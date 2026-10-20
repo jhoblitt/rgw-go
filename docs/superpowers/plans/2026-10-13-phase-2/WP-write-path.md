@@ -59,7 +59,7 @@ Exclusions this unit retires or rewrites, at 0239625:
 ## Decisions
 
 The index's rulings this unit carries are D21 to D25, each with the report's recommendation as
-its ruling (its §8 open questions 1 to 5). The unit's own are WD-1 to WD-16. Every difference
+its ruling (its §8 open questions 1 to 5). The unit's own are WD-1 to WD-17. Every difference
 from radosgw below is an exclusion, written by the task named in the last column.
 
 | Id | Decision | Reason | Tasks |
@@ -85,6 +85,7 @@ from radosgw below is an exclusion, written by the task named in the last column
 | WD-14 | The otp section applies `update-type` as rgw-go's other sections do. Its put answers Squid's 204 with `RGWX_UPDATE_STATUS: applied` and Tentacle's 200 without it, and `RGWX_UPDATE_VERSION: ver:0,tag:` on both. | radosgw applies every otp put whatever `update-type` says ([rgw_otp.cc:120-140](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_otp.cc#L120-L140), [rgw_otp.cc:70-82](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L70-L82)); the status and version headers are its bytes ([rgw_rest_metadata.cc:234-284](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_metadata.cc#L234-L284)). | WP-18, WP-19 |
 | WD-15 | An otp put is refused with 400 InvalidArgument, after every device is checked and before any write, when a device's `seed` is longer than 1024 bytes, counted as `len` of the decoded JSON string. A seed radosgw wrote longer still reads back: only writes are bounded. | Defect 13: the class declares a stack array as long as each seed, which nothing bounds below the OSD's 90 MiB write limit (registry, "cls_otp's otp_set puts an array as long as the seed on the OSD's stack"). The decoded string's bytes are what `std::string::length()` counts, so they size the array. 1024 bytes is 8 times the 128 hex characters of RFC 6238's longest key, SHA-512's 64 bytes, which base32 spells in 104. | WP-19 |
 | WD-16 | No code of WP-17, WP-19, V13a or V13b formats a struct holding devices in an unexported field, or a device, or any value holding one, under `%p` or `%w`. | fmt prints those without calling `OTPInfo`'s `Format`, which keeps the seed and `seed_bin` out of every other path (WP-16's godoc). V13b writes the emulator's check methods over the device state WP-17 keeps. | WP-17, WP-19, V13a, V13b |
+| WD-17 | rgw-go's otp put is one atomic op: radosgw's remove with FAILOK, `create(false)`, version, mtime and `otp_set`, then a raw omap write of `header` holding exactly the document's ids, `otp_header{set<id>}` v1, byte-identical to the class's. Replay state survives the put, as radosgw's does. | Every class call in one op reads the committed omap ([PrimaryLogPG.cc:7779-7800](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L7779-L7800), [PrimaryLogPG.cc:7856-7877](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L7856-L7877)), so `otp_set` lists the stored ids beside the document's. Class calls alone give exactly the document's ids only when it just drops devices: `otp_set`, then `otp_remove` of the dropped ids. When it adds one device and drops another they fail, as `otp_remove` too reads the committed header, which lacks the added id, and its header write comes last. The raw write covers every case. A put split after its remove would leave an empty object if the gateway died between the two ops. radosgw's put keeps a dropped device's id, after which every `get_all` fails (defect 14). | WP-19 |
 
 ## Seams
 
@@ -117,7 +118,7 @@ from radosgw below is an exclusion, written by the task named in the last column
 | `op.ChecksumRequest{Type cksum.Type; Flags uint16; Expected func() (string, bool)}`, `PutParams.Checksum *ChecksumRequest` | WP-5 | BC-32 (POST object's write) |
 | the checksum request parser over a field lookup, so POST object passes its form fields where a request passes headers: `op.ChecksumInput{Field func(name string) (string, bool); Trailers Trailers}` | WP-6 | BC-32 |
 | `internal/cls/otp`: `OTPInfo` (`otp_info_t` v1) with its JSON, `OTPCheck` (`otp_check_t`), the check-result constants, `OTPObject(uid meta.UserID) string` (`"user:" + uid.String()`, in `ZoneParams.OTPPool`), and the admin calls `Set`, `GetAll`, `Remove`, `GetCurrentTime` | WP-16 | V13a, which adds `ops_check.go` (`Check`, `LookupCheck`) |
-| fakerados `OTPClassAt(now func() time.Time) ClassFunc` and `OTPClass()`, assembled from `otpAdminMethods` and an empty `otpCheckMethods` table; each device's `last_checks` and `last_success` kept in the instance type | WP-17 | V13b, which fills `cls_otp_check.go` |
+| fakerados `OTPClassAt(now func() time.Time) ClassFunc` and `OTPClass()`, assembled from `otpAdminMethods(now)` and `otpCheckMethods(now)`, an empty table in `cls_otp_check.go`, on the clock `now`, which stands for the OSD's; each device's `last_checks` and `last_success` kept in the instance type | WP-17 | V13b, which fills `cls_otp_check.go` |
 | the placement lookup for a transition's target class: phase 1's `op.ZoneInfo.Placement(rule)`, which is `valid_placement` plus the pools and compression type. WP adds no new placement seam | existing | C11 |
 | `copyData`'s raw flag: the stored bytes and attrs, no compression or checksum filter (WD-11) | WP-11 | C11 |
 | `internal/op/multipart.go` and `internal/op/object.go`'s checksum fields, landed first | WP-5 | L5a and V's fields, line-local after it |
@@ -146,7 +147,7 @@ func SuppliedForComplete(in ChecksumInput) (*ChecksumRequest, error)
 | `internal/op/getobject.go`, `objectread.go`, `listparts.go` | WP-12 | V6, V14a, BC-14 | line-local; never in parallel |
 | `internal/s3/putobject.go`, `multipart.go`, `getobject.go`, `getobjattrs.go` | WP-7, WP-13 | V11, V14a, L5b, C8, BC-26 | Each task adds its headers in its own helper (WP's in `internal/s3/checksum.go`), one call line per site; whichever lands first, the later rebases (index Order, hot-file rule). |
 | `internal/driver/metadata.go`, `internal/op/adminmetadata.go` | WP-18, WP-19 | phase 3's roles, user_policy, group and topic sections | WP-18 turns the switches into tables, one file per section; WP-19 and phase 3 each add a file and a row |
-| `internal/cls/otp/` | WP-16 | V13a | WP-16 owns the package and its types; V13a adds `ops_check.go` |
+| `internal/cls/otp/` | WP-16, WP-19 | V13a | WP-16 owns the package and its types; WP-19 adds `otp_header`'s encoding to `types.go`; V13a adds `ops_check.go` |
 | `internal/testutil/fakerados/cls_otp*.go` | WP-17 | V13b | WP-17 owns `cls_otp.go`; V13b writes only `cls_otp_check.go` |
 | `internal/auth/chunked.go`, `payload.go`, `internal/op/identity.go` | WP-3 | BC-31 adds a new file and edits none of these | single owner |
 | the T unit's s3-tests lists, the ledgers and known-differences files | WP-14 | every unit's recording | after WP-22, WP-14 edits only its own lines; recordings land one at a time through the controller |
@@ -911,8 +912,10 @@ client's `otp_check`.
 ### Task WP-19: the otp metadata section
 
 - **Layer:** driver, with one row in each of WP-18's tables. **Files:** create
-  `internal/driver/metadata_otp.go`; one row in the driver's section table and one in the op's
-  status table. **Cluster:** no.
+  `internal/driver/metadata_otp.go`; add `otp_header` v1's encoding to `internal/cls/otp`
+  (`types.go`), with a hand-built golden byte-identical to the class's, since fakerados's
+  encoder is test-only; one row in the driver's section table and one in the op's status
+  table. **Cluster:** no.
 - **Consumes:** WP-16, WP-17 (specs), WP-18; `meta.ZoneParams.OTPPool`. **Produces:** the `otp`
   section.
 - **Behaviour** (§2.5):
@@ -929,9 +932,11 @@ client's `otp_check`.
      - the version set: the document's `ver` when its tag is non-empty, else a fresh random tag at
        version 1;
      - `mtime2`, the document's mtime;
-     - `otp_set` with the device list.
-     The removal resets every device's replay state (defect 12), which rgw-go keeps: the op and
-     the stored form are radosgw's.
+     - `otp_set` with the device list;
+     - then WD-17's raw write of `header`, holding exactly the document's ids.
+     `otp_set` reads the stored records across the remove, so every device the document keeps
+     keeps its replay state, as radosgw's put does (WP-17). The header write leaves no id of a
+     dropped device, which radosgw's put keeps (defect 14).
   4. **Refusals** before any write, 400 InvalidArgument: WD-13's four, and WD-15's seed bound,
      every device checked first. A string member given null, an object or an array is refused
      too, as WP-16's `OTPInfo` decodes the device, in the idiom of the sections already served.
@@ -951,8 +956,10 @@ client's `otp_check`.
 - **Specs** (fakerados with WP-17): each verb; each refusal, with nothing written; a seed of
   exactly 1024 bytes accepted, one of 1025 refused, and a second device over the bound writing
   nothing; a string member given null, an object or an array refused; the release split of the
-  put status and headers; `update-type` honoured; a list across pages; a put resetting a
-  device's replay state; the document round trip.
+  put status and headers; `update-type` honoured; a list across pages; a put keeping a
+  remaining device's replay state; a put that drops a device leaving `header` exactly the
+  document's ids, in the class's bytes, and `get_all` answering the remaining devices; the
+  document round trip.
 - **Exclusions and registry:**
   - rewrites "The admin metadata API serves three sections" (`docs/exclusions.md:1646`): four,
     and otp's `update-type` and refusals, WD-15's seed bound beside WD-13's, saying only writes
@@ -964,8 +971,13 @@ client's `otp_check`.
   - updates the rgw-go lines of the registry's "cls_otp divides by a stored step_size that is
     never validated" (#80948) and "cls_otp computes the replay index from an unsigned window
     distance" (#80949) to say what the section now writes;
-  - a new registry entry for defect 12: security, low, admin-triggered, intended by multisite's
-    design; unreproduced, and WP-24 reproduces it.
+  - WD-17's exclusion: rgw-go's otp put leaves `header` listing exactly the document's devices,
+    where radosgw's keeps a dropped device's id;
+  - updates the rgw-go line of the registry's "radosgw's otp metadata put keeps a dropped
+    device's id in the otp header" (defect 14) to WD-17's header write;
+  - updates the rgw-go line of the registry's "radosgw's otp replay state stays in the zone
+    that recorded it" (defect 12) to say the section's document carries only the devices, as
+    radosgw's does.
 - **Depends on:** WP-16, WP-17, WP-18. **PR:** one. **Brief:** about 190 lines.
 
 ### Task WP-20: object layout
@@ -1039,11 +1051,19 @@ client's `otp_check`.
        by `radosgw-admin mfa list` and accepted by `radosgw-admin mfa check` with a TOTP the spec
        computes from the seed (RFC 6238, the device's step and offset).
      - Metadata list and remove through each gateway.
-  3. **Reproductions.** Defect 12: a TOTP accepted, the device put again through either
-     gateway's metadata API, and the same TOTP accepted again inside its window. Defect 10: an
-     input that drives `dump_obj_layout` into its error path on a running release, if one can be
-     built without corrupting shared state; otherwise the entry stays unreproduced, with the
-     reason. Each result goes into the registry with its release.
+  3. **Reproductions.**
+     - Replay state across a put: a TOTP accepted, the device put again through either
+       gateway's metadata API, and the same TOTP refused inside its window, since the put keeps
+       the replay state (WP-17).
+     - Defect 14: a put through radosgw's metadata API that drops a device, after which
+       radosgw's metadata get answers 404 and `radosgw-admin mfa list` prints no devices; the
+       same put through rgw-go leaves both listing the remaining devices.
+       `radosgw-admin mfa remove` of the dropped id restores radosgw's object.
+     - Defect 12 needs two zones, so its entry stays unreproduced, with that reason.
+     - Defect 10: an input that drives `dump_obj_layout` into its error path on a running
+       release, if one can be built without corrupting shared state; otherwise the entry stays
+       unreproduced, with the reason.
+     Each result goes into the registry with its release.
 - **Depends on:** WP-19, WP-21. **PR split:** (a) the gate cases and goldens; (b) the registry's
   reproductions. **Brief:** about 120 lines.
 
@@ -1091,11 +1111,14 @@ search before any filing.
 | 9 | `Cksum::decode` copies a stored digest size of up to 65535 bytes into a 64-byte array ([rgw_cksum.h:268-281](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L268-L281)), and a v20.2.4 gateway indexes its nine-entry table with any stored type ([rgw_cksum.h:147-149](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L147-L149)), which main's types 9 to 11 overrun in a mixed v20 and v21 zone. | security (memory safety), privileged: a RADOS writer of the attr, or a newer radosgw | unreproduced | refuse both on read, never write either (D21, Review Focus 4); no exclusion; sent to the rgw-bug-reproduction session | WP-1, WP-6, WP-8 |
 | 10 | `?layout` ignores `dump_obj_layout`'s error and answers 200 with a truncated `{"result":{...}}` ([rgw_rest_s3.cc:4879-4896](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4879-L4896), [rgw_rest_s3.cc:4368-4385](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4368-L4385)). Both tags. | cosmetic | unreproduced | WD-12: answer the error | WP-21, WP-24 |
 | 11 | An otp put with `step_size` 0 makes every later check fault the OSD on a divide (registry, "cls_otp divides by a stored step_size that is never validated", #80948). Both tags. | security (DoS, admin-only) | reproduced in userspace only (registry) | WD-13: refuse it; update the registry's rgw-go line | WP-19 |
-| 12 | An otp put removes and recreates the object ([svc_cls.cc:188-216](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L188-L216)), so every device's replay state restarts and a TOTP just used can be used again within its window. Both tags. | security, low (admin-triggered); intended by multisite's design | unreproduced | keep it: the op and the stored form are radosgw's; registry entry as intended behaviour that surprises | WP-19, WP-24 |
+| 12 | A device's replay state, `last_checks` and `last_success`, lives in each zone's otp object and is never synced. The metadata document holds only `devices` ([rgw_otp.cc:47-49](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_otp.cc#L47-L49), [rgw_otp.cc:24-26](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L24-L26)), each an `otp_info_t` ([cls_otp_types.cc:30-71](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_types.cc#L30-L71), [cls_otp_types.cc:30-71](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_types.cc#L30-L71)), `otp_get` answers only the device ([cls_otp.cc:439](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L439), [cls_otp.cc:439](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L439)), and a check, which reads the local zone's object, writes no metadata log entry ([svc_cls.cc:32-63](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L32-L63), [svc_cls.cc:32-63](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_cls.cc#L32-L63)). So a TOTP accepted at one zone is accepted once more at each other zone inside its window, which RFC 6238 section 5.2 forbids (registry, "radosgw's otp replay state stays in the zone that recorded it"). Both tags. | security (possible), low: a replay needs the user's credentials and an observed code | unreproduced: it needs two zones | keep it: the stored form, the document and the sync are radosgw's; WP-19 updates the entry's rgw-go line | WP-19 |
 | 13 | `otp_set`'s `parse_seed` declares a stack array as long as each seed, which nothing bounds below the OSD's 90 MiB write limit (registry, "cls_otp's otp_set puts an array as long as the seed on the OSD's stack"). Both tags; fixed on main, in v21.0.1 and later. | security (possible): DoS, admin-only | unreproduced | WD-15: refuse a seed longer than 1024 bytes; update the registry's rgw-go line | WP-19 |
+| 14 | An otp put that drops a device keeps its id in `header`. The put removes and recreates the object and calls `otp_set` in one op, and `otp_set` reads the committed header ([svc_cls.cc:188-216](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L188-L216), [svc_cls.cc:188-216](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_cls.cc#L188-L216); [cls_otp.cc:301-348](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L301-L348), [cls_otp.cc:301-348](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L301-L348); registry, "radosgw's otp metadata put keeps a dropped device's id in the otp header"). Every later `get_all` fails with ENOENT, and metadata sync then removes the user's otp object on the peer zones. Both tags. | data corruption | unreproduced | WD-17: the put's raw `header` write; exclusion | WP-17, WP-19, WP-24 |
 
 Not defects, recorded so no task re-derives them:
 - `?layout` checks only the `admin` cap, by design.
+- An otp put does not reset a device's replay state: `otp_set` reads the stored records across
+  the op's remove ([PrimaryLogPG.cc:7779-7800](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L7779-L7800), [PrimaryLogPG.cc:7856-7877](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L7856-L7877)). The report's row 12 assumed it did.
 - An otp put changes no user record; `radosgw-admin mfa create` writes both the device and the
   user's `mfa_ids` ([rgw_admin.cc:10791-10856](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10791-L10856)).
 - An algorithm header with no value header and no trailer stores the computed checksum

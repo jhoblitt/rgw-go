@@ -84,8 +84,9 @@ their default.
 
 - WP-16: `internal/cls/otp` with `OTPInfo`, `OTPCheck`, the result constants and
   `OTPObject(uid meta.UserID) string`. WP-17: `OTPClassAt(now func() time.Time) ClassFunc`,
-  with `OTPClass()` as `OTPClassAt(time.Now)`, assembled with an empty `otpCheckMethods`
-  table, and per-device `last_checks` and `last_success`.
+  with `OTPClass()` as `OTPClassAt(time.Now)`, assembled with
+  `otpCheckMethods(now func() time.Time) methodTable`, an empty table in `cls_otp_check.go`, and
+  per-device `last_checks` and `last_success`.
 - Phase 1: `indexOp` (`prepare`, `complete`, `completeDel`, `cancel`, `guardReshard`),
   `blockWhileResharding`, `readHead`, `removeHead`, `guardHead`, `completionManager`,
   `checkDiskState`, `PutBucketInfo` under `RetryRacedBucketWrite`.
@@ -110,7 +111,7 @@ their default.
 |---|---|---|
 | `internal/testutil/fakerados/cls_rgw.go` | S1, V3a; C's emulator | S1 first. V3a alone edits the existing handlers; V3b and C add table files only. |
 | `internal/testutil/fakerados/cls_otp*.go` | WP-17, V13b | WP-17 owns `cls_otp.go`; V13b writes only `cls_otp_check.go`. |
-| `internal/cls/otp/` | WP-16, V13a | WP-16 owns the package and types; V13a adds `ops_check.go`. |
+| `internal/cls/otp/` | WP-16, WP-19, V13a | WP-16 owns the package and types; WP-19 adds `otp_header`'s encoding to `types.go`; V13a adds `ops_check.go`. |
 | `internal/driver/indexop.go` | V5a | V5a alone. |
 | `internal/driver/olh_head.go` | V4, V5c | V4 creates it; V5c, after V4 by its own dependency, adds `ExpectTag`'s cmpxattr beside D1's guard. |
 | `internal/driver/stat.go` | V5b, V6 | V5b adds the unfollowed head read and leaves `StatObject` and `PrefetchObject` refusing an OLH head; V6, after V5b by its own dependency, lifts that refusal. |
@@ -1387,8 +1388,8 @@ their default.
 
 ### Task V13b: emulator, the otp check methods
 
-- **Layer:** emulator. **Files:** create `internal/testutil/fakerados/cls_otp_check.go` (WP-17's
-  `otpCheckMethods` table) and specs. **Cluster:** no.
+- **Layer:** emulator. **Files:** fill `internal/testutil/fakerados/cls_otp_check.go`, the empty
+  `otpCheckMethods(now func() time.Time) methodTable` WP-17 created, and specs. **Cluster:** no.
 - **Security boundary:** MFA (PP-14); the emulator pins what the verifier trusts.
 - **Consumes:** WP-17's device store with `last_checks` and `last_success`; V13a.
 - **Behaviour:**
@@ -1399,7 +1400,9 @@ their default.
      [cls_otp.cc:108](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L108)), and write the device back.
   2. The validation ([cls_otp.cc:129-153](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L129-L153),
      [cls_otp.cc:129](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L129)): RFC 6238 TOTP over the stored seed, step, time offset
-     and window, at the cluster clock; a success stores its window index as `last_success`, so the
+     and window, at the class clock `now` that `OTPClassAt` passes to `otpCheckMethods`, which
+     stands for the OSD's `real_clock::now()`; every time the check methods read is that clock,
+     never `ClassCall.Now`. A success stores its window index as `last_success`, so the
      same code fails afterwards. The class validates through liboath; the implementer reads
      liboath's `oath_totp_validate2` for the digit count and the window walk and quotes it in the
      task notes (PP-2). The unsigned window distance of defect 11 is reproduced as the class
