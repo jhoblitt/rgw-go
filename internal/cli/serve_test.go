@@ -420,6 +420,24 @@ var _ = Describe("S3Config", func() {
 		Expect(cfg.ServerHeader).To(Equal("Example Storage"))
 	})
 
+	// radosgw holds such a value as one name, which bkt.s3.a.com is not in,
+	// so the Host-as-bucket fallback takes the whole Host as the bucket.
+	DescribeTable("splits rgw_dns_name on a comma or a space alone, as rgw_rest_init does",
+		func(ctx SpecContext, dnsName string) {
+			opts["rgw_dns_name"] = dnsName
+			cfg, err := cli.S3Config(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.DNSNames).To(Equal([]string{dnsName, "zg.example.com"}))
+			req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/k", nil)
+			req.Host = "bkt.s3.a.com"
+			p, err := s3.ParseRequest(req, cfg, time.Unix(1, 0))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(p.Req.Bucket).To(Equal("bkt.s3.a.com"), "bucket")
+		},
+		Entry("names joined with a semicolon", "s3.a.com;s3.b.com"),
+		Entry("names joined with a tab", "s3.a.com\ts3.b.com"),
+	)
+
 	It("names an option it cannot read", func() {
 		delete(opts, "rgw_service_provider_name")
 		_, err := cli.S3Config(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)
