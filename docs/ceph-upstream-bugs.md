@@ -345,6 +345,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [cls_rgw's lc_get_entry and lc_get_next_entry refuse an lc entry stored in its old pair form, which stalls the shard](#cls_rgws-lc_get_entry-and-lc_get_next_entry-refuse-an-lc-entry-stored-in-its-old-pair-form-which-stalls-the-shard) | pending | pending |  |
 | [cls_rgw's lc_get_entry logs a request it cannot decode as lc_set_entry's](#cls_rgws-lc_get_entry-logs-a-request-it-cannot-decode-as-lc_set_entrys) | pending | pending |  |
 | [radosgw's object-lock dates wrap past 2554](#radosgws-object-lock-dates-wrap-past-2554) | pending | pending |  |
+| [radosgw's PutObjectRetention holds a lapsed retention's mode and date](#radosgws-putobjectretention-holds-a-lapsed-retentions-mode-and-date) | pending | pending |  |
+| [radosgw aborts on an object-lock attr with bytes past its encoding](#radosgw-aborts-on-an-object-lock-attr-with-bytes-past-its-encoding) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -19083,8 +19085,127 @@ Every new entry adds its row to this table, in document order.
     availability only, since the writer could send 2554-07-21 itself.
 - **Releases:** v19.2.7, v20.2.4 and main 7ed73efc1be.
 - **rgw-go:** does not reproduce it. `iso8601.Parse` refuses a time before
-  the epoch or past the limit (`docs/exclusions.md`, "A date real_time
-  cannot hold is refused").
+  the epoch or past the limit, in a header and in PutObjectRetention's body
+  (`objectlock.ParseRetention`); `objectlock.LockUntil` clamps a default
+  retention to the limit, and `objectlock.PeriodFits` tells a rule whose
+  period from now passes it (`docs/exclusions.md`, "A date real_time cannot
+  hold is refused").
 - **Upstream:** pending: sent to rgw-bug-reproduction (L1-1).
 - **Found:** phase 2 Task L1, 2026-10-20, transcribing `from_iso_8601` and
   `get_lock_until_date`; derived from the source, not reproduced.
+
+## radosgw's PutObjectRetention holds a lapsed retention's mode and date
+
+- **Kind:** defect, unfixed at v19.2.7, v20.2.4 and main; S3-correctness,
+  not security-relevant: it fails closed, a retention that protects nothing
+  still refusing changes. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - PutObjectRetention reads the version's existing retention and, whatever
+    its date, refuses a proposed retain-until date earlier than the existing
+    one unless the existing mode is GOVERNANCE and the bypass holds, and
+    refuses COMPLIANCE becoming GOVERNANCE
+    ([rgw_op.cc:8403-8430](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8403-L8430),
+    [rgw_op.cc:9338-9365](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9338-L9365)).
+  - The same retention no longer protects the version: `verify_object_lock`
+    refuses a delete only while the retain-until second is after now's
+    ([rgw_common.cc:1649-1653](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1649-L1653),
+    [rgw_common.cc:1712-1716](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1712-L1716)).
+  - Main has the same check
+    ([rgw_op.cc:9843-9859](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_op.cc#L9843-L9859),
+    at 7ed73efc1be).
+- **Impact:** a version whose COMPLIANCE retention has lapsed answers 403
+  AccessDenied, "can't change retention mode from COMPLIANCE to
+  GOVERNANCE", to every GOVERNANCE retention, and "proposed retain-until
+  date shortens an existing retention period and governance bypass check
+  failed" to any date before the lapsed one, though anyone allowed to delete
+  it may. In S3 a lapsed retention is no retention.
+- **Releases:** v19.2.7, v20.2.4 and main 7ed73efc1be.
+- **rgw-go:** does not reproduce it. `objectlock.RetentionChange` takes a
+  retention whose retain-until second is not after now's for none
+  (`docs/exclusions.md`, "A lapsed retention binds no retention change").
+- **Upstream:** pending: sent to rgw-bug-reproduction (L1-2).
+- **Found:** phase 2 Task L1, 2026-10-20, transcribing
+  `RGWPutObjRetention::execute`; derived from the source, not reproduced.
+
+## radosgw aborts on an object-lock attr with bytes past its encoding
+
+- **Kind:** defect, unfixed at v19.2.7, v20.2.4 and main; availability, not
+  security-relevant: the trigger needs RADOS write access or corruption.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/`.
+  - Four readers of `user.rgw.object-retention` and
+    `user.rgw.object-legal-hold` decode the attr with `decode(x, bl)` on its
+    whole bufferlist: a delete's `verify_object_lock`
+    ([rgw_common.cc:1639-1667](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1639-L1667),
+    [rgw_common.cc:1702-1730](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1702-L1730)),
+    PutObjectRetention's read of the existing retention
+    ([rgw_op.cc:8403-8412](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8403-L8412),
+    [rgw_op.cc:9338-9347](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9338-L9347)),
+    lifecycle's `pass_object_lock_check`
+    ([rgw_lc.cc:318-345](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L318-L345),
+    [rgw_lc.cc:318-345](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L318-L345))
+    and the lock headers of GET and HEAD
+    ([rgw_rest_s3.cc:603-621](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L603-L621),
+    [rgw_rest_s3.cc:712-730](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L712-L730)).
+  - The abort comes from that convenience overload,
+    `decode(T&, const bufferlist&)`, not from the struct's decode: after the
+    decode it runs `ceph_assert(p.end())`
+    ([encoding.h:631-637](https://github.com/ceph/ceph/blob/v19.2.7/src/include/encoding.h#L631-L637),
+    [encoding.h:632-638](https://github.com/ceph/ceph/blob/v20.2.4/src/include/encoding.h#L632-L638)),
+    which release builds keep
+    ([ceph_assert.h:95-109](https://github.com/ceph/ceph/blob/v19.2.7/src/include/ceph_assert.h#L95-L109),
+    [ceph_assert.h:96-113](https://github.com/ceph/ceph/blob/v20.2.4/src/include/ceph_assert.h#L96-L113)).
+    The assert is no `buffer::error`, so it aborts inside each caller's
+    `catch (buffer::error&)`; only an attr too short to decode reaches that
+    catch, which each caller answers as the next item says. The struct's own
+    `DECODE_FINISH` skips bytes left inside its envelope by design
+    ([encoding.h:1635-1642](https://github.com/ceph/ceph/blob/v19.2.7/src/include/encoding.h#L1635-L1642),
+    [encoding.h:1651-1658](https://github.com/ceph/ceph/blob/v20.2.4/src/include/encoding.h#L1651-L1658)),
+    so a later version's added fields decode cleanly, and only bytes past
+    the envelope abort. The fix therefore belongs at the four call sites:
+    the iterator decode GetObjectRetention and GetObjectLegalHold use,
+    `obj_retention.decode(iter)` and `obj_legal_hold.decode(iter)`, which
+    leaves such bytes unread
+    ([rgw_op.cc:8475-8482](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8475-L8482),
+    [rgw_op.cc:9423-9430](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9423-L9430);
+    [rgw_op.cc:8579-8586](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8579-L8586),
+    [rgw_op.cc:9547-9554](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9547-L9554)).
+  - A short attr's answer is the caller's. `verify_object_lock` returns
+    -EIO for either attr
+    ([rgw_common.cc:1645-1663](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1645-L1663),
+    [rgw_common.cc:1708-1726](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1708-L1726)),
+    and PutObjectRetention's `RGWPutObjRetention::execute` sets -EIO for the
+    existing retention
+    ([rgw_op.cc:8408-8412](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8408-L8412),
+    [rgw_op.cc:9343-9347](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9343-L9347)).
+    Lifecycle's `pass_object_lock_check` returns false, so the version is
+    not expired
+    ([rgw_lc.cc:323-342](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L323-L342),
+    [rgw_lc.cc:323-342](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L323-L342)).
+    GET and HEAD, in `RGWGetObj_ObjStore_S3::send_response_data`, log the
+    error and leave the header out of a response that otherwise succeeds
+    ([rgw_rest_s3.cc:610-620](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L610-L620),
+    [rgw_rest_s3.cc:719-729](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L719-L729)).
+  - Main has the same overload
+    ([encoding.h:1485-1491](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/include/encoding.h#L1485-L1491),
+    at 7ed73efc1be).
+  - No client writes such an attr: every radosgw writer encodes it cleanly,
+    and copy_obj takes the lock attrs from the request, not the source
+    ([rgw_rados.cc:4800-4807](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4800-L4807),
+    [rgw_rados.cc:5013-5020](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5013-L5020)).
+    The trigger is corruption or a writer with RADOS write access.
+- **Impact:** availability. A delete naming the version, a
+  PutObjectRetention on it, or a GET or HEAD by a requester allowed to read
+  its lock ends the radosgw process, and lifecycle crash-loops the gateway:
+  each pass after a restart reaches the version and aborts again.
+- **Releases:** v19.2.7, v20.2.4 and main 7ed73efc1be.
+- **rgw-go:** differs: the strict `objectlock.DecodeRetention` and
+  `objectlock.DecodeLegalHold`, for the four, take such an attr for one that
+  does not decode, so `objectlock.VerifyDelete` refuses the delete as
+  radosgw refuses one whose attr is too short; the lenient
+  `objectlock.DecodeRetentionLenient` and `objectlock.DecodeLegalHoldLenient`
+  read it as the two Get ops do (`docs/exclusions.md`, "An object-lock attr
+  with bytes past its encoding does not decode").
+- **Upstream:** pending: sent to rgw-bug-reproduction (L1-3).
+- **Found:** phase 2 Task L1, 2026-10-20, transcribing
+  `verify_object_lock`; derived from the source, not reproduced.
