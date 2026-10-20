@@ -342,6 +342,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw sends a public access block after GetPublicAccessBlock's error document, past its Content-Length](#radosgw-sends-a-public-access-block-after-getpublicaccessblocks-error-document-past-its-content-length) | pending | pending |  |
 | [radosgw's ?layout dereferences a null manifest](#radosgws-layout-dereferences-a-null-manifest) | pending | pending | ✓ |
 | [radosgw's ?layout hands a cloud tier's S3 secret to any holder of admin=read](#radosgws-layout-hands-a-cloud-tiers-s3-secret-to-any-holder-of-adminread) | pending | pending | ✓ |
+| [cls_rgw's lc_get_entry and lc_get_next_entry refuse an lc entry stored in its old pair form, which stalls the shard](#cls_rgws-lc_get_entry-and-lc_get_next_entry-refuse-an-lc-entry-stored-in-its-old-pair-form-which-stalls-the-shard) | pending | pending |  |
+| [cls_rgw's lc_get_entry logs a request it cannot decode as lc_set_entry's](#cls_rgws-lc_get_entry-logs-a-request-it-cannot-decode-as-lc_set_entrys) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -18870,3 +18872,117 @@ Every new entry adds its row to this table, in document order.
   end to end at v20.2.4, and the `retain_head_object` precondition at both
   tags, by rgw-bug-reproduction's triage. Derived from the source, not
   reproduced.
+
+## cls_rgw's lc_get_entry and lc_get_next_entry refuse an lc entry stored in its old pair form, which stalls the shard
+
+- **Kind:** defect, S3-correctness of lifecycle: a lifecycle shard that still
+  holds an entry in the pair form releases before `cls_rgw_lc_entry` stored
+  stops radosgw's worker at that entry on every pass, and from then on no
+  bucket of the shard is processed.
+  No object data is damaged. Not security-relevant. Prior art not searched.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/cls/rgw/` unless named.
+  - Nautilus stored a shard entry as `rgw_lc_entry_t`,
+    `std::pair<std::string, int>` of bucket and status
+    ([cls_rgw_ops.h:1013](https://github.com/ceph/ceph/blob/v14.2.22/src/cls/rgw/cls_rgw_ops.h#L1013);
+    `rgw_cls_lc_set_entry`,
+    [cls_rgw.cc:3579-3596](https://github.com/ceph/ceph/blob/v14.2.22/src/cls/rgw/cls_rgw.cc#L3579-L3596)),
+    and so did Octopus through v15.2.4, the last release to store it
+    (`rgw_lc_entry_t`,
+    [cls_rgw_ops.h:1033](https://github.com/ceph/ceph/blob/v15.2.4/src/cls/rgw/cls_rgw_ops.h#L1033);
+    `rgw_cls_lc_set_entry`, keyed by `op.entry.first`,
+    [cls_rgw.cc:3674-3691](https://github.com/ceph/ceph/blob/v15.2.4/src/cls/rgw/cls_rgw.cc#L3674-L3691)).
+    `cls_rgw_lc_entry` first appears in v15.2.5
+    ([cls_rgw_types.h:1217](https://github.com/ceph/ceph/blob/v15.2.5/src/cls/rgw/cls_rgw_types.h#L1217)).
+    Squid's and Tentacle's `rgw_cls_lc_set_entry` stores the op's
+    `cls_rgw_lc_entry`
+    ([cls_rgw.cc:4199-4217](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L4199-L4217),
+    [cls_rgw.cc:4601-4619](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4601-L4619)),
+    and nothing converts an entry already stored.
+  - `rgw_cls_lc_list_entries` reads a value that does not decode as
+    `cls_rgw_lc_entry` as that pair, "try backward compat"
+    ([cls_rgw.cc:4291-4310](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L4291-L4310),
+    [cls_rgw.cc:4693-4712](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4693-L4712)).
+  - `rgw_cls_lc_get_entry` decodes the value through `read_omap_entry`, which
+    answers -EIO when it does not decode
+    ([cls_rgw.cc:914-932](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L914-L932),
+    [cls_rgw.cc:4188-4191](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L4188-L4191);
+    [cls_rgw.cc:1044-1062](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1044-L1062),
+    [cls_rgw.cc:4590-4593](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4590-L4593)),
+    and `rgw_cls_lc_get_next_entry` answers -EIO itself
+    ([cls_rgw.cc:4255-4265](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L4255-L4265),
+    [cls_rgw.cc:4657-4667](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4657-L4667)).
+    Neither reads the pair. A pair never decodes as an entry: the bytes that
+    would be the entry's struct length are the high bytes of the bucket
+    key's length and its first two characters, hundreds of megabytes for
+    any printable key.
+  - radosgw's shard pass claims an entry, setting it processing, and then
+    moves the head past it with `get_next_entry` (`advance_head`,
+    [rgw_lc.cc:2173-2201](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2173-L2201),
+    [rgw_lc.cc:2395-2408](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2395-L2408);
+    [rgw_lc.cc:2237-2266](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2237-L2266),
+    [rgw_lc.cc:2462-2475](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2462-L2475)).
+    When the next entry is a pair, that fails, and the pass ends without
+    processing the claimed bucket and without moving the head. A later pass
+    reads the head's entry, finds the claim live and skips it through
+    `update_head`, which calls `advance_head` again
+    ([rgw_lc.cc:2349-2365](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2349-L2365),
+    [rgw_lc.cc:2416-2432](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2416-L2432)),
+    or reclaims it once its session expires; both fail the same way.
+  - A head already left at a pair key, as a worker of a release that stored
+    pairs could leave it, stalls the shard on a second path: each pass
+    starts with `get_entry` on the head's marker, which answers -EIO, and
+    the pass ends with nothing claimed
+    ([rgw_lc.cc:2330-2346](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2330-L2346),
+    [rgw_lc.cc:2396-2413](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2396-L2413)).
+- **Impact:**
+  - On the first path, the bucket claimed before the pair entry stays
+    processing and is never processed. The head never moves past it, so the
+    shard never reaches its end, never rolls over, and neither the entries
+    after it nor those before it are processed again.
+  - On the second, no entry of the shard is claimed again: the head stays at
+    the pair key, and the shard never rolls over.
+  - A pair entry that is a shard's first entry heals itself: the pass reads
+    it through `lc_list_entries` and its claim rewrites it as an entry. A
+    PutBucketLifecycle on the pair entry's bucket rewrites it too, and a
+    DeleteBucketLifecycle removes it.
+  - Every claim rewrites its entry, so a shard keeps a pair entry only where
+    no lifecycle pass claimed it since the cluster ran v15.2.4 or earlier,
+    as with lifecycle threads off across the upgrades, or a head a pass of
+    those releases left at it.
+- **Releases:** the pair form checked at v14.2.22 and v15.2.4, the entry
+  form from v15.2.5; the refusal and the stall checked at v19.2.7 and
+  v20.2.4.
+- **rgw-go:** the class is radosgw's own, so rgw-go's lc client
+  (`internal/cls/rgw/ops_lc.go`) gets the same EIO, a `*radosclient.Error`
+  with Errno EIO, from `LCGetEntry` and `LCGetNextEntry`, and reads the pair
+  only in an `LCListEntries` reply, as radosgw does. rgw-go's lifecycle pass
+  is planned not to stall: on that EIO it reads the entry as
+  `lc_list_entries` does, rewrites it with `lc_set_entry` in the entry form
+  under the shard lock, and goes on.
+- **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
+  searched.
+- **Found:** phase 2 Task C3, 2026-10-20, reading the lc class methods for
+  the lc client. Derived from the source, not reproduced.
+
+## cls_rgw's lc_get_entry logs a request it cannot decode as lc_set_entry's
+
+- **Kind:** defect, cosmetic: an error log line names the wrong method. Not
+  security-relevant. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/cls/rgw/`.
+  - `rgw_cls_lc_get_entry` answers -EINVAL for a `cls_rgw_lc_get_entry_op`
+    that does not decode, logging "ERROR: rgw_cls_lc_set_entry(): failed to
+    decode entry" at level 1
+    ([cls_rgw.cc:4180-4186](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L4180-L4186),
+    [cls_rgw.cc:4582-4588](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4582-L4588)),
+    the line `rgw_cls_lc_set_entry` logs for its own request
+    ([cls_rgw.cc:4204-4210](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L4204-L4210),
+    [cls_rgw.cc:4606-4612](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4606-L4612)).
+- **Impact:** an operator reading the OSD log for a malformed lc_get_entry
+  is pointed at lc_set_entry. The caller's EINVAL is unaffected.
+- **Releases:** checked at v19.2.7 and v20.2.4.
+- **rgw-go:** unaffected: the line is the OSD's, and rgw-go's lc client
+  sends a request the class decodes.
+- **Upstream:** not filed; a cosmetic log message.
+- **Found:** phase 2 Task C3, 2026-10-20, reading the lc class methods for
+  the lc client. Derived from the source, not reproduced.
