@@ -28,14 +28,19 @@ var _ = Describe("bucket policy, tagging and lifecycle routes", func() {
 	var w *subresWorld
 	BeforeEach(func(ctx SpecContext) { w = newSubresWorld(ctx, denc.Squid) })
 
-	// expectEmpty checks rec is status with no body, no type and the
-	// Content-Length: 0 radosgw's frontend completes it with.
+	// expectEmpty checks rec is status with no body and no type. Its every
+	// status is a 204, which carries no length from either gateway, whatever
+	// the recorder holds: radosgw's ConLenControllingFilter drops the one its
+	// frontend completes a response with
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_client_io_filters.h#L342-L364 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_client_io_filters.h#L342-L364 at v20.2.4),
+	// and net/http deletes the one writeEmpty sets (net/http/server.go:1488-1490
+	// at go1.27.1), so no length is checked.
 	expectEmpty := func(rec *httptest.ResponseRecorder, status int) {
 		GinkgoHelper()
 		Expect(rec.Code).To(Equal(status), rec.Body.String())
 		Expect(rec.Body.String()).To(BeEmpty())
 		Expect(rec.Header()).NotTo(HaveKey("Content-Type"), "end_header(s) names no type and the formatter is empty, rgw_rest.cc:611-619 at v19.2.6")
-		Expect(rec.Header().Get("Content-Length")).To(Equal("0"))
 	}
 
 	Describe("the policy", func() {
