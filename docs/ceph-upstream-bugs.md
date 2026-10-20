@@ -333,6 +333,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw serves bucket configuration requests it has no op for as ListObjects, CreateBucket and DeleteBucket, deleting an empty bucket](#radosgw-serves-bucket-configuration-requests-it-has-no-op-for-as-listobjects-createbucket-and-deletebucket-deleting-an-empty-bucket) | pending | [ceph/ceph#64152](https://github.com/ceph/ceph/pull/64152) |  |
 | [radosgw serves PutObjectAnnotation and DeleteObjectAnnotation as PutObject and DeleteObject, overwriting or deleting the object](#radosgw-serves-putobjectannotation-and-deleteobjectannotation-as-putobject-and-deleteobject-overwriting-or-deleting-the-object) | pending | pending | ✓ |
 | [radosgw serves RenameObject and UpdateObjectEncryption as PutObject, overwriting the object](#radosgw-serves-renameobject-and-updateobjectencryption-as-putobject-overwriting-the-object) | pending | pending | ✓ |
+| [Tentacle's POST policy excepts a field whose name holds a NUL after a checksum algorithm's](#tentacles-post-policy-excepts-a-field-whose-name-holds-a-nul-after-a-checksum-algorithms) | pending | pending |  |
+| [radosgw's JSON parser recurses without limit on a POST policy's nesting](#radosgws-json-parser-recurses-without-limit-on-a-post-policys-nesting) | pending | pending |  |
+| [radosgw's POST policy never expires when its expiration is before 1970](#radosgws-post-policy-never-expires-when-its-expiration-is-before-1970) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -9990,31 +9993,81 @@ Every new entry adds its row to this table, in document order.
     with `create_s3_policy` from the same headers
     (`rgw_rest_s3.cc:3969-3979`; v20.2.4 `:4450-4460`), and
     CompleteMultipartUpload stores the object under that policy.
+  - **POST object, at v19.2.7 and v20.2.4.** This is not Tentacle-only:
+    wherever a signed POST policy allows an `acl` field, or a form with no
+    policy writes to a bucket that grants anonymous writes, a site relying
+    on the bucket's BlockPublicAcls has none, on either release. RGWPostObj
+    derives from `RGWOp`
+    ([rgw_op.h:1326](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L1326),
+    [rgw_op.h:1404](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1404)),
+    and neither its `init_processing` nor its `verify_permission` reads
+    the block
+    ([rgw_op.cc:4576-4605](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4576-L4605),
+    [rgw_op.cc:4869-4898](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4869-L4898)):
+    the only `block_public_acls` checks at either tag are RGWPutObj's
+    `init_processing`
+    ([rgw_op.cc:3904](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3904),
+    [rgw_op.cc:4113](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4113))
+    and RGWPutACLs' `execute`
+    ([rgw_op.cc:5909](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5909),
+    [rgw_op.cc:6552](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6552)).
+    `get_policy` builds the object's policy from the form's `acl` field
+    with `create_canned_acl`
+    ([rgw_rest_s3.cc:3242-3250](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3242-L3250),
+    [rgw_rest_s3.cc:3378-3386](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3378-L3386)),
+    and `RGWPostObj::execute` stores it as the object's ACL
+    ([rgw_op.cc:4756-4757](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4756-L4757),
+    [rgw_op.cc:5071-5072](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5071-L5072)),
+    so `acl=public-read` stores a public object in a bucket that blocks
+    public ACLs. On Tentacle "[Tentacle's POST policy excepts a field whose
+    name holds a NUL after a checksum algorithm's](#tentacles-post-policy-excepts-a-field-whose-name-holds-a-nul-after-a-checksum-algorithms)"
+    compounds it: the smuggled `acl` needs no condition either, so a policy
+    silent on `acl` gives a public object on a bucket configured to forbid
+    one.
+  - **The fix shape for POST object.** Copying RGWPutObj's check into
+    RGWPostObj would not fix it. That check tests `s->canned_acl`
+    against the public canned names, and `s->canned_acl` holds the
+    `x-amz-acl` header alone
+    ([rgw_rest_s3.cc:5050-5052](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5050-L5052),
+    [rgw_rest_s3.cc:5580-5582](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5580-L5582)),
+    while the form's `acl` goes through `create_canned_acl` straight into
+    `policy` without setting it. POST object needs an `is_public` test of
+    the policy it builds, as RGWPutACLs makes of its new policy
+    ([rgw_op.cc:5908-5910](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5908-L5910),
+    [rgw_op.cc:6551-6553](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6551-L6553)).
 - **Impact:** a bucket owner's BlockPublicAcls does not stop a writer from
-  making new objects public, through grant headers on PutObject or any ACL
-  on CopyObject and CreateMultipartUpload; S3 documents the setting as
+  making new objects public, through grant headers on PutObject, any ACL
+  on CopyObject and CreateMultipartUpload, or a POST form's `acl` field;
+  S3 documents the setting as
   refusing PUT Object calls whose ACL is public. The object is then public
   in fact where IgnorePublicAcls is off: a read adds the AllUsers grant's
   permissions unless the bucket ignores public ACLs (`rgw_acl.cc:180-186`
   at both tags; `rgw_common.cc:1572-1575`, v20.2.4 `:1626-1629`), so an
   anonymous GET succeeds. The writer is one the owner allows to write but
   not to publish: another account, a less privileged user or a tenant.
-- **Releases:** checked at v19.2.6 and v20.2.4.
+- **Releases:** checked at v19.2.6 and v20.2.4; POST object at v19.2.7
+  and v20.2.4.
 - **rgw-go:** does not reproduce it: PutObject, CopyObject,
   CreateMultipartUpload and UploadPart refuse a public policy under the
   block, whatever headers set it (`internal/op/putobject.go`,
   `internal/op/copyobject.go`, `internal/op/initmultipart.go`,
   `internal/op/uploadpart.go`; `docs/exclusions.md`, "A block of public
   ACLs refuses a public ACL on PutObject, CopyObject, CreateMultipartUpload
-  and UploadPart").
-- **Upstream:** reported to the Ceph security team (security@ceph.io) on
+  and UploadPart"). rgw-go serves no POST object yet; the phase 2 plan's
+  POST object op judges the policy it builds from the form's `acl` field
+  with `acl.Policy.IsPublic` and refuses a public one under the block.
+- **Upstream:** POST object: unfiled; rgw-bug-reproduction verified it at
+  v20.2.4 and logged it as security-relevant, since the disclosure below
+  did not name it. The rest: reported to the Ceph
+  security team (security@ceph.io) on
   2026-10-07; awaiting response. rgw-bug-reproduction's prior-art search
   found no report or fix. The nearest work covers the canned ACLs alone:
   [#49135](https://tracker.ceph.com/issues/49135) and its fix,
   [ceph/ceph#64290](https://github.com/ceph/ceph/pull/64290), "rgw/s3: fix
   PutObject's canned_acl comparisons for BlockPublicAcls".
 - **Found:** phase 1 unit W, Task 10, 2026-10-05, auditing the write ops'
-  public-access checks; derived from the source, not reproduced.
+  public-access checks; POST object by phase 2 task BC-30's re-review,
+  2026-10-19; derived from the source, not reproduced.
 
 ## RESTArgs::get_string url-decodes an admin argument a second time
 
@@ -18036,3 +18089,203 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 unit B, BC-28b's fix round, 2026-10-20, listing
   aws-sdk-go-v2's operations against the dispatch table; checked at
   v19.2.7, v20.2.4 and v21.1.2. Derived from the source, not reproduced.
+
+## Tentacle's POST policy excepts a field whose name holds a NUL after a checksum algorithm's
+
+- **Kind:** defect, security-relevant: an access-control bypass on Tentacle. Under
+  a signed POST policy that names no `acl`, the uploader stores the object
+  with the canned ACL it chooses, `public-read` included, and the same
+  holds for the object's Content-Type and tags. v20.2.4 only.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`, all at v20.2.4.
+  - `parse_cksum_type_hdr` checks only that `x-amz-checksum-` stands
+    somewhere in a name, then reads the algorithm from the fixed offset 15
+    as a C string, which `parse_cksum_type` matches with `boost::iequals`
+    against Tentacle's names
+    ([rgw_cksum.h:318-329](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L318-L329),
+    [rgw_cksum.h:293-300](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L293-L300)),
+    the rows of its `checksums` table, `crc32` among them
+    ([rgw_cksum.h:88-98](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L88-L98)),
+    and `is_checksum_hdr` takes any name it types
+    ([rgw_cksum.h:331-334](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L331-L334)).
+    So `acl`, a NUL, eleven more bytes, `crc32`, a NUL and
+    `x-amz-checksum-` is a checksum field.
+  - `match_policy_vars` skips every field `is_checksum_hdr` takes
+    ([rgw_policy_s3.cc:108-130](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_policy_s3.cc#L108-L130)),
+    so such a field needs no condition.
+  - The form reader keeps a NUL in a part's name. `index_of` ends a header
+    line only at a CRLF or the boundary
+    ([rgw_rest.cc:1173-1220](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1173-L1220)),
+    `read_form_part_header` keeps every byte of the line and takes the
+    part's name from its `name` parameter
+    ([rgw_rest.cc:1311-1370](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1311-L1370)),
+    which `parse_boundary_params` cuts only at `;` and `=`
+    ([rgw_rest.cc:1112-1145](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1112-L1145)).
+    `get_params` files the part in `parts` and in the policy's environment
+    under that whole name
+    ([rgw_rest_s3.cc:3094-3096](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3094-L3096)).
+  - `parts` is ordered by `ltstr_nocase`
+    ([rgw_rest.h:246-247](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.h#L246-L247)),
+    which is strcasecmp on `c_str()` and so ends a name at its NUL
+    ([rgw_string.h:15-21](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_string.h#L15-L21)),
+    and `part_str` and `part_bl` look a field up with `parts.find`
+    ([rgw_rest.cc:1372-1411](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1372-L1411)).
+    A lookup of `acl` therefore finds the NUL-named part.
+  - The sinks, each reached only when the policy names no condition for
+    the field, since a condition reads the same part through `get_var`'s
+    `ltstr_nocase` lookup:
+    - **acl.** `get_policy` builds the object's canned ACL from
+      `part_str(parts, "acl")`
+      ([rgw_rest_s3.cc:3378-3382](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3378-L3382)),
+      and `RGWPostObj::execute` stores it as the object's ACL
+      ([rgw_op.cc:5071-5072](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5071-L5072)).
+      `RGWPostObj::verify_permission` asks for `s3:PutObject` alone
+      ([rgw_op.cc:4885-4898](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4885-L4898)),
+      and no check of the bucket's BlockPublicAcls covers POST object at
+      either tag ("[radosgw lets a public ACL through a block of public ACLs
+      on PutObject's grant headers, CopyObject and
+      CreateMultipartUpload](#radosgw-lets-a-public-acl-through-a-block-of-public-acls-on-putobjects-grant-headers-copyobject-and-createmultipartupload)"),
+      so the smuggled `acl` stores a public object even on a bucket that
+      blocks public ACLs.
+    - **Content-Type.** `get_params` reads it with `part_str`
+      ([rgw_rest_s3.cc:3146-3150](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3146-L3150)),
+      and `RGWPostObj::execute` stores it as the object's content type
+      ([rgw_op.cc:5074-5079](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5074-L5079)).
+    - **tagging.** `get_tags` reads it with `part_str` and stores the tags
+      it parses as the object's tag attr
+      ([rgw_rest_s3.cc:3216-3254](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3216-L3254)).
+    - **key.** `get_params` reads it with `part_str`
+      ([rgw_rest_s3.cc:3130](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3130)),
+      but a policy nearly always pins the key.
+    - **x-amz-meta-.** The meta loop, from
+      `parts.upper_bound(RGW_AMZ_META_PREFIX)` on, stores each part as an
+      attr named `RGW_ATTR_PREFIX` and its whole name
+      ([rgw_rest_s3.cc:3166-3185](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3166-L3185)),
+      and `x-amz-meta-aaaacrc32`, a NUL and `x-amz-checksum-` has `crc32` at
+      byte 15. Whether the NUL survives into the stored xattr's name is
+      open; a cluster settles it.
+    - Only a field read under a name of at most fourteen bytes is reachable
+      through the NUL, since the algorithm must start at byte 15 after it.
+      A longer name passes only when its own bytes from 15 on are an
+      algorithm's name, which rules out `success_action_*`,
+      `x-amz-storage-class`, `x-amz-website-redirect-location` and
+      `x-amz-server-side-encryption*`.
+  - The recipe is self-contained. `get_params`' checksum loop types the
+    smuggled field too and sets `HTTP_X_AMZ_CHECKSUM_ALGORITHM` from it
+    ([rgw_rest_s3.cc:3105-3115](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3105-L3115)),
+    so `RGWPostObj::execute` builds a checksum filter with
+    `RGWPutObj_Cksum::Factory`
+    ([rgw_op.cc:4994-5003](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4994-L5003),
+    [rgw_cksum_pipe.cc:40-73](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.cc#L40-L73))
+    and answers 400 BadDigest, `ERR_BAD_DIGEST`, unless the filter's
+    `verify` finds the file's CRC32 in `HTTP_X_AMZ_CHECKSUM_CRC32`
+    ([rgw_op.cc:5095-5117](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5095-L5117),
+    [rgw_cksum_pipe.h:202-211](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L202-L211)).
+    The uploader also sends the `x-amz-checksum-crc32` field with the
+    file's true CRC32, which needs no condition either.
+- **Impact:** a site that hands browsers POST policies for private uploads,
+  and leaves `acl` out of them because its form never sends one, lets any
+  holder of such a policy store a world-readable object in the bucket, or
+  one with a Content-Type or tags the site did not choose, until the
+  policy expires.
+- **Releases:** v20.2.4. v19.2.7 is unaffected: its `match_policy_vars`
+  skips only `x-ignore-` names
+  ([rgw_policy_s3.cc:105-121](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_policy_s3.cc#L105-L121)),
+  so such a field needs a condition there. Not checked on main.
+- **rgw-go:** unaffected. `postpolicy.Env` excepts a checksum field only
+  when its name starts with `x-amz-checksum-` and all the rest is an
+  algorithm's name, and compares names over all their bytes, so the
+  NUL-named field needs a condition (docs/exclusions.md, "A POST policy
+  needs no condition for a checksum field" and "POST policy names are
+  compared over all their bytes").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task BC-30, 2026-10-19, transcribing Tentacle's
+  checksum exception; the acl, Content-Type, tagging and key sinks by the
+  task's review the same day, and the Kind raised to security by
+  rgw-bug-reproduction's triage. Derived from the source, not reproduced.
+
+## radosgw's JSON parser recurses without limit on a POST policy's nesting
+
+- **Kind:** defect, possibly security-relevant (availability): any holder of a key
+  can crash the radosgw process with a signed POST policy of a few KiB of
+  nested brackets. Both releases. Unreproduced on radosgw: derived from
+  the source, with the parser's stack use measured outside radosgw.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
+  `src/json_spirit` and `src/common/ceph_json.cc` are identical at the two
+  tags.
+  - json_spirit's grammar recurses through its `value_`, `object_` and
+    `array_` rules once per level of nesting, with no depth limit
+    ([json_spirit_reader_template.h:462-519](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L462-L519),
+    [json_spirit_reader_template.h:462-519](https://github.com/ceph/ceph/blob/v20.2.4/src/json_spirit/json_spirit_reader_template.h#L462-L519)),
+    and when the parse succeeds `JSONObj::init` and `handle_value` recurse
+    once more per level
+    ([ceph_json.cc:142-182](https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_json.cc#L142-L182),
+    [ceph_json.cc:142-182](https://github.com/ceph/ceph/blob/v20.2.4/src/common/ceph_json.cc#L142-L182)).
+  - `get_policy` parses the decoded policy only after
+    `rgw::auth::Strategy::apply` has accepted the form's signature
+    ([rgw_rest_s3.cc:3190-3210](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3190-L3210),
+    [rgw_rest_s3.cc:3326-3346](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3326-L3346)),
+    so the attacker needs only a key of their own to sign it.
+  - beast runs each connection on a coroutine whose stack is a
+    `boost::context::protected_fixedsize_stack{512*1024}`
+    ([rgw_asio_frontend.cc:65-68](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L65-L68),
+    [rgw_asio_frontend.cc:66-69](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L66-L69);
+    spawned with `make_stack_allocator` for SSL connections at
+    [rgw_asio_frontend.cc:1126](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L1126),
+    [rgw_asio_frontend.cc:1088](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L1088),
+    and for plain TCP at
+    [rgw_asio_frontend.cc:1161](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L1161),
+    [rgw_asio_frontend.cc:1123](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L1123)),
+    whose guard page turns an overflow into a clean SIGSEGV, so the
+    process dies with every request it serves.
+  - Measured outside radosgw: json_spirit's reader from each tag, built
+    with the ceph build tree's boost 1.82 and g++ 15 at -O2, reading nested
+    arrays with get_policy's NUL appended on a thread with a 512 KiB stack.
+    v19.2.7's parsed 2,023 levels and died of SIGSEGV at 2,028, and
+    100,000 levels overflowed even an 8 MiB stack (the task's review);
+    v20.2.4's parsed 2,025 and died at 2,026 (the task's fix round). A
+    policy of
+    about 4 KiB of brackets is thus near the limit; radosgw's own build,
+    and the frames of the request path beneath the parse, set where it
+    dies.
+- **Impact:** every request the process was serving fails, and the
+  gateway is down until it is restarted; the attacker can repeat it at
+  will.
+- **Releases:** v19.2.7 and v20.2.4. Not checked on main. Other callers
+  of `JSONParser` on client input were not surveyed.
+- **rgw-go:** unaffected. `postpolicy.Parse` refuses nesting deeper than
+  10,000 levels as "Malformed JSON", and goroutine stacks grow
+  (docs/exclusions.md, "A POST policy is read as RFC 8259 JSON").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task BC-30, 2026-10-19, reading how JSONParser reads
+  a policy; the stack measured by the task's review and its fix round.
+  Not reproduced on a running system.
+
+## radosgw's POST policy never expires when its expiration is before 1970
+
+- **Kind:** defect, S3-correctness: a POST policy whose expiration is
+  before 1970 is never expired. Not security-relevant: the date is the
+  signer's own, which the uploader cannot change without the key.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWPolicy` holds the expiration as `uint64_t expires`
+    ([rgw_policy_s3.h:31](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_policy_s3.h#L31),
+    [rgw_policy_s3.h:31](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_policy_s3.h#L31)).
+  - `set_expires` stores `internal_timegm`'s seconds there, negative for a
+    date before 1970
+    ([rgw_policy_s3.cc:132-141](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_policy_s3.cc#L132-L141),
+    [rgw_policy_s3.cc:141-150](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_policy_s3.cc#L141-L150)),
+    which wrap to more than any time.
+  - `RGWPolicy::check` refuses only when `expires <= now`, with `now` a
+    `uint64_t` too
+    ([rgw_policy_s3.cc:189-196](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_policy_s3.cc#L189-L196),
+    [rgw_policy_s3.cc:198-205](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_policy_s3.cc#L198-L205)).
+- **Impact:** a policy dated in the past by a slip of the year, such as
+  1925 for 2025, works for ever instead of being refused as expired.
+- **Releases:** v19.2.7 and v20.2.4. Not checked on main.
+- **rgw-go:** answers such a policy 403 AccessDenied, "Policy expired"
+  (docs/exclusions.md, "A POST policy whose expiration is before 1970 has
+  expired").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task BC-30, 2026-10-19, transcribing the expiry
+  check. Not reproduced on a running system.

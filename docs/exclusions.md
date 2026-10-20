@@ -5011,6 +5011,90 @@ rgw-go does the following.
   so its pass holds whatever the header said once its caches drop the
   bucket. rgw-go's DeleteBucketPolicy removes the attr on Tentacle, as
   radosgw's does (`:9151-9157` at v20.2.4).
+- **A POST policy needs no condition for a checksum field.** Tentacle's
+  radosgw lets a POST upload's form carry a checksum field that no
+  condition of its policy names: `match_policy_vars` skips
+  `x-amz-checksum-algorithm` and `x-amz-checksum-` followed by an
+  algorithm's name
+  ([rgw_policy_s3.cc:119-121](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_policy_s3.cc#L119-L121),
+  [rgw_cksum.h:318-334](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L318-L334)).
+  Squid's `match_policy_vars` makes no such exception
+  ([rgw_policy_s3.cc:105-121](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_policy_s3.cc#L105-L121)),
+  so by its source it answers s3-tests' `test_post_object_upload_checksum`
+  403 AccessDenied, "Policy missing condition: x-amz-checksum-sha256".
+  rgw-go makes Tentacle's exception on both releases, since it serves
+  single-object checksums on Squid too (`postpolicy.Policy.Check`). It
+  names the algorithms as `cksum.ParseName` does, so it also excepts
+  `xxhash3`, main's name for Tentacle's `xxh3`, which the write then
+  refuses, where Tentacle needs a condition for it; main's `md5`,
+  `xxhash64` and `xxhash128` need a condition, as on Tentacle. It needs
+  the prefix at the start of the name and the whole rest to be the
+  algorithm's name, where Tentacle finds the prefix anywhere in the name
+  and reads what follows its first fifteen bytes as a C string: a field
+  whose name has a NUL byte after the algorithm's, which Tentacle excepts,
+  needs a condition in rgw-go (docs/ceph-upstream-bugs.md, "[Tentacle's
+  POST policy excepts a field whose name holds a NUL after a checksum
+  algorithm's](ceph-upstream-bugs.md#tentacles-post-policy-excepts-a-field-whose-name-holds-a-nul-after-a-checksum-algorithms)").
+  Both match the prefixes in lower case only.
+- **A POST policy is read as RFC 8259 JSON.** radosgw reads a POST
+  upload's policy document with json_spirit's grammar
+  ([json_spirit_reader_template.h:462-519](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L462-L519),
+  the same at v20.2.4), which also takes a stray comma in an array or an
+  object, C white space such as a form feed, raw control bytes and bytes
+  that are not UTF-8 in a string, `\x` and octal escapes, a `\u` escape
+  whose digits are not hex, `hex_to_num` reading each such digit as 0
+  ([json_spirit_reader_template.h:52-58](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L52-L58),
+  [json_spirit_reader_template.h:73-93](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L73-L93),
+  the same at v20.2.4), escapes it drops, and numbers with a plus sign,
+  leading zeros, or a dot at either end. rgw-go
+  reads the document with Go's grammar and answers each of these 400
+  InvalidArgument, "Malformed JSON" (`postpolicy.Parse`). It answers so as
+  well a string that is not UTF-8, which Go's decoder would repair; an
+  escaped UTF-16 surrogate that is not half of a pair, which json_spirit
+  writes as three bytes that are no character; arrays and objects nested
+  deeper than 10000, where json_spirit recurses without limit
+  (docs/ceph-upstream-bugs.md, "[radosgw's JSON parser recurses without
+  limit on a POST policy's
+  nesting](ceph-upstream-bugs.md#radosgws-json-parser-recurses-without-limit-on-a-post-policys-nesting)");
+  and a
+  number whose value json_spirit takes from the host's libm: an exponent
+  past 300, a fraction of more than 300 digits, the exponent 126, or a
+  value that is not finite, which it writes as `inf` or `nan`. An escaped
+  surrogate pair is the one character it encodes, as RFC 8259 reads it,
+  where json_spirit writes each half alone, so a condition naming a
+  character past the Basic Multilingual Plane by its escapes matches the
+  character's UTF-8 in a field, where in radosgw only the six bytes
+  json_spirit writes match it. Otherwise rgw-go reads the
+  document as JSONParser does: the first of duplicate names, an object
+  condition's member of the smallest name, the members of an object
+  `conditions` in name order, any text after the document ignored, and
+  each value as `get_data` gives it, a number as json_spirit writes it
+  back, so `1e3` is `1000.0000000000000` and `0.3` is
+  `0.30000000000000004`.
+- **A POST policy whose expiration is before 1970 has expired.** radosgw
+  holds a POST policy's expiration as unsigned seconds,
+  `uint64_t expires`
+  ([rgw_policy_s3.h:31](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_policy_s3.h#L31),
+  the same at v20.2.4), so the negative seconds `internal_timegm` gives a
+  date before 1970 wrap past every time when `set_expires` stores them
+  ([rgw_policy_s3.cc:132-141](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_policy_s3.cc#L132-L141),
+  [rgw_policy_s3.cc:141-150](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_policy_s3.cc#L141-L150)),
+  and the `expires <= now` of `RGWPolicy::check` never finds the policy
+  expired
+  ([rgw_policy_s3.cc:189-196](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_policy_s3.cc#L189-L196),
+  [rgw_policy_s3.cc:198-205](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_policy_s3.cc#L198-L205)).
+  rgw-go answers such a policy 403 AccessDenied, "Policy expired"
+  (docs/ceph-upstream-bugs.md, "[radosgw's POST policy never expires when
+  its expiration is before
+  1970](ceph-upstream-bugs.md#radosgws-post-policy-never-expires-when-its-expiration-is-before-1970)").
+- **POST policy names are compared over all their bytes.** radosgw
+  matches a POST form's field names, and the names a policy gives them,
+  in any ASCII case with strcasecmp on C strings, `ltstr_nocase`
+  ([rgw_string.h:15-21](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_string.h#L15-L21),
+  the same at v20.2.4), which end at a NUL byte, so a field named `key`
+  followed by a NUL and more is the field `key`. rgw-go compares the
+  whole name (`postpolicy.Env`), so such a field is one of its own, which
+  a condition must name.
 
 ### Bucket metadata differences
 
