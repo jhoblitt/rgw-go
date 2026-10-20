@@ -3,6 +3,7 @@ package driver_test
 import (
 	"context"
 	"encoding/json"
+	"slices"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -54,6 +55,42 @@ var _ = Describe("the metadata section table", func() {
 			return err
 		}),
 	)
+
+	Describe("through the admin ops", func() {
+		run := func(ctx context.Context, o op.Op) error {
+			u := meta.NewUserInfo()
+			u.UserID = meta.UserID{ID: "admin"}
+			u.Caps = meta.Caps{"metadata": meta.CapAll}
+			return op.Run(ctx, o, &op.Request{Env: s.Env(), Identity: op.Identity{
+				User: &u, Owner: meta.UserOwner(u.UserID), OpMask: op.OpTypeAll, Caps: u.Caps,
+			}})
+		}
+		It("lists today's three sections at the top level", func(ctx SpecContext) {
+			Expect(s.Sections()).To(ConsistOf("bucket", "bucket.instance", "user"))
+			o := &op.ListMetadata{}
+			Expect(run(ctx, o)).To(Succeed())
+			Expect(o.Keys).To(Equal([]string{"bucket", "bucket.instance", "user"}))
+		})
+		It("takes a put to every section it serves, as each has a put rule", func(ctx SpecContext) {
+			for _, section := range s.Sections() {
+				o := &op.PutMetadata{Section: section, Key: "x", Body: []byte(`not json`)}
+				Expect(run(ctx, o)).To(MatchError(op.ErrInvalidArgument), "section %s", section)
+			}
+		})
+		// The sections radosgw serves and the driver does not
+		// (docs/exclusions.md, "The admin metadata API serves three
+		// sections"): a put rule for one would let its put past the gate.
+		It("refuses a put to a section of radosgw's it does not serve before reading the body, as none has a put rule", func(ctx SpecContext) {
+			unserved := slices.DeleteFunc([]string{"account", "group", "otp", "roles", "topic"}, func(section string) bool {
+				return slices.Contains(s.Sections(), section)
+			})
+			Expect(unserved).NotTo(BeEmpty(), "every section of radosgw's is served, so this spec checks nothing")
+			for _, section := range unserved {
+				o := &op.PutMetadata{Section: section, Key: "x", Body: []byte(`not json`)}
+				Expect(run(ctx, o)).To(MatchError(op.ErrNoSuchKey), "section %s", section)
+			}
+		})
+	})
 
 	It("refuses a key holding a NUL byte before it looks the section up", func(ctx SpecContext) {
 		_, err := s.Get(ctx, "kittens", "al\x00ice")

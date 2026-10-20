@@ -33,9 +33,10 @@ type PutMetadataOptions struct {
 
 //counterfeiter:generate . MetadataStore
 
-// MetadataStore is the admin API's metadata sections: user, bucket and
-// bucket.instance.
+// MetadataStore is the admin API's metadata sections, which Sections names.
 type MetadataStore interface {
+	// Sections names the sections the store serves, in any order.
+	Sections() []string
 	Get(ctx context.Context, section, key string) (MetadataEntry, error)
 	Put(ctx context.Context, section, key string, e MetadataEntry, opts PutMetadataOptions) error
 	Remove(ctx context.Context, section, key string) error

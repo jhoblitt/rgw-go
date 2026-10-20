@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
@@ -17,9 +19,10 @@ import (
 // (register_handler and find_handler,
 // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_metadata.cc#L416-L466 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_metadata.cc#L211-L261 at v20.2.4).
-// A section is served once it has a row in metadataSections. Get, Put and
-// Remove refuse a key holding a NUL byte before a section sees it, and
-// every verb answers a name without a row ErrNoSuchKey.
+// A section is served once it has a row in metadataSections, which lands
+// with its row in op's put rules, the gate of a put. Get, Put and Remove
+// refuse a key holding a NUL byte before a section sees it, and every verb
+// answers a name without a row ErrNoSuchKey.
 type metadataSection interface {
 	// get is the entry key names: its document as JSON in Data and, in Doc,
 	// as RGWMetadataObject::dump writes it, at the version and mtime its
@@ -51,6 +54,12 @@ var metadataSections = map[string]metadataSection{
 	sectionBucket:         bucketSection{},
 	sectionBucketInstance: instanceSection{},
 }
+
+// Sections implements op.MetadataStore: the name of each section
+// metadataSections holds, as get_sections names the registered handlers
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_metadata.cc#L687-L692 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_metadata.cc#L482-L487 at v20.2.4).
+func (s *Store) Sections() []string { return slices.Sorted(maps.Keys(metadataSections)) }
 
 // findSection is find_handler's lookup: the section named name, or
 // ErrNoSuchKey, its ENOENT.
