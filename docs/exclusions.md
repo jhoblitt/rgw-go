@@ -6524,18 +6524,28 @@ does the following.
 - **CompleteMultipartUpload's Location finds its domain without CNAME
   lookups or website hostnames.** rgw-go builds the Location as
   `compute_domain_uri` does, with no scheme under a configured name
-  (`rgw_rest.h:805-818` at v19.2.6, `:817-830` at v20.2.4;
+  ([rgw_rest.h:805-818](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.h#L805-L818),
+  [rgw_rest.h:817-830](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.h#L817-L830);
   `docs/ceph-upstream-bugs.md`, "[radosgw's CompleteMultipartUpload
   Location has no scheme under a configured
   domain](ceph-upstream-bugs.md#radosgws-completemultipartupload-location-has-no-scheme-under-a-configured-domain)"),
   and takes the domain from `rgw_dns_name` and the zonegroup's hostnames
-  alone. radosgw also takes it from the S3 website hostnames while the
-  website API is enabled, and from the name `rgw_resolve_cname` resolves
-  the Host to (`rgw_rest.cc:2070-2077` and `:2086-2126` at v19.2.6,
-  `:2087-2094` and `:2103-2143` at v20.2.4), where rgw-go writes
-  `rgw_dns_name`, or the scheme and the Host. An HTTP/1.0 request that
-  sends its Host empty gets `<HTTP_HOST>`, as one that sends none does:
-  net/http does not tell them apart.
+  alone. radosgw also takes it from the name `rgw_resolve_cname` resolves
+  the Host to
+  ([rgw_rest.cc:2091-2130](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2091-L2130),
+  [rgw_rest.cc:2103-2142](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2103-L2142)),
+  where rgw-go writes `rgw_dns_name`, or the scheme and the Host. radosgw
+  never builds a Location under a website hostname: with the website API
+  enabled a Host in one makes a website request, and the website handler's
+  `op_post` is NULL
+  ([rgw_rest_s3website.h:34](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3website.h#L34),
+  [rgw_rest_s3website.h:34](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3website.h#L34)),
+  which `process_request` answers 405 MethodNotAllowed
+  ([rgw_process.cc:325-329](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L325-L329),
+  [rgw_process.cc:327-331](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L327-L331)).
+  rgw-go knows no website hostname and completes such an upload. An
+  HTTP/1.0 request that sends its Host empty gets `<HTTP_HOST>`, as one
+  that sends none does: net/http does not tell them apart.
 - **A multipart upload with a retention or a legal hold on a bucket with
   object lock answers 501.** radosgw keeps the object-lock headers of
   CreateMultipartUpload and UploadPart on the upload and the parts' heads.
