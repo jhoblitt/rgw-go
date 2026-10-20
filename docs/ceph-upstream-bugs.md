@@ -338,6 +338,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's POST policy never expires when its expiration is before 1970](#radosgws-post-policy-never-expires-when-its-expiration-is-before-1970) | pending | pending |  |
 | [radosgw's DeleteBucketCors refuses, and keeps, a CORS configuration that does not decode](#radosgws-deletebucketcors-refuses-and-keeps-a-cors-configuration-that-does-not-decode) | none | none | ✓ |
 | [cls_rgw's bucket_list ignores its start key when it cannot read that key's instance entry](#cls_rgws-bucket_list-ignores-its-start-key-when-it-cannot-read-that-keys-instance-entry) | pending | pending |  |
+| [Squid's radosgw serves a request with no Host as S3 when s3website outranks s3](#squids-radosgw-serves-a-request-with-no-host-as-s3-when-s3website-outranks-s3) | [#66748](https://tracker.ceph.com/issues/66748), [#66820](https://tracker.ceph.com/issues/66820) | [ceph/ceph#58339](https://github.com/ceph/ceph/pull/58339) |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -18525,3 +18526,42 @@ Every new entry adds its row to this table, in document order.
   cited above, at v19.2.7, v20.2.4 and main.
 - **Found:** phase 2 Task V3a, 2026-10-19, emulating the class's start key
   in fakerados; derived from the source, not reproduced.
+
+## Squid's radosgw serves a request with no Host as S3 when s3website outranks s3
+
+- **Kind:** defect, fixed in Tentacle and not on squid. With
+  `rgw_enable_apis` naming `s3website` before `s3`, or without it, radosgw
+  means every request to be a website one, but Squid's flags only a
+  request with a Host. Unreproduced: derived from the source.
+- **Evidence:**
+  - Squid's `RGWREST::preprocess` sets `RGW_REST_WEBSITE` by the rank only
+    inside its branch for a Host
+    ([rgw_rest.cc:2150-2156](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2150-L2156)),
+    which ends with no branch for a request without one
+    ([rgw_rest.cc:2181](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2181)).
+    A request has no Host when its Host header is absent, empty or a port
+    alone, which `req_info` drops
+    ([rgw_common.cc:246-261](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L246-L261),
+    [rgw_common.cc:256-271](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L256-L271)).
+  - Ceph commit 5913f584cba, "rgw: use s3website REST when higher priority
+    and no host header" (first in v20.0.0), adds that branch, which sets
+    `RGW_REST_WEBSITE` on a request with no Host under the same rank
+    ([rgw_rest.cc:2193-2198](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2193-L2198)).
+- **Impact:** the S3-correctness class, minor, not security-relevant. On
+  Squid a client that sends no Host to a gateway set to serve the website
+  endpoint first gets the S3 API's answers, its XML errors and its other
+  methods, in place of the website's.
+- **Releases:** every Squid release, checked at v19.2.7; fixed from v20.0.0,
+  checked at v20.2.4. The fix is in neither v19.2.7 nor origin/squid as
+  fetched on 2026-10-20 (226f1401666), and it is on origin/tentacle.
+- **rgw-go:** applies Tentacle's rule on both releases (B14):
+  `ParseRequest` flags every request as a website one when s3website is
+  enabled and outranks s3, a request with no Host included
+  (`internal/s3/request.go:68-77`).
+- **Upstream:** [#66748](https://tracker.ceph.com/issues/66748), fixed by
+  [ceph/ceph#58339](https://github.com/ceph/ceph/pull/58339) (5913f584cba).
+  #66748 is Backporting to squid and reef: Squid's backport,
+  [#66820](https://tracker.ceph.com/issues/66820), is New with no PR, and
+  Reef's, #66821, was Rejected (checked 2026-10-20).
+- **Found:** phase 2 unit B, Task BC-13's review, 2026-10-20; derived from
+  the source, not reproduced.

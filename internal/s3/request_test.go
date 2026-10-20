@@ -14,6 +14,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/s3"
@@ -44,6 +45,17 @@ func readRequest(target, host string) *http.Request {
 // virtualHosted is a gateway whose rgw_dns_name is s3.example.com.
 func virtualHosted() s3.Config {
 	return s3.Config{DNSNames: []string{"s3.example.com"}}
+}
+
+// websiteGateway is a gateway whose rgw_dns_name is s3.example.com and whose
+// rgw_dns_s3website_name is web.example.com, under rgw_enable_apis apis.
+func websiteGateway(apis string) s3.Config {
+	a, err := cephconf.EnabledAPIs(cephconf.NewOptions(cephconf.MapGetter{"rgw_enable_apis": apis}))
+	Expect(err).NotTo(HaveOccurred())
+	return s3.Config{
+		DNSNames: []string{"s3.example.com"}, WebsiteNames: []string{"web.example.com"},
+		Website: a.Website, WebsiteFirst: a.WebsiteFirst,
+	}
 }
 
 var _ = Describe("ParseRequest", func() {
@@ -206,6 +218,52 @@ var _ = Describe("ParseRequest", func() {
 		Entry("a bad hex digit in the query alone", "http://s3.example.com/b/k?x=%zz", "x", false),
 		Entry("a well-formed escape in a query-held path", "http://s3.example.com?x=/b/a%2Fb", "x", false),
 		Entry("an origin-form path", "/b/a%2Fb", "s3.example.com", false),
+	)
+	// The table takes no release: RGWREST::preprocess reads a Host alike at
+	// v19.2.7 and v20.2.4, and rgw-go gives a request with no Host
+	// v20.2.4's flag on both.
+	DescribeTable("reads a website request's bucket, domain and flag, for each rgw_enable_apis order",
+		func(ctx SpecContext, apis, host, bucket, domain string, website bool) {
+			p, err := parse(ctx, "GET", "/k", map[string]string{"Host": host}, websiteGateway(apis))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(p.Req.Bucket).To(Equal(bucket), "bucket")
+			Expect(p.Req.Domain).To(Equal(domain), "domain")
+			Expect(p.Req.Website).To(Equal(website), "website")
+		},
+		Entry("s3 before s3website: a website host", "s3, s3website", "web.example.com", "k", "web.example.com", true),
+		Entry("s3 before s3website: a bucket subdomain of a website host",
+			"s3, s3website", "site.web.example.com", "site", "web.example.com", true),
+		Entry("s3 before s3website: a CNAME to a website host", "s3, s3website", "www.example.org", "www.example.org", "", false),
+		Entry("s3 before s3website: a plain S3 host", "s3, s3website", "site.s3.example.com", "site", "s3.example.com", false),
+		Entry("s3 before s3website: no Host", "s3, s3website", "", "k", "", false),
+		Entry("s3website before s3: a website host", "s3website, s3", "web.example.com", "k", "web.example.com", true),
+		Entry("s3website before s3: a bucket subdomain of a website host",
+			"s3website, s3", "site.web.example.com", "site", "web.example.com", true),
+		Entry("s3website before s3: a CNAME to a website host", "s3website, s3", "www.example.org", "www.example.org", "", true),
+		Entry("s3website before s3: a plain S3 host", "s3website, s3", "site.s3.example.com", "site", "s3.example.com", true),
+		Entry("s3website before s3: no Host, as v20.2.4 flags it", "s3website, s3", "", "k", "", true),
+		Entry("s3website without s3: a website host", "s3website", "web.example.com", "k", "web.example.com", true),
+		Entry("s3website without s3: a bucket subdomain of a website host",
+			"s3website", "site.web.example.com", "site", "web.example.com", true),
+		Entry("s3website without s3: a CNAME to a website host", "s3website", "www.example.org", "www.example.org", "", true),
+		Entry("s3website without s3: a plain S3 host", "s3website", "site.s3.example.com", "site", "s3.example.com", true),
+		Entry("s3website without s3: no Host", "s3website", "", "k", "", true),
+		Entry("s3 without s3website: a website host, taken whole as the bucket", "s3", "web.example.com", "web.example.com", "", false),
+		Entry("s3 without s3website: a bucket subdomain of a website host, taken whole as the bucket",
+			"s3", "site.web.example.com", "site.web.example.com", "", false),
+		Entry("s3 without s3website: a CNAME to a website host", "s3", "www.example.org", "www.example.org", "", false),
+		Entry("s3 without s3website: a plain S3 host", "s3", "site.s3.example.com", "site", "s3.example.com", false),
+		Entry("s3 without s3website: no Host", "s3", "", "k", "", false),
+	)
+	DescribeTable("takes WebsiteFirst only with Website, as preprocess checks s3website_enabled with the rank",
+		func(ctx SpecContext, host string) {
+			cfg := s3.Config{DNSNames: []string{"s3.example.com"}, WebsiteNames: []string{"web.example.com"}, WebsiteFirst: true}
+			p, err := parse(ctx, "GET", "/k", map[string]string{"Host": host}, cfg)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(p.Req.Website).To(BeFalse(), "website, host %q", host)
+		},
+		Entry("a plain S3 host", "site.s3.example.com"),
+		Entry("no Host", ""),
 	)
 	It("fills the plain fields", func(ctx SpecContext) {
 		req := httptest.NewRequestWithContext(ctx, "PUT", "/plain/k", strings.NewReader("body"))

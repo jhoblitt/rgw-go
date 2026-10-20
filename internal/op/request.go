@@ -38,8 +38,14 @@ type Request struct {
 	HTTPHost *string
 	// Domain is the configured name the Host matched, as cut from the Host,
 	// "" when it matched none: what RGWREST::preprocess sets s->info.domain
-	// to before it falls back to rgw_dns_name.
+	// to before it falls back to rgw_dns_name. With s3website enabled, a
+	// website name the Host is in takes the place of an S3 name.
 	Domain string
+	// Website is preprocess's RGW_REST_WEBSITE flag, with which S3's handler
+	// serves the request as the website endpoint
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5290-L5307 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5820-L5837 at v20.2.4).
+	Website bool
 	// Path is the request path decoded once; RawPath is as the client sent it,
 	// which SigV4 canonicalizes.
 	Path    string
@@ -98,6 +104,22 @@ type Request struct {
 	// List is set by a bucket listing once it has read its parameters, before
 	// it authorizes; nil for every other request.
 	List *ListConditions
+	// Redirect is s->redirect
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L1291 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1334 at v20.2.4):
+	// the Location a website request's redirect answers with, "" for every
+	// other request. radosgw sets it in three places: retarget, where the
+	// bucket's website configuration redirects the request
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5428 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5954 at v20.2.4);
+	// the website GetObject's send_response_data, from the object's
+	// x-amz-website-redirect-location
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L279 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L276 at v20.2.4);
+	// and the website error handler, where a routing rule matches the error
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5559-L5560 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6085-L6086 at v20.2.4).
+	Redirect string
 
 	// Status and the byte counters are filled by the protocol layer as the
 	// response goes out, for Complete, metrics and the usage log.

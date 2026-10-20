@@ -40,8 +40,10 @@ var _ = Describe("vhost", func() {
 		Entry("empty", "", ""),
 	)
 
-	DescribeTable("Domain is the name rgw_find_host_in_domains matched, as cut from the host",
-		func(host string, names []string, want string) { Expect(Domain(host, names)).To(Equal(want)) },
+	DescribeTable("Resolve's domain is the S3 name rgw_find_host_in_domains matched, as cut from the host",
+		func(host string, names []string, want string) {
+			Expect(Resolve(host, Names{S3: names}).Domain).To(Equal(want))
+		},
 		Entry("a subdomain's name, in the Host's case", "bkt.S3.Example.com", []string{"s3.example.com"}, "S3.Example.com"),
 		Entry("the name itself", "s3.example.com", []string{"s3.example.com"}, "s3.example.com"),
 		Entry("the least matching name", "a.b.example.com", []string{"example.com", "b.example.com"}, "b.example.com"),
