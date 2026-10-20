@@ -6,6 +6,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 
+	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/memstore"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/op/conformance"
@@ -48,12 +49,19 @@ func (u usageLog) Logged(_ context.Context, user, bucket string) ([]op.UsageReco
 }
 
 var _ = Describe("memstore", func() {
-	conformance.Run(func(context.Context) (*op.Env, func()) {
-		s := memstore.New(memstore.Config{})
-		env := &op.Env{
-			Zone: s, Users: s, Accounts: s, UsageReader: s, BucketAdmin: s, Realms: s, Buckets: s,
-			Objects: s, Multipart: s, Stats: s, Usage: usageLog{s}, Metadata: s,
-		}
-		return env, func() {}
-	})
+	for _, rel := range []denc.Release{denc.Squid, denc.Tentacle} {
+		Context("on "+rel.String(), func() {
+			newEnv := func(context.Context) (*op.Env, func()) {
+				s := memstore.New(memstore.Config{Release: rel})
+				env := &op.Env{
+					Zone: s, Users: s, Accounts: s, UsageReader: s, BucketAdmin: s, Realms: s, Buckets: s,
+					Objects: s, Multipart: s, Stats: s, Usage: usageLog{s}, Metadata: s,
+				}
+				return env, func() {}
+			}
+			conformance.Run(newEnv)
+			conformance.RunObjectChecksums(newEnv)
+			conformance.RunMultipartChecksums(newEnv)
+		})
+	}
 })

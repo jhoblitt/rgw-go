@@ -2,6 +2,7 @@ package memstore_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"math/rand/v2"
@@ -12,6 +13,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/memstore"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -390,5 +392,83 @@ var _ = Describe("multipart", func() {
 		res, err := store.ListUploads(ctx, rec, op.ListUploadsParams{MaxUploads: 10})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.Uploads).To(BeEmpty())
+	})
+
+	Context("checksums", func() {
+		// tentacleUpload replaces the store with a Tentacle one holding an
+		// upload of type uc.
+		tentacleUpload := func(ctx context.Context, uc op.UploadChecksum) {
+			GinkgoHelper()
+			store = memstore.New(memstore.Config{Release: denc.Tentacle, Now: (&clock{t: start}).now})
+			rec = mustCreate(ctx, store, "", "b", owner("alice"))
+			var err error
+			up, err = store.CreateUpload(ctx, rec, key, op.UploadParams{Checksum: uc})
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		It("refuses a part checksum type rgw-go does not compute with InvalidArgument before reading the body", func(ctx SpecContext) {
+			body := strings.NewReader("x")
+			_, err := store.PutPart(ctx, up, 1, body, op.PutParams{Size: 1, Checksum: &op.ChecksumRequest{Type: cksum.BLAKE3}})
+			Expect(err).To(MatchError(op.ErrInvalidArgument))
+			Expect(body.Len()).To(Equal(1), "the body is unread")
+			parts, err := store.ListParts(ctx, up, 0, 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(parts.Parts).To(BeEmpty())
+		})
+		// RGWPutObj::execute reads the upload
+		// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4453-L4469 at v20.2.4)
+		// before its checksum filter's Factory refuses a type
+		// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4601-L4611 at v20.2.4).
+		It("answers NoSuchUpload for an unknown upload before refusing a part checksum type", func(ctx SpecContext) {
+			body := strings.NewReader("x")
+			_, err := store.PutPart(ctx, &op.Upload{ID: "2~nope", Bucket: rec, Key: key}, 1, body,
+				op.PutParams{Size: 1, Checksum: &op.ChecksumRequest{Type: cksum.BLAKE3}})
+			Expect(err).To(MatchError(op.ErrNoSuchUpload))
+			Expect(body.Len()).To(Equal(1), "the body is unread")
+		})
+		It("refuses to copy a part into, or complete, an upload of a type rgw-go does not compute with NotImplemented", func(ctx SpecContext) {
+			tentacleUpload(ctx, op.UploadChecksum{Type: cksum.XXH3, Flags: cksum.FlagComposite})
+			mustPut(ctx, store, rec, "src", "hello")
+			src, err := store.StatObject(ctx, rec, meta.ObjKey{Name: "src"})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = store.CopyPart(ctx, up, 1, src, op.ByteRange{Length: 5})
+			Expect(err).To(MatchError(op.ErrNotImplemented), "the copy")
+			parts, err := store.ListParts(ctx, up, 0, 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(parts.Parts).To(BeEmpty(), "no part is copied")
+
+			_, err = store.PutPart(ctx, up, 1, strings.NewReader("x"), op.PutParams{Size: 1})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = store.Complete(ctx, up, []op.CompletePart{{Number: 1, ETag: md5Hex([]byte("x"))}})
+			Expect(err).To(MatchError(op.ErrNotImplemented), "the completion")
+			_, err = store.GetUpload(ctx, rec, key, up.ID)
+			Expect(err).NotTo(HaveOccurred(), "the upload stays")
+		})
+		It("answers a completion retried after it succeeded with the checksum it stored", func(ctx SpecContext) {
+			tentacleUpload(ctx, op.UploadChecksum{Type: cksum.CRC32C, Flags: cksum.FlagFullObject})
+			_, err := store.PutPart(ctx, up, 1, strings.NewReader("x"), op.PutParams{Size: 1, Checksum: &op.ChecksumRequest{Type: cksum.CRC32C, Flags: cksum.FlagFullObject}})
+			Expect(err).NotTo(HaveOccurred())
+			parts := []op.CompletePart{{Number: 1, ETag: md5Hex([]byte("x"))}}
+			first, err := store.Complete(ctx, up, parts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(first.Checksum).NotTo(BeNil())
+			again, err := store.Complete(ctx, up, parts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(again.Checksum).To(Equal(first.Checksum))
+		})
+		It("hands out copies of a part's checksum the caller may change freely", func(ctx SpecContext) {
+			tentacleUpload(ctx, op.UploadChecksum{Type: cksum.CRC32C, Flags: cksum.FlagFullObject})
+			res, err := store.PutPart(ctx, up, 1, strings.NewReader("x"), op.PutParams{Size: 1, Checksum: &op.ChecksumRequest{Type: cksum.CRC32C, Flags: cksum.FlagFullObject}})
+			Expect(err).NotTo(HaveOccurred())
+			want := bytes.Clone(res.Checksum.Digest)
+			res.Checksum.Digest[0] ^= 0xff
+			parts, err := store.ListParts(ctx, up, 0, 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(parts.Parts[0].Checksum.Digest).To(Equal(want), "the result's")
+			parts.Parts[0].Checksum.Digest[0] ^= 0xff
+			again, err := store.ListParts(ctx, up, 0, 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(again.Parts[0].Checksum.Digest).To(Equal(want), "a listing's")
+		})
 	})
 })

@@ -13,6 +13,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/internal/cksum"
+	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/memstore"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
@@ -349,4 +351,54 @@ var _ = Describe("objects", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got.Attrs["a"]).To(Equal([]byte("1")))
 	})
+
+	Context("checksums", func() {
+		It("stores a write's checksum as its head's user.rgw.cksum, the record Cksum::encode writes", func(ctx SpecContext) {
+			res, err := store.PutObject(ctx, rec, key, strings.NewReader("hello"),
+				op.PutParams{Size: 5, Checksum: &op.ChecksumRequest{Type: cksum.CRC32, Flags: cksum.FlagFullObject}})
+			Expect(err).NotTo(HaveOccurred())
+			// crc32("hello") is 0x3610a686.
+			want := cksum.Cksum{Type: cksum.CRC32, Digest: []byte{0x36, 0x10, 0xa6, 0x86}, Flags: cksum.FlagFullObject}
+			Expect(res.Checksum).To(Equal(&want))
+			st, err := store.StatObject(ctx, rec, key)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Attrs).To(HaveKeyWithValue(meta.AttrCksum, encodedCksum(want)))
+		})
+		DescribeTable("refuses a checksum type rgw-go does not compute with InvalidArgument before reading the body",
+			func(ctx SpecContext, t cksum.Type) {
+				body := strings.NewReader("hello")
+				_, err := store.PutObject(ctx, rec, key, body, op.PutParams{Size: 5, Checksum: &op.ChecksumRequest{Type: t}})
+				Expect(err).To(MatchError(op.ErrInvalidArgument))
+				Expect(body.Len()).To(Equal(5), "the body is unread")
+				st, err := store.StatObject(ctx, rec, key)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(st.Exists).To(BeFalse(), "nothing is written")
+			},
+			Entry("XXHASH3, a Tentacle type rgw-go does not compute", cksum.XXH3),
+			Entry("type 9, main's MD5, which a v20.2.4 radosgw would look up past its table", cksum.Type(9)),
+			Entry("none, which names no type", cksum.None),
+		)
+		It("reads a user.rgw.cksum that decodes as its record, and one that does not as none", func(ctx SpecContext) {
+			mustPut(ctx, store, rec, key.Name, "hello")
+			setCksum := func(b []byte) *op.ObjectState {
+				GinkgoHelper()
+				st, err := store.StatObject(ctx, rec, key)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(store.SetObjectAttrs(ctx, st, map[string][]byte{meta.AttrCksum: b}, nil)).To(Succeed())
+				st, err = store.StatObject(ctx, rec, key)
+				Expect(err).NotTo(HaveOccurred())
+				return st
+			}
+			c := cksum.Cksum{Type: cksum.SHA1, Digest: bytes.Repeat([]byte{7}, 20), Flags: cksum.FlagV2}
+			Expect(setCksum(encodedCksum(c)).Checksum).To(Equal(&c), "a record")
+			Expect(setCksum(encodedCksum(c)[:5]).Checksum).To(BeNil(), "a truncated record")
+		})
+	})
 })
+
+// encodedCksum is c as user.rgw.cksum holds it.
+func encodedCksum(c cksum.Cksum) []byte {
+	e := denc.NewEncoder()
+	c.Encode(e, denc.Tentacle)
+	return e.Bytes()
+}

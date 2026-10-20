@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/policy"
@@ -286,10 +287,13 @@ func ParseObjectAttrs(header string) ObjectAttrs {
 
 // ObjectPart is one Part of GetObjectAttributes' ObjectParts
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4087-L4096).
-// Its checksum is not implemented yet.
 type ObjectPart struct {
 	Number int
 	Size   uint64
+	// Checksum is the part head's own, nil when it has none, never the
+	// part's before it (docs/ceph-upstream-bugs.md, "radosgw's ObjectParts
+	// gives a part without a checksum the checksum of the part before it").
+	Checksum *cksum.Cksum
 }
 
 // MaxObjectParts is the max-parts list_parts takes without x-amz-max-parts,
@@ -454,7 +458,7 @@ func (o *GetObjectAttributes) listParts(ctx context.Context, r *Request) error {
 		if err != nil {
 			return manifestError(r, err)
 		}
-		o.Parts = append(o.Parts, ObjectPart{Number: n, Size: accountedSize(st, extent)})
+		o.Parts = append(o.Parts, ObjectPart{Number: n, Size: accountedSize(st, extent), Checksum: st.Checksum})
 		marker++
 		o.NextPartMarker = marker
 		limit--
