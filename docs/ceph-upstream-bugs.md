@@ -67,6 +67,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw aborts the process after 100 failed control-watch re-registrations](#radosgw-aborts-the-process-after-100-failed-control-watch-re-registrations) | [#80992](https://tracker.ceph.com/issues/80992) | [ceph/ceph#72251](https://github.com/ceph/ceph/pull/72251) |  |
 | [radosgw abandons a control watch whose control object is deleted](#radosgw-abandons-a-control-watch-whose-control-object-is-deleted) | [#59217](https://tracker.ceph.com/issues/59217) | none |  |
 | [radosgw keeps only the low 32 bits of rgw_num_control_oids](#radosgw-keeps-only-the-low-32-bits-of-rgw_num_control_oids) | none | none |  |
+| [radosgw keeps only the low 32 bits of rgw_website_routing_rules_max_num](#radosgw-keeps-only-the-low-32-bits-of-rgw_website_routing_rules_max_num) | none | none |  |
 | [radosgw adds STANDARD to an empty placement target on decode](#radosgw-adds-standard-to-an-empty-placement-target-on-decode) | none | none |  |
 | [radosgw lets a matching referer grant replace the requester's own ACL grants](#radosgw-lets-a-matching-referer-grant-replace-the-requesters-own-acl-grants) | [#18841](https://tracker.ceph.com/issues/18841) | [ceph/ceph#14344](https://github.com/ceph/ceph/pull/14344) |  |
 | [radosgw ends a Referer's userinfo at an @ in its path](#radosgw-ends-a-referers-userinfo-at-an--in-its-path) | none | none | ✓ |
@@ -2873,6 +2874,43 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** not filed; a quirk.
 - **Found:** phase 1 unit M, Task 2, 2026-10-01; derived from the source, not
   reproduced.
+
+## radosgw keeps only the low 32 bits of rgw_website_routing_rules_max_num
+
+- **Kind:** quirk, of the S3-correctness class, not security-relevant.
+  Unreproduced: derived from the source.
+- **Evidence:** the same at v19.2.7 and v20.2.4; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - `rgw_website_routing_rules_max_num` is a `type: int` option with no
+    `min` or `max`, `with_legacy: true` and a default of 50
+    ([rgw.yaml.in:46-53](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L46-L53),
+    [rgw.yaml.in:46-53](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L46-L53)), so its legacy field is an
+    `int64_t` (`OPTION_OPT_INT`,
+    [config_values.h:41](https://github.com/ceph/ceph/blob/v19.2.7/src/common/config_values.h#L41),
+    [config_values.h:41](https://github.com/ceph/ceph/blob/v20.2.4/src/common/config_values.h#L41)).
+  - `RGWSetBucketWebsite_ObjStore_S3::get_params` assigns it to
+    `int max_num`, and takes a negative one as
+    `WEBSITE_ROUTING_RULES_MAX_NUM`, 50
+    ([rgw_rest_s3.cc:2327-2331](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2327-L2331),
+    [rgw_rest_s3.cc:2422-2426](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2422-L2426)). Ceph builds as C++20
+    ([CMakeLists.txt:216](https://github.com/ceph/ceph/blob/v19.2.7/src/CMakeLists.txt#L216),
+    [CMakeLists.txt:243](https://github.com/ceph/ceph/blob/v20.2.4/src/CMakeLists.txt#L243)), which defines the narrowing as modular, so
+    only the low 32 bits count, read as a signed int.
+  - The narrowed limit then refuses a PutBucketWebsite as any limit does,
+    with its own value in the message
+    ([rgw_rest_s3.cc:2332-2342](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2332-L2342),
+    [rgw_rest_s3.cc:2427-2437](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2427-L2437)): 2^32+2 admits two
+    routing rules, 2^32 none, and 2^31 becomes -2^31, which reads as 50.
+- **Impact:** a configuration is held to a limit other than the one the
+  operator set, which the 400 InvalidRequest's message then names. It is
+  reachable only by misconfiguration.
+- **Releases:** v19.2.7 and v20.2.4, the tags checked.
+- **rgw-go:** matches it: `maxRoutingRules` keeps the low 32 bits the same
+  way (`internal/s3/website.go`), so both gateways hold a configuration to
+  the same limit for any setting.
+- **Upstream:** not filed; a quirk.
+- **Found:** phase 2 unit B, Task BC-12, 2026-10-19, and its task review,
+  2026-10-20; derived from the source, not reproduced.
 
 ## radosgw adds STANDARD to an empty placement target on decode
 

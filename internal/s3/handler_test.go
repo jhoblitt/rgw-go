@@ -154,7 +154,7 @@ var _ = Describe("Handler", func() {
 		Expect(rec.Header().Get("Server")).To(Equal("Ceph Object Gateway (squid)"))
 	})
 	It("renders radosgw's error document for a route without a handler", func() {
-		rec := get("/plain?website")
+		rec := get("/plain?mdsearch")
 		Expect(rec.Code).To(Equal(501))
 		Expect(rec.Header().Get("Content-Type")).To(Equal("application/xml"))
 		Expect(rec.Body.String()).To(Equal(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>NotImplemented</Code><Message></Message>` +
