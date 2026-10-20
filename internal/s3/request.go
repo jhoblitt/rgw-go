@@ -18,8 +18,16 @@ import (
 // Config is what the handler needs from Ceph configuration.
 type Config struct {
 	// DNSNames are rgw_dns_name's entries plus the zonegroup's hostnames;
-	// empty means path-style addressing only.
+	// empty, with WebsiteNames, means path-style addressing only.
 	DNSNames []string
+	// WebsiteNames are rgw_dns_s3website_name, taken whole, plus the
+	// zonegroup's hostnames_s3website (vhost.Names.Website).
+	WebsiteNames []string
+	// Website and WebsiteFirst are cephconf.APIs's: s3website enabled, and
+	// ranked above s3. WebsiteFirst counts only with Website, as preprocess
+	// checks both.
+	Website      bool
+	WebsiteFirst bool
 	// MaxConcurrent is rgw_max_concurrent_requests; 0 means unlimited.
 	MaxConcurrent int
 	// InFlight is the count of requests MaxConcurrent caps, which the admin
@@ -57,6 +65,16 @@ const maxObjectNameLen = 1024
 // at, and PostAuthInit rejects it.
 func ParseRequest(req *http.Request, cfg Config, now time.Time) (Parsed, error) {
 	host := vhost.Hostname(req.Host)
+	target := vhost.Resolve(host, cfg.hostNames())
+	// With s3website enabled and ranked above s3 every request is a website
+	// one, as at v20.2.4
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2162-L2168
+	// and
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2193-L2198);
+	// v19.2.7 flags only one with a Host
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2150-L2156),
+	// and rgw-go takes v20.2.4's rule on both releases.
+	website := target.Website || cfg.Website && cfg.WebsiteFirst
 	rawPath, rawQuery := vhost.RequestTarget(req)
 	uri := DecodedURI(req, cfg)
 	if strings.IndexByte(uri, 0) >= 0 {
@@ -72,7 +90,8 @@ func ParseRequest(req *http.Request, cfg Config, now time.Time) (Parsed, error) 
 		Method:        req.Method,
 		Host:          strings.ToLower(host),
 		HTTPHost:      httpHost(req),
-		Domain:        vhost.Domain(host, cfg.DNSNames),
+		Domain:        target.Domain,
+		Website:       website,
 		Path:          rgwtext.URLDecode(rawPath, false),
 		RawPath:       rawPath,
 		Query:         query,
@@ -150,10 +169,15 @@ func MalformedPath(req *http.Request, cfg Config) bool {
 // the Host names put in front of it.
 func requestURI(req *http.Request, cfg Config) string {
 	path, _ := vhost.RequestTarget(req)
-	if b := vhost.Bucket(vhost.Hostname(req.Host), cfg.DNSNames); b != "" {
+	if b := vhost.Resolve(vhost.Hostname(req.Host), cfg.hostNames()).Bucket; b != "" {
 		return withHostBucket(b, path)
 	}
 	return path
+}
+
+// hostNames are the hostnames RGWREST::preprocess finds a Host in.
+func (c Config) hostNames() vhost.Names {
+	return vhost.Names{S3: c.DNSNames, Website: c.WebsiteNames, WebsiteAPI: c.Website}
 }
 
 // withHostBucket is preprocess's "/" and bucket b in front of uri, with a
