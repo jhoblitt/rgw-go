@@ -2,16 +2,19 @@ package otp_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/jhoblitt/rgw-go/internal/cls/otp"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
+	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
 // stable decodes b with dec and, when that succeeds, checks that the value
@@ -58,7 +61,7 @@ func stable[T interface {
 func FuzzReplyDecoders(f *testing.F) {
 	for _, s := range []string{
 		getReplyHex, currentTimeReplyHex, setDevAHex, getAllHex, removeDev1Hex, getCurrentTimeHex,
-		devAHex, devAStoredHex, devBHex,
+		devAHex, devAStoredHex, devBHex, checkReqHex, replyHex("01"),
 		"010110000000" + "03000000" + "746f6b" + stampHex + "02",
 		"0101ffffffff", "01010400000000ffffff", "",
 	} {
@@ -77,6 +80,144 @@ func FuzzReplyDecoders(f *testing.F) {
 		stable(t, "cls_otp_get_otp_op", b, otp.DecodeGetOp, true)
 		stable(t, "cls_otp_remove_otp_op", b, otp.DecodeRemoveOp, true)
 		stable(t, "cls_otp_get_current_time_op", b, otp.DecodeGetCurrentTimeOp, true)
+		stable(t, "cls_otp_check_otp_op", b, otp.DecodeCheckOp, true)
+		stable(t, "cls_otp_get_result_reply", b, otp.DecodeGetResultReply, false)
+	})
+}
+
+// refReply is cls_otp_get_result_reply as refDecode reads it.
+type refReply struct {
+	token     string
+	sec, nsec uint32
+	result    byte
+}
+
+// refDecode reads cls_otp_get_result_reply byte by byte, as DECODE_START,
+// DECODE_FINISH and otp_check_t::decode read it
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_ops.h#L68-L83 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_types.h#L86-L107 at v19.2.7 and v20.2.4),
+// without denc, so that FuzzRecordFailClosed holds Record to a reading it
+// shares no code with. It reports false wherever the C++ decode throws.
+func refDecode(b []byte) (refReply, bool) {
+	off := 0
+	take := func(n int) ([]byte, bool) {
+		if n < 0 || off+n > len(b) {
+			return nil, false
+		}
+		s := b[off : off+n]
+		off += n
+		return s, true
+	}
+	// begin reads a struct header and returns where the struct ends.
+	begin := func() (int, bool) {
+		h, ok := take(6)
+		if !ok || h[1] > 1 {
+			return 0, false
+		}
+		n := int(binary.LittleEndian.Uint32(h[2:]))
+		if n > len(b)-off {
+			return 0, false
+		}
+		return off + n, true
+	}
+	var r refReply
+	end, ok := begin()
+	if !ok {
+		return r, false
+	}
+	checkEnd, ok := begin()
+	if !ok {
+		return r, false
+	}
+	l, ok := take(4)
+	if !ok {
+		return r, false
+	}
+	tok, ok := take(int(binary.LittleEndian.Uint32(l)))
+	if !ok {
+		return r, false
+	}
+	ts, ok := take(8)
+	if !ok {
+		return r, false
+	}
+	res, ok := take(1)
+	if !ok || off > checkEnd || checkEnd > end {
+		return r, false
+	}
+	r.token = string(tok)
+	r.sec = binary.LittleEndian.Uint32(ts[0:4])
+	r.nsec = binary.LittleEndian.Uint32(ts[4:8])
+	r.result = res[0]
+	return r, true
+}
+
+// recordOf runs Record over a lookup whose method answered b and rval.
+func recordOf(t *testing.T, b []byte, rval int32) (otp.OTPCheck, error) {
+	t.Helper()
+	rd := radosclient.NewReadOp()
+	l := otp.LookupCheck(rd, checkReq(), denc.Squid)
+	s, ok := rd.Steps()[0].(*radosclient.ExecStep)
+	if !ok {
+		t.Fatalf("lookup step is %T, not an exec", rd.Steps()[0])
+	}
+	s.Result.Set(b, rval)
+	return l.Record()
+}
+
+// FuzzRecordFailClosed runs Record over arbitrary replies and return values
+// against refDecode. Record must answer nil only where refDecode finds result
+// byte 1, ErrCheckRefused with refDecode's check for any other result, and,
+// with the zero check, an error that is neither for a reply refDecode
+// refuses and for a negative return value, which keeps its errno. A positive
+// return value is a success, as IoCtx::exec's r >= 0 is.
+func FuzzRecordFailClosed(f *testing.F) {
+	for _, s := range []string{replyHex("01"), replyHex("02"), replyHex("00"), replyHex("ff"), replyHex("01") + "aa", ""} {
+		b, err := hex.DecodeString(s)
+		if err != nil {
+			f.Fatal(err)
+		}
+		f.Add(b, int32(0))
+	}
+	b, err := hex.DecodeString(replyHex("01"))
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Add(b, int32(-2))
+	f.Add(b, int32(5))
+	f.Fuzz(func(t *testing.T, b []byte, rval int32) {
+		got, err := recordOf(t, b, rval)
+		failed := err != nil && !errors.Is(err, otp.ErrCheckRefused)
+		if rval < 0 {
+			var re *radosclient.Error
+			if !failed || !reflect.DeepEqual(got, otp.OTPCheck{}) || !errors.As(err, &re) || re.Errno != -rval {
+				t.Fatalf("rval %d: Record gave %v, %v, not the method's errno", rval, got, err)
+			}
+			return
+		}
+		ref, ok := refDecode(b)
+		if !ok {
+			if !failed || !reflect.DeepEqual(got, otp.OTPCheck{}) {
+				t.Fatalf("%x: refDecode refuses it, Record gave %v, %v", b, got, err)
+			}
+			return
+		}
+		if failed {
+			t.Fatalf("%x: refDecode reads it, Record failed: %v", b, err)
+		}
+		if got.Token != ref.token || byte(got.Result) != ref.result {
+			t.Fatalf("%x: Record read token %q result %d, refDecode %q %d", b, got.Token, got.Result, ref.token, ref.result)
+		}
+		want := time.Time{}
+		if ref.sec != 0 || ref.nsec != 0 {
+			want = time.Unix(int64(ref.sec), int64(ref.nsec)).UTC()
+		}
+		if !got.Timestamp.Equal(want) {
+			t.Fatalf("%x: Record read %v, refDecode %v", b, got.Timestamp, want)
+		}
+		if (ref.result == byte(otp.CheckSuccess)) != (err == nil) {
+			t.Fatalf("%x: result %d answered %v", b, ref.result, err)
+		}
 	})
 }
 

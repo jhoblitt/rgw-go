@@ -329,6 +329,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's otp metadata put keeps a dropped device's id in the otp header](#radosgws-otp-metadata-put-keeps-a-dropped-devices-id-in-the-otp-header) | pending | pending |  |
 | [radosgw's otp replay state stays in the zone that recorded it](#radosgws-otp-replay-state-stays-in-the-zone-that-recorded-it) | pending | pending |  |
 | [radosgw adds any header an aws-chunked trailer names to the request after its body](#radosgw-adds-any-header-an-aws-chunked-trailer-names-to-the-request-after-its-body) | pending | pending |  |
+| [radosgw's verify_mfa logs an x-amz-mfa value that does not split in two, its code included](#radosgws-verify_mfa-logs-an-x-amz-mfa-value-that-does-not-split-in-two-its-code-included) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -15994,9 +15995,14 @@ Every new entry adds its row to this table, in document order.
   method with the type named for it sends a request the class refuses, and
   an emulation of the class built the same way refuses radosgw's.
 - **Releases:** checked at v19.2.7 and v20.2.4.
-- **rgw-go:** sends no check yet (`internal/cls/otp`). Its check must send
-  `otp_get_result` the `otp_check` request, as radosgw does, and the class
-  emulation must decode that request.
+- **rgw-go:** sends the check op to both methods, as radosgw does: `Check`
+  sends `otp_check` a `cls_otp_check_otp_op`, and `LookupCheck` sends
+  `otp_get_result` the same bytes, encoded from the same `CheckOp`
+  (`internal/cls/otp/ops_check.go:142-144`,
+  `internal/cls/otp/ops_check.go:158-160`). The package defines no
+  `cls_otp_get_result_op`, so that no one "fixes" `LookupCheck` to send it:
+  the class answers it EINVAL, and every MFA check would fail. The class
+  emulation must decode the check op for both methods.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task WP-16, 2026-10-16, verifying the otp client's
   calls at both tags; derived from the source, not reproduced.
@@ -17735,3 +17741,85 @@ Every new entry adds its row to this table, in document order.
   `extract_trailing_headers` to keep rgw-go's trailer values. The task's
   adversarial review the same day added the bucket log, the bare LF and
   Squid's unprefixed keys. Derived from the source, not reproduced.
+
+## radosgw's verify_mfa logs an x-amz-mfa value that does not split in two, its code included
+
+- **Kind:** defect, possible security, low: an information disclosure. A
+  one-time code that no check has consumed can reach radosgw's log, at a
+  level that default settings keep out of every log output. Prior art not
+  searched. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWHandler_REST_S3::postauth_init` hands `verify_mfa` the `x-amz-mfa`
+    header of every request that carries one, read as a C string
+    ([rgw_rest_s3.cc:5026-5029](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5026-L5029),
+    [rgw_rest_s3.cc:5556-5559](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5556-L5559)).
+  - `RadosUser::verify_mfa` splits the value with
+    `get_str_vec(mfa_str, " ", params)`. When that does not give exactly two
+    fields, it logs the whole value at level 5, as "NOTICE: invalid mfa
+    string provided: " and `mfa_str`, and answers EINVAL
+    ([rgw_sal_rados.cc:287-293](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L287-L293),
+    [rgw_sal_rados.cc:304-310](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L304-L310)).
+  - `get_str_vec` keeps each piece `for_each_substr` finds
+    ([str_list.cc:43-49](https://github.com/ceph/ceph/blob/v19.2.7/src/common/str_list.cc#L43-L49),
+    [str_list.cc:43-49](https://github.com/ceph/ceph/blob/v20.2.4/src/common/str_list.cc#L43-L49)).
+    `for_each_substr` splits at the delimiters it is given, here a space
+    alone, and skips leading delimiters and runs of them, so no field is
+    empty
+    ([str_list.h:15-24](https://github.com/ceph/ceph/blob/v19.2.7/src/include/str_list.h#L15-L24),
+    [str_list.h:14-23](https://github.com/ceph/ceph/blob/v20.2.4/src/include/str_list.h#L14-L23)).
+  - So the level-5 line logs every value that is not two runs of characters
+    other than a space:
+    - one with a tab, or nothing, between the serial and the code
+      (`SERIAL<TAB>123456`, `SERIAL123456`);
+    - one with a third field (`SERIAL 123456 x`), or a code a space splits
+      (`SERIAL 123 456`);
+    - an empty one, or one of spaces alone.
+
+    A value whose spaces are doubled, leading or trailing still splits in
+    two, and is not logged.
+  - The line runs before any check, so the class has not consumed the code
+    in it. The lines past the split, for a serial missing from `mfa_ids`
+    and for a failed `check_mfa`, log the serial alone
+    ([rgw_sal_rados.cc:298-308](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L298-L308),
+    [rgw_sal_rados.cc:315-325](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L315-L325)),
+    and `check_mfa` logs the device id and the result
+    ([svc_cls.cc:60](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L60),
+    [svc_cls.cc:60](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_cls.cc#L60)).
+- **Impact:**
+  - A code logged this way verifies until its window passes. Whoever reads
+    the log in that time and also holds the user's keys can complete an MFA
+    delete that the user did not send. Stopping that holder of the keys is
+    what MFA delete is for.
+  - `SUBSYS(rgw, 1, 5)` gives the rgw subsystem log level 1 and gather
+    level 5
+    ([subsys.h:62](https://github.com/ceph/ceph/blob/v19.2.7/src/common/subsys.h#L62),
+    [subsys.h:62](https://github.com/ceph/ceph/blob/v20.2.4/src/common/subsys.h#L62)).
+    At default settings the level-5 line is gathered into the in-memory ring
+    of recent entries and written to no log output. `Log::_flush` gates every
+    output on the subsystem's log level unless it is dumping the ring: the
+    file, stderr, syslog, graylog and journald alike
+    ([Log.cc:392-397](https://github.com/ceph/ceph/blob/v19.2.7/src/log/Log.cc#L392-L397),
+    [Log.cc:392-397](https://github.com/ceph/ceph/blob/v20.2.4/src/log/Log.cc#L392-L397)).
+    Those outputs, not the file, are where deployments log: Rook runs the
+    daemons with `default-log-to-stderr` true and `default-log-to-file` false
+    ([defaults.go:43-48](https://github.com/rook/rook/blob/v1.20.9/pkg/operator/ceph/config/defaults.go#L43-L48)
+    at Rook v1.20.9), and cephadm sends them to journald or stderr, never to
+    a file
+    ([ceph.py:116-128](https://github.com/ceph/ceph/blob/v19.2.7/src/cephadm/cephadmlib/daemons/ceph.py#L116-L128),
+    [ceph.py:128-140](https://github.com/ceph/ceph/blob/v20.2.4/src/cephadm/cephadmlib/daemons/ceph.py#L128-L140)).
+  - The line reaches a log output only when `debug_rgw` is 5 or more, or
+    when the ring is dumped: by a crash, or by the admin socket's `log dump`
+    command, which calls `dump_recent`
+    ([ceph_context.cc:678-679](https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_context.cc#L678-L679),
+    [ceph_context.cc:670-671](https://github.com/ceph/ceph/blob/v20.2.4/src/common/ceph_context.cc#L670-L671)).
+  - Low: the value must be malformed, which a client does by mistake. The
+    code expires within its window, and default settings keep it out of
+    every log output.
+- **Releases:** checked at v19.2.7 and v20.2.4.
+- **rgw-go:** not affected once its `x-amz-mfa` verification, which phase 2
+  Task V13d ports, never logs the header value, as the plan requires.
+  rgw-go does not read the header yet.
+- **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
+  searched.
+- **Found:** phase 2 Task V13a's review, 2026-10-19, reading `verify_mfa`
+  beside the otp check; derived from the source, not reproduced.
