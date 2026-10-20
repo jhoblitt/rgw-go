@@ -10,8 +10,9 @@ import (
 )
 
 // ObjectRetention is RGWObjectRetention
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_object_lock.h#L151-L197 at v19.2.6
-// and v20.2.4): an object's retention mode and the date it is retained until.
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.h#L156-L202 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_object_lock.h#L151-L197 at v20.2.4):
+// an object's retention mode and the date it is retained until.
 type ObjectRetention struct {
 	Mode        string
 	RetainUntil time.Time
@@ -20,7 +21,7 @@ type ObjectRetention struct {
 // Encode mirrors RGWObjectRetention::encode, ENCODE_START(2, 1): the mode,
 // the date as a real_time, and the date again through round_trip_encode,
 // which writes its u64 nanosecond count
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/include/encoding.h#L393-L420 at v19.2.6,
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/include/encoding.h#L393-L420 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/include/encoding.h#L394-L421 at v20.2.4)
 // and so keeps the seconds past 2106 that the first form's u32 drops.
 func (o ObjectRetention) Encode(e *denc.Encoder, _ denc.Release) {
@@ -73,8 +74,9 @@ func realTimeFromNanos(n uint64) time.Time {
 }
 
 // ObjectLegalHold is RGWObjectLegalHold
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_object_lock.h#L199-L230 at v19.2.6
-// and v20.2.4): an object's legal hold status.
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.h#L204-L235 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_object_lock.h#L199-L230 at v20.2.4):
+// an object's legal hold status.
 type ObjectLegalHold struct{ Status string }
 
 // Encode mirrors RGWObjectLegalHold::encode, ENCODE_START(1, 1).
