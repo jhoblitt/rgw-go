@@ -575,17 +575,21 @@ against the release's radosgw, or against the rgw-go whose URL
 `out/<release>/rgw-go.endpoint` holds. The set
 is `test_s3.py` and `test_headers.py` minus the tests of the s3-tests markers
 `hack/s3tests/excluded-markers.txt` lists, of features not implemented yet and
-of `docs/exclusions.md`, and minus the tests `hack/s3tests/deselect-phase2.txt`
-and `deselect-phase3.txt` name: tests that call a later phase's feature but
-carry none of those markers. Both gateways run the same set, `fails_on_rgw`
-tests included, since both must fail those alike. The selection is a Go
-command, `hack/s3tests`, which `run.sh` builds into `bin/s3tests` from its
-own tree each time it runs: `run.sh` collects the tests with pytest under the
-expression the command makes of the markers, the command picks the set's
-node ids from that collection and the lists, and pytest runs exactly those
-ids, in collection order (`go doc ./hack/s3tests`). `run.sh` gives the
-command every flag, so that neither an `S3TESTS_` variable the command would
-read nor a config file one names changes a run.
+of `docs/exclusions.md`, plus the tests `hack/s3tests/include-phase2.txt`
+names, and minus the tests `hack/s3tests/deselect-phase2.txt` and
+`deselect-phase3.txt` name. A marker stays listed while it also marks tests
+of a feature not served yet, and the include list names the tests it removes
+that phase 2 serves; a deselect list names tests that call a later phase's
+feature but carry none of those markers. Both gateways run the same set,
+`fails_on_rgw` tests included, since both must fail those alike. The
+selection is a Go command, `hack/s3tests`, which `run.sh` builds into
+`bin/s3tests` from its own tree each time it runs: `run.sh` collects the
+tests with pytest twice, under the expression the command makes of the
+markers and without it, which alone holds the include list's tests; the
+command picks the set's node ids from the two collections and the lists, and
+pytest runs exactly those ids, in collection order (`go doc ./hack/s3tests`).
+`run.sh` gives the command every flag, so that neither an `S3TESTS_` variable
+the command would read nor a config file one names changes a run.
 
 `run.sh` creates the s3-tests users with `radosgw-admin`, with fixed keys so
 that every run writes the same conf: `s3tests-main`, `s3tests-alt`,
@@ -676,16 +680,24 @@ S3TESTS_REPO=$HOME/src/ceph S3TESTS_COMMIT=$(git -C "$HOME/src/ceph" rev-parse H
 Each line of `excluded-markers.txt` is a marker, under the comment naming
 its feature's phase or its exclusion. Each line of a deselect list is a pytest
 node id and, after `#`, the calls that need the feature; it removes every
-parametrization of that test. `run.sh` stops before any test runs when a line
-names no test the markers leave, because it was renamed, removed or marked at
-the pinned commit, or when a line would also remove a test the lists do not
-name were it given to pytest's `--deselect`, which removes every node id that
-starts with its argument; the command names every such line before it stops.
-`run.sh --print-deselect` prints a digest of the listed ids, which each
-recorded entry carries in its meta; the comparison no longer checks it. The
-PR that lands a later phase's feature deletes its lines, and its markers'
-lines, and records the tests they free in both ledgers, as "Adding tests"
-below does.
+parametrization of that test. Each line of an include list is a pytest node
+id, or a test's id without its parametrization for every parametrization, and
+after `#` why phase 2 runs it, under its area's comment; it adds the tests it
+names. `run.sh` stops before any test runs when a deselect line names no test
+the markers leave, because it was renamed, removed or marked at the pinned
+commit, or when a deselect line would also remove a test of the set it does
+not name were it given to pytest's `--deselect`, which removes every node id
+that starts with its argument. It stops too when an include line names no
+collected test, because it was renamed or removed, or names a test the
+markers leave, and when an include line and a deselect line name the same
+test. The command names every such line before it stops.
+`run.sh --print-deselect` prints a digest of the listed ids, each include
+line's after a `+`, which each recorded entry carries in its meta; with no
+include line it is the deselect lists' digest alone, and the comparison no
+longer checks it. The PR that lands a later phase's feature deletes its lines
+and its markers' lines, adds include lines for its tests that a marker still
+listed removes, and records the tests they free in both ledgers, as "Adding
+tests" below does.
 
 ## Parity baselines
 
