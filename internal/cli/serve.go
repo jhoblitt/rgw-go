@@ -452,7 +452,7 @@ func watchRADOS(reg *metrics.Registry, mode goceph.Mode, c radosclient.Cluster) 
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L642-L647 at v20.2.4),
 // and the request cap zi was opened with.
 func s3Config(conf *cephconf.Options, zi gatewayStore, instanceID uint64) (s3.Config, error) {
-	dns, err := conf.List("rgw_dns_name")
+	dns, err := conf.ListOn("rgw_dns_name", cephconf.DNSNameDelims)
 	if err != nil {
 		return s3.Config{}, fmt.Errorf("reading rgw_dns_name: %w", err)
 	}

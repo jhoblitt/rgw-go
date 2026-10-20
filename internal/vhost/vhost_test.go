@@ -9,6 +9,12 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+// gateway is the names of a gateway whose S3 name is s3.example.com and
+// whose website name is web.example.com, with s3website enabled or not.
+func gateway(websiteAPI bool) Names {
+	return Names{S3: []string{"s3.example.com"}, Website: []string{"web.example.com"}, WebsiteAPI: websiteAPI}
+}
+
 var _ = Describe("vhost", func() {
 	DescribeTable("RequestTarget is req_info's request_uri and request_params",
 		func(target, wantPath, wantQuery string) {
@@ -61,6 +67,47 @@ var _ = Describe("vhost", func() {
 			"a.x.s3.example.com", []string{"s3.example.com", "", "example.com", "x.s3.example.com"}, "a.x.s3"),
 		Entry("an empty subdomain falls back to the whole host", ".s3.example.com", []string{"s3.example.com"}, ".s3.example.com"),
 		Entry("no host", "", []string{"s3.example.com"}, ""),
+	)
+
+	DescribeTable("Resolve reads the bucket, the domain and the website match RGWREST::preprocess reads",
+		func(host string, n Names, want Target) { Expect(Resolve(host, n)).To(Equal(want), "%q", host) },
+		Entry("a website host is a website request at the service",
+			"web.example.com", gateway(true),
+			Target{Domain: "web.example.com", Website: true}),
+		Entry("a bucket subdomain of a website host names the bucket, in the Host's case",
+			"Site.WEB.example.com", gateway(true),
+			Target{Bucket: "Site", Domain: "WEB.example.com", Website: true}),
+		Entry("a website match replaces the S3 match the Host is also in",
+			"site.web.example.com", Names{S3: []string{"example.com"}, Website: []string{"web.example.com"}, WebsiteAPI: true},
+			Target{Bucket: "site", Domain: "web.example.com", Website: true}),
+		Entry("an empty subdomain of a website host falls back to the whole Host, still a website request",
+			".web.example.com", gateway(true),
+			Target{Bucket: ".web.example.com", Domain: "web.example.com", Website: true}),
+		Entry("a website name equal to the Host replaces the S3 subdomain",
+			"site.example.com", Names{S3: []string{"example.com"}, Website: []string{"site.example.com"}, WebsiteAPI: true},
+			Target{Domain: "site.example.com", Website: true}),
+		Entry("the least matching website name, in whatever order the names come",
+			"a.x.web.example.com", Names{Website: []string{"x.web.example.com", "", "web.example.com"}, WebsiteAPI: true},
+			Target{Bucket: "a.x", Domain: "web.example.com", Website: true}),
+		Entry("a plain S3 host is no website request",
+			"site.s3.example.com", gateway(true),
+			Target{Bucket: "site", Domain: "s3.example.com"}),
+		Entry("a website host without s3website falls back to the whole Host, not a website request",
+			"site.web.example.com", gateway(false),
+			Target{Bucket: "site.web.example.com"}),
+		Entry("a CNAME to a website host is the whole Host's bucket, not a website request",
+			"www.example.org", gateway(true),
+			Target{Bucket: "www.example.org"}),
+		Entry("website names alone let the Host name the bucket",
+			"www.example.org", Names{Website: []string{"web.example.com"}},
+			Target{Bucket: "www.example.org"}),
+		Entry("website names that are all empty do not",
+			"www.example.org", Names{Website: []string{""}, WebsiteAPI: true},
+			Target{}),
+		Entry("an IP literal names no bucket under website names alone",
+			"192.0.2.1", Names{Website: []string{"web.example.com"}, WebsiteAPI: true},
+			Target{}),
+		Entry("no Host", "", gateway(true), Target{}),
 	)
 
 	DescribeTable("LooksLikeIPAddress is looks_like_ip_address",

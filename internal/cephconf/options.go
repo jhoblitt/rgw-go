@@ -96,23 +96,32 @@ func (o *Options) Millis(name string) (time.Duration, error) {
 	return parse(o, name, func(s string) (time.Duration, error) { return duration(s, time.Millisecond) })
 }
 
-// listDelims are ceph::split's default delimiters, which rgw::AppMain splits
-// rgw_enable_apis on
-// (https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_appmain.cc#L391
-// at main; get_str_vec's ";,= \t" at v19.2.6 and v20.2.4). rgw_dns_name is
-// split on ", "
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L217), which
-// cuts every valid host name the same way.
-const listDelims = ";,= \t\n"
+// listDelims are the default delimiters of get_str_list and get_str_vec
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/common/str_list.cc#L30-L54 at v19.2.7
+// and v20.2.4); main's ceph::split adds a newline.
+const listDelims = ";,= \t"
 
-// List splits a string option into its items on ceph::split's delimiters,
-// dropping empty items, as radosgw splits rgw_enable_apis and rgw_dns_name.
+// DNSNameDelims are the delimiters radosgw splits rgw_dns_name on
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L217 at v19.2.7
+// and v20.2.4): a comma or a space, so a name list joined with ';' or a tab
+// is one name.
+const DNSNameDelims = ", "
+
+// List splits a string option into its items on get_str_list's default
+// delimiters, dropping empty items, as radosgw splits rgw_enable_apis and
+// rgw_extended_http_attrs.
 func (o *Options) List(name string) ([]string, error) {
+	return o.ListOn(name, listDelims)
+}
+
+// ListOn splits a string option into its items at every byte of delims,
+// dropping empty items, as get_str_list does when given delimiters.
+func (o *Options) ListOn(name, delims string) ([]string, error) {
 	s, err := o.String(name)
 	if err != nil {
 		return nil, err
 	}
-	return strings.FieldsFunc(s, func(r rune) bool { return strings.ContainsRune(listDelims, r) }), nil
+	return strings.FieldsFunc(s, func(r rune) bool { return strings.ContainsRune(delims, r) }), nil
 }
 
 // parse reads name and converts its text with conv, naming the option in a

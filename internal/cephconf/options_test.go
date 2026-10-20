@@ -59,9 +59,13 @@ var _ = Describe("Options", func() {
 		Expect(o.List("rgw_enable_apis")).To(Equal([]string{"s3", "s3website", "swift"}))
 		Expect(o.List("rgw_dns_name")).To(BeEmpty())
 	})
-	It("splits on every delimiter ceph::split takes, as radosgw splits rgw_enable_apis", func() {
-		l := cephconf.NewOptions(cephconf.MapGetter{"rgw_enable_apis": "s3;admin=sts\tiam\n,,notifications"})
-		Expect(l.List("rgw_enable_apis")).To(Equal([]string{"s3", "admin", "sts", "iam", "notifications"}))
+	It("splits on get_str_list's delimiters, a newline not among them, as radosgw splits rgw_enable_apis", func() {
+		l := cephconf.NewOptions(cephconf.MapGetter{"rgw_enable_apis": "s3;admin=sts\tiam\n,,notifications\nzero"})
+		Expect(l.List("rgw_enable_apis")).To(Equal([]string{"s3", "admin", "sts", "iam\n", "notifications\nzero"}))
+	})
+	It("splits on the delimiters it is given alone, as radosgw splits rgw_dns_name", func() {
+		l := cephconf.NewOptions(cephconf.MapGetter{"rgw_dns_name": "s3.a.com;s3.b.com, s3.c.com\ts3.d.com,,s3.e.com"})
+		Expect(l.ListOn("rgw_dns_name", cephconf.DNSNameDelims)).To(Equal([]string{"s3.a.com;s3.b.com", "s3.c.com\ts3.d.com", "s3.e.com"}))
 	})
 	DescribeTable("fails naming the option on a value its type does not render",
 		func(parse func(*cephconf.Options) error, name string) {

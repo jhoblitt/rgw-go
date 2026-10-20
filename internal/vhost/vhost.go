@@ -1,5 +1,6 @@
-// Package vhost reads the bucket a virtual-hosted request's Host names, as
-// radosgw's RGWREST::preprocess does, and the request target req_info splits
+// Package vhost reads the bucket a virtual-hosted request's Host names, the
+// domain it is in and whether that makes a website request, as radosgw's
+// RGWREST::preprocess does, and the request target req_info splits
 // before it. Routing and SigV2 read the bucket here; routing, SigV2, SigV4
 // and the S3 handler's Location header read the target from RequestTarget, so
 // a request is served on the path and query it is authenticated for.
@@ -90,36 +91,70 @@ func isDigits(s string) bool {
 	return true
 }
 
-// Bucket is the bucket RGWREST::preprocess reads from host, a Host as
-// Hostname leaves it, given rgw_dns_name's entries and the zonegroup's
-// hostnames
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L2048-L2143 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2065-L2160 at v20.2.4):
-// the subdomain of a configured name, or, when names are configured, the
-// whole host if it is not a configured name, looks like no IP address and
-// passes validate_bucket_name (the CNAME case). "" names no bucket.
-// rgw_resolve_cname's DNS lookup has no counterpart.
-func Bucket(host string, names []string) string {
-	if host == "" {
-		return ""
-	}
-	domain, subdomain := findHostInDomains(host, names)
-	if subdomain == "" && domain != host && hasName(names) &&
-		!LooksLikeIPAddress(host) && validBucketName(host) {
-		return host
-	}
-	return subdomain
+// Names are the hostnames RGWREST::preprocess finds a Host in, as
+// rgw_rest_init gathers them
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L215-L238 at v19.2.7
+// and v20.2.4).
+type Names struct {
+	// S3 are rgw_dns_name's entries and the zonegroup's hostnames.
+	S3 []string
+	// Website are rgw_dns_s3website_name, taken whole, and the zonegroup's
+	// hostnames_s3website.
+	Website []string
+	// WebsiteAPI is s3website in rgw_enable_apis, without which preprocess
+	// finds no Host in Website. Website names count toward the configured
+	// names that let a Host name the bucket either way.
+	WebsiteAPI bool
 }
 
-// Domain is the configured name RGWREST::preprocess finds host in, a Host as
-// Hostname leaves it, as cut from host with the client's case: the domain
-// preprocess makes s->info.domain
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L2163-L2165 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2180-L2182 at v20.2.4).
-// "" when host is in no configured name.
+// Target is what RGWREST::preprocess reads from a Host.
+type Target struct {
+	// Bucket is the bucket the Host names; "" names none.
+	Bucket string
+	// Domain is the configured name the Host is in, as cut from the Host with
+	// the client's case, which preprocess makes s->info.domain
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2168-L2170 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2180-L2182 at v20.2.4);
+	// "" when it is in none, where preprocess takes rgw_dns_name.
+	Domain string
+	// Website reports a Host in a website name, which makes the request a
+	// website one.
+	Website bool
+}
+
+// Resolve is what RGWREST::preprocess reads from host, a Host as Hostname
+// leaves it, under n
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2053-L2181 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2065-L2193 at v20.2.4).
+// Under the website API a Host in a website name takes that name's domain
+// and subdomain over an S3 name's. The bucket is the subdomain of the name
+// the Host is in or, when any name is configured, the whole host if it is in
+// none, looks like no IP address and passes validate_bucket_name (the CNAME
+// case), which makes no website request. rgw_resolve_cname's DNS lookup has
+// no counterpart.
+func Resolve(host string, n Names) Target {
+	var t Target
+	t.Domain, t.Bucket = findHostInDomains(host, n.S3)
+	if n.WebsiteAPI {
+		if domain, subdomain := findHostInDomains(host, n.Website); domain != "" {
+			t.Domain, t.Bucket, t.Website = domain, subdomain, true
+		}
+	}
+	if t.Bucket == "" && t.Domain != host && (hasName(n.S3) || hasName(n.Website)) &&
+		!LooksLikeIPAddress(host) && validBucketName(host) {
+		t.Bucket = host
+	}
+	return t
+}
+
+// Bucket is Resolve's bucket for host under the S3 names alone.
+func Bucket(host string, names []string) string {
+	return Resolve(host, Names{S3: names}).Bucket
+}
+
+// Domain is Resolve's domain for host under the S3 names alone.
 func Domain(host string, names []string) string {
-	domain, _ := findHostInDomains(host, names)
-	return domain
+	return Resolve(host, Names{S3: names}).Domain
 }
 
 // findHostInDomains is rgw_find_host_in_domains
