@@ -3,6 +3,7 @@ package meta
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/denc"
@@ -44,6 +45,13 @@ func DecodeObjectRetention(d *denc.Decoder) ObjectRetention {
 	d.EndStruct(h)
 	return o
 }
+
+// MaxRealTime is 2554-07-21T23:34:33.709551615Z, the latest instant radosgw's
+// dates hold, past which its arithmetic wraps: a ceph::real_time counts
+// nanoseconds since the epoch in a timespan, whose rep is uint64_t
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_time.h#L66-L74 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/ceph_time.h#L63-L71 at v20.2.4).
+var MaxRealTime = time.Unix(math.MaxUint64/1_000_000_000, math.MaxUint64%1_000_000_000).UTC()
 
 // realTimeNanos is a real_time's count of nanoseconds since the epoch, which
 // is a u64; the zero time.Time is the epoch, as denc writes it.

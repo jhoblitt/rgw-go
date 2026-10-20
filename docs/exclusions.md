@@ -6532,6 +6532,39 @@ does the following.
   GET and HEAD show only the `x-amz-meta-` attrs, so a client sees no
   difference from the blocklist; one that sends `X-Goog-Meta-*` sees no
   metadata where radosgw shows it.
+- **A date real_time cannot hold is refused.** radosgw keeps a retain-until
+  date as a `ceph::real_time`, whose `timespan` is a u64 `rep` of
+  nanoseconds since the epoch, so its last instant is
+  2554-07-21T23:34:33.709551615Z
+  ([ceph_time.h:66-74](https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_time.h#L66-L74),
+  [ceph_time.h:63-71](https://github.com/ceph/ceph/blob/v20.2.4/src/common/ceph_time.h#L63-L71)).
+  `from_iso_8601` reads the date, and its `calculate` converts the time
+  parsed modulo 2^64 nanoseconds
+  ([iso_8601.cc:39-48](https://github.com/ceph/ceph/blob/v19.2.7/src/common/iso_8601.cc#L39-L48),
+  [iso_8601.cc:39-48](https://github.com/ceph/ceph/blob/v20.2.4/src/common/iso_8601.cc#L39-L48)),
+  though the header that declares `from_iso_8601` requires every time to
+  fit
+  ([iso_8601.h:14-33](https://github.com/ceph/ceph/blob/v19.2.7/src/common/iso_8601.h#L14-L33),
+  [iso_8601.h:14-33](https://github.com/ceph/ceph/blob/v20.2.4/src/common/iso_8601.h#L14-L33)):
+  `3000-01-01T00:00:00Z` reads as 2415-06-13, `2600-01-01T00:00:00Z` as
+  2015-06-13, and `1970-01-00`, a day 00 in 1970 that it lets through, as
+  2554-07-20 (`docs/ceph-upstream-bugs.md`, "[radosgw's object-lock dates
+  wrap past
+  2554](ceph-upstream-bugs.md#radosgws-object-lock-dates-wrap-past-2554)").
+  So PutObject, CopyObject and CreateMultipartUpload take an
+  `x-amz-object-lock-retain-until-date` that wraps to a date after the
+  clock's and lock the object until the wrapped date, and refuse one that
+  wraps to an earlier date with 400 InvalidArgument
+  ([rgw_rest_s3.cc:2652-2663](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2652-L2663),
+  [rgw_rest_s3.cc:2805-2816](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2805-L2816);
+  [rgw_rest_s3.cc:3515-3526](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3515-L3526),
+  [rgw_rest_s3.cc:3765-3776](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3765-L3776);
+  [rgw_rest_s3.cc:4030-4039](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4030-L4039),
+  [rgw_rest_s3.cc:4481-4490](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4481-L4490)).
+  rgw-go's reader, `iso8601.Parse`, refuses every time before the epoch or
+  past that instant, so each such header answers 400 InvalidArgument
+  (`objectLockHeaders`, `internal/s3/putobject.go`). A date inside the
+  range reads as radosgw reads it, to the nanosecond.
 - **CopyObject refuses an object lock on a bucket without object lock.**
   radosgw's CopyObject stores the retention and legal hold its headers ask
   for on a bucket without object lock, where its PutObject refuses them
