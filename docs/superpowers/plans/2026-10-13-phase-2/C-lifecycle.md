@@ -342,13 +342,21 @@ the controller's ruling that splits C10 (C-D16).
 - **Behaviour** ([cls_rgw.cc:4175-4359](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L4175-L4359), [cls_rgw.cc:4577-4761](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4577-L4761);
   registered at [cls_rgw.cc:4734-4740](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L4734-L4740) and
   [cls_rgw.cc:5153-5159](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5153-L5159)):
-  1. `lc_get_entry` returns the omap value under the marker, ENOENT when absent.
+  1. `lc_get_entry` returns the omap value under the marker, ENOENT when absent, and EIO when
+     the value does not decode as `cls_rgw_lc_entry`, the legacy pair included:
+     `read_omap_entry` reads no pair ([cls_rgw.cc:915-932](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L915-L932),
+     [cls_rgw.cc:1045-1062](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1045-L1062)).
   2. `lc_set_entry` sets the omap value under the entry's bucket, creating the object;
      `lc_rm_entry` removes it.
   3. `lc_get_next_entry` returns the first key after the marker, or an empty entry at the end;
-     a value that does not decode is EIO.
-  4. `lc_list_entries` returns up to the maximum after the marker with the truncation flag,
-     decoding each value as an entry or else as the legacy pair, and replies at the request's
+     a value that does not decode, the legacy pair included, is EIO
+     ([cls_rgw.cc:4255-4265](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L4255-L4265),
+     [cls_rgw.cc:4657-4667](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4657-L4667)).
+  4. `lc_list_entries` returns the keys strictly after the marker, at most the maximum,
+     truncated while a key remains, so a maximum of 0 answers no entries, truncated
+     ([PrimaryLogPG.cc:7702-7763](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L7702-L7763),
+     [PrimaryLogPG.cc:7779-7840](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L7779-L7840));
+     each value read as an entry, else as the legacy pair, else EIO; replies at the request's
      struct_v.
   5. `lc_put_head` writes the omap header; `lc_get_head` of an empty header is a zero head,
      and one that does not decode is EINVAL.
@@ -356,7 +364,11 @@ the controller's ruling that splits C10 (C-D16).
      `lc_rm_entry` and `lc_put_head` only.
 - **Specs:** each method through C3's client on the emulator; ENOENT on a missing shard;
   `lc_set_entry` creating it; `lc_get_next_entry` order and end; list paging, truncation, a
-  legacy value and a struct_v 2 reply; the write flags in the derived write list.
+  legacy value and a struct_v 2 reply; the write flags in the derived write list; a value
+  stored in the legacy pair form: EIO from `lc_get_entry` and `lc_get_next_entry`, and the
+  pair's bucket and status with start 0 from `lc_list_entries` (`docs/ceph-upstream-bugs.md`,
+  "cls_rgw's lc_get_entry and lc_get_next_entry refuse an lc entry stored in its old pair
+  form, which stalls the shard"); a maximum of 0.
 - **Exclusions and registry:** none.
 - **Depends on:** S1, C3. **PR:** one. **Brief:** about 120 lines.
 
@@ -570,6 +582,20 @@ the controller's ruling that splits C10 (C-D16).
      10. An empty marker stamps the rollover date and ends the pass
          ([rgw_lc.cc:2203-2224](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2203-L2224), [rgw_lc.cc:2268-2289](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2268-L2289));
          otherwise it loops.
+     11. **A pair-form entry** (`docs/ceph-upstream-bugs.md`, "cls_rgw's lc_get_entry and
+         lc_get_next_entry refuse an lc entry stored in its old pair form, which stalls the
+         shard"): rgw-go rewrites the entry rather than stalling the shard as radosgw does
+         (spec §8). Where `lc_get_entry` or `lc_get_next_entry` answers EIO (a
+         `*radosclient.Error`, Errno EIO), the pass reads the entry as `lc_list_entries` does,
+         entry else pair: the next entry through `lc_list_entries` from the current key with a
+         maximum of 1, and the head's own entry through an omap read of its key. It rewrites
+         the entry with `lc_set_entry` as {bucket, 0, status} under the shard lock, and goes
+         on. A value that is neither ends this shard's pass with the head unmoved, and the pass
+         moves to the next shard. The rewrite is the form radosgw itself stores from v15.2.5,
+         so it stays RADOS-compatible and radosgw's worker reads the shard afterwards.
+     12. Every `lc_list_entries` call carries a maximum of at least 1, and a page loop also
+         stops on an empty page: a maximum of 0 answers no entries with is_truncated true while
+         a key remains.
 - **Specs**, on fakerados with a fake clock and the injected location:
   - the shard order random per pass; a held shard skipped after the five tries;
   - the claim, then the head, under the lock, and the unlock before the bucket pass (a
@@ -588,15 +614,19 @@ the controller's ruling that splits C10 (C-D16).
       passes;
     - the mixed case: a second client running radosgw's protocol unchanged claims E,
       advances the head to the end and wraps, and rgw-go's next pass follows the head;
+  - **a pair-form entry:** a shard holding A < P < Z with P stored as a pair: one pass
+    processes A, P and Z, P ends in the entry form, and a radosgw-protocol client's next pass
+    does not stall; a head left at a pair key: the pass rewrites it and goes on;
   - **Review Focus 3, a worker that dies holding a claim:** worker A claims a bucket and is
     cancelled before its post-state. Worker B skips the bucket until A's session expires,
     then claims and processes it, and it ends complete under B's start time. A worker
     restarted before the expiry does not process it.
   - **Review Focus 3, a stalled worker:** A stalls past its session and B reclaims. When A
     resumes, its claim re-read fails, so it stops and writes no post-state.
-- **Exclusions and registry:** C-D11's exclusion (the deployment's time zone). The reproduced-alike
-  behaviours stay without entries: an entry left processing for two days after a failed
-  re-lock, and the local day boundary.
+- **Exclusions and registry:** C-D11's exclusion (the deployment's time zone); the pair-form
+  rewrite's exclusion in `docs/exclusions.md`, and the registry entry's rgw-go line updated to
+  it. The reproduced-alike behaviours stay without entries: an entry left processing for two
+  days after a failed re-lock, and the local day boundary.
 - **Depends on:** C5. **PR:** one. **Brief:** about 250 lines.
 
 ### Task C10a: the worker on unversioned buckets, and the multipart abort
