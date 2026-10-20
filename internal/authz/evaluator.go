@@ -116,6 +116,29 @@ func (e *Evaluator) VerifyUser(ctx context.Context, r *op.Request, a policy.Acti
 // against r.BucketRec for the key r names, after the refusals
 // init_permissions makes on the request's bucket.
 func (e *Evaluator) VerifyBucket(ctx context.Context, r *op.Request, a policy.Action, perm acl.Permission) error {
+	return e.verifyRequestBucket(ctx, r, a, perm, false)
+}
+
+// VerifyBucketOwnerOrPolicy is VerifyBucket with the bucket owner in place
+// of the ACL fallback: where no identity or bucket policy decides, the
+// bucket's owner passes and every other requester is refused, whatever the
+// bucket's ACL grants. radosgw checks the public access block's ops through
+// verify_bucket_permission, whose fallback lets any WRITE_ACP grantee put or
+// delete the block and any READ_ACP grantee read it
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1370-L1371 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1392-L1393 at v20.2.4),
+// where Amazon S3 maps those ACL permissions to s3:PutBucketAcl and
+// s3:GetBucketAcl alone
+// (https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html#acl-access-policy-permission-mapping;
+// docs/exclusions.md, "No ACL grant authorizes the public access block's
+// ops"). Every other step is VerifyBucket's.
+func (e *Evaluator) VerifyBucketOwnerOrPolicy(ctx context.Context, r *op.Request, a policy.Action, perm acl.Permission) error {
+	return e.verifyRequestBucket(ctx, r, a, perm, true)
+}
+
+// verifyRequestBucket is VerifyBucket, with the bucket owner in place of the
+// ACL fallback when ownerOnly.
+func (e *Evaluator) verifyRequestBucket(ctx context.Context, r *op.Request, a policy.Action, perm acl.Permission, ownerOnly bool) error {
 	ids, b, rule, err := e.requestPrelude(ctx, r)
 	if err != nil {
 		return e.decided(ctx, a, rule, err)
@@ -123,7 +146,7 @@ func (e *Evaluator) VerifyBucket(ctx context.Context, r *op.Request, a policy.Ac
 	if err := e.deniedAsGroupMember(ctx, &r.Identity); err != nil {
 		return e.decided(ctx, a, "iam group member", err)
 	}
-	return e.verifyBucket(ctx, r, a, perm, b, b.block, r.Object, ids, formBucket)
+	return e.verifyBucket(ctx, r, a, perm, b, b.block, r.Object, ids, formBucket, ownerOnly)
 }
 
 // VerifyObject is verify_object_permission(s, op)
@@ -180,7 +203,7 @@ func (e *Evaluator) VerifyBucketIn(ctx context.Context, r *op.Request, a policy.
 	if err := e.deniedAsGroupMember(ctx, &r.Identity); err != nil {
 		return e.decided(ctx, a, "iam group member", err)
 	}
-	return e.verifyBucket(ctx, r, a, perm, b, reqBlock, key, ids, formBucketIn)
+	return e.verifyBucket(ctx, r, a, perm, b, reqBlock, key, ids, formBucketIn, false)
 }
 
 // VerifyObjectIn is VerifyObject against an explicit object in an explicit
@@ -371,8 +394,10 @@ const (
 	formObjectIn
 )
 
+// verifyBucket checks a against b's bucket, or the key it holds, with the
+// bucket owner in place of the ACL fallback when ownerOnly.
 func (e *Evaluator) verifyBucket(ctx context.Context, r *op.Request, a policy.Action, perm acl.Permission,
-	b bucketInputs, reqBlock *acl.PublicAccessBlock, key meta.ObjKey, ids []*policy.Policy, f form,
+	b bucketInputs, reqBlock *acl.PublicAccessBlock, key meta.ObjKey, ids []*policy.Policy, f form, ownerOnly bool,
 ) error {
 	bid := b.rec.Info.Bucket
 	arn := policy.BucketARN(bid.Tenant, bid.Name)
@@ -385,7 +410,7 @@ func (e *Evaluator) verifyBucket(ctx context.Context, r *op.Request, a policy.Ac
 	}
 	c := check{
 		a: a, perm: perm, arn: arn, ids: ids, bucket: b, reqBlock: reqBlock,
-		env: buildEnv(e.cfg, r, a, add),
+		env: buildEnv(e.cfg, r, a, add), ownerOnly: ownerOnly,
 	}
 	ok, rule := e.permit(r, &c)
 	return e.decided(ctx, a, rule, denial(ok))
@@ -472,6 +497,8 @@ type check struct {
 	reqBlock *acl.PublicAccessBlock
 	// object is the object's ACL for an object check, nil for a bucket check.
 	object *acl.Policy
+	// ownerOnly puts the bucket owner in place of the ACL fallback.
+	ownerOnly bool
 }
 
 // permit is verify_bucket_permission and verify_object_permission through
@@ -532,7 +559,8 @@ func expectedOwner(o meta.Owner) string {
 // and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1528-L1562 at v20.2.4):
 // requester pays, RestrictPublicBuckets when a resource policy is given,
-// the policies, and when they pass and withACL, the ACLs.
+// the policies, and when they pass and withACL, the ACLs, or for an
+// ownerOnly check the bucket's owner.
 func (e *Evaluator) permitOne(r *op.Request, id identity, c *check, accountRoot, withACL bool,
 	resource *policy.Policy, ids []*policy.Policy,
 ) (ok bool, rule string) {
@@ -551,6 +579,9 @@ func (e *Evaluator) permitOne(r *op.Request, id identity, c *check, accountRoot,
 	}
 	if !withACL {
 		return false, "no policy allows"
+	}
+	if c.ownerOnly {
+		return bucketOwner(id, c)
 	}
 	if c.object != nil {
 		return e.objectACL(r, id, c)
@@ -667,6 +698,25 @@ func bucketACL(r *op.Request, id identity, c *check) (ok bool, rule string) {
 		return true, "bucket acl"
 	}
 	return false, "bucket acl"
+}
+
+// bucketOwner passes the owner of the bucket's ACL, radosgw's s->bucket_owner
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L552 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L582 at v20.2.4),
+// within the permission mask, as the ACL passes its owner
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L171-L173 at v19.2.7 and v20.2.4),
+// and no one else. IgnorePublicAcls sets an anonymous owner aside, as
+// acl.Policy.Perm does.
+func bucketOwner(id identity, c *check) (ok bool, rule string) {
+	switch {
+	case c.perm&id.PermMask() != c.perm:
+		return false, "permission mask"
+	case !id.IsOwnerOf(c.bucket.acl.Owner.ID):
+		return false, "not the bucket owner"
+	case id.IsAnonymous() && c.ignorePublicACLs():
+		return false, "anonymous bucket owner under IgnorePublicAcls"
+	}
+	return true, "bucket owner"
 }
 
 // objectACL is verify_object_permission_no_policy

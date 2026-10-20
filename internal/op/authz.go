@@ -19,6 +19,11 @@ type Authorizer interface {
 	VerifyUser(ctx context.Context, r *Request, a policy.Action) error
 	// VerifyBucket authorizes a against r.BucketRec with perm as the ACL permission.
 	VerifyBucket(ctx context.Context, r *Request, a policy.Action, perm acl.Permission) error
+	// VerifyBucketOwnerOrPolicy is VerifyBucket with no ACL grant consulted:
+	// where no identity or bucket policy decides, the bucket's owner passes,
+	// within its permission mask for perm, and every other requester is
+	// refused, whatever the bucket's ACL grants them.
+	VerifyBucketOwnerOrPolicy(ctx context.Context, r *Request, a policy.Action, perm acl.Permission) error
 	// VerifyObject authorizes a against r.ObjState within r.BucketRec.
 	VerifyObject(ctx context.Context, r *Request, a policy.Action, perm acl.Permission) error
 	// VerifyBucketIn is VerifyBucket against an explicit bucket and key:
@@ -47,6 +52,12 @@ func VerifyUserPermission(ctx context.Context, r *Request, a policy.Action) erro
 // VerifyBucketPermission authorizes a bucket action through r.Env.Authz.
 func VerifyBucketPermission(ctx context.Context, r *Request, a policy.Action, perm acl.Permission) error {
 	return r.Env.Authz.VerifyBucket(ctx, r, a, perm)
+}
+
+// VerifyBucketPermissionOwnerOrPolicy authorizes a bucket action that no ACL
+// grant may authorize through r.Env.Authz.
+func VerifyBucketPermissionOwnerOrPolicy(ctx context.Context, r *Request, a policy.Action, perm acl.Permission) error {
+	return r.Env.Authz.VerifyBucketOwnerOrPolicy(ctx, r, a, perm)
 }
 
 // VerifyObjectPermission authorizes an object action through r.Env.Authz.
@@ -79,6 +90,11 @@ func (OwnerOnly) VerifyUser(context.Context, *Request, policy.Action) error { re
 
 // VerifyBucket allows r.BucketRec's owner.
 func (OwnerOnly) VerifyBucket(_ context.Context, r *Request, _ policy.Action, _ acl.Permission) error {
+	return ownerOnlyOf(r, r.BucketRec)
+}
+
+// VerifyBucketOwnerOrPolicy allows r.BucketRec's owner.
+func (OwnerOnly) VerifyBucketOwnerOrPolicy(_ context.Context, r *Request, _ policy.Action, _ acl.Permission) error {
 	return ownerOnlyOf(r, r.BucketRec)
 }
 

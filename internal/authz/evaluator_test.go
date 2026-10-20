@@ -320,6 +320,68 @@ var (
 	allowGet = doc(stmt("Allow", "", "s3:GetObject", "*", ""))
 )
 
+// blockCheckOp is one of the public access block's checks: Put and Delete
+// as s3:PutBucketPublicAccessBlock with WRITE_ACP, Get as
+// s3:GetBucketPublicAccessBlock with READ_ACP, the permissions op_to_perm
+// gives them
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L288-L311 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L304-L328 at v20.2.4).
+type blockCheckOp struct {
+	name string
+	a    policy.Action
+	perm acl.Permission
+}
+
+var blockCheckOps = []blockCheckOp{
+	{"put", policy.S3PutBucketPublicAccessBlock, acl.PermWriteACP},
+	{"get", policy.S3GetBucketPublicAccessBlock, acl.PermReadACP},
+}
+
+func groupGrant(g uint32, perm acl.Permission) acl.Grant {
+	return acl.Grant{Type: acl.GranteeGroup, Group: g, Permission: perm}
+}
+
+// blockGrantees are the buckets alice owns, each granting both block
+// permissions to one grantee kind, which VerifyBucket's ACL fallback honors.
+var blockGrantees = []struct {
+	name   string
+	bucket string
+	id     func() op.Identity
+	grants []acl.Grant
+}{
+	{
+		"a named user's WRITE_ACP and READ_ACP", "gacp", bob,
+		[]acl.Grant{userGrant("bob", acl.PermWriteACP), userGrant("bob", acl.PermReadACP)},
+	},
+	{"a named user's FULL_CONTROL", "gfull", bob, []acl.Grant{userGrant("bob", acl.PermFullControl)}},
+	{
+		"AllUsers' WRITE_ACP and READ_ACP, to the anonymous user", "gall", anon,
+		[]acl.Grant{groupGrant(acl.GroupAllUsers, acl.PermWriteACP), groupGrant(acl.GroupAllUsers, acl.PermReadACP)},
+	},
+	{
+		"AllUsers' WRITE_ACP and READ_ACP, to an authenticated stranger", "gall", bob,
+		[]acl.Grant{groupGrant(acl.GroupAllUsers, acl.PermWriteACP), groupGrant(acl.GroupAllUsers, acl.PermReadACP)},
+	},
+	{
+		"AuthenticatedUsers' WRITE_ACP and READ_ACP", "gauth", bob,
+		[]acl.Grant{groupGrant(acl.GroupAuthenticatedUsers, acl.PermWriteACP), groupGrant(acl.GroupAuthenticatedUsers, acl.PermReadACP)},
+	},
+	// Swift's X-Container-Write and X-Container-Read naming anonymous store
+	// a grant of WRITE_OBJS and READ_OBJS to that user
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_swift.cc#L183-L206 at v19.2.7 and v20.2.4),
+	// which verify_permission counts as WRITE and WRITE_ACP, and READ and
+	// READ_ACP
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl.cc#L216-L221 at v19.2.7 and v20.2.4).
+	{
+		"a Swift container's write and read lists naming anonymous", "gswift", anon,
+		[]acl.Grant{userGrant("anonymous", acl.PermWriteObjs), userGrant("anonymous", acl.PermReadObjs)},
+	},
+	{
+		"a Swift container's write and read lists naming bob", "gswiftbob", bob,
+		[]acl.Grant{userGrant("bob", acl.PermWriteObjs), userGrant("bob", acl.PermReadObjs)},
+	},
+}
+
 var _ = Describe("Evaluator", func() {
 	var f *fixture
 
@@ -645,6 +707,20 @@ var _ = Describe("Evaluator", func() {
 				})
 			})
 
+			Describe("a stored bucket ACL that does not decode", func() {
+				BeforeEach(func() {
+					f.setAttr("", "priv", meta.AttrACL, []byte{0xff})
+				})
+
+				It("refuses every requester of the bucket, an admin included, before the op mask", func() {
+					for _, id := range []op.Identity{alice(), adminOf(alice()), bob()} {
+						err := f.list(id, "priv")
+						Expect(err).To(MatchError(op.ErrUnknown), "%s", id.User.UserID)
+						Expect(op.IsBeforeVerify(err)).To(BeTrue(), "%s: marked, so op.Run never overrides it", id.User.UserID)
+					}
+				})
+			})
+
 			Describe("x-amz-expected-bucket-owner", func() {
 				It("refuses a request whose bucket another owner holds", func() {
 					Expect(f.getObject(alice(), "priv", "o", "X-Amz-Expected-Bucket-Owner", "bob")).
@@ -902,6 +978,246 @@ var _ = Describe("Evaluator", func() {
 					Expect(objectAs("anonown", "o", policy.S3GetObjectAcl, acl.PermReadACP)).To(MatchError(op.ErrAccessDenied), "no block")
 					f.setAttr("", "anonown", attrPublicAccess, pabAttr(ignoreBlock))
 					Expect(objectAs("anonown", "o", policy.S3GetObjectAcl, acl.PermReadACP)).To(MatchError(op.ErrAccessDenied), "IgnorePublicAcls")
+				})
+			})
+
+			Describe("a bucket check that no ACL grant authorizes", func() {
+				request := func(id op.Identity, bucket string, hdr ...string) *op.Request {
+					r := f.req(id, bucket, "", hdr...)
+					r.Method = http.MethodPut
+					return r
+				}
+				ownerOrPolicy := func(id op.Identity, bucket string, o blockCheckOp, hdr ...string) error {
+					return f.eval.VerifyBucketOwnerOrPolicy(f.ctx, request(id, bucket, hdr...), o.a, o.perm)
+				}
+				aliceOwns := func(name string, grants ...acl.Grant) {
+					GinkgoHelper()
+					alice := userOwner("", "alice")
+					p := ownerACL(alice)
+					for _, g := range grants {
+						p.ACL.AddGrant(g)
+					}
+					f.bucket(name, alice, aclAttr(p))
+				}
+				allowOn := func(effect, principal string) string {
+					return doc(stmt(effect, principal, "s3:*PublicAccessBlock", "arn:aws:s3:::*", ""))
+				}
+				BeforeEach(func() {
+					made := map[string]bool{}
+					for _, g := range blockGrantees {
+						if !made[g.bucket] {
+							aliceOwns(g.bucket, g.grants...)
+							made[g.bucket] = true
+						}
+					}
+					alice := userOwner("", "alice")
+					f.bucket("gref", alice, aclAttr(swiftReadACL(alice, "*")))
+				})
+
+				It("refuses every ACL grantee that VerifyBucket's ACL fallback lets through", func() {
+					for _, g := range blockGrantees {
+						for _, o := range blockCheckOps {
+							Expect(f.eval.VerifyBucket(f.ctx, request(g.id(), g.bucket), o.a, o.perm)).
+								To(Succeed(), "%s, %s, through the ACL", g.name, o.name)
+							Expect(ownerOrPolicy(g.id(), g.bucket, o)).To(MatchError(op.ErrAccessDenied), "%s, %s", g.name, o.name)
+						}
+					}
+				})
+
+				It("refuses a Swift container's .r:* the read, which VerifyBucket's ACL fallback grants everyone", func() {
+					get := blockCheckOps[1]
+					for _, id := range []op.Identity{anon(), bob()} {
+						Expect(f.eval.VerifyBucket(f.ctx, request(id, "gref"), get.a, get.perm)).To(Succeed(), "%s, through the ACL", id.User.UserID)
+						Expect(ownerOrPolicy(id, "gref", get)).To(MatchError(op.ErrAccessDenied), "%s", id.User.UserID)
+					}
+				})
+
+				DescribeTable("refuses the anonymous user through a Swift write list naming it under every block setting",
+					func(block acl.PublicAccessBlock) {
+						f.setAttr("", "gswift", attrPublicAccess, pabAttr(block))
+						for _, o := range blockCheckOps {
+							Expect(ownerOrPolicy(anon(), "gswift", o)).To(MatchError(op.ErrAccessDenied), "%s under %+v", o.name, block)
+							Expect(ownerOrPolicy(alice(), "gswift", o)).To(Succeed(), "the owner, %s under %+v", o.name, block)
+						}
+					},
+					Entry("BlockPublicAcls", acl.PublicAccessBlock{BlockPublicACLs: true}),
+					Entry("IgnorePublicAcls", ignoreBlock),
+					Entry("BlockPublicPolicy", acl.PublicAccessBlock{BlockPublicPolicy: true}),
+					Entry("RestrictPublicBuckets", acl.PublicAccessBlock{RestrictPublicBuckets: true}),
+					Entry("all four settings", allBlocks),
+				)
+
+				It("lets the bucket's owner through with no grant and no policy", func() {
+					f.bucket("bare", userOwner("", "alice"), aclAttr(acl.Policy{Owner: acl.Owner{ID: "alice", DisplayName: "alice"}}))
+					for _, o := range blockCheckOps {
+						Expect(ownerOrPolicy(alice(), "bare", o)).To(Succeed(), "an ACL of no grants, %s", o.name)
+						Expect(ownerOrPolicy(alice(), "priv", o)).To(Succeed(), "the default ACL, %s", o.name)
+						Expect(ownerOrPolicy(bob(), "bare", o)).To(MatchError(op.ErrAccessDenied), "bob, %s", o.name)
+					}
+				})
+
+				It("takes the owner from the bucket's ACL, as radosgw's s->bucket_owner is", func() {
+					f.bucket("aclowner", userOwner("", "alice"), aclAttr(ownerACL(userOwner("", "bob"))))
+					for _, o := range blockCheckOps {
+						Expect(ownerOrPolicy(bob(), "aclowner", o)).To(Succeed(), "the ACL's owner, %s", o.name)
+						Expect(ownerOrPolicy(alice(), "aclowner", o)).To(MatchError(op.ErrAccessDenied), "the instance's owner, %s", o.name)
+					}
+				})
+
+				// docs/ceph-upstream-bugs.md, "radosgw lets a matching referer
+				// grant replace the requester's own ACL grants".
+				It("lets the owner through a referer grant that VerifyBucket lets replace the owner's own", func() {
+					owner := userOwner("", "alice")
+					f.bucket("gdom", owner, aclAttr(swiftReadACL(owner, ".example.com")))
+					for _, o := range blockCheckOps {
+						if o.perm == acl.PermWriteACP {
+							Expect(f.eval.VerifyBucket(f.ctx, request(alice(), "gdom", "Referer", "http://a.example.com/"), o.a, o.perm)).
+								To(MatchError(op.ErrAccessDenied), "%s through the ACL, READ_OBJS in place of WRITE_ACP", o.name)
+						}
+						Expect(ownerOrPolicy(alice(), "gdom", o, "Referer", "http://a.example.com/")).To(Succeed(), "%s", o.name)
+					}
+				})
+
+				It("holds the owner to its permission mask", func() {
+					ro, full := alice(), alice()
+					ro.SubUser, full.SubUser = "ro", "full"
+					subs := map[string]meta.SubUser{
+						"ro": {Name: "ro", Perm: uint32(acl.PermRead)}, "full": {Name: "full", Perm: uint32(acl.PermFullControl)},
+					}
+					ro.User.SubUsers, full.User.SubUsers = subs, subs
+					for _, o := range blockCheckOps {
+						Expect(ownerOrPolicy(ro, "priv", o)).To(MatchError(op.ErrAccessDenied), "a read-only subuser, %s", o.name)
+						Expect(ownerOrPolicy(full, "priv", o)).To(Succeed(), "a full-control subuser, %s", o.name)
+					}
+				})
+
+				It("passes an anonymous owner unless IgnorePublicAcls sets its ownership aside", func() {
+					f.bucket("anonowned", userOwner("", "alice"), aclAttr(acl.Policy{Owner: acl.Owner{ID: "anonymous"}}))
+					for _, o := range blockCheckOps {
+						Expect(ownerOrPolicy(anon(), "anonowned", o)).To(Succeed(), "no block, %s", o.name)
+					}
+					f.setAttr("", "anonowned", attrPublicAccess, pabAttr(ignoreBlock))
+					for _, o := range blockCheckOps {
+						Expect(ownerOrPolicy(anon(), "anonowned", o)).To(MatchError(op.ErrAccessDenied), "IgnorePublicAcls, %s", o.name)
+					}
+				})
+
+				DescribeTable("lets a bucket or identity policy decide before the owner's pass",
+					func(id func() op.Identity, bucketPolicy, identityPolicy string, want error) {
+						if bucketPolicy != "" {
+							f.setPolicy("gacp", bucketPolicy)
+						}
+						who := id()
+						if identityPolicy != "" {
+							who = withUserPolicy(who, identityPolicy)
+						}
+						for _, o := range blockCheckOps {
+							err := ownerOrPolicy(who, "gacp", o)
+							if want == nil {
+								Expect(err).NotTo(HaveOccurred(), o.name)
+							} else {
+								Expect(err).To(MatchError(want), o.name)
+							}
+						}
+					},
+					Entry("a bucket policy's Allow for bob", bob, allowOn("Allow", awsPrincipal("arn:aws:iam:::user/bob")), "", nil),
+					Entry("bob's identity policy's Allow", bob, "", allowOn("Allow", ""), nil),
+					Entry("a bucket policy's Allow for everyone, to the anonymous user", anon, allowOn("Allow", `"*"`), "", nil),
+					Entry("a bucket policy's Deny over the owner", alice, allowOn("Deny", awsPrincipal("arn:aws:iam:::user/alice")), "",
+						op.ErrAccessDenied),
+					Entry("the owner's identity policy's Deny", alice, "", allowOn("Deny", ""), op.ErrAccessDenied),
+					Entry("a bucket policy's Allow for bob, to carol", carol, allowOn("Allow", awsPrincipal("arn:aws:iam:::user/bob")), "",
+						op.ErrAccessDenied),
+				)
+
+				It("refuses all but the owner a public policy's Allow under RestrictPublicBuckets", func() {
+					f.setPolicy("gacp", allowOn("Allow", `"*"`))
+					f.setAttr("", "gacp", attrPublicAccess, pabAttr(acl.PublicAccessBlock{RestrictPublicBuckets: true}))
+					for _, o := range blockCheckOps {
+						Expect(ownerOrPolicy(bob(), "gacp", o)).To(MatchError(op.ErrAccessDenied), "bob, %s", o.name)
+						Expect(ownerOrPolicy(alice(), "gacp", o)).To(Succeed(), "the owner, %s", o.name)
+					}
+				})
+
+				It("decides an account's identities by policy alone, the account root passing its own bucket", func() {
+					acct := meta.AccountOwner(ownAcct)
+					f.bucket("acctacp", acct, aclAttr(withGrant(ownerACL(acct), userGrant(otherAcct, acl.PermFullControl))))
+					root := accountIdentity(ownAcct, "root", meta.IdentityRoot)
+					user := accountIdentity(ownAcct, "acct", meta.IdentityRGW)
+					other := withUserPolicy(accountIdentity(otherAcct, "other", meta.IdentityRGW), allowOn("Allow", ""))
+					for _, o := range blockCheckOps {
+						Expect(ownerOrPolicy(root, "acctacp", o)).To(Succeed(), "the owning account's root, %s", o.name)
+						Expect(ownerOrPolicy(user, "acctacp", o)).To(MatchError(op.ErrAccessDenied), "its user without a policy, %s", o.name)
+						Expect(ownerOrPolicy(withUserPolicy(user, allowOn("Allow", "")), "acctacp", o)).
+							To(Succeed(), "its user under an identity Allow, %s", o.name)
+						Expect(f.eval.VerifyBucket(f.ctx, request(other, "acctacp"), o.a, o.perm)).
+							To(Succeed(), "another account's user granted FULL_CONTROL, %s, through the ACL", o.name)
+						Expect(ownerOrPolicy(other, "acctacp", o)).
+							To(MatchError(op.ErrAccessDenied), "another account's user granted FULL_CONTROL, %s", o.name)
+					}
+					f.setAttr("", "acctacp", attrIAMPolicy, []byte(allowOn("Allow", awsPrincipal("arn:aws:iam::"+otherAcct+":root"))))
+					for _, o := range blockCheckOps {
+						Expect(ownerOrPolicy(other, "acctacp", o)).To(Succeed(), "another account's user under both Allows, %s", o.name)
+					}
+				})
+
+				// radosgw lets another account's root through a cross-account
+				// check's identity side with no identity policy
+				// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1241-L1243 at v19.2.7,
+				// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1254-L1256 at v20.2.4),
+				// and an ACL grant to the account satisfies the resource side.
+				It("refuses another account's root that the ACL grants WRITE_ACP and READ_ACP, which needs no identity policy", func() {
+					acct := meta.AccountOwner(ownAcct)
+					f.bucket("acctgrant", acct, aclAttr(withGrant(withGrant(ownerACL(acct),
+						userGrant(otherAcct, acl.PermWriteACP)), userGrant(otherAcct, acl.PermReadACP))))
+					otherRoot := accountIdentity(otherAcct, "oroot", meta.IdentityRoot)
+					for _, o := range blockCheckOps {
+						Expect(f.eval.VerifyBucket(f.ctx, request(otherRoot, "acctgrant"), o.a, o.perm)).
+							To(Succeed(), "%s, through the ACL", o.name)
+						Expect(ownerOrPolicy(otherRoot, "acctgrant", o)).To(MatchError(op.ErrAccessDenied), "%s", o.name)
+					}
+				})
+
+				It("keeps the checks that come before the policies", func() {
+					for _, o := range blockCheckOps {
+						Expect(ownerOrPolicy(alice(), "priv", o, "X-Amz-Expected-Bucket-Owner", "bob")).
+							To(MatchError(op.ErrAccessDenied), "another expected owner, %s", o.name)
+						err := ownerOrPolicy(alice(), "susp", o)
+						Expect(err).To(MatchError(op.ErrUserSuspended), "a suspended bucket, %s", o.name)
+						Expect(op.IsBeforeVerify(err)).To(BeTrue(), "a suspended bucket, %s, marked", o.name)
+						member := alice()
+						member.User.GroupIDs = []string{"g1"}
+						Expect(ownerOrPolicy(member, "priv", o)).To(MatchError(op.ErrAccessDenied), "the owner as an iam group member, %s", o.name)
+					}
+					f.setAttr("", "gacp", attrPublicAccess, []byte{0xff})
+					for _, o := range blockCheckOps {
+						err := ownerOrPolicy(alice(), "gacp", o)
+						Expect(err).To(MatchError(op.ErrAccessDenied), "a block that does not decode, %s", o.name)
+						Expect(op.IsBeforeVerify(err)).To(BeTrue(), "a block that does not decode, %s, marked", o.name)
+						err = ownerOrPolicy(adminOf(bob()), "gacp", o)
+						Expect(err).To(MatchError(op.ErrAccessDenied), "an admin, %s", o.name)
+						Expect(op.IsBeforeVerify(err)).To(BeFalse(), "an admin, %s: unmarked, which op.Run lets through", o.name)
+					}
+				})
+
+				It("holds requester pays", func() {
+					f.setPolicy("payer", allowOn("Allow", awsPrincipal("arn:aws:iam:::user/bob")))
+					for _, o := range blockCheckOps {
+						Expect(ownerOrPolicy(bob(), "payer", o)).To(MatchError(op.ErrAccessDenied), "bob without the header, %s", o.name)
+						Expect(ownerOrPolicy(bob(), "payer", o, "X-Amz-Request-Payer", "requester")).To(Succeed(), "bob with it, %s", o.name)
+						Expect(ownerOrPolicy(alice(), "payer", o)).To(Succeed(), "the owner, %s", o.name)
+					}
+				})
+
+				It("refuses every requester of a bucket whose ACL does not decode, an admin included, before the op mask", func() {
+					f.setAttr("", "gacp", meta.AttrACL, []byte{0xff})
+					for _, id := range []op.Identity{alice(), adminOf(alice()), bob()} {
+						for _, o := range blockCheckOps {
+							err := ownerOrPolicy(id, "gacp", o)
+							Expect(err).To(MatchError(op.ErrUnknown), "%s, %s", id.User.UserID, o.name)
+							Expect(op.IsBeforeVerify(err)).To(BeTrue(), "%s, %s: marked, so op.Run never overrides it", id.User.UserID, o.name)
+						}
+					}
 				})
 			})
 

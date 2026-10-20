@@ -42,6 +42,20 @@ type FakeAuthorizer struct {
 	verifyBucketInReturnsOnCall map[int]struct {
 		result1 error
 	}
+	VerifyBucketOwnerOrPolicyStub        func(context.Context, *op.Request, policy.Action, acl.Permission) error
+	verifyBucketOwnerOrPolicyMutex       sync.RWMutex
+	verifyBucketOwnerOrPolicyArgsForCall []struct {
+		arg1 context.Context
+		arg2 *op.Request
+		arg3 policy.Action
+		arg4 acl.Permission
+	}
+	verifyBucketOwnerOrPolicyReturns struct {
+		result1 error
+	}
+	verifyBucketOwnerOrPolicyReturnsOnCall map[int]struct {
+		result1 error
+	}
 	VerifyObjectStub        func(context.Context, *op.Request, policy.Action, acl.Permission) error
 	verifyObjectMutex       sync.RWMutex
 	verifyObjectArgsForCall []struct {
@@ -215,6 +229,70 @@ func (fake *FakeAuthorizer) VerifyBucketInReturnsOnCall(i int, result1 error) {
 		})
 	}
 	fake.verifyBucketInReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeAuthorizer) VerifyBucketOwnerOrPolicy(arg1 context.Context, arg2 *op.Request, arg3 policy.Action, arg4 acl.Permission) error {
+	fake.verifyBucketOwnerOrPolicyMutex.Lock()
+	ret, specificReturn := fake.verifyBucketOwnerOrPolicyReturnsOnCall[len(fake.verifyBucketOwnerOrPolicyArgsForCall)]
+	fake.verifyBucketOwnerOrPolicyArgsForCall = append(fake.verifyBucketOwnerOrPolicyArgsForCall, struct {
+		arg1 context.Context
+		arg2 *op.Request
+		arg3 policy.Action
+		arg4 acl.Permission
+	}{arg1, arg2, arg3, arg4})
+	stub := fake.VerifyBucketOwnerOrPolicyStub
+	fakeReturns := fake.verifyBucketOwnerOrPolicyReturns
+	fake.recordInvocation("VerifyBucketOwnerOrPolicy", []interface{}{arg1, arg2, arg3, arg4})
+	fake.verifyBucketOwnerOrPolicyMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3, arg4)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *FakeAuthorizer) VerifyBucketOwnerOrPolicyCallCount() int {
+	fake.verifyBucketOwnerOrPolicyMutex.RLock()
+	defer fake.verifyBucketOwnerOrPolicyMutex.RUnlock()
+	return len(fake.verifyBucketOwnerOrPolicyArgsForCall)
+}
+
+func (fake *FakeAuthorizer) VerifyBucketOwnerOrPolicyCalls(stub func(context.Context, *op.Request, policy.Action, acl.Permission) error) {
+	fake.verifyBucketOwnerOrPolicyMutex.Lock()
+	defer fake.verifyBucketOwnerOrPolicyMutex.Unlock()
+	fake.VerifyBucketOwnerOrPolicyStub = stub
+}
+
+func (fake *FakeAuthorizer) VerifyBucketOwnerOrPolicyArgsForCall(i int) (context.Context, *op.Request, policy.Action, acl.Permission) {
+	fake.verifyBucketOwnerOrPolicyMutex.RLock()
+	defer fake.verifyBucketOwnerOrPolicyMutex.RUnlock()
+	argsForCall := fake.verifyBucketOwnerOrPolicyArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
+}
+
+func (fake *FakeAuthorizer) VerifyBucketOwnerOrPolicyReturns(result1 error) {
+	fake.verifyBucketOwnerOrPolicyMutex.Lock()
+	defer fake.verifyBucketOwnerOrPolicyMutex.Unlock()
+	fake.VerifyBucketOwnerOrPolicyStub = nil
+	fake.verifyBucketOwnerOrPolicyReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeAuthorizer) VerifyBucketOwnerOrPolicyReturnsOnCall(i int, result1 error) {
+	fake.verifyBucketOwnerOrPolicyMutex.Lock()
+	defer fake.verifyBucketOwnerOrPolicyMutex.Unlock()
+	fake.VerifyBucketOwnerOrPolicyStub = nil
+	if fake.verifyBucketOwnerOrPolicyReturnsOnCall == nil {
+		fake.verifyBucketOwnerOrPolicyReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.verifyBucketOwnerOrPolicyReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
 }
