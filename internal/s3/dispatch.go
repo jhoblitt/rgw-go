@@ -124,6 +124,26 @@ func (m method) walk(q url.Values, rel denc.Release) (string, bool) {
 // only) return nullptr when rgw_enable_mdsearch is off, and PUT ?replication
 // when the bucket's sync policy is legacy; no handler serves those routes, so
 // they answer 501 NotImplemented whatever the option and the policy say.
+//
+// The ownershipControls rows are v21.1.2's on both releases. Neither v19.2.7
+// nor v20.2.4 has the branch, so there the key selects nothing and DELETE
+// ?ownershipControls deletes an empty bucket (docs/exclusions.md). v21.1.2's
+// is_bucket_ownership_op tests the key's presence
+// (https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.h#L772-L774 at v21.1.2),
+// after the is_bucket_encryption_op branch
+// (https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L5469-L5474 at v21.1.2,
+// https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L5529-L5534 at v21.1.2),
+// and in op_delete ahead of the website and mdsearch branches
+// (https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L5537-L5576 at v21.1.2).
+//
+// The last rows of the bucket GET, PUT and DELETE and of the object GET, PUT
+// and DELETE are rgw-go's own, and no handler binds them, so each answers 501
+// NotImplemented. No release up to v21.1.2 has an op for the keys they test,
+// so radosgw serves Amazon S3's requests for those configurations, for an
+// object's annotations, and RenameObject and UpdateObjectEncryption, as
+// ListObjects, CreateBucket or DeleteBucket, or as GetObject, PutObject or
+// DeleteObject: it deletes an empty bucket, or overwrites or deletes the
+// object (docs/exclusions.md).
 var table = map[methodKey]method{
 	{op.ScopeService, http.MethodGet}: {
 		rows: []row{{key: "usage", name: "get_usage"}},
@@ -151,6 +171,13 @@ var table = map[methodKey]method{
 			{key: "policyStatus", name: "get_bucket_policy_status"},
 			{key: "publicAccessBlock", name: "get_bucket_public_access_block"},
 			{key: "encryption", name: "get_bucket_encryption"},
+			{key: "ownershipControls", name: "get_bucket_ownership_controls"},
+			{key: "analytics", name: "get_bucket_analytics"},
+			{key: "intelligent-tiering", name: "get_bucket_intelligent_tiering"},
+			{key: "inventory", name: "get_bucket_inventory"},
+			{key: "metrics", name: "get_bucket_metrics"},
+			{key: "metadataConfiguration", name: "get_bucket_metadata_configuration"},
+			{key: "metadataTable", name: "get_bucket_metadata_table"},
 		},
 		def: "list_bucket",
 	},
@@ -178,6 +205,13 @@ var table = map[methodKey]method{
 			{key: "replication", name: "put_bucket_replication"},
 			{key: "publicAccessBlock", name: "put_bucket_public_access_block"},
 			{key: "encryption", name: "put_bucket_encryption"},
+			{key: "ownershipControls", name: "put_bucket_ownership_controls"},
+			{key: "analytics", name: "put_bucket_analytics"},
+			{key: "intelligent-tiering", name: "put_bucket_intelligent_tiering"},
+			{key: "inventory", name: "put_bucket_inventory"},
+			{key: "metrics", name: "put_bucket_metrics"},
+			{key: "metadataConfiguration", name: "put_bucket_metadata_configuration"},
+			{key: "metadataTable", name: "put_bucket_metadata_table"},
 		},
 		def: "create_bucket",
 	},
@@ -192,8 +226,15 @@ var table = map[methodKey]method{
 			{key: "replication", name: "delete_bucket_replication"},
 			{key: "publicAccessBlock", name: "delete_bucket_public_access_block"},
 			{key: "encryption", name: "delete_bucket_encryption"},
+			{key: "ownershipControls", name: "delete_bucket_ownership_controls"},
 			{key: "website", name: "delete_bucket_website"},
 			{key: "mdsearch", name: "delete_bucket_meta_search"},
+			{key: "analytics", name: "delete_bucket_analytics"},
+			{key: "intelligent-tiering", name: "delete_bucket_intelligent_tiering"},
+			{key: "inventory", name: "delete_bucket_inventory"},
+			{key: "metrics", name: "delete_bucket_metrics"},
+			{key: "metadataConfiguration", name: "delete_bucket_metadata_configuration"},
+			{key: "metadataTable", name: "delete_bucket_metadata_table"},
 		},
 		def: "delete_bucket",
 	},
@@ -218,6 +259,7 @@ var table = map[methodKey]method{
 			{key: "attributes", name: "get_obj_attrs"},
 			{key: "retention", name: "get_obj_retention"},
 			{key: "legal-hold", name: "get_obj_legal_hold"},
+			{key: "annotation", name: "get_obj_annotation"},
 		},
 		def: "get_obj",
 	},
@@ -234,6 +276,9 @@ var table = map[methodKey]method{
 			{key: "tagging", name: "put_obj_tags"},
 			{key: "retention", name: "put_obj_retention"},
 			{key: "legal-hold", name: "put_obj_legal_hold"},
+			{key: "annotation", name: "put_obj_annotation"},
+			{key: "renameObject", name: "rename_obj"},
+			{key: "encryption", name: "update_obj_encryption"},
 		},
 		def: "put_obj",
 	},
@@ -241,6 +286,7 @@ var table = map[methodKey]method{
 		rows: []row{
 			{key: "tagging", name: "delete_obj_tags"},
 			{key: "uploadId", name: "abort_multipart", valued: true},
+			{key: "annotation", name: "delete_obj_annotation"},
 		},
 		def: "delete_obj",
 	},
@@ -354,6 +400,10 @@ var payloadTable = map[string]payloadRow{
 	"put_bucket_logging":                {op.PayloadSigned, onTentacle},
 	"post_bucket_logging":               {op.PayloadSigned, onTentacle},
 	"restore_obj":                       {op.PayloadSigned, onTentacle},
+	// v21.1.2's whitelist lists RGW_OP_PUT_BUCKET_OWNERSHIP_CONTROLS alone of
+	// the three ownership controls ops' types
+	// (https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L6793-L6842 at v21.1.2).
+	"put_bucket_ownership_controls": {op.PayloadSigned, 0},
 }
 
 func payloads(name string, rel denc.Release) op.PayloadForms {

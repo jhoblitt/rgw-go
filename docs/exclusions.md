@@ -2504,6 +2504,107 @@ following.
   level. On Squid it still accepts the signed payload forms of the
   GetObject a Squid radosgw would run, so authentication refuses no
   request radosgw takes.
+- **ownershipControls requests are served as v21 serves them.** Neither
+  floor has the ownership controls ops: no `op_*` branch tests
+  `ownershipControls`, and `RGWHTTPArgs::append` keeps it as no
+  sub-resource
+  ([rgw_common.cc:927-951](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L927-L951),
+  [rgw_common.cc:940-964](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L940-L964)).
+  So each request falls through its method's branches
+  ([rgw_rest_s3.cc:4660-4808](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4660-L4808),
+  [rgw_rest_s3.cc:5171-5326](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5171-L5326)):
+  a floor radosgw serves GetBucketOwnershipControls as ListObjects, or
+  ListObjectsV2 with `list-type=2`; PutBucketOwnershipControls as
+  CreateBucket, which refuses the document an SDK sends with 400
+  InvalidArgument for naming no `CreateBucketConfiguration`
+  ([rgw_rest_s3.cc:2466-2469](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2466-L2469),
+  [rgw_rest_s3.cc:2637-2642](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2637-L2642);
+  v19.2.7's `get_params` answers it when `get_location_constraint` fails,
+  [rgw_rest_s3.cc:2525-2528](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2525-L2528)),
+  and creates a bucket under a free name for an empty body; and
+  DeleteBucketOwnershipControls as DeleteBucket, which deletes an empty
+  bucket (docs/ceph-upstream-bugs.md, "[radosgw serves bucket configuration
+  requests it has no op for as ListObjects, CreateBucket and DeleteBucket,
+  deleting an empty
+  bucket](ceph-upstream-bugs.md#radosgw-serves-bucket-configuration-requests-it-has-no-op-for-as-listobjects-createbucket-and-deletebucket-deleting-an-empty-bucket)").
+  rgw-go routes the three on both releases as v21.1.2, the first release
+  line to carry the ops, does: by the key's presence, whatever its value,
+  after each method's encryption branch, and on DELETE ahead of the website
+  and mdsearch ones
+  ([rgw_rest_s3.h:772-774](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.h#L772-L774);
+  [rgw_rest_s3.cc:5469-5474](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L5469-L5474),
+  [rgw_rest_s3.cc:5529-5534](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L5529-L5534),
+  [rgw_rest_s3.cc:5556-5576](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L5556-L5576)).
+  A request whose query names an earlier branch's key is still served by
+  that branch, and a HEAD, a POST or an object's request with the key is
+  served as before, as v21.1.2 serves it. Being ahead of the website and
+  mdsearch branches, the DELETE also takes two requests a floor serves
+  otherwise: `?website&ownershipControls`, which a floor serves as
+  DeleteBucketWebsite, or refuses with 405 MethodNotAllowed before
+  authentication while `rgw_enable_static_website` is off; and
+  `?mdsearch&ownershipControls`, which a floor serves as
+  `RGWDelBucketMetaSearch`, at v20.2.4 only while `rgw_enable_mdsearch` is
+  on. rgw-go answered that one 501 through its metadata search route, and
+  still does. SigV2 signs the key on no release, v21.1.2 included. As
+  v21.1.2's whitelist has it, the PUT takes a single-chunk signed payload
+  and the GET and DELETE neither form
+  ([rgw_rest_s3.cc:6793-6842](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L6793-L6842)).
+  Those are the forms the floors' CreateBucket, ListObjects and DeleteBucket
+  take, so authentication accepts and refuses each request naming the key
+  alone as it did before. DeleteBucketWebsite takes a single chunk, so a
+  `?website&ownershipControls` DELETE with a signed, non-empty body is now
+  refused by authentication with 501 NotImplemented. Until rgw-go serves
+  the ops, each of the three answers 501 NotImplemented after
+  authentication, so none lists, creates or deletes a bucket on either
+  release. The PUT's document is read as "A PutBucketOwnershipControls
+  document is held to S3's schema" records, not as v21.1.2 reads it.
+- **A bucket or object request radosgw has no op for answers 501.** No
+  release up to v21.1.2 has an op for Amazon S3's bucket analytics,
+  intelligent-tiering, inventory, metrics and metadata configurations, for
+  an object's annotations, or for RenameObject and UpdateObjectEncryption:
+  no `op_*` branch tests `analytics`, `intelligent-tiering`, `inventory`,
+  `metrics`, `metadataConfiguration`, `metadataTable`, `annotation`,
+  `renameObject` or, at object scope, `encryption`, and none is a
+  sub-resource. So a floor radosgw serves each request as its method's
+  fall-through. A bucket GET is ListObjects, or ListObjectsV2 with
+  `list-type=2`; a PUT is CreateBucket, which creates a bucket under a free
+  name for an empty body; and a DELETE is DeleteBucket, which deletes an
+  empty bucket
+  ([rgw_rest_s3.cc:4640-4808](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4640-L4808),
+  [rgw_rest_s3.cc:5151-5326](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5151-L5326)).
+  The object `op_get`, `op_put` and `op_delete`
+  ([rgw_rest_s3.cc:4835-4892](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4835-L4892),
+  [rgw_rest_s3.cc:5360-5419](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5360-L5419))
+  serve a GET as GetObject; a PUT as PutObject, which replaces the object's
+  data with the request's body, an empty one for RenameObject, or as
+  CopyObject with a copy source; and a DELETE as DeleteObject, which deletes
+  the object, or the version `versionId` names (docs/ceph-upstream-bugs.md,
+  "[radosgw serves bucket configuration requests it has no op for as
+  ListObjects, CreateBucket and DeleteBucket, deleting an empty
+  bucket](ceph-upstream-bugs.md#radosgw-serves-bucket-configuration-requests-it-has-no-op-for-as-listobjects-createbucket-and-deletebucket-deleting-an-empty-bucket)",
+  "[radosgw serves PutObjectAnnotation and DeleteObjectAnnotation as
+  PutObject and DeleteObject, overwriting or deleting the
+  object](ceph-upstream-bugs.md#radosgw-serves-putobjectannotation-and-deleteobjectannotation-as-putobject-and-deleteobject-overwriting-or-deleting-the-object)"
+  and "[radosgw serves RenameObject and UpdateObjectEncryption as
+  PutObject, overwriting the
+  object](ceph-upstream-bugs.md#radosgw-serves-renameobject-and-updateobjectencryption-as-putobject-overwriting-the-object)").
+  On both releases rgw-go routes each of the six bucket keys on GET, PUT
+  and DELETE, `annotation` on an object's GET, PUT and DELETE, and
+  `renameObject` and `encryption` on an object's PUT, to a route of its
+  own, after every branch radosgw has and just before the method's
+  fall-through, and answers 501 NotImplemented: it lists, reads, creates,
+  overwrites and deletes nothing. Spec §8's compatibility "does not mean
+  reproducing radosgw's defects", and a 501 writes nothing to the RADOS
+  state the two gateways share. A request that also names an earlier
+  branch's key is served by that branch, as before. The routes take neither
+  signed payload form, so authentication now refuses, with the same 501
+  and before it looks the key up, the payloads the fall-through took: a
+  bucket PUT's signed single-chunk body, an object PUT's signed
+  single-chunk or aws-chunked one, and an object GET's signed, non-empty
+  one. AWS's requests are those aws-sdk-go-v2's S3 client v1.114.3 sends;
+  `metadataConfiguration` and `metadataTable` have no PUT there, their
+  Create being a POST, which rgw-go routes to `post_obj` as radosgw routes
+  it to its form upload.
 - **S3 XML request bodies are read with Go's `encoding/xml`, not expat.**
   radosgw reads them with expat, without namespace processing and without
   an unknown-encoding handler (`RGWXMLParser`, `rgw_xml.cc:158` and

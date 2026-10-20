@@ -2,6 +2,7 @@ package s3_test
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/denc"
+	"github.com/jhoblitt/rgw-go/internal/memstore"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/s3"
@@ -164,10 +166,6 @@ var _ = Describe("Dispatch", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(route.Name).To(Equal(want))
 		},
-		Entry("GET bucket ?ownershipControls lists on Squid", request("GET", "/b?ownershipControls"), denc.Squid, "list_bucket"),
-		Entry("GET bucket ?ownershipControls lists on Tentacle", request("GET", "/b?ownershipControls"), denc.Tentacle, "list_bucket"),
-		Entry("PUT bucket ?ownershipControls creates", request("PUT", "/b?ownershipControls"), denc.Tentacle, "create_bucket"),
-		Entry("DELETE bucket ?ownershipControls deletes", request("DELETE", "/b?ownershipControls"), denc.Squid, "delete_bucket"),
 		Entry("PUT bucket ?logging on Tentacle", request("PUT", "/b?logging"), denc.Tentacle, "put_bucket_logging"),
 		Entry("DELETE bucket ?logging on Tentacle falls through to delete_bucket", request("DELETE", "/b?logging"), denc.Tentacle, "delete_bucket"),
 		Entry("POST bucket ?logging on Tentacle", request("POST", "/b?logging"), denc.Tentacle, "post_bucket_logging"),
@@ -179,11 +177,82 @@ var _ = Describe("Dispatch", func() {
 		// only at v20.2.4); rgw-go serves GetObjectAttributes on both releases.
 		Entry("GET object ?attributes on Squid is GetObjectAttributes too", request("GET", "/b/k?attributes"), denc.Squid, "get_obj_attrs"),
 	)
+	DescribeTable("routes ?ownershipControls as v21.1.2 does, on both releases",
+		func(ctx SpecContext, req sent, want string, forms op.PayloadForms) {
+			for _, rel := range both {
+				route, err := dispatch(ctx, req, rel)
+				Expect(err).NotTo(HaveOccurred(), releaseName(rel))
+				Expect(route.Name).To(Equal(want), releaseName(rel))
+				Expect(route.Payloads).To(Equal(forms), releaseName(rel))
+			}
+		},
+		Entry("GET reaches GetBucketOwnershipControls, taking neither payload form", request("GET", "/b?ownershipControls"), "get_bucket_ownership_controls", op.PayloadForms(0)),
+		Entry("GET with a value, which the presence test ignores", request("GET", "/b?ownershipControls=x"), "get_bucket_ownership_controls", op.PayloadForms(0)),
+		Entry("GET with list-type=2, which only the fall-through reads", request("GET", "/b?ownershipControls&list-type=2"), "get_bucket_ownership_controls", op.PayloadForms(0)),
+		Entry("GET behind ?encryption", request("GET", "/b?ownershipControls&encryption"), "get_bucket_encryption", signed),
+		Entry("GET behind ?acl", request("GET", "/b?ownershipControls&acl"), "get_acls", op.PayloadForms(0)),
+		Entry("GET with the key in another case lists", request("GET", "/b?ownershipcontrols"), "list_bucket", op.PayloadForms(0)),
+		Entry("PUT reaches PutBucketOwnershipControls, taking a single chunk", request("PUT", "/b?ownershipControls"), "put_bucket_ownership_controls", signed),
+		Entry("PUT behind ?encryption", request("PUT", "/b?ownershipControls&encryption"), "put_bucket_encryption", signed),
+		Entry("PUT behind ?acl", request("PUT", "/b?ownershipControls&acl"), "put_acls", signed),
+		Entry("DELETE reaches DeleteBucketOwnershipControls, taking neither payload form", request("DELETE", "/b?ownershipControls"), "delete_bucket_ownership_controls", op.PayloadForms(0)),
+		Entry("DELETE behind ?encryption", request("DELETE", "/b?ownershipControls&encryption"), "delete_bucket_encryption", signed),
+		Entry("DELETE behind ?tagging", request("DELETE", "/b?ownershipControls&tagging"), "delete_bucket_tags", op.PayloadForms(0)),
+		Entry("DELETE ahead of ?website", request("DELETE", "/b?website&ownershipControls"), "delete_bucket_ownership_controls", op.PayloadForms(0)),
+		Entry("DELETE ahead of ?mdsearch", request("DELETE", "/b?mdsearch&ownershipControls"), "delete_bucket_ownership_controls", op.PayloadForms(0)),
+		Entry("HEAD, which has no such branch, stats", request("HEAD", "/b?ownershipControls"), "stat_bucket", op.PayloadForms(0)),
+		Entry("POST, which has no such branch, is a form upload", request("POST", "/b?ownershipControls"), "post_obj", op.PayloadForms(0)),
+		Entry("an object GET ignores it", request("GET", "/b/k?ownershipControls"), "get_obj", signed),
+		Entry("an object PUT ignores it", request("PUT", "/b/k?ownershipControls"), "put_obj", chunked),
+		Entry("an object DELETE ignores it", request("DELETE", "/b/k?ownershipControls"), "delete_obj", op.PayloadForms(0)),
+	)
+	It("routes DELETE ?ownershipControls ahead of ?website whatever rgw_enable_static_website says, and GET behind it", func(ctx SpecContext) {
+		for _, rel := range both {
+			route, err := dispatchWith(ctx, request("DELETE", "/b?website&ownershipControls"), rel, &op.Env{})
+			Expect(err).NotTo(HaveOccurred(), releaseName(rel))
+			Expect(route.Name).To(Equal("delete_bucket_ownership_controls"), releaseName(rel))
+			_, err = dispatchWith(ctx, request("GET", "/b?website&ownershipControls"), rel, &op.Env{})
+			Expect(err).To(MatchError(op.ErrMethodNotAllowed), "%s: op_get's website branch returns nullptr first", releaseName(rel))
+		}
+	})
+	It("refuses ?ownershipControls beside an object subresource on a bucket, as get_handler does", func(ctx SpecContext) {
+		for _, rel := range both {
+			_, err := dispatch(ctx, request("DELETE", "/b?ownershipControls&uploadId=u"), rel)
+			Expect(err).To(MatchError(op.ErrMethodNotAllowed), releaseName(rel))
+		}
+	})
+	// The walk below pins each refusal's position; these pin the requests as
+	// Amazon S3's SDK sends them, and that a refusal comes before the
+	// fall-through's list-type, copy source and empty uploadId readings.
+	DescribeTable("routes the configurations radosgw has no op for to a route of their own, on both releases",
+		func(ctx SpecContext, req sent, want string) {
+			for _, rel := range both {
+				route, err := dispatch(ctx, req, rel)
+				Expect(err).NotTo(HaveOccurred(), releaseName(rel))
+				Expect(route.Name).To(Equal(want), releaseName(rel))
+				Expect(route.Payloads).To(Equal(op.PayloadForms(0)), releaseName(rel))
+			}
+		},
+		Entry("GetBucketAnalyticsConfiguration", request("GET", "/b?analytics&x-id=GetBucketAnalyticsConfiguration&id=a"), "get_bucket_analytics"),
+		Entry("ListBucketMetricsConfigurations with list-type=2, which only the fall-through reads", request("GET", "/b?metrics&x-id=ListBucketMetricsConfigurations&list-type=2"), "get_bucket_metrics"),
+		Entry("DeleteBucketInventoryConfiguration", request("DELETE", "/b?inventory&id=a"), "delete_bucket_inventory"),
+		Entry("PutObjectAnnotation naming a version", request("PUT", "/b/k?annotation&annotationName=n&versionId=v"), "put_obj_annotation"),
+		Entry("an annotation PUT with a copy source, ahead of copy_obj", request("PUT", "/b/k?annotation", "x-amz-copy-source", "/a/b"), "put_obj_annotation"),
+		Entry("DeleteObjectAnnotation naming a version", request("DELETE", "/b/k?annotation&annotationName=n&versionId=v"), "delete_obj_annotation"),
+		Entry("an annotation DELETE with an empty uploadId, which aborts nothing", request("DELETE", "/b/k?annotation&uploadId"), "delete_obj_annotation"),
+		Entry("GetObjectAnnotation", request("GET", "/b/k?annotation&x-id=GetObjectAnnotation&annotationName=n"), "get_obj_annotation"),
+		Entry("RenameObject", request("PUT", "/b/new?renameObject", "x-amz-rename-source", "/b/k"), "rename_obj"),
+		Entry("UpdateObjectEncryption naming a version", request("PUT", "/b/k?encryption&versionId=v"), "update_obj_encryption"),
+		Entry("an encryption PUT with a copy source, ahead of copy_obj", request("PUT", "/b/k?encryption", "x-amz-copy-source", "/a/b"), "update_obj_encryption"),
+	)
 	// Each entry lists one op_* method's branches in radosgw's order, ending
 	// with the op it returns when none matches. The first request carries
 	// every branch's key and must select the first branch; each later one
 	// drops the key before it, so a branch out of order, a key that does not
-	// select its branch, or a mistyped route or payload form fails here.
+	// select its branch, or a mistyped route or payload form fails here. The
+	// bucket GET, PUT and DELETE carry v21.1.2's ownershipControls branch on
+	// both releases, where v21.1.2 puts it, and they and the object GET, PUT
+	// and DELETE end with rgw-go's refusals, just before the fall-through.
 	DescribeTable("walks each op_* method's branches in radosgw's order",
 		func(ctx SpecContext, method, path string, rels []denc.Release, steps []step) {
 			for _, rel := range rels {
@@ -236,6 +305,13 @@ var _ = Describe("Dispatch", func() {
 			{"policyStatus", "get_bucket_policy_status", 0},
 			{"publicAccessBlock", "get_bucket_public_access_block", signed},
 			{"encryption", "get_bucket_encryption", signed},
+			{"ownershipControls", "get_bucket_ownership_controls", 0},
+			{"analytics", "get_bucket_analytics", 0},
+			{"intelligent-tiering", "get_bucket_intelligent_tiering", 0},
+			{"inventory", "get_bucket_inventory", 0},
+			{"metrics", "get_bucket_metrics", 0},
+			{"metadataConfiguration", "get_bucket_metadata_configuration", 0},
+			{"metadataTable", "get_bucket_metadata_table", 0},
 			{"", "list_bucket", 0},
 		}),
 		Entry("bucket GET on Tentacle", "GET", "/b", tentacle, []step{
@@ -257,6 +333,13 @@ var _ = Describe("Dispatch", func() {
 			{"policyStatus", "get_bucket_policy_status", 0},
 			{"publicAccessBlock", "get_bucket_public_access_block", signed},
 			{"encryption", "get_bucket_encryption", signed},
+			{"ownershipControls", "get_bucket_ownership_controls", 0},
+			{"analytics", "get_bucket_analytics", 0},
+			{"intelligent-tiering", "get_bucket_intelligent_tiering", 0},
+			{"inventory", "get_bucket_inventory", 0},
+			{"metrics", "get_bucket_metrics", 0},
+			{"metadataConfiguration", "get_bucket_metadata_configuration", 0},
+			{"metadataTable", "get_bucket_metadata_table", 0},
 			{"", "list_bucket", 0},
 		}),
 		Entry("bucket HEAD", "HEAD", "/b", both, []step{
@@ -279,6 +362,13 @@ var _ = Describe("Dispatch", func() {
 			{"replication", "put_bucket_replication", signed},
 			{"publicAccessBlock", "put_bucket_public_access_block", signed},
 			{"encryption", "put_bucket_encryption", signed},
+			{"ownershipControls", "put_bucket_ownership_controls", signed},
+			{"analytics", "put_bucket_analytics", 0},
+			{"intelligent-tiering", "put_bucket_intelligent_tiering", 0},
+			{"inventory", "put_bucket_inventory", 0},
+			{"metrics", "put_bucket_metrics", 0},
+			{"metadataConfiguration", "put_bucket_metadata_configuration", 0},
+			{"metadataTable", "put_bucket_metadata_table", 0},
 			{"", "create_bucket", signed},
 		}),
 		Entry("bucket PUT on Tentacle", "PUT", "/b", tentacle, []step{
@@ -296,6 +386,13 @@ var _ = Describe("Dispatch", func() {
 			{"replication", "put_bucket_replication", signed},
 			{"publicAccessBlock", "put_bucket_public_access_block", signed},
 			{"encryption", "put_bucket_encryption", signed},
+			{"ownershipControls", "put_bucket_ownership_controls", signed},
+			{"analytics", "put_bucket_analytics", 0},
+			{"intelligent-tiering", "put_bucket_intelligent_tiering", 0},
+			{"inventory", "put_bucket_inventory", 0},
+			{"metrics", "put_bucket_metrics", 0},
+			{"metadataConfiguration", "put_bucket_metadata_configuration", 0},
+			{"metadataTable", "put_bucket_metadata_table", 0},
 			{"", "create_bucket", signed},
 		}),
 		Entry("bucket DELETE on Squid", "DELETE", "/b", squid, []step{
@@ -308,8 +405,15 @@ var _ = Describe("Dispatch", func() {
 			{"replication", "delete_bucket_replication", 0},
 			{"publicAccessBlock", "delete_bucket_public_access_block", signed},
 			{"encryption", "delete_bucket_encryption", signed},
+			{"ownershipControls", "delete_bucket_ownership_controls", 0},
 			{"website", "delete_bucket_website", signed},
 			{"mdsearch", "delete_bucket_meta_search", 0},
+			{"analytics", "delete_bucket_analytics", 0},
+			{"intelligent-tiering", "delete_bucket_intelligent_tiering", 0},
+			{"inventory", "delete_bucket_inventory", 0},
+			{"metrics", "delete_bucket_metrics", 0},
+			{"metadataConfiguration", "delete_bucket_metadata_configuration", 0},
+			{"metadataTable", "delete_bucket_metadata_table", 0},
 			{"", "delete_bucket", 0},
 		}),
 		Entry("bucket DELETE on Tentacle", "DELETE", "/b", tentacle, []step{
@@ -321,8 +425,15 @@ var _ = Describe("Dispatch", func() {
 			{"replication", "delete_bucket_replication", 0},
 			{"publicAccessBlock", "delete_bucket_public_access_block", signed},
 			{"encryption", "delete_bucket_encryption", signed},
+			{"ownershipControls", "delete_bucket_ownership_controls", 0},
 			{"website", "delete_bucket_website", signed},
 			{"mdsearch", "delete_bucket_meta_search", 0},
+			{"analytics", "delete_bucket_analytics", 0},
+			{"intelligent-tiering", "delete_bucket_intelligent_tiering", 0},
+			{"inventory", "delete_bucket_inventory", 0},
+			{"metrics", "delete_bucket_metrics", 0},
+			{"metadataConfiguration", "delete_bucket_metadata_configuration", 0},
+			{"metadataTable", "delete_bucket_metadata_table", 0},
 			{"", "delete_bucket", 0},
 		}),
 		Entry("bucket POST on Squid", "POST", "/b", squid, []step{
@@ -347,6 +458,7 @@ var _ = Describe("Dispatch", func() {
 			{"attributes", "get_obj_attrs", signed},
 			{"retention", "get_obj_retention", 0},
 			{"legal-hold", "get_obj_legal_hold", 0},
+			{"annotation", "get_obj_annotation", 0},
 			{"", "get_obj", signed},
 		}),
 		Entry("object GET on Tentacle", "GET", "/b/k", tentacle, []step{
@@ -357,6 +469,7 @@ var _ = Describe("Dispatch", func() {
 			{"attributes", "get_obj_attrs", 0},
 			{"retention", "get_obj_retention", 0},
 			{"legal-hold", "get_obj_legal_hold", 0},
+			{"annotation", "get_obj_annotation", 0},
 			{"", "get_obj", signed},
 		}),
 		Entry("object HEAD", "HEAD", "/b/k", both, []step{
@@ -369,11 +482,15 @@ var _ = Describe("Dispatch", func() {
 			{"tagging", "put_obj_tags", signed},
 			{"retention", "put_obj_retention", signed},
 			{"legal-hold", "put_obj_legal_hold", signed},
+			{"annotation", "put_obj_annotation", 0},
+			{"renameObject", "rename_obj", 0},
+			{"encryption", "update_obj_encryption", 0},
 			{"", "put_obj", chunked},
 		}),
 		Entry("object DELETE", "DELETE", "/b/k", both, []step{
 			{"tagging", "delete_obj_tags", 0},
 			{"uploadId=u", "abort_multipart", 0},
+			{"annotation", "delete_obj_annotation", 0},
 			{"", "delete_obj", 0},
 		}),
 		Entry("object POST on Squid", "POST", "/b/k", squid, []step{
@@ -484,3 +601,116 @@ var _ = Describe("Dispatch", func() {
 		Expect(err).To(MatchError(op.ErrMethodNotAllowed))
 	})
 })
+
+// A floor radosgw lists, creates or deletes the bucket for these requests;
+// rgw-go's ownership controls routes answer as every route without a
+// handler does, after authentication.
+var _ = Describe("An ownershipControls request through the handler", func() {
+	const document = `<OwnershipControls xmlns="http://s3.amazonaws.com/doc/2006-03-01/">` +
+		`<Rule><ObjectOwnership>BucketOwnerEnforced</ObjectOwnership></Rule></OwnershipControls>`
+	// newStore holds alice's empty bucket "plain" at rel.
+	newStore := func(ctx context.Context, rel denc.Release) (*memstore.Store, *op.UserRecord) {
+		store := memstore.New(memstore.Config{Release: rel})
+		alice := store.AddUser(meta.UserInfo{UserID: meta.UserID{ID: "alice"}, OpMask: op.OpTypeAll})
+		_, err := store.CreateBucket(ctx, op.CreateBucketParams{Name: "plain", Owner: meta.UserOwner(alice.Info.UserID)})
+		Expect(err).NotTo(HaveOccurred())
+		return store, alice
+	}
+
+	DescribeTable("answers 501 NotImplemented once authenticated, and lists, creates and deletes nothing",
+		func(ctx SpecContext, rel denc.Release, method, target, body string, forms op.PayloadForms) {
+			store, alice := newStore(ctx, rel)
+			var authed []op.PayloadForms
+			as := s3.AuthenticatorFunc(func(_ context.Context, _ *http.Request, got op.PayloadForms) (*op.AuthResult, error) {
+				authed = append(authed, got)
+				return &op.AuthResult{Identity: op.Identity{User: &alice.Info, Owner: meta.UserOwner(alice.Info.UserID), OpMask: alice.Info.OpMask}}, nil
+			})
+			rec := serveReq(newHandler(store, as, s3.Config{}), method, target, strings.NewReader(body))
+			Expect(rec.Code).To(Equal(http.StatusNotImplemented), rec.Body.String())
+			Expect(rec.Body.String()).To(ContainSubstring("<Code>NotImplemented</Code>"))
+			Expect(rec.Body.String()).NotTo(ContainSubstring("ListBucketResult"))
+			Expect(authed).To(Equal([]op.PayloadForms{forms}), "authenticated once, with the route's payload forms")
+			_, err := store.GetBucket(ctx, "", "plain")
+			Expect(err).NotTo(HaveOccurred(), "the empty bucket is still there")
+			_, err = store.GetBucket(ctx, "", "fresh")
+			Expect(err).To(MatchError(op.ErrNoSuchBucket), "no bucket was created")
+		},
+		Entry("GET on Squid", denc.Squid, "GET", "/plain?ownershipControls", "", op.PayloadForms(0)),
+		Entry("GET with list-type=2 on Tentacle", denc.Tentacle, "GET", "/plain?ownershipControls&list-type=2", "", op.PayloadForms(0)),
+		Entry("PUT of an OwnershipControls document on Squid", denc.Squid, "PUT", "/plain?ownershipControls", document, signed),
+		Entry("PUT with no body naming a free bucket name on Tentacle", denc.Tentacle, "PUT", "/fresh?ownershipControls", "", signed),
+		Entry("DELETE of an empty bucket on Squid", denc.Squid, "DELETE", "/plain?ownershipControls", "", op.PayloadForms(0)),
+		Entry("DELETE of an empty bucket on Tentacle", denc.Tentacle, "DELETE", "/plain?ownershipControls", "", op.PayloadForms(0)),
+	)
+	It("answers a refused authentication with its own error rather than 501", func(ctx SpecContext) {
+		store, _ := newStore(ctx, denc.Tentacle)
+		refusing := s3.AuthenticatorFunc(func(context.Context, *http.Request, op.PayloadForms) (*op.AuthResult, error) {
+			return nil, op.ErrAccessDenied
+		})
+		rec := serveReq(newHandler(store, refusing, s3.Config{}), http.MethodDelete, "/plain?ownershipControls", nil)
+		Expect(rec.Code).To(Equal(http.StatusForbidden), rec.Body.String())
+		Expect(rec.Body.String()).To(ContainSubstring("<Code>AccessDenied</Code>"))
+	})
+})
+
+// radosgw lists, creates or deletes the bucket, or reads, overwrites or
+// deletes the object, for each of these requests.
+var _ = Describe("A request for a configuration radosgw has no op for, through the handler", func() {
+	const data = "the object's data"
+	// newStore holds alice's empty bucket "plain" and her bucket "full", whose
+	// object "k" holds data.
+	newStore := func(ctx context.Context, rel denc.Release) (*memstore.Store, s3.Authenticator) {
+		store := memstore.New(memstore.Config{Release: rel})
+		alice := store.AddUser(meta.UserInfo{UserID: meta.UserID{ID: "alice"}, OpMask: op.OpTypeAll})
+		_, err := store.CreateBucket(ctx, op.CreateBucketParams{Name: "plain", Owner: meta.UserOwner(alice.Info.UserID)})
+		Expect(err).NotTo(HaveOccurred())
+		full, err := store.CreateBucket(ctx, op.CreateBucketParams{Name: "full", Owner: meta.UserOwner(alice.Info.UserID)})
+		Expect(err).NotTo(HaveOccurred())
+		_, err = store.PutObject(ctx, full, meta.ObjKey{Name: "k"}, strings.NewReader(data), op.PutParams{Size: int64(len(data))})
+		Expect(err).NotTo(HaveOccurred())
+		return store, authAs(alice)
+	}
+
+	DescribeTable("answers 501 NotImplemented and writes nothing, on both releases",
+		func(ctx SpecContext, method, target, body string, hdr ...string) {
+			for _, rel := range both {
+				store, as := newStore(ctx, rel)
+				rec := serveReq(newHandler(store, as, s3.Config{}), method, target, strings.NewReader(body), hdr...)
+				Expect(rec.Code).To(Equal(http.StatusNotImplemented), "%s: %s", releaseName(rel), rec.Body.String())
+				Expect(rec.Body.String()).To(ContainSubstring("<Code>NotImplemented</Code>"), releaseName(rel))
+				Expect(rec.Body.String()).NotTo(ContainSubstring(data), releaseName(rel))
+				_, err := store.GetBucket(ctx, "", "plain")
+				Expect(err).NotTo(HaveOccurred(), "%s: the empty bucket is still there", releaseName(rel))
+				_, err = store.GetBucket(ctx, "", "fresh")
+				Expect(err).To(MatchError(op.ErrNoSuchBucket), "%s: no bucket was created", releaseName(rel))
+				full, err := store.GetBucket(ctx, "", "full")
+				Expect(err).NotTo(HaveOccurred(), releaseName(rel))
+				st, err := store.PrefetchObject(ctx, full, meta.ObjKey{Name: "k"})
+				Expect(err).NotTo(HaveOccurred(), releaseName(rel))
+				Expect(string(st.Head)).To(Equal(data), "%s: the object is still there with its data", releaseName(rel))
+			}
+		},
+		refusedRequests(),
+	)
+})
+
+// refusedRequests is a GET, a PUT and a DELETE of each bucket configuration
+// radosgw has no op for, against the empty bucket or a free name, and of an
+// object's annotation, against the object that holds data, with a PUT of a
+// RenameObject and an UpdateObjectEncryption onto that object.
+func refusedRequests() []TableEntry {
+	var entries []TableEntry
+	for _, key := range []string{"analytics", "intelligent-tiering", "inventory", "metrics", "metadataConfiguration", "metadataTable"} {
+		entries = append(entries,
+			Entry("GET ?"+key+" lists nothing", "GET", "/plain?"+key, ""),
+			Entry("PUT ?"+key+" with no body creates no bucket under a free name", "PUT", "/fresh?"+key, ""),
+			Entry("DELETE ?"+key+" keeps the empty bucket", "DELETE", "/plain?"+key, ""))
+	}
+	return append(entries,
+		Entry("GET ?annotation sends none of the object's data", "GET", "/full/k?annotation&annotationName=n", ""),
+		Entry("PUT ?annotation keeps the object's data", "PUT", "/full/k?annotation&annotationName=n", "an annotation"),
+		Entry("DELETE ?annotation keeps the object", "DELETE", "/full/k?annotation&annotationName=n", ""),
+		Entry("PUT ?renameObject with no body keeps the data of the object under the new name", "PUT", "/full/k?renameObject", "",
+			"Content-Length", "0", "x-amz-rename-source", "/full/other"),
+		Entry("PUT ?encryption keeps the object's data", "PUT", "/full/k?encryption", "<ObjectEncryption/>"))
+}

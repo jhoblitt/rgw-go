@@ -330,6 +330,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's otp replay state stays in the zone that recorded it](#radosgws-otp-replay-state-stays-in-the-zone-that-recorded-it) | pending | pending |  |
 | [radosgw adds any header an aws-chunked trailer names to the request after its body](#radosgw-adds-any-header-an-aws-chunked-trailer-names-to-the-request-after-its-body) | pending | pending |  |
 | [radosgw's verify_mfa logs an x-amz-mfa value that does not split in two, its code included](#radosgws-verify_mfa-logs-an-x-amz-mfa-value-that-does-not-split-in-two-its-code-included) | pending | pending |  |
+| [radosgw serves bucket configuration requests it has no op for as ListObjects, CreateBucket and DeleteBucket, deleting an empty bucket](#radosgw-serves-bucket-configuration-requests-it-has-no-op-for-as-listobjects-createbucket-and-deletebucket-deleting-an-empty-bucket) | pending | [ceph/ceph#64152](https://github.com/ceph/ceph/pull/64152) |  |
+| [radosgw serves PutObjectAnnotation and DeleteObjectAnnotation as PutObject and DeleteObject, overwriting or deleting the object](#radosgw-serves-putobjectannotation-and-deleteobjectannotation-as-putobject-and-deleteobject-overwriting-or-deleting-the-object) | pending | pending | ✓ |
+| [radosgw serves RenameObject and UpdateObjectEncryption as PutObject, overwriting the object](#radosgw-serves-renameobject-and-updateobjectencryption-as-putobject-overwriting-the-object) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -17835,3 +17838,201 @@ Every new entry adds its row to this table, in document order.
   searched.
 - **Found:** phase 2 Task V13a's review, 2026-10-19, reading `verify_mfa`
   beside the otp check; derived from the source, not reproduced.
+
+## radosgw serves bucket configuration requests it has no op for as ListObjects, CreateBucket and DeleteBucket, deleting an empty bucket
+
+- **Kind:** defect, S3-correctness with data loss: a request to remove one
+  of a bucket's configurations deletes the bucket when it is empty, and
+  every setting it held. radosgw has no op for
+  Amazon S3's ownership controls before v21.0.0, nor for its analytics,
+  intelligent-tiering, inventory, metrics and metadata configurations at
+  any release checked, and its dispatch serves their requests as other ops
+  rather than refusing them. Not security-relevant: the delete is
+  authorized as a bucket's deletion, `s3DeleteBucket`
+  ([rgw_op.cc:3715](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3715),
+  [rgw_op.cc:3943](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3943)).
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - Amazon S3's client, aws-sdk-go-v2's `service/s3` v1.114.3, sends each
+    configuration's requests to the bucket with one query key
+    (`serializers.go`): `ownershipControls` for
+    GetBucketOwnershipControls, PutBucketOwnershipControls and
+    DeleteBucketOwnershipControls (`:3791`, `:7766`, `:1968`); `analytics`,
+    `intelligent-tiering`, `inventory` and `metrics` for each
+    configuration's Get, List, Put and Delete (`:2971`, `:5486`, `:6886`,
+    `:1349`; `:3176`, `:5557`, `:7183`, `:1554`; `:3247`, `:5628`,
+    `:7278`, `:1625`; `:3653`, `:5699`, `:7575`, `:1897`); and
+    `metadataConfiguration` and `metadataTable` for their Get and Delete
+    (`:3519`, `:1763`; `:3586`, `:1830`), whose Create is a POST (`:760`,
+    `:861`).
+  - Neither floor names any of the seven keys under `src/rgw` (`git grep`
+    at both tags; `inventory` stands only as a reshard stage's name at
+    v20.2.4), so no `op_*` branch tests one, and `RGWHTTPArgs::append`
+    keeps none as a sub-resource
+    ([rgw_common.cc:927-951](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L927-L951),
+    [rgw_common.cc:940-964](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L940-L964)).
+  - So each request falls through its method's branches: the bucket
+    `op_get` ends in `get_obj_op(true)`, ListObjects or, with
+    `list-type=2`, ListObjectsV2; `op_put` in CreateBucket; and `op_delete`
+    in DeleteBucket
+    ([rgw_rest_s3.cc:4640-4808](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4640-L4808),
+    [rgw_rest_s3.cc:5151-5326](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5151-L5326)).
+  - DeleteBucket deletes an empty bucket. CreateBucket refuses a body
+    that names no `CreateBucketConfiguration`, as each Put's configuration
+    document does, with 400 InvalidArgument
+    ([rgw_rest_s3.cc:2466-2469](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2466-L2469),
+    [rgw_rest_s3.cc:2637-2642](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2637-L2642)),
+    which v19.2.7's `get_params` answers when `get_location_constraint`
+    fails
+    ([rgw_rest_s3.cc:2525-2528](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2525-L2528)),
+    and creates a bucket under a free name for a PUT with no body. Each
+    Get and List is answered with the bucket's listing.
+  - v21.0.0 adds the ownership controls ops and their dispatch,
+    `is_bucket_ownership_op`, ceph commits b3733296c8e and e834454a6d5
+    merged by ceph/ceph#64152, first tagged in v21.0.0
+    ([rgw_rest_s3.h:772-774](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.h#L772-L774),
+    [rgw_rest_s3.cc:5556-5560](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L5556-L5560)).
+    v21.1.2 names none of the other six keys under `src/rgw` but the same
+    reshard stage, so they still fall through to ListObjects, CreateBucket
+    and `RGWDeleteBucket_ObjStore_S3` there
+    ([rgw_rest_s3.cc:5396-5577](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L5396-L5577)).
+- **Impact:** a client that removes one of these configurations from an
+  empty bucket loses the bucket with all of its own settings, its policy,
+  ACL, lifecycle, CORS, tags, versioning, website and the rest, and its
+  name, which another owner can then take. A client that reads one gets a
+  listing document, and one that sets one gets 400, or, with no body, a
+  new bucket under a free name.
+- **Releases:** for `ownershipControls`, Squid and Tentacle, checked at
+  v19.2.7 and v20.2.4, and v21.0.0 and later serve the ops, checked at
+  v21.1.2; for the other six keys, every release checked: v19.2.7, v20.2.4
+  and v21.1.2.
+- **rgw-go:** does not reproduce it, under spec §8: compatibility "does not
+  mean reproducing radosgw's defects". It routes `ownershipControls` to its
+  ownership controls routes on both releases, as v21.1.2 routes it
+  (`docs/exclusions.md`, "ownershipControls requests are served as v21
+  serves them"), and each of the other six keys, on GET, PUT and DELETE, to
+  a route of its own after every branch radosgw has (`docs/exclusions.md`,
+  "A bucket or object request radosgw has no op for answers 501";
+  `internal/s3/dispatch.go`). The six keys' routes answer 501
+  NotImplemented for good, as rgw-go serves none of those configurations;
+  the ownership controls routes answer it until rgw-go serves those ops.
+  So none of these requests lists, creates or deletes a bucket.
+- **Upstream:** v21.0.0's ownership controls,
+  [ceph/ceph#64152](https://github.com/ceph/ceph/pull/64152), end it for
+  `ownershipControls`; pending for Squid and Tentacle and for the other six
+  keys; prior art not searched.
+- **Found:** the phase 2 bucket-configuration research, 2026-10-13
+  (`docs/superpowers/plans/2026-10-13-phase-2/research/research-bucketconfig.md`,
+  defect 11); recorded by phase 2 unit B, Task BC-28b, 2026-10-20, which
+  checked it at v19.2.7, v20.2.4 and v21.1.2 and found the analytics,
+  intelligent-tiering, inventory and metrics keys; the metadata keys by
+  BC-28b's review, 2026-10-20. Derived from the source, not reproduced.
+
+## radosgw serves PutObjectAnnotation and DeleteObjectAnnotation as PutObject and DeleteObject, overwriting or deleting the object
+
+- **Kind:** defect, S3-correctness with data loss: a request to add an
+  annotation to an object overwrites the object's data with the
+  annotation, and one to delete an annotation deletes the object, or the
+  version it names. radosgw has no op for Amazon S3's object annotations,
+  and its dispatch serves their requests as other ops rather than refusing
+  them. Not security-relevant: the write is authorized as `s3PutObject` and
+  the delete as `s3DeleteObject` or, naming a version,
+  `s3DeleteObjectVersion`, as a plain PutObject or DeleteObject is
+  ([rgw_op.cc:3982-3983](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3982-L3983),
+  [rgw_op.cc:4191-4192](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4191-L4192);
+  [rgw_op.cc:5144-5147](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5144-L5147),
+  [rgw_op.cc:5534-5537](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5534-L5537)).
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - Amazon S3's client, aws-sdk-go-v2's `service/s3` v1.114.3, sends
+    PutObjectAnnotation as a PUT of `/{Key+}?annotation` with the annotation
+    as its body, DeleteObjectAnnotation as a DELETE of `/{Key+}?annotation`,
+    and GetObjectAnnotation and ListObjectAnnotations as GETs of it
+    (`serializers.go:8940`, `:2413`, `:4570`, `:6014`). The Put, Delete and
+    Get name the annotation in `annotationName`, and each of the four may
+    name a version in `versionId`. The client added them in v1.104.0
+    (`CHANGELOG.md:143-145`).
+  - Neither floor names `annotation` under `src/rgw` (`git grep` at both
+    tags). The object `op_get` tests `acl`, `uploadId`, `layout`,
+    `tagging`, at v20.2.4 `attributes`, `retention` and `legal-hold`, then
+    returns `get_obj_op(true)`; `op_put` tests `acl`, `tagging`,
+    `retention` and `legal-hold`, then returns RGWPutObj, or RGWCopyObj
+    with a copy source; and `op_delete` tests `tagging`, then returns
+    RGWDeleteObj unless `uploadId` has a value
+    ([rgw_rest_s3.cc:4835-4892](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4835-L4892),
+    [rgw_rest_s3.cc:5360-5419](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5360-L5419)).
+  - So PutObjectAnnotation without a version stores its body as the
+    object, replacing the data it held, GetObjectAnnotation and
+    ListObjectAnnotations are
+    answered with the object's data, and DeleteObjectAnnotation deletes the
+    object. `versionId` names the object's instance for every request
+    ([rgw_rest_s3.cc:4976-4985](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4976-L4985),
+    [rgw_rest_s3.cc:5506-5515](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5506-L5515)),
+    so a DeleteObjectAnnotation naming a version deletes that version.
+  - v21.1.2 names no `annotation` under `src/rgw` either, and its object
+    `op_get`, `op_put` and `op_delete` test the same keys, `attributes`
+    included
+    ([rgw_rest_s3.cc:5611-5670](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L5611-L5670)).
+- **Impact:** a client annotating an object loses the object's data, and
+  one removing an annotation loses the object, or one of its versions, on a
+  bucket of any versioning state. A client reading an annotation gets the
+  object's data in its place.
+- **Releases:** every release checked: v19.2.7, v20.2.4 and v21.1.2.
+- **rgw-go:** does not reproduce it, under spec §8. It routes an object's
+  GET, PUT and DELETE naming `annotation` to routes of their own after
+  every branch radosgw has, which answer 501 NotImplemented, so it reads,
+  overwrites and deletes nothing (`internal/s3/dispatch.go`;
+  `docs/exclusions.md`, "A bucket or object request radosgw has no op for
+  answers 501").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 unit B, BC-28b's review, 2026-10-20, from aws-sdk-go-v2's
+  operations; checked at v19.2.7, v20.2.4 and v21.1.2. Derived from the
+  source, not reproduced.
+
+## radosgw serves RenameObject and UpdateObjectEncryption as PutObject, overwriting the object
+
+- **Kind:** defect, S3-correctness with data loss: a request to rename an
+  object stores an empty object under the new name, replacing any object
+  there, and leaves the source in place; a request to change an object's
+  encryption replaces the object's data with the request's document.
+  radosgw has no op for either, and its dispatch serves both as PutObject
+  rather than refusing them. Not security-relevant: each is authorized as
+  `s3PutObject` on the key it writes, as a plain PutObject is
+  ([rgw_op.cc:3982-3983](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3982-L3983),
+  [rgw_op.cc:4191-4192](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4191-L4192)).
+  Unreproduced: derived from the source.
+- **Evidence:**
+  - Amazon S3's client, aws-sdk-go-v2's `service/s3` v1.114.3, sends
+    RenameObject as a PUT of `/{Key+}?renameObject`, the new name, with no
+    body and the source in `x-amz-rename-source`, and UpdateObjectEncryption
+    as a PUT of `/{Key+}?encryption` with an `ObjectEncryption` document as
+    its body (`serializers.go:9680-9771`, `:10406-10436`). The client added
+    them in v1.81.0 and v1.96.0 (`CHANGELOG.md:398-400`, `:242-244`).
+  - Neither floor names `renameObject` or `x-amz-rename-source` under
+    `src/rgw` (`git grep` at both tags), and `RGWHTTPArgs::append` keeps
+    `encryption` as no sub-resource. The object `op_put` tests `acl`,
+    `tagging`, `retention` and `legal-hold`, then returns RGWPutObj, or
+    RGWCopyObj for `x-amz-copy-source`
+    ([rgw_rest_s3.cc:4863-4879](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4863-L4879),
+    [rgw_rest_s3.cc:5390-5406](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5390-L5406);
+    [rgw_common.cc:927-951](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L927-L951),
+    [rgw_common.cc:940-964](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L940-L964)).
+    The bucket `op_put`'s refusal of an `encryption` sub-resource is the
+    bucket's alone.
+  - Nor does v21.1.2 name either, and its object `op_put` tests the same
+    keys
+    ([rgw_rest_s3.cc:5641-5657](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L5641-L5657)).
+- **Impact:** a client renaming an object finds an empty object under the
+  new name, and loses any object that held that name before; one changing
+  an object's encryption loses the object's data. Each is answered 200, as
+  if it had succeeded.
+- **Releases:** every release checked: v19.2.7, v20.2.4 and v21.1.2.
+- **rgw-go:** does not reproduce it, under spec §8. It routes an object's
+  PUT naming `renameObject` or `encryption` to a route of its own after
+  every branch radosgw has, which answers 501 NotImplemented, so it
+  writes nothing (`internal/s3/dispatch.go`; `docs/exclusions.md`, "A
+  bucket or object request radosgw has no op for answers 501").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 unit B, BC-28b's fix round, 2026-10-20, listing
+  aws-sdk-go-v2's operations against the dispatch table; checked at
+  v19.2.7, v20.2.4 and v21.1.2. Derived from the source, not reproduced.
