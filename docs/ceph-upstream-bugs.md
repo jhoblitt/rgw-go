@@ -19083,7 +19083,8 @@ Every new entry adds its row to this table, in document order.
     availability only, since the writer could send 2554-07-21 itself.
 - **Releases:** v19.2.7, v20.2.4 and main 7ed73efc1be.
 - **rgw-go:** does not reproduce it. `iso8601.Parse` refuses a time before
-  the epoch or past the limit (`docs/exclusions.md`, "A date real_time
+  the epoch or past the limit, in a header and in PutObjectRetention's body
+  (`objectlock.ParseRetention`; `docs/exclusions.md`, "A date real_time
   cannot hold is refused").
 - **Upstream:** pending: sent to rgw-bug-reproduction (L1-1).
 - **Found:** phase 2 Task L1, 2026-10-20, transcribing `from_iso_8601` and

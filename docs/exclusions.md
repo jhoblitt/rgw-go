@@ -6565,6 +6565,17 @@ does the following.
   past that instant, so each such header answers 400 InvalidArgument
   (`objectLockHeaders`, `internal/s3/putobject.go`). A date inside the
   range reads as radosgw reads it, to the nanosecond.
+
+  The same reader refuses such a `RetainUntilDate` in a PutObjectRetention
+  body as 400 MalformedXML (`objectlock.ParseRetention`). radosgw reads it
+  wrapped and answers by where the wrap lands: before the clock's second,
+  400 InvalidArgument, "the retain-until date must be in the future"
+  ([rgw_op.cc:8387-8392](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8387-L8392),
+  [rgw_op.cc:9322-9327](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9322-L9327));
+  earlier than a retention in force, 403 AccessDenied
+  ([rgw_op.cc:8413-8418](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8413-L8418),
+  [rgw_op.cc:9348-9353](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9348-L9353));
+  and otherwise it stores the wrapped date.
 - **CopyObject refuses an object lock on a bucket without object lock.**
   radosgw's CopyObject stores the retention and legal hold its headers ask
   for on a bucket without object lock, where its PutObject refuses them
