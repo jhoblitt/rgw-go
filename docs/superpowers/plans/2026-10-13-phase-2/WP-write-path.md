@@ -953,6 +953,11 @@ client's `otp_check`.
      with its own: encoding/json's quotes the document, so it can quote a seed (WP-16's godoc).
      No otp decode error is logged in full.
   10. **Formatting** follows WD-16.
+  11. **The memstore** serves no otp section, so WP-19 adds one beside its three. Otherwise,
+      once the op's status table has an otp row, a memstore otp put passes the op's gate and
+      answers 400 or 204 for a section the memstore does not list. WP-19 also updates the
+      memstore's doc line that it serves "the RADOS driver's sections"
+      (`internal/memstore/metadata.go:72-73`).
 - **Specs** (fakerados with WP-17): each verb; each refusal, with nothing written; a seed of
   exactly 1024 bytes accepted, one of 1025 refused, and a second device over the bound writing
   nothing; a string member given null, an object or an array refused; the release split of the
