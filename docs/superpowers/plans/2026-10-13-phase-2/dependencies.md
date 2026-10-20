@@ -599,6 +599,7 @@ flowchart LR
   t_S2 --> t_BC_6
   t_BC_3 --> t_BC_6
   t_BC_5 --> t_BC_6
+  t_BC_7 --> t_BC_6
   t_BC_2 --> t_BC_7
   t_BC_3 --> t_BC_7
   t_BC_3 --> t_BC_8
