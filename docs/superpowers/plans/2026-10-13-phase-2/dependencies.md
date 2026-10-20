@@ -18,7 +18,7 @@ flowchart LR
   u_L["L: object lock<br/>6 tasks"]
   u_C["C: lifecycle<br/>14 tasks"]
   u_B["B: bucket config<br/>41 tasks"]
-  u_WP["WP: write path<br/>22 tasks"]
+  u_WP["WP: write path<br/>23 tasks"]
   u_T["T: gate tooling<br/>8 tasks"]
   u_CL["CL: citation links<br/>6 tasks"]
   u_S -->|4| u_V
@@ -817,6 +817,7 @@ flowchart LR
   t_WP_18["WP-18"]
   t_WP_19["WP-19"]
   t_WP_20["WP-20"]
+  t_WP_20b["WP-20b"]
   t_WP_21["WP-21"]
   t_WP_24["WP-24"]
   t_S1["S1"]:::ext
@@ -873,6 +874,7 @@ flowchart LR
   t_WP_16 --> t_WP_19
   t_WP_17 --> t_WP_19
   t_WP_18 --> t_WP_19
+  t_WP_20 --> t_WP_20b
   t_S2 --> t_WP_21
   t_V6 --> t_WP_21
   t_WP_20 --> t_WP_21
@@ -898,6 +900,7 @@ flowchart LR
   click t_WP_18 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-18-metadata-sections-as-tables" "WP-18: metadata sections as tables"
   click t_WP_19 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-19-the-otp-metadata-section" "WP-19: the otp metadata section"
   click t_WP_20 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-20-object-layout" "WP-20: object layout"
+  click t_WP_20b href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-20b-mask-the-tier-secret-on-the-period-path" "WP-20b: mask the tier secret on the period path"
   click t_WP_21 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-21-get-layout" "WP-21: GET `?layout`"
   click t_WP_24 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-24-layout-and-otp-gate" "WP-24: `?layout` and otp gate"
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
@@ -932,6 +935,7 @@ flowchart LR
 - [WP-18](WP-write-path.md#task-wp-18-metadata-sections-as-tables): metadata sections as tables
 - [WP-19](WP-write-path.md#task-wp-19-the-otp-metadata-section): the otp metadata section
 - [WP-20](WP-write-path.md#task-wp-20-object-layout): object layout
+- [WP-20b](WP-write-path.md#task-wp-20b-mask-the-tier-secret-on-the-period-path): mask the tier secret on the period path
 - [WP-21](WP-write-path.md#task-wp-21-get-layout): GET `?layout`
 - [WP-24](WP-write-path.md#task-wp-24-layout-and-otp-gate): `?layout` and otp gate
 

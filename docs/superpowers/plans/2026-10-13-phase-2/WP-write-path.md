@@ -107,7 +107,7 @@ from radosgw below is an exclusion, written by the task named in the last column
     `meta.MultipartUploadInfo.CksumType` and `CksumFlags` at v4 on Tentacle
     (`internal/meta/multipart.go:201-260`);
   - `compression.NewDecoder` (`internal/compression/codec.go:51-80`);
-  - `meta.Manifest.MarshalJSON` (`internal/meta/manifest.go:53-100`); `op.CheckCaps`;
+  - `op.CheckCaps`;
   - `meta.ZoneParams.OTPPool` (`internal/meta/zone_params.go:32`).
 
 **Produced for other units**
@@ -1015,8 +1015,9 @@ client's `otp_check`.
 - **Layer:** driver, with its op seam. **Files:** create `internal/driver/layout.go`; the
   `LayoutStore` interface in `internal/op/layout.go`, with memstore and the fakes.
   **Cluster:** no.
-- **Consumes:** `meta.Manifest.MarshalJSON`, the driver's head ref. **Produces:**
-  the implementation of S2's `LayoutStore.ObjectLayout(ctx context.Context, st *ObjectState) (json.RawMessage, error)`,
+- **Consumes:** `meta.Manifest.Dump(f formatter.Formatter, rel denc.Release)`, which it adds and
+  which `MarshalJSON` now calls at Tentacle, and the driver's head ref. **Produces:** the
+  implementation of S2's `LayoutStore.ObjectLayout(ctx context.Context, st *ObjectState) (op.LayoutDocument, error)`,
   kept off `ObjectStore` so the hot interface is not touched.
 - **Behaviour:** the `result` document of `RadosObject::dump_obj_layout`
   ([rgw_sal_rados.cc:2780-2826](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2780-L2826),
@@ -1024,17 +1025,65 @@ client's `otp_check`.
   1. `head`, an `rgw_raw_obj` of `{pool, oid, loc}` from the head ref
      ([rgw_common.cc:3137-3142](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L3137-L3142), [rgw_common.cc:3193-3198](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L3193-L3198));
   2. `manifest`, `RGWObjManifest::dump`. **The tags differ:** `tier_config` prints for
-     `cloud-s3` only at v19.2.6, and for every supported tier type at v20.2.4
-     (`git diff v19.2.6 v20.2.4 -- src/rgw/driver/rados/rgw_obj_manifest.cc`). Phase 1's
-     `MarshalJSON` renders v20.2.4's; Squid takes v19.2.6's rule;
+     `cloud-s3` only at v19.2.7, and for every supported tier type at v20.2.4
+     (`git diff v19.2.7 v20.2.4 -- src/rgw/driver/rados/rgw_obj_manifest.cc`). `Manifest.Dump`
+     takes the release: `MarshalJSON` renders v20.2.4's, and Squid takes v19.2.7's rule;
   3. `data_location`, one `{ofs, loc, loc_ofs, loc_size}` per manifest stripe, `loc_size` the
      stripe size capped at what is left of the object.
   The bytes are ceph's JSONFormatter's: keys in this order, no spaces, and no HTML escaping.
 - **Specs:** documents for the corpus' shapes, in-head, striped, multipart, compressed and an
   `_underscore` key, derived by hand from the rules above; WP-24 adds radosgw's captured bodies
   to this suite as goldens; Squid's and Tentacle's `tier_config` rule on a cloud-tier manifest.
-- **Exclusions and registry:** none.
+- **Exclusions and registry:** the exclusions "`?layout` of an object without a manifest fails"
+  and "`?layout` masks a cloud tier's S3 secret", and a sub-bullet for the layout walk under "A
+  manifest walk that stops moving, or runs past its stripe bound, fails"; the registry entries
+  "radosgw's ?layout dereferences a null manifest" and "radosgw's ?layout hands a cloud tier's S3
+  secret to any holder of admin=read" (Defects row 15), the layout walk added to the
+  manifest-stall entry, and the period entry "radosgw hands a cloud tier's secret key to any holder
+  of zone=read", whose rgw-go line points to the new entry.
 - **Depends on:** nothing. **PR:** one. **Brief:** about 140 lines.
+
+### Task WP-20b: mask the tier secret on the period path
+
+- **Layer:** meta and admin handler. **Files:** `internal/meta/dump_period.go`,
+  `internal/admin/realm.go`, and the period entry's rgw-go line in `docs/ceph-upstream-bugs.md`;
+  nothing in `internal/driver`. **Cluster:** no.
+- **Consumes:** WP-20's exported mask in `internal/meta/dump_manifest.go`: `meta.MaskTierSecret`,
+  the tier-level mask that `meta.MaskTierSecrets` applies to a manifest, and `meta.MaskedTierSecret`;
+  and the exclusion "`?layout` masks a cloud tier's S3 secret". Both packages import `meta`, so
+  there is no import cycle. **Produces:** nothing other tasks consume.
+- **Behaviour:** `GET /admin/realm/period` writes each cloud tier's S3 secret masked, as WP-20's
+  `?layout` does, where radosgw writes it in the clear to a `zone=read` caller
+  (`RGWZoneGroupPlacementTierS3::dump`,
+  [rgw_zone.cc:966-979](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_zone.cc#L966-L979),
+  [rgw_zone.cc:1006-1019](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L1006-L1019)).
+  Today `ZoneGroupPlacementTierS3.Dump` (`internal/meta/dump_period.go`) writes the secret, and
+  the period getter (`internal/admin/realm.go`) renders it. The reason is spec §8, the same rule
+  as WP-20's: compatibility does not mean reproducing radosgw's defects, and the stored period is
+  unchanged. `ZoneGroupPlacementTierS3.Dump` stays faithful; the getter masks a copy.
+- **A period served to another zone keeps the secret.** WP-20b masks the admin API's responses to
+  a `zone=read` caller. A pulling zone decodes the same response and stores the period it reads,
+  `RGWPeriodPuller` through `pull_period`
+  ([rgw_period_puller.cc:27-63](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_period_puller.cc#L27-L63),
+  [rgw_period_puller.cc:28-68](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_period_puller.cc#L28-L68)) and
+  `radosgw-admin period pull` through `do_period_pull`
+  ([rgw_admin.cc:2094-2137](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L2094-L2137),
+  [radosgw-admin.cc:2168-2211](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L2168-L2211)),
+  so a masked period would leave it storing `******` as the tier's secret.
+  [ceph/ceph#68690](https://github.com/ceph/ceph/pull/68690) kept the secret for both by having
+  them send `mask_secrets=false`; at both tags neither sends any parameter that marks a pull.
+  Multi-zone serving is out of scope (spec §1; exclusion "Multisite"), so rgw-go serves no pulling
+  zone and the pull path is untouched today; the task that brings it in decides how a pull is told
+  apart and keeps the secret for it.
+- **Specs:** the period document of a zonegroup with a cloud tier carries `"secret":"******"`
+  and keeps the access key; an empty secret stays empty.
+- **Exclusions and registry:** extends the exclusion "`?layout` masks a cloud tier's S3 secret"
+  to the period getter, or adds one beside it. The period entry "radosgw hands a cloud tier's
+  secret key to any holder of zone=read" keeps its rgw-go line, "reproduces it, for fidelity",
+  until WP-20b masks the period path; WP-20b replaces that line with one saying rgw-go masks the
+  secret, with spec §8 as the reason.
+- **Review:** an ordinary task review.
+- **Depends on:** WP-20. **PR:** one. **Brief:** about 60 lines.
 
 ### Task WP-21: GET `?layout`
 
@@ -1053,8 +1102,15 @@ client's `otp_check`.
      `CheckCaps(r, "admin", read)` alone, with no ACL or policy evaluated
      ([rgw_op.h:2537-2554](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2537-L2554), [rgw_op.cc:7904-7911](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L7904-L7911),
      [rgw_op.cc:8809-8816](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L8809-L8816)). The bucket owner without the cap is refused.
-  4. **The response.** 200 `application/json`, `{"result": <WP-20's document>}`, with a
-     Content-Length of the body and no Accept-Ranges ([rgw_rest_s3.cc:4368-4385](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4368-L4385),
+  4. **The response.** Call `ObjectLayout` before anything is written and answer its error as
+     the error (WD-12). Otherwise send 200 `application/json` with Content-Length `doc.Len()` and
+     no Accept-Ranges, then `doc.WriteTo` the response through a `bufio.Writer` that is flushed at
+     the end (two small writes per stripe). The body is WP-20's document as it is: it opens the
+     `result` section itself, whose name a JSONFormatter drops at the top level, so it is
+     `{"head":…,"manifest":…,"data_location":[…]}`, not `{"result":…}`. A WriteTo error once the
+     200 is out, a client's disconnect or the request context's end, which the frontend's drain
+     also causes, is logged, not answered
+     ([rgw_rest_s3.cc:4368-4385](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4368-L4385),
      [rgw_rest_s3.cc:4879-4896](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4879-L4896), [rgw_client_io_filters.h:208-236](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_client_io_filters.h#L208-L236)).
   5. **A layout error** is answered as an error (WD-12).
 - **Specs:** the cap refusal, the bucket owner included; a missing object before the cap check;
@@ -1073,7 +1129,9 @@ client's `otp_check`.
 - **Behaviour:** the report's §4 gate cases 6 and 7, on both releases.
   1. **`?layout`, one way.** For every populated object and for rgw-go-written in-head, striped,
      multipart and compressed ones, rgw-go's and radosgw's bodies are byte-identical. The
-     captured bodies become WP-20's goldens.
+     captured bodies become WP-20's goldens. The carve-out is a cloud-transitioned object with a
+     set tier secret: its golden carries rgw-go's masked bytes, `"secret":"******"`, where
+     radosgw's body carries the secret (exclusion: "`?layout` masks a cloud tier's S3 secret").
   2. **otp.**
      - `radosgw-admin mfa create`, then rgw-go's `GET /admin/metadata/otp?key=user:<uid>` shows
        the device.
@@ -1093,6 +1151,14 @@ client's `otp_check`.
      - Defect 10: an input that drives `dump_obj_layout` into its error path on a running
        release, if one can be built without corrupting shared state; otherwise the entry stays
        unreproduced, with the reason.
+     - Defect 15: a cloud tier with `retain_head_object` set, which defaults to false
+       ([rgw_zone_types.h:548](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_zone_types.h#L548),
+       [rgw_zone_types.h:596](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone_types.h#L596)),
+       an object transitioned to it in an unversioned bucket, or a non-current version, since
+       lifecycle deletes the head otherwise and always for a versioning-enabled bucket's current
+       version ([rgw_lc.cc:1403-1404](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1403-L1404),
+       [rgw_lc.cc:1423-1424](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1423-L1424)), then radosgw's
+       `?layout` for it carries the tier's secret, and rgw-go's carries it masked.
      Each result goes into the registry with its release.
 - **Depends on:** WP-19, WP-21. **PR split:** (a) the gate cases and goldens; (b) the registry's
   reproductions. **Brief:** about 120 lines.
@@ -1105,7 +1171,7 @@ Everything starts after the index's deferred benchmark run and the shared tasks 
 |---|---|---|
 | 1 | WP-1, WP-3, WP-4, WP-10 (a), WP-16, WP-18 (a), WP-20 | nothing |
 | 2 | WP-2, WP-10 (b), WP-17, WP-18 (b) | WP-1; WP-4 and WP-10 (a); WP-16; WP-18 (a) |
-| 3 | WP-5, WP-19, WP-21 | WP-2; WP-17 and WP-18; WP-20, S2 and V6 |
+| 3 | WP-5, WP-19, WP-21, WP-20b | WP-2; WP-17 and WP-18; WP-20, S2 and V6; WP-20 |
 | 4 | WP-6, WP-8 | WP-3 and WP-5; WP-5 and WP-10 (b) |
 | 5 | WP-7, WP-9, WP-11 | WP-6, V11 and V14a; WP-8; WP-8 and WP-10 (b) |
 | 6 | WP-12, then WP-13 | WP-9; WP-12, WP-7 and V14a |
@@ -1144,6 +1210,7 @@ search before any filing.
 | 12 | A device's replay state, `last_checks` and `last_success`, lives in each zone's otp object and is never synced. The metadata document holds only `devices` ([rgw_otp.cc:47-49](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_otp.cc#L47-L49), [rgw_otp.cc:24-26](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L24-L26)), each an `otp_info_t` ([cls_otp_types.cc:30-71](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_types.cc#L30-L71), [cls_otp_types.cc:30-71](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_types.cc#L30-L71)), `otp_get` answers only the device ([cls_otp.cc:439](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L439), [cls_otp.cc:439](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L439)), and a check, which reads the local zone's object, writes no metadata log entry ([svc_cls.cc:32-63](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L32-L63), [svc_cls.cc:32-63](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_cls.cc#L32-L63)). So a TOTP accepted at one zone is accepted once more at each other zone inside its window, which RFC 6238 section 5.2 forbids (registry, "radosgw's otp replay state stays in the zone that recorded it"). Both tags. | security (possible), low: a replay needs the user's credentials and an observed code | unreproduced: it needs two zones | keep it: the stored form, the document and the sync are radosgw's; WP-19 updates the entry's rgw-go line | WP-19 |
 | 13 | `otp_set`'s `parse_seed` declares a stack array as long as each seed, which nothing bounds below the OSD's 90 MiB write limit (registry, "cls_otp's otp_set puts an array as long as the seed on the OSD's stack"). Both tags; fixed on main, in v21.0.1 and later. | security (possible): DoS, admin-only | unreproduced | WD-15: refuse a seed longer than 1024 bytes; update the registry's rgw-go line | WP-19 |
 | 14 | An otp put that drops a device keeps its id in `header`. The put removes and recreates the object and calls `otp_set` in one op, and `otp_set` reads the committed header ([svc_cls.cc:188-216](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L188-L216), [svc_cls.cc:188-216](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_cls.cc#L188-L216); [cls_otp.cc:301-348](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L301-L348), [cls_otp.cc:301-348](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L301-L348); registry, "radosgw's otp metadata put keeps a dropped device's id in the otp header"). Every later `get_all` fails with ENOENT, and metadata sync then removes the user's otp object on the peer zones. Both tags. | data corruption | unreproduced | WD-17: the put's raw `header` write; exclusion | WP-17, WP-19, WP-24 |
+| 15 | `?layout` writes a retained cloud-tier head's manifest, whose tier config holds the tier's S3 access key and secret, to any holder of `admin=read`: `RGWZoneGroupPlacementTierS3::dump` writes both unmasked ([rgw_zone.cc:966-979](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_zone.cc#L966-L979), [rgw_zone.cc:1006-1019](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L1006-L1019)). The head survives the transition only on a tier with the non-default `retain_head_object`, and never for a versioning-enabled bucket's current version; registry, "radosgw's ?layout hands a cloud tier's S3 secret to any holder of admin=read". Both tags and main. | security (possible): credential disclosure to `admin=read`, conditional on `retain_head_object` | unreproduced | mask the secret (spec §8); exclusion "`?layout` masks a cloud tier's S3 secret"; WP-20b masks the period path; sent to the rgw-bug-reproduction session | WP-20, WP-21, WP-24 |
 
 Not defects, recorded so no task re-derives them:
 - `?layout` checks only the `admin` cap, by design.
