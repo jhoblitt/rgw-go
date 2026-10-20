@@ -684,6 +684,12 @@ var _ = Describe("Handler", func() {
 			Expect(get("/plain/k", "Authorization", authz).Code).To(Equal(403))
 			Expect(logRecords(buf)).To(BeEmpty())
 		})
+		It("logs nothing for a NotImplemented, a refusal of what the request asks though its status is 501", func() {
+			buf := captureLog()
+			h = newHandler(store, failing(op.ErrNotImplemented), s3.Config{})
+			Expect(get("/plain/k", "Authorization", authz).Code).To(Equal(501))
+			Expect(logRecords(buf)).To(BeEmpty())
+		})
 	})
 	Describe("the request id", func() {
 		It("is on every line logged while a request is served: the authenticator's, the op layer's and the handler's", func(ctx SpecContext) {

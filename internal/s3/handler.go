@@ -504,10 +504,14 @@ func refuseAuth(ctx context.Context, w http.ResponseWriter, r *op.Request, err e
 // LogAuthError logs a failed authentication's server error, a store's
 // failure rather than a refusal, by its code alone, as an authenticator's
 // error can carry what the request's credentials hold. It logs no refusal:
-// the verifier logs the failed lookup behind one itself. The admin handler
-// logs its authentication failures through it too.
+// the verifier logs the failed lookup behind one itself. NotImplemented is a
+// refusal too, of a payload form the route does not take or of credentials
+// the authenticator does not, though its status is 501, so it is not logged
+// either, as WriteError does not log a route's. The admin handler logs its
+// authentication failures through it too.
 func LogAuthError(ctx context.Context, err error) {
-	if op.AsError(err).Status >= http.StatusInternalServerError {
+	e := op.AsError(err)
+	if e.Status >= http.StatusInternalServerError && !errors.Is(e, op.ErrNotImplemented) {
 		slog.ErrorContext(ctx, "authentication failed", slog.String("code", op.ErrorCode(err)))
 	}
 }
