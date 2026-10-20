@@ -10,10 +10,10 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/authz"
+	"github.com/jhoblitt/rgw-go/internal/iso8601"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/rgwtext"
-	"github.com/jhoblitt/rgw-go/internal/strptime"
 	"github.com/jhoblitt/rgw-go/internal/tags"
 )
 
@@ -263,8 +263,7 @@ func objectLockHeaders(r *op.Request, isCopy bool) error {
 	}
 	switch {
 	case hasMode && hasDate:
-		until, ok := fromISO8601(rgwtext.CString(date))
-		if !ok || until <= r.Env.Clock().Unix() {
+		if until, ok := iso8601.Parse(rgwtext.CString(date)); !ok || until.Unix() <= r.Env.Clock().Unix() {
 			return invalid("invalid x-amz-object-lock-retain-until-date value")
 		}
 		if mode = rgwtext.CString(mode); mode != "GOVERNANCE" && mode != "COMPLIANCE" {
@@ -279,79 +278,6 @@ func objectLockHeaders(r *op.Request, isCopy bool) error {
 		}
 	}
 	return nil
-}
-
-// fromISO8601 is ceph::from_iso_8601 with ws_terminates
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/iso_8601.cc#L51-L151 at v19.2.6
-// and v20.2.4) as RGWObjectRetention's caller then reads it,
-// real_clock::to_time_t: the time's whole seconds, through real_time's unsigned
-// 64-bit nanoseconds, which wrap for a time after 2554. A date or time may end
-// early, or at white space, or after a "Z"; a year before 1970 does not parse.
-func fromISO8601(s string) (int64, bool) {
-	p := 0
-	digits := func(n int) (int, bool) {
-		v := 0
-		for range n {
-			if p == len(s) || s[p] < '0' || s[p] > '9' {
-				return 0, false
-			}
-			v = v*10 + int(s[p]-'0')
-			p++
-		}
-		return v, true
-	}
-	space := func(c byte) bool { return c == ' ' || '\t' <= c && c <= '\r' }
-	dateEnd := func() bool { return p == len(s) || space(s[p]) }
-	timeEnd := func() bool { return p < len(s) && s[p] == 'Z' && (p+1 == len(s) || space(s[p+1])) }
-	year, ok := digits(4)
-	if !ok || year < 1970 {
-		return 0, false
-	}
-	month, day, hour, minute, sec := 1, 1, 0, 0, 0
-	seconds := func(frac uint64) (int64, bool) {
-		t := strptime.Tm{Year: year, Mon: month - 1, Mday: day, Hour: hour, Min: minute, Sec: sec}.Timegm().Unix()
-		if t == -1 {
-			return 0, false
-		}
-		ns := uint64(t)*uint64(time.Second) + frac   //nolint:gosec // real_time keeps unsigned nanoseconds
-		return int64(ns / uint64(time.Second)), true //nolint:gosec // to_time_t of those nanoseconds
-	}
-	if dateEnd() {
-		return seconds(0)
-	}
-	for _, field := range []struct {
-		delim byte
-		v     *int
-		end   func() bool
-	}{{'-', &month, dateEnd}, {'-', &day, dateEnd}, {'T', &hour, timeEnd}, {':', &minute, timeEnd}, {':', &sec, timeEnd}} {
-		if p == len(s) || s[p] != field.delim {
-			return 0, false
-		}
-		p++
-		if *field.v, ok = digits(2); !ok {
-			return 0, false
-		}
-		if field.end() {
-			return seconds(0)
-		}
-	}
-	if p == len(s) || s[p] != '.' {
-		return 0, false
-	}
-	p++
-	var frac, scale uint64 = 0, 100_000_000
-	for range 9 {
-		d, ok := digits(1)
-		if !ok {
-			return 0, false
-		}
-		frac += uint64(d) * scale //nolint:gosec // a digit
-		scale /= 10
-		if timeEnd() {
-			return seconds(frac)
-		}
-	}
-	return 0, false
 }
 
 // cephUnarmor is ceph_unarmor

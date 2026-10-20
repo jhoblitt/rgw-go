@@ -344,6 +344,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's ?layout hands a cloud tier's S3 secret to any holder of admin=read](#radosgws-layout-hands-a-cloud-tiers-s3-secret-to-any-holder-of-adminread) | pending | pending | ✓ |
 | [cls_rgw's lc_get_entry and lc_get_next_entry refuse an lc entry stored in its old pair form, which stalls the shard](#cls_rgws-lc_get_entry-and-lc_get_next_entry-refuse-an-lc-entry-stored-in-its-old-pair-form-which-stalls-the-shard) | pending | pending |  |
 | [cls_rgw's lc_get_entry logs a request it cannot decode as lc_set_entry's](#cls_rgws-lc_get_entry-logs-a-request-it-cannot-decode-as-lc_set_entrys) | pending | pending |  |
+| [radosgw's object-lock dates wrap past 2554](#radosgws-object-lock-dates-wrap-past-2554) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -18986,3 +18987,104 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** not filed; a cosmetic log message.
 - **Found:** phase 2 Task C3, 2026-10-20, reading the lc class methods for
   the lc client. Derived from the source, not reproduced.
+
+## radosgw's object-lock dates wrap past 2554
+
+- **Kind:** defect, unfixed at v19.2.7, v20.2.4 and main; security-relevant,
+  a WORM fail-open: a bucket's default retention long enough to pass 2554,
+  a value a bucket owner sets in ordinary use with no operator opt-in, leaves
+  each new object unprotected, or protected for far less than the rule says.
+  Unreproduced: derived from the source, with radosgw's u64 arithmetic
+  computed.
+- **Evidence:** paths are under `src/`.
+  - A `ceph::real_time` counts nanoseconds since the epoch in a `timespan`,
+    whose `rep` is `uint64_t`, so its last instant is
+    2554-07-21T23:34:33.709551615Z
+    ([ceph_time.h:66-74](https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_time.h#L66-L74),
+    [ceph_time.h:63-71](https://github.com/ceph/ceph/blob/v20.2.4/src/common/ceph_time.h#L63-L71)).
+  - **The default retention is unguarded.** `get_lock_until_date`, the
+    retention a bucket's rule gives each object written to it, is the mtime
+    plus `std::chrono::days(days)` or `std::chrono::years(years)`, 365.2425
+    days a year; the sum converts the period to real_time's unsigned
+    nanoseconds and wraps, with no range check
+    ([rgw_object_lock.cc:103-111](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L103-L111),
+    [rgw_object_lock.cc:87-95](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_object_lock.cc#L87-L95)).
+    The write path stores it on each create
+    ([rgw_rados.cc:3211-3221](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3211-L3221),
+    [rgw_rados.cc:3308-3318](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3308-L3318)).
+    PutObjectLockConfiguration's only check of the period is
+    `retention_period_valid`, exactly one of days and years positive, with
+    no upper bound
+    ([rgw_object_lock.h:116-121](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.h#L116-L121),
+    [rgw_object_lock.h:112-117](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_object_lock.h#L112-L117);
+    [rgw_op.cc:8275-8280](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8275-L8280),
+    [rgw_op.cc:9210-9215](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9210-L9215)).
+  - **An explicit date is a second, separate path.** `ceph::from_iso_8601`
+    reads the `x-amz-object-lock-retain-until-date` of PutObject, CopyObject
+    and CreateMultipartUpload
+    ([rgw_rest_s3.cc:2652-2663](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2652-L2663),
+    [rgw_rest_s3.cc:2805-2816](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2805-L2816);
+    [rgw_rest_s3.cc:3515-3526](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3515-L3526),
+    [rgw_rest_s3.cc:3765-3776](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3765-L3776);
+    [rgw_rest_s3.cc:4030-4039](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4030-L4039),
+    [rgw_rest_s3.cc:4481-4490](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4481-L4490))
+    and PutObjectRetention's `RetainUntilDate`
+    ([rgw_object_lock.cc:130-131](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L130-L131),
+    [rgw_object_lock.cc:114-115](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_object_lock.cc#L114-L115)).
+    Its `calculate` converts the parsed time with `real_clock::from_time_t`,
+    modulo 2^64 nanoseconds
+    ([iso_8601.cc:39-48](https://github.com/ceph/ceph/blob/v19.2.7/src/common/iso_8601.cc#L39-L48),
+    [iso_8601.cc:39-48](https://github.com/ceph/ceph/blob/v20.2.4/src/common/iso_8601.cc#L39-L48);
+    [ceph_time.h:149-151](https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_time.h#L149-L151),
+    [ceph_time.h:146-148](https://github.com/ceph/ceph/blob/v20.2.4/src/common/ceph_time.h#L146-L148)),
+    and it refuses a year before 1970 and no other range, though the header
+    that declares `from_iso_8601` requires every time to be representable
+    ([iso_8601.h:14-33](https://github.com/ceph/ceph/blob/v19.2.7/src/common/iso_8601.h#L14-L33),
+    [iso_8601.h:14-33](https://github.com/ceph/ceph/blob/v20.2.4/src/common/iso_8601.h#L14-L33)).
+    Such a date is guarded only by the check that its whole second is after
+    the clock's, and for PutObjectRetention by the check that it does not
+    shorten a retention in force
+    ([rgw_op.cc:8387-8392](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8387-L8392),
+    [rgw_op.cc:9322-9327](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9322-L9327);
+    [rgw_op.cc:8413-8429](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8413-L8429),
+    [rgw_op.cc:9348-9364](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9348-L9364)).
+  - A day or month of `00` in 1970 gives `from_iso_8601` a time before the
+    epoch, which wraps the other way, to 2554. It also takes invalid
+    calendar fields as carried dates, month 13 as the next January and
+    February 31 as March 3, against its header's "If a date is invalid,
+    boost::none is returned"
+    ([iso_8601.h:30](https://github.com/ceph/ceph/blob/v19.2.7/src/common/iso_8601.h#L30),
+    [iso_8601.h:30](https://github.com/ceph/ceph/blob/v20.2.4/src/common/iso_8601.h#L30)); rgw-go
+    reproduces that.
+  - "[radosgw's date conditions wrap past 2554 and before
+    1970](#radosgws-date-conditions-wrap-past-2554-and-before-1970)" has the
+    same root, real_time's unsigned nanoseconds, and the same
+    `from_iso_8601`. Its sink, a policy's date comparison, fails safe; here
+    the sink is a lock, and it fails open.
+  - Tracker [#56993](https://tracker.ceph.com/issues/56993)'s fix,
+    dd87a0ff845 ("rgw: s3 object lock avoids overflow in retention date",
+    2023-06-14), widened the days to `int64_t`; 1396796ca9e, the same day,
+    moved the sum to the `std::chrono` form, which wraps in real_time's u64.
+    Main's `get_lock_until_date` has the same sum
+    ([rgw_object_lock.cc:105-113](https://github.com/ceph/ceph/blob/7ed73efc1beb034b76e150439972959857600920/src/rgw/rgw_object_lock.cc#L105-L113),
+    at 7ed73efc1be).
+- **Impact:**
+  - The default rule, for an object written at 2026-10-20T00:00:00Z: a rule
+    of `Years` 528, the first that passes the limit, locks it until
+    1970-04-01T01:23:02Z, so not at all; `Years` 584 until 2026-03-31,
+    already past; `Years` 600 until 2042-03-31, not 2626; and `Years` 1000,
+    meant as forever, until 2442-03-31.
+  - An explicit date on a version with no retention in force:
+    `2611-05-12T00:00:00Z` wraps to 2026-10-21T00:25:26Z, about a one-day
+    lock, and `3000-01-01T00:00:00Z` to 2415-06-13; `2600-01-01T00:00:00Z`
+    wraps into the past and is refused.
+  - The `00` direction: `1970-01-00`, a past date, locks the object until
+    2554-07-20, which in COMPLIANCE mode no one can shorten. That is
+    availability only, since the writer could send 2554-07-21 itself.
+- **Releases:** v19.2.7, v20.2.4 and main 7ed73efc1be.
+- **rgw-go:** does not reproduce it. `iso8601.Parse` refuses a time before
+  the epoch or past the limit (`docs/exclusions.md`, "A date real_time
+  cannot hold is refused").
+- **Upstream:** pending: sent to rgw-bug-reproduction (L1-1).
+- **Found:** phase 2 Task L1, 2026-10-20, transcribing `from_iso_8601` and
+  `get_lock_until_date`; derived from the source, not reproduced.
