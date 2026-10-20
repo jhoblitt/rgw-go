@@ -14,8 +14,7 @@ import (
 
 // PublicAccessBlock is PublicAccessBlockConfiguration
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_public_access.h#L21-L66),
-// which radosgw stores in a bucket's user.rgw.public-access attr. rgw-go
-// does not manage it yet, but honors a stored one.
+// which radosgw stores in a bucket's user.rgw.public-access attr.
 type PublicAccessBlock struct {
 	BlockPublicACLs       bool
 	IgnorePublicACLs      bool
