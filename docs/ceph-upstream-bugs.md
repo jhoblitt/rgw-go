@@ -340,6 +340,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [cls_rgw's bucket_list ignores its start key when it cannot read that key's instance entry](#cls_rgws-bucket_list-ignores-its-start-key-when-it-cannot-read-that-keys-instance-entry) | pending | pending |  |
 | [Squid's radosgw serves a request with no Host as S3 when s3website outranks s3](#squids-radosgw-serves-a-request-with-no-host-as-s3-when-s3website-outranks-s3) | [#66748](https://tracker.ceph.com/issues/66748), [#66820](https://tracker.ceph.com/issues/66820) | [ceph/ceph#58339](https://github.com/ceph/ceph/pull/58339) |  |
 | [radosgw sends a public access block after GetPublicAccessBlock's error document, past its Content-Length](#radosgw-sends-a-public-access-block-after-getpublicaccessblocks-error-document-past-its-content-length) | pending | pending |  |
+| [radosgw's ?layout dereferences a null manifest](#radosgws-layout-dereferences-a-null-manifest) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -18682,3 +18683,69 @@ Every new entry adds its row to this table, in document order.
   v19.2.7 and v20.2.4 by task BC-19, 2026-10-20, and rated possibly
   security-relevant, conditionally, by rgw-bug-reproduction's triage,
   2026-10-20. Derived from the source, not reproduced.
+
+## radosgw's ?layout dereferences a null manifest
+
+- **Kind:** defect, possibly security-relevant (denial of service), found by
+  us. Unfixed at v19.2.7 and v20.2.4. Derived from the source, not
+  reproduced.
+- **Evidence:**
+  - `?layout` is the object GET `RGWGetObjLayout`, whose permission check is
+    the requester's `admin=read` cap alone
+    ([rgw_op.h:2371-2376](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2371-L2376),
+    [rgw_op.h:2542-2547](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2542-L2547)). Its response calls
+    `dump_obj_layout` inside a JSONFormatter section
+    ([rgw_rest_s3.cc:4368-4385](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4368-L4385),
+    [rgw_rest_s3.cc:4879-4896](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4879-L4896)).
+  - `dump_obj_layout` prepares a read, which succeeds on a head without
+    `user.rgw.manifest`, takes the manifest `get_manifest` returns, and dumps
+    `*amanifest` without checking it
+    ([rgw_sal_rados.cc:2793-2806](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2793-L2806),
+    [rgw_sal_rados.cc:3628-3641](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3628-L3641)).
+  - `get_obj_state_impl` fills the state's manifest only from that attr
+    ([rgw_rados.cc:6354-6362](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6354-L6362),
+    [rgw_rados.cc:6968-6976](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6968-L6976)), and `get_state`
+    hands out nullptr when there is none
+    ([rgw_rados.cc:6468-6474](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6468-L6474),
+    [rgw_rados.cc:7082-7088](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7082-L7088)).
+- **Impact:** the dereference is undefined behaviour. `RGWObjManifest::dump`
+  reads the manifest's members through the null pointer, which would fault
+  and end the radosgw process, and with it every request the process
+  serves; not reproduced. Only a requester with the `admin=read` cap
+  reaches it, and only on a head without a manifest.
+  - Neither gateway leaves such a head under a key an S3 request names.
+    Every radosgw write that creates one sets the manifest at both tags: the
+    atomic and append processors
+    ([rgw_putobj_processor.cc:376](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L376) and
+    [rgw_putobj_processor.cc:736-738](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L736-L738) at
+    v19.2.7, [rgw_putobj_processor.cc:406](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L406) and
+    [rgw_putobj_processor.cc:780-782](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L780-L782) at
+    v20.2.4), `copy_obj`
+    ([rgw_rados.cc:5003](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5003),
+    [rgw_rados.cc:5231](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5231)), multipart completion
+    ([rgw_sal_rados.cc:3627](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3627),
+    [rgw_sal_rados.cc:4471](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4471)), the cloud tier's
+    head ([rgw_sal_rados.cc:2735](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2735),
+    [rgw_sal_rados.cc:3556](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3556)), and at v20.2.4 a
+    temporary restore's expiry
+    ([rgw_sal_rados.cc:3461](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3461)) and the bucket
+    logging commit ([rgw_sal_rados.cc:1498](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L1498)).
+    The heads written without one are a multipart part's
+    ([rgw_putobj_processor.cc:528](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L528),
+    [rgw_putobj_processor.cc:566](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L566)) and an
+    upload's meta object
+    ([rgw_sal_rados.cc:3327](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3327),
+    [rgw_sal_rados.cc:4169](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4169)), both in the
+    multipart namespace, whose names no key's oid takes. rgw-go writes the
+    same way (`headWrite.manifest`, `internal/driver/headwrite.go`). So the
+    head comes from another writer to the data pool, or is one whose
+    manifest attr was removed.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** does not reproduce it. Its layout fails with InternalError
+  for an object without a manifest (`driver.Store.ObjectLayout`,
+  `internal/driver/layout.go`), and `?layout` answers that as an error
+  (`docs/exclusions.md`, "`?layout` of an object without a manifest fails").
+- **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
+  searched.
+- **Found:** phase 2 task WP-20, 2026-10-19, reading `dump_obj_layout` for
+  the layout document. Derived from the source, not reproduced.
