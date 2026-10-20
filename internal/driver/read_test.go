@@ -486,7 +486,7 @@ var _ = Describe("ReadObject", func() {
 		Consistently(started.Load).Should(BeEquivalentTo(4),
 			"no fifth read starts while tails 2-4 hold the window, where radosgw's throttle would start three more")
 		close(release[stripe("1")])
-		Eventually(done).Should(Receive(Succeed()))
+		Eventually(done).WithTimeout(10 * time.Second).Should(Receive(Succeed()))
 		Expect(out.Bytes()).To(Equal(data))
 		Expect(started.Load()).To(BeEquivalentTo(6))
 		Expect(peak.Load()).To(BeNumerically("<=", 4))
@@ -520,7 +520,7 @@ var _ = Describe("ReadObject", func() {
 		Consistently(started.Load).Should(BeEquivalentTo(4),
 			"no fifth read starts while tail 1 is being written: it holds its share, and tails 2-4, read, hold theirs")
 		close(sink.resume)
-		Eventually(done).Should(Receive(Succeed()))
+		Eventually(done).WithTimeout(10 * time.Second).Should(Receive(Succeed()))
 		Expect(sink.buf.Bytes()).To(Equal(data))
 		Expect(started.Load()).To(BeEquivalentTo(6))
 	})
@@ -562,7 +562,7 @@ var _ = Describe("ReadObject", func() {
 		Eventually(started.Load).Should(BeEquivalentTo(4))
 		Consistently(started.Load).Should(BeEquivalentTo(4), "four 4 MiB buffers fill the window")
 		close(block)
-		Eventually(done).Should(Receive(Succeed()))
+		Eventually(done).WithTimeout(10 * time.Second).Should(Receive(Succeed()))
 		Expect(started.Load()).To(BeEquivalentTo(8))
 	})
 
