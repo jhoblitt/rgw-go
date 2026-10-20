@@ -503,7 +503,11 @@ runs for every S3 request carrying the header, whether or not the op needs MFA. 
 `PostAuthInit` notes the gap (`internal/s3/request.go:163-179`).
 
 **verify_mfa** ([rgw_sal_rados.cc:284-312](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L284-L312), [rgw_sal_rados.cc:301](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L301)): the
-header splits on single spaces into exactly two fields, `serial` and `pin`, else `-EINVAL`; the
+header splits as `get_str_vec(mfa_str, " ", params)` does
+([str_list.cc:43-49](https://github.com/ceph/ceph/blob/v19.2.6/src/common/str_list.cc#L43-L49), the same at v20.2.4). That keeps what `for_each_substr` finds at
+spaces alone, skipping leading spaces and runs of them so that no field is empty, with a tab
+part of a field ([str_list.h:15-24](https://github.com/ceph/ceph/blob/v19.2.6/src/include/str_list.h#L15-L24), [str_list.h:14-23](https://github.com/ceph/ceph/blob/v20.2.4/src/include/str_list.h#L14-L23)). It must give exactly two
+fields, `serial` and `pin`, else `-EINVAL`; the
 serial must be in the user's `mfa_ids` (`RGWUserInfo`, [rgw_common.h:598](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L598),
 [rgw_common.h:622](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L622); rgw-go's `meta.UserInfo.MFAIDs`), else `-EACCES`; then `check_mfa`, any failure
 `-EACCES`; success sets `verified`.
@@ -514,7 +518,8 @@ default `<zone>.rgw.otp`); `OTP::check` is two class calls on it
 ([cls_otp_client.cc:60-96](https://github.com/ceph/ceph/blob/v19.2.6/src/cls/otp/cls_otp_client.cc#L60-L96)):
 
 1. `otp_check` (RD|WR) with `cls_otp_check_otp_op` v1 `{id = serial, val = pin, token}` where
-   `token` is 16 random alphanumerics; v19.2.6 sends it through `IoCtx::exec`, v20.2.4 through
+   `token` is 16 characters from `CryptoRandom` over a 64-character table, `A-Za-z0-9-_`
+   ([random_string.cc:33-51](https://github.com/ceph/ceph/blob/v19.2.6/src/common/random_string.cc#L33-L51), the same at v20.2.4); v19.2.6 sends it through `IoCtx::exec`, v20.2.4 through
    an `ObjectWriteOperation` (the only cls_otp change between the tags). The class
    ([cls_otp.cc:447-481](https://github.com/ceph/ceph/blob/v19.2.6/src/cls/otp/cls_otp.cc#L447-L481)) loads the device, records the attempt with the
    result of a TOTP validation against the seed, step, offset and window, unless five attempts

@@ -1360,7 +1360,8 @@ their default.
   `GetResultOp` is defined: radosgw never sends `cls_otp_get_result_op`.
 - **Behaviour:**
   1. `OTP::check` sends `otp_check` (RD|WR) with the check op, whose token is 16 random
-     alphanumerics; the caller, V13c, draws it. Squid sends it through `IoCtx::exec` and Tentacle
+     characters of the 64-character table `A-Za-z0-9-_` (V13c's behaviour 2); the caller, V13c,
+     draws it. Squid sends it through `IoCtx::exec` and Tentacle
      on a write op ([cls_otp_client.cc:60-74](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_client.cc#L60-L74), [cls_otp_client.cc:60-76](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_client.cc#L60-L76)). The call step's
      bytes are the same, and the OSD takes a call to an RD|WR method for a write either way
      (`may_write`, `set_class_write`, [osd_op_util.cc:23-25](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/osd_op_util.cc#L23-L25), [osd_op_util.cc:23-25](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/osd_op_util.cc#L23-L25); [osd_op_util.cc:197-204](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/osd_op_util.cc#L197-L204), [osd_op_util.cc:197-204](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/osd_op_util.cc#L197-L204)), so V13a sends
@@ -1395,9 +1396,17 @@ their default.
 - **Behaviour:**
   1. `otp_check` RD|WR ([cls_otp.cc:447-481](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L447-L481),
      [cls_otp.cc:447](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L447)): load the device by id, record the attempt with the TOTP
-     result unless five attempts already fell in the current step window (`ATTEMPTS_PER_WINDOW`,
-     [cls_otp.cc:43](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L43); [cls_otp.cc:108-127](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L108-L127),
-     [cls_otp.cc:108](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L108)), and write the device back.
+     result and write the device back, unless five attempts already fell in the last `step_size`
+     seconds. That window slides with the check's own time, as `trim_expired` drops the attempts
+     older than `now - step_size`; it is not an aligned TOTP step, so an emulator keyed on
+     `floor(now / step)` would admit a sixth attempt across a step boundary
+     ([cls_otp.cc:98-106](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L98-L106), [cls_otp.cc:98-106](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L98-L106);
+     `ATTEMPTS_PER_WINDOW`, [cls_otp.cc:43](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L43); `otp_instance::check`, [cls_otp.cc:108-127](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L108-L127),
+     [cls_otp.cc:108-127](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L108-L127)). A declined check answers 0 and writes nothing: `check`
+     returns with `*update = false`
+     ([cls_otp.cc:113-117](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L113-L117), [cls_otp.cc:113-117](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L113-L117)), and the method calls `write_otp_instance`
+     only on `update`
+     ([cls_otp.cc:471-480](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L471-L480), [cls_otp.cc:471-480](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L471-L480)).
   2. The validation ([cls_otp.cc:129-153](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L129-L153),
      [cls_otp.cc:129](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L129)): RFC 6238 TOTP over the stored seed, step, time offset
      and window, at the class clock `now` that `OTPClassAt` passes to `otpCheckMethods`, which
@@ -1406,7 +1415,11 @@ their default.
      same code fails afterwards. The class validates through liboath; the implementer reads
      liboath's `oath_totp_validate2` for the digit count and the window walk and quotes it in the
      task notes (PP-2). The unsigned window distance of defect 11 is reproduced as the class
-     computes it; a stored step of 0, which faults the OSD (defect 10), answers EIO here.
+     computes it; a stored step of 0, which faults the OSD (defect 10), answers EIO here. The
+     class hands liboath `val.c_str()`, so the emulator validates `Val` only up to its first NUL,
+     and a good code followed by a NUL and junk verifies; counting digits with Go's `len` would
+     fail it ([cls_otp.cc:133-136](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L133-L136), [cls_otp.cc:133-136](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L133-L136)). The id and the token stay
+     whole strings.
   3. `otp_get_result` RD ([cls_otp.cc:483-511](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L483-L511), [cls_otp.cc:483-511](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L483-L511)) decodes a `CheckOp`, so a
      `cls_otp_get_result_op` frame, whose token reads as the id and whose code runs past the
      frame, fails with EINVAL. It finds the device by the id, answering ENOENT when there is none
@@ -1414,13 +1427,19 @@ their default.
      token, after `trim_expired` drops the checks older than one step, or
      `{token, OTP_CHECK_UNKNOWN, now}` when none does (`otp_instance::find`,
      [cls_otp.cc:155-169](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L155-L169), [cls_otp.cc:155-169](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L155-L169); `trim_expired`, [cls_otp.cc:98-106](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L98-L106), [cls_otp.cc:98-106](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L98-L106)). The trim is not written back,
-     because the method is RD.
+     because the method is RD. So the lookup after a declined check answers
+     `OTP_CHECK_UNKNOWN` under a fresh token. Under a reused one it answers the newest earlier
+     entry of `last_checks` carrying it, a success included
+     ([cls_otp.cc:160-165](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L160-L165), [cls_otp.cc:160-165](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L160-L165)): the hazard V13c's fresh token defends
+     against, which the emulator reproduces so that V13c's spec bites.
   4. WP's WD-16, the formatting rule, binds this task's code.
-- **Specs:** RFC 6238 Appendix B's SHA-1 vectors at their times; a wrong code; a reused code; the
-  sixth attempt in one window; an unknown token; a missing device; a `cls_otp_get_result_op`
+- **Specs:** RFC 6238 Appendix B's SHA-1 vectors at their times; a wrong code; a reused code; a
+  good code followed by a NUL and junk, verified; the sixth attempt in one window, answered 0
+  with nothing written; its lookup, `OTP_CHECK_UNKNOWN` under a fresh token and the fifth check's
+  result under the fifth's token; an unknown token; a missing device; a `cls_otp_get_result_op`
   frame answered EINVAL; a lookup that trims an expired check and leaves it stored.
 - **Registry:** none new; defects 10 and 11 are in the registry already.
-- **Depends on:** WP-17, V13a. **PR split:** one. **Brief:** about 140 lines.
+- **Depends on:** WP-17, V13a. **PR split:** one. **Brief:** about 155 lines.
 
 ### Task V13c: driver, VerifyMFA
 
@@ -1436,16 +1455,40 @@ their default.
   2. `check_mfa` ([svc_cls.cc:46-63](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L46-L63),
      [svc_cls.cc:46](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_cls.cc#L46)): the object `user:<uid>` in the zone's `otp_pool`
      ([svc_cls.h:56-58](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.h#L56-L58)), V13a's two calls with one token, verified
-     only on `OTP_CHECK_SUCCESS`. The token is 16 random alphanumerics, as `OTP::check` draws
-     it with `gen_rand_alphanumeric` and `TOKEN_LEN` ([cls_otp_client.cc:65-66](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_client.cc#L65-L66),
-     [cls_otp_client.cc:65-66](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_client.cc#L65-L66)), drawn once per check and sent in both calls.
+     only on `OTP_CHECK_SUCCESS`. The token is 16 characters, as `OTP::check` draws it with
+     `gen_rand_alphanumeric` and `TOKEN_LEN` ([cls_otp_client.cc:65-66](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_client.cc#L65-L66),
+     [cls_otp_client.cc:65-66](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_client.cc#L65-L66)), drawn once per check and sent in both calls. It
+     comes from crypto/rand, as radosgw's comes from `CryptoRandom` over letters, digits, `-` and
+     `_` ([random_string.cc:33-51](https://github.com/ceph/ceph/blob/v19.2.7/src/common/random_string.cc#L33-L51), [random_string.cc:33-51](https://github.com/ceph/ceph/blob/v20.2.4/src/common/random_string.cc#L33-L51)). What it must be is unique among every
+     gateway's checks on the device within a step, rgw-go's and radosgw's alike: under a shared
+     token a declined check answers another check's result (V13b's behaviour 3). So no counter,
+     no derivation from the request and no math/rand stream, any of which can repeat across
+     processes.
   3. Any other result, which `Record` returns as V13a's `ErrCheckRefused`, or a missing device,
      `radosclient.ErrNotFound` from either call, is `(false, nil)`; V13c matches both with
-     `errors.Is`. Any other RADOS failure is `(false, err)`.
-- **Specs** (on the emulator, V13b): an unknown serial; a good code; a wrong one; a reused one; a
-  rate-limited one; the token shared by the two calls; a pool error.
+     `errors.Is`. Any other RADOS failure is `(false, err)`. `Check` returns nothing, so its
+     ENOENT arrives as `Pool.Write`'s error, and a failed `otp_check` ends the check before the
+     lookup, as `OTP::check` returns
+     ([cls_otp_client.cc:72-74](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_client.cc#L72-L74), [cls_otp_client.cc:74-76](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_client.cc#L74-L76)).
+  4. Nothing is logged but the otp id and the result, as `check_mfa` logs them at level 20
+     ([svc_cls.cc:60](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L60), [svc_cls.cc:60](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_cls.cc#L60)): never the `CheckOp`, its `Val`, or the header, whose
+     code still verifies until a check consumes it or its window passes.
+  5. A pin holding a NUL is not verified, and the class is not called. The class hands liboath
+     `val.c_str()`, so it would verify a good code followed by a NUL and junk
+     ([cls_otp.cc:133-136](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L133-L136), [cls_otp.cc:133-136](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L133-L136)), and `VerifyMFA` serves every later op. No
+     exclusion: the difference cannot be observed, because net/http answers 400 to a header
+     holding a NUL (V13d's behaviour 4), and radosgw cuts the header at its first NUL itself,
+     reading `HTTP_X_AMZ_MFA` as a C string
+     ([rgw_rest_s3.cc:5026-5028](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5026-L5028), [rgw_rest_s3.cc:5556-5558](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5556-L5558)). The task report says so.
+- **Specs** (on the emulator, V13b): an unknown serial; a serial in `mfa_ids` whose device is gone
+  from the otp object, and a user with no otp object at all, each `(false, nil)`; a good code; a
+  wrong one; a reused one; a rate-limited one, five checks in one step whose fifth is a good code,
+  then a sixth with a wrong code, which is refused (with a fail as the fifth, a reused token
+  reads FAIL too and the spec passes on the bug); two checks drawing different tokens; the token
+  shared by the two calls; a failed `otp_check` with no lookup sent; a pin holding a NUL, refused
+  with no call; nothing logged but the id and the result; a pool error.
 - **Exclusions:** none.
-- **Depends on:** V13a, V13b. **PR split:** one. **Brief:** about 100 lines.
+- **Depends on:** V13a, V13b. **PR split:** one. **Brief:** about 130 lines.
 
 ### Task V13d: op and s3, the `x-amz-mfa` header
 
@@ -1457,14 +1500,36 @@ their default.
   1. `PostAuthInit` reads `x-amz-mfa` after the tenant, bucket and object-name checks
      ([rgw_rest_s3.cc:5026-5031](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5026-L5031), [rgw_rest_s3.cc:5556](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5556)), where
      phase 1 notes the gap (`internal/s3/request.go:163-179`).
-  2. The value splits on single spaces into exactly two fields, serial and pin; anything else is
-     not verified. A verified pair sets `Request.MFAVerified`.
+  2. The value splits as `verify_mfa`'s `get_str_vec(mfa_str, " ", params)` does, and exactly
+     two fields, serial and pin, are verified. Anything else is not, and never reaches the
+     verifier, as `verify_mfa` answers EINVAL before `mfa_ids` and `check_mfa`: a split that
+     handed a third field on as the pin would record a FAIL toward the five-attempt limit
+     ([rgw_sal_rados.cc:287-293](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L287-L293), [rgw_sal_rados.cc:304-310](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L304-L310)). `get_str_vec` keeps what
+     `for_each_substr` finds between spaces, and that skips leading spaces and runs of them, so no
+     field is empty: `SERIAL  123456`, doubled, splits in two as `SERIAL 123456` does, while a
+     tab is part of a field
+     ([str_list.cc:43-49](https://github.com/ceph/ceph/blob/v19.2.7/src/common/str_list.cc#L43-L49), [str_list.cc:43-49](https://github.com/ceph/ceph/blob/v20.2.4/src/common/str_list.cc#L43-L49); [str_list.h:15-24](https://github.com/ceph/ceph/blob/v19.2.7/src/include/str_list.h#L15-L24), [str_list.h:14-23](https://github.com/ceph/ceph/blob/v20.2.4/src/include/str_list.h#L14-L23)). A
+     verified pair sets `Request.MFAVerified`.
   3. Nothing about MFA fails the request here; an op that needs MFA refuses it with 403
      AccessDenied (`-ERR_MFA_REQUIRED` 2044, [rgw_common.cc:96](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L96)).
-- **Specs:** absent, malformed (one field, three, double space), unknown serial, good and bad
-  codes through a fake verifier; a verifier error logged and the request carried on unverified.
-- **Exclusions:** none; V12a retires "Deletes that need MFA are refused".
-- **Depends on:** S2, V10, V13c. **PR split:** one. **Brief:** about 90 lines.
+  4. A NUL never reaches `PostAuthInit`: net/http answers 400 "invalid header value" to a header
+     value holding a control character other than a space or a tab, before any handler runs
+     (`net/http/server.go:1082-1083` and `httpguts.ValidHeaderFieldValue` at go1.27.1; the
+     frontend is net/http over HTTP/1, `internal/frontend/server.go:221-231`). V13d needs no NUL
+     rule of its own; a spec pins the 400 at the handler, and a `PostAuthInit` called directly with
+     one answers not verified, through V13c's behaviour 5.
+  5. The header value is never logged, nor is anything holding it. radosgw's own level-5 log of a
+     value that does not split carries its code (`docs/ceph-upstream-bugs.md`, "radosgw's
+     verify_mfa logs an x-amz-mfa value that does not split in two, its code included").
+- **Specs:** absent; malformed: one field, three, a tab between serial and pin, an empty value,
+  each not verified with the fake verifier never called; doubled spaces between the fields,
+  verified as radosgw verifies them; unknown serial; good and
+  bad codes through a fake verifier; a verifier error logged and the request carried on
+  unverified; a NUL in the header answered 400 before the handler, and a NUL passed to
+  `PostAuthInit` directly not verified; no log line holding the header value, for a malformed one
+  included.
+- **Exclusions:** none: the split is radosgw's. V12a retires "Deletes that need MFA are refused".
+- **Depends on:** S2, V10, V13c. **PR split:** one. **Brief:** about 110 lines.
 
 ### Task V14a: op and s3, versioned reads
 
