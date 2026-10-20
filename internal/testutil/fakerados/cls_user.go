@@ -85,9 +85,10 @@ type classValue interface {
 	Encode(e *denc.Encoder, r denc.Release)
 }
 
-// encodeSquid encodes v at the Squid release, as an emulator that cannot
-// know the cluster's release encodes what it stores and replies; no type the
-// user class encodes differs between releases.
+// encodeSquid encodes v at the Squid release, at which the emulators that
+// call it store and reply whatever release the cluster names; only the rgw
+// class's part record follows that release (osdRelease). No type the user
+// class encodes differs between releases.
 func encodeSquid(v classValue) []byte {
 	e := denc.NewEncoder()
 	v.Encode(e, denc.Squid)

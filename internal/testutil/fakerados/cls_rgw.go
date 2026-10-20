@@ -1,6 +1,7 @@
 package fakerados
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"maps"
@@ -697,8 +698,8 @@ func (c *Cluster) Header(pool, ns, oid string) rgwcls.DirHeader {
 }
 
 // rgwMPUploadPartInfoUpdate is rgw_mp_upload_part_info_update
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L4360-L4400 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4762-L4802 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L4360-L4401 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4762-L4803 at v20.2.4).
 // A request that does not decode is EINVAL. The part info stored under the
 // request's key, read as read_omap_entry does
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L915-L932 at v19.2.6,
@@ -709,8 +710,11 @@ func (c *Cluster) Header(pool, ns, oid string) rgwcls.DirHeader {
 // is EEXIST; otherwise the merged info is stored under the key, creating the
 // object as cls_cxx_map_set_val does. radosgw sends assert_exists ahead of
 // the call, which fails first on a missing meta object. The info is stored
-// at the Squid release, as a Squid OSD re-encodes it, dropping a Tentacle
-// checksum.
+// re-encoded at the release of the OSD the fake emulates (osdRelease), as
+// the class encodes it with its own RGWUploadPartInfo: a Squid OSD's version
+// 5 drops a Tentacle checksum, and a Tentacle OSD's version 6 keeps it
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_basic_types.h#L267-L278 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_basic_types.h#L285-L297 at v20.2.4).
 func rgwMPUploadPartInfoUpdate(call *ClassCall) int32 {
 	op, rval := decodeRequest(call.In, rgwcls.DecodeMPUploadPartInfoUpdateOp)
 	if rval < 0 {
@@ -740,8 +744,20 @@ func rgwMPUploadPartInfoUpdate(call *ClassCall) int32 {
 	if _, found := slices.BinarySearch(info.PastPrefixes, info.Manifest.Prefix); found {
 		return -int32(syscall.EEXIST)
 	}
-	call.Create().Omap[op.PartKey] = encodeSquid(info)
+	e := denc.NewEncoder()
+	info.Encode(e, osdRelease(call))
+	call.Create().Omap[op.PartKey] = e.Bytes()
 	return 0
+}
+
+// osdRelease is the release of the OSD the fake emulates, read from the name
+// SetRequiredOSDRelease gave the cluster as driver.Open reads a cluster's
+// (denc.ClusterRelease): a name newer than every release denc knows is
+// Tentacle, with ClusterRelease's warning, and a name below Squid, on which
+// no store opens, is Squid. A class call carries no context of its own.
+func osdRelease(call *ClassCall) denc.Release {
+	r, _ := denc.ClusterRelease(context.Background(), call.x.cluster.release)
+	return r
 }
 
 // manifestEmpty is RGWObjManifest::empty: no pieces when explicit, no rules
