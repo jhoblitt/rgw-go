@@ -224,7 +224,9 @@ the controller's ruling that splits C10 (C-D16).
 
 - **Layer:** pure library (`internal/lifecycle`). **Cluster:** no.
 - **Files:** create `internal/lifecycle/{expire.go,decide.go,headers.go}` and their specs.
-- **Consumes:** C1; L1 (c)'s `objectlock.VerifyDelete`. **Produces:**
+- **Consumes:** C1; L1 (c)'s `objectlock.VerifyDelete`, which decodes with the strict
+  `DecodeRetention` and `DecodeLegalHold` (only GetObjectRetention and GetObjectLegalHold use
+  the lenient decode). **Produces:**
   `Expired(mtime time.Time, days int, now time.Time, debug time.Duration, loc *time.Location) bool`;
   the per-entry decision, `Decide`, over a listed entry and the lister's state, with the
   size, tags and lock predicate injected; `ExpirationHeader` and `AbortHeader`.

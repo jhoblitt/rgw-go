@@ -44,7 +44,7 @@ The index's rulings this unit carries are D12 and D13, and the pending-owner def
 
 | Id | Decision | Reason |
 |---|---|---|
-| L-D1 (D12) | A date past real_time's range, 2554-07-21T23:34:33.709551615Z (u64 nanoseconds), is refused, and a computed default retention saturates there. A PutObjectLockConfiguration rule whose period from now passes it is InvalidRetentionPeriod. A `RetainUntilDate` past it is the parser's MalformedXML in a body and InvalidArgument in a header. A default retention computed at a write is clamped to the limit. | radosgw wraps the sum in u64 nanoseconds, often to a past date, which leaves the object unprotected at once (defect LL-4). A clamped date reads in radosgw as a lock to 2554, so the RADOS state stays compatible and the failure is closed. |
+| L-D1 (D12) | A date past real_time's range, 2554-07-21T23:34:33.709551615Z (u64 nanoseconds), or before the epoch, is refused, and a computed default retention saturates there. A PutObjectLockConfiguration rule whose period from now passes it is InvalidRetentionPeriod. A `RetainUntilDate` past it is the parser's MalformedXML in a body and InvalidArgument in a header. A default retention computed at a write is clamped to the limit. | radosgw wraps the sum in u64 nanoseconds, often to a past date, which leaves the object unprotected at once (defect LL-4). A clamped date reads in radosgw as a lock to 2554, so the RADOS state stays compatible and the failure is closed. |
 | L-D2 (D13) | PutObjectRetention treats an existing retention whose retain-until second is not after now as absent: no shortening or mode check applies to it. | It only ever lets a client place new protection, and it is what a lapsed lock means in S3 (defect LL-8). |
 | L-D3 | DeleteObjects evaluates s3:BypassGovernanceRetention per key on the object's ARN, as DeleteObject does. | radosgw checks it once on the bucket ARN, so a Deny scoped to `arn:aws:s3:::b/*` does not bind it (defect LL-5, security). |
 | L-D4 (P2, the owner, 2026-10-13) | Admin object removal and bucket purge ignore object lock, as radosgw does; V12b writes the exclusion. | The admin caps are the operator's tool, and Rook's bucket deletion relies on the purge. |
@@ -105,6 +105,12 @@ Versioning's ids are V-versioning.md's.
   - `ParseConfiguration`, `ParseRetention` and `ParseLegalHold` from `[]byte`, and `Marshal*`;
   - `RetentionPeriodValid(DefaultRetention) bool`;
   - `LockUntil(DefaultRetention, mtime time.Time) time.Time`, saturating;
+  - `DecodeRetention([]byte) (meta.ObjectRetention, error)` and
+    `DecodeLegalHold([]byte) (meta.ObjectLegalHold, error)`, strict: an attr short or with
+    bytes past its encoding is `ErrUndecodable`, for radosgw's full-buffer callers (a delete,
+    PutObjectRetention's existing retention, lifecycle, GET and HEAD's headers);
+    `DecodeRetentionLenient` and `DecodeLegalHoldLenient`, of the same shapes, lenient: only a
+    short attr is, for GetObjectRetention and GetObjectLegalHold;
   - `VerifyDelete(attrs map[string][]byte, now time.Time, bypassHeader, bypassAllowed bool) error`;
   - `RetentionChange(old *meta.ObjectRetention, proposed meta.ObjectRetention, now time.Time, bypass bool) error`.
 - `op.BypassGovernanceHeader(v string) bool` (L3), the header url-decoded and "true" in any
@@ -278,8 +284,10 @@ Versioning's ids are V-versioning.md's.
 - **Layer:** op and S3 handler. **Cluster:** no.
 - **Files:** create `internal/op/objectretention.go`, `internal/s3/objectretention.go` and
   their specs; modify the object-lock route-set file (after L2).
-- **Consumes:** L1; V6's `StatObject` and `SetObjectAttrs` on the resolved version;
-  `ReadParamBody`. **Produces:** the four ops, and `op.BypassGovernanceHeader`.
+- **Consumes:** L1, its strict `DecodeRetention` for PutObjectRetention's existing retention,
+  and its lenient `DecodeRetentionLenient` and `DecodeLegalHoldLenient`, which
+  GetObjectRetention and GetObjectLegalHold use; V6's `StatObject` and `SetObjectAttrs` on the
+  resolved version; `ReadParamBody`. **Produces:** the four ops, and `op.BypassGovernanceHeader`.
 - **Behaviour:**
   1. **PutObjectRetention.**
      - verify_permission ([rgw_op.cc:8334-8351](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8334-L8351),
@@ -336,8 +344,14 @@ Versioning's ids are V-versioning.md's.
   - a noncurrent version written and read by `versionId`, the current left alone;
   - the write moves the mtime by 1 ns and replaces the idtag (registry quirk);
   - response bytes; a body over `rgw_max_put_param_size`; a payload-hash mismatch refused.
-- **Exclusions and registry:** L-D2's exclusion and the registry entry for defect LL-8, class
-  S3-correctness, unreproduced (reproduction in C13 (a)).
+- **Exclusions and registry:** none of its own. L3 extends four of L1 (c)'s: L-D2's
+  exclusion, "A lapsed retention binds no retention change", and the registry entry for
+  defect LL-8, class S3-correctness, unreproduced (reproduction in C13 (a)), each to name
+  PutObjectRetention's op; the exclusion "An object-lock attr with bytes past its encoding
+  does not decode", to name its 500s: PutObjectRetention's for such an attr, and none from
+  GetObjectRetention and GetObjectLegalHold, which read it leniently; and the exclusion "A
+  retain-until second is compared with the clock exactly", to name the site it wires,
+  PutObjectRetention's check that the body's date is not before the clock.
 - **Depends on:** L1, L2 (the route-set file), S2, V6. **PR:** one. **Brief:** about 200
   lines.
 
@@ -474,7 +488,9 @@ Versioning's ids are V-versioning.md's.
 - **Files:** modify `internal/op/initmultipart.go` (the two `UploadParams` fields), `internal/s3/putobject.go`, `copyobject.go`, `multipart.go` and
   `getobject.go` (one helper each in a new `internal/s3/objectlockheaders.go`, one call line
   per site), and `internal/op/getobject.go` (the two permissions, one helper call).
-- **Consumes:** L1; L5a's `UploadParams` fields; phase 1's `objectLockHeaders`.
+- **Consumes:** L1, its strict `DecodeRetention` and `DecodeLegalHold` for GET and HEAD's
+  headers (only GetObjectRetention and GetObjectLegalHold use the lenient decode); L5a's
+  `UploadParams` fields; phase 1's `objectLockHeaders`.
 - **Produces:** the headers; the retirement of L-D10's refusals.
 - **Behaviour:**
   1. **PutObject and CopyObject** store the header retention, {mode, the date with its
@@ -511,7 +527,9 @@ Versioning's ids are V-versioning.md's.
 - **Exclusions and registry:** retires "No object-lock headers", "A multipart upload with a
   retention or a legal hold on a bucket with object lock answers 501", and the write half of
   the object-lock 501 that V11 leaves of "Writes to a versioned or object-lock bucket answer
-  501".
+  501". It extends L1 (c)'s exclusion "A retain-until second is compared with the clock
+  exactly" to the sites it wires, the CopyObject and CreateMultipartUpload headers whose date
+  it stores.
 - **Depends on:** L5a, V11, V14a, WP-13 (hot-file order). **PR split:** (a) the write
   headers and the retired refusals; (b) the GET and HEAD headers. **Brief:** about 170
   lines.
@@ -546,7 +564,7 @@ reproductions on a disposable cluster (PP-11).
 |---|---|---|---|---|---|---|
 | LL-4 | The lock-until date wraps: `get_lock_until_date` adds the period in u64 nanoseconds, so a default period ending after 2554-07-21 wraps, often to a past date, and the object is unprotected at once; `from_iso_8601` wraps an explicit date the same way ([rgw_object_lock.cc:103-111](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L103-L111)). Tracker #56993's fix (dd87a0ff845) removed an int overflow; the chrono form wraps again. | both, and main | security (WORM fail-open) | unreproduced | L-D1: refuse what cannot be represented; clamp a computed default. Exclusion. | L1 |
 | LL-5 | DeleteObjects checks s3:BypassGovernanceRetention once, on the bucket ARN ([rgw_op.cc:6780-6783](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6780-L6783), [rgw_op.cc:7713-7716](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7713-L7716)), so a Deny on `arn:aws:s3:::b/*` does not bind it, while DeleteObject honours it. | both | security (authorization bypass) | unreproduced | L-D3: per key on the object ARN. Exclusion. | L4 |
-| LL-8 | PutObjectRetention refuses COMPLIANCE to GOVERNANCE, and a shorter date without the bypass, even after the existing retention has lapsed ([rgw_op.cc:8413-8430](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8413-L8430), [rgw_op.cc:9293-9383](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9293-L9383)). | both | S3-correctness (fail-closed) | unreproduced | L-D2: a lapsed retention is absent. Exclusion. | L3 |
+| LL-8 | PutObjectRetention refuses COMPLIANCE to GOVERNANCE, and a shorter date without the bypass, even after the existing retention has lapsed ([rgw_op.cc:8413-8430](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8413-L8430), [rgw_op.cc:9293-9383](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9293-L9383)). | both | S3-correctness (fail-closed) | unreproduced | L-D2: a lapsed retention is absent. Exclusion. | L1 (c), extended by L3 |
 
 Existing registry entries this unit meets:
 - "radosgw's bucket instance metadata put drops the bucket's object lock rule" (#71157): L1's
