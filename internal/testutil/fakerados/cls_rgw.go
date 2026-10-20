@@ -1339,20 +1339,35 @@ func (c *Cluster) Suggestions(pool, ns, oid string) []rgwcls.Suggestion {
 	return out
 }
 
+// The 0x80 namespace's bounds as the class's plain listing skips it,
+// BI_PREFIX_END being BI_PREFIX_CHAR and its last index prefix "9999_", and
+// the instance entries' prefix
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L51-L75 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L51-L77 at v20.2.4).
+const (
+	biPrefixEnd      = "\x809999_"
+	biInstancePrefix = "\x801000_"
+)
+
 // rgwCheckIndex is check_index
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3035-L3114 at v19.2.6,
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L3035-L3114 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L3361-L3434 at v20.2.4)
 // over a shard: its stored header, and the header its entries make, which
 // carries the stored tag timeout, version and sync-stopped flag and nothing
-// else of it, and counts each existing plain entry without flags in its
-// category. An entry that does not decode is EIO. The fake answers ENOENT
-// for a shard that does not exist, which is what the OSD answers
-// bucket_check_index, a read; bucket_rebuild_index, a write, would instead
-// read an empty header there
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/osd/PrimaryLogPG.cc#L7767-L7770 at v19.2.6)
+// else of it. It counts in its category each existing plain entry without
+// flags, a plain entry being one below the 0x80 namespace or after
+// biPrefixEnd (list_plain_entries), and each existing instance entry, whatever
+// its flags (list_instance_entries)
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2794-L2940 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L3069-L3215 at v20.2.4).
+// The OLH entries and the rest of the 0x80 namespace are not read. An entry
+// it reads that does not decode is EIO. The fake answers ENOENT for a shard
+// that does not exist, which is what the OSD answers bucket_check_index, a
+// read; bucket_rebuild_index, a write, would instead read an empty header
+// there
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L7767-L7770 at v19.2.7)
 // and create the shard holding a zero header at version 1. radosgw sends
-// neither method to a shard it has not created. The fake stores no key in
-// the 0x80 namespace, whose instance entries the class counts as well.
+// neither method to a shard it has not created.
 func rgwCheckIndex(call *ClassCall) (existing, calc rgwcls.DirHeader, rval int32) {
 	if call.Stored == nil {
 		return rgwcls.DirHeader{}, rgwcls.DirHeader{}, -int32(syscall.ENOENT)
@@ -1363,7 +1378,8 @@ func rgwCheckIndex(call *ClassCall) (existing, calc rgwcls.DirHeader, rval int32
 	}
 	calc = rgwcls.DirHeader{TagTimeout: existing.TagTimeout, Ver: existing.Ver, SyncStopped: existing.SyncStopped, Stats: map[uint8]rgwcls.CategoryStats{}}
 	for _, k := range slices.Sorted(maps.Keys(call.Stored.Omap)) {
-		if strings.HasPrefix(k, "\x80") {
+		plain := k < biPrefixBegin || k > biPrefixEnd
+		if !plain && !strings.HasPrefix(k, biInstancePrefix) {
 			continue
 		}
 		d := denc.NewDecoder(call.Stored.Omap[k])
@@ -1371,7 +1387,7 @@ func rgwCheckIndex(call *ClassCall) (existing, calc rgwcls.DirHeader, rval int32
 		if d.Err() != nil {
 			return rgwcls.DirHeader{}, rgwcls.DirHeader{}, -int32(syscall.EIO)
 		}
-		if !en.Exists || en.Flags != 0 {
+		if !en.Exists || (plain && en.Flags != 0) {
 			continue
 		}
 		st := calc.Stats[en.Meta.Category]
@@ -1385,7 +1401,7 @@ func rgwCheckIndex(call *ClassCall) (existing, calc rgwcls.DirHeader, rval int32
 }
 
 // rgwBucketCheckIndex is rgw_bucket_check_index
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3129-L3141 at v19.2.6,
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L3129-L3141 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L3461-L3478 at v20.2.4):
 // both headers, as rgw_cls_check_index_ret.
 func rgwBucketCheckIndex(call *ClassCall) (out []byte, rval int32) {
@@ -1397,10 +1413,10 @@ func rgwBucketCheckIndex(call *ClassCall) (out []byte, rval int32) {
 }
 
 // rgwBucketRebuildIndex is rgw_bucket_rebuild_index
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3116-L3126 at v19.2.6):
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L3116-L3126 at v19.2.7):
 // the recalculated header written in place of the stored one, its version
 // counted as write_bucket_header counts it
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L696-L703).
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L696-L703).
 // Tentacle's
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L3436-L3458)
 // also guards itself against a reshard, which the fake, Squid's class,

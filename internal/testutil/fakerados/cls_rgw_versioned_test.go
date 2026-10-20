@@ -387,6 +387,65 @@ var _ = Describe("RGWClass's index methods on versioned keys", func() {
 		Expect(ret.Marker).To(Equal(rgwcls.ObjKey{Name: eAcute + "16"}))
 	})
 
+	// check_index counts each existing plain entry without flags and each
+	// existing instance entry whatever its flags, and reads no OLH entry
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L3035-L3114 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L3361-L3434 at v20.2.4);
+	// list_plain_entries covers the keys below the 0x80 namespace and after
+	// BI_PREFIX_END
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2794-L2849 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L3069-L3124 at v20.2.4).
+	// bucket_rebuild_index writes that header with its version counted
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L3116-L3126 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L3436-L3458 at v20.2.4).
+	Describe("bucket_check_index and bucket_rebuild_index on a versioned shard", func() {
+		BeforeEach(func(ctx SpecContext) {
+			seedHeader(rgwcls.DirHeader{Ver: 9, TagTimeout: 30, Stats: mainStats(1, 1)})
+			for _, id := range []string{"A", "B"} {
+				s.stage(s.version(id))
+				s.mustLink(ctx, linkOp(id))
+			}
+			s.mustLink(ctx, markerOp("C"))
+			pending := s.version("D")
+			pending.Exists = false
+			s.stage(pending)
+			for _, n := range []string{"a", eAcute, "\x80zz"} {
+				plain(n)
+			}
+		})
+		// The plain entries a, é and "\x80zz", after BI_PREFIX_END, and the
+		// instance entries A and B; not D, which does not exist, nor the
+		// delete marker C, whose instance entry the class writes without
+		// exists (init_as_delete_marker), nor k's list entries and version
+		// marker, which carry flags; at the header version ver.
+		counted := func(ver uint64) rgwcls.DirHeader {
+			return rgwcls.DirHeader{Ver: ver, TagTimeout: 30, Stats: map[uint8]rgwcls.CategoryStats{
+				rgwcls.CategoryMain: {NumEntries: 5, TotalSize: 25, TotalSizeRounded: 5 * 4096, ActualSize: 25},
+			}}
+		}
+		It("counts the existing instance entries beside the plain ones", func(ctx SpecContext) {
+			r := radosclient.NewReadOp()
+			res := rgwcls.BucketCheckIndex(r, denc.Squid)
+			_, err := s.p.Read(ctx, olhOID, r, radosclient.OpFlagNone)
+			Expect(err).NotTo(HaveOccurred())
+			ret, err := res.Result()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ret.ExistingHeader).To(Equal(rgwcls.DirHeader{Ver: 9, TagTimeout: 30, Stats: mainStats(1, 1)}))
+			Expect(ret.CalculatedHeader).To(Equal(counted(9)))
+		})
+		It("writes the count as the header, its version counted", func(ctx SpecContext) {
+			Expect(s.write(ctx, func(op *radosclient.WriteOp) { rgwcls.BucketRebuildIndex(op) })).To(Succeed())
+			Expect(header()).To(Equal(counted(10)))
+		})
+		It("fails with EIO on an instance entry that does not decode", func(ctx SpecContext) {
+			s.omap()[verInstKey("E")] = []byte{9}
+			r := radosclient.NewReadOp()
+			rgwcls.BucketCheckIndex(r, denc.Squid)
+			_, err := s.p.Read(ctx, olhOID, r, radosclient.OpFlagNone)
+			Expect(err).To(haveErrno(syscall.EIO))
+		})
+	})
+
 	Describe("the shard readers", func() {
 		It("decode a version's instance and list entries and the name's OLH entry", func(ctx SpecContext) {
 			s.stage(s.version("A"))
