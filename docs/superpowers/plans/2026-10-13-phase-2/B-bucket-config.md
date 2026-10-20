@@ -3,7 +3,7 @@
 Threat model: a client adversary at the security boundaries PP-14 names, which get adversarial
 review: authentication (BC-3's preflight, BC-5, BC-6's options_cors route, BC-31), authorization
 (BC-4, BC-18, BC-28c, BC-28e, BC-32) and the parsers of a client's documents (BC-2, BC-10, BC-17,
-BC-23, BC-28a, BC-29, BC-30); everything else here, the configuration storage, the website renderer
+BC-23, BC-28a, BC-29, BC-30, BC-30b); everything else here, the configuration storage, the website renderer
 and the recording tasks, defends against honest mistakes, and every write keeps the bucket instance
 radosgw-readable.
 
@@ -1442,7 +1442,17 @@ BC-29's and BC-32's specs.
      Content-Disposition `name` names the part
      ([rgw_rest.cc:1311-1370](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1311-L1370),
      [rgw_rest.cc:1311-1370](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1311-L1370)). Names
-     compare case-insensitively ([rgw_rest.h:247-249](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.h#L247-L249), [rgw_rest.h:247-249](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.h#L247-L249)).
+     compare as `postpolicy.Env` compares them, in any ASCII case over all their bytes, where
+     radosgw's `ltstr_nocase` part map stops at a NUL
+     ([rgw_rest.h:246-247](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.h#L246-L247), [rgw_rest.h:246-247](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.h#L246-L247));
+     a later field of the same name replaces the earlier's value and keeps its spelling, as both
+     the part map and `RGWPolicyEnv::add_var` do. **A part name holding a NUL, CR, LF or any
+     other control byte is 400 InvalidArgument**, an exclusion: radosgw keeps such a name whole
+     in its part map, so a NUL name aliases a shorter one and reaches Tentacle's checksum
+     exception (`docs/ceph-upstream-bugs.md`, "Tentacle's POST policy excepts a field whose name
+     holds a NUL after a checksum algorithm's"), and kept whole in rgw-go an `x-amz-meta-` name
+     would reach an xattr name, which go-ceph passes as a C string, and a GET's response header
+     (BC-30's review).
      A field keeps its raw value for the policy environment and gives a trimmed one for
      parameters ([rgw_rest.cc:1372-1385](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1372-L1385),
      [rgw_rest.cc:1372-1385](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1372-L1385)).
@@ -1466,16 +1476,22 @@ BC-29's and BC-32's specs.
   - the framing cases: CRLF line ends, a delimiter split across two reads, the final `--`,
     parts after the file, a missing boundary, the end before the file;
   - each "Malformed request" and "Couldn't find boundary";
+  - two fields whose names differ only in ASCII case, the later's value kept under the first's
+    spelling; names differing in a non-ASCII letter's case kept apart;
+  - a part name holding a NUL, a CR, an LF, a tab or DEL refused, among them Tentacle's two
+    exploit shapes, `acl` then a NUL, eleven bytes, `crc32`, a NUL and `x-amz-checksum-`, and
+    `x-amz-meta-aaaacrc32` then a NUL and `x-amz-checksum-`;
   - **Review Focus 5, a boundary string inside the file data:** file data holding `--` boundary
     mid-line, and the boundary text without its leading CRLF, reads back byte-identical;
   - **Review Focus 5, a file larger than memory:** a generated multi-GiB file part, never held
     in memory, read through the file reader into a discarding sink, with the heap's growth
     under a fixed multiple of the read size;
   - an s3-tests addition for the boundary case, to the `rgw-go-s3tests` branch.
-- **Exclusions and registry:** new exclusion for the delimiter rule; new registry entry for
-  defect 18 (S3-correctness: an upload cut at the string, stored truncated or refused;
-  unreproduced, from the source).
-- **Depends on:** nothing. **PR:** one. **Brief:** about 200 lines.
+- **Exclusions and registry:** new exclusion for the delimiter rule; new exclusion for the
+  refused part names; new registry entry for defect 18 (S3-correctness: an upload cut at the
+  string, stored truncated or refused; unreproduced, from the source).
+- **Depends on:** BC-30, whose `postpolicy.Env` item 2's name rule matches. **PR:** one.
+  **Brief:** about 215 lines.
 
 ### Task BC-30: POST policy document
 
@@ -1509,6 +1525,58 @@ BC-29's and BC-32's specs.
   and an exponent number as ceph's parser reads them; a checksum field on each release.
 - **Exclusions and registry:** new exclusion for the checksum exception on Squid (B13).
 - **Depends on:** WP-1. **PR:** one. **Brief:** about 180 lines.
+
+### Task BC-30b: One parse_iso8601 and one json_spirit reader
+
+- **Layer:** library. **Files:** create `internal/jsonspirit/` from `internal/meta/json_spirit.go`;
+  move `parse_iso8601`'s extended format out of `internal/op/readconds.go` into
+  `internal/strptime` or `internal/rgwtext`, whichever adds no import cycle (strptime imports
+  only `time`, rgwtext only `math` and `strings`); modify `internal/meta/json_spirit.go`,
+  `internal/meta/jsonformattable.go`, `internal/op/readconds.go` and
+  `internal/postpolicy/{expiration,json,number}.go`. **Cluster:** no.
+- **Why:** BC-30's Files line confined it to `internal/postpolicy/`, so it transcribed two things
+  rgw-go already had: `parse_iso8601`'s extended format (`internal/postpolicy/expiration.go:23-43`
+  beside `internal/op/readconds.go:318-348`) and json_spirit's number reading with the glibc
+  `pow` table (`internal/postpolicy/number.go:25-138` beside
+  `internal/meta/json_spirit.go:313-514`). The copies have already drifted: meta refuses a real
+  whose integer part has more than 300 digits, where postpolicy, closer to radosgw, accumulates
+  it as boost's `positive_accumulate` does until the double overflows, which involves no libm
+  call (BC-30's review).
+- **Produces:** an exported `parse_iso8601` (extended format) returning the `strptime.Tm` and the
+  fraction's nanoseconds, which `op.ParseHTTPTime` and `postpolicy.Parse` call on their own
+  C-string-cut input; `internal/jsonspirit`, json_spirit's reader as JSONParser reads it, with a
+  node's `get_data` text and its children in JSONObj's order, which `meta` and `postpolicy` call.
+- **Behaviour:**
+  1. **One parse_iso8601**, identical at both tags
+     ([rgw_common.cc:599-659](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L599-L659),
+     [rgw_common.cc:612-672](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L612-L672)).
+     Each caller keeps its own use of the result: `op` its nanoseconds and `utime`'s 32-bit
+     seconds, `postpolicy` the whole seconds `internal_timegm` gives. `auth`'s basic-format
+     reader is a different format and stays.
+  2. **One number reader**, `number_` as `meta` transcribes it, with postpolicy's rule for an
+     integer part: any length until the accumulated double passes DBL_MAX. The limits that
+     depend on the host's libm stay: an exponent past 300, a fraction of more than 300 digits,
+     the exponent 126, a value that is not finite.
+  3. **The POST policy is read with the shared reader**, bounded at 10000 levels of nesting, in
+     place of Go's decoder. The bound is needed on both callers' paths: the reader recurses once
+     per level, so an unbounded nesting would grow the goroutine's stack toward Go's 1 GB
+     default limit, where the runtime ends the process. The review's differential fuzz of
+     BC-30's tree against `meta`'s transcription, 120 s and 1,851,614 inputs, found the two
+     agree on every document both accept but for an escaped surrogate pair, so the change keeps
+     every BC-30 reading and adds json_spirit's: stray commas, C white space, raw control and
+     non-UTF-8 bytes, dropped and non-hex escapes, signs, leading zeros and bare dots, and each
+     half of a surrogate pair written alone. `\x` and octal escapes, which `meta` refuses as not
+     transcribed, stay refused unless the task transcribes boost's `escape_char_parse`. If the
+     task finds a document the shared reader cannot read as JSONParser does, it keeps Go's
+     decoder for the policy and records why in the exclusion.
+- **Specs:** every spec of the three packages passes unchanged but where behaviour 2 or 3
+  changes it: `meta` takes a real with a 301-digit integer part; each of BC-30's grammar
+  refusals becomes a spec of json_spirit's reading of the same document; 10000 levels read and
+  10001 refused on the shared reader, and a 4 MiB nesting refused without its stack growing past
+  a fixed bound; BC-30's `FuzzParse` kept, with a seed for each grammar case.
+- **Exclusions and registry:** shrink "A POST policy is read as RFC 8259 JSON" to what remains,
+  retitled to match; no registry change.
+- **Depends on:** BC-30. **PR:** one. **Brief:** about 130 lines.
 
 ### Task BC-31: Browser-upload credentials
 
@@ -1546,6 +1614,12 @@ BC-29's and BC-32's specs.
   1. The bucket loads (NoSuchBucket first), then `Form`.
   2. The `x-amz-server-side-encryption*` fields go to `EncryptionDefaults` as the asked
      encryption. Every field enters the policy environment with its raw value, then `bucket`.
+     **Every field the op reads is read through `postpolicy.Env`'s name rule** (BC-29 item 2):
+     `key`, `acl`, `Content-Type`, `x-amz-meta-*`, `x-amz-storage-class`, `tagging`,
+     `success_action_*`, the SSE fields, the checksum fields and
+     `x-amz-website-redirect-location`, each with the last duplicate's value, which is the value
+     `Check` judged. A map or loop of the op's own that compares names otherwise, or keeps the
+     first duplicate, writes a value the policy never checked (BC-30's review).
   3. `key` is required (400 "Key not specified"); its first `${filename}` is replaced
      ([rgw_rest_s3.cc:2889-2902](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2889-L2902),
      [rgw_rest_s3.cc:3015-3028](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3015-L3028)); an empty
@@ -1554,7 +1628,9 @@ BC-29's and BC-32's specs.
      [rgw_rest_s3.cc:3137-3144](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3137-L3144)).
   4. `Content-Type` enters the environment when set; `x-amz-storage-class` must be a valid
      placement ("The storage class you specified is not valid"); `x-amz-meta-*` and
-     `x-amz-website-redirect-location` become NUL-terminated attrs.
+     `x-amz-website-redirect-location` become NUL-terminated attrs. Their names hold no NUL, CR,
+     LF or other control byte, since BC-29 refuses such a part name; the op relies on that and
+     does not re-check it.
   5. Credentials ([rgw_rest_s3.cc:3120-3254](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3120-L3254),
      [rgw_rest_s3.cc:3256-3390](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3256-L3390)): with a
      `policy` field, `x-amz-algorithm` AWS4-HMAC-SHA256 selects SigV4, which needs
@@ -1578,12 +1654,38 @@ BC-29's and BC-32's specs.
   [rgw_op.cc:4612-4796](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4612-L4796) and
   [rgw_op.cc:4905-5139](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4905-L5139):
   9. **A public canned ACL under BlockPublicAcls is 403 AccessDenied**, as rgw-go's PutObject
-     refuses one (`internal/op/putobject.go:198-211`; B11, defect 9).
+     refuses one (`internal/op/putobject.go:157-168`; B11, defect 9). The op judges the ACL it
+     builds from the form's `acl` field, item 7's canned ACL marked for the writer's own write
+     by `ForOwnWrite` as `authz.DefaultACL` marks PutObject's, with `acl.Policy.IsPublic`,
+     the AWS-correct judgment of a public ACL that PutObject, CopyObject, CreateMultipartUpload
+     and UploadPart apply under the block (`internal/op/putobject.go:166`,
+     `internal/op/copyobject.go:219`, `internal/op/initmultipart.go:100`); it never tests the
+     canned name alone. radosgw checks no block on POST object at either release, and copying
+     RGWPutObj's test would not fix that, since it tests the `x-amz-acl` header, which never
+     holds the form's field (`docs/ceph-upstream-bugs.md`, "radosgw lets a public ACL through
+     a block of public ACLs on PutObject's grant headers, CopyObject and
+     CreateMultipartUpload").
   10. The quota check; Content-MD5 (400 InvalidDigest or BadDigest); the versioned write
      (`VersionForWrite`, or phase 1's 501 until V11); BC-26's encryption; the checksum field
      through WP-6's parser, D21's refusals included; `ObjectStore.PutObject` streaming the file
      with the policy's bounds (400 EntityTooLarge over the maximum, EntityTooSmall under the
      minimum); the attrs ETag, ACL, Content-Type (NUL-terminated), metas, the redirect and tags.
+     **Every checksum field D21 refuses reaches WP-6's parser and is refused,** whatever the
+     policy said of it: `x-amz-checksum-md5`, `-xxhash64`, `-xxhash128`, `-xxhash3`, Tentacle's
+     spelling `-xxh3` and `-blake3`, an `x-amz-checksum-algorithm` naming any of them, and each
+     of them when a form holds several checksum fields. `-xxhash3`, `-xxh3`, `-blake3` and the
+     algorithm field pass `Check` with no condition, since `cksum.ParseName` names them; `-md5`,
+     `-xxhash64` and `-xxhash128` pass only when a condition names them, since `Check` excepts
+     no name `ParseName` refuses. A field the write does not refuse is ignored, so the refusal
+     is what stops it. **The bounds compare as radosgw's do:** `MinLength` and
+     `MaxLength` are signed, as its `off_t` fields are
+     ([rgw_op.h:1328-1331](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L1328-L1331),
+     [rgw_op.h:1406-1409](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1406-L1409)),
+     and may be negative or the maximum below the minimum; the maximum is compared after each
+     non-empty read and the minimum once after the stream
+     ([rgw_op.cc:4705-4732](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4705-L4732),
+     [rgw_op.cc:5018-5046](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5018-L5046)),
+     so an empty file passes even a negative maximum.
      Default retention comes from the head write, as for PutObject
      ([rgw_rados.cc:3211-3215](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3211-L3215),
      [rgw_rados.cc:3308-3312](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3308-L3312)). **Differs:** v20.2.4 adds the
@@ -1591,6 +1693,14 @@ BC-29's and BC-32's specs.
 - **Specs:**
   - the error order across Init, VerifyPermission and Execute, with counterfeiter fakes;
   - each length bound; each attr; a suspended user; a public canned ACL under a block;
+  - each field of item 2 sent twice, in two ASCII cases, with the policy's condition met by the
+    later value: the later value is the one written;
+  - each checksum field D21 refuses, alone, beside a CRC32 field, and named by
+    `x-amz-checksum-algorithm`, under a policy that names none of them: refused by WP-6's
+    parser;
+  - the bounds: an empty file under a maximum of -1 stored, and a one-byte file refused; a
+    maximum of 5 under a minimum of 10 refusing every file, the empty one too; a file of exactly
+    each bound stored;
   - **Review Focus 5, a `$key` condition with a `${filename}` key:** with key
     `uploads/${filename}` and filename `cat.jpg`, the conditions `["eq", "$key",
     "uploads/${filename}"]`, `["eq", "$key", "uploads/cat.jpg"]` and `["starts-with", "$key",
@@ -1603,12 +1713,14 @@ BC-29's and BC-32's specs.
 - **Exclusions and registry:** new exclusion and registry entry for defect 8 (security,
   fail-open; unreproduced; prior-art search pending; also sent to the rgw-bug-reproduction
   session); extends "A block of public ACLs refuses a public ACL on PutObject, CopyObject,
-  CreateMultipartUpload and UploadPart" and the registry's matching entry with POST object
-  (defect 9); retires the last sentence of "PutObject and CopyObject authorize a request before
+  CreateMultipartUpload and UploadPart" with POST object (defect 9), whose registry entry BC-30
+  already extended, and updates that entry's rgw-go line to say rgw-go serves POST object and
+  refuses there; retires the last sentence of "PutObject and CopyObject authorize a request before
   they read what the store holds for it", which says rgw-go serves no POST object; an exclusion
   for B12 if AWS's page departs from radosgw.
 - **Depends on:** BC-26 (a), BC-30, BC-31, WP-5, WP-6. **PR split:** (a) Init and
-  VerifyPermission; (b) Execute. **Brief:** about 240 lines.
+  VerifyPermission; (b) Execute. **Brief:** about 265 lines, past PP-6's 250 with BC-30's
+  review's carries, so one brief per PR if it runs long.
 
 ### Task BC-33: POST object routes
 
@@ -1625,14 +1737,20 @@ BC-29's and BC-32's specs.
      `success_action_redirect` is 303 with Location `<redirect>?bucket=…&key=…&etag=…`
      url-encoded, the tenant first when set; `success_action_status` 200 is 200, 201 is 201
      with a `PostResponse` of Location, Bucket, Key and ETag, anything else 204; the default is
-     204 with the ETag header; radosgw's messages go into the error documents.
+     204 with the ETag header; radosgw's messages go into the error documents. A policy
+     refusal's message quotes the policy's operands and the form's field names unbounded: a
+     nested operand is written back with each byte past ASCII escaped in six, so a 3 MiB policy
+     can give a message of about 18 MiB (BC-30's review). The error document keeps the message
+     whole, as radosgw sends it, and what rgw-go logs of it is cut to a fixed bound, which needs
+     no exclusion; cutting the document would.
   3. The 201's Location takes its domain as rgw-go's CompleteMultipartUpload does
      (`internal/s3/multipart.go:341-360`; defect 17).
   4. **Differs from both floors by design (B11):** the usage log counts the body, as main does
      ([rgw_rest.cc:1236-1238](https://github.com/ceph/ceph/blob/7d2484c45b4/src/rgw/rgw_rest.cc#L1236-L1238)); the
      byte counter, today PutObject's alone (`internal/s3/handler.go:473-486`), covers post_obj.
 - **Specs:** each status and header; `${filename}` end to end; a tenant's redirect; the usage
-  entry's bytes received.
+  entry's bytes received; a policy refusal whose message passes the log bound, sent whole and
+  logged cut.
 - **Exclusions and registry:** new exclusion and registry entry for defect 10 (S3-correctness;
   reported upstream as tracker #76157; fixed on main by 7d2484c45b4); adds POST object to the
   registry entry defect 17 names.
@@ -1689,7 +1807,7 @@ WP-23 for BC-27 (b); L2's PR (b) for BC-28c (b) and BC-28d. Within the unit:
 | Wave | Tasks, in parallel | Each waits for |
 |---|---|---|
 | 1 | BC-2, BC-5, BC-9, BC-13, BC-17, BC-23, BC-28a, BC-28b, BC-29, BC-31; BC-20; BC-30 | nothing in the unit; BC-20 S3; BC-30 WP-1 |
-| 2 | BC-3, BC-10, BC-11, BC-18, BC-21, BC-24, BC-28c (a) | BC-2 and BC-5; BC-9; BC-9; BC-17, S3 and S5; BC-20; BC-23; BC-28a |
+| 2 | BC-3, BC-10, BC-11, BC-18, BC-21, BC-24, BC-28c (a), BC-30b | BC-2 and BC-5; BC-9; BC-9; BC-17, S3 and S5; BC-20; BC-23; BC-28a; BC-30 |
 | 3 | BC-4, BC-7, BC-12, BC-14, BC-19, BC-25, BC-26 (a), BC-28c (b) | BC-3; BC-3; BC-10 and BC-11; BC-10 and BC-13; BC-18; BC-24; BC-23, BC-27 (a), WP-6 and WP-7; BC-28c (a) and L2 (b) |
 | 4 | BC-6, BC-15, BC-32, BC-26 (b), BC-28d, BC-35 | BC-3, BC-5 and BC-7; BC-12 and BC-14; BC-26 (a), BC-30, BC-31, WP-5 and WP-6; WP-13; BC-28b and BC-28c (b); BC-3, BC-11, BC-18, BC-24 and BC-28c |
 | 5 | BC-33, BC-28e | BC-29, BC-32 and BC-15; BC-28a, S3 and BC-32 |
@@ -1716,7 +1834,7 @@ task budgets the cluster reproduction.
 | 6 | GetPublicAccessBlock without a block sends a default document after the 404, past its Content-Length ([rgw_rest_s3.cc:4613-4624](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4613-L4624)) | S3-correctness (HTTP framing; can desynchronize a keep-alive connection); possibly security-relevant, conditional on radosgw keeping the connection open (rgw-bug-reproduction's triage, BC19-1) | unreproduced; BC-22 captures the bytes and whether the connection stays open | none found | the error document alone (BC-19) |
 | 7 | A public-access block that does not decode is ignored (registry) | security, low | unreproduced | registry | phase 1 fails closed; Get answers 500 (BC-18) |
 | 8 | POST object is never checked for a suspended user: the check precedes the form's authentication | security (fail-open) | unreproduced | none found; prior-art search pending | 403 UserSuspended; reported upstream once reproduced (BC-32) |
-| 9 | POST object stores a public canned `acl` under BlockPublicAcls | security (an owner's block bypassed) | unreproduced | extends the registry's PutObject, CopyObject and CreateMultipartUpload entry | 403 AccessDenied (BC-32) |
+| 9 | POST object stores a public canned `acl` under BlockPublicAcls | security (an owner's block bypassed) | unreproduced | the registry's PutObject, CopyObject and CreateMultipartUpload entry, extended by BC-30's fix round; pending: sent to rgw-bug-reproduction | 403 AccessDenied by `acl.Policy.IsPublic` of the built ACL (BC-32) |
 | 10 | POST object's body bytes are not counted in the usage log | S3-correctness (usage accounting is shared RADOS state) | reported upstream (tracker #76157) | fixed on main by 7d2484c45b4; in no tag | count them, as main (BC-33) |
 | 11 | Ownership-controls requests fall through to ListObjects, CreateBucket and DeleteBucket; DELETE `?ownershipControls` deletes an empty bucket | S3-correctness, losing the bucket | unreproduced | the feature lands in v21.0.0 (b3733296c8e) | v21's feature (BC-28a to BC-28e, B7) |
 | 12 | PutBucketEncryption stores any SSEAlgorithm, and a KMS key id with any algorithm | S3-correctness | unreproduced | none found | validate as AWS documents (BC-23, B5) |
