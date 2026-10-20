@@ -94,6 +94,11 @@ type ClassCall struct {
 	omap   map[string][]byte
 	hdr    []byte
 	copied bool
+	// wrote is whether the call sent a write through Create, Update or
+	// Remove, which the OSD counts in num_write before the write looks for
+	// the object; staged is whether one of those writes went into the op's
+	// transaction, which only an existing or created object takes.
+	wrote, staged bool
 }
 
 // StoredOmap returns the stored omap and omap header as a class's map
@@ -114,24 +119,53 @@ func (c *ClassCall) StoredOmap() (omap map[string][]byte, hdr []byte) {
 }
 
 // Object returns the object as the op has left it so far, nil when it does
-// not exist now. Its existence is what a class's cls_cxx_stat sees, and an
-// emulator writes through it.
+// not exist now. Its existence is what a class's cls_cxx_stat sees. It is
+// for reading: an emulator writes through Create, Update or Remove, which
+// count a write that leaves the object as it was.
 func (c *ClassCall) Object() *Object { return c.x.obj }
 
+// Update returns the op's object for a write that does not create it, as
+// cls_cxx_map_remove_key's and cls_cxx_map_clear's, nil when it does not
+// exist now. Either way the call has sent a write: CEPH_OSD_OP_OMAPRMKEYS
+// and OMAPCLEAR count it in num_write before they answer ENOENT for a
+// missing object, and only an existing one takes it into the op's
+// transaction. Update stages the write on any existing object, but
+// OMAPCLEAR takes it only from one whose FLAG_OMAP is set, so a map clear's
+// emulator calls Update only for such an object, as rgwUsageLogClear does
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L7936-L7983 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L8013-L8060 at v20.2.4).
+func (c *ClassCall) Update() *Object {
+	c.wrote = true
+	if c.x.obj != nil {
+		c.staged = true
+	}
+	return c.x.obj
+}
+
 // Create returns the op's object, creating an empty one when it does not
-// exist, as a class's first write to a missing object creates it.
-func (c *ClassCall) Create() *Object { return c.x.create() }
+// exist, as a class's first write to a missing object creates it. The call
+// has sent a write the op's transaction takes, whatever it then stores.
+func (c *ClassCall) Create() *Object {
+	c.wrote, c.staged = true, true
+	return c.x.create()
+}
 
 // Now returns the cluster's clock, which SetClock sets, as a class reads the
 // OSD's with ceph_clock_now.
 func (c *ClassCall) Now() time.Time { return c.x.cluster.now() }
 
 // Remove removes the op's object and returns 0, or -ENOENT when it does not
-// exist, as cls_cxx_remove does.
+// exist, as cls_cxx_remove does. Either way the call has sent a write:
+// CEPH_OSD_OP_DELETE counts it in num_write before _delete_oid finds the
+// object missing
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L6952-L6959 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L7021-L7028 at v20.2.4).
 func (c *ClassCall) Remove() int32 {
+	c.wrote = true
 	if c.x.obj == nil {
 		return -int32(syscall.ENOENT)
 	}
+	c.staged = true
 	c.x.remove()
 	return 0
 }
@@ -808,7 +842,14 @@ func omapWritten(start, now *Object) bool {
 	return false
 }
 
-// exec runs a class call; what it changes in the object is a change to it.
+// exec runs a class call. A write the call put in the op's transaction, or a
+// change it made to the object, modifies the object, so the op bumps its
+// version even when the write left it as it was: the OSD treats an op as a
+// no-op only while its transaction is empty, and otherwise finish_ctx gives
+// the object the next user_version, a CLS_METHOD_WR call having marked the
+// op a user modification
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L8873-L8971 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L8979-L9075 at v20.2.4).
 func (x *execution) exec(s *radosclient.ExecStep) (func(), error) {
 	cls := x.cluster.classes[s.Class]
 	call := &ClassCall{Method: s.Method, In: slices.Clone(s.In), Stored: x.classStored(), x: x}
@@ -818,13 +859,16 @@ func (x *execution) exec(s *radosclient.ExecStep) (func(), error) {
 	if x.omapCleared && omapWritten(before, x.obj) {
 		x.omapCleared = false
 	}
-	if !sameContent(before, x.obj) {
+	changed := !sameContent(before, x.obj)
+	if call.staged || changed {
 		x.modified = true
-		if !cls.writes[s.Method] {
-			// The OSD fails a method that updates the object without the
-			// WR flag, before taking its output (PrimaryLogPG::do_osd_ops).
-			return func() { s.Result.Set(nil, -int32(syscall.EIO)) }, x.errno(syscall.EIO)
-		}
+	}
+	if (call.wrote || changed) && !cls.writes[s.Method] {
+		// The OSD fails a method without the WR flag that sent a write,
+		// before taking its output, once num_write has grown past prev_wr
+		// (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L6170-L6185 at v19.2.7,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L6239-L6254 at v20.2.4).
+		return func() { s.Result.Set(nil, -int32(syscall.EIO)) }, x.errno(syscall.EIO)
 	}
 	x.reply(len(out))
 	if rval < 0 {

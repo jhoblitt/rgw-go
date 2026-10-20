@@ -198,7 +198,9 @@ func userSetBucketsInfo(call *ClassCall) int32 {
 // userRemoveBucket is cls_user_remove_bucket
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L239-L289):
 // a missing entry is no failure and writes nothing, and the header loses
-// the entry's stats only when they were synced.
+// the entry's stats only when they were synced. remove_entry is
+// cls_cxx_map_remove_key, so an object an earlier step of the op removed is
+// ENOENT rather than created again.
 func userRemoveBucket(call *ClassCall) int32 {
 	op, rval := decodeRequest(call.In, user.DecodeRemoveBucketOp)
 	if rval < 0 {
@@ -215,13 +217,16 @@ func userRemoveBucket(call *ClassCall) int32 {
 	case rval < 0:
 		return rval
 	}
-	obj := call.Create()
+	obj := call.Update()
+	if obj == nil {
+		return -int32(syscall.ENOENT)
+	}
 	delete(obj.Omap, op.Bucket.Name)
 	if !entry.UserStatsSync {
 		return 0
 	}
 	decStats(&h.Stats, entry)
-	obj.OmapHdr = encodeSquid(h)
+	call.Create().OmapHdr = encodeSquid(h)
 	return 0
 }
 
@@ -405,7 +410,10 @@ func accountResourceGet(call *ClassCall) (out []byte, rval int32) {
 // accountResourceRm is cls_account_resource_rm
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L616-L661):
 // ENOENT for a name the index lacks; otherwise the entry goes and the
-// header's count drops by one, never below zero.
+// header's count drops by one, never below zero. The key's removal comes
+// before the header's read, as in the class, and is cls_cxx_map_remove_key,
+// so an object an earlier step of the op removed is ENOENT rather than
+// created again.
 func accountResourceRm(call *ClassCall) int32 {
 	op, rval := decodeRequest(call.In, user.DecodeAccountResourceRmOp)
 	if rval < 0 {
@@ -415,6 +423,11 @@ func accountResourceRm(call *ClassCall) int32 {
 	if _, ok := storedEntry(call, key); !ok {
 		return -int32(syscall.ENOENT)
 	}
+	obj := call.Update()
+	if obj == nil {
+		return -int32(syscall.ENOENT)
+	}
+	delete(obj.Omap, key)
 	h, rval := accountHeader(call)
 	if rval < 0 {
 		return rval
@@ -422,9 +435,7 @@ func accountResourceRm(call *ClassCall) int32 {
 	if h.Count > 0 {
 		h.Count--
 	}
-	obj := call.Create()
-	delete(obj.Omap, key)
-	obj.OmapHdr = encodeSquid(h)
+	call.Create().OmapHdr = encodeSquid(h)
 	return 0
 }
 

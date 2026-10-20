@@ -227,7 +227,7 @@ func rgwGCSetEntry(call *ClassCall) int32 {
 			if d.Err() != nil {
 				return -int32(syscall.EIO)
 			}
-			if obj := call.Object(); obj != nil {
+			if obj := call.Update(); obj != nil {
 				delete(obj.Omap, gcTimeIndex+gcTimeKey(old.Time))
 			}
 		}
@@ -320,7 +320,7 @@ func rgwGCRemove(call *ClassCall) int32 {
 		if d.Err() != nil {
 			return -int32(syscall.EIO)
 		}
-		if obj := call.Object(); obj != nil {
+		if obj := call.Update(); obj != nil {
 			delete(obj.Omap, gcTimeIndex+gcTimeKey(info.Time))
 			delete(obj.Omap, gcNameIndex+tag)
 		}
@@ -389,7 +389,7 @@ func rgwPutEntry(call *ClassCall, idx string, en rgwcls.DirEntry) {
 // rgwRemoveEntry removes idx from the op's object, as cls_cxx_map_remove_key
 // does.
 func rgwRemoveEntry(call *ClassCall, idx string) {
-	if obj := call.Object(); obj != nil {
+	if obj := call.Update(); obj != nil {
 		delete(obj.Omap, idx)
 	}
 }
@@ -993,7 +993,7 @@ func rgwUserUsageLogTrim(call *ClassCall) int32 {
 	more, rval := usageIterateRange(call, op.StartEpoch, op.EndEpoch, op.User, op.Bucket, &iter, usageMaxEntries,
 		func(e rgwcls.UsageLogEntry) {
 			found = true
-			omap := call.Object().Omap
+			omap := call.Update().Omap
 			delete(omap, usageKeyByTime(e.Epoch, e.Owner, e.Bucket))
 			delete(omap, usageKeyByUser(e.Owner, e.Epoch, e.Bucket))
 		})
@@ -1010,12 +1010,19 @@ func rgwUserUsageLogTrim(call *ClassCall) int32 {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L3805-L3815 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L4207-L4217 at v20.2.4):
 // the omap cleared, header included, as cls_cxx_map_clear does; an object
-// that does not exist is already clear.
+// that does not exist is already clear. CEPH_OSD_OP_OMAPCLEAR writes only an
+// object whose FLAG_OMAP is set
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L7936-L7957 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L8013-L8034 at v20.2.4),
+// which the fake takes to be one holding an omap key or header, as its
+// OmapClear step does.
 func rgwUsageLogClear(call *ClassCall) int32 {
-	if obj := call.Object(); obj != nil {
-		clear(obj.Omap)
-		obj.OmapHdr = nil
+	if obj := call.Object(); obj == nil || (len(obj.Omap) == 0 && len(obj.OmapHdr) == 0) {
+		return 0
 	}
+	obj := call.Update()
+	clear(obj.Omap)
+	obj.OmapHdr = nil
 	return 0
 }
 

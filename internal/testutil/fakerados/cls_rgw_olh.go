@@ -64,7 +64,7 @@ func rgwSetOmap(call *ClassCall, idx string, v classValue) {
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L7959-L7988 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L8036-L8065 at v20.2.4).
 func rgwRemoveOmap(call *ClassCall, idx string) int32 {
-	obj := call.Object()
+	obj := call.Update()
 	if obj == nil {
 		return -int32(syscall.ENOENT)
 	}

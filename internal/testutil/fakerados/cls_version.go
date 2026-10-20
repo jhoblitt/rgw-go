@@ -103,7 +103,13 @@ func setVersion(call *ClassCall, v version.ObjVersion) int32 {
 // incVersion is cls_version_inc: read_version with implicit creation, which
 // initializes a missing xattr only, so a stored version 0 keeps its tag
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/version/cls_version.cc#L58-L66),
-// then the conditions and the increment.
+// then the conditions and the increment. init_version writes the version it
+// makes before check_conds runs, so a failed condition, ECANCELED, leaves
+// that write in the op, which only a FAILOK caller could see
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/version/cls_version.cc#L37-L66 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/cls/version/cls_version.cc#L148-L175 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/version/cls_version.cc#L37-L66 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/version/cls_version.cc#L148-L175 at v20.2.4).
 func incVersion(call *ClassCall, conds []version.Condition) int32 {
 	cur, present, rval := storedVersion(call)
 	if rval < 0 {
@@ -114,6 +120,9 @@ func incVersion(call *ClassCall, conds []version.Condition) int32 {
 		var b [18]byte
 		_, _ = rand.Read(b[:]) // crypto/rand.Read never fails
 		cur = version.ObjVersion{Ver: 1, Tag: base64.StdEncoding.EncodeToString(b[:])}
+		if rval := setVersion(call, cur); rval < 0 {
+			return rval
+		}
 	}
 	if !checkConds(conds, cur) {
 		return -int32(syscall.ECANCELED)
