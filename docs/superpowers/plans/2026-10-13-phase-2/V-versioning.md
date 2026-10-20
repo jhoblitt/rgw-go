@@ -1175,6 +1175,34 @@ their default.
 - **Exclusions and registry:** retires "A shard that answers advance-and-retry fails an ordered
   listing" (with V0); a new exclusion and a registry entry for defect 17 (S3-correctness, both
   floors, unreproduced).
+- **Leads V9 settles** (V3a's review, not yet traced past the class): V9's brief traces both at
+  v19.2.7 and v20.2.4, registers what is a defect, and decides what rgw-go's `checkDiskState`
+  suggests for a version's list entry. V5a's D5, a versioned write awaiting its completion
+  before its link, is why rgw-go's own writes leave neither.
+  1. A listing calls `check_disk_state` for any entry it lists with a pending map
+     ([rgw_rados.cc:10019-10031](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L10019-L10031),
+     [rgw_rados.cc:10279-10287](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L10279-L10287);
+     [rgw_rados.cc:10743-10755](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10743-L10755),
+     [rgw_rados.cc:11005-11013](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L11005-L11013)),
+     and `check_disk_state` suggests it under the listed entry's own key, with no case for a
+     version
+     ([rgw_rados.cc:10519-10671](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L10519-L10671),
+     [rgw_rados.cc:11247-11399](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L11247-L11399)).
+     `rgw_dir_suggest_changes` applies the change under `encode_obj_index_key`
+     ([cls_rgw.cc:2249-2250](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2249-L2250),
+     [cls_rgw.cc:2419-2420](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2419-L2420)),
+     which for a version is its instance key
+     ([cls_rgw.cc:339-346](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L339-L346),
+     [cls_rgw.cc:389-396](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L389-L396)).
+     So a suggestion for a version reaches only its instance entry, never the list entry radosgw
+     listed, and a list entry carrying a pending map may never be repaired.
+  2. A null version's list entry has an empty instance, so the same `encode_obj_index_key`
+     keys its suggestion to the plain key, which on a converted name is the version marker.
+     Whether the class then updates or removes the marker, given its index version check and
+     the marker's state
+     ([cls_rgw.cc:2309-2316](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2309-L2316),
+     [cls_rgw.cc:2479-2486](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2479-L2486)),
+     is untraced.
 - **Depends on:** V0, V3a, V5a. **PR split:** one. **Brief:** about 175 lines.
 
 ### Task V10: op and s3, PutBucketVersioning and GetBucketVersioning
