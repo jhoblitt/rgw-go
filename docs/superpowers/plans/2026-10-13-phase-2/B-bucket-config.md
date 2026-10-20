@@ -108,7 +108,7 @@ and BC-34.
 |---|---|---|---|
 | `internal/s3/handler.go` | BC-15 (website-mode error path), BC-33 (the byte counter's condition) | S2 (binding) | merge S2, then BC-15, then BC-33 |
 | `internal/s3/dispatch.go` | BC-15 (one call line at the top of `Dispatch`; the website dispatch lives in `website_serve.go`), BC-28b (`ownershipControls` rows) | versioning | line-local; never in parallel |
-| `internal/s3/headers.go`, `internal/s3/errors.go` | BC-7 (`SetCommonHeaders`), BC-15 (the HTML error variant) | - | one owner each |
+| `internal/s3/headers.go`, `internal/s3/errors.go` | BC-7 (`SetCommonHeaders`, `SetPreflightHeaders`), BC-15 (the HTML error variant) | - | one owner each |
 | `internal/op/op.go` | BC-4 (one call into `corsmatch.go`) | - | single owner |
 | `internal/op/request.go` | BC-13 (`Website`, `Redirect`), BC-26 (`CryptAttrs`) | versioning | additive fields, each task's in its own PR |
 | `internal/op/getobject.go` | BC-14 (one hook field, one call; the body in `website_get.go`) | versioning, WP-12 | line-local |
@@ -358,8 +358,9 @@ relies on fakerados behaviour beyond what it serves today.
 ### Task BC-6: CORS routes
 
 - **Layer:** handler. **Files:** S2's `internal/s3/cors.go`. **Cluster:** no.
-- **Consumes:** BC-3's ops; phase 1's `readParamBody` (`internal/s3/bucket.go:135`) and
-  `writeXML` (`internal/s3/xml.go:33`).
+- **Consumes:** BC-3's ops, each with its `StorageClass` input; BC-7's preflight seam
+  (`SetPreflightHeaders`, and `SetCommonHeaders`' rule for an OPTIONS response); phase 1's
+  `readParamBody` (`internal/s3/bucket.go:135`) and `writeXML` (`internal/s3/xml.go:33`).
 - **Behaviour:**
   1. **get_cors:** 200 with BC-2's document
      ([rgw_rest_s3.cc:3749-3770](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3749-L3770),
@@ -371,28 +372,76 @@ relies on fakerados behaviour beyond what it serves today.
      ([rgw_rest_s3.cc:3772-3841](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3772-L3841),
      [rgw_rest_s3.cc:4223-4292](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4223-L4292);
      [rgw.yaml.in:26-30](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L26-L30), [rgw.yaml.in:26-30](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L26-L30)).
-  3. **delete_cors:** 204, with or without a configuration
+  3. **delete_cors:** 204, with or without a configuration, one that does not decode included,
+     which BC-3's op removes
      ([rgw_rest_s3.cc:3843-3852](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3843-L3852), [rgw_rest_s3.cc:4294-4303](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4294-L4303)).
-  4. **options_cors:** 200 with BC-2's preflight headers, else the op's 403 or 400
-     ([rgw_rest_s3.cc:3854-3875](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3854-L3875),
-     [rgw_rest_s3.cc:4305-4326](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4305-L4326)).
-     The handler adds no per-user header, x-amz-request-charged among them, and calls nothing
-     that reads the key's user, which BC-3's invariant pins end to end (Specs).
+  4. **options_cors**, at bucket and at object scope:
+     - 200 with the preflight's Access-Control headers, else the op's 403, 400, 404, 301 or 500
+       ([rgw_rest_s3.cc:3854-3875](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3854-L3875),
+       [rgw_rest_s3.cc:4305-4326](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4305-L4326)).
+     - The headers are rendered once, by BC-7's `SetPreflightHeaders` from `OptionsCORS`'s
+       results, which passes `ResponseHeaders` the constant `authorized = true`: radosgw's
+       preflight sends the Origin as the request sent it, whatever the rule holds
+       ([rgw_rest_s3.cc:3872-3873](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3872-L3873),
+       [rgw_rest_s3.cc:4323-4324](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4323-L4324);
+       `internal/cors/match.go:232-236`). The route derives no input of the rendering from
+       `r.Identity`: telling an anonymous identity from an Unverified one there would make a
+       forged preflight's answer differ from an anonymous one's.
+     - No preflight's response carries x-amz-request-charged, an anonymous preflight's included,
+       on success and on the error writer's 200-399 path, which takes the 301 PermanentRedirect
+       of another zonegroup's bucket, whose `r.BucketRec` `OptionsCORS.Init` leaves set
+       (`internal/s3/errors.go:50-54`). radosgw sends it to a requester that does not own a
+       requester-pays bucket, an anonymous one included
+       ([rgw_rest.cc:597-601](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L597-L601),
+       [rgw_rest.cc:602-606](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L602-L606)).
+       BC-7's rule in `SetCommonHeaders` keeps it off every OPTIONS response, so this task
+       touches neither `headers.go` nor `errors.go`.
+     - The route calls nothing else that reads the key's user. At object scope it builds the op
+       without reading the object, as radosgw's `read_permissions` reads the bucket alone for
+       OP_OPTIONS
+       ([rgw_rest.cc:1930-1932](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1930-L1932),
+       [rgw_rest.cc:1929-1931](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1929-L1931)).
+  5. **Storage class:** each of the four routes sets its op's `StorageClass` from
+     `x-amz-storage-class`, as PutObject's route does (`internal/s3/putobject.go:58`). BC-3's
+     ops make radosgw's refusal of a class the bucket's placement lacks, 400 InvalidArgument
+     ([rgw_op.cc:576-583](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L576-L583),
+     [rgw_op.cc:606-613](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L606-L613)).
 - **Specs:**
   - status, headers and body of each route from test_set_cors, test_cors_header_option,
     test_cors_origin_wildcard and the presigned preflight cases;
-  - BC-3's invariant table end to end through the route: a forged preflight with each of its
-    keys gives the same status, headers and body, apart from request ids, none of them carrying
-    x-amz-request-charged, and writes no usage charged to any of them.
-- **Exclusions and registry:** none.
-- **Depends on:** S2, BC-3, BC-5 (the presigned preflight specs). **PR:** one. **Brief:** about
-  150 lines.
+  - BC-3's invariant table end to end through the route, its rows the anonymous preflight and a
+    forged one with each of BC-3's keys, on a requester-pays bucket the table names `:plain`, so
+    that every key, the tenanted one included, resolves it alike. Each gives the same status,
+    headers and body, apart from request ids; none carries x-amz-request-charged, the
+    anonymous one included, in every entry, the 301 of another zonegroup's bucket among them;
+    and none writes usage charged to its key's user. The table gains an object-scope entry,
+    of a key that does not exist, answered 200;
+  - the tenant ruling end to end, through the real handler and `PostAuthInit`
+    (`internal/s3/handler.go:404`): a tenanted key's preflight of `plain` gives what an
+    anonymous preflight of `t:plain` gives, and not what one of `plain` gives;
+  - a successful preflight on a rule that allows `*`, with and without an Authorization header,
+    sends the Origin as sent;
+  - each route with an `x-amz-storage-class` the placement lacks is 400 InvalidArgument, the
+    three configuration routes' only once the requester is authorized, and the preflight's
+    answer is the same for every key.
+- **Exclusions and registry:** retires "A CORS preflight is answered 501 until CORS lands" and
+  the last paragraph of "A preflight's usage is accounted as an anonymous request's"; puts the
+  routed preflight of "A preflight's answer says nothing of its key's user", the delete of
+  "DeleteBucketCors removes a CORS configuration that does not decode" and the routed ops of
+  "The CORS configuration ops check the storage class once the requester is authorized" in the
+  present tense; and does the same in the registry entry "radosgw grants a signed CORS
+  preflight without comparing its signature", whose rgw-go paragraph still says the preflight
+  is answered 501.
+- **Depends on:** S2, BC-3, BC-5 (the presigned preflight specs), BC-7 (the preflight seam).
+  **PR:** one. **Brief:** about 170 lines.
 
 ### Task BC-7: CORS headers on responses
 
-- **Layer:** handler. **Files:** modify `internal/s3/headers.go` (`SetCommonHeaders`).
-  **Cluster:** no.
-- **Consumes:** BC-2's `Decode`, `Match`, `ResponseHeaders`; BC-3's `AttrCORS`.
+- **Layer:** handler. **Files:** modify `internal/s3/headers.go` (`SetCommonHeaders`, and a new
+  `SetPreflightHeaders`). **Cluster:** no.
+- **Consumes:** BC-2's `Decode`, `Match`, `ResponseHeaders`; BC-3's `AttrCORS` and
+  `OptionsCORS`. **Produces:** `SetPreflightHeaders(w http.ResponseWriter, o *op.OptionsCORS)`,
+  which BC-6's options_cors route calls, and `SetCommonHeaders`' rule for an OPTIONS response.
 - **Behaviour** (B1, D15):
   1. When the request carries an Origin and its bucket record is loaded with a configuration
      that decodes, `SetCommonHeaders` adds `ResponseHeaders` of the matched rule, for the
@@ -407,12 +456,34 @@ relies on fakerados behaviour beyond what it serves today.
      request-payment PUTs among them (the research's scan of `end_header` calls, §2.1). rgw-go adds
      them where a bucket is loaded; a request with no bucket record gets none.
   4. An undecodable configuration adds no headers; the op answers it.
+  5. **The preflight's response.** Dispatch sends an OPTIONS request to options_cors alone, so
+     `SetCommonHeaders` treats every OPTIONS response as the preflight's, on success and on the
+     error writer's 200-399 path (`internal/s3/errors.go:50-54`) alike:
+     - it adds no Access-Control headers of its own: the preflight's are rendered once, by
+       `SetPreflightHeaders`, from `OptionsCORS`'s rule, Origin, method and requested headers,
+       with `ResponseHeaders`' `authorized` the constant true, as radosgw's preflight sends the
+       Origin as the request sent it
+       ([rgw_rest_s3.cc:3872-3873](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3872-L3873),
+       [rgw_rest_s3.cc:4323-4324](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4323-L4324)).
+       Neither function derives anything for a preflight from `r.Identity` or the
+       Authorization header. radosgw's preflight errors carry no Access-Control headers
+       (`end_header(s, NULL)`, the same lines' function), and neither do rgw-go's;
+     - it sends no x-amz-request-charged, whatever the identity, an anonymous one included: on a
+       forged preflight the header would say whether the key's user owns the bucket, and
+       sending it to an anonymous preflight alone would tell a forged one from an anonymous one
+       (docs/exclusions.md, "A preflight's answer says nothing of its key's user"). radosgw
+       sends it to every non-owner
+       ([rgw_rest.cc:597-601](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L597-L601),
+       [rgw_rest.cc:602-606](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L602-L606)).
 - **Specs:** GET object 200 and 404 with the headers; an authentication failure without them;
   a presigned request on a wildcard rule gets `*`; a method the rule does not allow; a
-  PutBucketEncryption response with the headers.
+  PutBucketEncryption response with the headers; an OPTIONS response, 200 and 301, anonymous and
+  Unverified, on a requester-pays bucket the identity does not own, with no
+  x-amz-request-charged and no Access-Control headers from `SetCommonHeaders`;
+  `SetPreflightHeaders` on a rule that allows `*` sends the Origin as sent.
 - **Exclusions and registry:** new exclusion "Every S3 response carries CORS headers once its
-  bucket is loaded", listing radosgw's omissions.
-- **Depends on:** BC-2, BC-3. **PR:** one. **Brief:** about 120 lines.
+  bucket is loaded", listing radosgw's omissions, and that a preflight's carries only its own.
+- **Depends on:** BC-2, BC-3. **PR:** one. **Brief:** about 150 lines.
 
 ### Task BC-8: CORS recording and gate
 
@@ -1597,8 +1668,8 @@ WP-23 for BC-27 (b); L2's PR (b) for BC-28c (b) and BC-28d. Within the unit:
 |---|---|---|
 | 1 | BC-2, BC-5, BC-9, BC-13, BC-17, BC-23, BC-28a, BC-28b, BC-29, BC-31; BC-20; BC-30 | nothing in the unit; BC-20 S3; BC-30 WP-1 |
 | 2 | BC-3, BC-10, BC-11, BC-18, BC-21, BC-24, BC-28c (a) | BC-2 and BC-5; BC-9; BC-9; BC-17, S3 and S5; BC-20; BC-23; BC-28a |
-| 3 | BC-4, BC-6, BC-7, BC-12, BC-14, BC-19, BC-25, BC-26 (a), BC-28c (b) | BC-3; BC-3 and BC-5; BC-3; BC-10 and BC-11; BC-10 and BC-13; BC-18; BC-24; BC-23, BC-27 (a), WP-6 and WP-7; BC-28c (a) and L2 (b) |
-| 4 | BC-15, BC-32, BC-26 (b), BC-28d, BC-35 | BC-12 and BC-14; BC-26 (a), BC-30, BC-31, WP-5 and WP-6; WP-13; BC-28b and BC-28c (b); BC-3, BC-11, BC-18, BC-24 and BC-28c |
+| 3 | BC-4, BC-7, BC-12, BC-14, BC-19, BC-25, BC-26 (a), BC-28c (b) | BC-3; BC-3; BC-10 and BC-11; BC-10 and BC-13; BC-18; BC-24; BC-23, BC-27 (a), WP-6 and WP-7; BC-28c (a) and L2 (b) |
+| 4 | BC-6, BC-15, BC-32, BC-26 (b), BC-28d, BC-35 | BC-3, BC-5 and BC-7; BC-12 and BC-14; BC-26 (a), BC-30, BC-31, WP-5 and WP-6; WP-13; BC-28b and BC-28c (b); BC-3, BC-11, BC-18, BC-24 and BC-28c |
 | 5 | BC-33, BC-28e | BC-29, BC-32 and BC-15; BC-28a, S3 and BC-32 |
 
 The cluster tasks run one at a time, and the recording ones land through the controller, as
