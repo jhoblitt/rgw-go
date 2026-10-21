@@ -402,6 +402,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's retried PutObjectLockConfiguration can lock a bucket re-created under the same name](#radosgws-retried-putobjectlockconfiguration-can-lock-a-bucket-re-created-under-the-same-name) | pending | pending | ✓ |
 | [radosgw's CreateBucket with object lock skips the two permissions Amazon S3 requires for it](#radosgws-createbucket-with-object-lock-skips-the-two-permissions-amazon-s3-requires-for-it) | pending | pending | ✓ |
 | [radosgw's CreateBucket checks s3:PutBucketOwnershipControls before it reads x-amz-object-ownership](#radosgws-createbucket-checks-s3putbucketownershipcontrols-before-it-reads-x-amz-object-ownership) | pending | pending | ✓ |
+| [radosgw's CreateBucket takes an ACL other than private without s3:PutBucketAcl](#radosgws-createbucket-takes-an-acl-other-than-private-without-s3putbucketacl) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -23022,7 +23023,10 @@ Every new entry adds its row to this table, in document order.
   parsed at init, `x-amz-acl` among them. Every permission Amazon S3 requires
   for a CreateBucket header that radosgw does not check, or checks dead,
   meets it:
-  "[radosgw's CreateBucket with object lock skips the two permissions Amazon S3 requires for it](#radosgws-createbucket-with-object-lock-skips-the-two-permissions-amazon-s3-requires-for-it)".
+  - "[radosgw's CreateBucket with object lock skips the two permissions Amazon S3 requires for it](#radosgws-createbucket-with-object-lock-skips-the-two-permissions-amazon-s3-requires-for-it)", for `x-amz-bucket-object-lock-enabled`, parsed
+    late as this header is;
+  - "[radosgw's CreateBucket takes an ACL other than private without s3:PutBucketAcl](#radosgws-createbucket-takes-an-acl-other-than-private-without-s3putbucketacl)", for `x-amz-acl` and `x-amz-grant-*`, which the
+    handler parses at init, so that check needs no change to the parsing.
 - **Releases:** ceph main d8552606 and v21.1.2 (v21.0.0 onward); not at
   v19.2.7 or v20.2.4, which read no ownership header.
 - **rgw-go:** not affected yet: CreateBucket reads no
@@ -23032,4 +23036,67 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task L2's scoped re-review, 2026-10-21, checking the
   sibling the CreateBucket-with-object-lock entry led with; verified here
   and independently by rgw-bug-reproduction. Derived from the source, not
+  reproduced.
+
+## radosgw's CreateBucket takes an ACL other than private without s3:PutBucketAcl
+
+- **Kind:** defect, S3-correctness, unfixed at v19.2.7, v20.2.4 and ceph
+  main d8552606. Possibly security-relevant: a policy that denies
+  s3:PutBucketAcl, to keep a deployment's buckets from being made public
+  or shared, does not stop a requester allowed s3:CreateBucket from
+  creating a bucket with a public or shared ACL. Unreproduced: derived from
+  the source.
+- **Evidence:**
+  - `RGWCreateBucket::verify_permission` checks s3:CreateBucket alone
+    ([rgw_op.cc:3215-3244](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3215-L3244),
+    [rgw_op.cc:3443-3472](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3443-L3472)), while its
+    `get_params` builds the bucket's ACL from the request's `x-amz-acl` and
+    `x-amz-grant-*` headers
+    ([rgw_rest_s3.cc:2491](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2491),
+    [rgw_rest_s3.cc:2603](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2603)).
+    s3:PutBucketAcl appears in `rgw_op.cc` only in RGWPutACLs
+    ([rgw_op.cc:5754](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5754),
+    [rgw_op.cc:6329](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6329),
+    [rgw_op.cc:6834](https://github.com/ceph/ceph/blob/d8552606/src/rgw/rgw_op.cc#L6834) at ceph main
+    d8552606).
+  - At ceph main d8552606, CreateBucket refuses the three public canned
+    ACLs under the public access block's BlockPublicAcls
+    ([rgw_op.cc:3866-3872](https://github.com/ceph/ceph/blob/d8552606/src/rgw/rgw_op.cc#L3866-L3872) at ceph main
+    d8552606). That partly mitigates the public subset only: it is a
+    different control from an IAM deny, it must be configured, and it does
+    not cover a grant header or the other canned ACLs, which Amazon S3 calls
+    any other custom ACLs. Public ACLs are not unguarded at main, but
+    s3:PutBucketAcl is still unchecked there.
+  - Amazon S3's CreateBucket reference, retrieved 2026-10-21: "In your
+    `CreateBucket` request, if you specify an access control list (ACL) and
+    set it to `public-read`, `public-read-write`, `authenticated-read`, or if
+    you explicitly specify any other custom ACLs, both `s3:CreateBucket` and
+    `s3:PutBucketAcl` permissions are required."
+- **Impact:** at v19.2.7 and v20.2.4, a requester denied s3:PutBucketAcl
+  creates a bucket whose ACL grants everyone read, or write, or names any
+  grantee it likes, where Amazon S3 refuses the request; at main the same
+  holds for every such ACL that BlockPublicAcls does not catch, a grant
+  header among them.
+- **Shared sink:** `RGWCreateBucket::verify_permission`, which
+  "[radosgw's CreateBucket checks s3:PutBucketOwnershipControls before it reads x-amz-object-ownership](#radosgws-createbucket-checks-s3putbucketownershipcontrols-before-it-reads-x-amz-object-ownership)" describes, with "[radosgw's CreateBucket with object lock skips the two permissions Amazon S3 requires for it](#radosgws-createbucket-with-object-lock-skips-the-two-permissions-amazon-s3-requires-for-it)" beside this
+  entry. Of the headers the three name, only these are parsed at handler
+  init: `RGWHandler_REST_S3::init` sets `s->canned_acl` and
+  `s->has_acl_header`
+  ([rgw_rest_s3.cc:5050-5054](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5050-L5054),
+  [rgw_rest_s3.cc:5580-5584](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5580-L5584),
+  [rgw_rest_s3.cc:5855-5859](https://github.com/ceph/ceph/blob/d8552606/src/rgw/rgw_rest_s3.cc#L5855-L5859) at ceph main
+  d8552606), so `verify_permission` can test s3:PutBucketAcl without the
+  parsing change the other two need.
+- **Releases:** v19.2.7, v20.2.4 and ceph main d8552606.
+- **rgw-go:** does not reproduce it. A CreateBucket whose `x-amz-acl` is
+  other than `private`, or that carries an `x-amz-grant-*` header, is
+  authorized as s3:PutBucketAcl on the new bucket against the requester's
+  own policies, and a denial is 403 AccessDenied with nothing created
+  (`NonPrivateACL`, `internal/s3/bucket.go` and `internal/op/bucketops.go`;
+  `docs/exclusions.md`, "CreateBucket with an ACL other than private is
+  authorized as s3:PutBucketAcl too").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task L2's review, 2026-10-21, beside the object-lock
+  permissions on the same Amazon S3 page; ceph main's BlockPublicAcls check
+  found by the controller and verified here. Derived from the source, not
   reproduced.
