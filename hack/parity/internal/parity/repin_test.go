@@ -23,7 +23,26 @@ type gitRepo struct{ dir string }
 func newGitRepo() *gitRepo {
 	r := &gitRepo{dir: GinkgoT().TempDir()}
 	r.git("init", "-q", "-b", "main")
+	r.noMaintenance()
 	return r
+}
+
+// cloneGitRepo returns a clone of the repository at from in a directory of
+// its own.
+func cloneGitRepo(from string) *gitRepo {
+	r := &gitRepo{dir: GinkgoT().TempDir()}
+	r.git("clone", "-q", from, ".")
+	r.noMaintenance()
+	return r
+}
+
+// noMaintenance turns off, in the repository's own config, so that every git
+// run in it sees it, the code under test's included, the maintenance git
+// commit and git fetch start: it detaches, works in .git/objects after the
+// command returns, and can race the spec's TempDir cleanup there.
+func (r *gitRepo) noMaintenance() {
+	r.git("config", "maintenance.auto", "false")
+	r.git("config", "gc.auto", "0")
 }
 
 // git runs git in the repository, isolated from the caller's configuration.
@@ -152,6 +171,26 @@ func snapshot(opts parity.RepinOptions) []string {
 	}
 	return out
 }
+
+var _ = Describe("a treeless clone of the s3-tests repository", func() {
+	It("turns off git's maintenance in its own config, so that no fetch into it starts one", func(ctx SpecContext) {
+		ceph := newGitRepo()
+		ceph.seed()
+		ceph.serveTrusted()
+		trace := filepath.Join(GinkgoT().TempDir(), "trace")
+		GinkgoT().Setenv("GIT_TRACE", trace)
+		clone, err := parity.FetchTreeless(ctx, "file://"+ceph.dir, "+refs/heads/main:refs/heads/main")
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(os.RemoveAll, clone)
+		traced, err := os.ReadFile(trace)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(traced)).To(ContainSubstring("fetch"), "GIT_TRACE traced the clone's git runs")
+		Expect(string(traced)).NotTo(ContainSubstring("git maintenance"))
+		cloned := &gitRepo{dir: clone}
+		Expect(cloned.git("config", "--get", "maintenance.auto")).To(Equal("false"))
+		Expect(cloned.git("config", "--get", "gc.auto")).To(Equal("0"))
+	})
+})
 
 var _ = Describe("Repin", func() {
 	var (

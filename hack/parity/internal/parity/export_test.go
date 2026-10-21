@@ -14,3 +14,6 @@ var ReadPinFile = readPinFile
 
 // PinSourceProblems exposes pinSourceProblems to the specs.
 var PinSourceProblems = pinSourceProblems
+
+// FetchTreeless exposes fetchTreeless to the specs.
+var FetchTreeless = fetchTreeless
