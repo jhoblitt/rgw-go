@@ -4123,7 +4123,7 @@ does the following.
   rgw-go answers every preflight whose key resolves alike, on both
   releases. It authenticates a preflight so today: it runs a suspended
   user's preflight (`internal/s3/handler.go:421`), takes no `rgwx-uid` on
-  any preflight (`internal/auth/verifier.go:116-123`), and reads
+  any preflight (`internal/auth/verifier.go:132-137`), and reads
   `rgwx-bucket-instance` on no request. A suspended user's own preflight
   therefore passes where radosgw refuses it; the request it precedes is
   still refused. Only radosgw's own multisite connection sends `rgwx-`
@@ -4252,7 +4252,9 @@ does the following.
   Only radosgw's own multisite connection sends a system request with
   `rgwx-uid` or `rgwx-perm-check-uid` (`RGWRESTConn`,
   `rgw_rest_conn.h:234-237` and `rgw_rest_conn.cc:330-331` at v20.2.4),
-  and rgw-go answers one on both floors as Squid does. With a non-empty
+  and rgw-go answers a SigV4 one on both floors as Squid does; it reads no
+  SigV2 request's `rgwx-uid` ("A SigV2 request's rgwx-uid is not read",
+  below). With a non-empty
   `rgwx-uid` naming a user, Tentacle makes that user the request's user
   record (`SysReqApplier::load_acct_info` returns it,
   `rgw_auth_filters.h:324-344`, and `Strategy::apply` stores it,
@@ -4679,6 +4681,45 @@ does the following.
   header-signed PutObject with `?x-amz-meta-x=1`. Run against both
   releases' clusters on 2026-10-14, rgw-go stored the signed metadata
   alone, and radosgw stored `x` as well.
+- **A SigV2 request's rgwx-uid is not read.** radosgw's `SysReqApplier`
+  takes a system user's `rgwx-uid` from the query on every route, in its
+  `load_acct_info`
+  ([rgw_auth_filters.h:283-317](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_filters.h#L283-L317) at v19.2.7,
+  [rgw_auth_filters.h:305-345](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_filters.h#L305-L345) at v20.2.4),
+  but SigV2 signs no `rgwx-` parameter: `RGWHTTPArgs::append` files them
+  apart from the sub-resources the canonical resource writes and from the
+  ordinary arguments the presigned route's query map reads
+  ([rgw_common.cc:920-924](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L920-L924) at v19.2.7,
+  [rgw_common.cc:933-937](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L933-L937) at v20.2.4).
+  So whoever holds a system user's presigned SigV2 URL, or resends its
+  header-signed request within the skew window, chooses the request's owner
+  (`docs/ceph-upstream-bugs.md`, "[radosgw takes a system key's rgwx-uid
+  from a query its signature does not
+  cover](ceph-upstream-bugs.md#radosgw-takes-a-system-keys-rgwx-uid-from-a-query-its-signature-does-not-cover)").
+  rgw-go, on both releases, takes a system user's `rgwx-uid` from a SigV4
+  request alone, whose canonical query signs it (`Verifier.Authenticate`):
+  a SigV2 system request runs as its own user, and an `rgwx-uid` naming no
+  user or account is not looked up, where radosgw refuses it 403
+  AccessDenied. Only radosgw's multisite connection sends `rgwx-uid`: a
+  zone names the request's owner in it on every request it forwards to the
+  metadata master and on an object fetch
+  (`rgw_forward_request_to_master`,
+  [rgw_op.cc:113-117](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L113-L117) at v19.2.7,
+  [rgw_op.cc:147-152](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L147-L152) at v20.2.4;
+  `RGWRESTConn::populate_params`,
+  [rgw_rest_conn.cc:150-154](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_conn.cc#L150-L154) at v19.2.7,
+  [rgw_rest_conn.cc:151-155](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_conn.cc#L151-L155) at v20.2.4),
+  and it signs SigV2 only when `rgw_s3_client_max_sig_ver` is set to 1, 2
+  or 3 (`sign_request`,
+  [rgw_rest_client.cc:268-280](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_client.cc#L268-L280) at v19.2.7,
+  [rgw_rest_client.cc:274-286](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_client.cc#L274-L286) at v20.2.4),
+  where `rgw_s3_client_max_sig_ver` defaults to -1, SigV4
+  ([rgw.yaml.in:1844-1849](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L1844-L1849) at v19.2.7,
+  [rgw.yaml.in:1926-1931](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L1926-L1931) at v20.2.4).
+  A peer set so would have its forwarded and fetch requests run on rgw-go
+  as the system user, a forwarded CreateBucket owned by it for one.
+  Multisite is excluded, so nothing rgw-go serves today breaks; the gap is
+  the multisite unit's to close.
 - **A browser upload's identity takes nothing from the query.** radosgw
   authenticates a POST object form's credentials inside the op, through
   `create_apl_local`, which wraps the local applier in `SysReqApplier`
