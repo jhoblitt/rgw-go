@@ -395,6 +395,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [cls_rgw's start-key delimiter test reads a null version's list key as a common prefix](#cls_rgws-start-key-delimiter-test-reads-a-null-versions-list-key-as-a-common-prefix) | pending | pending |  |
 | [radosgw's bucket removal with purge leaves a key's older versions behind when a page ends on one of its versions](#radosgws-bucket-removal-with-purge-leaves-a-keys-older-versions-behind-when-a-page-ends-on-one-of-its-versions) | pending | pending |  |
 | [cls_otp checks a code at the low 32 bits of the OSD's clock](#cls_otp-checks-a-code-at-the-low-32-bits-of-the-osds-clock) | pending | pending | ✓ |
+| [radosgw reports a partNumber read's checksum as the multipart object's composite](#radosgw-reports-a-partnumber-reads-checksum-as-the-multipart-objects-composite) | pending | [ceph/ceph#66042](https://github.com/ceph/ceph/pull/66042) |  |
+| [radosgw's ListParts never reports its upload's checksum algorithm](#radosgws-listparts-never-reports-its-uploads-checksum-algorithm) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -6777,11 +6779,17 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v20.2.4 and main (06adccc25d6, 2026-10-01,
   `driver/rados/rgw_sal_rados.cc:3059`, `:3097`, `:3107`;
   `rgw_rest_s3.cc:4284`).
-- **rgw-go:** not affected yet: it renders no part checksum.
+- **rgw-go:** unaffected: each listed part's checksum is the one the head
+  of that part, which it stats, carries, and a part whose head has none, or
+  one rgw-go cannot read, shows none (`listParts`,
+  `internal/op/objectread.go`). Its S3 handler renders no part checksum yet
+  (`docs/exclusions.md`, "Stored checksums are not shown").
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-05
   and has not reported a prior-art result.
 - **Found:** review of phase 1 unit R, Task 6, 2026-10-04; derived from the
-  source, not reproduced.
+  source, not reproduced. Phase 2 task WP-5 gave rgw-go's parts their own
+  heads' checksums, and phase 2 task WP-12 stopped showing one of type none,
+  2026-10-21.
 
 ## radosgw starts an aws-chunked trailer section from a stale leftover count
 
@@ -15088,17 +15096,23 @@ Every new entry adds its row to this table, in document order.
   another writer of the attr in RADOS can plant the bytes.
 - **Releases:** v20.2.4 and main f6f2529dd9e.
 - **rgw-go:** not affected. `StatObject` and `PrefetchObject` decode the
-  attr into the object's checksum with `cksum.DecodeCksum`, which reads one
-  record and leaves the bytes after it unread, as radosgw's iterator readers
-  do, so such an attr reads as its record. An attr that does not decode
-  reads as no checksum and fails no read of the object
-  (`internal/driver/stat.go`, `internal/cksum/record.go`). Every attr
-  rgw-go writes is one record, encoded whole.
+  attr into the object's checksum with `cksum.DecodeAttr`, which refuses
+  bytes after the record, so such an attr reads as no checksum, as one
+  that does not decode does, and fails no read of the object: every read
+  that shows a checksum shows none for it, where radosgw's iterator readers
+  show the record (`internal/driver/stat.go`, `internal/cksum/record.go`;
+  `docs/exclusions.md`, "A stored checksum rgw-go cannot read whole is not
+  shown"). rgw-go writes each record it encodes whole, and a copy that
+  streams its data drops a source's attr that `cksum.DecodeAttr`
+  refuses (`droppedChecksum`, `internal/driver/copy.go`); a copy that shares
+  the tails, and the raw copy a lifecycle transition is to use, keep the
+  attr as it is, as radosgw's copy and `transition_obj` do.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task WP-1, 2026-10-15, tracing the readers of
   `Cksum::decode`. Its review set the class and listed the iterator
   readers the same day. Phase 2 task WP-8 added rgw-go's reader,
-  2026-10-20. Derived from the source, not reproduced.
+  2026-10-20, and phase 2 task WP-12 made it refuse bytes after the record,
+  2026-10-21. Derived from the source, not reproduced.
 
 ## cls_rgw mis-sorts and cannot list versions whose epoch is 2^32 or more
 
@@ -21659,8 +21673,10 @@ Every new entry adds its row to this table, in document order.
   that streams its data drops a composite checksum").
   The raw copy lifecycle's transition is to use keeps it, as
   `transition_obj` does; the transition's task decides. rgw-go's reads show
-  no stored checksum yet ("Stored checksums are not shown"), and the
-  planned read rules hide a composite on an object without parts.
+  no composite on an object without parts (`objectReadChecksum`,
+  `internal/op/getobject.go`; `docs/exclusions.md`, "A composite checksum
+  on an object without parts is not shown"), though its S3 handler renders
+  no stored checksum yet ("Stored checksums are not shown").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task WP-11's review, 2026-10-20, from the exclusion
   WP-11 wrote for rgw-go's drop; derived from the source, not reproduced.
@@ -22504,3 +22520,108 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V13b, 2026-10-20, emulating `otp_check`; checked
   at v19.2.7 and v20.2.4, derived from the source, not reproduced.
+
+## radosgw reports a partNumber read's checksum as the multipart object's composite
+
+- **Kind:** defect, S3-correctness: a GET or HEAD with `partNumber` and
+  `x-amz-checksum-mode: enabled` reports the part's own checksum as
+  COMPOSITE, with the multipart object's part count after it, whatever the
+  upload's checksum type. No stored data is damaged. Not security-relevant.
+  Fixed in v21.0.0, not on the tentacle branch. Prior art: upstream fixed
+  it on main before we met it. Unreproduced: derived from the source.
+- **Evidence:** at v20.2.4 unless a link names main; v19.2.7 has no
+  checksum code (it has no `src/rgw/rgw_cksum.h`).
+  - A `partNumber` read redirects to the part head's state, keeping only
+    the object's crypt attrs, and sets the object's parts count
+    ([rgw_rados.cc:7728-7765](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7728-L7765));
+    `RGWGetObj::execute` takes the part head's attrs and that count
+    ([rgw_op.cc:2491-2499](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2491-L2499)).
+  - A part's `user.rgw.cksum` is computed with its upload's checksum type
+    and flags, and its record takes the upload's flags in place of the
+    digest's, so it never has V2
+    ([rgw_op.cc:4471-4472](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4471-L4472),
+    [rgw_op.cc:4601-4607](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4601-L4607),
+    [rgw_cksum_pipe.h:187-191](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L187-L191)).
+  - `send_response_data` types the record with `get_checksum_type` and the
+    parts count, which answers COMPOSITE for a multipart object's record
+    without V2, and sends `<armor>-<parts>`
+    ([rgw_rest_s3.cc:548-586](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L548-L586),
+    [rgw_cksum.h:382-399](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L382-L399)).
+    A CRC upload created FULL_OBJECT gets its part's CRC back as
+    `<crc>-<parts>` and COMPOSITE.
+  - main types a `partNumber` read with `get_part_checksum_type`, COMPOSITE
+    only when the record's flags say so, and sends the armor alone
+    ([rgw_rest_s3.cc:569-608](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_rest_s3.cc#L569-L608),
+    [rgw_cksum.h:417-424](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_cksum.h#L417-L424)),
+    since 9b43590e12e, "rgw: fix checksum for get part request". The
+    tentacle branch at ab83d026c29 has no `get_part_checksum_type`.
+  - s3-tests' five `test_multipart_use_cksum_helper_*` expect main's
+    answer: a part GET's checksum is the part's own, typed as its upload
+    ([test_s3.py:16229-16239](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L16229-L16239)),
+    as they do at rgw-go's s3-tests pin, e9c8467b114.
+- **Impact:** a client reading a multipart object by part with checksum
+  mode gets a value with a `-<parts>` suffix, which is no checksum of the
+  part it read, under the type COMPOSITE whatever the upload's type.
+- **Releases:** v20.2.4 and the tentacle branch at ab83d026c29. v19.2.7 has
+  no checksum code. Fixed in v21.0.0 (ceph/ceph#66042, 590ef383142), not
+  backported to tentacle.
+- **rgw-go:** differs: a `partNumber` read shows its part head's record as
+  main does (`partReadChecksum`, `internal/op/getobject.go`;
+  `docs/exclusions.md`, "A partNumber read shows its part's checksum
+  bare"). Its S3 handler renders no stored checksum yet ("Stored checksums
+  are not shown").
+- **Upstream:** fixed before we met it, by 9b43590e12e on main through
+  [ceph/ceph#66042](https://github.com/ceph/ceph/pull/66042) (merge
+  590ef383142, 2025-12-04), first tagged in v21.0.0, which `git tag
+  --contains` lists first, and not backported to tentacle: `gh` finds no
+  other PR of that title, and neither origin/tentacle nor origin/squid
+  carries the commit. The PR names no tracker issue.
+- **Found:** the phase 2 write-path research, 2026-10-13
+  (`docs/superpowers/plans/2026-10-13-phase-2/research/research-writepath.md`,
+  §6, defect 5); recorded by phase 2 task WP-12, 2026-10-21, which checked
+  it at v20.2.4, main f6f2529dd9e, the tentacle branch and the s3-tests
+  pin. Derived from the source, not reproduced; task WP-14 reproduces it.
+
+## radosgw's ListParts never reports its upload's checksum algorithm
+
+- **Kind:** defect, S3-correctness, minor: ListParts reports no
+  `ChecksumAlgorithm` for an upload created with one, and no `ChecksumType`
+  for any upload. No stored data is damaged. Not security-relevant.
+  Unfixed through main. Unreproduced: derived from the source.
+- **Evidence:** at v20.2.4 unless a link names main; v19.2.7 has no
+  checksum code.
+  - CreateMultipartUpload keeps the algorithm and its flags in the upload's
+    `multipart_upload_info`
+    ([rgw_op.cc:7006-7010](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7006-L7010)).
+  - `RGWListMultipart::execute` decodes the checksum ListParts reports from
+    the meta object's `user.rgw.cksum`
+    ([rgw_op.cc:7617-7630](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7617-L7630)),
+    and `send_response` renders `ChecksumAlgorithm` from it alone
+    ([rgw_rest_s3.cc:4695-4698](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4695-L4698)).
+  - Nothing writes that attr on a meta object: its writers are the head
+    writes of PutObject and UploadPart, of POST object and of the
+    completion
+    ([rgw_op.cc:4776](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4776),
+    [rgw_op.cc:5102](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5102),
+    [rgw_op.cc:7340](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7340)).
+  - `send_response` renders no `ChecksumType`
+    ([rgw_rest_s3.cc:4657-4719](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4657-L4719)),
+    an element AWS's ListParts response carries.
+  - main is the same
+    ([rgw_op.cc:8157-8170](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_op.cc#L8157-L8170),
+    [rgw_rest_s3.cc:4955-4957](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_rest_s3.cc#L4955-L4957)).
+- **Impact:** a client cannot learn an upload's checksum algorithm or
+  checksum type from ListParts, as it can from AWS; it must keep what it
+  sent to CreateMultipartUpload.
+- **Releases:** v20.2.4 and main f6f2529dd9e. v19.2.7 has no checksum code.
+- **rgw-go:** differs: ListParts reports both from the upload's
+  `multipart_upload_info`, for a type AWS defines (`ListParts`,
+  `internal/op/listparts.go`; `docs/exclusions.md`, "ListParts reports its
+  upload's checksum algorithm and type"). Its S3 handler renders neither
+  yet ("Stored checksums are not shown").
+- **Upstream:** pending; prior art not searched.
+- **Found:** the phase 2 write-path research, 2026-10-13
+  (`docs/superpowers/plans/2026-10-13-phase-2/research/research-writepath.md`,
+  §6, defect 8); recorded by phase 2 task WP-12, 2026-10-21, which checked
+  it at v20.2.4 and main f6f2529dd9e and added the missing `ChecksumType`.
+  Derived from the source, not reproduced; task WP-14 reproduces it.
