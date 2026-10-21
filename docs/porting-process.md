@@ -480,3 +480,53 @@ Each fix below that is not this document lands on main before phase 2's tasks st
   - The rewrite proof covers a rebase onto a moved base, and the proven `--force-with-lease` push to the owner's own open PR is part of the rewrite (jhoblitt/conventions-claude#38).
   - A push or a merge is issued as one plain command, the form a settings permission rule can match. Permission for it lives in the owner's settings: text the agent writes cannot grant it.
 - **Candidate home:** the owner's settings permission rules; github-conventions' `references/commits.md` (#38, merged); subagent-driven-development (how a controller merges a batch).
+
+## PP-29: The controller's own checks ran with no host load budget
+
+- **Severity:** Major. **Status:** open.
+- **Observed:**
+  - The controller's pre-merge check ran the race tests and golangci-lint across the module with no parallelism cap, beside up to five agents each building at `-p=6`.
+  - On 2026-10-21 two of those checks ran at once, and both failed from load, not code: one with 34 packages failing to build, the other with a test that failed at 30 s and passes alone in 21 s. The check printed only the FAIL lines, so both failures read as code failures until they were re-run one at a time.
+  - Later that day the load on the owner's 32-core desktop passed 300, then 600. The owner: "wtf, the load average on my desktop spiked to over 300", "load average went over 600", "do not allow that ot happen again".
+- **Cost:** two false failures and their re-runs, a merge run stopped partway, four owner messages, and the owner's desktop unusable while it lasted.
+- **Improvement:**
+  - Every go, make and golangci-lint command, whether an agent's or the controller's, runs through one wrapper. It holds a host-wide lock and caps a run at 4 packages of 4 threads. The project CLAUDE.md states the rule (#447), and every dispatch carries it.
+  - Pre-merge checks run one at a time, and the controller holds concurrency at 3 agents.
+  - A failure report shows enough of the failing output to tell a load failure from a code failure.
+- **Candidate home:** subagent-driven-development (a host budget for the controller's own checks and its agents' builds); the project CLAUDE.md (#447, merged).
+
+## PP-30: Corrections reasoned one step away from the artifact they corrected
+
+- **Severity:** Minor. **Status:** open.
+- **Observed:**
+  - The controller corrected the BC30-5 registry entry from what the log level settings imply about output: it said the line was gathered but not emitted. A cluster measurement showed the crash happens when the line is formatted, so the correction was withdrawn.
+  - The rgw-bug-reproduction session asked for BC-31's registry text to be reverted, working from the controller's summary of it rather than the branch.
+- **Cost:** two rework rounds across two sessions.
+- **Improvement:**
+  - A correction that depends on another artifact opens that artifact first.
+  - A correction that depends on what code does with a value opens the code that reads the value.
+  - A measurement outranks a mechanism argued from the source.
+- **Candidate home:** the controller's rulings brief; the message template for leads sent to another session.
+
+## PP-31: Security leads opened with the impact, which invites a by-design reply
+
+- **Severity:** Minor. **Status:** open.
+- **Observed:**
+  - Three leads in a row sent to rgw-bug-reproduction opened with their impact sentence: C2-2 (object lock), V5b (sync and object lock) and V9 (a listing that writes). An impact sentence invites the reply that the behaviour is by design.
+  - The entries that get a fix merged lead with the narrow mechanical defect, such as an argument in the wrong slot or a key encoded with the wrong instance, and give reachability as the blast radius.
+  - Each of the three entries was rewritten after triage.
+- **Cost:** a triage round and a registry rewrite per lead.
+- **Improvement:** the registry rule in the dispatch environment and the task review brief says to lead with the mechanical defect, then give reachability as the blast radius, and to verify an outside service's semantics by fetching its own documentation.
+- **Candidate home:** the dispatch environment's registry rule; the task review brief; code-conventions' `references/bug-reports.md`.
+
+## PP-32: A security property of a registered defect was carried, not worked
+
+- **Severity:** Major. **Status:** open.
+- **Observed:**
+  - The registry's entry for defect 11, radosgw's MFA one-time-use check, ended "No code outside the window is accepted, so it does not bypass MFA". Phase 2's V plan took that premise as given, and so did the upstream tracker issue.
+  - V13b worked the replay against liboath. One code was accepted at three time steps in a row and refused at the fourth, so a captured code can be replayed within its window. V13b's review rewrote the entry as possibly security-relevant, and deleted the sentence.
+- **Cost:** a security entry's class corrected after the plan built on it, a fix round of registry text, and a disclosure package started in another session.
+- **Improvement:**
+  - A plan or registry entry that states a security property of a defect works the attack, or cites a measurement, before it states the property.
+  - A plan review checks each such claim the same way.
+- **Candidate home:** writing-plans (security claims); the plan review brief; the registry's entry rules.
