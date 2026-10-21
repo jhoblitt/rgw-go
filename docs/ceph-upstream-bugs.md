@@ -377,6 +377,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's CompleteMultipartUpload combines the checksums of the parts it lists, not of those it completes](#radosgws-completemultipartupload-combines-the-checksums-of-the-parts-it-lists-not-of-those-it-completes) | pending | pending | ✓ |
 | [radosgw's CompleteMultipartUpload never compares a supplied CRC64NVME checksum](#radosgws-completemultipartupload-never-compares-a-supplied-crc64nvme-checksum) | pending | [ceph/ceph#71484](https://github.com/ceph/ceph/pull/71484) |  |
 | [radosgw's CompleteMultipartUpload accepts a supplied checksum that only starts with its own](#radosgws-completemultipartupload-accepts-a-supplied-checksum-that-only-starts-with-its-own) | pending | pending | ✓ |
+| [Tentacle's copy of a compressed source into a class that does not compress it accounts the compressed size](#tentacles-copy-of-a-compressed-source-into-a-class-that-does-not-compress-it-accounts-the-compressed-size) | [#75715](https://tracker.ceph.com/issues/75715), [#75716](https://tracker.ceph.com/issues/75716), [#78257](https://tracker.ceph.com/issues/78257), [#78260](https://tracker.ceph.com/issues/78260) | [ceph/ceph#70006](https://github.com/ceph/ceph/pull/70006), [ceph/ceph#70242](https://github.com/ceph/ceph/pull/70242), [ceph/ceph#70241](https://github.com/ceph/ceph/pull/70241), [ceph/ceph#70239](https://github.com/ceph/ceph/pull/70239) |  |
+| [radosgw carries a composite checksum to a copy without parts, which Tentacle reports as its FULL_OBJECT checksum](#radosgw-carries-a-composite-checksum-to-a-copy-without-parts-which-tentacle-reports-as-its-full_object-checksum) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -21390,3 +21392,149 @@ Every new entry adds its row to this table, in document order.
   §6, defect 7); recorded by phase 2 task WP-9, 2026-10-20, which checked it
   at v20.2.4 and main f6f2529dd9e and added the empty value. Derived from
   the source, not reproduced; task WP-14 reproduces it.
+
+## Tentacle's copy of a compressed source into a class that does not compress it accounts the compressed size
+
+- **Kind:** defect, S3-correctness: the copy's bucket index entry carries
+  the source's compressed size as its accounted size, where the copy holds
+  the plaintext. No stored data is damaged. Not security-relevant. Fixed on
+  main, on the tentacle branch after v20.2.4, in no Tentacle release yet,
+  and, though Squid never reached it, in v19.2.7; present at v20.2.4.
+  Unreproduced: derived from the source.
+- **Evidence:** at v20.2.4 unless a link names v19.2.7.
+  - A copy that streams its data reads the source up to its stored size:
+    `Read::prepare` gives `obj_size` as the head state's `size`, the stored
+    size, and `copy_obj` hands `copy_obj_data` `obj_size - 1` as the end of
+    the read
+    ([rgw_rados.cc:7842](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7842),
+    [rgw_rados.cc:5135-5139](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5135-L5139)).
+  - `RGWCopyObjDPF::set_writer` decodes a compressed source, erases its
+    compression info from the copy's attrs, and `finalize_attrs` adds one
+    back only when the copy's own compressor compressed
+    ([rgw_op.cc:5774-5790](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5774-L5790),
+    [rgw_op.cc:5821-5838](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5821-L5838),
+    [rgw_op.cc:5871-5893](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5871-L5893)):
+    not into a class without a compression type, nor where the plugin does
+    not load or the first block does not compress.
+  - `copy_obj_data` then takes the accounted size from the compression info
+    when there is one and otherwise from `ofs`, the end of the read plus
+    one, which is the source's stored size
+    ([rgw_rados.cc:5338-5346](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5338-L5346),
+    [rgw_rados.cc:5368-5379](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5368-L5379)),
+    and the head write puts it in the index entry and the quota stats
+    ([rgw_rados.cc:3473](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3473),
+    [rgw_rados.cc:3516-3518](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3516-L3518)).
+  - The copy's head carries no compression info, so its state's accounted
+    size is its plaintext size
+    ([rgw_rados.cc:6927](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6927)),
+    which a GET sends as its length, while ListObjects reports the entry's
+    accounted size as the object's Size
+    ([rgw_rest_s3.cc:2054](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2054),
+    [rgw_rest_s3.cc:2198](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2198)).
+  - A delete of the copy takes the stored entry's accounted size, the
+    compressed one the write added, out of the bucket index header
+    (`unaccount_entry`,
+    [cls_rgw.cc:887-898](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L887-L898),
+    [cls_rgw.cc:1017-1028](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1017-L1028)),
+    so the bucket's stats do not drift. The gateway's quota cache takes the
+    state's plaintext size off instead
+    ([rgw_rados.cc:6625](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6625),
+    [rgw_rados.cc:6738](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6738)),
+    until it reads the bucket's stats again once `rgw_bucket_quota_ttl`
+    passes
+    ([rgw_quota.cc:133-142](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_quota.cc#L133-L142)).
+  - In multisite the peer zone recomputes the accounted size when it fetches
+    the copy, so ListObjectVersions reports different sizes per zone, as
+    5addb80abac's message describes.
+  - main's 5addb80abac, "rgw: copy_obj_data() record uncompressed size for
+    a compressed source", passes `copy_obj_data` the source's accounted size
+    for a destination left uncompressed, and its squid backport 8001a4d4fd8
+    is in v19.2.7
+    ([rgw_rados.cc:5131-5146](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5131-L5146),
+    [rgw_rados.cc:4907-4910](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4907-L4910)).
+    Squid's copy has no data-processor factory and always keeps the
+    source's compression info
+    ([rgw_rados.cc:4823-4825](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4823-L4825)),
+    so its accounted size came from that info before the fix too.
+- **Impact:** a listing reports such a copy smaller than a GET of it
+  returns. The bucket's stats, and the quota and user stats taken from
+  them, count the copy at its compressed size while it exists; the
+  gateway's quota cache subtracts its plaintext size on delete, until its
+  next refresh. In multisite the zones list different sizes for the copy.
+- **Releases:** v20.2.4. The fix is on the tentacle branch since
+  2026-08-20, after v20.2.4, and in no Tentacle release yet. v19.2.7
+  carries the fix and never reached the defect; main is fixed.
+- **rgw-go:** unaffected: a copy of a compressed source copies its stored
+  bytes with their compression info, and `putStream` accounts the info's
+  original size (`copyData`, `internal/driver/copy.go`;
+  `docs/exclusions.md`, "A copy that streams a compressed source copies its
+  stored bytes"). An entry a Tentacle radosgw wrote is read as it stands.
+- **Upstream:** [#75715](https://tracker.ceph.com/issues/75715) and
+  [#75716](https://tracker.ceph.com/issues/75716), which 5addb80abac names,
+  with their tentacle backports
+  [#78260](https://tracker.ceph.com/issues/78260) and
+  [#78257](https://tracker.ceph.com/issues/78257), Resolved. Fixed by
+  [ceph/ceph#70006](https://github.com/ceph/ceph/pull/70006) on main,
+  [ceph/ceph#70242](https://github.com/ceph/ceph/pull/70242) on squid,
+  [ceph/ceph#70241](https://github.com/ceph/ceph/pull/70241) on tentacle,
+  merged as 341675df0b9 on 2026-08-20, and
+  [ceph/ceph#70239](https://github.com/ceph/ceph/pull/70239) on umbrella.
+- **Found:** phase 2 task WP-11, 2026-10-20, reading the change in
+  `copy_obj_data` between v19.2.6 and v19.2.7; derived from the source, not
+  reproduced.
+
+## radosgw carries a composite checksum to a copy without parts, which Tentacle reports as its FULL_OBJECT checksum
+
+- **Kind:** defect, S3-correctness: a copy that streams its data, and a
+  lifecycle transition, keep a multipart source's combined checksum on an
+  object that has no parts, and a Tentacle radosgw then reports the
+  composite as the object's own FULL_OBJECT checksum. No stored data is
+  damaged. Not security-relevant. Unreproduced: derived from the source.
+- **Evidence:** at v20.2.4 unless a link names v19.2.7.
+  - A multipart upload of a digest type completes with a composite: the
+    digest of its parts' digests, flagged COMPOSITE and COMBINED
+    ([rgw_cksum.cc:96-116](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.cc#L96-L116)).
+  - A CopyObject under `COPY` takes every source attr, `user.rgw.cksum`
+    included (`set_copy_attrs`,
+    [rgw_rados.cc:3863-3865](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3863-L3865)),
+    and neither `copy_obj` nor `RGWCopyObjDPF` touches the attr: the only
+    writers of `RGW_ATTR_CKSUM` are the PUT, POST object and completion
+    paths
+    ([rgw_op.cc:4776](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4776),
+    [rgw_op.cc:5102](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5102),
+    [rgw_op.cc:7340](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7340)).
+    `transition_obj` keeps every attr but the id tag and the tail tag and
+    copies through `copy_obj_data` with no data-processor factory
+    ([rgw_rados.cc:5460-5461](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5460-L5461),
+    [rgw_rados.cc:5481](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5481)).
+  - Either copy writes an atomic object, whose manifest has no parts, so
+    `Read::prepare` sets no parts count
+    ([rgw_rados.cc:7709-7716](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7709-L7716)).
+  - A checksum-mode GET or HEAD and GetObjectAttributes then call
+    `get_checksum_type` with `is_multipart` false, which answers
+    FULL_OBJECT whatever the flags, and render the value bare
+    ([rgw_rest_s3.cc:551-578](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L551-L578),
+    [rgw_rest_s3.cc:4029-4050](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4029-L4050),
+    [rgw_cksum.h:382-399](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L382-L399)).
+  - Squid has no checksum code (v19.2.7 has no `src/rgw/rgw_cksum.h`), so
+    it neither writes nor shows the record. Its copy and its transition
+    carry one they find as an opaque attr
+    ([rgw_rados.cc:3702-3732](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3702-L3732),
+    [rgw_rados.cc:5227-5228](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5227-L5228)),
+    which a Tentacle gateway on the zone later reports the same way.
+- **Impact:** a checksum-mode GET or HEAD, or GetObjectAttributes, of such a
+  copy returns a FULL_OBJECT checksum that is not the digest of its body, so
+  a client that checks a FULL_OBJECT checksum against the data it read
+  reports a mismatch on an intact object.
+- **Releases:** v20.2.4; v19.2.7 carries the record without reading it.
+  main not checked.
+- **rgw-go:** a streamed CopyObject drops such a record (`compositeChecksum`
+  in `copyData`, `internal/driver/copy.go`; `docs/exclusions.md`, "A copy
+  that streams its data drops a composite checksum").
+  The raw copy lifecycle's transition is to use keeps it, as
+  `transition_obj` does; the transition's task decides. rgw-go's reads show
+  no stored checksum yet ("Stored checksums are not shown"), and the
+  planned read rules hide a composite on an object without parts.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task WP-11's review, 2026-10-20, from the exclusion
+  WP-11 wrote for rgw-go's drop; derived from the source, not reproduced.
