@@ -8063,6 +8063,195 @@ following.
   `pkg/operator/ceph/object/controller.go:620-654`,
   `objectstore.go:799-823`).
 
+### Lifecycle differences
+
+rgw-go decides what a lifecycle rule does to a listed object, and what
+`x-amz-expiration` and `x-amz-abort-date` name, as radosgw's `rgw_lc.cc`
+does at the v19.2.7 and v20.2.4 tags (`lifecycle.Decide`,
+`lifecycle.ExpirationHeader` and `lifecycle.AbortHeader`,
+`internal/lifecycle/decide.go` and `headers.go`). rgw-go does not yet run
+the worker or send the headers ("No x-amz-expiration", under "Object read
+differences"), so these entries describe the decisions both will take.
+Where rgw-go differs, it does the following, as the design's compatibility
+rule asks (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:284-298`):
+the correct S3 result, in RADOS state radosgw reads as its own.
+
+- **A current delete marker at the end of a listing page is kept on
+  Squid.** radosgw lists a rule's objects in pages of 1000, and at v19.2.7
+  its `next_key_name` answers none for a page's last entry
+  ([rgw_lc.cc:434-443](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L434-L443)),
+  so a current delete marker there looks to have no older version, and an
+  ExpiredObjectDeleteMarker or Expiration rule removes it; its older
+  versions start the next page, and the newest becomes current again
+  (docs/ceph-upstream-bugs.md, "[radosgw's lifecycle removes a current
+  delete marker that ends a listing
+  page](ceph-upstream-bugs.md#radosgws-lifecycle-removes-a-current-delete-marker-that-ends-a-listing-page)").
+  rgw-go takes v20.2.4's rule on both releases: the last entry of a
+  truncated page sees its own name as the next one
+  ([rgw_lc.cc:434-451](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L434-L451)),
+  so a marker that ends a truncated page is kept whether or not older
+  versions follow, and one with none is removed by a pass whose page does
+  not end at it (`lifecycle.Lister`). Tentacle and rgw-go agree.
+- **Lifecycle expiration on a versioning-suspended bucket writes the null
+  delete marker.** radosgw's current expiration removes the current
+  version outright unless versioning is enabled
+  ([rgw_lc.cc:1189](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1189),
+  [rgw_lc.cc:1209](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1209)),
+  so on a suspended bucket it unlinks that version, null or not, and the
+  next newer one becomes current (docs/ceph-upstream-bugs.md, "[radosgw's
+  lifecycle expiration deletes the current version of a
+  versioning-suspended
+  bucket](ceph-upstream-bugs.md#radosgws-lifecycle-expiration-deletes-the-current-version-of-a-versioning-suspended-bucket)").
+  S3 writes a delete marker with the null version ID there, which replaces
+  a null current version and keeps any other as noncurrent (the S3 User
+  Guide, "Lifecycle configuration elements", the table "Lifecycle actions
+  and bucket versioning state"). rgw-go decides that marker
+  (`lifecycle.EffectNullMarker`), the one radosgw's own DeleteObject writes
+  on a suspended bucket, so the RADOS state is radosgw's.
+- **Every permanent removal by lifecycle runs the object-lock check.**
+  radosgw checks a version's retention and legal hold, through
+  `pass_object_lock_check`
+  ([rgw_lc.cc:304-349](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L304-L349),
+  [rgw_lc.cc:304-349](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L304-L349)),
+  only before a noncurrent expiration. On a lock bucket S3 made, versioning
+  is enabled and stays so
+  ([rgw_op.cc:2788-2793](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2788-L2793),
+  [rgw_op.cc:3020-3025](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3020-L3025)),
+  and the current expiration writes a delete marker. But on a bucket whose
+  flags carry object lock without `BUCKET_VERSIONED`, or with versioning
+  suspended, which a `bucket.instance` metadata put can write and the race
+  in "[radosgw's retried PutBucketVersioning skips its object-lock and MFA
+  delete
+  checks](ceph-upstream-bugs.md#radosgws-retried-putbucketversioning-skips-its-object-lock-and-mfa-delete-checks)"
+  can leave, radosgw's current expiration removes a retained or held
+  object (docs/ceph-upstream-bugs.md, "[radosgw's lifecycle current
+  expiration removes an object under object
+  lock](ceph-upstream-bugs.md#radosgws-lifecycle-current-expiration-removes-an-object-under-object-lock)").
+  rgw-go runs the same check, `objectlock.VerifyDelete` with no bypass,
+  before every removal that deletes a version: a current object of a
+  bucket never versioned and a null version the null marker replaces, as
+  well as a noncurrent version. One that fails keeps the object, and
+  another of the rule's actions may be taken instead, as when a noncurrent
+  version fails it. A delete marker over a locked version is no removal and
+  is written.
+- **Lifecycle selection takes an action due at the epoch.** Of a rule's
+  actions whose check holds, radosgw takes the one due strictly after the
+  latest so far, starting from the epoch
+  ([rgw_lc.cc:1623-1634](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1623-L1634),
+  [rgw_lc.cc:1679-1690](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1679-L1690)),
+  so a rule whose Date is 1970-01-01T00:00:00Z, which both gateways'
+  PutBucketLifecycleConfiguration take, never acts
+  (docs/ceph-upstream-bugs.md, "[radosgw's lifecycle never selects an
+  action due at the
+  epoch](ceph-upstream-bugs.md#radosgws-lifecycle-never-selects-an-action-due-at-the-epoch)").
+  rgw-go takes the first action that holds and then any due strictly
+  later, so such a rule acts at once, as for any other date already past.
+- **A skipped local midnight is read at the offset now has.** radosgw's
+  `round_to_day` returns glibc's `mktime` unchecked
+  ([utime.h:218-227](https://github.com/ceph/ceph/blob/v19.2.7/src/include/utime.h#L218-L227),
+  [utime.h:218-227](https://github.com/ceph/ceph/blob/v20.2.4/src/include/utime.h#L218-L227)),
+  which gives -1 for a local midnight a zone skips with the same DST flag
+  either side, so `obj_has_expired`'s base is a second before the epoch and
+  nothing is due that day (docs/ceph-upstream-bugs.md, "[radosgw's
+  lifecycle finds nothing due on a day whose local midnight a zone skips
+  without a DST
+  change](ceph-upstream-bugs.md#radosgws-lifecycle-finds-nothing-due-on-a-day-whose-local-midnight-a-zone-skips-without-a-dst-change)").
+  rgw-go reads such a midnight at the offset now has, glibc's answer for
+  every other skipped midnight, and acts on what is due. Current tzdata
+  holds no such day from 2016-10-23 through 2037.
+- **A local midnight that occurs twice with the same DST flag is the later
+  one.** radosgw's `round_to_day` hands such a midnight to glibc's `mktime`
+  ([utime.h:218-227](https://github.com/ceph/ceph/blob/v19.2.7/src/include/utime.h#L218-L227),
+  [utime.h:218-227](https://github.com/ceph/ceph/blob/v20.2.4/src/include/utime.h#L218-L227)),
+  whose answer follows the gateway process's previous `mktime` call:
+  Asia/Magadan's on 2014-10-26 is 14:00Z the day before in a fresh process
+  and 12:00Z after a call for 2010 (docs/ceph-upstream-bugs.md, "[radosgw's
+  lifecycle finds nothing due on a day whose local midnight a zone skips
+  without a DST
+  change](ceph-upstream-bugs.md#radosgws-lifecycle-finds-nothing-due-on-a-day-whose-local-midnight-a-zone-skips-without-a-dst-change)").
+  rgw-go takes the later, glibc's answer in a fresh process. Current tzdata
+  holds no such day from 2023-12-19 through 2037.
+- **The lifecycle size filter reads a version's own, uncompressed size.**
+  radosgw's `pass_size_limit_checks` stats the listed key with the OLH
+  followed, so a noncurrent null version is judged by the current
+  version's size, and compares the size stored, which for a compressed
+  object is its compressed size
+  ([rgw_lc.cc:516-545](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L516-L545),
+  [rgw_lc.cc:524-552](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L524-L552);
+  docs/ceph-upstream-bugs.md, "[radosgw's lifecycle size filter reads the
+  wrong size](ceph-upstream-bugs.md#radosgws-lifecycle-size-filter-reads-the-wrong-size)").
+  S3's ObjectSizeGreaterThan and ObjectSizeLessThan are the object's size.
+  rgw-go reads the listed version by its own key, `null` for a null
+  version, and its uncompressed size (`lifecycle.Probe`'s `Size`). It reads
+  every delete marker as size 0, as radosgw's stat of a marker with an
+  instance gives; radosgw's stat of a null marker, listed without one,
+  follows the OLH, so its filter fails for a current null marker and reads
+  the current version's size for a noncurrent one. A size-filtered rule
+  therefore treats a null marker as it treats any other marker.
+- **The lifecycle tag filter needs each of a rule's tags among the
+  object's.** radosgw's worker, in `has_all_tags`
+  ([rgw_lc.cc:1030-1050](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1030-L1050),
+  [rgw_lc.cc:1050-1070](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1050-L1070)),
+  counts the object's tags whose value matches the rule's for their key,
+  so a tag set that repeats a key can stand in for a tag it lacks, and
+  `s3_expiration_header` reads only the first value of a repeated key
+  ([rgw_lc.cc:2830-2848](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2830-L2848),
+  [rgw_lc.cc:2893-2911](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2893-L2911);
+  docs/ceph-upstream-bugs.md, "[radosgw's lifecycle tag filter counts an
+  object's repeated tag key toward the rule's other
+  tags](ceph-upstream-bugs.md#radosgws-lifecycle-tag-filter-counts-an-objects-repeated-tag-key-toward-the-rules-other-tags)").
+  rgw-go takes a rule for an object, in the worker and the header alike,
+  only when each tag of the rule is among the object's, its key with its
+  value. The two agree on every tag set without a repeated key, which S3
+  refuses.
+- **x-amz-expiration names the Expiration rule alone on Tentacle.**
+  v20.2.4's `s3_expiration_header` gives a request that names a version a
+  header, and for a key with an instance, which a GET or HEAD of a current
+  version with a version ID also passes, takes the date from the rule's
+  NoncurrentVersionExpiration
+  ([rgw_lc.cc:2817-2952](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2817-L2952);
+  docs/ceph-upstream-bugs.md, "[radosgw's x-amz-expiration reports a
+  NoncurrentVersionExpiration
+  rule](ceph-upstream-bugs.md#radosgws-x-amz-expiration-reports-a-noncurrentversionexpiration-rule)").
+  rgw-go computes v19.2.7's form on both releases
+  ([rgw_lc.cc:2750-2888](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2750-L2888)):
+  the Expiration rule alone, and no header for a request that names a
+  version. Squid and rgw-go agree.
+- **Lifecycle header dates past 24855 days or real_time are not wrapped.**
+  radosgw counts DaysAfterInitiation in `int` seconds, which overflow past
+  24855 days, and an Expiration's Days in 64-bit nanoseconds, which
+  overflow past about 106751, and either date wraps past real_time's last
+  instant in 2554
+  ([rgw_lc.cc:2932-2935](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2932-L2935),
+  [rgw_lc.cc:2996-2999](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2996-L2999);
+  [rgw_lc.cc:2859-2863](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2859-L2863),
+  [rgw_lc.cc:2923-2927](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2923-L2927);
+  docs/ceph-upstream-bugs.md, "[radosgw's lifecycle headers wrap a date
+  past 24855 days or
+  real_time](ceph-upstream-bugs.md#radosgws-lifecycle-headers-wrap-a-date-past-24855-days-or-real_time)").
+  rgw-go counts in 64-bit seconds and names the date the days give. Rules
+  of fewer days, all a client is likely to send, get the same date from
+  both.
+- **Lifecycle headers name the midnight the worker acts at.** radosgw's
+  x-amz-expiration and x-amz-abort-date take the midnight UTC that begins
+  the mtime's day, plus the days and one more
+  ([rgw_lc.cc:2859-2863](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2859-L2863),
+  [rgw_lc.cc:2923-2927](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2923-L2927);
+  [rgw_lc.cc:2932-2935](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2932-L2935),
+  [rgw_lc.cc:2996-2999](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2996-L2999)),
+  while its worker acts once midnight is the days past the mtime's whole
+  second (`obj_has_expired`,
+  [rgw_lc.cc:272-302](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L272-L302),
+  [rgw_lc.cc:272-302](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L272-L302)).
+  For an object written in a day's first second the headers name the day
+  after the one the worker acts on (docs/ceph-upstream-bugs.md,
+  "[radosgw's lifecycle headers name the day after the worker acts for an
+  object written in a day's first
+  second](ceph-upstream-bugs.md#radosgws-lifecycle-headers-name-the-day-after-the-worker-acts-for-an-object-written-in-a-days-first-second)").
+  rgw-go names the first midnight UTC at least the days past the mtime's
+  second, the one a worker in UTC acts at, so for that object it names a
+  day earlier than radosgw. Every other mtime gets radosgw's date.
+
 ## Pending
 
 None. D3N was excluded on 2026-09-25. Bucket notifications were first
