@@ -182,15 +182,14 @@ func withChecksum(attrs map[string][]byte, c *cksum.Cksum, rel denc.Release) map
 }
 
 // storedChecksum decodes attrs' user.rgw.cksum: nil when there is none or
-// it does not decode.
+// cksum.DecodeAttr refuses it.
 func storedChecksum(attrs map[string][]byte) *cksum.Cksum {
 	b, ok := attrs[meta.AttrCksum]
 	if !ok {
 		return nil
 	}
-	d := denc.NewDecoder(b)
-	c := cksum.DecodeCksum(d)
-	if d.Err() != nil {
+	c, err := cksum.DecodeAttr(b)
+	if err != nil {
 		return nil
 	}
 	return &c

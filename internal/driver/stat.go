@@ -185,21 +185,21 @@ func decodeState(ctx context.Context, st *op.ObjectState) error {
 }
 
 // storedChecksum is st's user.rgw.cksum, nil when there is none or
-// cksum.DecodeCksum refuses it: radosgw reads the attr in the ops that show
+// cksum.DecodeAttr refuses it: radosgw reads the attr in the ops that show
 // it, never in get_obj_state_impl, so a record it cannot read fails no read
 // of the object. Such a record is logged at debug level, as radosgw's
 // list_parts logs one it cannot decode
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2919-L2923 at v20.2.4).
-// Bytes past the record are left unread, as every radosgw reader but the
-// checksum-mode GET leaves them (docs/ceph-upstream-bugs.md, "radosgw aborts
-// on a checksum-mode GET of an object whose checksum attr has bytes past its
-// record").
+// An attr with bytes past its record is one cksum.DecodeAttr refuses, where
+// radosgw's checksum-mode GET aborts and its other readers take the record
+// (docs/exclusions.md, "A stored checksum rgw-go cannot read whole is not
+// shown").
 func storedChecksum(ctx context.Context, st *op.ObjectState) *cksum.Cksum {
 	b, ok := st.Attrs[meta.AttrCksum]
 	if !ok {
 		return nil
 	}
-	c, err := decodeAttr(b, cksum.DecodeCksum)
+	c, err := cksum.DecodeAttr(b)
 	if err != nil {
 		slog.DebugContext(ctx, "the stored checksum does not decode; the object shows none",
 			slog.String("bucket", st.Bucket.Info.Bucket.Name), slog.String("key", st.Key.Name), slog.Any("error", err))

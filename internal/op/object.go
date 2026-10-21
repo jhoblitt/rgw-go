@@ -23,7 +23,7 @@ type ObjectState struct {
 	Manifest    *meta.Manifest
 	Compression *meta.CompressionInfo
 	// Checksum is the head's user.rgw.cksum, nil when it has none or the
-	// record does not decode (cksum.DecodeCksum).
+	// attr is not one record that decodes (cksum.DecodeAttr).
 	Checksum *cksum.Cksum
 	ETag     string
 	// WriteTag is user.rgw.idtag.

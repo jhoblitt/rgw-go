@@ -9,10 +9,12 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/policy"
@@ -52,6 +54,8 @@ type GetObject struct {
 	// Secure is rgw_transport_is_secure: TLS, or a forwarded protocol radosgw
 	// trusts.
 	Secure bool
+	// ChecksumMode is x-amz-checksum-mode, "" when absent.
+	ChecksumMode string
 	// Sink receives the status, through the handler's wrapper, and the body.
 	Sink Sink
 
@@ -75,6 +79,23 @@ type GetObject struct {
 	VersionID string
 	// Status is 200, or 206 for a range.
 	Status int
+	// Checksum is the stored checksum the response reports, nil for none
+	// (readChecksum); set only once every check has passed, as radosgw
+	// renders it only on success.
+	Checksum *ReadChecksum
+}
+
+// ReadChecksum is a stored checksum as a read reports it: a GET's or HEAD's
+// header and x-amz-checksum-type, or GetObjectAttributes' Checksum element
+// and its ChecksumType.
+type ReadChecksum struct {
+	// Type names the header and the element (cksum.Type.Info).
+	Type cksum.Type
+	// Value is the armored digest, followed by "-<parts>" for a COMPOSITE
+	// checksum of a whole multipart object.
+	Value string
+	// ChecksumType is cksum.FullObjectType or cksum.CompositeType.
+	ChecksumType string
 }
 
 var _ Op = (*GetObject)(nil)
@@ -209,7 +230,106 @@ func (o *GetObject) serve(ctx context.Context, r *Request, in commonInputs) erro
 	if err := o.checkOverrides(r); err != nil {
 		return err
 	}
+	ck, err := o.readChecksum(r)
+	if err != nil {
+		return err
+	}
+	o.Checksum = ck
 	return o.send(ctx, r)
+}
+
+// readChecksum is the stored checksum send_response_data reports for a
+// request with x-amz-checksum-mode enabled and no Range
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L314-L318 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L548-L586 at v20.2.4):
+// a partNumber read's part head's (partReadChecksum), else the object's
+// (objectReadChecksum). Squid's radosgw shows none, and rgw-go shows what it
+// stores there too (docs/exclusions.md, "Squid clusters show the checksums
+// they store").
+func (o *GetObject) readChecksum(r *Request) (*ReadChecksum, error) {
+	if o.Range != "" || !checksumModeEnabled(o.ChecksumMode) {
+		return nil, nil
+	}
+	if o.State != o.CondState {
+		return partReadChecksum(o.State.Checksum), nil
+	}
+	return o.objectReadChecksum(r)
+}
+
+// checksumModeEnabled is get_params' checksum_mode: v is "enabled", ASCII
+// case folded as boost::iequals folds it in radosgw's C locale.
+func checksumModeEnabled(v string) bool {
+	const enabled = "enabled"
+	return len(v) == len(enabled) && strncaseEqual(v, enabled, len(v))
+}
+
+// objectReadChecksum is the object's checksum, typed by get_checksum_type
+// for its parts count
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L382-L399 at v20.2.4),
+// the value "<armor>-<parts>" when that is COMPOSITE. A composite on an
+// object without parts shows nothing: its value combines parts the object
+// no longer has, where radosgw shows it as the object's FULL_OBJECT
+// checksum (docs/ceph-upstream-bugs.md, "radosgw carries a composite
+// checksum to a copy without parts, which Tentacle reports as its
+// FULL_OBJECT checksum").
+func (o *GetObject) objectReadChecksum(r *Request) (*ReadChecksum, error) {
+	c := shownChecksum(o.CondState.Checksum)
+	if c == nil {
+		return nil, nil
+	}
+	parts, err := o.objectPartsCount(r)
+	if err != nil {
+		return nil, err
+	}
+	if parts == 0 && c.Composite() {
+		return nil, nil
+	}
+	rc := &ReadChecksum{Type: c.Type, Value: c.Armor(), ChecksumType: c.ObjectType(parts > 0)}
+	if rc.ChecksumType == cksum.CompositeType {
+		rc.Value += "-" + strconv.Itoa(parts)
+	}
+	return rc, nil
+}
+
+// partReadChecksum is a part head's checksum as main reports it for a
+// partNumber read: its armor alone, typed by get_part_checksum_type
+// (https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_rest_s3.cc#L569-L608
+// at main), where v20.2.4 types it as the whole object's and adds the parts
+// count (docs/ceph-upstream-bugs.md, "radosgw reports a partNumber read's
+// checksum as the multipart object's composite").
+func partReadChecksum(c *cksum.Cksum) *ReadChecksum {
+	c = shownChecksum(c)
+	if c == nil {
+		return nil
+	}
+	return &ReadChecksum{Type: c.Type, Value: c.Armor(), ChecksumType: c.PartType()}
+}
+
+// shownChecksum is c, or nil for a record of type none, which holds no
+// digest and which no radosgw writes.
+func shownChecksum(c *cksum.Cksum) *cksum.Cksum {
+	if c == nil || c.Type == cksum.None {
+		return nil
+	}
+	return c
+}
+
+// objectPartsCount is the parts count of the object read, CondState: the
+// count Tentacle's Read::prepare reports, taken from the manifest on Squid,
+// where prepare reports none.
+func (o *GetObject) objectPartsCount(r *Request) (int, error) {
+	if o.PartsCount != nil {
+		return *o.PartsCount, nil
+	}
+	m := o.CondState.Manifest
+	if m == nil {
+		return 0, nil
+	}
+	n, err := m.PartsCount()
+	if err != nil {
+		return 0, manifestError(r, err)
+	}
+	return n, nil
 }
 
 // Complete does nothing: the handler logs usage once the response is written.

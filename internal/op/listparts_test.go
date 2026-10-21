@@ -9,6 +9,7 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/authz"
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
@@ -55,6 +56,53 @@ var _ = Describe("ListParts", func() {
 		Expect(o.StorageClass).To(Equal(meta.StorageClassStandard))
 		Expect(o.Upload.ID).To(Equal(id))
 		Expect(f.store.Usage()).To(BeEmpty(), "the handler logs usage, not the op")
+	})
+	DescribeTable("reports the upload's checksum algorithm and type, and each part's checksum, on Tentacle, and none on Squid",
+		func(ctx SpecContext, rel denc.Release, algorithm, wantType string) {
+			f = newMPFixture(ctx, rel)
+			init := &op.InitMultipart{ACL: acl.DefaultPolicy(f.alice.Owner, "Alice"), ChecksumField: checksumFields("x-amz-checksum-algorithm", algorithm)}
+			Expect(op.Run(ctx, init, f.req(http.MethodPost, "plain", "k"))).To(Succeed())
+			f.uploadPart(ctx, "k", init.UploadID, 1, []byte("x"))
+			o := &op.ListParts{UploadID: init.UploadID, MaxParts: 10}
+			Expect(op.Run(ctx, o, f.req(http.MethodGet, "plain", "k"))).To(Succeed())
+			t, _ := cksum.ParseName(algorithm)
+			if rel < denc.Tentacle {
+				t = cksum.None
+			}
+			Expect([]any{o.ChecksumAlgorithm, o.ChecksumType}).To(Equal([]any{t, wantType}))
+			Expect(o.Result.Parts).To(HaveExactElements(HaveField("Checksum", WithTransform(func(c *cksum.Cksum) cksum.Type {
+				if c == nil {
+					return cksum.None
+				}
+				return c.Type
+			}, Equal(t)))))
+		},
+		Entry("a CRC32C upload on Tentacle, FULL_OBJECT", denc.Tentacle, "CRC32C", cksum.FullObjectType),
+		Entry("a SHA256 upload on Tentacle, COMPOSITE", denc.Tentacle, "SHA256", cksum.CompositeType),
+		Entry("a CRC32C upload on Squid, whose upload keeps no type", denc.Squid, "CRC32C", ""),
+	)
+	DescribeTable("types the upload's checksum by how its completion combines the parts",
+		func(ctx SpecContext, uc op.UploadChecksum, want string) {
+			stubbed(&op.Upload{ID: id, Attrs: map[string][]byte{meta.AttrACL: f.aliceACL}, Checksum: uc})
+			o := &op.ListParts{UploadID: id, MaxParts: 10}
+			Expect(op.Run(ctx, o, f.req(http.MethodGet, "plain", "k"))).To(Succeed())
+			Expect([]any{o.ChecksumAlgorithm, o.ChecksumType}).To(Equal([]any{uc.Type, want}))
+		},
+		Entry("a CRC created FULL_OBJECT", op.UploadChecksum{Type: cksum.CRC32, Flags: cksum.FlagFullObject}, cksum.FullObjectType),
+		Entry("a CRC created COMPOSITE", op.UploadChecksum{Type: cksum.CRC32, Flags: cksum.FlagComposite}, cksum.CompositeType),
+		Entry("a CRC created with a type header naming neither, flags 0", op.UploadChecksum{Type: cksum.CRC64NVME}, cksum.FullObjectType),
+		Entry("a digest", op.UploadChecksum{Type: cksum.SHA1, Flags: cksum.FlagComposite}, cksum.CompositeType),
+		Entry("xxhash3, an AWS type under its AWS name", op.UploadChecksum{Type: cksum.XXH3, Flags: cksum.FlagComposite}, cksum.CompositeType),
+	)
+	It("reports no algorithm, and no part checksum, of a type AWS does not define, as radosgw renders only AWS types", func(ctx SpecContext) {
+		stub := stubbed(&op.Upload{ID: id, Attrs: map[string][]byte{meta.AttrACL: f.aliceACL}, Checksum: op.UploadChecksum{Type: cksum.BLAKE3, Flags: cksum.FlagComposite}})
+		blake := &cksum.Cksum{Type: cksum.BLAKE3, Digest: make([]byte, 32), Flags: cksum.FlagComposite}
+		crc := &cksum.Cksum{Type: cksum.CRC32, Digest: make([]byte, 4)}
+		stub.ListPartsReturns(op.ListPartsResult{Parts: []op.Part{{Number: 1, Checksum: blake}, {Number: 2, Checksum: crc}, {Number: 3}}}, nil)
+		o := &op.ListParts{UploadID: id, MaxParts: 10}
+		Expect(op.Run(ctx, o, f.req(http.MethodGet, "plain", "k"))).To(Succeed())
+		Expect([]any{o.ChecksumAlgorithm, o.ChecksumType}).To(Equal([]any{cksum.None, ""}))
+		Expect(o.Result.Parts).To(HaveExactElements(HaveField("Checksum", BeNil()), HaveField("Checksum", Equal(crc)), HaveField("Checksum", BeNil())))
 	})
 	It("reports the storage class of the upload's placement", func(ctx SpecContext) {
 		stubbed(&op.Upload{ID: id, Placement: meta.PlacementRule{Name: "default-placement", StorageClass: "COLD"}, Attrs: map[string][]byte{meta.AttrACL: f.aliceACL}})

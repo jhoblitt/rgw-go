@@ -290,9 +290,10 @@ func ParseObjectAttrs(header string) ObjectAttrs {
 type ObjectPart struct {
 	Number int
 	Size   uint64
-	// Checksum is the part head's own, nil when it has none, never the
-	// part's before it (docs/ceph-upstream-bugs.md, "radosgw's ObjectParts
-	// gives a part without a checksum the checksum of the part before it").
+	// Checksum is the part head's own, rendered bare as radosgw renders a
+	// part's, nil when it has none or one of type none; never the part's
+	// before it (docs/ceph-upstream-bugs.md, "radosgw's ObjectParts gives a
+	// part without a checksum the checksum of the part before it").
 	Checksum *cksum.Cksum
 }
 
@@ -345,12 +346,13 @@ func (o *GetObjectAttributes) Action() policy.Action {
 // none of the inputs RGWGetObjAttrs_ObjStore_S3::get_params, which replaces
 // GetObject's, never reads
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3941-L3983):
-// no Range, no conditionals, no partNumber, no torrent and no response-*
-// overrides.
+// no Range, no conditionals, no partNumber, no torrent, no response-*
+// overrides and no x-amz-checksum-mode.
 func (o *GetObjectAttributes) Init(ctx context.Context, r *Request) error {
 	g := &o.GetObject
 	g.GetData, g.Torrent, g.PartNumber, g.ResponseOverrides = false, false, nil, nil
 	g.Range, g.IfMatch, g.IfNoneMatch, g.IfModifiedSince, g.IfUnmodifiedSince = "", "", "", "", ""
+	g.ChecksumMode = ""
 	return g.Init(ctx, r)
 }
 
@@ -376,8 +378,11 @@ func (o *GetObjectAttributes) VerifyPermission(ctx context.Context, r *Request) 
 }
 
 // Execute is RGWGetObjAttrs::execute, which is RGWGetObj::execute without
-// data, then the part listing RGWGetObjAttrs_ObjStore_S3::send_response makes
-// for ObjectParts
+// data, then what RGWGetObjAttrs_ObjStore_S3::send_response reads: the
+// object's checksum for Checksum, by GetObject's whole-object rules
+// (objectReadChecksum;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4029-L4057),
+// and the part listing for ObjectParts
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4059-L4119).
 // The parts count is Tentacle's Read::prepare count of a multipart manifest,
 // which rgw-go's GetObject reports only on Tentacle, so it is taken here on
@@ -387,13 +392,16 @@ func (o *GetObjectAttributes) Execute(ctx context.Context, r *Request) error {
 	if err := o.GetObject.Execute(ctx, r); err != nil {
 		return err
 	}
-	if o.PartsCount == nil && o.State.Manifest != nil {
-		n, err := o.State.Manifest.PartsCount()
-		if err != nil {
-			return manifestError(r, err)
-		}
-		if n > 0 {
-			o.PartsCount = &n
+	n, err := o.objectPartsCount(r)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		o.PartsCount = &n
+	}
+	if o.Requested&AttrChecksum != 0 {
+		if o.Checksum, err = o.objectReadChecksum(r); err != nil {
+			return err
 		}
 	}
 	if o.Requested&AttrObjectParts == 0 || o.PartsCount == nil {
@@ -458,7 +466,7 @@ func (o *GetObjectAttributes) listParts(ctx context.Context, r *Request) error {
 		if err != nil {
 			return manifestError(r, err)
 		}
-		o.Parts = append(o.Parts, ObjectPart{Number: n, Size: accountedSize(st, extent), Checksum: st.Checksum})
+		o.Parts = append(o.Parts, ObjectPart{Number: n, Size: accountedSize(st, extent), Checksum: shownChecksum(st.Checksum)})
 		marker++
 		o.NextPartMarker = marker
 		limit--

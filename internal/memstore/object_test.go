@@ -392,6 +392,7 @@ var _ = Describe("objects", func() {
 			c := cksum.Cksum{Type: cksum.SHA1, Digest: bytes.Repeat([]byte{7}, 20), Flags: cksum.FlagV2}
 			Expect(setCksum(encodedCksum(c)).Checksum).To(Equal(&c), "a record")
 			Expect(setCksum(encodedCksum(c)[:5]).Checksum).To(BeNil(), "a truncated record")
+			Expect(setCksum(append(encodedCksum(c), 0x99)).Checksum).To(BeNil(), "a record with a byte past it")
 		})
 	})
 })

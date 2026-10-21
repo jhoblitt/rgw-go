@@ -18,6 +18,7 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/memstore"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -217,6 +218,29 @@ var _ = Describe("GetObject", func() {
 		r := req("small")
 		r.Bucket = "nobucket"
 		Expect(op.Run(context.Background(), o, r)).To(MatchError(op.ErrNoSuchBucket))
+	})
+
+	It("shows a checksum the store reads, and serves an object whose checksum attr it cannot read whole without one", func(ctx SpecContext) {
+		rec, err := store.GetBucket(ctx, "", "plain")
+		Expect(err).NotTo(HaveOccurred())
+		_, err = store.PutObject(ctx, rec, meta.ObjKey{Name: "ck"}, bytes.NewReader(payload(1024)),
+			op.PutParams{Size: 1024, Checksum: &op.ChecksumRequest{Type: cksum.SHA1}})
+		Expect(err).NotTo(HaveOccurred())
+		enabled := func(o *op.GetObject) { o.ChecksumMode = "enabled" }
+		o, _, err := get("ck", enabled)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(o.Checksum).To(HaveField("Type", cksum.SHA1), "Squid shows what it stores")
+		record := o.State.Attrs[meta.AttrCksum]
+		for name, attr := range map[string][]byte{
+			"a byte past the record, on which radosgw's full-buffer decode aborts": append(bytes.Clone(record), 0x99),
+			"a record that does not decode":                                        record[:len(record)-1],
+		} {
+			Expect(store.SetObjectAttrs(ctx, o.State, map[string][]byte{meta.AttrCksum: attr}, nil)).To(Succeed())
+			o, _, err = get("ck", enabled)
+			Expect(err).NotTo(HaveOccurred(), name)
+			Expect(o.Checksum).To(BeNil(), name)
+			Expect(sink.body.Bytes()).To(Equal(payload(1024)), name)
+		}
 	})
 
 	Describe("Range", func() {
@@ -780,6 +804,114 @@ var _ = Describe("GetObject", func() {
 				o, _, err = get("k", nil)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(*o.PartsCount).To(Equal(3))
+			})
+		})
+
+		Describe("checksum mode", func() {
+			const partKey = "multipart.bin.2~vXcCS0UgSATwQOecOwRkZrWyEyux7jO.2"
+			// crcArmor and shaArmor are the armors of crc's and sha's digests.
+			const (
+				crcArmor = "3q2+7w=="
+				shaArmor = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="
+			)
+			crc := func(flags uint16) *cksum.Cksum {
+				return &cksum.Cksum{Type: cksum.CRC32C, Digest: []byte{0xde, 0xad, 0xbe, 0xef}, Flags: flags}
+			}
+			sha := func(flags uint16) *cksum.Cksum {
+				return &cksum.Cksum{Type: cksum.SHA256, Digest: bytes.Repeat([]byte{7}, 32), Flags: flags}
+			}
+			const (
+				combinedCRC = cksum.FlagV2 | cksum.FlagCombined | cksum.FlagFullObject
+				composite   = cksum.FlagV2 | cksum.FlagCombined | cksum.FlagComposite
+			)
+			// single is an object without parts carrying c, multipart the
+			// golden three-part object carrying it.
+			single := func(c *cksum.Cksum) func() *op.ObjectState {
+				return func() *op.ObjectState { return state(func(st *op.ObjectState) { st.Checksum = c }) }
+			}
+			multipart := func(c *cksum.Cksum) func() *op.ObjectState {
+				return func() *op.ObjectState {
+					m := decodeGoldenManifest("squid-multipart")
+					return state(func(st *op.ObjectState) { st.Manifest, st.Size, st.Checksum = &m, m.ObjSize, c })
+				}
+			}
+			partHead := func(c *cksum.Cksum) *op.ObjectState {
+				return &op.ObjectState{Exists: true, Size: 4 << 20, Key: meta.ObjKey{Name: partKey, NS: meta.NSMultipart}, Attrs: map[string][]byte{}, Checksum: c}
+			}
+			enabled := func(o *op.GetObject) { o.ChecksumMode = "enabled" }
+			// serveParts answers the head with head and the part head with
+			// partSt.
+			serveParts := func(head, partSt *op.ObjectState, mut func(o *op.GetObject)) (*op.GetObject, error) {
+				objects.PrefetchObjectReturnsOnCall(0, head, nil)
+				objects.PrefetchObjectReturnsOnCall(1, partSt, nil)
+				o, _, err := get("k", mut)
+				return o, err
+			}
+			fullObject := func(t cksum.Type, v string) *op.ReadChecksum {
+				return &op.ReadChecksum{Type: t, Value: v, ChecksumType: cksum.FullObjectType}
+			}
+			compositeOf := func(t cksum.Type, v string) *op.ReadChecksum {
+				return &op.ReadChecksum{Type: t, Value: v, ChecksumType: cksum.CompositeType}
+			}
+
+			DescribeTable("shows the stored checksum only for x-amz-checksum-mode enabled, in any case, without a Range",
+				func(mode, rng string, getData bool, want *op.ReadChecksum) {
+					o, err := serve(single(crc(0))(), func(o *op.GetObject) { o.ChecksumMode, o.Range, o.GetData = mode, rng, getData })
+					Expect(err).NotTo(HaveOccurred())
+					Expect(o.Checksum).To(Equal(want))
+				},
+				Entry("enabled, on a GET", "enabled", "", true, fullObject(cksum.CRC32C, crcArmor)),
+				Entry("ENABLED, on a HEAD", "ENABLED", "", false, fullObject(cksum.CRC32C, crcArmor)),
+				Entry("no header", "", "", true, (*op.ReadChecksum)(nil)),
+				Entry("another value", "disabled", "", true, (*op.ReadChecksum)(nil)),
+				Entry("enabled with a trailing space, which iequals does not match", "enabled ", "", true, (*op.ReadChecksum)(nil)),
+				Entry("a Range, even one that covers the object", "enabled", "bytes=0-", true, (*op.ReadChecksum)(nil)),
+				Entry("a Range on a HEAD", "enabled", "bytes=0-9", false, (*op.ReadChecksum)(nil)),
+			)
+			DescribeTable("types the whole object's checksum by get_checksum_type over its parts count, on either release",
+				func(st func() *op.ObjectState, want *op.ReadChecksum) {
+					for _, zone := range []op.ZoneInfo{store, tentacle()} {
+						env.Zone = zone
+						o, err := serve(st(), enabled)
+						Expect(err).NotTo(HaveOccurred(), "release %d", zone.Release())
+						Expect(o.Checksum).To(Equal(want), "release %d", zone.Release())
+					}
+				},
+				Entry("a PutObject's record", single(crc(0)), fullObject(cksum.CRC32C, crcArmor)),
+				Entry("a multipart object's combined CRC, bare", multipart(crc(combinedCRC)), fullObject(cksum.CRC32C, crcArmor)),
+				Entry("a multipart object's composite, with its parts count", multipart(sha(composite)), compositeOf(cksum.SHA256, shaArmor+"-3")),
+				Entry("a multipart object's record without V2, which radosgw takes for a composite written before CRC combining",
+					multipart(crc(cksum.FlagCombined|cksum.FlagFullObject)), compositeOf(cksum.CRC32C, crcArmor+"-3")),
+				Entry("a composite on an object without parts, which shows nothing", single(sha(composite)), (*op.ReadChecksum)(nil)),
+				Entry("a record of type none, which shows nothing", single(&cksum.Cksum{Flags: cksum.FlagV2}), (*op.ReadChecksum)(nil)),
+				Entry("no record", single(nil), (*op.ReadChecksum)(nil)),
+			)
+			DescribeTable("shows a partNumber read's part head checksum bare, typed by its own flags",
+				func(c *cksum.Cksum, want *op.ReadChecksum) {
+					o, err := serveParts(multipart(sha(composite))(), partHead(c), func(o *op.GetObject) { enabled(o); o.PartNumber = new(2) })
+					Expect(err).NotTo(HaveOccurred())
+					Expect(*o.PartsCount).To(Equal(3))
+					Expect(o.Checksum).To(Equal(want))
+				},
+				Entry("a CRC upload's part, FULL_OBJECT", crc(cksum.FlagFullObject), fullObject(cksum.CRC32C, crcArmor)),
+				Entry("a digest upload's part, COMPOSITE", sha(cksum.FlagComposite), compositeOf(cksum.SHA256, shaArmor)),
+				Entry("a Squid part's own, which carries no upload flags", crc(0), fullObject(cksum.CRC32C, crcArmor)),
+				Entry("a part head without one, never the object's", nil, (*op.ReadChecksum)(nil)),
+			)
+			DescribeTable("shows part 1 of an object without parts, which is the whole object, by the whole object's rules",
+				func(st func() *op.ObjectState, want *op.ReadChecksum) {
+					o, err := serveParts(st(), nil, func(o *op.GetObject) { enabled(o); o.PartNumber = new(1) })
+					Expect(err).NotTo(HaveOccurred())
+					Expect(o.State).To(BeIdenticalTo(o.CondState), "no part head was read")
+					Expect(o.Checksum).To(Equal(want))
+				},
+				Entry("a PutObject's record", single(crc(0)), fullObject(cksum.CRC32C, crcArmor)),
+				Entry("a composite, which shows nothing", single(sha(composite)), (*op.ReadChecksum)(nil)),
+			)
+			It("shows nothing on a read it refuses", func() {
+				o, err := serve(single(crc(0))(), func(o *op.GetObject) { enabled(o); o.IfNoneMatch = etagAttr })
+				Expect(err).To(MatchError(op.ErrNotModified))
+				Expect(o.Checksum).To(BeNil())
 			})
 		})
 

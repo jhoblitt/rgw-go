@@ -455,6 +455,42 @@ var _ = Describe("GetObjectAttributes", func() {
 				HaveField("Checksum", Equal(parts[2].Checksum)),
 			), "never the part's before it")
 		})
+		It("shows no part checksum of type none, as radosgw's ObjectParts skips one", func(ctx SpecContext) {
+			none := partHead()
+			none.Checksum = &cksum.Cksum{Flags: cksum.FlagV2}
+			o := &op.GetObjectAttributes{Requested: op.AttrObjectParts}
+			Expect(serve(ctx, o, mpHead(), none, partHead(), partHead())).To(Succeed())
+			Expect(o.Parts).To(HaveLen(3))
+			Expect(o.Parts[0].Checksum).To(BeNil())
+		})
+		DescribeTable("reports the object's checksum, when Checksum is asked for, by the GET's whole-object rules, never reading x-amz-checksum-mode",
+			func(ctx SpecContext, requested op.ObjectAttrs, multipart bool, c *cksum.Cksum, want *op.ReadChecksum) {
+				head := &op.ObjectState{Exists: true, Size: 10, Key: meta.ObjKey{Name: "k"}, Attrs: map[string][]byte{}}
+				if multipart {
+					head = mpHead()
+				}
+				head.Checksum = c
+				o := &op.GetObjectAttributes{Requested: requested}
+				o.ChecksumMode = "enabled"
+				Expect(serve(ctx, o, head)).To(Succeed())
+				Expect(o.Checksum).To(Equal(want))
+			},
+			Entry("a multipart object's composite, with its parts count, on Squid too", op.AttrChecksum, true,
+				&cksum.Cksum{Type: cksum.SHA1, Digest: make([]byte, 20), Flags: cksum.FlagV2 | cksum.FlagCombined | cksum.FlagComposite},
+				&op.ReadChecksum{Type: cksum.SHA1, Value: "AAAAAAAAAAAAAAAAAAAAAAAAAAA=-3", ChecksumType: cksum.CompositeType}),
+			Entry("a multipart object's combined CRC, bare", op.AttrChecksum, true,
+				&cksum.Cksum{Type: cksum.CRC32, Digest: []byte{1, 2, 3, 4}, Flags: cksum.FlagV2 | cksum.FlagCombined | cksum.FlagFullObject},
+				&op.ReadChecksum{Type: cksum.CRC32, Value: "AQIDBA==", ChecksumType: cksum.FullObjectType}),
+			Entry("a PutObject's record", op.AttrChecksum, false,
+				&cksum.Cksum{Type: cksum.CRC32, Digest: []byte{1, 2, 3, 4}},
+				&op.ReadChecksum{Type: cksum.CRC32, Value: "AQIDBA==", ChecksumType: cksum.FullObjectType}),
+			Entry("a composite on an object without parts, which shows nothing", op.AttrChecksum, false,
+				&cksum.Cksum{Type: cksum.SHA1, Digest: make([]byte, 20), Flags: cksum.FlagV2 | cksum.FlagCombined | cksum.FlagComposite},
+				(*op.ReadChecksum)(nil)),
+			Entry("Checksum not asked for", op.AttrETag|op.AttrObjectSize, true,
+				&cksum.Cksum{Type: cksum.CRC32, Digest: []byte{1, 2, 3, 4}, Flags: cksum.FlagV2 | cksum.FlagCombined | cksum.FlagFullObject},
+				(*op.ReadChecksum)(nil)),
+		)
 		It("lists nothing, and reads no part head, unless ObjectParts is asked for", func(ctx SpecContext) {
 			o := &op.GetObjectAttributes{Requested: op.AttrETag | op.AttrObjectSize}
 			Expect(serve(ctx, o, mpHead())).To(Succeed())

@@ -164,6 +164,36 @@ var _ = Describe("Cksum", func() {
 			Entry("a compat past version 2", slices.Concat([]byte{3, 3}, v2CRC32()[2:]), denc.ErrIncompatible),
 		)
 
+		DescribeTable("DecodeAttr reads an attr that holds one record and nothing after it",
+			func(b []byte, want cksum.Cksum) {
+				c, err := cksum.DecodeAttr(b)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(c).To(Equal(want))
+			},
+			Entry("version 2", v2CRC32(), cksum.Cksum{Type: cksum.CRC32, Digest: deadbeef(), Flags: cksum.FlagV2 | cksum.FlagFullObject}),
+			Entry("version 1", v1CRC32(), cksum.Cksum{Type: cksum.CRC32, Digest: deadbeef()}),
+			Entry("a later version, whose bytes after the flags are inside its frame",
+				record(3, u16(1), u16(4), deadbeef(), u16(5), []byte{0xaa}),
+				cksum.Cksum{Type: cksum.CRC32, Digest: deadbeef(), Flags: cksum.FlagV2 | cksum.FlagFullObject}),
+		)
+
+		DescribeTable("DecodeAttr refuses bytes past the record, on which a full-buffer decode asserts, and what DecodeCksum refuses",
+			func(b []byte, want error) {
+				c, err := cksum.DecodeAttr(b)
+				Expect(err).To(MatchError(want))
+				Expect(c).To(BeZero())
+			},
+			Entry("one byte past a version 2 record", slices.Concat(v2CRC32(), []byte{0x99}), denc.ErrMalformed),
+			Entry("a second record", slices.Concat(v2CRC32(), v2CRC32()), denc.ErrMalformed),
+			Entry("type 9", record(2, u16(9), u16(16), seq(16), u16(1)), denc.ErrMalformed),
+			Entry("a truncated record", v2CRC32()[:12], denc.ErrShortBuffer),
+		)
+
+		It("DecodeAttr names the count of bytes past the record", func() {
+			_, err := cksum.DecodeAttr(slices.Concat(v2CRC32(), []byte{1, 2, 3}))
+			Expect(err).To(MatchError(ContainSubstring("3 bytes past")))
+		})
+
 		DescribeTable("Valid refuses what DecodeCksum would",
 			func(c cksum.Cksum, ok bool) {
 				if ok {
