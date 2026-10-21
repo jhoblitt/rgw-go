@@ -3451,6 +3451,18 @@ does the following.
   [ZlibCompressor.cc:106-112](https://github.com/ceph/ceph/blob/v20.2.4/src/compressor/zlib/ZlibCompressor.cc#L106-L112);
   [ZstdCompressor.h:31](https://github.com/ceph/ceph/blob/v19.2.7/src/compressor/zstd/ZstdCompressor.h#L31),
   [ZstdCompressor.h:31](https://github.com/ceph/ceph/blob/v20.2.4/src/compressor/zstd/ZstdCompressor.h#L31)).
+  It holds too for `rgw_lc_max_objs` and `rgw_lc_lock_max_time`, which
+  radosgw's lifecycle configuration put and delete read each time they
+  write a bucket's entry (`get_lc_index` and `guard_lc_modify`,
+  [rgw_lc.cc:1966-1976](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1966-L1976)
+  and [rgw_lc.cc:2599](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2599),
+  [rgw_lc.cc:2023-2033](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2023-L2033)
+  and [rgw_lc.cc:2666](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2666)),
+  while its workers keep the shard names `rgw_lc_max_objs` gave at startup
+  ([rgw_lc.cc:237-248](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L237-L248),
+  [rgw_lc.cc:237-248](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L237-L248)),
+  an option its own description says not to change while the lifecycle
+  index holds entries.
 - **Shard counts, the bucket-index AIO limit and the copy concurrency that
   are not positive.** A
   zero or negative `rgw_usage_max_shards`, `rgw_usage_max_user_shards`,
@@ -8444,6 +8456,57 @@ the correct S3 result, in RADOS state radosgw reads as its own.
   rgw-go names the first midnight UTC at least the days past the mtime's
   second, the one a worker in UTC acts at, so for that object it names a
   day earlier than radosgw. Every other mtime gets radosgw's date.
+- **The lifecycle work window must scan as four numbers.** With
+  `rgw_enable_lc_threads` on, rgw-go refuses to start on an
+  `rgw_lifecycle_work_time` that does not hold four numbers of `int` in the
+  form `%d:%d-%d:%d`, naming the option and the value: one of fewer
+  numbers, such as `01:00-06`, a space before the dash, as in
+  `01:00 - 06:00`, or a number beyond `int`. radosgw starts, and its worker
+  compares the window with numbers the scan never set
+  ([rgw_lc.cc:2510-2570](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2510-L2570),
+  [rgw_lc.cc:2577-2637](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2577-L2637);
+  docs/ceph-upstream-bugs.md, "[radosgw's lifecycle work window reads
+  numbers rgw_lifecycle_work_time does not
+  give](ceph-upstream-bugs.md#radosgws-lifecycle-work-window-reads-numbers-rgw_lifecycle_work_time-does-not-give)").
+  A value that scans is read as radosgw's `sscanf` reads it: white space
+  before a number skipped, a sign taken, text after the fourth number
+  ignored, and hours and minutes outside a day kept. With the threads off
+  rgw-go does not scan the option, and radosgw, which reads it only in its
+  lifecycle threads, does not read it
+  ([rgw_rados.cc:1368-1369](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L1368-L1369),
+  [rgw_rados.cc:1423-1424](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1423-L1424)).
+- **Lifecycle worker counts that are not positive.** With
+  `rgw_enable_lc_threads` on, rgw-go uses a negative
+  `rgw_lc_max_worker` as 0, and runs no lifecycle worker, and an
+  `rgw_lc_max_wp_worker` that is not positive as 1, each with an
+  error-level log line naming the option and the value read. radosgw
+  throws at startup on the negative worker count, and narrows the workpool
+  size to 16 bits: a size that narrows to 0 divides by zero at the first
+  lifecycle work item, and another negative size runs its remainder modulo
+  65536 of threads in each worker's pool
+  ([rgw_lc.cc:2467-2477](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2467-L2477),
+  [rgw_lc.cc:832-879](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L832-L879);
+  [rgw_lc.cc:2534-2544](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2534-L2544),
+  [rgw_lc.cc:853-900](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L853-L900);
+  docs/ceph-upstream-bugs.md, "[radosgw aborts on a negative
+  rgw_lc_max_worker and divides by zero on an rgw_lc_max_wp_worker of
+  0](ceph-upstream-bugs.md#radosgw-aborts-on-a-negative-rgw_lc_max_worker-and-divides-by-zero-on-an-rgw_lc_max_wp_worker-of-0)").
+  rgw-go uses a workpool size above 65535 as given, where radosgw narrows
+  it. With the threads off neither gateway uses either count, and rgw-go
+  logs nothing about them.
+- **A lifecycle entry's write releases only a shard lock it took.** A
+  lifecycle configuration put or delete writes the bucket's entry under
+  its shard's `lc_process` lock, as radosgw's `guard_lc_modify` does,
+  retrying a locked shard every 100 ms up to 500 times
+  ([rgw_lc.cc:2584-2634](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2584-L2634),
+  [rgw_lc.cc:2651-2701](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2651-L2701)).
+  When it cannot take the lock, radosgw unlocks the shard all the same,
+  which releases the gateway's own hold on the shard when one holds it,
+  another request's or its worker's `bucket_lc_post`
+  (docs/ceph-upstream-bugs.md, "[radosgw's guard_lc_modify unlocks a
+  lifecycle shard lock it did not
+  take](ceph-upstream-bugs.md#radosgws-guard_lc_modify-unlocks-a-lifecycle-shard-lock-it-did-not-take)").
+  rgw-go unlocks only a lock it took, and fails with the lock's error.
 
 ## Pending
 

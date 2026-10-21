@@ -379,6 +379,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's CompleteMultipartUpload accepts a supplied checksum that only starts with its own](#radosgws-completemultipartupload-accepts-a-supplied-checksum-that-only-starts-with-its-own) | pending | pending | ✓ |
 | [Tentacle's copy of a compressed source into a class that does not compress it accounts the compressed size](#tentacles-copy-of-a-compressed-source-into-a-class-that-does-not-compress-it-accounts-the-compressed-size) | [#75715](https://tracker.ceph.com/issues/75715), [#75716](https://tracker.ceph.com/issues/75716), [#78257](https://tracker.ceph.com/issues/78257), [#78260](https://tracker.ceph.com/issues/78260) | [ceph/ceph#70006](https://github.com/ceph/ceph/pull/70006), [ceph/ceph#70242](https://github.com/ceph/ceph/pull/70242), [ceph/ceph#70241](https://github.com/ceph/ceph/pull/70241), [ceph/ceph#70239](https://github.com/ceph/ceph/pull/70239) |  |
 | [radosgw carries a composite checksum to a copy without parts, which Tentacle reports as its FULL_OBJECT checksum](#radosgw-carries-a-composite-checksum-to-a-copy-without-parts-which-tentacle-reports-as-its-full_object-checksum) | pending | pending | ✓ |
+| [radosgw's lifecycle work window reads numbers rgw_lifecycle_work_time does not give](#radosgws-lifecycle-work-window-reads-numbers-rgw_lifecycle_work_time-does-not-give) | pending | pending | ✓ |
+| [radosgw aborts on a negative rgw_lc_max_worker and divides by zero on an rgw_lc_max_wp_worker of 0](#radosgw-aborts-on-a-negative-rgw_lc_max_worker-and-divides-by-zero-on-an-rgw_lc_max_wp_worker-of-0) | pending | pending | ✓ |
+| [radosgw's guard_lc_modify unlocks a lifecycle shard lock it did not take](#radosgws-guard_lc_modify-unlocks-a-lifecycle-shard-lock-it-did-not-take) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -14772,8 +14775,9 @@ Every new entry adds its row to this table, in document order.
 ## radosgw's version instances are 31 characters, one short of their buffer
 
 - **Kind:** defect, cosmetic: an off-by-one in a buffer size makes every
-  version instance one character shorter than `OBJ_INSTANCE_LEN`. Not
-  security-relevant. Unreproduced on a floor release: derived from the
+  version instance one character shorter than `OBJ_INSTANCE_LEN`, and the
+  same off-by-one makes every lifecycle lock cookie one character shorter
+  than `COOKIE_LEN`. Not security-relevant. Unreproduced on a floor release: derived from the
   source, and seen in older releases' captures.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
   - `RGWRados::gen_rand_obj_instance_name` defines `OBJ_INSTANCE_LEN` as 32,
@@ -14795,17 +14799,35 @@ Every new entry adds its row to this table, in document order.
     `rgw_sal_motr.cc`, `rgw_sal_posix.cc` under `src/rgw/driver/`), and, at
     v20.2.4 only, the d4n filter's three version strings
     (`rgw_sal_d4n.cc`).
+  - The lifecycle lock cookie repeats it. `RGWLC::initialize` defines
+    `COOKIE_LEN` as 16, declares `char cookie_buf[COOKIE_LEN + 1]` and
+    passes `sizeof(cookie_buf) - 1`, 16, as the size, so
+    `gen_rand_alphanumeric` draws 15 characters, one short of
+    `COOKIE_LEN`
+    ([rgw_lc.cc:250-253](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L250-L253),
+    [rgw_lc.cc:250-253](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L250-L253);
+    [random_string.cc:45-51](https://github.com/ceph/ceph/blob/v19.2.7/src/common/random_string.cc#L45-L51),
+    [random_string.cc:45-51](https://github.com/ceph/ceph/blob/v20.2.4/src/common/random_string.cc#L45-L51)).
+    `fix_lc_shard_entry` draws its cookie the same way
+    ([rgw_lc.cc:2732-2735](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2732-L2735),
+    [rgw_lc.cc:2799-2802](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2799-L2802)).
 - **Impact:** none on behaviour. S3 fixes no version id length, and
   clients treat it as opaque. An instance carries 186 random bits, from 31
-  draws of a 64-character table, where 32 draws would carry 192.
+  draws of a 64-character table, where 32 draws would carry 192. A
+  lifecycle cookie only has to differ from the shard lock's other holders'
+  cookies, and its 15 draws carry 90 bits.
 - **Releases:** checked at v19.2.7 and v20.2.4; the corpus shows it in
   every archive from 15.0.0-539 to 19.2.0-404.
 - **rgw-go:** reproduces it, for parity with the version ids radosgw
-  issues: `NewInstance` draws 31 characters (`internal/meta/olh.go`).
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+  issues: `NewInstance` draws 31 characters (`internal/meta/olh.go`), and
+  the driver's lifecycle cookie is 15 (`lcCookieLen`,
+  `internal/driver/lc_shards.go`).
+- **Upstream:** pending: sent to rgw-bug-reproduction, for the version
+  instances; the lifecycle cookies were not sent. Prior art not searched.
 - **Found:** phase 2 task V2, 2026-10-15, writing `meta.NewInstance`; its
   review classed it a defect. Derived from the source, not reproduced on a
-  floor release.
+  floor release. The lifecycle cookies: phase 2 task C5's review,
+  2026-10-20.
 
 ## radosgw's checksum decode overruns its digest buffer and its type table
 
@@ -21538,3 +21560,138 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task WP-11's review, 2026-10-20, from the exclusion
   WP-11 wrote for rgw-go's drop; derived from the source, not reproduced.
+
+## radosgw's lifecycle work window reads numbers rgw_lifecycle_work_time does not give
+
+- **Kind:** defect, S3-correctness of lifecycle scheduling: an
+  `rgw_lifecycle_work_time` that does not hold four numbers in the form
+  `%d:%d-%d:%d` leaves the lifecycle work window to whatever the stack
+  held. Not security-relevant: only the gateway's configuration reaches it.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - The option is a string, default `00:00-06:00`, which Ceph's config
+    checks no further
+    ([rgw.yaml.in:374-386](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L374-L386),
+    [rgw.yaml.in:400-412](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L400-L412)).
+  - `LCWorker::should_work` and `LCWorker::schedule_next_start_time` declare
+    the window's four `int`s without a value and fill them with
+    `sscanf(worktime.c_str(), "%d:%d-%d:%d", ...)`, whose count of numbers
+    assigned neither reads
+    ([rgw_lc.cc:2510-2570](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2510-L2570),
+    [rgw_lc.cc:2577-2637](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2577-L2637)).
+    A value of fewer than four numbers, such as `01:00-06`, or one with a
+    space before the dash, `01:00 - 06:00`, which the format's literal `-`
+    does not skip, ends the scan early, and the window is then compared
+    with, and the next start computed from, values never set: undefined
+    behaviour. A number beyond `int` is undefined behaviour of `sscanf`
+    itself.
+- **Impact:** the worker may run outside the window the operator meant,
+  never run, or start its passes at an unrelated time, and the two
+  functions, each reading its own stack, may disagree. In debug mode, a
+  positive `rgw_lc_debug_interval`, neither answer depends on the values.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** with `rgw_enable_lc_threads` on, refuses to start on such a
+  value, naming the option and the value, and reads a value that scans as
+  `sscanf` reads it, text after the fourth number ignored. With the threads
+  off it does not scan the option, as radosgw reads it only in the threads
+  (`scanLCWorkTime`, `internal/driver/lc_options.go`;
+  `docs/exclusions.md`, "The lifecycle work window must scan as four
+  numbers").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C5, 2026-10-20, reading the option. Derived from
+  the source, not reproduced.
+
+## radosgw aborts on a negative rgw_lc_max_worker and divides by zero on an rgw_lc_max_wp_worker of 0
+
+- **Kind:** defect, S3-correctness: radosgw does not start, or stops at its
+  first lifecycle work item. Not security-relevant: only the gateway's
+  configuration reaches it. Unreproduced: derived from the source. The sink
+  is the one of "[radosgw faults on a zero rgw_gc_max_objs, rgw_lc_max_objs
+  or
+  rgw_usage_max_shards](#radosgw-faults-on-a-zero-rgw_gc_max_objs-rgw_lc_max_objs-or-rgw_usage_max_shards)":
+  a count option without a `min:` used unchecked.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - Both are `int` options without a `min:`, default 3
+    ([rgw.yaml.in:402-426](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L402-L426),
+    [rgw.yaml.in:428-452](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L428-L452)).
+  - `RGWLC::start_processor` reserves `rgw_lc_max_worker` workers in a
+    `std::vector` before it starts them
+    ([rgw_lc.cc:2467-2477](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2467-L2477),
+    [rgw_lc.cc:2534-2544](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2534-L2544)).
+    The value is an `int64_t`, so a negative one converts to a `size_t`
+    past the vector's `max_size()`, and `reserve` throws
+    `std::length_error`. `RGWRados::init_complete` calls `start_processor`
+    whenever the lifecycle threads are enabled, as they are by default
+    ([rgw_rados.cc:1368-1369](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L1368-L1369),
+    [rgw_rados.cc:1423-1424](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1423-L1424)).
+  - Each `LCWorker` builds its `WorkPool` with `rgw_lc_max_wp_worker`
+    queues, which the pool's constructor takes as a `uint16_t`
+    ([rgw_lc.cc:832-879](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L832-L879),
+    [rgw_lc.cc:853-900](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L853-L900)).
+    A value that narrows to 0, 0 itself or any multiple of 65536, makes a
+    pool of no queues, and `WorkPool::enqueue` then divides by zero in
+    `(ix+1) % wqs.size()` at the first multipart upload or object a rule
+    lists
+    ([rgw_lc.cc:979](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L979),
+    [rgw_lc.cc:1815](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1815);
+    [rgw_lc.cc:999](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L999),
+    [rgw_lc.cc:1871](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1871)).
+    Any other negative value narrows to its remainder modulo 65536, so -1
+    runs 65535 threads in each worker's pool.
+- **Impact:** a negative `rgw_lc_max_worker` stops radosgw at startup. An
+  `rgw_lc_max_wp_worker` of 0 lets it start, and kills it with SIGFPE at
+  its first lifecycle work item, on every gateway that runs the worker
+  with that setting.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** with `rgw_enable_lc_threads` on, uses a negative
+  `rgw_lc_max_worker` as 0, no lifecycle worker, and an
+  `rgw_lc_max_wp_worker` that is not positive as 1, each with an
+  error-level log line naming the option and the value read. With the
+  threads off it settles neither, as radosgw reads them only to start the
+  threads (`lcWorkerCounts`, `internal/driver/lc_options.go`;
+  `docs/exclusions.md`,
+  "Lifecycle worker counts that are not positive"). A workpool size above
+  65535 is used as given.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C5, 2026-10-20, reading the options. Derived from
+  the source, not reproduced.
+
+## radosgw's guard_lc_modify unlocks a lifecycle shard lock it did not take
+
+- **Kind:** defect, cosmetic: a lifecycle configuration put or delete that
+  fails to lock its shard unlocks it all the same, which releases the
+  gateway's own hold on the shard when one holds it: another request's, or
+  its worker's `bucket_lc_post`. Not security-relevant.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `guard_lc_modify` calls `lock->unlock()` after its loop whatever the
+    loop ended with: the lock taken, the lock's error after 500 retries, or
+    any other error at once
+    ([rgw_lc.cc:2584-2634](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2584-L2634),
+    [rgw_lc.cc:2651-2701](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2651-L2701)).
+  - The lock is cls_lock's `lc_process` on the shard, taken under RGWLC's
+    cookie, one per process
+    ([rgw_lc.cc:250-253](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L250-L253),
+    [rgw_lc.cc:250-253](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L250-L253);
+    `LCRadosSerializer`,
+    [rgw_sal_rados.cc:3766-3778](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3766-L3778),
+    [rgw_sal_rados.cc:4626-4638](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4626-L4638)),
+    and a cls_lock holder is the client entity with its cookie. Every
+    request of one gateway is that entity with that cookie, and so is its
+    worker's `bucket_lc_post`, which locks the shard under the same cookie
+    ([rgw_lc.cc:1871-1872](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1871-L1872),
+    [rgw_lc.cc:1927-1928](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1927-L1928)).
+    A lock that failed with EEXIST failed because one of them held the
+    shard, and the unlock removes that hold.
+- **Impact:** the released holder's section is a single write, so its lock
+  is lost for at most the time that write takes; another holder,
+  such as a worker's shard pass, may take the shard meanwhile. The
+  outcome is one a put just before or after that pass would give too. No
+  corruption is known.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** releases only a lock it took (`guardLCModify`,
+  `internal/driver/lc_shards.go`; `docs/exclusions.md`, "A lifecycle
+  entry's write releases only a shard lock it took").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C5, 2026-10-20, reading guard_lc_modify. Derived
+  from the source, not reproduced.

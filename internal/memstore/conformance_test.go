@@ -55,7 +55,7 @@ var _ = Describe("memstore", func() {
 				s := memstore.New(memstore.Config{Release: rel})
 				env := &op.Env{
 					Zone: s, Users: s, Accounts: s, UsageReader: s, BucketAdmin: s, Realms: s, Buckets: s,
-					Objects: s, Multipart: s, Stats: s, Usage: usageLog{s}, Metadata: s,
+					Objects: s, Multipart: s, Stats: s, Usage: usageLog{s}, Metadata: s, Lifecycle: s,
 				}
 				return env, func() {}
 			}

@@ -34,7 +34,17 @@ type options struct {
 	usageTick           time.Duration // rgw_usage_log_tick_interval, 30 s
 	usageMaxShards      uint32        // rgw_usage_max_shards, 32, floored to 1
 	usageMaxUserShards  uint32        // rgw_usage_max_user_shards, 1, floored to 1
-	lcMaxObjs           uint32        // rgw_lc_max_objs, 32, floored to 1 and capped at lcHashPrime; for lifecycle, which rgw-go does not serve yet
+	lcMaxObjs           uint32        // rgw_lc_max_objs, 32, floored to 1 and capped at lcHashPrime
+	lcThreads           bool          // rgw_enable_lc_threads, true
+	lcMaxWorker         int           // rgw_lc_max_worker, 3, a negative count used as 0; 0 with lcThreads off
+	lcMaxWPWorker       int           // rgw_lc_max_wp_worker, 3, floored to 1; 0 with lcThreads off
+	lcLockMaxTime       time.Duration // rgw_lc_lock_max_time, 90 s, narrowed to 32 bits of seconds as utime_t narrows it
+	lcThreadDelay       time.Duration // rgw_lc_thread_delay, 0 ms
+	lcDebugInterval     time.Duration // rgw_lc_debug_interval, -1 s: the length of a lifecycle day when positive
+	lcWorkTime          lcWorkTime    // rgw_lifecycle_work_time, 00:00-06:00; zero with lcThreads off
+	lcMaxRules          int           // rgw_lc_max_rules, 1000
+	lcAutoSessionClear  bool          // rgwlc_auto_session_clear, true
+	lcSkipBucketStep    bool          // rgwlc_skip_bucket_step, false
 
 	bucketQuotaTTL       time.Duration // rgw_bucket_quota_ttl, 600 s
 	bucketQuotaCacheSize int           // rgw_bucket_quota_cache_size, 10000
@@ -59,7 +69,13 @@ type options struct {
 // that is not positive is used as 1, with an error-level log line naming the
 // option and the value read: radosgw faults on a zero shard count, and on a
 // zero AIO limit it skips or never finishes every batch of index operations
-// (docs/ceph-upstream-bugs.md).
+// (docs/ceph-upstream-bugs.md). The lifecycle worker counts are logged the
+// same way when lcWorkerCounts changes them. rgw_lifecycle_work_time is
+// scanned, and those counts settled, only with rgw_enable_lc_threads on;
+// both are left zero otherwise: radosgw reads them only to start and run its
+// lifecycle threads
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L1368-L1369 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1423-L1424 at v20.2.4).
 func readOptions(conf *cephconf.Options) (options, error) {
 	var r reads
 	o := options{
@@ -72,6 +88,13 @@ func readOptions(conf *cephconf.Options) (options, error) {
 		usageLogEnabled:     readOption(&r, conf.Bool, "rgw_enable_usage_log"),
 		usageFlushThreshold: int(readOption(&r, conf.Int64, "rgw_usage_log_flush_threshold")),
 		usageTick:           secondsToDuration(readOption(&r, conf.Int64, "rgw_usage_log_tick_interval")),
+		lcThreads:           readOption(&r, conf.Bool, "rgw_enable_lc_threads"),
+		lcLockMaxTime:       time.Duration(uint32(readOption(&r, conf.Int64, "rgw_lc_lock_max_time"))) * time.Second, //nolint:gosec // narrowed as utime_t's seconds narrow it
+		lcThreadDelay:       countToDuration(readOption(&r, conf.Int64, "rgw_lc_thread_delay"), time.Millisecond),
+		lcDebugInterval:     secondsToDuration(readOption(&r, conf.Int64, "rgw_lc_debug_interval")),
+		lcMaxRules:          saturate(readOption(&r, conf.Uint64, "rgw_lc_max_rules"), math.MaxInt),
+		lcAutoSessionClear:  readOption(&r, conf.Bool, "rgwlc_auto_session_clear"),
+		lcSkipBucketStep:    readOption(&r, conf.Bool, "rgwlc_skip_bucket_step"),
 
 		bucketQuotaTTL:       secondsToDuration(readOption(&r, conf.Int64, "rgw_bucket_quota_ttl")),
 		bucketQuotaCacheSize: int(readOption(&r, conf.Int64, "rgw_bucket_quota_cache_size")),
@@ -90,7 +113,13 @@ func readOptions(conf *cephconf.Options) (options, error) {
 	usageShards := readOption(&r, conf.Int64, "rgw_usage_max_shards")
 	userShards := readOption(&r, conf.Int64, "rgw_usage_max_user_shards")
 	lcObjs := readOption(&r, conf.Int64, "rgw_lc_max_objs")
+	lcWorkers := readOption(&r, conf.Int64, "rgw_lc_max_worker")
+	lcWPWorkers := readOption(&r, conf.Int64, "rgw_lc_max_wp_worker")
+	lcWorkTime := readOption(&r, conf.String, "rgw_lifecycle_work_time")
 	aio := readOption(&r, conf.Uint64, "rgw_bucket_index_max_aio")
+	if r.err == nil && o.lcThreads {
+		o.lcWorkTime, r.err = scanLCWorkTime(lcWorkTime)
+	}
 	if r.err != nil {
 		return options{}, fmt.Errorf("reading the driver options: %w", r.err)
 	}
@@ -99,6 +128,9 @@ func readOptions(conf *cephconf.Options) (options, error) {
 	o.usageMaxShards = floorShards("rgw_usage_max_shards", usageShards)
 	o.usageMaxUserShards = floorShards("rgw_usage_max_user_shards", userShards)
 	o.lcMaxObjs = min(floorShards("rgw_lc_max_objs", lcObjs), lcHashPrime)
+	if o.lcThreads {
+		o.lcMaxWorker, o.lcMaxWPWorker = lcWorkerCounts(lcWorkers, lcWPWorkers)
+	}
 	if aio == 0 {
 		slog.Error("bucket index aio limit is not positive; using 1",
 			slog.String("option", "rgw_bucket_index_max_aio"), slog.Uint64("value", aio))
@@ -130,18 +162,20 @@ func saturate[T int | int64 | uint32](n uint64, ceiling T) T {
 	return T(n)
 }
 
-// secondsToDuration converts a count of seconds to a Duration, using the
-// nearest one a Duration holds, about 292 years either way, for a count
-// beyond them.
-func secondsToDuration(n int64) time.Duration {
-	const limit = math.MaxInt64 / int64(time.Second)
+// secondsToDuration is countToDuration in seconds.
+func secondsToDuration(n int64) time.Duration { return countToDuration(n, time.Second) }
+
+// countToDuration converts a count of unit to a Duration, using the nearest
+// one a Duration holds, about 292 years either way, for a count beyond them.
+func countToDuration(n int64, unit time.Duration) time.Duration {
+	limit := math.MaxInt64 / int64(unit)
 	switch {
 	case n > limit:
 		return math.MaxInt64
 	case n < -limit:
 		return math.MinInt64
 	}
-	return time.Duration(n) * time.Second
+	return time.Duration(n) * unit
 }
 
 // positiveInterval returns d, a worker's interval read from option, or one
