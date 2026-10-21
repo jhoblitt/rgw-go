@@ -215,6 +215,26 @@ var _ = Describe("BucketStore: entry point and instance", func() {
 			Expect(got.Version).To(Equal(meta.ObjVersion{Ver: 2, Tag: "b"}))
 		})
 
+		It("writes a bucket's object lock into the instance and reads it back, rule replaced and removed", func(ctx SpecContext) {
+			seedBucket(c, plain(""), nil, meta.ObjVersion{Ver: 1, Tag: "e"}, meta.ObjVersion{Ver: 1, Tag: "b"})
+			rule := func(mode string, days, years int32) meta.ObjectLock {
+				return meta.ObjectLock{Enabled: true, Rule: &meta.ObjectLockRule{DefaultRetention: meta.DefaultRetention{Mode: mode, Days: days, Years: years}}}
+			}
+			for _, want := range []meta.ObjectLock{rule("GOVERNANCE", 1, 0), rule("COMPLIANCE", 0, 3), {Enabled: true}} {
+				rec, err := s.GetBucket(ctx, "", "plain")
+				Expect(err).NotTo(HaveOccurred())
+				rec.Info.Flags |= meta.BucketVersioned | meta.BucketObjLockEnabled
+				rec.Info.SetObjectLock(want)
+				Expect(s.PutBucketInfo(ctx, rec)).To(Succeed())
+				Expect(c.Object(rookMetaPool, rookRoot, instOID).Data).To(Equal(encode(rec.Info)))
+				got, err := s.GetBucket(ctx, "", "plain")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(got.Info.Flags).To(Equal(uint32(meta.BucketVersioned | meta.BucketObjLockEnabled)))
+				Expect(got.Info.ObjectLock()).To(Equal(want))
+				Expect(got.Info.ObjLock).To(Equal(rec.Info.ObjLock), "RGWBucketInfo::decode reads obj_lock back as written")
+			}
+		})
+
 		It("merges attrs into a full instance write, setting then removing", func(ctx SpecContext) {
 			seedBucket(c, plain(""), map[string][]byte{"user.rgw.acl": {1}, "user.rgw.x-amz-tagging": {2}}, meta.ObjVersion{Ver: 1, Tag: "e"}, meta.ObjVersion{Ver: 1, Tag: "b"})
 			rec, err := s.GetBucket(ctx, "", "plain")

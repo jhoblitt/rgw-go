@@ -412,6 +412,29 @@ func Run(newEnv func(ctx context.Context) (*op.Env, func())) {
 			Expect(got.Attrs).To(Equal(map[string][]byte{meta.AttrACL: aclOf(u), attrProbe: []byte("info")}))
 		})
 
+		It("writes a bucket's object lock with PutBucketInfo, which GetBucket reads back, rule replaced and removed", func(ctx SpecContext) {
+			u := newUser(ctx, "owner")
+			name := prefix + "-lock"
+			newBucket(ctx, u, name, meta.Quota{})
+			rule := func(mode string, days, years int32) meta.ObjectLock {
+				return meta.ObjectLock{Enabled: true, Rule: &meta.ObjectLockRule{DefaultRetention: meta.DefaultRetention{Mode: mode, Days: days, Years: years}}}
+			}
+			for _, want := range []meta.ObjectLock{rule("GOVERNANCE", 1, 0), rule("COMPLIANCE", 0, 3), {Enabled: true}} {
+				rec, err := env.Buckets.GetBucket(ctx, "", name)
+				Expect(err).NotTo(HaveOccurred())
+				rec.Info.Flags |= meta.BucketVersioned | meta.BucketObjLockEnabled
+				rec.Info.SetObjectLock(want)
+				Expect(env.Buckets.PutBucketInfo(ctx, rec)).To(Succeed())
+				got, err := env.Buckets.GetBucket(ctx, "", name)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(got.Info.Flags & (meta.BucketVersioned | meta.BucketObjLockEnabled)).To(Equal(uint32(meta.BucketVersioned | meta.BucketObjLockEnabled)))
+				Expect(got.Info.ObjectLock()).To(Equal(want))
+				e := denc.NewEncoder()
+				want.Encode(e, env.Zone.Release())
+				Expect([]byte(got.Info.ObjLock)).To(Equal(e.Bytes()), "RGWObjectLock::encode's bytes")
+			}
+		})
+
 		It("lays PutBucketAttrs' set over the record's attrs, not the stored ones", func(ctx SpecContext) {
 			u := newUser(ctx, "owner")
 			name := prefix + "-attrs"

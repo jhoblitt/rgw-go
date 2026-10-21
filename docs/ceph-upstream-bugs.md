@@ -399,6 +399,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's ListParts never reports its upload's checksum algorithm](#radosgws-listparts-never-reports-its-uploads-checksum-algorithm) | pending | pending | ✓ |
 | [radosgw's bucket delete drops the lifecycle entry of a bucket it then fails to remove](#radosgws-bucket-delete-drops-the-lifecycle-entry-of-a-bucket-it-then-fails-to-remove) | pending | pending | ✓ |
 | [radosgw's bucket rename leaves the renamed bucket out of the lifecycle index](#radosgws-bucket-rename-leaves-the-renamed-bucket-out-of-the-lifecycle-index) | pending | pending | ✓ |
+| [radosgw's retried PutObjectLockConfiguration can lock a bucket re-created under the same name](#radosgws-retried-putobjectlockconfiguration-can-lock-a-bucket-re-created-under-the-same-name) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -22750,3 +22751,97 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task C7, 2026-10-21, checking which bucket writes
   besides the delete and the instance put change an entry's key. Derived
   from the source, not reproduced.
+
+## radosgw's retried PutObjectLockConfiguration can lock a bucket re-created under the same name
+
+- **Kind:** defect, a race, unfixed at v19.2.7 and v20.2.4. Possibly
+  security-relevant, and conditional on a victim re-creating the name (see
+  Impact). Its harm is permanent, so "a narrow race, therefore low
+  severity" does not apply: the window is paid once and the damage never
+  heals, since object lock, once on a bucket, is one no S3 request turns
+  off. Unreproduced: derived from the source. rgw-bug-reproduction's triage
+  verified its claims at v20.2.4 and classified it CONDITIONAL. It is one
+  more input to the sink of
+  "[radosgw's retried bucket write can land in a bucket re-created under the same name](#radosgws-retried-bucket-write-can-land-in-a-bucket-re-created-under-the-same-name)": `retry_raced_bucket_write`'s refresh by name,
+  which writes into whatever instance the name now names.
+- **Evidence:** at v19.2.7, then v20.2.4.
+  - `RGWPutBucketObjectLock::execute` checks versioning against the bucket
+    its request loaded, then writes through `retry_raced_bucket_write`
+    ([rgw_op.cc:8289-8304](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8289-L8304),
+    [rgw_op.cc:9224-9239](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9224-L9239)). While the write
+    fails with -ECANCELED it calls `try_refresh_info` and the write again,
+    up to fifteen times (`for (auto i = 0u; i < 15u && r == -ECANCELED;
+    ++i)`, [rgw_op.h:184-197](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L184-L197),
+    [rgw_op.h:197-210](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L197-L210)), so the window is fifteen
+    tries, not one. The refresh reads the bucket by name, whatever instance
+    it now names (the sink's entry).
+  - The write's lambda reads only the bucket it now holds
+    ([rgw_op.cc:8290-8301](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8290-L8301),
+    [rgw_op.cc:9225-9236](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9225-L9236)). When that bucket
+    lacks `BUCKET_OBJ_LOCK_ENABLED`, it checks that bucket's versioning,
+    sets the flag and the request's `obj_lock`, and calls `put_info`. When
+    the bucket has the flag, it makes no check at all and replaces the
+    bucket's `obj_lock` with the request's. It compares neither the
+    instance nor the owner with the bucket the request was authorized on,
+    and the retry is not authorized again
+    ("[radosgw's retried bucket writes are not authorized again](#radosgws-retried-bucket-writes-are-not-authorized-again)").
+  - No S3 request clears the flag. Its only writers set it, the op above
+    and `create_bucket`
+    ([rgw_op.cc:8298](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8298),
+    [rgw_rados.cc:2405](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L2405);
+    [rgw_op.cc:9233](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9233),
+    [rgw_rados.cc:2497](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2497)),
+    a configuration document takes `ObjectLockEnabled` as `Enabled` alone
+    ([rgw_object_lock.cc:73-82](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L73-L82),
+    [rgw_object_lock.cc:57-66](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_object_lock.cc#L57-L66)),
+    and PutBucketVersioning refuses any status but Enabled on a bucket with
+    the flag
+    ([rgw_op.cc:2788-2793](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2788-L2793),
+    [rgw_op.cc:3020-3025](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3020-L3025)).
+  - The only escape is a `bucket.instance` metadata put, which takes the
+    flags from its document
+    ([rgw_common.cc:2553](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2553),
+    [rgw_common.cc:2612](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2612)) and needs
+    the metadata caps only an admin holds; that put has its own object-lock
+    defect ("[radosgw's bucket instance metadata put drops the bucket's object lock rule](#radosgws-bucket-instance-metadata-put-drops-the-buckets-object-lock-rule)").
+- **Impact:**
+  - Permanence first. Every other caller of the retry leaves state its
+    owner can put back. This one leaves a bucket whose object lock no S3
+    request turns off and whose versioning no S3 request suspends, and
+    under a COMPLIANCE rule every object the owner writes before it
+    replaces the rule is retained for the rule's full period, with no
+    bypass for anyone.
+  - When the name is re-created with versioning enabled while the
+    requester's write is in flight, the retry enables object lock on the
+    new owner's bucket, with the requester's rule.
+  - When it is re-created with `x-amz-bucket-object-lock-enabled: true`,
+    the usual way a WORM bucket is made, the bucket already carries the
+    flag. The retry makes no check and replaces the new owner's lock with
+    the requester's rule, which needs no second step by the owner: a
+    COMPLIANCE default retention of the requester's choosing then governs
+    every object the owner writes without a retention of its own, and a
+    long one written in that time is one nobody can shorten afterwards.
+  - Either way the rule lands on a stranger's bucket of the same name, and
+    the write is never authorized against it.
+  - The attacker controls three of the four steps: deleting its own
+    bucket, holding a PutObjectLockConfiguration in flight, and winning the
+    retry, at fifteen tries. It cannot force a victim to create that name
+    at that instant: it needs an induced or a lucky re-creation, such as a
+    naming convention, or CI that re-creates its buckets.
+  - The harm is a rule placed by someone who does not control the bucket.
+    It is not whether a bucket's own controller may replace its rule with a
+    weaker one, which Amazon S3's PutObjectLockConfiguration allows, and it
+    stays apart from rgw-bug-reproduction's L1-4, a different question in
+    the same function.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** does not reproduce it. PutObjectLockConfiguration writes
+  through `retryBucketWrite`, which stops with 409 ConcurrentModification,
+  writing nothing, when the name names another instance, and authorizes
+  each retry again (`internal/op/bucketobjectlock.go`; `docs/exclusions.md`,
+  "A retried bucket write stops when the name names another bucket").
+- **Upstream:** pending: sent to rgw-bug-reproduction, whose triage on
+  2026-10-21 added no row of its own: the case composes the two it tracks,
+  the by-name refresh and the unauthorized retry.
+- **Found:** phase 2 task L2, 2026-10-21, reading the retry of
+  `RGWPutBucketObjectLock::execute`; derived from the source, not
+  reproduced.
