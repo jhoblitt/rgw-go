@@ -9209,7 +9209,7 @@ Every new entry adds its row to this table, in document order.
     preflight is signed over the method it asks for on Squid too").
   - Once the key resolves as `LocalEngine` resolves it, it grants the
     preflight without comparing its signature, SigV2 and SigV4 alike
-    (`internal/auth/verifier.go:115-137`), and marks the identity as
+    (`internal/auth/verifier.go:115-142`), and marks the identity as
     granted on its key's id alone.
   - It keeps the identity so granted to the preflight: `op.Run`, the S3
     handler and the admin handler refuse it everywhere else with 500
@@ -9330,7 +9330,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.1.0 on, with the preflight's signature skip; checked
   at v19.2.7 and v20.2.4.
 - **rgw-go:** differs: a preflight's identity takes no `rgwx-uid`
-  (`internal/auth/verifier.go:116-123`; `docs/exclusions.md`, "A
+  (`internal/auth/verifier.go:132-137`; `docs/exclusions.md`, "A
   preflight's answer says nothing of its key's user").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task BC-5, 2026-10-15, by the security review of its
@@ -20747,11 +20747,15 @@ Every new entry adds its row to this table, in document order.
   which would otherwise take that argument unsigned on SigV2 and on a form
   too.
 - **Releases:** v19.2.7 and v20.2.4; main not checked.
-- **rgw-go:** differs for a POST object form: its identity takes nothing
-  from the query (`docs/exclusions.md`, "A browser upload's identity takes
-  nothing from the query"). For SigV2 it reproduces the defect: a system
-  user's SigV2 request, header-signed or presigned, takes its `rgwx-uid`
-  (`internal/auth/verifier.go:115-133`, `internal/auth/identity.go:53-77`).
+- **rgw-go:** differs on both: a system user's `rgwx-uid` is taken from a
+  SigV4 request alone, whose canonical query signs it
+  (`internal/auth/verifier.go:124-137`), and a POST object form's identity
+  takes nothing from the query (`docs/exclusions.md`, "A SigV2 request's
+  rgwx-uid is not read" and "A browser upload's identity takes nothing from
+  the query"). A multisite peer signs SigV2 only when
+  `rgw_s3_client_max_sig_ver` is set to 1, 2 or 3; such a peer's forwarded
+  and fetch requests would run on rgw-go as the system user. Multisite is
+  excluded, so nothing rgw-go serves today breaks.
 - **Upstream:** pending: sent to rgw-bug-reproduction, which sends it
   upstream as an addendum with the preflight entry above.
 - **Found:** phase 2 task BC-31, 2026-10-20, tracing what of the request
