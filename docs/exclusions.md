@@ -2102,8 +2102,16 @@ review and verified against the tree.
   RGWBucketInfo's object-lock configuration and sync policy are kept as
   the encoded bytes radosgw wrote and written back unchanged; the compat
   check of each is still applied. This keeps them byte-exact by
-  construction. The phase that serves object lock or bucket sync policy
-  models them. The admin API's `GET` or `PUT
+  construction. The object-lock configuration is decoded where it is
+  read, and PutObjectLockConfiguration encodes the one it stores. A
+  configuration that passes the compat check but does not decode, a
+  configuration radosgw never writes, loads with its bucket: rgw-go's
+  GetObjectLockConfiguration answers it 500 UnknownError, and its
+  PutObjectLockConfiguration replaces it, where radosgw fails every load
+  of the bucket with -EIO before either op runs
+  ([svc_bucket_sobj.cc:363-369](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_bucket_sobj.cc#L363-L369),
+  [svc_bucket_sobj.cc:312-318](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bucket_sobj.cc#L312-L318)).
+  The phase that serves bucket sync policy models it. The admin API's `GET` or `PUT
   /admin/metadata/bucket.instance` of a bucket holding a sync policy with
   groups answers 501 NotImplemented, where radosgw renders the record, and
   so does a put of a document that holds none: the put reads the stored
@@ -5691,8 +5699,9 @@ differ, rgw-go does the following.
   PutBucketPolicy, DeleteBucketPolicy, PutBucketTagging,
   DeleteBucketTagging, PutBucketWebsite, DeleteBucketWebsite,
   PutPublicAccessBlock, DeletePublicAccessBlock,
-  PutBucketEncryption, DeleteBucketEncryption, PutBucketCors and
-  DeleteBucketCors retry a write that lost a race up to fifteen times, each
+  PutBucketEncryption, DeleteBucketEncryption, PutBucketCors,
+  DeleteBucketCors and PutObjectLockConfiguration retry a write that lost
+  a race up to fifteen times, each
   after reading the bucket
   again by name (`retry_raced_bucket_write`, `rgw_op.h:183-196` at v19.2.6,
   `:197-210` at v20.2.4), and so does rgw-go's PutBucketAcl ("A PutBucketAcl
@@ -5731,7 +5740,11 @@ differ, rgw-go does the following.
   [rgw_op.cc:6133-6152](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6133-L6152),
   [rgw_op.cc:6770-6774](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6770-L6774)
   and
-  [rgw_op.cc:6800-6819](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6800-L6819)).
+  [rgw_op.cc:6800-6819](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6800-L6819)),
+  and PutObjectLockConfiguration enables object lock on that bucket, when
+  its versioning is enabled, and replaces its configuration
+  ([rgw_op.cc:8289-8304](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8289-L8304),
+  [rgw_op.cc:9224-9239](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9224-L9239)).
   When the bucket
   was deleted and a bucket of the same name created in between, radosgw
   writes into the new bucket, another owner's included
@@ -5806,8 +5819,9 @@ differ, rgw-go does the following.
   PutBucketAcl, PutBucketPolicy, DeleteBucketPolicy, PutBucketTagging,
   DeleteBucketTagging, PutBucketWebsite, DeleteBucketWebsite,
   PutPublicAccessBlock, DeletePublicAccessBlock,
-  PutBucketEncryption, DeleteBucketEncryption, PutBucketCors and
-  DeleteBucketCors, is authorized again the same way before each retry,
+  PutBucketEncryption, DeleteBucketEncryption, PutBucketCors,
+  DeleteBucketCors and PutObjectLockConfiguration, is authorized again
+  the same way before each retry,
   against the bucket that
   retry read: its ACL, of which the block writes read the owner alone, its
   policy and its public-access block, with the same admin rule. radosgw retries all but PutBucketAcl through
@@ -5840,7 +5854,10 @@ differ, rgw-go does the following.
   [rgw_op.cc:6133-6152](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6133-L6152),
   [rgw_op.cc:6770-6774](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6770-L6774)
   and
-  [rgw_op.cc:6800-6819](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6800-L6819)),
+  [rgw_op.cc:6800-6819](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6800-L6819);
+  the object-lock write at
+  [rgw_op.cc:8289-8304](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8289-L8304),
+  [rgw_op.cc:9224-9239](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9224-L9239)),
   which reads the bucket again and authorizes nothing, so when the
   write a try lost to revoked the requester's permission, by an ACL that
   drops their grant or a policy that denies them, radosgw's retry writes for
