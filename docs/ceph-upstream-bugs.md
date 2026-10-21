@@ -400,6 +400,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's bucket delete drops the lifecycle entry of a bucket it then fails to remove](#radosgws-bucket-delete-drops-the-lifecycle-entry-of-a-bucket-it-then-fails-to-remove) | pending | pending | ✓ |
 | [radosgw's bucket rename leaves the renamed bucket out of the lifecycle index](#radosgws-bucket-rename-leaves-the-renamed-bucket-out-of-the-lifecycle-index) | pending | pending | ✓ |
 | [radosgw's retried PutObjectLockConfiguration can lock a bucket re-created under the same name](#radosgws-retried-putobjectlockconfiguration-can-lock-a-bucket-re-created-under-the-same-name) | pending | pending | ✓ |
+| [radosgw's CreateBucket with object lock skips the two permissions Amazon S3 requires for it](#radosgws-createbucket-with-object-lock-skips-the-two-permissions-amazon-s3-requires-for-it) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -22845,3 +22846,100 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task L2, 2026-10-21, reading the retry of
   `RGWPutBucketObjectLock::execute`; derived from the source, not
   reproduced.
+
+## radosgw's CreateBucket with object lock skips the two permissions Amazon S3 requires for it
+
+- **Kind:** defect, unfixed at v19.2.7, v20.2.4, v21.1.2 and ceph main
+  d8552606. Possibly security-relevant, which rgw-bug-reproduction's triage
+  rated yes: a governance-control bypass. The actor creates a bucket it
+  owns, so nothing of anyone else's is touched; it needs a deployment whose
+  policies deny s3:PutBucketObjectLockConfiguration or
+  s3:PutBucketVersioning; and its result is permanent. Unreproduced:
+  derived from the source.
+- **Evidence:**
+  - The same function holds a live header check parsed early and a dead
+    one parsed late, within twenty lines, at ceph main d8552606.
+    `RGWCreateBucket::verify_permission`'s refusal of a public canned ACL
+    under BlockPublicAcls reads `s->canned_acl`
+    ([rgw_op.cc:3866-3872](https://github.com/ceph/ceph/blob/d8552606/src/rgw/rgw_op.cc#L3866-L3872)), which
+    `RGWHandler_REST_S3::init` sets from `x-amz-acl`
+    ([rgw_rest_s3.cc:5855-5857](https://github.com/ceph/ceph/blob/d8552606/src/rgw/rgw_rest_s3.cc#L5855-L5857)) when the
+    handler is built, before the op runs
+    ([rgw_rest.cc:2311](https://github.com/ceph/ceph/blob/d8552606/src/rgw/rgw_rest.cc#L2311);
+    [rgw_process.cc:405](https://github.com/ceph/ceph/blob/d8552606/src/rgw/rgw_process.cc#L405)), so that check runs.
+    Its s3:PutBucketOwnershipControls check reads `object_ownership`
+    ([rgw_op.cc:3874-3879](https://github.com/ceph/ceph/blob/d8552606/src/rgw/rgw_op.cc#L3874-L3879)), which only
+    `get_params` sets
+    ([rgw_rest_s3.cc:2817-2824](https://github.com/ceph/ceph/blob/d8552606/src/rgw/rgw_rest_s3.cc#L2817-L2824)), and
+    `get_params` runs in `execute`
+    ([rgw_op.cc:4197](https://github.com/ceph/ceph/blob/d8552606/src/rgw/rgw_op.cc#L4197)), after
+    `verify_permission`
+    ([rgw_process.cc:313](https://github.com/ceph/ceph/blob/d8552606/src/rgw/rgw_process.cc#L313),
+    [rgw_process.cc:352](https://github.com/ceph/ceph/blob/d8552606/src/rgw/rgw_process.cc#L352)), so this one
+    never fires. The object-lock header is parsed late
+    too, into `createparams.obj_lock_enabled`
+    ([rgw_rest_s3.cc:2809-2815](https://github.com/ceph/ceph/blob/d8552606/src/rgw/rgw_rest_s3.cc#L2809-L2815)), and no
+    check reads it: s3:PutBucketObjectLockConfiguration and
+    s3:PutBucketVersioning appear in `rgw_op.cc` only in their own ops
+    ([rgw_op.cc:9727](https://github.com/ceph/ceph/blob/d8552606/src/rgw/rgw_op.cc#L9727),
+    [rgw_op.cc:3391](https://github.com/ceph/ceph/blob/d8552606/src/rgw/rgw_op.cc#L3391)).
+    v21.1.2 is the same: the header is parsed in `get_params`
+    ([rgw_rest_s3.cc:2801-2807](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L2801-L2807)),
+    which `execute` calls
+    ([rgw_op.cc:4067](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L4067)),
+    and the two actions appear only in their own ops
+    ([rgw_op.cc:9580](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L9580),
+    [rgw_op.cc:3271](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L3271)).
+  - At v19.2.7 and v20.2.4 `verify_permission` authorizes s3:CreateBucket
+    alone
+    ([rgw_op.cc:3215-3244](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3215-L3244),
+    [rgw_op.cc:3443-3472](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3443-L3472)). The lock header is
+    read only in `get_params`
+    ([rgw_rest_s3.cc:2542-2548](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2542-L2548),
+    [rgw_rest_s3.cc:2695-2701](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2695-L2701)), which
+    `execute` calls
+    ([rgw_op.cc:3460](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3460),
+    [rgw_op.cc:3688](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3688)) after
+    `verify_permission`
+    ([rgw_process.cc:225](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L225) and
+    [rgw_process.cc:255](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L255);
+    [rgw_process.cc:225](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L225) and
+    [rgw_process.cc:258](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L258)), and
+    `create_bucket` writes it as `BUCKET_VERSIONED | BUCKET_OBJ_LOCK_ENABLED`
+    ([rgw_rados.cc:2404-2406](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L2404-L2406),
+    [rgw_rados.cc:2496-2498](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2496-L2498)).
+  - Amazon S3's CreateBucket reference, retrieved 2026-10-21: "In your
+    `CreateBucket` request, if you set `x-amz-bucket-object-lock-enabled` to
+    true, the `s3:PutBucketObjectLockConfiguration` and
+    `s3:PutBucketVersioning` permissions are required."
+- **Impact:** a deployment that keeps its buckets out of object lock by
+  denying those two actions, the controls Amazon S3 names for this request,
+  does not stop a requester allowed s3:CreateBucket from creating a bucket
+  versioned with object lock. The result is permanent: no S3 request turns
+  the bucket's object lock off or suspends its versioning
+  ("[radosgw's retried PutObjectLockConfiguration can lock a bucket re-created under the same name](#radosgws-retried-putobjectlockconfiguration-can-lock-a-bucket-re-created-under-the-same-name)" gives the evidence), and the bucket
+  admits object retentions and legal holds from then on, so a COMPLIANCE
+  retention placed in it keeps the object, and the bucket with it, from
+  deletion until the retention lapses.
+- **Fix:** parse `x-amz-bucket-object-lock-enabled`, with
+  `x-amz-object-ownership`, into `req_state` in `RGWHandler_REST_S3::init`,
+  as `x-amz-acl` already is, then test them in `verify_permission`. Adding
+  the two permission tests to `verify_permission` alone would be dead, as
+  the ownership check is, because `createparams.obj_lock_enabled` is also
+  set only in `get_params`
+  ([rgw_rest_s3.cc:2809-2815](https://github.com/ceph/ceph/blob/d8552606/src/rgw/rgw_rest_s3.cc#L2809-L2815)).
+- **Releases:** v19.2.7, v20.2.4, v21.1.2 and ceph main d8552606.
+- **rgw-go:** does not reproduce it. CreateBucket authorizes both actions
+  on the new bucket against the requester's own policies once the header
+  reads true, and refuses a denial of either with 403 AccessDenied,
+  creating nothing (`verifyCreateActions`, `internal/op/bucketops.go`;
+  `createBucketActions`, `internal/authz/evaluator.go`; `docs/exclusions.md`,
+  "CreateBucket with object lock is authorized as
+  s3:PutBucketObjectLockConfiguration and s3:PutBucketVersioning too").
+  rgw-go reads the header in the handler and checks it in the op's execute,
+  before anything is written.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task L2's review, 2026-10-21, against Amazon S3's
+  CreateBucket reference. The ownership check this entry first took for a
+  working sibling was found dead by the scoped re-review and verified here
+  and by rgw-bug-reproduction. Derived from the source, not reproduced.
