@@ -1268,6 +1268,28 @@ review and verified against the tree.
       through the old name between the attempts is lost too
       (docs/ceph-upstream-bugs.md, "radosgw's bucket rename loses a bucket
       config write made through the old name").
+  - A bucket rename moves the lifecycle entry to the new name. An entry is
+    keyed by the bucket's tenant, name and marker, and radosgw's rename
+    moves none, so the renamed bucket's rules stop running
+    (docs/ceph-upstream-bugs.md, "[radosgw's bucket rename leaves the
+    renamed bucket out of the lifecycle
+    index](ceph-upstream-bugs.md#radosgws-bucket-rename-leaves-the-renamed-bucket-out-of-the-lifecycle-index)").
+    Once a rename of a bucket carrying `user.rgw.lc` completes, its retry
+    included, rgw-go files the entry under the new name and removes the
+    one under the old, logging a failure of either; a failure to file it
+    leaves the bucket out of the index, as radosgw's rename does. An old
+    entry left behind names a name that no longer loads the bucket, which
+    radosgw's lifecycle pass drops, as for a delete ("A bucket delete
+    removes the lifecycle entry once the bucket is gone"), and rgw-go's own
+    worker once it does what `bucket_lc_process` does; until then, in a
+    zone where no radosgw lifecycle thread runs, nothing drops it. A
+    DeleteBucketLifecycle on the new name that lands between the rename's
+    last instance write and its filing of the entry leaves an entry for a
+    bucket without `user.rgw.lc`. radosgw's pass keeps such an entry and
+    skips the bucket
+    ([rgw_lc.cc:1776-1783](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1776-L1783)),
+    which costs one bucket load per pass until the bucket's next lifecycle
+    configuration put or delete, or its removal.
   - The owners' bucket list entries a link removes are the ACL owner's and
     the instance owner's when it differs, each only while it names the
     bucket's instance, and a failure is returned; radosgw removes the ACL

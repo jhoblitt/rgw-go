@@ -562,8 +562,28 @@ func (s *Store) moveBucket(ctx context.Context, rec *op.BucketRecord, pol acl.Po
 		return err
 	}
 	s.settleClaim(ctx, r.dst)
+	s.moveLCEntry(ctx, &cur, r.src)
 	*rec = cur
 	return nil
+}
+
+// moveLCEntry files the lifecycle entry of cur, a renamed bucket carrying
+// user.rgw.lc, under its new name, and removes the one under src, its old
+// name, logging a failure of either: the rename is done by then. An entry's
+// key holds the bucket's name, and radosgw's rename moves no entry, so the
+// renamed bucket's rules stop running (docs/ceph-upstream-bugs.md,
+// "radosgw's bucket rename leaves the renamed bucket out of the lifecycle
+// index").
+func (s *Store) moveLCEntry(ctx context.Context, cur *op.BucketRecord, src meta.BucketID) {
+	if _, ok := cur.Attrs[op.AttrLC]; !ok {
+		return
+	}
+	if err := s.SetEntry(ctx, cur); err != nil {
+		slog.WarnContext(ctx, "could not file the renamed bucket's lifecycle entry", slog.String("bucket", cur.Info.Bucket.Name), slog.Any("error", err))
+	}
+	if err := s.RemoveEntry(ctx, &op.BucketRecord{Info: meta.BucketInfo{Bucket: src}}); err != nil {
+		slog.WarnContext(ctx, "could not remove the renamed bucket's old lifecycle entry", slog.String("bucket", src.Name), slog.Any("error", err))
+	}
 }
 
 // removeSource is renameBucket's steps 7 and 8: src's entry point read,
