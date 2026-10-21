@@ -398,6 +398,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw reports a partNumber read's checksum as the multipart object's composite](#radosgw-reports-a-partnumber-reads-checksum-as-the-multipart-objects-composite) | pending | [ceph/ceph#66042](https://github.com/ceph/ceph/pull/66042) |  |
 | [radosgw's ListParts never reports its upload's checksum algorithm](#radosgws-listparts-never-reports-its-uploads-checksum-algorithm) | pending | pending | ✓ |
 | [radosgw's bucket delete drops the lifecycle entry of a bucket it then fails to remove](#radosgws-bucket-delete-drops-the-lifecycle-entry-of-a-bucket-it-then-fails-to-remove) | pending | pending | ✓ |
+| [radosgw's bucket rename leaves the renamed bucket out of the lifecycle index](#radosgws-bucket-rename-leaves-the-renamed-bucket-out-of-the-lifecycle-index) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -22698,3 +22699,54 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task C7, 2026-10-21, reading `RadosBucket::remove` at
   both tags. Derived from the source, not reproduced.
+
+## radosgw's bucket rename leaves the renamed bucket out of the lifecycle index
+
+- **Kind:** defect, S3-correctness of lifecycle: a bucket renamed through
+  the admin bucket link keeps its lifecycle configuration, but no
+  lifecycle pass runs its rules again. Not security-relevant: only an
+  admin's rename reaches it, and it grants and exposes nothing; it keeps
+  what the configuration would expire. Unreproduced: derived from the
+  source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - A bucket's lifecycle entry is keyed `tenant:name:marker`
+    ([rgw_lc.cc:1990-1992](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1990-L1992),
+    [rgw_lc.cc:2047-2049](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2047-L2049)).
+  - `RGWBucketAdminOp::link` with a new name writes the instance under the
+    new name with the same marker, links it, and removes the old entry
+    point and instance, with no call into the lifecycle index
+    ([rgw_bucket.cc:1067-1186](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L1067-L1186),
+    [rgw_bucket.cc:1218-1337](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1218-L1337)).
+    Its instance write is `put_info`, which reaches
+    `store_bucket_instance_info` and not the metadata handler's `put_post`,
+    the one instance write that files an entry
+    ([rgw_bucket.cc:2900-2928](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L2900-L2928),
+    [rgw_bucket.cc:3010-3040](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L3010-L3040)).
+  - The entry under the old name then names a bucket that name no longer
+    loads, and a lifecycle pass removes it
+    ([rgw_lc.cc:1697-1718](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1697-L1718),
+    [rgw_lc.cc:2430-2440](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2430-L2440);
+    [rgw_lc.cc:1753-1774](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1753-L1774),
+    [rgw_lc.cc:2497-2506](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2497-L2506)).
+- **Impact:** after a rename the bucket's lifecycle rules stop: objects
+  meant to expire stay and uploads meant to be aborted keep their parts,
+  while GetBucketLifecycleConfiguration still returns the configuration,
+  until the configuration is put again or an operator runs
+  `radosgw-admin lc reshard fix`, which files the missing entry of a
+  bucket whose attrs carry it
+  ([rgw_lc.cc:2703-2748](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2703-L2748),
+  [rgw_lc.cc:2770-2815](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2770-L2815)).
+  It is the rename-side sibling of "[radosgw's bucket delete drops the
+  lifecycle entry of a bucket it then fails to
+  remove](#radosgws-bucket-delete-drops-the-lifecycle-entry-of-a-bucket-it-then-fails-to-remove)":
+  both leave a bucket's configuration without the entry that runs it.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** once a rename completes, files the entry under the new name
+  and removes the one under the old name for a bucket carrying
+  `user.rgw.lc`, logging a failure of either (`Store.moveLCEntry`,
+  `internal/driver/bucketadmin.go`; `docs/exclusions.md`, "A bucket rename
+  moves the lifecycle entry to the new name").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C7, 2026-10-21, checking which bucket writes
+  besides the delete and the instance put change an entry's key. Derived
+  from the source, not reproduced.
