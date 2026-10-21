@@ -1,0 +1,11 @@
+# Tests of the gate set that run only at a phase gate and on demand, at the
+# s3-tests pin, PIN: those a pull request's check cannot afford, such as the
+# time-driven lifecycle tests, which sleep while lifecycle rules come due.
+# The selection, hack/s3tests, leaves each line's test, or every
+# parametrization of a base id that the gate set holds, out of the pr set,
+# which make s3tests-parity runs by default, and keeps it in the gate set,
+# which SET=gate and every recording run. It refuses a line that names no
+# test of the gate set, in either set. Each line sits under its area's
+# comment and lands with the PR that records its area's tests.
+# Format: a pytest node id, or a base id for every parametrization, then "#"
+# and why it waits for the gate.

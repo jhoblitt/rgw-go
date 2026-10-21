@@ -63,12 +63,14 @@ func runSh(ctx context.Context, root string, env []string, args ...string) (ok b
 
 // ambient are S3TESTS_ settings each of which would fail the command, were
 // it to read them: a lists directory, TESTS file, collection and config file
-// that are not there, and log settings it does not know.
+// that are not there, a gate-only ids file in a directory that is not there,
+// and log settings and a set it does not know.
 func ambient() []string {
 	missing := filepath.Join(GinkgoT().TempDir(), "missing")
 	return []string{
 		"S3TESTS_LISTS=" + missing, "S3TESTS_TESTS=" + missing, "S3TESTS_UNFILTERED=" + missing,
-		"S3TESTS_CONFIG=" + missing, "S3TESTS_LOG_LEVEL=bogus", "S3TESTS_LOG_FORMAT=bogus",
+		"S3TESTS_GATE_ONLY_IDS=" + filepath.Join(missing, "run.gate-only.ids"),
+		"S3TESTS_CONFIG=" + missing, "S3TESTS_LOG_LEVEL=bogus", "S3TESTS_LOG_FORMAT=bogus", "S3TESTS_SET=bogus",
 	}
 }
 
@@ -125,7 +127,7 @@ var _ = Describe("run.sh", func() {
 			func(ctx SpecContext) {
 				root := runShTree(true, lists0239625)
 				conf := writeRunConf(root)
-				ok, _, stderr := runSh(ctx, root, ambient(), "squid", "radosgw", "r1")
+				ok, _, stderr := runSh(ctx, root, ambient(), "squid", "radosgw", "r1", "pr")
 				Expect(ok).To(BeFalse(), "the fetch from an empty directory fails")
 				Expect(stderr).NotTo(ContainSubstring("s3tests:"))
 				Expect(conf).NotTo(BeAnExistingFile(), "the run got past its arguments to removing its outputs")
@@ -139,7 +141,7 @@ var _ = Describe("run.sh", func() {
 				if text != nil {
 					Expect(os.WriteFile(tests, []byte(*text), 0o600)).To(Succeed())
 				}
-				ok, _, stderr := runSh(ctx, root, nil, "squid", "radosgw", "r1", tests)
+				ok, _, stderr := runSh(ctx, root, nil, "squid", "radosgw", "r1", "pr", tests)
 				Expect(ok).To(BeFalse())
 				Expect(stderr).To(ContainSubstring(want))
 				Expect(conf).To(BeAnExistingFile())
@@ -147,6 +149,20 @@ var _ = Describe("run.sh", func() {
 			},
 			Entry("that is not there", nil, "no tests file ", SpecTimeout(5*time.Minute)),
 			Entry("that names no test", new("# none yet\n"), " names no test", SpecTimeout(5*time.Minute)),
+		)
+
+		DescribeTable("refuses a set other than pr or gate before it removes the run's outputs",
+			func(ctx SpecContext, args ...string) {
+				root := runShTree(true, lists0239625)
+				conf := writeRunConf(root)
+				ok, _, stderr := runSh(ctx, root, nil, append([]string{"squid", "radosgw", "r1"}, args...)...)
+				Expect(ok).To(BeFalse())
+				Expect(stderr).To(ContainSubstring("usage: run.sh squid|tentacle radosgw|rgw-go RUN-ID pr|gate [TESTS-FILE]"))
+				Expect(conf).To(BeAnExistingFile())
+			},
+			Entry("none", SpecTimeout(5*time.Minute)),
+			Entry("another word", "all", SpecTimeout(5*time.Minute)),
+			Entry("a TESTS file in its place", "tests.txt", SpecTimeout(5*time.Minute)),
 		)
 	})
 })
