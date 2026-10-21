@@ -31,7 +31,7 @@ var GCQueueWriteMethods = []string{
 // counted from the queue's first entry ever, as cls_queue's offsets stay
 // valid when a removal moves the front: the count of entries removed is
 // kept in the xattr GCQueueFrontXattr. So an enqueue on an existing shard
-// needs no rgw_gc_queue_init, and the init, which writes nothing, finds a
+// needs no rgw_gc_queue_init, and the init, which stores nothing, finds a
 // head only in a queue that holds or has held an entry. Without a head the
 // fake keeps no deferred entries, so listing and removal skip none. A
 // missing shard is ENOENT, as the class's read of the queue head answers.
@@ -84,6 +84,11 @@ func gcQueueInit(call *ClassCall) int32 {
 	if _, held := obj.Xattrs[GCQueueFrontXattr]; held || len(obj.Data) > 0 {
 		return -int32(syscall.EEXIST)
 	}
+	// queue_write_head writes the head the fake keeps nowhere, a write the
+	// op's transaction takes all the same
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/queue/cls_queue_src.cc#L107-L138 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/queue/cls_queue_src.cc#L107-L138 at v20.2.4).
+	call.Update()
 	return 0
 }
 
@@ -94,7 +99,7 @@ func gcQueueEnqueue(call *ClassCall) int32 {
 	if rval < 0 {
 		return rval
 	}
-	obj := call.Object()
+	obj := call.Update()
 	if obj == nil {
 		return -int32(syscall.ENOENT)
 	}
@@ -154,7 +159,11 @@ func gcQueueList(call *ClassCall) (out []byte, rval int32) {
 // gcQueueRemove is cls_rgw_gc_queue_remove_entries
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw_gc/cls_rgw_gc.cc#L227-L375):
 // the oldest NumEntries entries (128 for 0) go, every entry when fewer
-// remain, and the front moves past them.
+// remain, and the front moves past them. The class reads the head with
+// queue_read_head, and the entries, before it writes, so a call that fails
+// sends no write, which only a FAILOK caller could see
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw_gc/cls_rgw_gc.cc#L227-L374 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw_gc/cls_rgw_gc.cc#L227-L374 at v20.2.4).
 func gcQueueRemove(call *ClassCall) int32 {
 	op, rval := decodeRequest(call.In, gc.DecodeQueueRemoveEntriesOp)
 	if rval < 0 {
@@ -182,6 +191,7 @@ func gcQueueRemove(call *ClassCall) int32 {
 		rest = rest[size:]
 		front++
 	}
+	obj = call.Update()
 	obj.Data = slices.Clone(rest)
 	obj.Xattrs[GCQueueFrontXattr] = binary.LittleEndian.AppendUint64(nil, front)
 	return 0

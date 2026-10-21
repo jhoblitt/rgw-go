@@ -185,7 +185,7 @@ func otpWriteInstance(call *ClassCall, inst otpInstance) {
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L7959-L7972 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L8036-L8049 at v20.2.4).
 func otpRemoveInstance(call *ClassCall, id string) int32 {
-	obj := call.Object()
+	obj := call.Update()
 	if obj == nil {
 		return -int32(syscall.ENOENT)
 	}

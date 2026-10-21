@@ -87,7 +87,7 @@ func rgwLCRmEntry(call *ClassCall) int32 {
 	if rval < 0 {
 		return rval
 	}
-	obj := call.Object()
+	obj := call.Update()
 	if obj == nil {
 		return -int32(syscall.ENOENT)
 	}

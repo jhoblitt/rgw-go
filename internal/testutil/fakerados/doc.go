@@ -23,12 +23,18 @@
 // step's mode and each called method's WR flag, whatever the op's kind
 // (OpInfo::set_from_op): a read op keeps what a WR method in it writes,
 // without stamping an mtime. An op that does not write fails on a missing
-// object with ENOENT before any step runs, and a method that changes the
-// object without the WR flag fails with EIO. A successful op that wrote
+// object with ENOENT before any step runs, and a method without the WR flag
+// that writes the object fails with EIO: one that changes it, or sends a
+// write through Create, Update or Remove even when the write changes nothing
+// or finds the object missing, as the OSD counts each in num_write
+// (PrimaryLogPG::do_osd_ops). A successful op that wrote
 // returns no step's output unless it carries ReturnVec; with ReturnVec it
 // fails with EOVERFLOW, applying nothing, when a step's output passes the
-// OSD's osd_max_write_op_reply_len (PrimaryLogPG::execute_ctx). The fake
-// sees what a method writes by what it changes in the object.
+// OSD's osd_max_write_op_reply_len (PrimaryLogPG::execute_ctx). A method
+// writes through ClassCall's Create, Update and Remove, and a write the op's
+// transaction takes bumps the object's version even when it leaves the
+// object as it was, as on the OSD (PrimaryLogPG::prepare_transaction); a
+// change a method makes any other way counts as a write too.
 //
 // Locators do not change where the fake keeps an object: each namespace of a
 // pool holds its objects by name alone.
