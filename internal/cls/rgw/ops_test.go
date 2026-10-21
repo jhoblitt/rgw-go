@@ -1,6 +1,8 @@
 package rgw_test
 
 import (
+	"syscall"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -267,6 +269,55 @@ var _ = Describe("reply decoding", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(got).To(Equal(decodeWhole(c.Bin, rgw.DecodeListRet)))
 		}
+	})
+
+	Describe("a bucket_list reply", func() {
+		var ret rgw.ListRet
+		BeforeEach(func() {
+			ret = rgw.ListRet{
+				Dir:         rgw.Dir{Header: rgw.DirHeader{Ver: 6}},
+				IsTruncated: true,
+				Marker:      rgw.ObjKey{Name: "d3\x01"},
+			}
+		})
+		listed := func(out []byte, rval int32) *rgw.ListResult {
+			op := radosclient.NewReadOp()
+			res := rgw.BucketList(op, rgw.ListOp{NumEntries: 1}, denc.Squid)
+			execResult(op).Set(out, rval)
+			return res
+		}
+		It("is decoded with retry unset after a success", func() {
+			got, retry, err := listed(encodeAt(ret, denc.Squid), 0).Reply()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(retry).To(BeFalse())
+			Expect(got).To(Equal(ret))
+		})
+		// bucket_list encodes the reply before it answers
+		// RGWBIAdvanceAndRetryError
+		// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L680-L693 at v19.2.7).
+		It("is decoded with retry set on advance-and-retry", func() {
+			got, retry, err := listed(encodeAt(ret, denc.Squid), -int32(syscall.EFBIG)).Reply()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(retry).To(BeTrue())
+			Expect(got).To(Equal(ret))
+		})
+		It("names bucket_list when an advance-and-retry reply does not decode", func() {
+			_, retry, err := listed([]byte{4, 2, 100, 0, 0, 0}, -int32(syscall.EFBIG)).Reply()
+			Expect(err).To(MatchError(denc.ErrShortBuffer))
+			Expect(err).To(MatchError(ContainSubstring("rgw: decoding bucket_list reply")))
+			Expect(retry).To(BeFalse())
+		})
+		It("fails with any other negative value, whatever the output", func() {
+			_, retry, err := listed(encodeAt(ret, denc.Squid), -int32(syscall.ENOENT)).Reply()
+			Expect(err).To(MatchError(radosclient.ErrNotFound))
+			Expect(retry).To(BeFalse())
+		})
+		It("reports an op that has not run", func() {
+			op := radosclient.NewReadOp()
+			_, retry, err := rgw.BucketList(op, rgw.ListOp{}, denc.Squid).Reply()
+			Expect(err).To(MatchError(radosclient.ErrIncomplete))
+			Expect(retry).To(BeFalse())
+		})
 	})
 
 	It("decodes every rgw_cls_check_index_ret golden from a bucket_check_index result", func() {
