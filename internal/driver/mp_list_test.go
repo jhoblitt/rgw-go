@@ -5,12 +5,14 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
+	"slices"
 	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -225,6 +227,60 @@ var _ = Describe("multipart listings", func() {
 				Expect(partNumbers(res.Parts)).To(Equal([]int{1, 2, 10}))
 				Expect(c.Reads(extraPoolName, "", o)).To(Equal(2), "is_v2_upload_id accepts 2/, rgw_multi.cc:76-82; 10 follows 1")
 			})
+		})
+	})
+
+	Describe("ListParts' checksums", func() {
+		putWith := func(ctx context.Context, up *op.Upload, n int, body []byte, req *op.ChecksumRequest) {
+			GinkgoHelper()
+			_, err := s.PutPart(ctx, up, n, bytes.NewReader(body), op.PutParams{Size: int64(len(body)), Attrs: attrsWithACL(initiator), Checksum: req})
+			Expect(err).NotTo(HaveOccurred())
+		}
+
+		It("returns each part's checksum from its Tentacle record, none for a part without one or one whose checksum does not decode", func(ctx SpecContext) {
+			req := &op.ChecksumRequest{Type: cksum.CRC32C, Flags: cksum.FlagFullObject}
+			c.SetRequiredOSDRelease("tentacle")
+			s = openPutStore(ctx, c, denc.Tentacle, nil, mtime)
+			up := create(ctx, "k", putPrefix)
+			putWith(ctx, up, 1, check9, req)
+			putWith(ctx, up, 2, check9, nil)
+			putWith(ctx, up, 3, check9, req)
+			oid := metaOID(rec, "k", up.ID)
+			e := denc.NewEncoder()
+			info := meta.DecodeUploadPartInfo(denc.NewDecoder(c.Object(extraPoolName, "", oid).Omap[meta.MultipartPartKey(3)]))
+			info.Cksum = slices.Concat([]byte{1}, cksumRecord(9, make([]byte, 16), cksum.FlagFullObject))
+			info.Encode(e, denc.Tentacle)
+			c.Object(extraPoolName, "", oid).Omap[meta.MultipartPartKey(3)] = e.Bytes()
+			settle(s)
+			res, err := s.ListParts(ctx, up, 0, 10)
+			Expect(err).NotTo(HaveOccurred(), "a checksum that does not decode fails no listing")
+			Expect(res.Parts).To(HaveExactElements(
+				HaveField("Checksum", Equal(&cksum.Cksum{Type: cksum.CRC32C, Digest: check9Digests()[cksum.CRC32C], Flags: cksum.FlagFullObject})),
+				HaveField("Checksum", BeNil()),
+				HaveField("Checksum", BeNil()),
+			))
+		})
+		It("returns no checksum from a Squid record, which has none", func(ctx SpecContext) {
+			up := create(ctx, "k", putPrefix)
+			putWith(ctx, up, 1, check9, &op.ChecksumRequest{Type: cksum.CRC32C, Flags: cksum.FlagFullObject})
+			settle(s)
+			res, err := s.ListParts(ctx, up, 0, 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.Parts).To(HaveExactElements(HaveField("Checksum", BeNil())))
+		})
+		It("returns no checksum on Squid from a version 6 record a Tentacle radosgw wrote, as Squid's decode reads none", func(ctx SpecContext) {
+			up := create(ctx, "k", putPrefix)
+			putWith(ctx, up, 1, check9, nil)
+			oid := metaOID(rec, "k", up.ID)
+			info := meta.DecodeUploadPartInfo(denc.NewDecoder(c.Object(extraPoolName, "", oid).Omap[meta.MultipartPartKey(1)]))
+			info.Cksum = slices.Concat([]byte{1}, cksumRecord(cksum.CRC32C, check9Digests()[cksum.CRC32C], cksum.FlagFullObject))
+			e := denc.NewEncoder()
+			info.Encode(e, denc.Tentacle)
+			c.Object(extraPoolName, "", oid).Omap[meta.MultipartPartKey(1)] = e.Bytes()
+			settle(s)
+			res, err := s.ListParts(ctx, up, 0, 10)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.Parts).To(HaveExactElements(HaveField("Checksum", BeNil())), "rgw_basic_types.h:279-296 at v19.2.7 decodes at most version 5")
 		})
 	})
 

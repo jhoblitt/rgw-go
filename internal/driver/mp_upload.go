@@ -2,8 +2,11 @@ package driver
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
+	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 )
@@ -25,19 +28,34 @@ const uploadIDLen = 31
 // holding the encoded multipart_upload_info naming p.Placement and p's
 // attrs, its MultiMeta index entry of size the info's length and accounted
 // size 0 on the shard of the upload's key, and one object and no bytes
-// added to the quota cache. The info carries no object lock settings and,
-// on Tentacle, no checksum type (docs/exclusions.md, "Client checksums are
-// ignored until phase 2"). init retries a new id on EEXIST, which its
-// create(false) never meets, so one attempt is the loop
+// added to the quota cache. The info carries no object lock settings. On
+// Tentacle it carries p.Checksum's type and flags, as RGWInitMultipart::execute
+// hands them to init
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7003-L7010 at v20.2.4),
+// which sets them in the upload_info it writes
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4150-L4154 at v20.2.4),
+// and a type rgw-go does not compute is InvalidArgument before anything is
+// written, so that no caller that skipped the op's parsing stores a type a
+// v20.2.4 radosgw would look up past the end of its table. Squid's info has
+// no field for either, so a Squid upload has none. init retries a new id on
+// EEXIST, which its create(false) never meets, so one attempt is the loop
 // (docs/ceph-upstream-bugs.md, "radosgw creates a multipart upload's meta
 // object without the exclusive create its flags ask for").
 func (s *Store) CreateUpload(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.UploadParams) (*op.Upload, error) {
+	var uc op.UploadChecksum
+	if s.release >= denc.Tentacle {
+		uc = p.Checksum
+		if uc.Type != cksum.None && !uc.Type.Writable() {
+			return nil, fmt.Errorf("%w: creating an upload of %s/%s: rgw-go computes no checksum of type %d",
+				op.ErrInvalidArgument, rec.Info.Bucket.Name, key.Name, uc.Type)
+		}
+	}
 	id := meta.MultipartUploadIDPrefix + s.w.rand(uploadIDLen)
 	ref, err := s.metaRef(ctx, rec, key, id)
 	if err != nil {
 		return nil, err
 	}
-	data := encodeAt(meta.MultipartUploadInfo{DestPlacement: p.Placement}, s.release)
+	data := encodeAt(meta.MultipartUploadInfo{DestPlacement: p.Placement, CksumType: uint16(uc.Type), CksumFlags: uc.Flags}, s.release)
 	now := s.now()
 	hw := &headWrite{
 		rec: rec, key: ref.key, data: data, attrs: p.Attrs, mtime: now, create: true,
@@ -52,12 +70,13 @@ func (s *Store) CreateUpload(ctx context.Context, rec *op.BucketRecord, key meta
 	}
 	return &op.Upload{
 		ID: id, Bucket: rec, Key: key, Owner: p.Owner, OwnerName: p.OwnerName,
-		Initiated: now, Placement: p.Placement, Attrs: p.Attrs,
+		Initiated: now, Placement: p.Placement, Attrs: p.Attrs, Checksum: uc,
 	}, nil
 }
 
 // GetUpload implements op.MultipartStore: one read of the meta object, as
-// get_info with the attrs makes it (readMeta).
+// get_info with the attrs makes it (readMeta), with the checksum type and
+// flags the info stores (uploadChecksum).
 func (s *Store) GetUpload(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, uploadID string) (*op.Upload, error) {
 	ref, err := s.metaRef(ctx, rec, key, uploadID)
 	if err != nil {
@@ -67,5 +86,7 @@ func (s *Store) GetUpload(ctx context.Context, rec *op.BucketRecord, key meta.Ob
 	if err != nil {
 		return nil, err
 	}
-	return uploadFromMeta(rec, key, uploadID, st), nil
+	up := uploadFromMeta(rec, key, uploadID, st)
+	up.Checksum = s.uploadChecksum(st.info)
+	return up, nil
 }

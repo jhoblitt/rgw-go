@@ -722,30 +722,34 @@ var _ = Describe("UploadPart's checksum", func() {
 		}
 	})
 
-	It("hands the store the upload's type with the part's request", func(ctx SpecContext) {
+	It("hands the store the upload's placement and type with the part's request", func(ctx SpecContext) {
 		body := []byte(partBody)
 		f := newMPFixture(ctx, denc.Tentacle)
 		stub := &opfakes.FakeMultipartStore{}
 		uc := op.UploadChecksum{Type: cksum.SHA1, Flags: cksum.FlagComposite}
-		stub.GetUploadReturns(&op.Upload{ID: "2~x", Checksum: uc}, nil)
+		dest := meta.PlacementRule{Name: "default-placement", StorageClass: "COLD"}
+		stub.GetUploadReturns(&op.Upload{ID: "2~x", Placement: dest, Checksum: uc}, nil)
 		stub.PutPartReturns(&op.PartResult{}, nil)
 		f.env.Multipart = stub
 		o, err := part(ctx, f, "2~x", bytes.NewReader(body))
 		Expect(err).NotTo(HaveOccurred())
+		Expect(stub.GetUploadCallCount()).To(Equal(1), "get_info, once")
 		_, rec, key, id := stub.GetUploadArgsForCall(0)
 		Expect([]any{rec.Info.Bucket.Name, key, id}).To(Equal([]any{"plain", meta.ObjKey{Name: "k"}, "2~x"}))
 		_, up, _, got, p := stub.PutPartArgsForCall(0)
+		Expect(up.Placement).To(Equal(dest), "the destination placement get_info read, which the part is written to")
 		Expect(up.Checksum).To(Equal(uc))
 		Expect(got).To(BeIdenticalTo(o.Body))
 		Expect(askedOf(p.Checksum, nil)).To(Equal(&asked{Type: cksum.SHA1, Flags: cksum.FlagComposite}))
 	})
 
-	It("hands CopyPart the checksum type and flags of the upload it read", func(ctx SpecContext) {
+	It("hands CopyPart the placement, checksum type and flags of the upload it read", func(ctx SpecContext) {
 		f := newMPFixture(ctx, denc.Tentacle)
 		f.put(ctx, "src", []byte(partBody))
 		stub := &opfakes.FakeMultipartStore{}
 		uc := op.UploadChecksum{Type: cksum.SHA256, Flags: cksum.FlagComposite}
-		stub.GetUploadReturns(&op.Upload{ID: "2~x", Checksum: uc}, nil)
+		dest := meta.PlacementRule{Name: "default-placement", StorageClass: "COLD"}
+		stub.GetUploadReturns(&op.Upload{ID: "2~x", Placement: dest, Checksum: uc}, nil)
 		stub.CopyPartReturns(&op.PartResult{}, nil)
 		f.env.Multipart = stub
 		o := f.copyPartOf("2~x", 1, "src", "")
@@ -753,6 +757,7 @@ var _ = Describe("UploadPart's checksum", func() {
 		Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(Succeed())
 		Expect(stub.CopyPartCallCount()).To(Equal(1))
 		_, up, _, _, _ := stub.CopyPartArgsForCall(0)
+		Expect(up.Placement).To(Equal(dest))
 		Expect(up.Checksum).To(Equal(uc), "the upload's, not the copy request's")
 	})
 

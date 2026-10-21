@@ -373,6 +373,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw compares a request's signature in non-constant time](#radosgw-compares-a-requests-signature-in-non-constant-time) | pending | pending | ✓ |
 | [radosgw logs the signature it expects for a request before it refuses it](#radosgw-logs-the-signature-it-expects-for-a-request-before-it-refuses-it) | pending | pending | ✓ |
 | [radosgw logs a SigV4 request's signing key at debug level 10](#radosgw-logs-a-sigv4-requests-signing-key-at-debug-level-10) | pending | pending | ✓ |
+| [radosgw's CompleteMultipartUpload combines the checksums of the parts it lists, not of those it completes](#radosgws-completemultipartupload-combines-the-checksums-of-the-parts-it-lists-not-of-those-it-completes) | pending | pending | ✓ |
+| [radosgw's CompleteMultipartUpload never compares a supplied CRC64NVME checksum](#radosgws-completemultipartupload-never-compares-a-supplied-crc64nvme-checksum) | pending | [ceph/ceph#71484](https://github.com/ceph/ceph/pull/71484) |  |
+| [radosgw's CompleteMultipartUpload accepts a supplied checksum that only starts with its own](#radosgws-completemultipartupload-accepts-a-supplied-checksum-that-only-starts-with-its-own) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -21045,3 +21048,176 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task BC-31's fix round, 2026-10-20, checking what else
   on the path to the signature compare logs key material. Derived from the
   source, not reproduced.
+
+## radosgw's CompleteMultipartUpload combines the checksums of the parts it lists, not of those it completes
+
+- **Kind:** defect, S3-correctness: on an upload with a checksum type,
+  CompleteMultipartUpload combines the part checksums of the last page
+  `list_parts` returns for the request's part count, not of the parts the
+  request names, and before it matches those parts to the uploaded ones.
+  Without a race this changes only which error a refused completion
+  answers; a part registering while the completion runs can leave a wrong
+  checksum on an intact object. No stored data is damaged, and it is not
+  security-relevant. Unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`, at v20.2.4 unless a link names
+  main; v19.2.7 has no checksum code.
+  - `RGWCompleteMultipart::execute` runs `try_sum_part_cksums` for an
+    upload with a checksum type once it holds the completion lock, before
+    `complete`
+    ([rgw_op.cc:7273-7282](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7273-L7282),
+    [rgw_op.cc:7366-7369](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7366-L7369)).
+  - `try_sum_part_cksums` calls `list_parts` for `num_parts`, the request's
+    part count, from marker 0, and while the page is truncated calls it
+    again from the marker it returned
+    ([rgw_op.cc:7068-7092](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7068-L7092));
+    each call clears the upload's parts first
+    ([rgw_sal_rados.cc:4193](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4193)).
+    It then combines every part the last page holds, refusing one without
+    a checksum or with one of another type with `ERR_INVALID_REQUEST`
+    ([rgw_op.cc:7101-7140](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7101-L7140)),
+    and appends `-<num_parts>` to a composite's armor
+    ([rgw_op.cc:7145-7151](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7145-L7151)).
+    A supplied value is then compared with that armor, `ERR_BAD_DIGEST`
+    when it differs
+    ([rgw_op.cc:7317-7336](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7317-L7336)).
+  - Only `complete` lists the parts again and matches them: a part count
+    other than the upload's is `ERR_INVALID_PART`, and so is a number or
+    ETag that differs from the stored part's in lockstep
+    ([rgw_sal_rados.cc:4310-4349](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4310-L4349)).
+  - So a completion naming parts 1 and 2 of an upload holding parts 1 to 3
+    combines part 3 alone. It answers 400 InvalidRequest when part 3 has no
+    checksum or one of another type, else 400 BadDigest when the value
+    supplied is not part 3's, though the 400 InvalidPart `complete` would
+    answer is due either way.
+  - A completion naming a part whose upload registers after
+    `try_sum_part_cksums` lists the parts and before `complete` does, as a
+    client that computes its parts' ETags itself can send it, combines the
+    parts without that one and completes the object with it, storing the
+    combination of the parts before it
+    ([rgw_op.cc:7338-7340](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7338-L7340)).
+  - main at f6f2529dd9e is the same: `try_sum_part_cksums`
+    ([rgw_op.cc:7590-7660](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_op.cc#L7590-L7660))
+    runs before `complete`
+    ([rgw_op.cc:7811-7820](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_op.cc#L7811-L7820),
+    [rgw_op.cc:7910-7913](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_op.cc#L7910-L7913)).
+- **Impact:** a client whose completion names fewer or other parts than it
+  uploaded is told its checksums are at fault, 400 InvalidRequest or
+  BadDigest, rather than its part list, 400 InvalidPart. Under the race, the
+  object's stored checksum is not that of its parts: a FULL_OBJECT CRC an
+  SDK checks on GET refuses the intact object, and a composite claims
+  parts it did not combine.
+- **Releases:** v20.2.4 and main f6f2529dd9e. v19.2.7 has no checksum code.
+- **rgw-go:** differs. Its completion combines exactly the parts the
+  request names, in number order, from the part records its assembly
+  matched to them, once every named part has matched, so it answers a part
+  fault before a checksum fault (`combineChecksums`,
+  `internal/driver/mp_cksum.go`; `docs/exclusions.md`,
+  "CompleteMultipartUpload combines the parts it completes and compares the
+  whole supplied checksum").
+- **Upstream:** pending; prior art not searched.
+- **Found:** the phase 2 write-path research, 2026-10-13
+  (`docs/superpowers/plans/2026-10-13-phase-2/research/research-writepath.md`,
+  §6, defect 1); recorded by phase 2 task WP-9, 2026-10-20, which checked it
+  at v20.2.4 and main f6f2529dd9e. Derived from the source, not reproduced;
+  task WP-14 reproduces it.
+
+## radosgw's CompleteMultipartUpload never compares a supplied CRC64NVME checksum
+
+- **Kind:** defect, S3-correctness, not found by us: upstream has fixed it
+  on main, in no tagged release. A CompleteMultipartUpload that supplies
+  its combined checksum as `x-amz-checksum-crc64nvme` is completed without
+  the value being compared, so a CRC64NVME upload's completion accepts any
+  value. No stored data is damaged, and it is not security-relevant.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`, at v20.2.4 unless a link names
+  main or v21.3.0; v19.2.7 has no checksum code.
+  - `find_hdr_cksum`, the completion's search for a supplied value, takes
+    the first `x-amz-checksum-<alg>` header from crc32, type 1, to blake3,
+    type 7
+    ([rgw_cksum_pipe.h:120-136](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L120-L136)),
+    and crc64nvme is type 8
+    ([rgw_cksum.h:41-52](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L41-L52)).
+  - The completion compares only a non-empty value the search finds, and
+    stores its combination either way
+    ([rgw_op.cc:7295-7340](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7295-L7340)).
+  - A CRC64NVME upload is always full-object:
+    `permitted_cksum_algo_and_type` refuses it COMPOSITE
+    ([rgw_cksum.h:340-356](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L340-L356)).
+  - main at f6f2529dd9e fixes it: `find_hdr_cksum` scans every type from
+    none + 1 to COUNT
+    ([rgw_cksum_pipe.h:149-164](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_cksum_pipe.h#L149-L164)),
+    from ee6894210c6, "rgw: support new checksum types to match aws s3",
+    which [ceph/ceph#71484](https://github.com/ceph/ceph/pull/71484) merged
+    and no tag carries: v21.3.0 still scans crc32 to blake3
+    ([rgw_cksum_pipe.h:143-158](https://github.com/ceph/ceph/blob/v21.3.0/src/rgw/rgw_cksum_pipe.h#L143-L158)).
+  - A like gap in another table, `cksum_algorithm_hdr`'s switch for a part
+    of a typed upload, which has no crc64nvme case
+    ([rgw_cksum_pipe.h:33-63](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L33-L63)),
+    leaves a CRC64NVME part sent without an algorithm header unverified
+    ("[radosgw does not verify a CRC64NVME or xxh3 upload's part sent without
+    an algorithm
+    header](#radosgw-does-not-verify-a-crc64nvme-or-xxh3-uploads-part-sent-without-an-algorithm-header)").
+    ee6894210c6 adds no crc64nvme case to that switch.
+- **Impact:** a client that supplies a CRC64NVME upload's full-object CRC
+  at completion gets no check of it: a value that is not the combination of
+  the stored parts is accepted, and the object stores the combination.
+- **Releases:** v20.2.4 and v21.3.0. Fixed on main f6f2529dd9e. v19.2.7 has
+  no checksum code.
+- **rgw-go:** differs. Its op layer takes the completion's one
+  `x-amz-checksum-<alg>` header of every type, `crc64nvme` included
+  (`internal/op/checksumreq.go`), and its completion compares it
+  (`combineChecksums`, `internal/driver/mp_cksum.go`; `docs/exclusions.md`,
+  "CompleteMultipartUpload reads one checksum header, of any type").
+- **Upstream:** fixed on main by
+  [ceph/ceph#71484](https://github.com/ceph/ceph/pull/71484) (ee6894210c6),
+  in no tag through v21.3.0; no tracker issue searched.
+- **Found:** the phase 2 write-path research, 2026-10-13
+  (`docs/superpowers/plans/2026-10-13-phase-2/research/research-writepath.md`,
+  §6, defect 4, its completion half); recorded by phase 2 task WP-9,
+  2026-10-20, which found main's fix. Derived from the source, not
+  reproduced; task WP-14 reproduces it.
+
+## radosgw's CompleteMultipartUpload accepts a supplied checksum that only starts with its own
+
+- **Kind:** defect, S3-correctness, minor: CompleteMultipartUpload accepts
+  a supplied combined checksum that is not its own, provided it starts with
+  its own armored value, or with a composite's armor less its part count,
+  and compares no empty value. No stored data is damaged, and it is not
+  security-relevant. Unfixed through main. Unreproduced: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`, at v20.2.4 unless a link names
+  main; v19.2.7 has no checksum code.
+  - A supplied value `scm` other than the armored value `acm` is compared
+    with `scm.compare(0, c_len, acm, 0, c_len)`, where `c_len` is `acm`'s
+    length less that of `-<parts>` when the combination is a composite,
+    and only a difference there is `ERR_BAD_DIGEST`
+    ([rgw_op.cc:7317-7336](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7317-L7336)).
+    `std::string_view::compare` with those counts compares the first
+    `c_len` characters of each, so every value whose first `c_len`
+    characters are `acm`'s passes: `acm` followed by any bytes, a
+    composite's armor followed by another part count, and a full-object
+    CRC's armor followed by a part count.
+  - The comment above the check means to accept the armor with or without
+    the part count
+    ([rgw_op.cc:7304-7315](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7304-L7315)),
+    not any extension of it. An empty value skips the check
+    ([rgw_op.cc:7317](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7317)).
+  - main at f6f2529dd9e is the same
+    ([rgw_op.cc:7854-7867](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_op.cc#L7854-L7867)).
+- **Impact:** a client that supplies a combined checksum with a stray
+  suffix, or with the wrong part count, is told it matched, so a client
+  bug in forming the value goes unnoticed.
+- **Releases:** v20.2.4 and main f6f2529dd9e. v19.2.7 has no checksum code.
+- **rgw-go:** differs. Its completion accepts the armored value, which ends
+  in `-<parts>` for a composite, or a composite's armor alone, and answers
+  400 BadDigest to any other value, the empty one included
+  (`combineChecksums`, `internal/driver/mp_cksum.go`; `docs/exclusions.md`,
+  "CompleteMultipartUpload combines the parts it completes and compares the
+  whole supplied checksum").
+- **Upstream:** pending; prior art not searched.
+- **Found:** the phase 2 write-path research, 2026-10-13
+  (`docs/superpowers/plans/2026-10-13-phase-2/research/research-writepath.md`,
+  §6, defect 7); recorded by phase 2 task WP-9, 2026-10-20, which checked it
+  at v20.2.4 and main f6f2529dd9e and added the empty value. Derived from
+  the source, not reproduced; task WP-14 reproduces it.

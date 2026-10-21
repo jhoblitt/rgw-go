@@ -316,11 +316,17 @@ func (s *Store) removePartHead(ctx context.Context, rec *op.BucketRecord, key me
 }
 
 // PutPart implements op.MultipartStore as RGWPutObj::execute writes part n
-// of an upload: the meta object read for the destination placement before
-// the body, as get_info reads it
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4244-L4264),
-// so an unknown upload is NoSuchUpload with the body unread; the part
-// streamed (streamPart) and registered (registerPart). p.Attrs are the part
+// of an upload: the part streamed (streamPart) and registered
+// (registerPart), into the destination placement up holds, which the
+// caller read with GetUpload as get_info reads it before the body
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4244-L4260 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4453-L4469 at v20.2.4).
+// Nothing of the meta object is read here, as radosgw's part writer reads
+// nothing of it and only registers the part
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L572-L591 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L611-L630 at v20.2.4),
+// so an upload gone since is NoSuchUpload once the part's objects are
+// written, and they are removed. p.Attrs are the part
 // head's attrs; p.Mtime its mtime, zero for now. A part takes no write
 // conditions: Squid's MultipartObjectProcessor sets none, while Tentacle's
 // checks them against the part head the request has just created
@@ -338,11 +344,7 @@ func (s *Store) PutPart(ctx context.Context, up *op.Upload, n int, body io.Reade
 	if err != nil {
 		return nil, err
 	}
-	ms, err := s.readMeta(ctx, ref)
-	if err != nil {
-		return nil, err
-	}
-	pl, err := s.partLayout(ctx, rec, ms.info.DestPlacement)
+	pl, err := s.partLayout(ctx, rec, up.Placement)
 	if err != nil {
 		return nil, err
 	}
@@ -364,8 +366,9 @@ func (s *Store) PutPart(ctx context.Context, up *op.Upload, n int, body io.Reade
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4297-L4400):
 // rng of src read through ReadObject, decompressed, into PutPart, with
 // up.Attrs as the part head's attrs and the range's length as the body's,
-// so a source that ends short fails as a body cut short does. The source is
-// read once the upload is known, and from the one state src holds, where
+// so a source that ends short fails as a body cut short does. up is the
+// upload the caller read before the source, as get_info runs first. The
+// source is read from the one state src holds, where
 // radosgw prepares a read of the source again for each rgw_max_chunk_size
 // of the range (docs/exclusions.md, "UploadPartCopy reads one version of
 // its source"). The decoded bytes take the upload's checksum type and

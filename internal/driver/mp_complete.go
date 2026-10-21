@@ -75,8 +75,9 @@ func equalMessage(a, b *int32) bool {
 }
 
 // assembly is what complete builds from the stored parts: the object's
-// manifest, compression and ETag, its stored and accounted sizes, and what
-// completing it retires.
+// manifest, compression and ETag, its stored and accounted sizes, what
+// completing it retires, and the stored records the request's parts
+// matched, one for one in number order.
 type assembly struct {
 	manifest   meta.Manifest
 	cs         meta.CompressionInfo
@@ -85,6 +86,7 @@ type assembly struct {
 	size       uint64
 	accounted  uint64
 	cleanup    partCleanup
+	parts      []meta.UploadPartInfo
 }
 
 // assemble is complete's validation and assembly
@@ -97,7 +99,8 @@ type assembly struct {
 // entry, "<prefix>.<n>" in the multipart namespace, is to be retired, and so
 // is its history (retirePart). A part whose manifest radosgw would append as
 // an explicit one is ErrInvalidPart (docs/exclusions.md, "An explicit part
-// manifest is not appended").
+// manifest is not appended"). Once every part matched, the stored records
+// are the assembly's parts.
 func (s *Store) assemble(key meta.ObjKey, uploadID string, stored []meta.UploadPartInfo, parts []op.CompletePart) (*assembly, error) {
 	if len(parts) == 0 {
 		return nil, fmt.Errorf("%w: a completion names no part", op.ErrInvalidPart)
@@ -123,7 +126,7 @@ func (s *Store) assemble(key meta.ObjKey, uploadID string, stored []meta.UploadP
 	if err != nil {
 		return nil, err
 	}
-	a.etag = etag
+	a.etag, a.parts = etag, stored
 	return a, nil
 }
 
@@ -208,7 +211,10 @@ func (s *Store) checkPartHeads(ctx context.Context, parts []meta.UploadPartInfo)
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6543-L6580;
 // v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7433-L7504):
-// the key's head carries the ETag the request's parts make.
+// the key's head carries the ETag the request's parts make. Its Checksum is
+// the one the head stores, nil when it stores none or one that does not
+// decode, as Tentacle's check decodes it and answers 200 either way
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7474-L7501 at v20.2.4).
 func (s *Store) checkPreviouslyCompleted(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, parts []op.CompletePart) (*op.ObjectState, bool) {
 	st, err := s.readHead(ctx, rec, key, false)
 	if err != nil || !st.Exists {
@@ -237,7 +243,8 @@ func sameCompletion(st *op.ObjectState, a *assembly) bool {
 //   - the RGWCompleteMultipart lock on the meta object (lockMeta), under a
 //     cookie of this completion's own (newLockCookie), whose ENOENT, when
 //     the key already carries the parts' ETag (checkPreviouslyCompleted), is
-//     radosgw's re-sent completion, answered with that stored ETag
+//     radosgw's re-sent completion, answered with that stored ETag and
+//     checksum
 //     (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6438-L6441;
 //     v19.2.7
 //     https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6584,
@@ -252,14 +259,19 @@ func sameCompletion(st *op.ObjectState, a *assembly) bool {
 //   - the head of every part (checkPartHeads), and the key's current head:
 //     one whose manifest names this upload's objects, with no record, is an
 //     earlier completion a gateway without the record left behind, which is
-//     finished when it is this completion's object and otherwise refused
-//     with NoSuchUpload (tracker #80896);
+//     finished when it is this completion's object, with the checksum that
+//     head stores, and otherwise refused with NoSuchUpload (tracker #80896);
+//   - the checksum of the matched parts, compared with up.SuppliedChecksum,
+//     or NotImplemented for an upload type rgw-go does not compute
+//     (combineChecksums), so a completion that has both a part fault and a
+//     checksum fault answers the part fault;
 //   - the lock renewed with the completion record written (renewAndRecord),
 //     or 500 as for a held lock;
 //   - the head written as write_meta writes it for complete
 //     (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3588-L3637):
-//     the meta object's attrs with the ETag, the compression info and the
-//     object lock settings, under up.WriteTag or a random tag, created,
+//     the meta object's attrs with the ETag, the compression info, the
+//     combined checksum and the object lock settings, under up.WriteTag or
+//     a random tag, created,
 //     atomic, its tail modified, with no bytes added to the quota cache,
 //     and with up's conditions. A write that
 //     certainly failed takes the record back (clearRecord). A lost race
@@ -298,7 +310,7 @@ func (s *Store) Complete(ctx context.Context, up *op.Upload, parts []op.Complete
 		if errors.Is(err, radosclient.ErrNotFound) {
 			if st, ok := s.checkPreviouslyCompleted(ctx, rec, key, parts); ok {
 				slog.InfoContext(ctx, "multipart completion already completed", slog.String("upload", up.ID))
-				return &op.PutResult{ETag: st.ETag, Size: st.Size, Mtime: st.Mtime, Epoch: st.Epoch}, nil
+				return &op.PutResult{ETag: st.ETag, Size: st.Size, Mtime: st.Mtime, Epoch: st.Epoch, Checksum: st.Checksum}, nil
 			}
 		}
 		return nil, fmt.Errorf("%w: locking upload %s: %w", op.ErrCompletionInProgress, up.ID, err)
@@ -348,7 +360,11 @@ func (s *Store) completeLocked(ctx context.Context, up *op.Upload, ref mpRef, co
 		}
 		slog.InfoContext(ctx, "finishing a multipart completion whose meta object outlived its head write", slog.String("upload", up.ID))
 		released := s.retireUpload(ctx, up, ref, ms, &a.cleanup)
-		return &op.PutResult{ETag: a.etag, Size: cur.Size, Mtime: cur.Mtime, Epoch: cur.Epoch}, released, nil
+		return &op.PutResult{ETag: a.etag, Size: cur.Size, Mtime: cur.Mtime, Epoch: cur.Epoch, Checksum: cur.Checksum}, released, nil
+	}
+	sum, err := combineChecksums(s.uploadChecksum(ms.info), a.parts, up.SuppliedChecksum)
+	if err != nil {
+		return nil, false, fmt.Errorf("completing upload %s: %w", up.ID, err)
 	}
 	tag := cmp.Or(up.WriteTag, s.w.randTag())
 	if lerr := s.renewAndRecord(ctx, ref, cookie, tag); lerr != nil {
@@ -368,6 +384,9 @@ func (s *Store) completeLocked(ctx context.Context, up *op.Upload, ref mpRef, co
 	}
 	if a.compressed {
 		attrs[meta.AttrCompression] = encodeAt(a.cs, s.release)
+	}
+	if sum != nil {
+		attrs[meta.AttrCksum] = encodeAt(*sum, s.release)
 	}
 	hw := &headWrite{
 		rec: rec, key: key, tag: tag, manifest: &a.manifest, attrs: attrs, mtime: s.now(), create: true, modifyTail: true,
@@ -389,7 +408,7 @@ func (s *Store) completeLocked(ctx context.Context, up *op.Upload, ref mpRef, co
 		mtime = hw.mtime
 	}
 	released := s.retireUpload(ctx, up, ref, ms, &a.cleanup)
-	return &op.PutResult{ETag: a.etag, Size: a.size, Mtime: mtime, Epoch: hr.epoch}, released, nil
+	return &op.PutResult{ETag: a.etag, Size: a.size, Mtime: mtime, Epoch: hr.epoch, Checksum: sum}, released, nil
 }
 
 // replayRecorded answers a completion whose meta object holds the record of
@@ -397,7 +416,8 @@ func (s *Store) completeLocked(ctx context.Context, up *op.Upload, ref mpRef, co
 // names still carries tag and the ETag the request's parts make, that
 // completion took effect, and this one finishes it, removing the meta object
 // with the parts' entries and retiring what the head does not name, without
-// writing a head or checking the request's conditions. Otherwise that head
+// writing a head or checking the request's conditions or its supplied
+// checksum, and answers with the head's ETag and checksum. Otherwise that head
 // was never written, or was replaced or deleted and its parts queued for the
 // GC, and a head over them would lose the object's data: NoSuchUpload, with
 // nothing written. A record naming a version other than the key's own head
@@ -428,7 +448,7 @@ func (s *Store) replayRecorded(ctx context.Context, up *op.Upload, ref mpRef, ms
 	}
 	slog.InfoContext(ctx, "finishing a recorded multipart completion whose meta object outlived its head write", slog.String("upload", up.ID))
 	released := s.retireUpload(ctx, up, ref, ms, &cleanup)
-	return &op.PutResult{ETag: cur.ETag, Size: cur.Size, Mtime: cur.Mtime, Epoch: cur.Epoch}, released, nil
+	return &op.PutResult{ETag: cur.ETag, Size: cur.Size, Mtime: cur.Mtime, Epoch: cur.Epoch, Checksum: cur.Checksum}, released, nil
 }
 
 // retireUpload is what follows a completion's head write: the chain of

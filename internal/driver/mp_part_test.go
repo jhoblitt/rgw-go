@@ -194,7 +194,7 @@ var _ = Describe("PutPart", func() {
 		Expect(res.ETag).To(Equal(md5hex(body)))
 		Expect(res.Size).To(BeEquivalentTo(9 << 20))
 		Expect(res.Mtime).To(Equal(mtime))
-		Expect(c.Reads(extraPoolName, "", metaObj)).To(Equal(1), "get_info, before the body")
+		Expect(c.Reads(extraPoolName, "", metaObj)).To(BeZero(), "the op's get_info read the upload; the part writer reads nothing of it")
 
 		head := partHeadOID(prefix, 2)
 		Expect(c.Writes(testDataPool, "", head)).To(Equal(2), "write_exclusive, then write_meta")
@@ -384,8 +384,9 @@ var _ = Describe("PutPart", func() {
 	})
 
 	It("keys a part of an upload without a v2 id by its number", func(ctx SpecContext) {
-		seedMeta(ctx, c, rec, "k", "legacy", meta.PlacementRule{Name: "default-placement"}, attrsWithACL(initiator), nil)
-		_, err := s.PutPart(ctx, &op.Upload{ID: "legacy", Bucket: rec, Key: key}, 3, strings.NewReader("x"), op.PutParams{Attrs: partAttrs(), Size: 1})
+		dest := meta.PlacementRule{Name: "default-placement"}
+		seedMeta(ctx, c, rec, "k", "legacy", dest, attrsWithACL(initiator), nil)
+		_, err := s.PutPart(ctx, &op.Upload{ID: "legacy", Bucket: rec, Key: key, Placement: dest}, 3, strings.NewReader("x"), op.PutParams{Attrs: partAttrs(), Size: 1})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(storedPart(c, metaOID(rec, "k", "legacy"), "part.3").Num).To(BeEquivalentTo(3), "rgw_putobj_processor.cc:534-543: part_num_str")
 		Expect(c.Object(testDataPool, "", partHeadOID("k.legacy", 3))).NotTo(BeNil())
@@ -425,13 +426,15 @@ var _ = Describe("PutPart", func() {
 		Expect(poolObjects(ctx, c, testDataPool, "")).To(BeEmpty())
 	})
 
-	It("answers NoSuchUpload for an unknown upload before reading the body", func(ctx SpecContext) {
-		var read atomic.Int64
-		r := &countingReader{r: strings.NewReader("x"), n: &read}
-		_, err := s.PutPart(ctx, &op.Upload{ID: "2~nope", Bucket: rec, Key: key}, 1, r, op.PutParams{Attrs: partAttrs(), Size: 1})
-		Expect(err).To(MatchError(op.ErrNoSuchUpload))
-		Expect(read.Load()).To(BeZero())
-		Expect(poolObjects(ctx, c, testDataPool, "")).To(BeEmpty())
+	It("answers NoSuchUpload for an upload gone before its part registers, removing what the part wrote", func(ctx SpecContext) {
+		gone := &op.Upload{ID: "2~nope", Bucket: rec, Key: key, Placement: meta.PlacementRule{Name: "default-placement"}}
+		_, err := s.PutPart(ctx, gone, 1, bytes.NewReader(mibPattern(5)), op.PutParams{Attrs: partAttrs(), Size: 5 << 20})
+		Expect(err).To(MatchError(op.ErrNoSuchUpload), "the registration's assert_exists, ENOENT as ERR_NO_SUCH_UPLOAD")
+		settle(s)
+		Expect(poolObjects(ctx, c, testDataPool, "")).To(BeEmpty(), "~RadosWriter removes the head and the stripes")
+		_, ok := c.Entry(rookIndexPool, "", shard, partIndexKey("k.2~nope", 1))
+		Expect(ok).To(BeFalse(), "the head's index entry went with it")
+		Expect(c.Object(extraPoolName, "", metaOID(rec, "k", "2~nope"))).To(BeNil(), "no meta object made")
 	})
 
 	It("writes an empty part as an exclusive empty head", func(ctx SpecContext) {
@@ -683,12 +686,14 @@ var _ = Describe("CopyPart", func() {
 		Expect(c.Object(extraPoolName, "", metaObj).Omap).NotTo(HaveKey("part.00000001"))
 	})
 
-	It("reads nothing of the source for an unknown upload", func(ctx SpecContext) {
+	It("answers NoSuchUpload for an upload gone before its copied part registers, removing what the copy wrote", func(ctx SpecContext) {
 		st := source(ctx, mibPattern(5))
-		c.ResetCounters()
-		_, err := s.CopyPart(ctx, &op.Upload{ID: "2~nope", Bucket: rec, Key: meta.ObjKey{Name: "k"}}, 1, st, op.ByteRange{Length: 5 << 20})
-		Expect(err).To(MatchError(op.ErrNoSuchUpload))
-		Expect(c.Reads(testDataPool, "", tailOID(secondPrefix, 1))).To(BeZero(), "get_info runs before the source is read")
+		gone := &op.Upload{ID: "2~nope", Bucket: rec, Key: meta.ObjKey{Name: "k"}, Placement: meta.PlacementRule{Name: "default-placement"}}
+		_, err := s.CopyPart(ctx, gone, 1, st, op.ByteRange{Length: 5 << 20})
+		Expect(err).To(MatchError(op.ErrNoSuchUpload), "the op's get_info runs before the source is read; the part writer's assert_exists finds the upload gone")
+		settle(s)
+		Expect(c.Object(testDataPool, "", partHeadOID("k.2~nope", 1))).To(BeNil(), "~RadosWriter removes the head")
+		Expect(c.Object(testDataPool, "", partShadowOID("k.2~nope", 1, 1))).To(BeNil(), "and the stripe")
 	})
 })
 

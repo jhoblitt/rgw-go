@@ -232,6 +232,11 @@ func CompleteETag(parts []CompletePart) (string, error) {
 type MultipartStore interface {
 	CreateUpload(ctx context.Context, rec *BucketRecord, key meta.ObjKey, p UploadParams) (*Upload, error)
 	GetUpload(ctx context.Context, rec *BucketRecord, key meta.ObjKey, uploadID string) (*Upload, error)
+	// PutPart writes part n of up with the head attrs p.Attrs. up carries the
+	// destination placement GetUpload or CreateUpload gave the upload, and
+	// the part goes there, as radosgw's goes to the placement get_info read
+	// before the body, so a store need not read the upload again. An upload
+	// gone since is ErrNoSuchUpload.
 	PutPart(ctx context.Context, up *Upload, n int, body io.Reader, p PutParams) (*PartResult, error)
 	// CopyPart computes the upload's checksum type over the copied bytes,
 	// with the upload's flags, as radosgw's part override has it

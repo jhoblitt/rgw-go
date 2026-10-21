@@ -398,15 +398,16 @@ func partChecksum(ctx context.Context, r *Request, up *Upload, in ChecksumInput)
 }
 
 // readUpload is get_info's read of up's upload for a part, which gives up
-// the upload's checksum type and flags, for the part's checksum request or
-// for MultipartStore.CopyPart to compute.
+// the upload's destination placement, which MultipartStore.PutPart writes
+// the part to, and its checksum type and flags, for the part's checksum
+// request or for MultipartStore.CopyPart to compute.
 func readUpload(ctx context.Context, r *Request, up *Upload) error {
 	got, err := r.Env.Multipart.GetUpload(ctx, r.BucketRec, r.Object, up.ID)
 	if err != nil {
 		return err
 	}
 	if got != nil {
-		up.Checksum = got.Checksum
+		up.Placement, up.Checksum = got.Placement, got.Checksum
 	}
 	return nil
 }
