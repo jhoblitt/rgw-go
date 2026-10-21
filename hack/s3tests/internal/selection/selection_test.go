@@ -153,8 +153,29 @@ var _ = Describe("ReadDeselect", func() {
 		Expect(err).NotTo(HaveOccurred())
 		_, err = selection.ReadInclude(repoLists)
 		Expect(err).NotTo(HaveOccurred())
+		_, err = selection.ReadGateOnly(repoLists)
+		Expect(err).NotTo(HaveOccurred())
 		_, err = selection.ReadList(filepath.Join(repoLists, selection.MarkersFile))
 		Expect(err).NotTo(HaveOccurred())
+	})
+})
+
+var _ = Describe("ReadGateOnly", func() {
+	It("reads the gate-only list in the lists directory, and no other list", func() {
+		dir := GinkgoT().TempDir()
+		for _, name := range append(slices.Clone(selection.DeselectLists), selection.IncludeLists...) {
+			Expect(os.WriteFile(filepath.Join(dir, name), []byte("listed\n"), 0o600)).To(Succeed())
+		}
+		path := filepath.Join(dir, selection.GateOnlyFile)
+		Expect(os.WriteFile(path, []byte("# why\n"+s3+"test_a # slow\n"), 0o600)).To(Succeed())
+		got, err := selection.ReadGateOnly(dir)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(Equal([]selection.ListLine{{ID: s3 + "test_a", File: path, Line: 2}}))
+	})
+
+	It("fails for a lists directory without the gate-only list, naming it", func() {
+		_, err := selection.ReadGateOnly(GinkgoT().TempDir())
+		Expect(err).To(MatchError(ContainSubstring(selection.GateOnlyFile)))
 	})
 })
 
@@ -444,6 +465,164 @@ var _ = Describe("Select", func() {
 				s3 + "test_zz is not in the set: no such test, or the markers or a deselect list remove it",
 			}),
 	)
+
+	Describe("given gate-only lines", func() {
+		// in returns an input whose gate set is test_a, test_p[x], test_p[y],
+		// test_q[x], test_q[y] and test_b, and whose gate-only lines name
+		// test_p by its base id and test_q[y] by its id, for the set given.
+		in := func(set selection.Set) selection.Input {
+			return selection.Input{
+				Collected: []string{
+					s3 + "test_a", s3 + "test_p[x]", s3 + "test_p[y]", s3 + "test_q[x]", s3 + "test_q[y]", s3 + "test_b",
+				},
+				GateOnly: lines(s3+"test_p", s3+"test_q[y]"),
+				Set:      set,
+			}
+		}
+
+		DescribeTable("selects",
+			func(in selection.Input, want []string) {
+				got, err := selection.Select(in)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(got).To(Equal(want))
+			},
+			Entry("for the pr set, the gate set less every parametrization a base id names and the one an id names",
+				in(selection.SetPR), []string{s3 + "test_a", s3 + "test_q[x]", s3 + "test_b"}),
+			Entry("for the gate set, every test, the gate-only lines' among them",
+				in(selection.SetGate),
+				[]string{s3 + "test_a", s3 + "test_p[x]", s3 + "test_p[y]", s3 + "test_q[x]", s3 + "test_q[y]", s3 + "test_b"}),
+			Entry("for the zero set, the gate set",
+				in(""),
+				[]string{s3 + "test_a", s3 + "test_p[x]", s3 + "test_p[y]", s3 + "test_q[x]", s3 + "test_q[y]", s3 + "test_b"}),
+			Entry("for the gate set, the gate-only tests a TESTS file names",
+				func() selection.Input {
+					i := in(selection.SetGate)
+					i.TestsFile, i.Tests = "t.txt", lines(s3+"test_p", s3+"test_b")
+					return i
+				}(),
+				[]string{s3 + "test_p[x]", s3 + "test_p[y]", s3 + "test_b"}),
+			Entry("for the pr set, the parametrizations a TESTS base id names that no gate-only line names",
+				func() selection.Input {
+					i := in(selection.SetPR)
+					i.TestsFile, i.Tests = "t.txt", lines(s3+"test_q")
+					return i
+				}(),
+				[]string{s3 + "test_q[x]"}),
+			Entry("for the pr set, the gate set less an included test a gate-only line names",
+				selection.Input{
+					Collected:  []string{s3 + "test_a"},
+					Unfiltered: []string{s3 + "test_a", s3 + "test_m"},
+					Include:    lines(s3 + "test_m"),
+					GateOnly:   lines(s3 + "test_m"),
+					Set:        selection.SetPR,
+				},
+				[]string{s3 + "test_a"}),
+		)
+
+		DescribeTable("names the gate set's tests the gate-only lines name, in collection order, beside the set",
+			func(set selection.Set, tests, want []string) {
+				i := in(set)
+				if tests != nil {
+					i.TestsFile, i.Tests = "t.txt", lines(tests...)
+				}
+				got, gateOnly, err := selection.SelectSets(i)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(gateOnly).To(Equal([]string{s3 + "test_p[x]", s3 + "test_p[y]", s3 + "test_q[y]"}))
+				Expect(got).To(Equal(want))
+				plain, err := selection.Select(i)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(plain).To(Equal(got), "Select's set")
+			},
+			Entry("for the pr set, which leaves them out", selection.SetPR, nil,
+				[]string{s3 + "test_a", s3 + "test_q[x]", s3 + "test_b"}),
+			Entry("for the gate set, which holds them", selection.SetGate, nil,
+				[]string{s3 + "test_a", s3 + "test_p[x]", s3 + "test_p[y]", s3 + "test_q[x]", s3 + "test_q[y]", s3 + "test_b"}),
+			Entry("for a TESTS file, which narrows the set alone", selection.SetPR, []string{s3 + "test_b"},
+				[]string{s3 + "test_b"}),
+		)
+
+		It("names no gate-only test for no gate-only line", func() {
+			i := in(selection.SetPR)
+			i.GateOnly = nil
+			_, gateOnly, err := selection.SelectSets(i)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(gateOnly).To(BeEmpty())
+		})
+
+		DescribeTable("refuses",
+			func(in selection.Input, want selection.Refusals) {
+				got, err := selection.Select(in)
+				Expect(err).To(MatchError(want))
+				Expect(got).To(BeNil())
+			},
+			Entry("a gate-only line naming no test of the gate set, in either set",
+				func() selection.Input {
+					i := in(selection.SetGate)
+					i.GateOnly = append(i.GateOnly, lines(s3+"test_gone")...)
+					return i
+				}(),
+				selection.Refusals{
+					s3 + "test_gone names no test of the gate set: renamed or removed at this commit, " +
+						"or the markers or a deselect list remove it",
+				}),
+			Entry("a gate-only line naming a test a deselect line removes",
+				selection.Input{
+					Collected: []string{s3 + "test_a", s3 + "test_b"},
+					Deselect:  lines(s3 + "test_b"),
+					GateOnly:  lines(s3 + "test_b"),
+					Set:       selection.SetPR,
+				},
+				selection.Refusals{
+					s3 + "test_b names no test of the gate set: renamed or removed at this commit, " +
+						"or the markers or a deselect list remove it",
+				}),
+			Entry("a gate-only line naming a test the markers remove and no include line adds",
+				selection.Input{
+					Collected:  []string{s3 + "test_a"},
+					Unfiltered: []string{s3 + "test_a", s3 + "test_m"},
+					GateOnly:   lines(s3 + "test_m"),
+					Set:        selection.SetPR,
+				},
+				selection.Refusals{
+					s3 + "test_m names no test of the gate set: renamed or removed at this commit, " +
+						"or the markers or a deselect list remove it",
+				}),
+			Entry("for the pr set, a TESTS line naming a gate-only test",
+				func() selection.Input {
+					i := in(selection.SetPR)
+					i.TestsFile, i.Tests = "t.txt", lines(s3+"test_p", s3+"test_q[y]", s3+"test_b")
+					return i
+				}(),
+				selection.Refusals{
+					s3 + "test_p is not in the pr set: a gate-only line names it, so only the gate set runs it",
+					s3 + "test_q[y] is not in the pr set: a gate-only line names it, so only the gate set runs it",
+				}),
+			Entry("for the pr set, a set the gate-only lines leave empty",
+				selection.Input{
+					Collected: []string{s3 + "test_a"},
+					GateOnly:  lines(s3 + "test_a"),
+					Set:       selection.SetPR,
+				},
+				selection.Refusals{"no test is left to run: the gate-only lines name every test of the gate set"}),
+			Entry("every gate-only refusal, after the include lines' and before the TESTS file's",
+				selection.Input{
+					Collected:  []string{s3 + "test_a", s3 + "test_b"},
+					Unfiltered: []string{s3 + "test_a", s3 + "test_b"},
+					Include:    lines(s3 + "test_b"),
+					GateOnly:   lines(s3+"test_x", s3+"test_y"),
+					TestsFile:  "t.txt", Tests: lines(s3 + "test_zz"),
+					Set: selection.SetPR,
+				},
+				selection.Refusals{
+					s3 + "test_b is a test the markers leave: include lines add only tests they exclude",
+					s3 + "test_x names no test of the gate set: renamed or removed at this commit, " +
+						"or the markers or a deselect list remove it",
+					s3 + "test_y names no test of the gate set: renamed or removed at this commit, " +
+						"or the markers or a deselect list remove it",
+					s3 + "test_zz is not in the set: no such test, or the markers or a deselect list remove it",
+				}),
+		)
+	})
 
 	DescribeTable("selects a pin's set as it stood before the include list, given an empty one",
 		func(pin, lists string, n int, unfiltered bool) {

@@ -165,6 +165,12 @@ type cephFixture struct {
 func newCephFixture() *cephFixture {
 	r := &cephFixture{dir: GinkgoT().TempDir()}
 	r.git("init", "-q", "-b", "main", "--object-format=sha1")
+	// git commit starts git maintenance run --auto --detach, whose detached
+	// process works in .git/objects after the commit returns and can race the
+	// spec's removal of the fixture; the repository's own config turns it off
+	// for every git run there, the code under test's included.
+	r.git("config", "maintenance.auto", "false")
+	r.git("config", "gc.auto", "0")
 	r.write("src/rgw/rgw_fixture.cc", fixtureCC)
 	r.write("src/rgw/rgw_fixture.h", fixtureH)
 	r.v1 = r.commit("v1")
@@ -197,11 +203,14 @@ func (r *cephFixture) blobSharing(commit string) string {
 }
 
 // partialClone returns a clone of the fixture that holds none of its files'
-// contents, as git clone --filter=blob:none makes one.
+// contents, as git clone --filter=blob:none makes one. Each read there fetches
+// what it needs, and each such fetch would start the maintenance
+// newCephFixture turns off, so the clone's config turns it off too.
 func (r *cephFixture) partialClone() string {
 	r.git("config", "uploadpack.allowFilter", "true")
 	dst := GinkgoT().TempDir()
-	r.git("clone", "-q", "--no-checkout", "--filter=blob:none", "file://"+r.dir, dst)
+	r.git("clone", "-q", "-c", "maintenance.auto=false", "-c", "gc.auto=0", "--no-checkout", "--filter=blob:none",
+		"file://"+r.dir, dst)
 	return dst
 }
 

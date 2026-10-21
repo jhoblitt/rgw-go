@@ -218,27 +218,27 @@ var _ = Describe("diff", func() {
 	It("is equal when only unstable tests differ", func() {
 		cand := candidate(map[string]string{"t1": "passed", "t2": "failed", "t3": "failed"})
 		cand.Meta["gateway"] = "rgw-go"
-		diffs, err := parity.Diff(base, cand, false, parity.KnownList{})
+		diffs, err := parity.Diff(base, cand, false, parity.KnownList{}, parity.Selection{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(diffs).To(BeEmpty())
 	})
 
 	It("names every stable test whose outcome changed, and a test missing from the candidate", func() {
-		diffs, err := parity.Diff(base, candidate(map[string]string{"t1": "failed", "t3": "passed"}), false, parity.KnownList{})
+		diffs, err := parity.Diff(base, candidate(map[string]string{"t1": "failed", "t3": "passed"}), false, parity.KnownList{}, parity.Selection{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(diffs).To(Equal([]string{"t1: baseline passed, candidate failed", "t2: baseline failed, candidate missing"}))
 	})
 
 	It("names a candidate test the ledger holds no entry for", func() {
 		cand := candidate(map[string]string{"t1": "passed", "t2": "failed", "t3": "passed", "t4": "error"})
-		diffs, err := parity.Diff(base, cand, false, parity.KnownList{})
+		diffs, err := parity.Diff(base, cand, false, parity.KnownList{}, parity.Selection{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(diffs).To(Equal([]string{"t4: no baseline entry"}))
 	})
 
 	It("judges a test by its last entry", func() {
 		base.Tests["t1"] = append(base.Tests["t1"], reasoned(entry("aaa", "failed"), "radosgw 19.2.6 answers 400"))
-		diffs, err := parity.Diff(base, candidate(map[string]string{"t1": "failed", "t2": "failed"}), false, parity.KnownList{})
+		diffs, err := parity.Diff(base, candidate(map[string]string{"t1": "failed", "t2": "failed"}), false, parity.KnownList{}, parity.Selection{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(diffs).To(BeEmpty())
 	})
@@ -249,13 +249,13 @@ var _ = Describe("diff", func() {
 		})
 
 		It("is not missing from a candidate that lacks it", func() {
-			diffs, err := parity.Diff(base, candidate(map[string]string{"t1": "passed"}), false, parity.KnownList{})
+			diffs, err := parity.Diff(base, candidate(map[string]string{"t1": "passed"}), false, parity.KnownList{}, parity.Selection{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(diffs).To(BeEmpty())
 		})
 
 		It("is named when the candidate runs it again", func() {
-			diffs, err := parity.Diff(base, candidate(map[string]string{"t1": "passed", "t2": "failed"}), false, parity.KnownList{})
+			diffs, err := parity.Diff(base, candidate(map[string]string{"t1": "passed", "t2": "failed"}), false, parity.KnownList{}, parity.Selection{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(diffs).To(Equal([]string{"t2: baseline retired, candidate failed"}))
 		})
@@ -265,10 +265,10 @@ var _ = Describe("diff", func() {
 		It("is stale for a last entry recorded under another Ceph version, unless meta drift is allowed", func() {
 			base.Tests["t1"] = []parity.Entry{withCeph(entry("aaa", "passed"), "19.2.5")}
 			cand := candidate(map[string]string{"t1": "failed", "t2": "failed"})
-			diffs, err := parity.Diff(base, cand, false, parity.KnownList{})
+			diffs, err := parity.Diff(base, cand, false, parity.KnownList{}, parity.Selection{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(diffs).To(Equal([]string{"t1: baseline stale, re-record"}))
-			diffs, err = parity.Diff(base, cand, true, parity.KnownList{})
+			diffs, err = parity.Diff(base, cand, true, parity.KnownList{}, parity.Selection{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(diffs).To(Equal([]string{"t1: baseline passed, candidate failed"}))
 		})
@@ -279,7 +279,7 @@ var _ = Describe("diff", func() {
 			cand := candidate(map[string]string{"t1": "passed", "t2": "failed"})
 			cand.Meta["s3tests_commit"] = "bbb"
 			for _, drift := range []bool{false, true} {
-				diffs, err := parity.Diff(base, cand, drift, parity.KnownList{})
+				diffs, err := parity.Diff(base, cand, drift, parity.KnownList{}, parity.Selection{})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(diffs).To(Equal([]string{"t2: baseline stale, re-record", "t3: baseline stale, re-record"}), "drift %v", drift)
 			}
@@ -291,7 +291,7 @@ var _ = Describe("diff", func() {
 				base.Tests["t4"] = []parity.Entry{entry("bbb", "passed")}
 				cand := candidate(map[string]string{"t1": "failed", "t2": "failed", "t4": "passed"})
 				cand.Meta["s3tests_commit"] = "bbb"
-				diffs, err := parity.Diff(base, cand, false, parity.KnownList{})
+				diffs, err := parity.Diff(base, cand, false, parity.KnownList{}, parity.Selection{})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(diffs).To(Equal([]string{"t1: baseline passed, candidate failed"}))
 			},
@@ -301,7 +301,7 @@ var _ = Describe("diff", func() {
 
 		It("is judged before an unstable last entry is skipped", func() {
 			base.Tests["t3"][0].CephVersion = "19.2.5"
-			diffs, err := parity.Diff(base, candidate(map[string]string{"t1": "passed", "t2": "failed", "t3": "passed"}), false, parity.KnownList{})
+			diffs, err := parity.Diff(base, candidate(map[string]string{"t1": "passed", "t2": "failed", "t3": "passed"}), false, parity.KnownList{}, parity.Selection{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(diffs).To(Equal([]string{"t3: baseline stale, re-record"}))
 		})
@@ -310,16 +310,16 @@ var _ = Describe("diff", func() {
 	It("refuses a candidate run at a source other than the chain's head unless told to", func() {
 		base.Pins = append(base.Pins, parity.Pin{Source: "bbb", Admitted: parity.AdmitAdditive})
 		cand := candidate(map[string]string{"t1": "passed", "t2": "failed"})
-		_, err := parity.Diff(base, cand, false, parity.KnownList{})
+		_, err := parity.Diff(base, cand, false, parity.KnownList{}, parity.Selection{})
 		Expect(err).To(MatchError(ContainSubstring("s3tests_commit: baseline bbb, candidate aaa")))
-		_, err = parity.Diff(base, cand, true, parity.KnownList{})
+		_, err = parity.Diff(base, cand, true, parity.KnownList{}, parity.Selection{})
 		Expect(err).NotTo(HaveOccurred())
 	})
 
 	It("names every compared key that differs", func() {
 		cand := candidate(map[string]string{"t1": "passed"})
 		cand.Meta["s3tests_commit"], cand.Meta["release"] = "bbb", "tentacle"
-		_, err := parity.Diff(base, cand, false, parity.KnownList{})
+		_, err := parity.Diff(base, cand, false, parity.KnownList{}, parity.Selection{})
 		Expect(err).To(MatchError(ContainSubstring("s3tests_commit: baseline aaa, candidate bbb")))
 		Expect(err).To(MatchError(ContainSubstring("release: baseline squid, candidate tentacle")))
 	})
@@ -329,7 +329,7 @@ var _ = Describe("diff", func() {
 			cand := candidate(map[string]string{"t1": "passed"})
 			delete(cand.Meta, key)
 			for _, drift := range []bool{false, true} {
-				_, err := parity.Diff(base, cand, drift, parity.KnownList{})
+				_, err := parity.Diff(base, cand, drift, parity.KnownList{}, parity.Selection{})
 				Expect(err).To(MatchError(ContainSubstring(want)), "drift %v", drift)
 			}
 		},
@@ -341,7 +341,7 @@ var _ = Describe("diff", func() {
 	It("ignores the deselect digest, the gateway and any key outside the source, release and Ceph version", func() {
 		cand := candidate(map[string]string{"t1": "passed", "t2": "failed"})
 		cand.Meta["deselect"], cand.Meta["gateway"], cand.Meta["go_ceph_tag"] = "222222222222", "rgw-go", "v0.39.0"
-		diffs, err := parity.Diff(base, cand, false, parity.KnownList{})
+		diffs, err := parity.Diff(base, cand, false, parity.KnownList{}, parity.Selection{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(diffs).To(BeEmpty())
 	})
@@ -349,27 +349,27 @@ var _ = Describe("diff", func() {
 	Describe("with a known-difference list", func() {
 		It("skips a listed test whose outcome differs", func() {
 			cand := candidate(map[string]string{"t1": "failed", "t2": "passed", "t3": "passed"})
-			diffs, err := parity.Diff(base, cand, false, mustKnown("t1\n"))
+			diffs, err := parity.Diff(base, cand, false, mustKnown("t1\n"), parity.Selection{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(diffs).To(Equal([]string{"t2: baseline failed, candidate passed"}))
 		})
 
 		It("reports a listed test whose outcome no longer differs", func() {
 			cand := candidate(map[string]string{"t1": "failed", "t2": "failed", "t3": "passed"})
-			diffs, err := parity.Diff(base, cand, false, mustKnown("t[12]\n"))
+			diffs, err := parity.Diff(base, cand, false, mustKnown("t[12]\n"), parity.Selection{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(diffs).To(Equal([]string{"t2: known difference no longer differs"}))
 		})
 
 		It("reports an entry that matches no compared test, an unstable one included", func() {
-			diffs, err := parity.Diff(base, candidate(map[string]string{"t1": "passed", "t2": "failed"}), false, mustKnown("t9\nt3\n"))
+			diffs, err := parity.Diff(base, candidate(map[string]string{"t1": "passed", "t2": "failed"}), false, mustKnown("t9\nt3\n"), parity.Selection{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(diffs).To(ConsistOf("t9: known difference matches no test", "t3: known difference matches no test"))
 		})
 
 		It("skips a test with no baseline entry that a plain or an either-outcome entry matches", func() {
 			cand := candidate(map[string]string{"t1": "passed", "t2": "failed", "t4": "error", "t5": "passed", "t6": "passed"})
-			diffs, err := parity.Diff(base, cand, false, mustKnown("t4\n~ t5\n"))
+			diffs, err := parity.Diff(base, cand, false, mustKnown("t4\n~ t5\n"), parity.Selection{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(diffs).To(Equal([]string{"t6: no baseline entry"}))
 		})
@@ -377,21 +377,21 @@ var _ = Describe("diff", func() {
 		It("leaves a stale test's line alone, and counts the entry matching it as matched", func() {
 			base.Tests["t1"][0].CephVersion = "19.2.5"
 			cand := candidate(map[string]string{"t1": "failed", "t2": "failed"})
-			diffs, err := parity.Diff(base, cand, false, mustKnown("t1\n"))
+			diffs, err := parity.Diff(base, cand, false, mustKnown("t1\n"), parity.Selection{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(diffs).To(Equal([]string{"t1: baseline stale, re-record"}))
 		})
 
 		It("matches a pattern against the whole test id", func() {
 			cand := candidate(map[string]string{"t1": "failed", "t2": "failed", "t3": "passed"})
-			diffs, err := parity.Diff(base, cand, false, mustKnown("t\n"))
+			diffs, err := parity.Diff(base, cand, false, mustKnown("t\n"), parity.Selection{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(diffs).To(ConsistOf("t: known difference matches no test", "t1: baseline passed, candidate failed"))
 		})
 
 		It("counts a test missing from the candidate as differing", func() {
 			cand := candidate(map[string]string{"t1": "passed", "t3": "passed"})
-			diffs, err := parity.Diff(base, cand, false, mustKnown("t2\n"))
+			diffs, err := parity.Diff(base, cand, false, mustKnown("t2\n"), parity.Selection{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(diffs).To(BeEmpty())
 		})
@@ -399,27 +399,27 @@ var _ = Describe("diff", func() {
 		Describe("an either-outcome entry", func() {
 			It("skips its test when the outcome differs", func() {
 				cand := candidate(map[string]string{"t1": "failed", "t2": "failed", "t3": "passed"})
-				diffs, err := parity.Diff(base, cand, false, mustKnown("~ t1\n"))
+				diffs, err := parity.Diff(base, cand, false, mustKnown("~ t1\n"), parity.Selection{})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(diffs).To(BeEmpty())
 			})
 
 			It("skips its test when the outcome agrees, where a plain entry would be stale", func() {
 				cand := candidate(map[string]string{"t1": "passed", "t2": "failed", "t3": "passed"})
-				diffs, err := parity.Diff(base, cand, false, mustKnown("~ t1\nt2\n"))
+				diffs, err := parity.Diff(base, cand, false, mustKnown("~ t1\nt2\n"), parity.Selection{})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(diffs).To(Equal([]string{"t2: known difference no longer differs"}))
 			})
 
 			It("leaves a plain entry for the same test strict", func() {
 				cand := candidate(map[string]string{"t1": "passed", "t2": "failed", "t3": "passed"})
-				diffs, err := parity.Diff(base, cand, false, mustKnown("~ t1\nt1\n"))
+				diffs, err := parity.Diff(base, cand, false, mustKnown("~ t1\nt1\n"), parity.Selection{})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(diffs).To(Equal([]string{"t1: known difference no longer differs"}))
 			})
 
 			It("is reported, as written, when it matches no compared test", func() {
-				diffs, err := parity.Diff(base, candidate(map[string]string{"t1": "passed", "t2": "failed"}), false, mustKnown("~ t9\n~ t3\n"))
+				diffs, err := parity.Diff(base, candidate(map[string]string{"t1": "passed", "t2": "failed"}), false, mustKnown("~ t9\n~ t3\n"), parity.Selection{})
 				Expect(err).NotTo(HaveOccurred())
 				Expect(diffs).To(ConsistOf("~ t9: known difference matches no test", "~ t3: known difference matches no test"))
 			})
@@ -427,10 +427,10 @@ var _ = Describe("diff", func() {
 
 		It("compares under the zero list as under an empty parsed one", func() {
 			cand := candidate(map[string]string{"t1": "failed", "t2": "failed", "t3": "passed"})
-			zero, err := parity.Diff(base, cand, false, parity.KnownList{})
+			zero, err := parity.Diff(base, cand, false, parity.KnownList{}, parity.Selection{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(zero).To(Equal([]string{"t1: baseline passed, candidate failed"}))
-			parsed, err := parity.Diff(base, cand, false, mustKnown("# no entries\n"))
+			parsed, err := parity.Diff(base, cand, false, mustKnown("# no entries\n"), parity.Selection{})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(parsed).To(Equal(zero))
 		})

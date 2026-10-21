@@ -265,14 +265,17 @@ read-gate: need-release ## Read the populated corpus through rgw-go and the RELE
 # The gateway s3tests and admin-suite run against, and the run id that names
 # their reports. TESTS names a file of pytest node ids, one a line, for
 # s3tests to run alone, s3tests-record-tests to record and s3tests-pin to
-# write.
+# write. SET is the s3-tests set s3tests and s3tests-parity run: pr, the gate
+# set less the tests hack/s3tests/gate-only.txt names, or gate; the
+# recordings run the gate set whatever it says.
 GATEWAY ?= radosgw
 RUN ?= local
 TESTS ?=
+SET ?= pr
 
 .PHONY: s3tests
-s3tests: need-release ## Run the phase 1 s3-tests set, or the TESTS file's tests, against GATEWAY (radosgw|rgw-go) on the RELEASE cluster; junit under hack/s3tests/out/
-	ROOKET=$(ROOKET_BIN) hack/s3tests/run.sh $(RELEASE) $(GATEWAY) $(RUN) $(TESTS)
+s3tests: need-release ## Run the s3-tests SET (pr|gate), or the TESTS file's tests of it, against GATEWAY (radosgw|rgw-go) on the RELEASE cluster; junit under hack/s3tests/out/
+	ROOKET=$(ROOKET_BIN) hack/s3tests/run.sh $(RELEASE) $(GATEWAY) $(RUN) $(SET) $(TESTS)
 
 .PHONY: admin-suite
 admin-suite: need-release ## Run go-ceph's rgw/admin suite at its pinned tag against GATEWAY on the RELEASE cluster; go test -json under hack/admin/_out/
@@ -306,18 +309,28 @@ parity-check: ## Compare a candidate result with a ledger: make parity-check BAS
 # built binary because go run exits 1 for any failure: make's error line
 # then names the diff's own status, 1 for a test that differs or whose entry
 # is stale under another Ceph version, and 2 for a run at another s3-tests
-# commit than the ledger's head, or for another release.
+# commit than the ledger's head, or for another release. A run of the pr set
+# is compared over the tests it selected alone, so that the ledger's
+# gate-only tests are not missing from it, and the diff lists, without
+# failing, each other ledger test the run no longer selects, as dropped from
+# the pr set; a run of the gate set is compared over every test of the
+# ledger. SUMMARY names a markdown file, such as a CI job's summary, that the
+# diff appends that list to when it is not empty.
 BASELINE ?= test/s3tests/baseline/$(RELEASE).json
+SUMMARY ?=
 
 .PHONY: s3tests-parity
-s3tests-parity: need-release ## Run the phase 1 s3-tests set against rgw-go and compare with radosgw's ledger
-	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=rgw-go RUN=parity TESTS=
+s3tests-parity: need-release ## Run the s3-tests SET (pr|gate) against rgw-go and compare with radosgw's ledger
+	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=rgw-go RUN=parity SET=$(SET) TESTS=
 	go build -o bin/parity ./hack/parity
 	bin/parity record --format junit --suite s3tests --out $(CLUSTER_OUT)/s3tests-rgw-go.json \
 	  --meta release=$(RELEASE) --meta ceph_version=$$(jq -r .ceph_version $(CLUSTER_OUT)/manifest.json) --meta gateway=rgw-go \
 	  --meta s3tests_commit=$$(hack/s3tests/run.sh --print-commit) --meta deselect=$$(hack/s3tests/run.sh --print-deselect) \
 	  hack/s3tests/out/$(RELEASE)-rgw-go-parity.xml
-	bin/parity diff --baseline $(BASELINE) --candidate $(CLUSTER_OUT)/s3tests-rgw-go.json --known test/s3tests/known-differences-$(RELEASE).txt
+	bin/parity diff --baseline $(BASELINE) --candidate $(CLUSTER_OUT)/s3tests-rgw-go.json --known test/s3tests/known-differences-$(RELEASE).txt \
+	  $(if $(SUMMARY),--summary "$(SUMMARY)") \
+	  $(if $(filter gate,$(SET)),,--selection hack/s3tests/out/$(RELEASE)-rgw-go-parity.ids \
+	    --gate-only hack/s3tests/out/$(RELEASE)-rgw-go-parity.gate-only.ids)
 
 # The ledger admin-parity compares rgw-go's run with; a record made elsewhere
 # passes the copy it has just appended to.
@@ -373,20 +386,22 @@ endef
 
 # rgw-go-up sets the parity options on radosgw's entity as well as rgw-go's,
 # so a baseline recorded after it is radosgw under the options rgw-go is
-# compared under; its endpoint file is the sign it has run.
+# compared under; its endpoint file is the sign it has run. A recording runs
+# the gate set whatever SET says: a full record retires every ledger test it
+# did not run, which would retire the gate-only tests.
 .PHONY: s3tests-record
-s3tests-record: need-release ## Run the phase 1 s3-tests set twice against radosgw, after rgw-go-up, and append it to the ledger OUT (default test/s3tests/baseline/RELEASE.json)
+s3tests-record: need-release ## Run the s3-tests gate set twice against radosgw, after rgw-go-up, and append it to the ledger OUT (default test/s3tests/baseline/RELEASE.json)
 	@test -f $(CLUSTER_OUT)/rgw-go.endpoint || { echo "run make rgw-go-up RELEASE=$(RELEASE) first: radosgw records under the parity options it sets" >&2; exit 1; }
-	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base1 TESTS=
-	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base2 TESTS=
+	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base1 SET=gate TESTS=
+	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base2 SET=gate TESTS=
 	$(call s3tests_append,base1,base2)
 
 .PHONY: s3tests-record-tests
-s3tests-record-tests: need-release ## Run the TESTS file's s3-tests twice against radosgw, after rgw-go-up, and append them alone to the ledger OUT (default test/s3tests/baseline/RELEASE.json)
+s3tests-record-tests: need-release ## Run the TESTS file's s3-tests, of the gate set, twice against radosgw, after rgw-go-up, and append them alone to the ledger OUT (default test/s3tests/baseline/RELEASE.json)
 	@test -n "$(TESTS)" || { echo "set TESTS to a file of pytest node ids, one a line, such as make s3tests-pin writes" >&2; exit 1; }
 	@test -f $(CLUSTER_OUT)/rgw-go.endpoint || { echo "run make rgw-go-up RELEASE=$(RELEASE) first: radosgw records under the parity options it sets" >&2; exit 1; }
-	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=tests1 TESTS=$(TESTS)
-	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=tests2 TESTS=$(TESTS)
+	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=tests1 SET=gate TESTS=$(TESTS)
+	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=tests2 SET=gate TESTS=$(TESTS)
 	$(call s3tests_append,tests1,tests2,--subset)
 
 # A clone of Ceph that holds the s3-tests pin and NEW, the commit to pin.

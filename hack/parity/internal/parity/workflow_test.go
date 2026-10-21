@@ -54,6 +54,27 @@ func stepIndex(steps []workflowStep, what string, match func(workflowStep) bool)
 	return found[0]
 }
 
+var _ = Describe("the s3tests workflow", func() {
+	It("points every comparison's summary at the job summary, so that a dropped test shows on the pull request",
+		func() {
+			wf, _ := readWorkflow("s3tests.yml")
+			steps := wf.Jobs["parity"].Steps
+			compare := steps[stepIndex(steps, "run make s3tests-parity", func(s workflowStep) bool {
+				return strings.Contains(s.Run, "make s3tests-parity")
+			})]
+			var calls []string
+			for line := range strings.SplitSeq(compare.Run, "\n") {
+				if strings.Contains(line, "make s3tests-parity") {
+					calls = append(calls, line)
+				}
+			}
+			Expect(calls).To(HaveLen(2))
+			for _, call := range calls {
+				Expect(call).To(ContainSubstring(`"SUMMARY=${GITHUB_STEP_SUMMARY}"`))
+			}
+		})
+})
+
 var _ = Describe("the ledgers workflow", func() {
 	var (
 		wf    workflow

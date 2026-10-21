@@ -530,8 +530,14 @@ func fetchTreeless(ctx context.Context, repo string, refspecs ...string) (string
 	if err != nil {
 		return "", fmt.Errorf("making the clone: %w", err)
 	}
+	// Every fetch starts git maintenance run --auto --detach, whose detached
+	// process works in objects/ after the fetch returns, while the caller
+	// removes the clone; the clone's own config turns it off for every git
+	// run there, the lazy fetches of a later read among them.
 	for _, args := range [][]string{
 		{"init", "-q", "--bare"},
+		{"config", "maintenance.auto", "false"},
+		{"config", "gc.auto", "0"},
 		{"remote", "add", "--", "origin", repo},
 		{"config", "remote.origin.promisor", "true"},
 		{"config", "remote.origin.partialclonefilter", "tree:0"},

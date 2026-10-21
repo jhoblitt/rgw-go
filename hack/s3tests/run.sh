@@ -10,13 +10,17 @@
 # phase's feature without carrying such a marker. hack/s3tests's Go command,
 # which run.sh builds into bin/s3tests, decides it from those lists and
 # pytest's collections with and without the markers, and pytest runs exactly
-# its node ids on both gateways.
+# its node ids on both gateways. That set is the gate set, which gate runs;
+# pr runs the pr set, the gate set less the tests gate-only.txt names, which
+# only a phase gate and a run on demand afford. The node ids a run selects
+# are left beside its report, in its .ids file, and those of the gate set's
+# gate-only tests, whichever set ran, in its .gate-only.ids file.
 # fails_on_rgw stays in, since both gateways must fail those alike. Users
 # are created through radosgw-admin, so run this after make gate: the gate
 # counts the zone's users. TESTS-FILE runs only the pytest node ids it lists,
 # one a line, each of which the set must hold.
 #
-# Usage: [S3TESTS_REPO=URL|PATH S3TESTS_COMMIT=SHA] run.sh squid|tentacle radosgw|rgw-go RUN-ID [TESTS-FILE]
+# Usage: [S3TESTS_REPO=URL|PATH S3TESTS_COMMIT=SHA] run.sh squid|tentacle radosgw|rgw-go RUN-ID pr|gate [TESTS-FILE]
 #        run.sh --print-commit | --print-deselect
 set -euo pipefail
 
@@ -99,13 +103,15 @@ fi
 use_release "${1:-}"
 gateway=${2:-}
 run_id=${3:-}
-readonly usage="usage: ${script} squid|tentacle radosgw|rgw-go RUN-ID [TESTS-FILE]"
+test_set=${4:-}
+readonly usage="usage: ${script} squid|tentacle radosgw|rgw-go RUN-ID pr|gate [TESTS-FILE]"
 [[ "${gateway}" == radosgw || "${gateway}" == rgw-go ]] || die "${usage}"
 [[ "${run_id}" =~ ^[A-Za-z0-9._-]+$ ]] || die "${usage}; RUN-ID, which names the reports, is [A-Za-z0-9._-]+"
+[[ "${test_set}" == pr || "${test_set}" == gate ]] || die "${usage}"
 # --tests is given empty for the whole set. expr refuses a TESTS file that is
 # missing or names no test, before the run removes its outputs or fetches
 # anything.
-readonly run_flags=("${s3tests_flags[@]}" --tests "${4:-}")
+readonly run_flags=("${s3tests_flags[@]}" --set "${test_set}" --tests "${5:-}")
 expr=$("${s3tests}" expr "${run_flags[@]}")
 
 src=${harness}/out/src
@@ -116,8 +122,10 @@ conf=${name}.conf
 report=${name}.xml
 log=${name}.log
 freeze=${name}.freeze
+selected_ids=${name}.ids
+gate_only_ids=${name}.gate-only.ids
 mkdir -p "${harness}/out"
-rm -f "${conf}" "${report}" "${log}" "${freeze}"
+rm -f "${conf}" "${report}" "${log}" "${freeze}" "${selected_ids}" "${gate_only_ids}"
 
 # Only the suite is fetched from all of Ceph: the one commit, its trees
 # without their blobs, and then just the blobs the sparse checkout asks the
@@ -311,11 +319,16 @@ collect() {
 }
 ids=$(collect -m "${expr}") || die "pytest could not collect the parity set:"$'\n'"${ids}"
 unfiltered=$(collect) || die "pytest could not collect the tests without the markers:"$'\n'"${unfiltered}"
-# --unfiltered is given here rather than in run_flags, which expr takes too,
-# and on every call, so that no S3TESTS_UNFILTERED reaches the selection.
-selection=$("${s3tests}" select "${run_flags[@]}" --unfiltered <(printf '%s\n' "${unfiltered}") <<<"${ids}") ||
+# --unfiltered and --gate-only-ids are given here rather than in run_flags,
+# which expr takes too, and on every call, so that no S3TESTS_UNFILTERED or
+# S3TESTS_GATE_ONLY_IDS reaches the selection.
+selection=$("${s3tests}" select "${run_flags[@]}" --unfiltered <(printf '%s\n' "${unfiltered}") \
+	--gate-only-ids "${gate_only_ids}" <<<"${ids}") ||
 	die "hack/s3tests selected no set from the collections; nothing ran"
 mapfile -t selected <<<"${selection}"
+# hack/parity diff --selection compares a run of the pr set over these alone,
+# and --gate-only names the tests it leaves out by design.
+printf '%s\n' "${selected[@]}" >"${selected_ids}"
 
 purge_buckets
 echo "running ${#selected[@]} tests against the ${gateway} at ${endpoint}; log ${log}"

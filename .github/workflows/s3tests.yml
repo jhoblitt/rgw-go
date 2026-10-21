@@ -1,4 +1,4 @@
-# s3-tests parity: the phase 1 s3-tests set against rgw-go on a disposable
+# s3-tests parity: the pr set of s3-tests against rgw-go on a disposable
 # Rook cluster, compared with radosgw's recorded baseline by make
 # s3tests-parity (hack/rooket/README.md). On every pull request, Squid only,
 # and on demand for either release, where it can also append a fresh record
@@ -135,12 +135,15 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
+      # The job summary lists, when there are any, the ledger tests the pr
+      # set no longer runs and no gate-only line names: a test this pull
+      # request's selection dropped, which the next gate run judges.
       - name: Compare rgw-go with radosgw's baseline
         run: |
           if [ -n "${RECORDED_BASELINE:-}" ]; then
-            make s3tests-parity "RELEASE=${RELEASE}" "BASELINE=${RECORDED_BASELINE}"
+            make s3tests-parity "RELEASE=${RELEASE}" "BASELINE=${RECORDED_BASELINE}" "SUMMARY=${GITHUB_STEP_SUMMARY}"
           else
-            make s3tests-parity "RELEASE=${RELEASE}"
+            make s3tests-parity "RELEASE=${RELEASE}" "SUMMARY=${GITHUB_STEP_SUMMARY}"
           fi
 
       - name: Upload the s3-tests reports
@@ -152,6 +155,7 @@ jobs:
             hack/s3tests/out/*.xml
             hack/s3tests/out/*.log
             hack/s3tests/out/*.freeze
+            hack/s3tests/out/*.ids
             hack/rooket/out/${{ env.RELEASE }}/s3tests-rgw-go.json
             hack/rooket/out/${{ env.RELEASE }}/rgw-go.log
           retention-days: 14

@@ -1,7 +1,8 @@
-// Package selection decides which s3-tests the parity set runs: the tests
-// pytest collects from test_s3.py and test_headers.py under the excluded
-// markers' expression and the tests the include lists name, less those the
-// deselect lists name.
+// Package selection decides which s3-tests the parity set runs: the gate set,
+// the tests pytest collects from test_s3.py and test_headers.py under the
+// excluded markers' expression and the tests the include lists name, less
+// those the deselect lists name; or the pr set, the gate set less the tests
+// the gate-only list names.
 package selection
 
 import (
@@ -31,6 +32,22 @@ var DeselectLists = []string{"deselect-phase2.txt", "deselect-phase3.txt"}
 // not served yet. A line goes once its test's markers leave MarkersFile,
 // since Select then refuses it.
 var IncludeLists = []string{"include-phase2.txt"}
+
+// GateOnlyFile is the list of the tests of the gate set that the pr set
+// leaves out, by pytest node id or base id, in the lists directory: tests a
+// phase gate and a run on demand afford and a pull request's check does not,
+// such as those that wait for time to pass.
+const GateOnlyFile = "gate-only.txt"
+
+// Set names which set Select returns.
+type Set string
+
+// The sets: the gate set, which recordings and phase gates run, and the pr
+// set, which a pull request's check runs.
+const (
+	SetGate Set = "gate"
+	SetPR   Set = "pr"
+)
 
 // ListLine is a line of a list that names something, a marker or a pytest
 // node id, and where it stands.
@@ -71,6 +88,11 @@ func ReadInclude(dir string) ([]ListLine, error) {
 	return readLists(dir, IncludeLists)
 }
 
+// ReadGateOnly reads GateOnlyFile from dir.
+func ReadGateOnly(dir string) ([]ListLine, error) {
+	return ReadList(filepath.Join(dir, GateOnlyFile))
+}
+
 func readLists(dir string, names []string) ([]ListLine, error) {
 	var out []ListLine
 	for _, name := range names {
@@ -107,6 +129,11 @@ type Input struct {
 	Deselect []ListLine
 	// Include is the include lists' lines.
 	Include []ListLine
+	// GateOnly is the gate-only list's lines.
+	GateOnly []ListLine
+	// Set is the set to select: SetPR leaves out the tests GateOnly names,
+	// and SetGate, or the zero Set, keeps them.
+	Set Set
 	// TestsFile names the file whose lines Tests holds, each a node id or a
 	// base id to run alone; empty runs the whole set.
 	TestsFile string
@@ -155,10 +182,11 @@ func uniqueIDs(lines []ListLine) []string {
 
 // Select returns the node ids of the set, in collection order: the collected
 // ids and the tests the include lines name, less each one whose base id a
-// deselect line names, and with a TESTS file only those it names by id or
-// base id. Collection order is Unfiltered's when it holds a node id, and
-// Collected's otherwise. It returns Refusals instead when anything in its
-// input is wrong, listing each.
+// deselect line names, which make the gate set; for the pr set, less the
+// tests the gate-only lines name too; and with a TESTS file only those it
+// names by id or base id. Collection order is Unfiltered's when it holds a
+// node id, and Collected's otherwise. It returns Refusals instead when
+// anything in its input is wrong, listing each.
 //
 // A deselect line removes its tests by their base id. It is refused when it
 // is also the start of another id in the set, since the line, read as the
@@ -172,9 +200,23 @@ func uniqueIDs(lines []ListLine) []string {
 // deselect line removes. Unfiltered must hold every collected id, since the
 // set, taken in its order, would lose the others.
 //
+// A gate-only line names the test of its id, or every parametrization of a
+// base id, in the gate set. It is refused, whichever set is selected, when it
+// names none there, since it is then stale. A TESTS line must name a test of
+// the set selected, so a gate-only test runs alone only from the gate set.
+//
 // A set left empty is refused too: pytest given no node id runs every test it
 // finds.
 func Select(in Input) ([]string, error) {
+	set, _, err := SelectSets(in)
+	return set, err
+}
+
+// SelectSets returns what Select does, and beside it the tests of the gate
+// set the gate-only lines name, in collection order, whichever set in.Set
+// names: those a comparison of a pr set's run over that run's selection
+// leaves out by design.
+func SelectSets(in Input) (set, gateOnlyIDs []string, err error) {
 	collected := collectedIDs(in.Collected)
 	unfiltered := collectedIDs(in.Unfiltered)
 	marked := make(map[string]bool, len(collected))
@@ -194,7 +236,6 @@ func Select(in Input) ([]string, error) {
 
 	refusals := testsRefusals(in)
 	seen, inSet := map[string]bool{}, map[string]bool{}
-	var set []string
 	for _, c := range order {
 		if !marked[c] && !included[c] {
 			continue
@@ -222,9 +263,30 @@ func Select(in Input) ([]string, error) {
 		}
 	}
 	refusals = append(append(refusals, orderRefusals...), includeRefusals...)
+	gateOnly, gateOnlyRefusals := gateOnlyTests(uniqueIDs(in.GateOnly), set)
+	refusals = append(refusals, gateOnlyRefusals...)
+	for _, c := range set {
+		if gateOnly[c] {
+			gateOnlyIDs = append(gateOnlyIDs, c)
+		}
+	}
+	gateSet := len(set) > 0
+	inChosen := inSet
+	if in.Set == SetPR {
+		set = slices.DeleteFunc(set, func(c string) bool { return gateOnly[c] })
+		inChosen = make(map[string]bool, 2*len(set))
+		for _, c := range set {
+			inChosen[c], inChosen[baseID(c)] = true, true
+		}
+	}
 	tests := uniqueIDs(in.Tests)
 	for _, id := range tests {
-		if !inSet[id] {
+		switch {
+		case inChosen[id]:
+		case inSet[id]:
+			refusals = append(refusals,
+				id+" is not in the pr set: a gate-only line names it, so only the gate set runs it")
+		default:
 			refusals = append(refusals,
 				id+" is not in the set: no such test, or the markers or a deselect list remove it")
 		}
@@ -238,15 +300,18 @@ func Select(in Input) ([]string, error) {
 	}
 	if len(set) == 0 && len(refusals) == 0 {
 		why := "the deselect lists remove every test the markers leave"
-		if len(collected) == 0 {
+		switch {
+		case len(collected) == 0:
 			why = "the collection holds no node id"
+		case gateSet:
+			why = "the gate-only lines name every test of the gate set"
 		}
 		refusals = append(refusals, "no test is left to run: "+why)
 	}
 	if len(refusals) > 0 {
-		return nil, refusals
+		return nil, nil, refusals
 	}
-	return set, nil
+	return set, gateOnlyIDs, nil
 }
 
 // includeTests returns the unfiltered ids the include lines ids name, and the
@@ -288,6 +353,36 @@ func includeTests(ids, unfiltered []string, marked, listed map[string]bool) (map
 		}
 	}
 	return included, refusals
+}
+
+// gateOnlyTests returns the tests of the gate set gate that the gate-only
+// lines ids name, and the refusals of the lines that name none.
+func gateOnlyTests(ids, gate []string) (map[string]bool, Refusals) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	exact := make(map[string]bool, len(gate))
+	byBase := map[string][]string{}
+	for _, c := range gate {
+		exact[c] = true
+		byBase[baseID(c)] = append(byBase[baseID(c)], c)
+	}
+	named := map[string]bool{}
+	var refusals Refusals
+	for _, id := range ids {
+		tests := byBase[id]
+		if exact[id] {
+			tests = []string{id}
+		}
+		if len(tests) == 0 {
+			refusals = append(refusals, id+" names no test of the gate set: renamed or removed at this commit, "+
+				"or the markers or a deselect list remove it")
+		}
+		for _, c := range tests {
+			named[c] = true
+		}
+	}
+	return named, refusals
 }
 
 // naming returns how a refusal of the include line id names the test c it
@@ -332,7 +427,8 @@ func testsRefusals(in Input) Refusals {
 // include lines' ids, each of those after a "+", sorted by byte together,
 // each followed by a newline. The "+" keeps an include line from hashing as
 // the deselect line of the same test; with no include line, the digest is
-// the deselect lines' alone.
+// the deselect lines' alone. The gate-only lines stay out, as the markers
+// do, so that a run of the pr set and one of the gate set carry one digest.
 func Hash(deselect, include []ListLine) string {
 	ids := make([]string, 0, len(deselect)+len(include))
 	for _, l := range deselect {

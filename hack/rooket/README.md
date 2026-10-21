@@ -560,6 +560,7 @@ ignored by git, holds each release's binary and each builder's Go build cache.
 ```sh
 make gate RELEASE=squid                                # first: the gate counts the zone's users
 make s3tests RELEASE=squid GATEWAY=radosgw RUN=try1    # GATEWAY=rgw-go runs the same set against rgw-go
+make s3tests RELEASE=squid GATEWAY=radosgw SET=gate    # the gate set, gate-only tests included
 ```
 
 `hack/s3tests/run.sh` runs s3-tests, the suite ceph/ceph carries in
@@ -580,10 +581,15 @@ names, and minus the tests `hack/s3tests/deselect-phase2.txt` and
 `deselect-phase3.txt` name. A marker stays listed while it also marks tests
 of a feature not served yet, and the include list names the tests it removes
 that phase 2 serves; a deselect list names tests that call a later phase's
-feature but carry none of those markers. Both gateways run the same set,
-`fails_on_rgw` tests included, since both must fail those alike. The
-selection is a Go command, `hack/s3tests`, which `run.sh` builds into
-`bin/s3tests` from its own tree each time it runs: `run.sh` collects the
+feature but carry none of those markers. That is the gate set, which a phase
+gate and every recording run. The pr set, which `SET=pr`, the default, runs,
+and with it the `s3tests` workflow on every pull request, is the gate set
+less the tests `hack/s3tests/gate-only.txt` names: tests only a gate and a
+run on demand afford, such as the time-driven lifecycle tests, which sleep
+while their rules come due. `SET=gate` runs the gate set. Both gateways run
+the same set, `fails_on_rgw` tests included, since both must fail those
+alike. The selection is a Go command, `hack/s3tests`, which `run.sh` builds
+into `bin/s3tests` from its own tree each time it runs: `run.sh` collects the
 tests with pytest twice, under the expression the command makes of the
 markers and without it, which alone holds the include list's tests; the
 command picks the set's node ids from the two collections and the lists, and
@@ -638,8 +644,11 @@ done
 
 Each run leaves `hack/s3tests/out/<release>-<gateway>-<run>.xml`, the junit
 report `hack/parity` reads, with `.log` (pytest's output), `.conf` (the
-s3-tests conf) and `.freeze` (the Python version and the packages the venv
-held; s3-tests' `requirements.txt` pins none) beside it. `out/src` holds the
+s3-tests conf), `.freeze` (the Python version and the packages the venv
+held; s3-tests' `requirements.txt` pins none), `.ids` (the pytest node ids
+the run selected, one a line, which `hack/parity diff --selection` reads)
+and `.gate-only.ids` (those of the gate set's tests `gate-only.txt` names,
+whichever set ran, which `--gate-only` reads) beside it. `out/src` holds the
 pinned commit alone, fetched without file contents and checked out sparsely,
 so of all of Ceph only the suite in `src/test/rgw/s3-tests` is on disk, with
 the files directly in its parent directories and at the top level, which
@@ -649,12 +658,20 @@ in `out/venv` are rebuilt when the pin changes, which "Moving the s3-tests
 pin" below covers. `run.sh` exits 0 when pytest ran the whole set, whatever
 the tests' outcomes, and nonzero when it could not.
 
-A fourth argument, a file of pytest node ids
+`run.sh`'s fourth argument is the set, `pr` or `gate`, which `make s3tests
+SET=` passes. A fifth, a file of pytest node ids
 (`s3tests/functional/test_s3.py::test_x`) one a line, `#` starting a comment,
 runs only those tests, and a test's id without its parametrization runs each
 of them; `make s3tests TESTS=FILE` passes it. `run.sh` stops before any test
-runs when an id is not in the set: no such test at the pin, or the markers or
-a deselect list remove it.
+runs when an id is not in the set: no such test at the pin, the markers or
+a deselect list remove it, or, for the pr set, `gate-only.txt` names it.
+Such a run's `.ids` holds only those tests, so a `hack/parity diff
+--selection` of it by hand lists every other ledger test as dropped from the
+pr set, as expected.
+`make s3tests-record` and `make s3tests-record-tests` run the gate set
+whatever `SET` says: a full record retires every ledger test it did not run,
+which would retire the gate-only tests, and a TESTS file of a record may
+name one.
 
 To try a change to s3-tests before it is pinned, `S3TESTS_REPO` and
 `S3TESTS_COMMIT` in the environment make `run.sh`, and every target that
@@ -690,14 +707,20 @@ not name were it given to pytest's `--deselect`, which removes every node id
 that starts with its argument. It stops too when an include line names no
 collected test, because it was renamed or removed, or names a test the
 markers leave, and when an include line and a deselect line name the same
-test. The command names every such line before it stops.
+test. Each line of `gate-only.txt` is a pytest node id, or a test's id
+without its parametrization for each parametrization the gate set holds, and
+after `#` why it waits for the gate, under its area's comment; `run.sh` stops
+when one names no test of the gate set, for either set. The command names
+every such line before it stops.
 `run.sh --print-deselect` prints a digest of the listed ids, each include
 line's after a `+`, which each recorded entry carries in its meta; with no
 include line it is the deselect lists' digest alone, and the comparison no
-longer checks it. The PR that lands a later phase's feature deletes its lines
-and its markers' lines, adds include lines for its tests that a marker still
-listed removes, and records the tests they free in both ledgers, as "Adding
-tests" below does.
+longer checks it. The gate-only lines stay out of it, so a run of either set
+carries the same digest. The PR that lands a later phase's feature deletes
+its lines and its markers' lines, adds include lines for its tests that a
+marker still listed removes, and gate-only lines for those the pr set cannot
+afford, and records the tests they free in both ledgers, as "Adding tests"
+below does.
 
 ## Parity baselines
 
@@ -767,9 +790,9 @@ make rgw-go-up RELEASE=squid       # sets the parity options on radosgw's entity
 make s3tests-record RELEASE=squid  # REASONS=FILE for changed outcomes; OUT=FILE appends to another ledger
 ```
 
-`make s3tests-record` runs the set against radosgw twice, as `RUN=base1` and
-`RUN=base2`, and appends both runs to `OUT`, by default
-`test/s3tests/baseline/<release>.json`, with the meta `release`,
+`make s3tests-record` runs the gate set, whatever `SET` says, against radosgw
+twice, as `RUN=base1` and `RUN=base2`, and appends both runs to `OUT`, by
+default `test/s3tests/baseline/<release>.json`, with the meta `release`,
 `ceph_version` from `manifest.json`, `gateway=radosgw`, `s3tests_commit`,
 `deselect` and `pytest_freeze`. It refuses to start before `make rgw-go-up`,
 so that radosgw records under the parity options rgw-go is compared under.
@@ -892,44 +915,68 @@ keeps its entries. A new test's first entry needs no reason. Commit
 make gate RELEASE=squid           # first: the gate counts the zone's users
 make rgw-go-up RELEASE=squid
 make s3tests-parity RELEASE=squid
+make s3tests-parity RELEASE=squid SET=gate        # the gate set, at a phase gate
 make s3tests-parity RELEASE=squid BASELINE=path/to/just-recorded.json
 make rgw-go-down RELEASE=squid
 ```
 
-`make s3tests-parity` runs the set against the rgw-go `make rgw-go-up`
-started, as `make s3tests GATEWAY=rgw-go RUN=parity`, records the run in
-`out/<release>/s3tests-rgw-go.json` with the release, the Ceph version from
-`manifest.json`, the s3-tests commit and the deselect digest, and compares it
-with `BASELINE`, by default `test/s3tests/baseline/<release>.json`. It needs a
-populated cluster, for `manifest.json`. It prints one line per test whose
-outcome differs, and `<test>: baseline stale, re-record` for each whose last
-entry was recorded under another Ceph version or before the chain's last
-base pin, and fails unless there is none. `hack/parity` runs as a built
-binary, `bin/parity`, so make's error line carries the comparison's own
-status: 1 for a test that differs or is stale, 2 for a run at another
-s3-tests commit than the ledger's head, or for another release. A stale
-test and a moved pin are recorded as under "Parity baselines". make itself
-exits 2 for either status.
+`make s3tests-parity` runs the pr set, or with `SET=gate` the gate set,
+against the rgw-go `make rgw-go-up` started, as `make s3tests GATEWAY=rgw-go
+RUN=parity`, records the run in `out/<release>/s3tests-rgw-go.json` with the
+release, the Ceph version from `manifest.json`, the s3-tests commit and the
+deselect digest, and compares it with `BASELINE`, by default
+`test/s3tests/baseline/<release>.json`. It needs a populated cluster, for
+`manifest.json`. A run of the pr set is compared over the tests it selected
+alone, `bin/parity diff --selection` reading the run's `.ids` and
+`--gate-only` its `.gate-only.ids`: a ledger test outside the selection that
+the run lacks is not compared, so it does not fail the run. A gate-only test
+passes silently; any other such test, unless retired, is a test the pull
+request's selection no longer runs, such as one a new deselect or marker
+line, or a deleted include line, removes, and the comparison lists it after
+the differences, under `dropped from the pr set: <n> ledger tests ...`, as
+an indented `<test>: baseline <outcome>`, and counts it in its summary when
+it fails. With `SUMMARY=FILE` it also appends that list, when it is not
+empty, to FILE as markdown under the same heading; the `s3tests` workflow
+points it at the job summary, so a pull request's reviewer sees the tests it
+drops on a green run. A run of the gate set is compared over every test of
+the ledger, so it fails on a dropped test as missing, or as stale when its
+last entry is, until a record retires it; it skips one whose last entry is
+current and unstable, which the next full record of the gate set retires,
+stopping for its reason. A selected test the run lacks is still missing, and
+one the ledger lacks has no baseline entry. It prints one line per test
+whose outcome differs, and `<test>: baseline stale, re-record` for each
+whose last entry was recorded under another Ceph version or before the
+chain's last base pin, and fails unless there is none. `hack/parity` runs
+as a built binary, `bin/parity`, so make's error line carries the
+comparison's own status: 1 for a test that differs or is stale, 2 for a run
+at another s3-tests commit than the ledger's head, or for another release.
+A stale test and a moved pin are recorded as under "Parity baselines". make
+itself exits 2 for either status.
 
 The comparison skips the tests `test/s3tests/known-differences-<release>.txt`
 lists: one regular expression per line over `hack/parity`'s test ids
 (`s3tests.functional.test_s3::<test>`), each under a comment naming the
 `docs/exclusions.md` entry that decides the difference. It fails on a line
 that matches no test, and on one whose test no longer differs, so the list
-cannot outlive its differences. A line starting with `~ ` is the other kind
-of entry, for a test whose outcome on rgw-go depends on timing, as its
-exclusion says: its test is skipped whether it differs or agrees, and only
-an entry that matches no test fails. No entry on either list uses that form
-at present; every entry is plain. Only a recorded exclusion goes there. A
-difference that is not one is a bug in rgw-go, and a test that needs a later
-phase's feature goes on that phase's deselect list, which removes it on both
-gateways. Squid's list is mostly the Tentacle feature level rgw-go serves on
-Squid too, which Squid's radosgw fails.
+cannot outlive its differences; a pr set's comparison takes a line that
+matches only a ledger test outside the run's selection, a gate-only or a
+dropped test's, as matching, unless a comparison of the gate set would skip
+that test too: its last entry retired, or current and unstable. A line
+starting with `~ ` is the other kind of entry, for a test whose outcome on
+rgw-go depends on timing, as its exclusion says: its test is skipped
+whether it differs or agrees, and only an entry that matches no test fails.
+No entry on either list uses that form at present; every entry is plain.
+Only a recorded exclusion goes there. A difference that is not one is a bug
+in rgw-go, and a test that needs a later phase's feature goes on that
+phase's deselect list, which removes it on both gateways. Squid's list is
+mostly the Tentacle feature level rgw-go serves on Squid too, which Squid's
+radosgw fails.
 
 The `s3tests` workflow (`.github/workflows/s3tests.yml`) runs `make
-rgw-go-up` and `make s3tests-parity` against a Squid cluster on every pull
-request that changes the S3 path, and against either release on demand, so
-CI and a local run judge alike; its `s3-tests` job is the check to require.
+rgw-go-up` and `make s3tests-parity`, the pr set, against a Squid cluster on
+every pull request that changes the S3 path, and against either release on
+demand, so CI and a local run judge alike; its `s3-tests` job is the check
+to require.
 It runs no gate, and needs none: nothing after it counts the users.
 
 ### A unit's tests
@@ -946,13 +993,18 @@ and ListMultipartUploads, and partNumber reads of the result. After
 
 ```sh
 go run ./hack/parity diff --baseline test/s3tests/baseline/squid.json \
-	--candidate hack/rooket/out/squid/s3tests-rgw-go.json | grep -E -f test/s3tests/w-groups.txt
+	--candidate hack/rooket/out/squid/s3tests-rgw-go.json \
+	--selection hack/s3tests/out/squid-rgw-go-parity.ids \
+	--gate-only hack/s3tests/out/squid-rgw-go-parity.gate-only.ids | grep -E -f test/s3tests/w-groups.txt
 ```
 
 The diff runs without `--known`, so it prints the recorded differences
 too: every line the filter keeps is a known-differences entry, whose
 exclusion decides it, an upstream Ceph defect, which goes in
-`docs/ceph-upstream-bugs.md`, or a bug in rgw-go.
+`docs/ceph-upstream-bugs.md`, or a bug in rgw-go, or a test dropped from the
+pr set. `--selection` and `--gate-only` keep the gate-only tests a run of the
+pr set leaves out from showing as missing; a run of the gate set needs
+neither.
 
 ## go-ceph's rgw/admin suite
 

@@ -68,18 +68,21 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	pf.String("config", "", "config file to read after flags and environment")
 	pf.String("log-level", "info", "log level: debug, info, warn, or error (S3TESTS_LOG_LEVEL)")
 	pf.String("log-format", "json", "log format: json or text (S3TESTS_LOG_FORMAT)")
-	pf.String("lists", defaultLists, "the directory of "+MarkersFile+", the deselect lists and the include lists "+
-		"(S3TESTS_LISTS)")
+	pf.String("lists", defaultLists, "the directory of "+MarkersFile+", the deselect lists, the include lists and "+
+		GateOnlyFile+" (S3TESTS_LISTS)")
 	cmd.AddCommand(newExprCmd(v), newSelectCmd(v), newHashCmd(v))
 	return cmd
 }
 
 func newExprCmd(v *viper.Viper) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "expr [--lists DIR] [--tests FILE]",
+		Use:   "expr [--lists DIR] [--set pr|gate] [--tests FILE]",
 		Short: "Print the pytest -m expression that leaves out " + MarkersFile + "'s markers",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if _, err := readSet(v); err != nil {
+				return err
+			}
 			in, err := readTestsInput(v)
 			if err != nil {
 				return err
@@ -96,6 +99,8 @@ func newExprCmd(v *viper.Viper) *cobra.Command {
 	}
 	cmd.Flags().String("tests", "", "a TESTS file to refuse now, as select would, when it is missing "+
 		"or names no test (S3TESTS_TESTS)")
+	cmd.Flags().String("set", string(SetGate), "a set to refuse now, as select would, when it is neither pr "+
+		"nor gate (S3TESTS_SET)")
 	return cmd
 }
 
@@ -120,10 +125,14 @@ func newHashCmd(v *viper.Viper) *cobra.Command {
 
 func newSelectCmd(v *viper.Viper) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "select [--lists DIR] [--tests FILE] [--unfiltered FILE] <COLLECTION",
+		Use:   "select [--lists DIR] [--set pr|gate] [--tests FILE] [--unfiltered FILE] <COLLECTION",
 		Short: "Print the node ids of the set, from pytest --collect-only -q's output on stdin",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			set, err := readSet(v)
+			if err != nil {
+				return err
+			}
 			deselect, err := ReadDeselect(v.GetString("lists"))
 			if err != nil {
 				return err
@@ -132,11 +141,15 @@ func newSelectCmd(v *viper.Viper) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			gateOnly, err := ReadGateOnly(v.GetString("lists"))
+			if err != nil {
+				return err
+			}
 			in, err := readTestsInput(v)
 			if err != nil {
 				return err
 			}
-			in.Deselect, in.Include = deselect, include
+			in.Deselect, in.Include, in.GateOnly, in.Set = deselect, include, gateOnly, set
 			if in.Unfiltered, err = readUnfiltered(v); err != nil {
 				return err
 			}
@@ -145,20 +158,40 @@ func newSelectCmd(v *viper.Viper) *cobra.Command {
 				return fmt.Errorf("reading the collection: %w", err)
 			}
 			in.Collected = strings.Split(string(collection), "\n")
-			ids, err := Select(in)
+			ids, gateOnlyIDs, err := SelectSets(in)
 			if err != nil {
 				return err
 			}
-			slog.InfoContext(cmd.Context(), "selected the parity set",
-				slog.Int("selected", len(ids)), slog.Int("collected", len(collectedIDs(in.Collected))))
+			if path := v.GetString("gate-only-ids"); path != "" {
+				if err := writeFile(path, gateOnlyIDs); err != nil {
+					return err
+				}
+			}
+			slog.InfoContext(cmd.Context(), "selected the parity set", slog.String("set", string(set)),
+				slog.Int("selected", len(ids)), slog.Int("gate_only", len(gateOnlyIDs)),
+				slog.Int("collected", len(collectedIDs(in.Collected))))
 			return write(cmd.OutOrStdout(), ids...)
 		},
 	}
+	cmd.Flags().String("gate-only-ids", "", "a file to write the node ids of the gate set's tests that "+GateOnlyFile+
+		" names to, a line each, whichever set is selected (S3TESTS_GATE_ONLY_IDS)")
+	cmd.Flags().String("set", string(SetGate), "the set: gate, or pr, the gate set less the tests "+GateOnlyFile+
+		" names (S3TESTS_SET)")
 	cmd.Flags().String("tests", "", "a file of the node ids or base ids to run alone, a line each, "+
 		"each of which the set must hold (S3TESTS_TESTS)")
 	cmd.Flags().String("unfiltered", "", "a file of pytest --collect-only -q's output without the marker "+
 		"expression, which holds the tests the include lists name (S3TESTS_UNFILTERED)")
 	return cmd
+}
+
+// readSet returns the set the set key names, pr or gate.
+func readSet(v *viper.Viper) (Set, error) {
+	switch set := Set(v.GetString("set")); set {
+	case SetPR, SetGate:
+		return set, nil
+	default:
+		return "", fmt.Errorf("--set must be %s or %s, not %q", SetPR, SetGate, string(set))
+	}
 }
 
 // readUnfiltered returns the lines of the collection file the unfiltered key
@@ -200,6 +233,18 @@ func write(w io.Writer, lines ...string) error {
 	}
 	if _, err := io.WriteString(w, b.String()); err != nil {
 		return fmt.Errorf("writing the output: %w", err)
+	}
+	return nil
+}
+
+// writeFile writes lines to the file at path, each followed by a newline.
+func writeFile(path string, lines []string) error {
+	var b strings.Builder
+	if err := write(&b, lines...); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil { //nolint:gosec // a run's output, read by all
+		return fmt.Errorf("writing %s: %w", path, err)
 	}
 	return nil
 }

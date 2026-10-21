@@ -51,7 +51,8 @@ func layFrozenLists(dir, from string) {
 }
 
 // layLists writes text into the first of the deselect lists the command reads
-// in dir, and leaves the others and the include lists empty.
+// in dir, and leaves the others, the include lists and the gate-only list
+// empty.
 func layLists(dir, text string) {
 	for i, name := range selection.DeselectLists {
 		var data []byte
@@ -61,6 +62,12 @@ func layLists(dir, text string) {
 		Expect(os.WriteFile(filepath.Join(dir, name), data, 0o600)).To(Succeed())
 	}
 	layInclude(dir, "")
+	layGateOnly(dir, "")
+}
+
+// layGateOnly writes text into the gate-only list in dir.
+func layGateOnly(dir, text string) {
+	Expect(os.WriteFile(filepath.Join(dir, selection.GateOnlyFile), []byte(text), 0o600)).To(Succeed())
 }
 
 // layInclude writes text into the first of the include lists the command
@@ -313,5 +320,134 @@ var _ = Describe("the s3tests command", func() {
 			Expect(status).To(Equal(1))
 			Expect(stdout).To(BeEmpty())
 		})
+	})
+
+	Describe("given a gate-only list", func() {
+		var dir string
+
+		BeforeEach(func() {
+			dir = emptyLists()
+			layGateOnly(dir, "# waits for time to pass\n"+s3+"test_b # sleeps\n")
+		})
+
+		// selected returns select's exit status and the ids it prints for a
+		// collection of test_a, test_b and test_c, the gate-only line test_b
+		// and args.
+		selected := func(ctx context.Context, args ...string) (int, string) {
+			status, stdout, stderr := run(ctx, s3+"test_a\n"+s3+"test_b\n"+s3+"test_c\n",
+				append([]string{"select", "--lists", dir}, args...)...)
+			Expect(status).To(BeNumerically("<=", 1), stderr)
+			return status, stdout
+		}
+
+		It("selects the pr set, without the gate-only tests, under --set pr", func(ctx SpecContext) {
+			status, stdout := selected(ctx, "--set", "pr")
+			Expect(status).To(Equal(0))
+			Expect(stdout).To(Equal(s3 + "test_a\n" + s3 + "test_c\n"))
+		})
+
+		It("selects the gate set under --set gate, and when no set is given", func(ctx SpecContext) {
+			for _, args := range [][]string{{"--set", "gate"}, nil} {
+				status, stdout := selected(ctx, args...)
+				Expect(status).To(Equal(0), "args %v", args)
+				Expect(stdout).To(Equal(s3+"test_a\n"+s3+"test_b\n"+s3+"test_c\n"), "args %v", args)
+			}
+		})
+
+		It("refuses a gate-only line that names no test of the gate set, and exits 1", func(ctx SpecContext) {
+			layGateOnly(dir, s3+"test_gone\n")
+			status, stdout, stderr := run(ctx, s3+"test_a\n", "select", "--lists", dir, "--set", "gate")
+			Expect(status).To(Equal(1))
+			Expect(stdout).To(BeEmpty())
+			Expect(stderr).To(ContainSubstring(s3 + "test_gone names no test of the gate set"))
+		})
+
+		It("takes the set given over S3TESTS_SET and the config file", func(ctx SpecContext) {
+			setenv("S3TESTS_SET", "pr")
+			_, stdout := selected(ctx)
+			Expect(stdout).To(Equal(s3+"test_a\n"+s3+"test_c\n"), "S3TESTS_SET applies without --set")
+			_, stdout = selected(ctx, "--set", "gate")
+			Expect(stdout).To(Equal(s3 + "test_a\n" + s3 + "test_b\n" + s3 + "test_c\n"))
+
+			Expect(os.Unsetenv("S3TESTS_SET")).To(Succeed())
+			setenv("S3TESTS_CONFIG", writeFile("config.yaml", "set: pr\n"))
+			_, stdout = selected(ctx)
+			Expect(stdout).To(Equal(s3+"test_a\n"+s3+"test_c\n"), "the config file's set applies without --set")
+			_, stdout = selected(ctx, "--set", "gate")
+			Expect(stdout).To(Equal(s3 + "test_a\n" + s3 + "test_b\n" + s3 + "test_c\n"))
+		})
+
+		DescribeTable("writes the gate set's gate-only tests to --gate-only-ids, whichever set it selects",
+			func(ctx SpecContext, set string) {
+				out := filepath.Join(GinkgoT().TempDir(), "run.gate-only.ids")
+				status, _ := selected(ctx, "--set", set, "--gate-only-ids", out)
+				Expect(status).To(Equal(0))
+				Expect(readFile(out)).To(Equal(s3 + "test_b\n"))
+			},
+			Entry("pr", "pr"),
+			Entry("gate", "gate"),
+		)
+
+		It("writes an empty --gate-only-ids file for no gate-only line", func(ctx SpecContext) {
+			layGateOnly(dir, "# none yet\n")
+			out := filepath.Join(GinkgoT().TempDir(), "run.gate-only.ids")
+			status, _ := selected(ctx, "--set", "pr", "--gate-only-ids", out)
+			Expect(status).To(Equal(0))
+			Expect(readFile(out)).To(BeEmpty())
+		})
+
+		It("writes no --gate-only-ids file when it refuses the set", func(ctx SpecContext) {
+			layGateOnly(dir, s3+"test_gone\n")
+			out := filepath.Join(GinkgoT().TempDir(), "run.gate-only.ids")
+			status, _ := selected(ctx, "--set", "pr", "--gate-only-ids", out)
+			Expect(status).To(Equal(1))
+			Expect(out).NotTo(BeAnExistingFile())
+		})
+
+		It("exits 2 for a --gate-only-ids file it cannot write, naming it", func(ctx SpecContext) {
+			out := filepath.Join(GinkgoT().TempDir(), "missing", "run.gate-only.ids")
+			status, stdout, stderr := run(ctx, s3+"test_a\n"+s3+"test_b\n", "select", "--lists", dir, "--gate-only-ids", out)
+			Expect(status).To(Equal(2))
+			Expect(stdout).To(BeEmpty())
+			Expect(stderr).To(ContainSubstring(out))
+		})
+
+		It("takes the --gate-only-ids given, even empty, over S3TESTS_GATE_ONLY_IDS", func(ctx SpecContext) {
+			env := filepath.Join(GinkgoT().TempDir(), "env.ids")
+			setenv("S3TESTS_GATE_ONLY_IDS", env)
+			selected(ctx)
+			Expect(env).To(BeAnExistingFile(), "S3TESTS_GATE_ONLY_IDS applies without --gate-only-ids")
+			Expect(os.Remove(env)).To(Succeed())
+			selected(ctx, "--gate-only-ids", "")
+			Expect(env).NotTo(BeAnExistingFile())
+		})
+
+		It("prints the digest it prints without the list, which leaves gate-only lines out", func(ctx SpecContext) {
+			lists := frozenLists(lists0239625)
+			layGateOnly(lists, s3+"test_x # slow\n")
+			status, stdout, stderr := run(ctx, "", "hash", "--lists", lists)
+			Expect(status).To(Equal(0), stderr)
+			Expect(stdout).To(Equal("999e22cc41a0\n"))
+		})
+	})
+
+	DescribeTable("exits 2 for a set other than pr or gate, naming it",
+		func(ctx SpecContext, args ...string) {
+			status, stdout, stderr := run(ctx, s3+"test_a\n", append(args, "--lists", emptyLists(), "--set", "all")...)
+			Expect(status).To(Equal(2))
+			Expect(stdout).To(BeEmpty())
+			Expect(stderr).To(ContainSubstring(`--set must be pr or gate, not "all"`))
+		},
+		Entry("in expr, before a run changes anything", "expr"),
+		Entry("in select", "select"),
+	)
+
+	It("exits 2 in select for a lists directory without the gate-only list", func(ctx SpecContext) {
+		dir := emptyLists()
+		Expect(os.Remove(filepath.Join(dir, selection.GateOnlyFile))).To(Succeed())
+		status, stdout, stderr := run(ctx, s3+"test_a\n", "select", "--lists", dir)
+		Expect(status).To(Equal(2))
+		Expect(stdout).To(BeEmpty())
+		Expect(stderr).To(ContainSubstring(selection.GateOnlyFile))
 	})
 })

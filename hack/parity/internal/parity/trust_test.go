@@ -12,8 +12,7 @@ import (
 // forkCommit returns a commit of a fork of ceph: a clone that commits on
 // top of ceph's branch and pushes nowhere.
 func forkCommit(ceph *gitRepo) string {
-	fork := &gitRepo{dir: GinkgoT().TempDir()}
-	fork.git("clone", "-q", ceph.dir, ".")
+	fork := cloneGitRepo(ceph.dir)
 	fork.write("s3tests/functional/test_headers.py", "def test_headers_one():\n    assert True\n\n\ndef test_headers_two():\n    assert True\n")
 	return fork.commit("a fork's test")
 }
@@ -80,8 +79,7 @@ var _ = Describe("an s3-tests pin check --base takes in", func() {
 	})
 
 	It("asks the repository, not --clone, which holds the fork's commit", func(ctx SpecContext) {
-		fork := &gitRepo{dir: GinkgoT().TempDir()}
-		fork.git("clone", "-q", f.ceph.dir, ".")
+		fork := cloneGitRepo(f.ceph.dir)
 		fork.write("s3tests/functional/test_headers.py", "def test_headers_one():\n    assert True\n\n\ndef test_headers_two():\n    assert True\n")
 		fc := fork.commit("a fork's test")
 		Expect(fork.git("rev-parse", parity.TrustedBranch)).To(Equal(fc), "the fork's own rgw-go-s3tests holds the commit")
@@ -116,8 +114,7 @@ var _ = Describe("parity pin's new commit", func() {
 			Expect(snapshot(opts)).To(Equal(before))
 		},
 		Entry("a fork's commit", func() (string, string) {
-			fork := &gitRepo{dir: GinkgoT().TempDir()}
-			fork.git("clone", "-q", repo.dir, ".")
+			fork := cloneGitRepo(repo.dir)
 			fork.write("s3tests/functional/test_headers.py", "def test_headers_one():\n    assert True\n\n\ndef test_headers_two():\n    assert True\n")
 			return fork.commit("a fork's test"), fork.dir
 		}, notServed),
