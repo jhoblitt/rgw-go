@@ -2558,16 +2558,6 @@ review and verified against the tree.
   policy", when it is another
   ([rgw_op.cc:3569-3578](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3569-L3578),
   [rgw_op.cc:3797-3806](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3797-L3806)).
-- **A stored lifecycle configuration answers 501 until phase 2.** `GET
-  /{bucket}?lifecycle` loads the bucket and authorizes
-  `s3:GetLifecycleConfiguration` as radosgw's `RGWGetLC` does
-  (`rgw_op.cc:5759-5770` at v19.2.6, `:6405-6416` at v20.2.4), and answers
-  a bucket without `user.rgw.lc` with radosgw's 404
-  NoSuchLifecycleConfiguration (`RGWGetLC_ObjStore_S3`,
-  `rgw_rest_s3.cc:3658-3696` at v19.2.6, `:4139-4177` at v20.2.4). A
-  bucket that carries the attr, empty or not, answers 501 NotImplemented,
-  where radosgw renders the configuration, or answers 500 UnknownError for
-  one that does not decode.
 - **A requested bucket index answers 501 on Tentacle.** Tentacle's
   CreateBucket reads a `BucketIndex` element of `CreateBucketConfiguration`,
   whose `Type` and `NumShards` set the new bucket's index, and refuses a
@@ -6136,10 +6126,29 @@ differ, rgw-go does the following.
   both. This is the correct S3 answer that the design's compatibility rule
   asks for
   (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:284-298`).
-  AWS's answer was not checked against Amazon S3 itself. How
-  GetBucketLifecycleConfiguration answers the empty configuration radosgw
-  stores for such a body is task C6's to decide
-  (`docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md`).
+  AWS's answer was not checked against Amazon S3 itself. The empty
+  configuration radosgw stores for such a body is read as none
+  ("GetBucketLifecycleConfiguration answers a stored configuration without
+  rules with 404", below).
+- **GetBucketLifecycleConfiguration answers a stored configuration without
+  rules with 404.** radosgw's GetBucketLifecycleConfiguration renders
+  whatever `user.rgw.lc` decodes to, so the empty configuration its PUT
+  stores for a body whose root is not LifecycleConfiguration (the entry
+  above) answers 200 with a `LifecycleConfiguration` holding no `Rule`
+  ([rgw_rest_s3.cc:3688-3726](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3688-L3726),
+  [rgw_rest_s3.cc:4139-4177](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4139-L4177)).
+  S3's model never holds a configuration without a rule, its `Rules`
+  required
+  ([api.go:13051-13057](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L13051-L13057)).
+  As the design's compatibility rule asks, reading
+  correctly what radosgw's defect leaves
+  (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:284-298`),
+  rgw-go answers such an attr with radosgw's 404
+  NoSuchLifecycleConfiguration and no message, the answer for a bucket
+  with no configuration (`GetBucketLifecycle.Execute`,
+  `internal/op/lifecycle.go`). The attr is left as stored, and its lc entry
+  too; radosgw's worker finds no rule in it. An attr that does not decode
+  is 500 UnknownError from both.
 - **PutBucketLifecycleConfiguration holds a rule's numbers to S3's
   types.** radosgw keeps every number of a lifecycle rule as its
   element's text (`decode_xml_obj(std::string&)`,

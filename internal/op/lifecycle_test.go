@@ -115,6 +115,8 @@ var _ = Describe("bucket lifecycle ops", func() {
 			Expect(o.Action()).To(Equal(a))
 			Expect(o.OpMask()).To(Equal(mask))
 		},
+		Entry("GetBucketLifecycle, rgw_op.h:1635-1650 at v19.2.7", &op.GetBucketLifecycle{}, "get_lifecycle",
+			policy.S3GetLifecycleConfiguration, op.OpTypeRead),
 		Entry("PutBucketLifecycle, rgw_op.h:1652-1682 at v19.2.7", &op.PutBucketLifecycle{}, "put_lifecycle",
 			policy.S3PutLifecycleConfiguration, op.OpTypeWrite),
 		Entry("DeleteBucketLifecycle, a write authorized as s3:PutLifecycleConfiguration, rgw_op.h:1684-1695 and rgw_op.cc:5790-5802 at v19.2.7",
@@ -159,6 +161,7 @@ var _ = Describe("bucket lifecycle ops", func() {
 			return r
 		}
 
+		getOp := func() op.Op { return &op.GetBucketLifecycle{} }
 		putOp := func() op.Op { return &op.PutBucketLifecycle{} }
 		delOp := func() op.Op { return &op.DeleteBucketLifecycle{} }
 
@@ -195,9 +198,10 @@ var _ = Describe("bucket lifecycle ops", func() {
 				r.Header.Set("Content-Length", strconv.Itoa(len(doc)))
 			}
 		}
-		stored := func(ctx context.Context, _ *op.Request) {
-			f.setBucketAttrs(ctx, map[string][]byte{op.AttrLC: lcAttr(lcExpireConfig())})
+		storedAttr := func(b []byte) func(context.Context, *op.Request) {
+			return func(ctx context.Context, _ *op.Request) { f.setBucketAttrs(ctx, map[string][]byte{op.AttrLC: b}) }
 		}
+		stored := func(ctx context.Context, r *op.Request) { storedAttr(lcAttr(lcExpireConfig()))(ctx, r) }
 		writeFails := func(context.Context, *op.Request) {
 			buckets.PutBucketAttrsStub = func(context.Context, *op.BucketRecord, map[string][]byte, []string) error {
 				seen = append(seen, "write")
@@ -219,6 +223,14 @@ var _ = Describe("bucket lifecycle ops", func() {
 				Expect(op.Run(ctx, mk(), r)).To(MatchError(want))
 				Expect(seen).To(Equal(steps))
 			},
+			Entry("GetBucketLifecycle on a missing bucket, before any permission check", getOp, missing, op.ErrNoSuchBucket, []string{"load"}),
+			Entry("GetBucketLifecycle for a refused requester, before it looks for the attr", getOp, both(stored, refused),
+				op.ErrAccessDenied, []string{"load", "verify"}),
+			Entry("GetBucketLifecycle on a bucket without a configuration", getOp, none, op.ErrNoSuchLifecycleConfiguration, []string{"load", "verify"}),
+			Entry("GetBucketLifecycle on a configuration that does not decode", getOp, storedAttr([]byte{0xff}), op.ErrUnknown,
+				[]string{"load", "verify"}),
+			Entry("GetBucketLifecycle on a configuration without rules", getOp, storedAttr(lcAttr(lifecycle.Configuration{})),
+				op.ErrNoSuchLifecycleConfiguration, []string{"load", "verify"}),
 			Entry("PutBucketLifecycle on a missing bucket, its body unread", putOp, missing, op.ErrNoSuchBucket, []string{"load"}),
 			Entry("PutBucketLifecycle for a refused requester, its body unread", putOp, refused, op.ErrAccessDenied, []string{"load", "verify"}),
 			Entry("PutBucketLifecycle on an indexless bucket, before its Content-MD5, v20.2.4 rgw_op.cc:6594-6599",
@@ -271,22 +283,26 @@ var _ = Describe("bucket lifecycle ops", func() {
 				Expect(seen).To(Equal([]string{"load", "verify"}))
 				Expect(lc.Invocations()).To(BeEmpty())
 			},
+			Entry("GetBucketLifecycle, without read", getOp),
 			Entry("PutBucketLifecycle, without write", putOp),
 			Entry("DeleteBucketLifecycle, without write", delOp),
 		)
 		DescribeTable("authorizes its action against the bucket with the ACL permission op_to_perm gives it",
-			func(ctx SpecContext, mk func() op.Op, steps []string) {
+			func(ctx SpecContext, mk func() op.Op, a policy.Action, perm acl.Permission, steps []string) {
 				stored(ctx, nil)
 				Expect(op.Run(ctx, mk(), request(lcExpireDoc))).To(Succeed())
 				Expect(seen).To(Equal(steps))
 				Expect(authzr.VerifyBucketCallCount()).To(Equal(1))
 				_, r, gotA, gotPerm := authzr.VerifyBucketArgsForCall(0)
 				Expect(r.BucketRec.Info.Bucket.Name).To(Equal("plain"))
-				Expect(gotA).To(Equal(policy.S3PutLifecycleConfiguration))
-				Expect(gotPerm).To(Equal(acl.PermWriteACP))
+				Expect(gotA).To(Equal(a))
+				Expect(gotPerm).To(Equal(perm))
 			},
-			Entry("PutBucketLifecycle, WRITE_ACP", putOp, []string{"load", "verify", "read", "write", "entry"}),
-			Entry("DeleteBucketLifecycle, WRITE_ACP as s3:PutLifecycleConfiguration", delOp, []string{"load", "verify", "write", "entry"}),
+			Entry("GetBucketLifecycle, READ_ACP", getOp, policy.S3GetLifecycleConfiguration, acl.PermReadACP, []string{"load", "verify"}),
+			Entry("PutBucketLifecycle, WRITE_ACP", putOp, policy.S3PutLifecycleConfiguration, acl.PermWriteACP,
+				[]string{"load", "verify", "read", "write", "entry"}),
+			Entry("DeleteBucketLifecycle, WRITE_ACP as s3:PutLifecycleConfiguration", delOp, policy.S3PutLifecycleConfiguration, acl.PermWriteACP,
+				[]string{"load", "verify", "write", "entry"}),
 		)
 	})
 
@@ -305,6 +321,63 @@ var _ = Describe("bucket lifecycle ops", func() {
 		Entry("Squid, whose radosgw stores it (docs/exclusions.md)", denc.Squid),
 		Entry("Tentacle", denc.Tentacle),
 	)
+
+	Describe("GetBucketLifecycle", func() {
+		run := func(ctx context.Context) (*op.GetBucketLifecycle, error) {
+			o := &op.GetBucketLifecycle{}
+			return o, op.Run(ctx, o, f.req(http.MethodGet, "plain", ""))
+		}
+
+		It("answers a bucket without the attr with 404 NoSuchLifecycleConfiguration and no message", func(ctx SpecContext) {
+			Expect(op.AttrLC).To(Equal("user.rgw.lc"), "RGW_ATTR_LC, rgw_common.h:82 at v19.2.7, :87 at v20.2.4")
+			_, err := run(ctx)
+			Expect(err).To(MatchError(op.ErrNoSuchLifecycleConfiguration), "-ENOENT as ERR_NO_SUCH_LC, rgw_rest_s3.cc:3692-3696 and :3711-3712 at v19.2.7")
+			Expect(op.AsError(err)).To(Equal(op.ErrNoSuchLifecycleConfiguration), "send_response sets no message")
+		})
+		It("takes the stored configuration as it decodes", func(ctx SpecContext) {
+			f.setBucketAttrs(ctx, map[string][]byte{op.AttrLC: lcAttr(lcExpireConfig())})
+			o, err := run(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(o.Config).To(Equal(lcExpireConfig()))
+		})
+		It("reads back what PutBucketLifecycle stored", func(ctx SpecContext) {
+			Expect(put(ctx, putReq(lcBody(lcExpireRule("b", "y/", 4), lcExpireRule("a", "x/", 3))))).To(Succeed())
+			o, err := run(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(o.Config.Rules).To(HaveLen(2))
+			Expect([]string{o.Config.Rules[0].ID, o.Config.Rules[1].ID}).To(Equal([]string{"a", "b"}), "rule_map order")
+		})
+		It("ignores the bytes after the configuration, as decode reads no further", func(ctx SpecContext) {
+			f.setBucketAttrs(ctx, map[string][]byte{op.AttrLC: append(lcAttr(lcExpireConfig()), 'x', 'y', 'z')})
+			o, err := run(ctx)
+			Expect(err).NotTo(HaveOccurred(), "rgw_rest_s3.cc:3698-3705 at v19.2.7")
+			Expect(o.Config).To(Equal(lcExpireConfig()))
+		})
+		DescribeTable("answers an attr that does not decode with 500 UnknownError, radosgw's -EIO, which no error row holds",
+			func(ctx SpecContext, b []byte) {
+				f.setBucketAttrs(ctx, map[string][]byte{op.AttrLC: b})
+				_, err := run(ctx)
+				Expect(err).To(MatchError(op.ErrUnknown), "rgw_rest_s3.cc:3700-3704 and rgw_common.cc:352-353 at v19.2.7")
+				Expect(op.AsError(err).Status).To(Equal(http.StatusInternalServerError))
+			},
+			Entry("a truncated one", []byte{0xff}),
+			Entry("an empty one, which is present, so not 404", []byte{}),
+			Entry("one whose compat version is above 1", []byte{2, 2, 4, 0, 0, 0, 0, 0, 0, 0}),
+		)
+		It("answers a configuration without rules, which radosgw's PUT stores for another root, with 404 and no message, where radosgw answers 200",
+			func(ctx SpecContext) {
+				f.setBucketAttrs(ctx, map[string][]byte{op.AttrLC: lcAttr(lifecycle.Configuration{})})
+				_, err := run(ctx)
+				Expect(err).To(MatchError(op.ErrNoSuchLifecycleConfiguration), "docs/exclusions.md")
+				Expect(op.AsError(err)).To(Equal(op.ErrNoSuchLifecycleConfiguration))
+			})
+		It("finds nothing after a PUT whose root is not LifecycleConfiguration, which stores nothing", func(ctx SpecContext) {
+			Expect(put(ctx, putReq(`<s3:LifecycleConfiguration xmlns:s3="http://s3.amazonaws.com/doc/2006-03-01/">`+
+				lcExpireRule("r", "", 1)+`</s3:LifecycleConfiguration>`))).To(MatchError(op.ErrMalformedXML))
+			_, err := run(ctx)
+			Expect(err).To(MatchError(op.ErrNoSuchLifecycleConfiguration))
+		})
+	})
 
 	Describe("PutBucketLifecycle", func() {
 		It("stores the configuration in the lifecycle attr alone, then sets the bucket's entry", func(ctx SpecContext) {

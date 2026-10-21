@@ -14,12 +14,13 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 )
 
-// The lifecycle configuration ops of this file are rgw_op.cc's RGWPutLC and
-// RGWDeleteLC. Each loads the bucket in Init, so a missing bucket is
-// NoSuchBucket before the permission check, and authorizes its action
-// against the bucket, adding the bucket's tags when a policy needs them
-// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5776-L5802 at v19.2.7,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6419-L6445 at v20.2.4).
+// The lifecycle configuration ops of this file are rgw_op.cc's RGWGetLC,
+// RGWPutLC and RGWDeleteLC. Each loads the bucket in Init, so a missing
+// bucket is NoSuchBucket before the permission check, and authorizes its
+// action against the bucket, adding the bucket's tags when a policy needs
+// them
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5762-L5802 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6405-L6445 at v20.2.4).
 // The configuration is the AttrLC attr, and a bucket that holds one has an
 // entry in its lifecycle shard, which Env.Lifecycle keeps. The forward to
 // the metadata master each write makes is a no-op on a single zone, which is
@@ -35,6 +36,70 @@ const (
 	msgLCMD5NotBase64 = "Request header Content-MD5 contains character that is not base64 encoded."
 	msgLCMD5Mismatch  = "The Content-MD5 you specified did not match what we received."
 )
+
+// GetBucketLifecycle is RGWGetLC
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L1635-L1650 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1785-L1801 at v20.2.4),
+// GetBucketLifecycleConfiguration, with RGWGetLC_ObjStore_S3::execute.
+type GetBucketLifecycle struct {
+	// Config is the stored configuration, holding at least one rule.
+	Config lifecycle.Configuration
+}
+
+var _ Op = (*GetBucketLifecycle)(nil)
+
+// Name is RGWGetLC::name.
+func (*GetBucketLifecycle) Name() string { return "get_lifecycle" }
+
+// Action is s3:GetLifecycleConfiguration.
+func (*GetBucketLifecycle) Action() policy.Action { return policy.S3GetLifecycleConfiguration }
+
+// OpMask is RGW_OP_TYPE_READ.
+func (*GetBucketLifecycle) OpMask() uint32 { return OpTypeRead }
+
+// Init loads the bucket.
+func (*GetBucketLifecycle) Init(ctx context.Context, r *Request) error { return loadBucket(ctx, r) }
+
+// VerifyPermission is RGWGetLC::verify_permission.
+func (o *GetBucketLifecycle) VerifyPermission(ctx context.Context, r *Request) error {
+	return verifyBucketAction(ctx, r, o)
+}
+
+// Execute is RGWGetLC_ObjStore_S3::execute
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3688-L3706 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4139-L4157 at v20.2.4):
+// a bucket without the attr is -ENOENT, which send_response answers as
+// ERR_NO_SUCH_LC, 404 NoSuchLifecycleConfiguration with no message
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3708-L3726 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4159-L4177 at v20.2.4).
+// The attr is read as lifecycle.Decode reads it, the bytes after the
+// configuration ignored; one that does not decode, an empty one among
+// them, is -EIO, which no row of the error table holds, so
+// set_req_state_err answers it 500 UnknownError
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L352-L353 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L365-L366 at v20.2.4).
+// An attr that decodes to no rule, which radosgw's PUT stores for a body
+// whose root is not LifecycleConfiguration, is 404
+// NoSuchLifecycleConfiguration too: radosgw answers it 200 with a
+// configuration holding no Rule, which S3 never holds (docs/exclusions.md).
+func (o *GetBucketLifecycle) Execute(_ context.Context, r *Request) error {
+	b, ok := r.BucketRec.Attrs[AttrLC]
+	if !ok {
+		return ErrNoSuchLifecycleConfiguration
+	}
+	c, err := lifecycle.Decode(b)
+	if err != nil {
+		return fmt.Errorf("%w: bucket %s: %w", ErrUnknown, r.BucketRec.Info.Bucket.Name, err)
+	}
+	if len(c.Rules) == 0 {
+		return fmt.Errorf("%w: bucket %s holds a lifecycle configuration without rules", ErrNoSuchLifecycleConfiguration, r.BucketRec.Info.Bucket.Name)
+	}
+	o.Config = c
+	return nil
+}
+
+// Complete does nothing: the handler logs usage once the response is written.
+func (*GetBucketLifecycle) Complete(context.Context, *Request) {}
 
 // PutBucketLifecycle is RGWPutLC
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L1652-L1682 at v19.2.7,
