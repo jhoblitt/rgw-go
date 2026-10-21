@@ -126,7 +126,7 @@ func (e *Evaluator) BuildACL(ctx context.Context, r *op.Request, res acl.Resolve
 		p   acl.Policy
 		err error
 	)
-	if canned != "" || hasGrantHeader(r.Header) {
+	if canned != "" || HasGrantHeader(r.Header) {
 		if !object && strings.Contains(canned, "bucket") {
 			canned = ""
 		}
@@ -198,7 +198,7 @@ func (e *Evaluator) BuildDefaultACL(ctx context.Context, r *op.Request, res acl.
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_env.cc#L22-L25 at v19.2.6
 // and v20.2.4).
 func createS3Policy(ctx context.Context, r *op.Request, res acl.Resolver, canned string, owner, bucketOwner acl.Owner) (acl.Policy, error) {
-	if !hasGrantHeader(r.Header) {
+	if !HasGrantHeader(r.Header) {
 		return acl.Canned(owner, bucketOwner, canned)
 	}
 	if canned != "" {
@@ -223,9 +223,9 @@ func createS3Policy(ctx context.Context, r *op.Request, res acl.Resolver, canned
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5584 at v20.2.4).
 const grantHeaderPrefix = "X-Amz-Grant"
 
-// hasGrantHeader reports whether h holds a header whose name starts with
+// HasGrantHeader reports whether h holds a header whose name starts with
 // x-amz-grant in any case.
-func hasGrantHeader(h http.Header) bool {
+func HasGrantHeader(h http.Header) bool {
 	for k := range h {
 		if len(k) >= len(grantHeaderPrefix) && strings.EqualFold(k[:len(grantHeaderPrefix)], grantHeaderPrefix) {
 			return true

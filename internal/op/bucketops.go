@@ -103,6 +103,9 @@ type CreateBucket struct {
 	BucketIndex bool
 	// ACL is the bucket's policy, whose owner the bucket gets.
 	ACL acl.Policy
+	// NonPrivateACL reports that the request names an ACL other than
+	// private: an x-amz-acl other than private, or a grant header.
+	NonPrivateACL bool
 
 	// Existed is set when the bucket already belonged to the ACL's owner,
 	// which S3 answers as created.
@@ -208,9 +211,10 @@ func checkOwnerMaxBuckets(ctx context.Context, r *Request) error {
 // value InvalidArgument
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2542-L2548 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2695-L2701 at v20.2.4).
-// A bucket with object lock is then authorized as
-// s3:PutBucketObjectLockConfiguration and s3:PutBucketVersioning on the new
-// bucket, as Amazon S3 requires and radosgw does not (verifyCreateActions).
+// As Amazon S3 requires and radosgw does not (verifyCreateActions), an ACL
+// other than private is authorized as s3:PutBucketAcl on the new bucket,
+// before the header is checked, and a bucket with object lock then as
+// s3:PutBucketObjectLockConfiguration and s3:PutBucketVersioning.
 // A requested index is NotImplemented, for a bucket that does not exist,
 // after every check radosgw makes before it creates one
 // (docs/exclusions.md). The location constraint picks the bucket's
@@ -231,6 +235,11 @@ func checkOwnerMaxBuckets(ctx context.Context, r *Request) error {
 func (o *CreateBucket) Execute(ctx context.Context, r *Request) error {
 	if o.Params != nil {
 		if err := o.Params(ctx, o); err != nil {
+			return err
+		}
+	}
+	if o.NonPrivateACL {
+		if err := verifyCreateActions(ctx, r, policy.S3PutBucketAcl); err != nil {
 			return err
 		}
 	}
@@ -305,16 +314,20 @@ func (o *CreateBucket) Execute(ctx context.Context, r *Request) error {
 // verifyCreateActions authorizes each of actions, which Amazon S3 requires
 // beside s3:CreateBucket for what the request asks of the new bucket, as the
 // requester's own policies decide s3:CreateBucket: no bucket policy exists
-// yet. Amazon S3's CreateBucket reference, retrieved 2026-10-21: "if you set
-// x-amz-bucket-object-lock-enabled to true, the
+// yet. Amazon S3's CreateBucket reference, retrieved 2026-10-21: "if you
+// specify an access control list (ACL) and set it to public-read,
+// public-read-write, authenticated-read, or if you explicitly specify any
+// other custom ACLs, both s3:CreateBucket and s3:PutBucketAcl permissions are
+// required", and "if you set x-amz-bucket-object-lock-enabled to true, the
 // s3:PutBucketObjectLockConfiguration and s3:PutBucketVersioning permissions
 // are required". radosgw's verify_permission checks s3:CreateBucket alone
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3215-L3244 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3443-L3472 at v20.2.4;
-// docs/exclusions.md, "CreateBucket with object lock is authorized as
-// s3:PutBucketObjectLockConfiguration and s3:PutBucketVersioning too"). An
-// admin is let through a denial as Run lets one through the permission
-// check.
+// docs/exclusions.md, "CreateBucket with an ACL other than private is
+// authorized as s3:PutBucketAcl too" and "CreateBucket with object lock is
+// authorized as s3:PutBucketObjectLockConfiguration and s3:PutBucketVersioning
+// too"). An admin is let through a denial as Run lets one through the
+// permission check.
 func verifyCreateActions(ctx context.Context, r *Request, actions ...policy.Action) error {
 	for _, a := range actions {
 		err := VerifyUserPermission(ctx, r, a)

@@ -59,12 +59,15 @@ func (e *Evaluator) deniedAsGroupMember(ctx context.Context, id *op.Identity) er
 }
 
 // createBucketActions are the actions Amazon S3 requires beside
-// s3:CreateBucket for a bucket created with object lock, which op.CreateBucket
-// authorizes through VerifyUser on the new bucket. radosgw authorizes
-// s3:CreateBucket alone (docs/exclusions.md, "CreateBucket with object lock
-// is authorized as s3:PutBucketObjectLockConfiguration and
-// s3:PutBucketVersioning too").
+// s3:CreateBucket for a bucket created with object lock or an ACL other than
+// private, which op.CreateBucket authorizes through VerifyUser on the new
+// bucket. radosgw authorizes s3:CreateBucket alone (docs/exclusions.md,
+// "CreateBucket with object lock is authorized as
+// s3:PutBucketObjectLockConfiguration and s3:PutBucketVersioning too" and
+// "CreateBucket with an ACL other than private is authorized as
+// s3:PutBucketAcl too").
 var createBucketActions = map[policy.Action]bool{
+	policy.S3PutBucketAcl:                     true,
 	policy.S3PutBucketObjectLockConfiguration: true,
 	policy.S3PutBucketVersioning:              true,
 }

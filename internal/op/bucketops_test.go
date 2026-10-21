@@ -514,6 +514,68 @@ var _ = Describe("bucket ops", func() {
 				})
 			})
 		})
+		// Amazon S3's CreateBucket reference, retrieved 2026-10-21: "if you
+		// specify an access control list (ACL) and set it to public-read,
+		// public-read-write, authenticated-read, or if you explicitly specify
+		// any other custom ACLs, both s3:CreateBucket and s3:PutBucketAcl
+		// permissions are required".
+		Describe("an ACL other than private", func() {
+			BeforeEach(func() { env.Authz = authz.New(authz.DefaultConfig(denc.Squid)) })
+			nonPrivate := func(o *op.CreateBucket) { o.NonPrivateACL = true }
+			createUnder := func(ctx context.Context, admin bool, edit func(*op.CreateBucket), stmts ...string) error {
+				o := &op.CreateBucket{ACL: policyOf(bob)}
+				if edit != nil {
+					edit(o)
+				}
+				r := request(bob, "plain")
+				r.Identity.Admin = admin
+				r.Identity.Attrs = map[string][]byte{"user.rgw.user-policy": userPolicyAttr(stmts...)}
+				return op.Run(ctx, o, r)
+			}
+			const denyACL = `{"Effect":"Deny","Action":"s3:PutBucketAcl","Resource":"arn:aws:s3:::plain"}`
+			exists := func(ctx context.Context) bool {
+				_, err := store.GetBucket(ctx, "", "plain")
+				return err == nil
+			}
+
+			It("is refused with 403 AccessDenied, creating nothing, when the policy denies s3:PutBucketAcl on the bucket", func(ctx SpecContext) {
+				Expect(createUnder(ctx, false, nonPrivate, denyACL)).To(MatchError(op.ErrAccessDenied))
+				Expect(exists(ctx)).To(BeFalse(), "nothing created")
+			})
+			It("is created when the policy allows s3:PutBucketAcl", func(ctx SpecContext) {
+				Expect(createUnder(ctx, false, nonPrivate,
+					policyStatement("Allow", "s3:CreateBucket", "arn:aws:s3:::plain"),
+					policyStatement("Allow", "s3:PutBucketAcl", "arn:aws:s3:::plain"))).To(Succeed())
+				Expect(exists(ctx)).To(BeTrue())
+			})
+			It("asks for no s3:PutBucketAcl for a private ACL or none", func(ctx SpecContext) {
+				Expect(createUnder(ctx, false, nil, denyACL)).To(Succeed())
+				Expect(exists(ctx)).To(BeTrue())
+			})
+			It("is refused when s3:PutBucketAcl is allowed and an object lock action is not", func(ctx SpecContext) {
+				err := createUnder(ctx, false, func(o *op.CreateBucket) {
+					nonPrivate(o)
+					o.ObjectLock, o.HasObjectLock = "true", true
+				}, policyStatement("Deny", "s3:PutBucketVersioning", "*"))
+				Expect(err).To(MatchError(op.ErrAccessDenied))
+				Expect(exists(ctx)).To(BeFalse(), "nothing created")
+			})
+			It("lets an admin through the denial", func(ctx SpecContext) {
+				Expect(createUnder(ctx, true, nonPrivate, denyACL)).To(Succeed())
+				Expect(exists(ctx)).To(BeTrue())
+			})
+			It("refuses the owner's re-create of a bucket it already owns with that ACL, before finding that the bucket exists", func(ctx SpecContext) {
+				Expect(createUnder(ctx, false, nonPrivate,
+					policyStatement("Allow", "s3:CreateBucket", "arn:aws:s3:::plain"),
+					policyStatement("Allow", "s3:PutBucketAcl", "arn:aws:s3:::plain"))).To(Succeed())
+				before, err := store.GetBucket(ctx, "", "plain")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(createUnder(ctx, false, nonPrivate, denyACL)).To(MatchError(op.ErrAccessDenied), "radosgw answers it 200, rgw_rest_s3.cc:2554-2555 at v19.2.7")
+				after, err := store.GetBucket(ctx, "", "plain")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(after).To(Equal(before), "the record unchanged")
+			})
+		})
 		Describe("a requested bucket index", func() {
 			index := func(o *op.CreateBucket) { o.BucketIndex = true }
 			It("answers NotImplemented and creates nothing", func(ctx SpecContext) {
