@@ -20,6 +20,7 @@ var routeReads = []struct {
 	{"SigV2's presigned route, which signs the query's meta and no encryption setting", op.RouteSigV2Query, true, false},
 	{"SigV4 in the header, whose canonical query names every parameter", op.RouteSigV4Header, true, true},
 	{"presigned SigV4", op.RouteSigV4Query, true, true},
+	{"a POST object form, whose signature covers its policy alone", op.RouteBrowserUpload, false, false},
 }
 
 var _ = Describe("AuthRoute", func() {

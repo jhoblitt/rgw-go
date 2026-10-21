@@ -19,14 +19,29 @@ type Authenticator interface {
 	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5899-L5969 at v19.2.6,
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6466-L6540 at v20.2.4).
 	Authenticate(ctx context.Context, r *http.Request, payloads op.PayloadForms) (*op.AuthResult, error)
+	// AuthenticateBrowserUpload resolves a POST object form's credentials,
+	// which radosgw authenticates inside the op once the request has
+	// authenticated as anonymous (get_policy's Strategy::apply,
+	// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3190-L3193 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3326-L3329 at v20.2.4).
+	// The caller applies the result with ApplyAuth, so its identity and its
+	// route replace the anonymous ones. It never answers the anonymous
+	// identity: a form it does not authenticate is refused.
+	AuthenticateBrowserUpload(ctx context.Context, creds op.BrowserUploadCredentials) (*op.AuthResult, error)
 }
 
-// AuthenticatorFunc adapts a function to Authenticator.
+// AuthenticatorFunc adapts a function to Authenticator's Authenticate.
 type AuthenticatorFunc func(ctx context.Context, r *http.Request, payloads op.PayloadForms) (*op.AuthResult, error)
 
 // Authenticate calls f.
 func (f AuthenticatorFunc) Authenticate(ctx context.Context, r *http.Request, payloads op.PayloadForms) (*op.AuthResult, error) {
 	return f(ctx, r, payloads)
+}
+
+// AuthenticateBrowserUpload answers ErrNotImplemented: the function
+// authenticates requests, and no form's credentials.
+func (AuthenticatorFunc) AuthenticateBrowserUpload(context.Context, op.BrowserUploadCredentials) (*op.AuthResult, error) {
+	return nil, op.ErrNotImplemented
 }
 
 // AnonymousOnly authenticates unsigned requests as anonymous and answers
@@ -56,4 +71,10 @@ func (AnonymousOnly) Authenticate(_ context.Context, r *http.Request, _ op.Paylo
 		}
 	}
 	return &op.AuthResult{Identity: op.Anonymous(), PayloadSHA256: "UNSIGNED-PAYLOAD", Route: op.RouteAnonymous}, nil
+}
+
+// AuthenticateBrowserUpload answers ErrNotImplemented to every form, as
+// Authenticate answers every request carrying credentials.
+func (AnonymousOnly) AuthenticateBrowserUpload(context.Context, op.BrowserUploadCredentials) (*op.AuthResult, error) {
+	return nil, op.ErrNotImplemented
 }
