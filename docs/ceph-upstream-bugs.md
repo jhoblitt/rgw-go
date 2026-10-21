@@ -368,6 +368,11 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's lifecycle lets a transition to an object's own class mask its due expiration](#radosgws-lifecycle-lets-a-transition-to-an-objects-own-class-mask-its-due-expiration) | pending | pending | ✓ |
 | [radosgw's lifecycle headers name the day after the worker acts for an object written in a day's first second](#radosgws-lifecycle-headers-name-the-day-after-the-worker-acts-for-an-object-written-in-a-days-first-second) | pending | pending | ✓ |
 | [radosgw's lifecycle finds nothing due on a day whose local midnight a zone skips without a DST change](#radosgws-lifecycle-finds-nothing-due-on-a-day-whose-local-midnight-a-zone-skips-without-a-dst-change) | pending | pending | ✓ |
+| [radosgw takes a system key's rgwx-uid from a query its signature does not cover](#radosgw-takes-a-system-keys-rgwx-uid-from-a-query-its-signature-does-not-cover) | pending | pending | ✓ |
+| [radosgw takes a SigV4 browser upload's credential without a slash as both its key id and its scope](#radosgw-takes-a-sigv4-browser-uploads-credential-without-a-slash-as-both-its-key-id-and-its-scope) | pending | pending | ✓ |
+| [radosgw compares a request's signature in non-constant time](#radosgw-compares-a-requests-signature-in-non-constant-time) | pending | pending | ✓ |
+| [radosgw logs the signature it expects for a request before it refuses it](#radosgw-logs-the-signature-it-expects-for-a-request-before-it-refuses-it) | pending | pending | ✓ |
+| [radosgw logs a SigV4 request's signing key at debug level 10](#radosgw-logs-a-sigv4-requests-signing-key-at-debug-level-10) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -9294,6 +9299,19 @@ Every new entry adds its row to this table, in document order.
     ([rgw_auth.cc:534](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L534)),
     which the suspended check then reads
     ([rgw_process.cc:374-376](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L374-L376)).
+  - At v20.2.4 the preflight's grant passes `false /* is_impersonating */`
+    ([rgw_rest_s3.cc:6929](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6929)),
+    as the ordinary path's `is_impersonating` argument does
+    ([rgw_rest_s3.cc:6985](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6985));
+    only the `rgwx-perm-check-uid` path passes `true /* is_impersonating */`
+    ([rgw_rest_s3.cc:6976](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6976)).
+    So `SysReqApplier::load_acct_info` takes the preflight's `rgwx-uid`,
+    and a system user's preflight identity answers `is_admin()` true
+    ([rgw_auth_filters.h:284-290](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_filters.h#L284-L290)).
+    `STSEngine` keeps its own `is_impersonating`
+    ([rgw_rest_s3.cc:7076](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L7076),
+    [rgw_rest_s3.cc:7100](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L7100) and
+    [rgw_rest_s3.cc:7191](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L7191)).
 - **Impact:** a preflight with a system user's access key id, any
   signature and `?rgwx-uid=` naming a user or an account is 403
   AccessDenied when that user or account does not load and is served
@@ -20570,3 +20588,456 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** task C2's re-review of fix round 1, 2026-10-20; confirmed by
   task C2's fix round 2 with the probe and the scan.
+
+## radosgw takes a system key's rgwx-uid from a query its signature does not cover
+
+- **Kind:** defect, possibly security-relevant, conditional on a deployment
+  that signs presigned URLs or POST object forms with a system user's key,
+  a key meant for multisite peers. Whoever holds such a presigned SigV2 URL
+  or form can name, in the query, the user or account the request runs as
+  the owner of, and on SigV2 the tenant whose bucket it reaches, since
+  neither signature can cover the query's `rgwx-` arguments. Found by us.
+  Unreproduced: derived from the source. Open question, which gates the
+  triage: does any shipped tool or common operator practice presign URLs
+  or build POST forms with a system key?
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - The sink is `SysReqApplier`'s read of `rgwx-uid`.
+    `AWSAuthStrategy::create_apl_local` wraps every identity the local
+    engine grants in `SysReqApplier`
+    ([rgw_auth_s3.h:178-191](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.h#L178-L191),
+    [rgw_auth_s3.h:179-193](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.h#L179-L193)).
+    For a system user, `SysReqApplier::load_acct_info` reads `rgwx-uid`
+    from the request's query with `sys_get` and makes the user or account
+    it names the effective owner, and its tenant the effective tenant. A
+    name that does not load throws -EACCES, so the target must exist
+    ([rgw_auth_filters.h:283-317](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_filters.h#L283-L317),
+    [rgw_auth_filters.h:305-345](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_filters.h#L305-L345)).
+    - At v19.2.7 `load_acct_info` returns nothing and reads the named user
+      for its display name alone, so the request keeps the system user's
+      record and only the owner and the tenant change.
+    - At v20.2.4 it returns the named user's record, which `Strategy::apply`
+      makes the request's user
+      ([rgw_auth.cc:534](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L534)),
+      and it skips the read for an identity that is impersonating.
+  - `RGWHTTPArgs::append` files every `rgwx-` argument into a map of its
+    own at parse time, unconditionally, and `sys_get` reads that map
+    directly, with no visibility gate, during authentication and before
+    `modify_request_state` makes the request a system request with every
+    `rgwx-` argument visible
+    ([rgw_common.cc:920-924](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L920-L924)
+    and
+    [rgw_common.cc:1059-1069](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1059-L1069),
+    [rgw_common.cc:933-937](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L933-L937)
+    and
+    [rgw_common.cc:1072-1082](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1072-L1082);
+    `modify_request_state`,
+    [rgw_auth_filters.h:319-332](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_filters.h#L319-L332),
+    [rgw_auth_filters.h:348-359](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_filters.h#L348-L359)).
+  - `Strategy::apply` makes the effective owner the request's owner
+    ([rgw_auth.cc:534](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L534),
+    [rgw_auth.cc:549](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L549)).
+    `postauth_init`, which runs after authentication, resolves the
+    request's bucket in the identity's tenant
+    ([rgw_rest_s3.cc:4991-4998](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4991-L4998),
+    [rgw_rest_s3.cc:5521-5528](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5521-L5528)),
+    which `SysReqApplier::get_tenant` answers with the named one's
+    ([rgw_auth_filters.h:262-267](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_filters.h#L262-L267),
+    [rgw_auth_filters.h:277-282](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_filters.h#L277-L282)).
+  - A failed permission check is then overridden, by a different rule on
+    each release:
+    - v19.2.7 overrides any failure when `s->system_request` is set
+      ([rgw_process.cc:228-236](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L228-L236)).
+    - v20.2.4 overrides only EACCES, EPERM and ERR_AUTHORIZATION, and only
+      for an identity whose `is_admin()` is true: "system requests may
+      impersonate another user/role for permission checks so only rely on
+      is_admin() to override permissions"
+      ([rgw_process.cc:228-239](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L228-L239)).
+      `SysReqApplier::is_admin()` is true for a system identity that is not
+      impersonating
+      ([rgw_auth_filters.h:284-290](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_filters.h#L284-L290)),
+      and only the `rgwx-perm-check-uid` branch of `LocalEngine::authenticate`
+      builds one that is: it passes `true /* is_impersonating */`
+      ([rgw_rest_s3.cc:6976](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6976)),
+      where the ordinary branch passes `false /* is_impersonating */`
+      ([rgw_rest_s3.cc:6985](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6985)).
+      Naming an effective owner with `rgwx-uid` is not impersonation, so the
+      narrowing restricts which errors are overridden, not who gets the
+      override: it is a fix scoped to impersonation proper, and an
+      `rgwx-uid` request still gets it.
+    - At both releases the override is what grants the access; only its
+      gate and the errors it covers differ. v20.2.4's swap of the request's
+      user does not take its place: `LocalApplier` matches ACL grants and
+      ownership against the
+      `user_info` it copied when it was built, the system user's
+      ([rgw_auth.cc:1052-1076](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L1052-L1076),
+      [rgw_auth.cc:1162](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L1162)),
+      so the identity still checks permissions as the system user, and the
+      override is what lets the request through on both releases.
+  - SigV4's canonical query names every argument, `rgwx-` ones included, so
+    a SigV4 signature covers `rgwx-uid`. Two signatures cannot:
+    - SigV2: the argument is invisible to its signer, not merely left out.
+      `get_canon_resource` writes a fixed allowlist of signed sub-resources,
+      and `get_v2_qs_map` reads `get_params()`, the ordinary arguments,
+      which an `rgwx-` argument never enters, for their `x-amz-meta-*` and
+      `x-amz-security-token` alone
+      ([rgw_auth_s3.cc:92-124](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L92-L124)
+      and
+      [rgw_auth_s3.cc:175-187](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L175-L187),
+      [rgw_auth_s3.cc:93-125](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L93-L125)
+      and
+      [rgw_auth_s3.cc:176-188](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L176-L188)).
+      Neither tag has an option that turns SigV2 off.
+    - A POST object form's signature covers its policy document alone
+      (`AWSBrowserUploadAbstractor`,
+      [rgw_rest_s3.cc:6157-6212](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6157-L6212),
+      [rgw_rest_s3.cc:6687-6742](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6687-L6742)).
+      `get_policy` authenticates it through the same strategy and then
+      builds the stored object's ACL for the request's owner
+      ([rgw_rest_s3.cc:3190-3193](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3190-L3193)
+      and
+      [rgw_rest_s3.cc:3246-3247](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3246-L3247),
+      [rgw_rest_s3.cc:3326-3329](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3326-L3329)
+      and
+      [rgw_rest_s3.cc:3382-3383](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3382-L3383)),
+      and `RGWPostObj::execute` writes the object for that owner
+      ([rgw_op.cc:4663-4665](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4663-L4665),
+      [rgw_op.cc:4957-4959](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4957-L4959)).
+      The form's bucket was resolved before the form authenticates, by
+      `postauth_init` under the request's first, anonymous identity, so a
+      form changes the owner and not the tenant.
+- **Impact:** a presigned URL and a POST form are credentials their signer
+  hands to someone else, held to what the signature covers.
+  - A system key's presigned SigV2 URL for `/b/k`, with `?rgwx-uid=tb$u`
+    added for any user `u` of tenant `tb` that loads, reaches tenant `tb`'s
+    bucket `b` and key `k` past the permission check: a cross-tenant read
+    with a presigned GET, the common kind, for which an owner change means
+    nothing, and a cross-tenant write with a PUT. The request is a system
+    request, so every other `rgwx-` argument the holder adds is read as a
+    multisite peer's would be.
+  - A system key's POST form lets its holder name the owner of the object
+    it stores, whose ACL grant gives that owner full control; on v20.2.4
+    the request also runs with that user's record.
+  - Resending a header-signed SigV2 system request within its skew window,
+    with an added `rgwx-uid`, needs a non-default configuration. radosgw's
+    own multisite client signs SigV2 only when `rgw_s3_client_max_sig_ver`
+    is 1, 2 or 3
+    ([rgw_rest_client.cc:268-280](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_client.cc#L268-L280),
+    [rgw_rest_client.cc:274-286](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_client.cc#L274-L286)),
+    and `rgw_s3_client_max_sig_ver` defaults to -1
+    ([rgw.yaml.in:1844-1849](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L1844-L1849),
+    [rgw.yaml.in:1926-1931](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L1926-L1931)),
+    so on a default multisite deployment sync traffic is SigV4.
+- **Shared sink:** `SysReqApplier`'s `rgwx-uid` read through `sys_get`,
+  which bypasses the gate that keeps `rgwx-` arguments hidden until the
+  request is a system one. Every scheme that does not canonicalise the
+  whole query inherits from it an unsigned control of ownership, and SigV4
+  alone canonicalises it. This entry is the third door onto that read:
+  - "[radosgw's signed CORS preflight takes a system key's rgwx-uid
+    unverified](#radosgws-signed-cors-preflight-takes-a-system-keys-rgwx-uid-unverified)"
+    reaches it through a preflight whose signature is never compared;
+  - "[Tentacle's radosgw never applies rgwx-perm-check-uid, so a user-mode
+    sync pipe's source read goes
+    unchecked](#tentacles-radosgw-never-applies-rgwx-perm-check-uid-so-a-user-mode-sync-pipes-source-read-goes-unchecked)"
+    meets the same gate from the other side, a read that cannot see its
+    argument.
+
+  The fix belongs at the read: refuse an `rgwx-` argument unless the
+  authenticating scheme signed it. The same rule bounds the one-word fix
+  the second entry proposes, reading `rgwx-perm-check-uid` with `sys_get`,
+  which would otherwise take that argument unsigned on SigV2 and on a form
+  too.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** differs for a POST object form: its identity takes nothing
+  from the query (`docs/exclusions.md`, "A browser upload's identity takes
+  nothing from the query"). For SigV2 it reproduces the defect: a system
+  user's SigV2 request, header-signed or presigned, takes its `rgwx-uid`
+  (`internal/auth/verifier.go:115-133`, `internal/auth/identity.go:53-77`).
+- **Upstream:** pending: sent to rgw-bug-reproduction, which sends it
+  upstream as an addendum with the preflight entry above.
+- **Found:** phase 2 task BC-31, 2026-10-20, tracing what of the request
+  the browser-upload strategy's identity reads, and then which signatures
+  cover the `rgwx-uid` it reads; the cross-tenant reach by the task's
+  review, and the sink, the release split and the bounds by
+  rgw-bug-reproduction's triage, the same day. Derived from the source, not
+  reproduced.
+
+## radosgw takes a SigV4 browser upload's credential without a slash as both its key id and its scope
+
+- **Kind:** defect, cosmetic, not security-relevant: the form's signature
+  must still be made with the key's secret. Found by us. Unreproduced:
+  derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `AWSBrowserUploadAbstractor::get_auth_data_v4` takes the key id as
+    `credential.substr(0, pos)` and the scope as `credential.substr(pos + 1)`
+    with `pos` the credential's first `/`; without one `pos` is `npos`, so
+    both are the whole credential
+    ([rgw_rest_s3.cc:6176-6181](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6176-L6181),
+    [rgw_rest_s3.cc:6706-6711](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6706-L6711)).
+  - `parse_cred_scope` then reads that scope, which has no `/` either, as
+    the date, the region and the service alike
+    ([rgw_auth_s3.cc:984-1004](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L984-L1004),
+    [rgw_auth_s3.cc:939-959](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L939-L959)).
+- **Impact:** a form whose `x-amz-credential` is a bare key id, signed under
+  the signing key of that key id as its date, region and service, is
+  accepted where AWS's credential is a key id followed by its scope. No SDK
+  signs a form so.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** differs: it refuses such a form with 403 AccessDenied
+  (`docs/exclusions.md`, "A SigV4 browser upload's credential must hold a
+  slash").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task BC-31, 2026-10-20, transcribing the browser-upload
+  abstractor. Derived from the source, not reproduced.
+
+## radosgw compares a request's signature in non-constant time
+
+- **Kind:** defect, possibly security-relevant, conditional: a hardening
+  finding with an unestablished attack. The local and STS engines compare
+  the client's signature, a secret-derived authenticator, with a byte
+  comparison that can stop at the first byte that differs. A remote timing
+  attack on a short HMAC compared so, over HTTP through a frontend, is a
+  very high bar, and nothing establishes that one is practical. Found by
+  us. Unreproduced: derived from the source; no timing measured.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `LocalEngine::authenticate` computes the server's signature and
+    compares it with `signature.compare(server_signature)`
+    ([rgw_rest_s3.cc:6403-6405](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6403-L6405),
+    [rgw_rest_s3.cc:6933-6935](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6933-L6935)),
+    and `STSEngine::authenticate` does the same
+    ([rgw_rest_s3.cc:6559-6561](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6559-L6561),
+    [rgw_rest_s3.cc:7126-7128](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L7126-L7128)).
+    `signature` is a `std::string_view`, whose `compare` is a
+    lexicographic comparison of the bytes.
+  - Every signed S3 request reaches one of them, SigV2 and SigV4,
+    header-signed, presigned and POST forms alike, a form with its policy as
+    the string to sign (`AWSBrowserUploadAbstractor`,
+    [rgw_rest_s3.cc:6157-6212](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6157-L6212),
+    [rgw_rest_s3.cc:6687-6742](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6687-L6742)).
+  - ceph's own sources at v20.2.4 have no constant-time comparison helper:
+    src/common, src/include, src/rgw, src/auth, src/crypto, src/mon and
+    src/msg were searched for one. OpenSSL's `CRYPTO_memcmp` is one a fix
+    can reuse. rgw already includes the header that declares it
+    (`openssl/crypto.h`,
+    [rgw_http_client_curl.cc:14](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_http_client_curl.cc#L14)).
+- **Impact:** none established. If timing could be measured finely enough,
+  an attacker could learn, byte by byte, the signature the server expects
+  for a string to sign of its choosing, and so forge a request, or a POST
+  form over a policy of its own, for a known key id without the secret.
+- **Shared sink:** the handling of the signature at the point of
+  comparison, the same call whose operands "[radosgw logs the signature it
+  expects for a request before it refuses
+  it](#radosgw-logs-the-signature-it-expects-for-a-request-before-it-refuses-it)"
+  logs on the next lines.
+- **Releases:** v19.2.7 and v20.2.4; present at ceph d8552606
+  (2026-10-14, `server_signature` compared at
+  [rgw_rest_s3.cc:7327](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_rest_s3.cc#L7327)
+  and
+  [rgw_rest_s3.cc:7521](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_rest_s3.cc#L7521)).
+- **rgw-go:** unaffected: `authData.verify` compares with
+  `subtle.ConstantTimeCompare` on the header path, presigned URLs and POST
+  forms alike (`internal/auth/sigv4.go:79-95`). No client sees a
+  difference, so no exclusion.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task BC-31's review, 2026-10-20, transcribing
+  `LocalEngine::authenticate` for the browser-upload path; written as a
+  hardening finding by rgw-bug-reproduction's triage the same day. Derived
+  from the source, not reproduced.
+
+## radosgw logs the signature it expects for a request before it refuses it
+
+- **Kind:** defect, possibly security-relevant, conditional on two
+  non-default preconditions: debug_rgw raised to 15 and read access to the
+  log. The local engine logs the signature it expects beside the client's
+  before it decides, so a refused request logs the correct signature for
+  the key it named: an oracle. Raising debug_rgw to 15 silently converts
+  log-read access into credential-forgery access. Found by us.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `LocalEngine::authenticate` logs four lines at level 15, the string to
+    sign, the server signature, the client's and the result of the compare,
+    and only then refuses a mismatch with `ERR_SIGNATURE_NO_MATCH`
+    ([rgw_rest_s3.cc:6407-6416](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6407-L6416),
+    [rgw_rest_s3.cc:6937-6946](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6937-L6946)).
+    `STSEngine::authenticate` repeats the four lines before its own refusal
+    ([rgw_rest_s3.cc:6563-6572](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6563-L6572),
+    [rgw_rest_s3.cc:7130-7139](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L7130-L7139)).
+  - The string to sign goes through `rgw::crypt_sanitize::log_content`,
+    which suppresses it when it holds an SSE-C key
+    ([rgw_crypt_sanitize.cc:77-85](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt_sanitize.cc#L77-L85),
+    [rgw_crypt_sanitize.cc:89-98](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt_sanitize.cc#L89-L98)),
+    while the server signature on the next line is streamed raw.
+  - Every signed S3 request reaches these lines, a POST object form's
+    included, whose string to sign is its policy alone
+    (`AWSBrowserUploadAbstractor`,
+    [rgw_rest_s3.cc:6157-6212](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6157-L6212),
+    [rgw_rest_s3.cc:6687-6742](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6687-L6742)).
+  - debug_rgw defaults to 1/5 (`SUBSYS(rgw, 1, 5)`,
+    [subsys.h:62](https://github.com/ceph/ceph/blob/v19.2.7/src/common/subsys.h#L62),
+    [subsys.h:62](https://github.com/ceph/ceph/blob/v20.2.4/src/common/subsys.h#L62)).
+    An entry is gathered when its level is at most the larger of the log
+    level and the gather level (`m_gather_levels`,
+    [SubsystemMap.h:37-41](https://github.com/ceph/ceph/blob/v19.2.7/src/log/SubsystemMap.h#L37-L41)
+    and
+    [SubsystemMap.h:88-91](https://github.com/ceph/ceph/blob/v19.2.7/src/log/SubsystemMap.h#L88-L91),
+    [SubsystemMap.h:37-41](https://github.com/ceph/ceph/blob/v20.2.4/src/log/SubsystemMap.h#L37-L41)
+    and
+    [SubsystemMap.h:88-91](https://github.com/ceph/ceph/blob/v20.2.4/src/log/SubsystemMap.h#L88-L91)),
+    so at the shipped default, max(1, 5) = 5 < 15, the level-15 lines are
+    neither gathered nor emitted, and the default gather level alone does
+    not reach 15. The rule is symmetric: a line at level 4 or 5 is gathered
+    at the shipped default, since its level is at most 5, and the same rule
+    keeps these lines silent unless debug_rgw is raised. A gather level raised to
+    15 or more without the log level, such as 1/20, keeps them in the
+    in-memory ring, which no output writes (`should_log`,
+    [Log.cc:392-397](https://github.com/ceph/ceph/blob/v19.2.7/src/log/Log.cc#L392-L397),
+    [Log.cc:392-397](https://github.com/ceph/ceph/blob/v20.2.4/src/log/Log.cc#L392-L397))
+    until a crash or the admin socket's `log dump` dumps it (`dump_recent`,
+    [ceph_context.cc:678-679](https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_context.cc#L678-L679),
+    [ceph_context.cc:670-671](https://github.com/ceph/ceph/blob/v20.2.4/src/common/ceph_context.cc#L670-L671)).
+- **Impact:** for a reader of such a log:
+  - **On a POST form it is forgery, not replay.** The form's signature
+    covers its policy alone, and the attacker writes the policy. It submits
+    a form naming the victim's access key id, with a policy of its own, an
+    expiry as far off as it likes and whatever conditions it wants, collects
+    the 403, and reads "server signature=" from the log. It then holds a
+    correctly signed POST credential for the victim's account over that
+    policy, valid until the expiry it set.
+  - On any other request it sends the request with any signature, reads the
+    expected one, and resends it as the victim within the skew window, or
+    before a presigned URL expires.
+- **Shared sink:** the handling of the signature at the point of
+  comparison: these lines log the operands of the compare that "[radosgw
+  compares a request's signature in non-constant
+  time](#radosgw-compares-a-requests-signature-in-non-constant-time)"
+  records.
+- **Releases:** v19.2.7 and v20.2.4; present at ceph d8552606
+  (2026-10-14, `ERR_SIGNATURE_NO_MATCH` after the lines at
+  [rgw_rest_s3.cc:7329-7338](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_rest_s3.cc#L7329-L7338)
+  and
+  [rgw_rest_s3.cc:7523-7532](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_rest_s3.cc#L7523-L7532)).
+- **rgw-go:** unaffected: `internal/auth` logs no credential at any level,
+  no secret key, signature, signing key, string to sign or canonical request
+  (`internal/auth/doc.go:5-7`), and the spec "names none of the form's
+  credentials in a refusal or in its log"
+  (`internal/auth/browserupload_test.go`) pins it for a form. No client
+  sees a difference, so no exclusion.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task BC-31's review, 2026-10-20, transcribing
+  `LocalEngine::authenticate` for the browser-upload path; the oracle, the
+  POST forgery and the gather-level check by rgw-bug-reproduction's triage
+  and the task's fix round, the same day. Derived from the source, not
+  reproduced.
+
+## radosgw logs a SigV4 request's signing key at debug level 10
+
+- **Kind:** defect, possibly security-relevant, conditional on debug_rgw
+  raised to 10 and read access to the log. For every SigV4 request and
+  form, radosgw logs the keys it derives from the secret. The first,
+  `date_k`, derives a signing key for any region and any service on that
+  date, `sts` included, without the secret. Found by us. Unreproduced:
+  derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `get_v4_signing_key` logs at level 10 the four products of its
+    derivation, `date_k`, `region_k`, `service_k` and `signing_k`
+    ([rgw_auth_s3.cc:1049-1052](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L1049-L1052),
+    [rgw_auth_s3.cc:1004-1007](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1004-L1007)).
+    The chain: `date_k` is the HMAC-SHA256 of the scope's date under the
+    secret, `region_k` that of the region under `date_k`, `service_k` that
+    of the service under `region_k`, and `signing_k` that of
+    `aws4_request` under `service_k`
+    ([rgw_auth_s3.cc:1041-1047](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L1041-L1047),
+    [rgw_auth_s3.cc:996-1002](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L996-L1002)).
+    So `date_k` is the primary leak: it derives the signing key for any
+    region and service on its date, `sts` included, and not only for the
+    logged request's scope. `signing_k` is the convenience copy for that
+    scope.
+  - `get_v4_signature` logs the signature it computed
+    ([rgw_auth_s3.cc:1085](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L1085),
+    [rgw_auth_s3.cc:1040](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1040)).
+    A digest prints as hex (`sha_digest_t::to_str`,
+    [types.h:612](https://github.com/ceph/ceph/blob/v19.2.7/src/include/types.h#L612)
+    and
+    [types.h:652](https://github.com/ceph/ceph/blob/v19.2.7/src/include/types.h#L652),
+    [types.h:674](https://github.com/ceph/ceph/blob/v20.2.4/src/include/types.h#L674)
+    and
+    [types.h:714](https://github.com/ceph/ceph/blob/v20.2.4/src/include/types.h#L714)).
+  - Every SigV4 request reaches them through the `get_v4_signature`
+    factory the local engine calls, the header path's
+    ([rgw_rest_s3.cc:5889-5894](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5889-L5894),
+    [rgw_rest_s3.cc:6415-6420](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6415-L6420))
+    and a POST form's, `get_v4_signature` too
+    ([rgw_rest_s3.cc:6184-6189](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6184-L6189),
+    [rgw_rest_s3.cc:6714-6719](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6714-L6719)).
+  - How long a logged key stays useful is unsettled. The source shows no
+    cross-check of the credential scope's date against X-Amz-Date:
+    `parse_cred_scope` splits the scope and its date is used only to derive
+    `date_k`
+    ([rgw_auth_s3.cc:984-1004](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L984-L1004),
+    [rgw_auth_s3.cc:939-959](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L939-L959)),
+    and the only checks on time are the skew window around a
+    header-signed request's own date (`is_time_skew_ok` against
+    `RGW_AUTH_GRACE`,
+    [rgw_auth_s3.cc:265-278](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L265-L278)
+    and
+    [rgw_auth_s3.cc:457-459](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L457-L459),
+    [rgw_auth_s3.cc:268-281](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L268-L281)
+    and
+    [rgw_auth_s3.cc:460-462](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L460-L462))
+    and a presigned URL's `X-Amz-Expires`
+    ([rgw_auth_s3.cc:301-318](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L301-L318),
+    [rgw_auth_s3.cc:304-321](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L304-L321)).
+    The registry's quirk entry "[radosgw never checks a SigV4 credential
+    scope's date, region or
+    service](#radosgw-never-checks-a-sigv4-credential-scopes-date-region-or-service)"
+    reads the source the same way. Neither reading is verified on a
+    running cluster.
+    - If radosgw does not cross-check, a stale scope date with a current
+      X-Amz-Date passes the skew check, and a logged key works until the
+      secret is rotated.
+    - If it does, the key dies with the skew window around its own date,
+      a one-day exposure.
+    - The cluster test that settles it: sign a request with a stale scope
+      date and a fresh X-Amz-Date, and see whether it is accepted. It has
+      not been run.
+  - A sanitiser exists and was not applied here.
+    `rgw::crypt_sanitize::log_content` wraps the string to sign that
+    `get_v4_string_to_sign` logs at the same level
+    ([rgw_auth_s3.cc:976-978](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L976-L978),
+    [rgw_auth_s3.cc:931-933](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L931-L933)),
+    and the one beside the signature the local engine logs at 15, but not
+    the key derivation's lines.
+  - debug_rgw defaults to 1/5 (`SUBSYS(rgw, 1, 5)`,
+    [subsys.h:62](https://github.com/ceph/ceph/blob/v19.2.7/src/common/subsys.h#L62),
+    [subsys.h:62](https://github.com/ceph/ceph/blob/v20.2.4/src/common/subsys.h#L62)),
+    so at the shipped default, max(1, 5) = 5 < 10, these lines are neither
+    gathered nor emitted, and an operator must raise debug_rgw. Every rgw
+    subsystem carries 1/5 in its `SUBSYS` line, so none is a back door
+    ([subsys.h:62-69](https://github.com/ceph/ceph/blob/v19.2.7/src/common/subsys.h#L62-L69),
+    [subsys.h:62-71](https://github.com/ceph/ceph/blob/v20.2.4/src/common/subsys.h#L62-L71)
+    and
+    [subsys.h:109](https://github.com/ceph/ceph/blob/v20.2.4/src/common/subsys.h#L109)).
+    The rule is symmetric: a line at level 4 or 5 is gathered at the
+    shipped default, since its level is at most 5, and the same rule keeps
+    these lines silent unless debug_rgw is raised. The rule is set out in
+    full in "[radosgw logs the signature it expects for a request before it
+    refuses
+    it](#radosgw-logs-the-signature-it-expects-for-a-request-before-it-refuses-it)".
+- **Impact:** a reader of such a log needs no request of its own: one
+  logged SigV4 request of the victim's yields a `date_k`, from which it
+  derives the signing key of any region and service on that date, so it
+  can sign any SigV4 S3 or STS request, and any POST form, for that access
+  key, with no further access to the log. How long that lasts is the
+  unsettled question above: until the secret is rotated, or only within
+  the skew window around that date.
+- **Releases:** v19.2.7 and v20.2.4; present at ceph d8552606
+  (2026-10-14, `signing_key` logged at
+  [rgw_auth_s3.cc:1048](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_auth_s3.cc#L1048),
+  and `signature` at
+  [rgw_auth_s3.cc:1081](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_auth_s3.cc#L1081)).
+- **rgw-go:** unaffected: `internal/auth` logs no signing key or signature
+  at any level (`internal/auth/doc.go:5-7`). No client sees a difference,
+  so no exclusion.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task BC-31's fix round, 2026-10-20, checking what else
+  on the path to the signature compare logs key material. Derived from the
+  source, not reproduced.
