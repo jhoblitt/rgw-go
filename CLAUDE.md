@@ -17,6 +17,11 @@ before writing Go here.
   `librados-devel` is absent; use `CGO_CFLAGS=-I/home/jhoblitt/github/ceph/src/include`
   and `CGO_LDFLAGS=-L$HOME/.local/lib/rgw-go` where that directory holds
   `librados.so -> /usr/lib64/librados.so.2`. CI installs `librados-dev`.
+- Host load: every go, make and golangci-lint command on this host, the agents' and the
+  controller's, runs through `.claude/worktrees/phase-1-exec/.superpowers/tools/ctrl/gobuild.sh`,
+  one host-wide flock with `GOFLAGS=-p=4 GOMAXPROCS=4`, so only one build or test runs at a
+  time. Never run them outside it. Uncapped parallel runs took the owner's desktop past a load
+  of 600 on 2026-10-21.
 - go-ceph comes from the jhoblitt/go-ceph fork through a `replace` in go.mod pinned to a
   commit on the fork's `rgw-go` integration branch; Dependabot does not follow a replace, so it
   is bumped by hand. Every pinned ref must be on `rgw-go`, and
