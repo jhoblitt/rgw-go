@@ -18,7 +18,7 @@ func squidDefaults() options {
 		cacheEnabled: true, cacheLRUSize: 25000, cacheExpiry: 900 * time.Second, numControlOIDs: 8, maxNotifyRetries: 10,
 		usageFlushThreshold: 1024, usageTick: 30 * time.Second, usageMaxShards: 32, usageMaxUserShards: 1, lcMaxObjs: 32,
 		lcThreads: true, lcMaxWorker: 3, lcMaxWPWorker: 3, lcLockMaxTime: 90 * time.Second, lcDebugInterval: -time.Second,
-		lcWorkTime: lcWorkTime{endHour: 6}, lcMaxRules: 1000, lcAutoSessionClear: true,
+		lcWorkTime: lcWorkTime{endHour: 6}, lcAutoSessionClear: true,
 		bucketQuotaTTL: 10 * time.Minute, bucketQuotaCacheSize: 10000, bucketSyncInterval: 3 * time.Minute,
 		ownerSyncInterval: 24 * time.Hour, ownerSyncWait: 24 * time.Hour, quotaThreads: true, listBucketsChunk: 1000,
 		listMinReadahead: 1000, bucketIndexMaxAIO: 128, dynamicResharding: true, runSyncThread: true,
@@ -61,7 +61,6 @@ var _ = Describe("readOptions", func() {
 		Entry(nil, "rgw_lifecycle_work_time", "22:30-02:15", func(o *options) {
 			o.lcWorkTime = lcWorkTime{startHour: 22, startMinute: 30, endHour: 2, endMinute: 15}
 		}),
-		Entry(nil, "rgw_lc_max_rules", "7", func(o *options) { o.lcMaxRules = 7 }),
 		Entry(nil, "rgwlc_auto_session_clear", "false", func(o *options) { o.lcAutoSessionClear = false }),
 		Entry(nil, "rgwlc_skip_bucket_step", "true", func(o *options) { o.lcSkipBucketStep = true }),
 		Entry(nil, "rgw_bucket_quota_ttl", "7", func(o *options) { o.bucketQuotaTTL = 7 * time.Second }),
@@ -153,15 +152,13 @@ var _ = Describe("readOptions", func() {
 		Expect(o.lcLockMaxTime).To(Equal(math.MaxUint32 * time.Second))
 	})
 
-	It("uses a lifecycle delay, interval or rule count its field cannot hold as the nearest one it can", func() {
+	It("uses a lifecycle delay or interval its field cannot hold as the nearest one it can", func() {
 		o, err := readOptions(conf(map[string]string{
 			"rgw_lc_thread_delay": "9223372036855", "rgw_lc_debug_interval": "-9223372037",
-			"rgw_lc_max_rules": "18446744073709551615",
 		}))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(o.lcThreadDelay).To(Equal(time.Duration(math.MaxInt64)))
 		Expect(o.lcDebugInterval).To(Equal(time.Duration(math.MinInt64)))
-		Expect(o.lcMaxRules).To(Equal(math.MaxInt))
 		o, err = readOptions(conf(map[string]string{"rgw_lc_thread_delay": "-9223372036855"}))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(o.lcThreadDelay).To(Equal(time.Duration(math.MinInt64)))

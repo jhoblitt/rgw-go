@@ -220,12 +220,5 @@ var _ = Describe("bucket policy, tagging and lifecycle routes", func() {
 			Expect(rec.Code).To(Equal(404))
 			Expect(rec.Body.String()).To(ContainSubstring("<Code>NoSuchBucket</Code>"))
 		})
-		It("leaves PUT and DELETE 501 NotImplemented", func() {
-			for _, method := range []string{http.MethodPut, http.MethodDelete} {
-				rec := w.send(w.alice, method, "/plain?lifecycle", "")
-				Expect(rec.Code).To(Equal(501), "%s: %s", method, rec.Body.String())
-				Expect(rec.Body.String()).To(ContainSubstring("<Code>NotImplemented</Code>"))
-			}
-		})
 	})
 })

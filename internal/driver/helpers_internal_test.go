@@ -64,7 +64,7 @@ func conf(kv map[string]string) *cephconf.Options {
 		"rgw_usage_max_shards": "32", "rgw_usage_max_user_shards": "1", "rgw_lc_max_objs": "32",
 		"rgw_enable_lc_threads": "true", "rgw_lc_max_worker": "3", "rgw_lc_max_wp_worker": "3", "rgw_lc_lock_max_time": "90",
 		"rgw_lc_thread_delay": "0", "rgw_lc_debug_interval": "-1", "rgw_lifecycle_work_time": "00:00-06:00",
-		"rgw_lc_max_rules": "1000", "rgwlc_auto_session_clear": "true", "rgwlc_skip_bucket_step": "false",
+		"rgwlc_auto_session_clear": "true", "rgwlc_skip_bucket_step": "false",
 		"rgw_bucket_quota_ttl": "600", "rgw_bucket_quota_cache_size": "10000", "rgw_user_quota_bucket_sync_interval": "180",
 		"rgw_user_quota_sync_interval": "86400", "rgw_user_quota_sync_wait_time": "86400",
 		"rgw_user_quota_sync_idle_users": "false", "rgw_enable_quota_threads": "true", "rgw_list_buckets_max_chunk": "1000",

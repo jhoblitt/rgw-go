@@ -23254,7 +23254,9 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.7 and v20.2.4; main not checked.
 - **rgw-go:** answers a Content-MD5 that does not decode, or decodes to
   other than 16 bytes, with 400 InvalidDigest before reading the body
-  (`lifecycleContentMD5`, `internal/op/lifecycle.go`).
+  (`lifecycleContentMD5`, `internal/op/lifecycle.go`; `docs/exclusions.md`,
+  "PutBucketLifecycleConfiguration answers a Content-MD5 that is not a
+  16-byte digest with InvalidDigest, before reading the body").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 planning (defect LL-10), recorded by task C6,
   2026-10-21. Derived from the source, not reproduced.

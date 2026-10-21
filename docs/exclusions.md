@@ -2567,9 +2567,7 @@ review and verified against the tree.
   `rgw_rest_s3.cc:3658-3696` at v19.2.6, `:4139-4177` at v20.2.4). A
   bucket that carries the attr, empty or not, answers 501 NotImplemented,
   where radosgw renders the configuration, or answers 500 UnknownError for
-  one that does not decode. `PUT` and `DELETE /{bucket}?lifecycle` answer
-  501 NotImplemented before any permission check and change nothing: their
-  routes have no handler.
+  one that does not decode.
 - **A requested bucket index answers 501 on Tentacle.** Tentacle's
   CreateBucket reads a `BucketIndex` element of `CreateBucketConfiguration`,
   whose `Type` and `NumShards` set the new bucket's index, and refuses a
@@ -6335,6 +6333,89 @@ differ, rgw-go does the following.
   never acts, and one of 0, which acts as if none were set, a Date that
   `from_iso_8601` rolls forward, such as `2026-13-01`, read as the instant
   it rolls to, and a bare date or a year, read as its first midnight.
+- **PutBucketLifecycleConfiguration refuses an indexless bucket on Squid
+  too.** Tentacle's radosgw answers it 405 MethodNotAllowed, "Indexless
+  buckets do not support lifecycle policy", before it reads the
+  Content-MD5 or the body
+  ([rgw_op.cc:6594-6599](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6594-L6599)).
+  Squid's stores the configuration and the bucket's lc entry and answers
+  200, though its worker cannot list an indexless bucket, so the rules
+  never act
+  ([rgw_op.cc:5933-6028](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5933-L6028);
+  docs/ceph-upstream-bugs.md, "[Squid stores a lifecycle configuration on
+  an indexless bucket, which its worker cannot
+  list](ceph-upstream-bugs.md#squid-stores-a-lifecycle-configuration-on-an-indexless-bucket-which-its-worker-cannot-list)").
+  rgw-go answers Tentacle's 405 and message on both releases
+  (`PutBucketLifecycle.Execute`, `internal/op/lifecycle.go`), and stores
+  nothing.
+- **PutBucketLifecycleConfiguration answers a Content-MD5 that is not a
+  16-byte digest with InvalidDigest, before reading the body.** radosgw
+  decodes the header with `from_base64` and answers one that does not
+  decode with 400 BadDigest, "Request header Content-MD5 contains character
+  that is not base64 encoded."; once it has read the body it compares 16
+  bytes of the decoded value with the body's MD5 whatever the value's
+  length, and answers a difference with 400 BadDigest, "The Content-MD5 you
+  specified did not match what we received."
+  ([rgw_op.cc:5945-5988](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5945-L5988),
+  [rgw_op.cc:6611-6654](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6611-L6654);
+  docs/ceph-upstream-bugs.md, "[radosgw's PutBucketLifecycle compares 16
+  bytes of a Content-MD5 of any
+  length](ceph-upstream-bugs.md#radosgws-putbucketlifecycle-compares-16-bytes-of-a-content-md5-of-any-length)").
+  So radosgw:
+  - takes a value longer than 16 bytes whose first 16 are the body's MD5;
+  - takes a 15-byte value equal to the MD5's first 15 bytes when the MD5's
+    last byte is 0, one body in 256, as the 16th byte it compares is the
+    value's terminating NUL, and compares a shorter value's NUL and then
+    bytes the string never set;
+  - answers a value of the wrong length only after the body checks, so
+    with 411 MissingContentLength or 416 InvalidRange beside a body that
+    has no length or is over `rgw_max_put_param_size`;
+  - ends on a value of '=' alone when it is built with
+    `-D_GLIBCXX_ASSERTIONS` (docs/ceph-upstream-bugs.md, "[radosgw's
+    from_base64 reads before an all-'=' input](ceph-upstream-bugs.md#radosgws-from_base64-reads-before-an-all--input)").
+
+  S3 answers a Content-MD5 that is not a well-formed digest with 400
+  InvalidDigest, and BadDigest only for a well-formed one the body does
+  not match: s3-tests, written against AWS, expect InvalidDigest for a
+  value that decodes short and for an empty one, and BadDigest for a
+  mismatch
+  ([test_headers.py:189-207](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/test/rgw/s3-tests/s3tests/functional/test_headers.py#L189-L207)
+  at ceph main d8552606). radosgw's own PutObject answers a decoded length
+  other than 16 with InvalidDigest
+  ([rgw_op.cc:4184-4194](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4184-L4194),
+  [rgw_op.cc:4393-4403](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4393-L4403)).
+  rgw-go answers a Content-MD5 that does not decode with 400 InvalidDigest
+  and radosgw's message for it, and one that decodes to other than 16
+  bytes, an empty or all-'=' one included, with 400 InvalidDigest and no
+  message, both before it reads the body (`lifecycleContentMD5`,
+  `internal/op/lifecycle.go`). A 16-byte one the body does not match is
+  answered as radosgw answers it, BadDigest with its message, once the body
+  is read.
+- **A lifecycle configuration put or delete that loses a race is retried,
+  and authorized again.** radosgw's PutBucketLifecycleConfiguration stores
+  its configuration, and its DeleteBucketLifecycle erases it, in one write
+  under the bucket version its request loaded, so a write of the bucket
+  that lands in between fails the request with 409 ConcurrentModification
+  ([rgw_lc.cc:2642-2654](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2642-L2654)
+  and
+  [rgw_lc.cc:2676-2684](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2676-L2684),
+  [rgw_lc.cc:2710-2721](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2710-L2721)
+  and
+  [rgw_lc.cc:2743-2751](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2743-L2751);
+  docs/ceph-upstream-bugs.md, "[radosgw's lifecycle configuration put and
+  delete fail on a lost bucket race instead of
+  retrying](ceph-upstream-bugs.md#radosgws-lifecycle-configuration-put-and-delete-fail-on-a-lost-bucket-race-instead-of-retrying)").
+  rgw-go retries each as its other bucket writes are retried, up to
+  fifteen times after reading the bucket again by name, and authorizes the
+  requester again before each retry against the bucket that retry read, as
+  "A PutBucketAcl that loses a race is retried, and every retried ACL,
+  policy or tagging write is authorized again" describes; a retry of the
+  delete that finds the attr gone writes nothing. A name that now names
+  another bucket ends it with 409 and nothing written. The put writes the
+  configuration's attr alone over the bucket each try read, where radosgw
+  merges the attrs its request loaded, and sets the lc entry only once the
+  attr is stored; the delete removes the entry whether or not the bucket
+  held a configuration, as radosgw does.
 
 ### Object read differences
 
