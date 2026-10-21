@@ -2374,7 +2374,10 @@ review and verified against the tree.
   through rgw-go, and an upload rgw-go began, therefore carry no
   `user.rgw.cksum`: GetObjectAttributes and a checksum-mode GET through
   radosgw show no checksum for them, and rgw-go accepts a checksum that
-  does not match the data. An upload a Tentacle radosgw began with a
+  does not match the data. A CopyObject keeps or drops its source's record
+  as radosgw's does, but for a composite one, which a copy that streams
+  drops ("A copy that streams its data drops a composite checksum"). An
+  upload a Tentacle radosgw began with a
   checksum algorithm keeps it through rgw-go: rgw-go reads the upload's
   type, computes it over each part it writes, a copied one included, with
   the upload's flags, and combines the parts' checksums into the object's
@@ -2423,25 +2426,31 @@ review and verified against the tree.
   DeleteObjects' per-key checks, which radosgw also makes without its
   override. Account users in IAM groups therefore work through radosgw and
   not through rgw-go until phase 3.
-- **A copy that streams its data copies the stored bytes.** Where a copy
-  cannot share the source's tails (another pool, placement or storage
-  class, or a source held in its head), rgw-go reads the source's stored
-  bytes and writes them unchanged, keeping a compressed source's
-  compression attribute and its accounted size, as a Squid radosgw does
-  (`copy_obj_data`, `driver/rados/rgw_rados.cc:5034-5115` at v19.2.6). A
-  Tentacle radosgw decodes such a source instead and re-encodes it with
-  the destination placement's compression type
-  (`RGWCopyObjDPF::set_writer`, `rgw_op.cc:5770-5844` at v20.2.4), so the
-  two gateways' copies can differ in codec and block layout; each reads
-  back identically through either gateway. For the same reason a Tentacle
-  radosgw compresses an uncompressed source that a copy streams into a
-  placement with a compression type, which rgw-go, like Squid, stores
-  uncompressed. rgw-go refuses an encrypted copy source with 501
+- **A copy that streams a compressed source copies its stored bytes.**
+  Where a copy cannot share the source's tails (another pool, placement or
+  storage class, or a source held in its head), rgw-go writes a compressed
+  source's stored bytes unchanged, keeping its compression attribute, block
+  map included, and its accounted size, whatever the destination
+  placement's compression type, as a Squid radosgw copies every source
+  (`copy_obj_data`,
+  [rgw_rados.cc:5066-5153](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5066-L5153)).
+  A Tentacle radosgw decodes such a source instead and encodes the copy
+  with the destination placement's compression type, or stores it decoded
+  where that type is none (`RGWCopyObjDPF::set_writer`,
+  [rgw_op.cc:5770-5844](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5770-L5844)),
+  so the two gateways' copies can differ in codec and block layout; each
+  reads back identically through either gateway. An uncompressed source
+  that a copy streams into a placement with a compression type is
+  compressed as a PUT is, on both releases, as a Tentacle radosgw
+  compresses it; a Squid radosgw, whose copy has no compression stage,
+  stores it uncompressed. rgw-go refuses an encrypted copy source with 501
   NotImplemented on both releases, as a Squid radosgw does
-  (`driver/rados/rgw_rados.cc:4755-4763` at v19.2.6); a Tentacle radosgw
-  decrypts it and re-encrypts as the request asks (`rgw_op.cc:5793-5805`
-  and `:5846-5866` at v20.2.4), which needs SSE-C decryption, which
-  phase 4 adds, or a key server, which is excluded.
+  ([rgw_rados.cc:4787-4795](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4787-L4795));
+  a Tentacle radosgw decrypts it and re-encrypts as the request asks
+  ([rgw_op.cc:5791-5804](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5791-L5804),
+  [rgw_op.cc:5846-5865](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5846-L5865)),
+  which needs SSE-C decryption, which phase 4 adds, or a key server, which
+  is excluded.
 - **CreateBucket with object lock answers 501 until phase 2.** A
   CreateBucket with `x-amz-bucket-object-lock-enabled: true`, in any case,
   answers 501 NotImplemented and creates nothing, until object lock and
@@ -7715,14 +7724,19 @@ does the following.
 - **`random` and a codec rgw-go has no encoder for store the object
   uncompressed.** A storage class whose `compression_type` is `random`, or a
   codec other than the four rgw-go encodes (snappy, zlib, zstd and lz4), has
-  rgw-go store a PUT's or a part's data uncompressed, without the
-  incompressible hint, and log the type the first time it meets it.
-  radosgw compresses with the plugin it loads: for `random`, a teuthology
-  setting, a codec it picks at random for each object, and by the upload
-  id's hash for an upload's parts
+  rgw-go store a PUT's, a part's or a streamed copy's data uncompressed,
+  without the incompressible hint, and log the type the first time it
+  meets it; a streamed copy of a compressed source, which rgw-go copies as
+  it is, goes unhinted there too. radosgw compresses with the plugin it
+  loads: for `random`, a teuthology setting, a codec it picks at random for
+  each object, and by the upload id's hash for an upload's parts
   ([rgw_op.cc:4087-4108](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4087-L4108),
   [rgw_op.cc:4296-4317](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4296-L4317));
   for another name, such as brotli in a build with that plugin, its codec.
+  A Tentacle radosgw's streamed copy loads the plugin the same way and
+  marks the copy compressed, so it hints every stripe
+  ([rgw_op.cc:5826-5838](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5826-L5838));
+  Squid's copy loads none.
   Where no plugin loads, radosgw stores the object uncompressed too
   ([rgw_op.cc:4360-4366](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4360-L4366),
   [rgw_op.cc:4576-4582](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4576-L4582)).
@@ -7979,6 +7993,39 @@ does the following.
   hold in the binary. A Squid upload has no checksum type, so nothing is
   combined or compared on Squid ("Squid clusters get single-object and part
   checksums, not an upload's").
+- **A copy that streams its data drops a composite checksum.** A CopyObject
+  under `COPY` keeps its source's `user.rgw.cksum` and one under `REPLACE`
+  drops it, as `set_copy_attrs` does
+  ([rgw_rados.cc:3702-3732](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3702-L3732),
+  [rgw_rados.cc:3855-3885](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3855-L3885)),
+  and rgw-go computes no checksum for a copy, as Tentacle's radosgw computes
+  none
+  ([rgw_rados.cc:5381-5385](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5381-L5385))
+  and Squid's has no checksum code. Where the copy cannot share its
+  source's tails and streams the data, which leaves it without parts,
+  rgw-go also drops a record that combines part checksums: a record flagged
+  COMPOSITE and COMBINED, on any source, or one on a source with parts that
+  carries neither V2 nor FULL_OBJECT, which `get_checksum_type` reads as a
+  composite written before CRC combining
+  ([rgw_cksum.h:382-399](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L382-L399)).
+  A radosgw of either release carries such a record to the copy, where a
+  Tentacle radosgw's checksum-mode GET and GetObjectAttributes show it as
+  the copy's FULL_OBJECT checksum, which a composite's value is not
+  (`docs/ceph-upstream-bugs.md`, "[radosgw carries a composite checksum to
+  a copy without parts, which Tentacle reports as its FULL_OBJECT
+  checksum](ceph-upstream-bugs.md#radosgw-carries-a-composite-checksum-to-a-copy-without-parts-which-tentacle-reports-as-its-full_object-checksum)"). A
+  full-object CRC rides the copy, a one-part upload's without V2 included
+  (`docs/ceph-upstream-bugs.md`, "[radosgw reports a single-part CRC
+  upload's full-object checksum as
+  COMPOSITE](ceph-upstream-bugs.md#radosgw-reports-a-single-part-crc-uploads-full-object-checksum-as-composite)"),
+  and so does a record that does not decode. One record is dropped though
+  its value is the copy's CRC: a one-part CRC upload a Tentacle radosgw
+  completed as COMPOSITE, which keeps the part's own CRC under the composite
+  flags (`docs/ceph-upstream-bugs.md`, "[radosgw stores a COMPOSITE CRC
+  upload's checksum as a full-object
+  CRC](ceph-upstream-bugs.md#radosgw-stores-a-composite-crc-uploads-checksum-as-a-full-object-crc)").
+  A copy that shares its source's tails keeps the record, and a multipart
+  source's parts with it.
 
 ### Bucket index differences
 

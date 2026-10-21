@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/sync/semaphore"
 
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/cls/refcount"
 	"github.com/jhoblitt/rgw-go/internal/compression"
 	"github.com/jhoblitt/rgw-go/internal/denc"
@@ -42,8 +43,8 @@ var (
 // destination's tail placement and pool shares them: every tail gets a
 // refcount reference under the copy's tag, the head's own bytes are copied,
 // and a new head names the source's tails; a copy onto itself rewrites the
-// head alone and keeps its tails. Anything else streams the source's stored
-// bytes into a new object
+// head alone and keeps its tails. Anything else streams the source into a new
+// object (copyData)
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4847-L4879).
 // src is the state the op read with PrefetchObject, as radosgw's object
 // context holds it from read_obj_policy, so the head's bytes come from its
@@ -110,7 +111,7 @@ func (s *Store) CopyObject(ctx context.Context, src *op.ObjectState, dst *op.Buc
 	}
 	if copyData {
 		delete(attrs, meta.AttrTailTag)
-		return s.copyData(ctx, src, dst, dstKey, p.StorageClass, attrs, p.Mtime)
+		return s.copyData(ctx, src, dst, dstKey, p.StorageClass, attrs, p.Mtime, false)
 	}
 	tag := p.Tag
 	if tag == "" {
@@ -449,23 +450,54 @@ func (s *Store) unrefTails(refs []objRef, tag string) {
 }
 
 // copyData is copy_obj_data
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5034-L5115;
-// v20.2.4
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5294-L5386):
-// the source's stored bytes, read as Read::read hands them over
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5067),
-// without decompressing, streamed through AtomicObjectProcessor into a new
-// object under storageClass with a random tag
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5051)
-// and without conditions. attrs keep the source's etag and a compressed
-// source's compression info, block map included, from which putStream takes
-// the accounted size
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5098-L5108).
-// The destination placement's compression is not consulted.
-func (s *Store) copyData(ctx context.Context, src *op.ObjectState, dst *op.BucketRecord, dstKey meta.ObjKey, storageClass string, attrs map[string][]byte, mtime time.Time) (*op.PutResult, error) {
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5066-L5153 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5294-L5386 at v20.2.4):
+// the source's stored bytes, as Read::read hands them over, streamed through
+// AtomicObjectProcessor into a new object under storageClass with a random
+// tag and without conditions, attrs its head's. A compressed source's
+// compression info, block map included, gives putStream the accounted size.
+// No checksum is computed, as copy_obj_data completes with none
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5381-L5385 at v20.2.4).
+//
+// raw is transition_obj's copy, whose copy_obj_data takes no data-processor
+// factory
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5184-L5257 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5417-L5490 at v20.2.4):
+// the stored bytes and attrs as they are. Without it the copy is
+// CopyObject's, which Tentacle's RGWCopyObjDPF filters
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5770-L5893 at v20.2.4):
+// an uncompressed source is compressed as the destination placement's
+// compression type says, as a PUT is, on Squid too, where radosgw stores it
+// as it is; a compressed source is still copied raw, where Tentacle's
+// radosgw decodes it and encodes the copy as the destination says
+// (docs/exclusions.md, "A copy that streams a compressed source copies its
+// stored bytes"); and a composite checksum is dropped (compositeChecksum).
+func (s *Store) copyData(ctx context.Context, src *op.ObjectState, dst *op.BucketRecord, dstKey meta.ObjKey, storageClass string, attrs map[string][]byte, mtime time.Time, raw bool) (*op.PutResult, error) {
 	l, err := s.planPut(ctx, dst, dstKey, storageClass)
 	if err != nil {
 		return nil, err
+	}
+	w := streamWrite{tag: s.w.randTag(), attrs: attrs, size: int64(src.Size), mtime: mtime} //nolint:gosec // an object size is far below 2^63
+	if !raw {
+		if _, ok := attrs[meta.AttrCksum]; ok {
+			var drop bool
+			if drop, err = compositeChecksum(src); err != nil {
+				return nil, err
+			}
+			if drop {
+				delete(attrs, meta.AttrCksum)
+			}
+		}
+		typ := s.compressionType(l.tailRule)
+		if c := src.Compression; c == nil || c.Type == compression.None {
+			w.compression = typ
+		} else {
+			// Tentacle's set_writer marks the copy compressed once the
+			// destination's plugin loads, whatever the source
+			// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5826-L5838 at v20.2.4),
+			// so its writers hint the stored bytes; Squid's copy marks nothing.
+			w.incompressible = s.release >= denc.Tentacle && s.codecLoads(typ)
+		}
 	}
 	pr, pw := io.Pipe()
 	read := make(chan struct{})
@@ -475,10 +507,46 @@ func (s *Store) copyData(ctx context.Context, src *op.ObjectState, dst *op.Bucke
 		// body's error, so the tails already written are deleted.
 		pw.CloseWithError(s.readStored(ctx, src, 0, src.Size, pw))
 	}()
-	res, err := s.putStream(ctx, dst, dstKey, pr, l, streamWrite{
-		tag: s.w.randTag(), attrs: attrs, size: int64(src.Size), mtime: mtime, //nolint:gosec // an object size is far below 2^63
-	})
+	res, err := s.putStream(ctx, dst, dstKey, pr, l, w)
 	pr.CloseWithError(errCopyStreamDone)
 	<-read
 	return res, err
+}
+
+// codecLoads reports whether a write into a placement of compression type
+// typ finds an encoder for it, as storeFor does: an encoder that refuses its
+// options loads, and random or a codec rgw-go has none for does not.
+func (s *Store) codecLoads(typ string) bool {
+	if typ == "" || typ == compression.None {
+		return false
+	}
+	_, err := s.w.newEncoder(typ, s.w.opts.codec)
+	return !errors.Is(err, compression.ErrUnknownCodec)
+}
+
+// compositeChecksum reports whether src's checksum record would be misread
+// on a copy without parts: one whose flags make it composite, or, on a
+// source with parts, one with neither V2 nor FULL_OBJECT, which
+// get_checksum_type takes for a composite written before CRC combining
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L382-L399 at v20.2.4).
+// Either combines the parts' checksums, which a reader of an object without
+// parts would show as the whole object's. A one-part CRC upload's record
+// lacks V2 but holds FULL_OBJECT, and its value is the object's CRC
+// (docs/ceph-upstream-bugs.md, "radosgw reports a single-part CRC upload's
+// full-object checksum as COMPOSITE").
+func compositeChecksum(src *op.ObjectState) (bool, error) {
+	c := src.Checksum
+	switch {
+	case c == nil:
+		return false, nil
+	case c.Composite():
+		return true, nil
+	case c.Flags&(cksum.FlagV2|cksum.FlagFullObject) != 0 || src.Manifest == nil:
+		return false, nil
+	}
+	parts, err := src.Manifest.PartsCount()
+	if err != nil {
+		return false, manifestErr(src, err)
+	}
+	return parts > 0, nil
 }

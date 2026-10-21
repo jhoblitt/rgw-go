@@ -83,6 +83,9 @@ type streamWrite struct {
 	// zonegroup supports compress-encrypted.
 	compression string
 	encrypted   bool
+	// incompressible hints every data write INCOMPRESSIBLE though no stage
+	// compresses the body: a copy of bytes another compressor made.
+	incompressible bool
 }
 
 // putStream writes body as AtomicObjectProcessor does, after its prepare,
@@ -126,7 +129,8 @@ func (s *Store) putStream(ctx context.Context, rec *op.BucketRecord, key meta.Ob
 	}
 	plain := newPlaintext(body, limit, s.w.opts.chunkSize, sinks...)
 	stored := s.storeFor(ctx, plain, w.size, w.compression, w.encrypted)
-	tw.incompressible = stored.incompressible
+	incompressible := stored.incompressible || w.incompressible
+	tw.incompressible = incompressible
 	data, size, err := tw.consume(ctx, stored, w.size)
 	// radosgw finishes a PUT whose body it holds whether or not its client
 	// stays: nothing after get_data's loop watches the client, the second
@@ -179,7 +183,7 @@ func (s *Store) putStream(ctx context.Context, rec *op.BucketRecord, key meta.Ob
 	hw := &headWrite{
 		rec: rec, key: key, tag: w.tag, data: data, manifest: &m, attrs: attrs, mtime: w.mtime,
 		ifMatch: w.ifMatch, ifNoneMatch: w.ifNoneMatch, create: true, modifyTail: true, size: size, accountedSize: accounted,
-		incompressible: stored.incompressible,
+		incompressible: incompressible,
 	}
 	res, err := s.writeMeta(ctx, hw, s.newIndexOp(rec, key, w.tag))
 	if err != nil {
