@@ -171,12 +171,18 @@ func (s *Store) cleanIndex(ctx context.Context, info *meta.BucketInfo) error {
 // a new bucket id as marker and id, the owner, zonegroup and placement
 // asked for, requester-pays off, created now, and the default layout. A
 // zero p.Quota is S3's quota that is not given, which keeps RGWBucketInfo's
-// unlimited default.
+// unlimited default. A bucket with object lock gets BUCKET_VERSIONED and
+// BUCKET_OBJ_LOCK_ENABLED, its obj_lock left RGWObjectLock()
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L2404-L2406 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2496-L2498 at v20.2.4).
 func (s *Store) newBucketInfo(p op.CreateBucketParams, indexType meta.IndexType) meta.BucketInfo {
 	id := s.bucketID()
 	info := meta.NewBucketInfo()
 	info.Bucket = meta.BucketID{Tenant: p.Tenant, Name: p.Name, Marker: id, ID: id}
 	info.Owner, info.Zonegroup, info.PlacementRule = p.Owner, p.Zonegroup, p.Placement
+	if p.ObjectLock {
+		info.Flags |= meta.BucketVersioned | meta.BucketObjLockEnabled
+	}
 	info.CreationTime = meta.Time{Time: s.sysobj.now()}
 	if p.Quota != (meta.Quota{}) {
 		info.Quota = p.Quota

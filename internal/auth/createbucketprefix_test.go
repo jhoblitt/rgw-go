@@ -88,11 +88,15 @@ var _ = Describe("CreateBucket's object lock under another meta prefix", func() 
 
 	// A presigned SigV4 URL signs host alone, so an X-Amz- header sent with
 	// one is refused unsigned before CreateBucket reads it.
-	It("reads X-Amz-Bucket-Object-Lock-Enabled, which it does not serve yet, on SigV2's routes and SigV4's header route", func(ctx SpecContext) {
+	It("reads X-Amz-Bucket-Object-Lock-Enabled on SigV2's routes and SigV4's header route, creating the bucket with object lock", func(ctx SpecContext) {
 		reqs := creates(ctx, "X-Amz-Bucket-Object-Lock-Enabled", "x-amz-bucket-object-lock-enabled:true\n")
 		for _, how := range []string{"SigV2", "presigned SigV2", "SigV4"} {
 			code, body := serve(reqs[how])
-			Expect(code).To(Equal(http.StatusNotImplemented), "%s: %s", how, body)
+			Expect(code).To(Equal(http.StatusOK), "%s: %s", how, body)
+			rec, err := store.GetBucket(ctx, "", "newbkt")
+			Expect(err).NotTo(HaveOccurred(), how)
+			Expect(rec.Info.ObjLockEnabled()).To(BeTrue(), how)
+			Expect(store.DeleteBucket(ctx, rec)).To(Succeed())
 		}
 	})
 })

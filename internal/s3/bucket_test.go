@@ -191,17 +191,50 @@ var _ = Describe("create_bucket, delete_bucket, stat_bucket and get_bucket_locat
 			Expect(err).To(MatchError(op.ErrNoSuchBucket))
 		})
 		DescribeTable("checks x-amz-bucket-object-lock-enabled",
-			func(v string, code int, errCode string) {
+			func(ctx SpecContext, v string, code int, errCode string, flags uint32) {
 				rec := put("/plain", "", "x-amz-bucket-object-lock-enabled", v)
-				Expect(rec.Code).To(Equal(code))
+				Expect(rec.Code).To(Equal(code), rec.Body.String())
 				if errCode != "" {
 					Expect(rec.Body.String()).To(ContainSubstring("<Code>" + errCode + "</Code>"))
+					_, err := store.GetBucket(ctx, "", "plain")
+					Expect(err).To(MatchError(op.ErrNoSuchBucket))
+					return
 				}
+				Expect(rec.Body.String()).To(BeEmpty())
+				b, err := store.GetBucket(ctx, "", "plain")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(b.Info.Flags).To(Equal(flags))
 			},
-			Entry("maybe is InvalidArgument", "maybe", 400, "InvalidArgument"),
-			Entry("true is not served yet", "true", 501, "NotImplemented"),
-			Entry("false creates the bucket", "false", 200, ""),
+			Entry("maybe is InvalidArgument", "maybe", 400, "InvalidArgument", uint32(0)),
+			Entry("true creates the bucket versioned with object lock enabled", "true", 200, "", uint32(meta.BucketVersioned|meta.BucketObjLockEnabled)),
+			Entry("false creates the bucket with neither", "false", 200, "", uint32(0)),
 		)
+		It("creates a bucket with object lock that GetObjectLockConfiguration reads as enabled with no rule, and takes a rule", func(ctx SpecContext) {
+			Expect(put("/plain", "", "x-amz-bucket-object-lock-enabled", "true").Code).To(Equal(200))
+			rec := serveReq(h, http.MethodGet, "/plain?object-lock", nil)
+			Expect(rec.Code).To(Equal(200), rec.Body.String())
+			Expect(rec.Body.String()).To(Equal(`<?xml version="1.0" encoding="UTF-8"?><ObjectLockConfiguration>` +
+				`<ObjectLockEnabled>Enabled</ObjectLockEnabled></ObjectLockConfiguration>`))
+			doc := `<ObjectLockConfiguration><ObjectLockEnabled>Enabled</ObjectLockEnabled><Rule><DefaultRetention>` +
+				`<Mode>GOVERNANCE</Mode><Days>1</Days></DefaultRetention></Rule></ObjectLockConfiguration>`
+			Expect(put("/plain?object-lock", doc).Code).To(Equal(200))
+			rec = serveReq(h, http.MethodGet, "/plain?object-lock", nil)
+			Expect(rec.Body.String()).To(HaveSuffix(`<Rule><DefaultRetention><Mode>GOVERNANCE</Mode><Days>1</Days></DefaultRetention></Rule></ObjectLockConfiguration>`))
+		})
+		It("creates a bucket with object lock whose versioning PutBucketVersioning refuses to suspend with 409", func(ctx SpecContext) {
+			const suspend = `<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Suspended</Status></VersioningConfiguration>`
+			Expect(put("/plain", "", "x-amz-bucket-object-lock-enabled", "true").Code).To(Equal(200))
+			before, err := store.GetBucket(ctx, "", "plain")
+			Expect(err).NotTo(HaveOccurred())
+			rec := put("/plain?versioning", suspend)
+			Expect(rec.Code).To(Equal(http.StatusConflict), rec.Body.String())
+			Expect(rec.Body.String()).To(ContainSubstring("<Code>InvalidBucketState</Code>"))
+			Expect(rec.Body.String()).To(ContainSubstring("<Message>bucket versioning cannot be disabled on buckets with object lock enabled</Message>"))
+			after, err := store.GetBucket(ctx, "", "plain")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(after.Info.Flags).To(Equal(uint32(meta.BucketVersioned|meta.BucketObjLockEnabled)), "rgw_op.cc:2788-2793 at v19.2.7, :3020-3025 at v20.2.4")
+			Expect(after.Version).To(Equal(before.Version), "nothing written")
+		})
 		It("applies a canned ACL", func(ctx SpecContext) {
 			Expect(put("/plain", "", "x-amz-acl", "public-read").Code).To(Equal(200))
 			want, err := acl.Canned(acl.Owner{ID: "bob", DisplayName: "Bob"}, acl.Owner{}, "public-read")
@@ -248,7 +281,11 @@ var _ = Describe("create_bucket, delete_bucket, stat_bucket and get_bucket_locat
 				Expect(err).NotTo(HaveOccurred())
 				Expect(b.Info.PlacementRule.StorageClass).To(Equal("STANDARD"))
 			}),
-			Entry("x-amz-bucket-object-lock-enabled: false after true", "x-amz-bucket-object-lock-enabled", []string{"true", "false"}, func(context.Context) {}),
+			Entry("x-amz-bucket-object-lock-enabled: false after true", "x-amz-bucket-object-lock-enabled", []string{"true", "false"}, func(ctx context.Context) {
+				b, err := store.GetBucket(ctx, "", "plain")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(b.Info.Flags).To(BeZero(), "no object lock")
+			}),
 		)
 		It("refuses a canned ACL together with a grant header", func() {
 			rec := put("/plain", "", "x-amz-acl", "private", "x-amz-grant-read", `id="alice"`)

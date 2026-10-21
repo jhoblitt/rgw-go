@@ -58,6 +58,17 @@ func (e *Evaluator) deniedAsGroupMember(ctx context.Context, id *op.Identity) er
 	return fmt.Errorf("%w: %s belongs to an iam group", op.ErrAccessDenied, uid)
 }
 
+// createBucketActions are the actions Amazon S3 requires beside
+// s3:CreateBucket for a bucket created with object lock, which op.CreateBucket
+// authorizes through VerifyUser on the new bucket. radosgw authorizes
+// s3:CreateBucket alone (docs/exclusions.md, "CreateBucket with object lock
+// is authorized as s3:PutBucketObjectLockConfiguration and
+// s3:PutBucketVersioning too").
+var createBucketActions = map[policy.Action]bool{
+	policy.S3PutBucketObjectLockConfiguration: true,
+	policy.S3PutBucketVersioning:              true,
+}
+
 // VerifyUser is verify_user_permission for an action on no bucket:
 // ListAllMyBuckets (RGWListBuckets::verify_permission,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2489-L2500 at v19.2.6,
@@ -65,7 +76,9 @@ func (e *Evaluator) deniedAsGroupMember(ctx context.Context, id *op.Identity) er
 // and CreateBucket (RGWCreateBucket::verify_permission,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3215-L3245 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3443-L3472 at v20.2.4,
-// whose max-buckets check is the op's).
+// whose max-buckets check is the op's). s3:CreateBucket, and each action
+// of createBucketActions, is evaluated on the ARN of the bucket the
+// request creates, every other action on "*".
 func (e *Evaluator) VerifyUser(ctx context.Context, r *op.Request, a policy.Action) error {
 	ids, err := e.identityPolicies(r)
 	if err != nil {
@@ -80,6 +93,9 @@ func (e *Evaluator) VerifyUser(ctx context.Context, r *op.Request, a policy.Acti
 		if id.IsAnonymous() {
 			return e.decided(ctx, a, "anonymous", op.ErrAccessDenied)
 		}
+		arn = policy.BucketARN(r.Tenant, r.Bucket)
+	}
+	if createBucketActions[a] {
 		arn = policy.BucketARN(r.Tenant, r.Bucket)
 	}
 	env := buildEnv(e.cfg, r, a, nil)

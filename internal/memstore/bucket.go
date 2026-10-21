@@ -42,8 +42,9 @@ func (s *Store) GetBucketInstance(_ context.Context, id meta.BucketID) (*op.Buck
 }
 
 // CreateBucket implements op.BucketStore. The instance id has radosgw's
-// three-part shape, "<zone id>.<counter>.1", and is the marker too. An
-// existing name, Exclusive or not, answers with a copy of its record and
+// three-part shape, "<zone id>.<counter>.1", and is the marker too. A bucket
+// with object lock is versioned too, its lock RGWObjectLock(). An existing
+// name, Exclusive or not, answers with a copy of its record and
 // ErrBucketAlreadyExists.
 func (s *Store) CreateBucket(_ context.Context, p op.CreateBucketParams) (*op.BucketRecord, error) {
 	s.mu.Lock()
@@ -65,6 +66,9 @@ func (s *Store) CreateBucket(_ context.Context, p op.CreateBucketParams) (*op.Bu
 	info.PlacementRule = p.Placement
 	info.HasInstanceObj = true
 	info.Quota = p.Quota
+	if p.ObjectLock {
+		info.Flags |= meta.BucketVersioned | meta.BucketObjLockEnabled
+	}
 
 	ep := meta.NewBucketEntryPoint()
 	ep.Bucket = bid
