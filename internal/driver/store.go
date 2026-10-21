@@ -47,6 +47,7 @@ type Store struct {
 	readCfg readConfig
 	w       *writer
 	mp      mpOptions
+	lc      lcIndex
 	// headBufs holds the *[]byte buffers prefetches read the head into.
 	headBufs sync.Pool
 	// readBufs holds the *[]byte buffers of rgw_get_obj_max_req_size that
@@ -144,7 +145,7 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 	opts.logWorkersNotRun(ctx)
 	s := &Store{
 		cluster: cluster, conf: conf, opts: opts, release: release, zone: zc, names: names, roots: roots, pools: pools, sysobj: sys, readCfg: readCfg,
-		mp: mp, newTicker: newTimeTicker,
+		mp: mp, lc: newLCIndex(), newTicker: newTimeTicker,
 	}
 	s.heads = s
 	s.bgAIO = semaphore.NewWeighted(int64(opts.bucketIndexMaxAIO))
@@ -216,6 +217,7 @@ func (s *Store) Env() *op.Env {
 		Stats:       s,
 		Usage:       s,
 		Metadata:    s,
+		Lifecycle:   s,
 		Layout:      s,
 		Conf:        s.conf,
 	}

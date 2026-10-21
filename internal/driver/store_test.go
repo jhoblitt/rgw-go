@@ -14,6 +14,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/meta"
+	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/testutil/fakerados"
 )
@@ -237,6 +238,24 @@ var _ = Describe("the driver", func() {
 			Expect(cluster.opened).To(HaveLen(1))
 			Expect(cluster.opened[0].closes).To(Equal(1))
 		})
+
+		It("fails on an rgw_lifecycle_work_time that does not scan, naming it, and closes the pools it opened", func(ctx SpecContext) {
+			_, err := driver.Open(ctx, cluster, conf(map[string]string{
+				"rgw_realm": "ceph-objectstore", "rgw_zonegroup": "ceph-objectstore", "rgw_zone": "ceph-objectstore",
+				"rgw_lifecycle_work_time": "01:00 - 06:00",
+			}), driver.Options{})
+			Expect(err).To(MatchError(ContainSubstring(`rgw_lifecycle_work_time: "01:00 - 06:00"`)))
+			Expect(cluster.opened).To(HaveLen(1))
+			Expect(cluster.opened[0].closes).To(Equal(1))
+		})
+
+		It("opens on an rgw_lifecycle_work_time that does not scan when the lifecycle threads are off, as radosgw never reads it then", func(ctx SpecContext) {
+			_, err := driver.Open(ctx, cluster, conf(map[string]string{
+				"rgw_realm": "ceph-objectstore", "rgw_zonegroup": "ceph-objectstore", "rgw_zone": "ceph-objectstore",
+				"rgw_enable_lc_threads": "false", "rgw_lifecycle_work_time": "01:00 - 06:00",
+			}), driver.Options{})
+			Expect(err).NotTo(HaveOccurred())
+		})
 	})
 
 	Context("once open", func() {
@@ -251,12 +270,34 @@ var _ = Describe("the driver", func() {
 			env := s.Env()
 			Expect([]any{
 				env.Zone, env.Users, env.Accounts, env.UsageReader, env.BucketAdmin, env.Realms,
-				env.Buckets, env.Objects, env.Multipart, env.Stats, env.Usage, env.Metadata, env.Layout,
+				env.Buckets, env.Objects, env.Multipart, env.Stats, env.Usage, env.Metadata, env.Lifecycle, env.Layout,
 			}).To(HaveEach(BeIdenticalTo(s)))
 			Expect(env.Conf).To(BeIdenticalTo(opts))
 			Expect(env.Authz).To(BeNil(), "authz is the caller's")
 			Expect(env.Metrics).To(BeNil(), "metrics are the caller's")
 			Expect(env.HostID).To(BeEmpty(), "the host id is the caller's")
+		})
+
+		It("files a bucket's lifecycle entry on its shard in the zone's lc pool, locked under a cookie of its own", func(ctx SpecContext) {
+			const lcPool, lcNS, shard = "ceph-objectstore.rgw.log", "lc", "lc.17"
+			rec := &op.BucketRecord{Info: meta.BucketInfo{Bucket: meta.BucketID{Name: "b", Marker: "m"}}}
+			var cookies []string
+			cluster.BeforeWrite(lcPool, lcNS, shard, func(*fakerados.Object) {
+				for _, l := range cluster.Locks(lcPool, lcNS, shard, "lc_process") {
+					cookies = append(cookies, l.Cookie)
+				}
+			})
+			Expect(s.SetEntry(ctx, rec)).To(Succeed())
+			Expect(cluster.Object(lcPool, lcNS, shard).Omap).To(HaveKey(":b:m"))
+			Expect(s.RemoveEntry(ctx, rec)).To(Succeed())
+			Expect(cluster.Object(lcPool, lcNS, shard).Omap).NotTo(HaveKey(":b:m"))
+			other, err := driver.Open(ctx, cluster, opts, driver.Options{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(other.SetEntry(ctx, rec)).To(Succeed())
+			Expect(cookies).To(HaveLen(3))
+			Expect(cookies[0]).To(MatchRegexp(`^[A-Za-z0-9_-]{15}$`), "RGWLC's 15 characters of gen_rand_alphanumeric")
+			Expect(cookies[1]).To(Equal(cookies[0]), "one cookie for the life of the Store")
+			Expect(cookies[2]).NotTo(Equal(cookies[0]), "another Store draws its own, as another gateway process does")
 		})
 
 		Describe("Run", func() {

@@ -17,6 +17,8 @@ func squidDefaults() options {
 	return options{
 		cacheEnabled: true, cacheLRUSize: 25000, cacheExpiry: 900 * time.Second, numControlOIDs: 8, maxNotifyRetries: 10,
 		usageFlushThreshold: 1024, usageTick: 30 * time.Second, usageMaxShards: 32, usageMaxUserShards: 1, lcMaxObjs: 32,
+		lcThreads: true, lcMaxWorker: 3, lcMaxWPWorker: 3, lcLockMaxTime: 90 * time.Second, lcDebugInterval: -time.Second,
+		lcWorkTime: lcWorkTime{endHour: 6}, lcMaxRules: 1000, lcAutoSessionClear: true,
 		bucketQuotaTTL: 10 * time.Minute, bucketQuotaCacheSize: 10000, bucketSyncInterval: 3 * time.Minute,
 		ownerSyncInterval: 24 * time.Hour, ownerSyncWait: 24 * time.Hour, quotaThreads: true, listBucketsChunk: 1000,
 		listMinReadahead: 1000, bucketIndexMaxAIO: 128, dynamicResharding: true, runSyncThread: true,
@@ -48,6 +50,20 @@ var _ = Describe("readOptions", func() {
 		Entry(nil, "rgw_usage_max_shards", "7", func(o *options) { o.usageMaxShards = 7 }),
 		Entry(nil, "rgw_usage_max_user_shards", "7", func(o *options) { o.usageMaxUserShards = 7 }),
 		Entry(nil, "rgw_lc_max_objs", "7", func(o *options) { o.lcMaxObjs = 7 }),
+		Entry(nil, "rgw_enable_lc_threads", "false", func(o *options) {
+			o.lcThreads, o.lcMaxWorker, o.lcMaxWPWorker, o.lcWorkTime = false, 0, 0, lcWorkTime{}
+		}),
+		Entry(nil, "rgw_lc_max_worker", "7", func(o *options) { o.lcMaxWorker = 7 }),
+		Entry(nil, "rgw_lc_max_wp_worker", "7", func(o *options) { o.lcMaxWPWorker = 7 }),
+		Entry(nil, "rgw_lc_lock_max_time", "7", func(o *options) { o.lcLockMaxTime = 7 * time.Second }),
+		Entry(nil, "rgw_lc_thread_delay", "7", func(o *options) { o.lcThreadDelay = 7 * time.Millisecond }),
+		Entry(nil, "rgw_lc_debug_interval", "7", func(o *options) { o.lcDebugInterval = 7 * time.Second }),
+		Entry(nil, "rgw_lifecycle_work_time", "22:30-02:15", func(o *options) {
+			o.lcWorkTime = lcWorkTime{startHour: 22, startMinute: 30, endHour: 2, endMinute: 15}
+		}),
+		Entry(nil, "rgw_lc_max_rules", "7", func(o *options) { o.lcMaxRules = 7 }),
+		Entry(nil, "rgwlc_auto_session_clear", "false", func(o *options) { o.lcAutoSessionClear = false }),
+		Entry(nil, "rgwlc_skip_bucket_step", "true", func(o *options) { o.lcSkipBucketStep = true }),
 		Entry(nil, "rgw_bucket_quota_ttl", "7", func(o *options) { o.bucketQuotaTTL = 7 * time.Second }),
 		Entry(nil, "rgw_bucket_quota_cache_size", "7", func(o *options) { o.bucketQuotaCacheSize = 7 }),
 		Entry(nil, "rgw_user_quota_bucket_sync_interval", "7", func(o *options) { o.bucketSyncInterval = 7 * time.Second }),
@@ -99,6 +115,61 @@ var _ = Describe("readOptions", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(o.lcMaxObjs).To(Equal(uint32(7877)))
 		Expect(buf.String()).To(BeEmpty())
+	})
+
+	It("runs no lifecycle worker for a negative rgw_lc_max_worker and floors rgw_lc_max_wp_worker to one, saying so, with the lifecycle threads on", func() {
+		var buf bytes.Buffer
+		DeferCleanup(captureLog(&buf))
+		o, err := readOptions(conf(map[string]string{"rgw_lc_max_worker": "-2", "rgw_lc_max_wp_worker": "0"}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(o.lcMaxWorker).To(Equal(0))
+		Expect(o.lcMaxWPWorker).To(Equal(1))
+		read := func(option string, value int) any {
+			return And(HaveKeyWithValue("level", "ERROR"), HaveKeyWithValue("option", option), HaveKeyWithValue("value", BeNumerically("==", value)))
+		}
+		Expect(logRecords(&buf)).To(ConsistOf(read("rgw_lc_max_worker", -2), read("rgw_lc_max_wp_worker", 0)))
+	})
+
+	It("leaves the worker counts and the work window unset, and logs and refuses nothing, with the lifecycle threads off, as radosgw reads them only to start the threads", func() {
+		var buf bytes.Buffer
+		DeferCleanup(captureLog(&buf))
+		o, err := readOptions(conf(map[string]string{
+			"rgw_enable_lc_threads": "false", "rgw_lc_max_worker": "-2", "rgw_lc_max_wp_worker": "0",
+			"rgw_lifecycle_work_time": "01:00 - 06:00",
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(o.lcMaxWorker).To(Equal(0))
+		Expect(o.lcMaxWPWorker).To(Equal(0))
+		Expect(o.lcWorkTime).To(Equal(lcWorkTime{}))
+		Expect(buf.String()).To(BeEmpty())
+	})
+
+	It("narrows rgw_lc_lock_max_time to 32 bits of seconds, as utime_t narrows it", func() {
+		o, err := readOptions(conf(map[string]string{"rgw_lc_lock_max_time": "4294967297"}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(o.lcLockMaxTime).To(Equal(time.Second))
+		o, err = readOptions(conf(map[string]string{"rgw_lc_lock_max_time": "-1"}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(o.lcLockMaxTime).To(Equal(math.MaxUint32 * time.Second))
+	})
+
+	It("uses a lifecycle delay, interval or rule count its field cannot hold as the nearest one it can", func() {
+		o, err := readOptions(conf(map[string]string{
+			"rgw_lc_thread_delay": "9223372036855", "rgw_lc_debug_interval": "-9223372037",
+			"rgw_lc_max_rules": "18446744073709551615",
+		}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(o.lcThreadDelay).To(Equal(time.Duration(math.MaxInt64)))
+		Expect(o.lcDebugInterval).To(Equal(time.Duration(math.MinInt64)))
+		Expect(o.lcMaxRules).To(Equal(math.MaxInt))
+		o, err = readOptions(conf(map[string]string{"rgw_lc_thread_delay": "-9223372036855"}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(o.lcThreadDelay).To(Equal(time.Duration(math.MinInt64)))
+	})
+
+	It("refuses an rgw_lifecycle_work_time that does not scan, naming the option and the value, with the lifecycle threads on", func() {
+		_, err := readOptions(conf(map[string]string{"rgw_lifecycle_work_time": "01:00 - 06:00"}))
+		Expect(err).To(MatchError(ContainSubstring(`option rgw_lifecycle_work_time: "01:00 - 06:00"`)))
 	})
 
 	It("uses a value its field cannot hold as the nearest one it can", func() {
