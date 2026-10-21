@@ -160,8 +160,11 @@ func (s *Store) sortedPartsPage(ctx context.Context, ref mpRef, marker, limit in
 // without its get_info: the op read the meta object already for the policy
 // and the placement, so only the omap is read here (listPartsPage), and a
 // meta object gone since is NoSuchUpload. A part's Size is its accounted
-// size, RadosMultipartPart::get_size, and its Mtime the time the part info
-// records.
+// size, RadosMultipartPart::get_size, its Mtime the time the part info
+// records, and its Checksum the one the info holds, which only Tentacle's
+// RGWUploadPartInfo, at version 6, has
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_basic_types.h#L270-L322 at v20.2.4),
+// none on Squid or when it does not decode (listedPartChecksum).
 func (s *Store) ListParts(ctx context.Context, up *op.Upload, marker, maxParts int) (op.ListPartsResult, error) {
 	ref, err := s.metaRef(ctx, up.Bucket, up.Key, up.ID)
 	if err != nil {
@@ -174,7 +177,9 @@ func (s *Store) ListParts(ctx context.Context, up *op.Upload, marker, maxParts i
 	res := op.ListPartsResult{Parts: make([]op.Part, 0, len(infos)), NextMarker: next, Truncated: truncated}
 	for i := range infos {
 		p := &infos[i]
-		res.Parts = append(res.Parts, op.Part{Number: int(p.Num), ETag: p.ETag, Size: p.AccountedSize, Mtime: p.Modified})
+		res.Parts = append(res.Parts, op.Part{
+			Number: int(p.Num), ETag: p.ETag, Size: p.AccountedSize, Mtime: p.Modified, Checksum: s.listedPartChecksum(ctx, *p),
+		})
 	}
 	return res, nil
 }

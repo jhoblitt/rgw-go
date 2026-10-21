@@ -8,6 +8,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/driver"
@@ -202,6 +203,58 @@ var _ = Describe("CreateUpload and GetUpload", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got.Placement).To(Equal(meta.PlacementRule{Name: "default-placement"}))
 	})
+
+	It("writes Tentacle's version 4 upload info with the checksum type and flags, which GetUpload reads back", func(ctx SpecContext) {
+		s2 := openPutStore(ctx, c, denc.Tentacle, nil, now)
+		uc := op.UploadChecksum{Type: cksum.SHA256, Flags: cksum.FlagComposite}
+		up, err := s2.CreateUpload(ctx, rec, key, op.UploadParams{Owner: initiator, Placement: meta.PlacementRule{Name: "default-placement"}, Attrs: attrsWithACL(initiator), Checksum: uc})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(up.Checksum).To(Equal(uc), "the upload created")
+		data := c.Object(extraPoolName, "", metaOID(rec, "k", up.ID)).Data
+		Expect(data[0]).To(Equal(byte(4)))
+		Expect(data[len(data)-4:]).To(Equal([]byte{5, 0, 2, 0}), "u16 cksum_type sha256, then u16 cksum_flags FLAG_COMPOSITE (rgw_common.h:1570-1572 at v20.2.4)")
+		got, err := s2.GetUpload(ctx, rec, key, up.ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.Checksum).To(Equal(uc), "the upload read back")
+	})
+
+	It("writes Squid's version 2 upload info without a checksum type, and reads none from a Tentacle radosgw's", func(ctx SpecContext) {
+		uc := op.UploadChecksum{Type: cksum.CRC32, Flags: cksum.FlagFullObject}
+		up, err := s.CreateUpload(ctx, rec, key, op.UploadParams{Owner: initiator, Placement: meta.PlacementRule{Name: "default-placement"}, Attrs: attrsWithACL(initiator), Checksum: uc})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(up.Checksum).To(BeZero(), "the upload created")
+		obj := c.Object(extraPoolName, "", metaOID(rec, "k", up.ID))
+		Expect(obj.Data).To(Equal(encode(meta.MultipartUploadInfo{DestPlacement: meta.PlacementRule{Name: "default-placement"}})), "Squid's version 2")
+		e := denc.NewEncoder()
+		meta.MultipartUploadInfo{DestPlacement: meta.PlacementRule{Name: "default-placement"}, CksumType: uint16(uc.Type), CksumFlags: uc.Flags}.Encode(e, denc.Tentacle)
+		obj.Data = e.Bytes()
+		got, err := s.GetUpload(ctx, rec, key, up.ID)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got.Checksum).To(BeZero(), "Squid's DECODE_START(2) reads no checksum field (rgw_common.h:1527-1540 at v19.2.7)")
+		Expect(got.Placement).To(Equal(meta.PlacementRule{Name: "default-placement"}))
+	})
+
+	It("creates an upload on Squid for a checksum type rgw-go does not compute, keeping none, as Squid's radosgw ignores the algorithm", func(ctx SpecContext) {
+		up, err := s.CreateUpload(ctx, rec, key, op.UploadParams{
+			Owner: initiator, Placement: meta.PlacementRule{Name: "default-placement"}, Attrs: attrsWithACL(initiator),
+			Checksum: op.UploadChecksum{Type: cksum.XXH3, Flags: cksum.FlagComposite},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(up.Checksum).To(BeZero())
+		Expect(c.Object(extraPoolName, "", metaOID(rec, "k", up.ID)).Data).To(Equal(encode(meta.MultipartUploadInfo{DestPlacement: meta.PlacementRule{Name: "default-placement"}})), "Squid's version 2")
+	})
+
+	DescribeTable("refuses on Tentacle a checksum type rgw-go does not compute with InvalidArgument, writing nothing",
+		func(ctx SpecContext, t cksum.Type) {
+			s2 := openPutStore(ctx, c, denc.Tentacle, nil, now)
+			_, err := s2.CreateUpload(ctx, rec, key, op.UploadParams{Owner: initiator, Attrs: attrsWithACL(initiator), Checksum: op.UploadChecksum{Type: t, Flags: cksum.FlagComposite}})
+			Expect(err).To(MatchError(op.ErrInvalidArgument))
+			Expect(c.Object(extraPoolName, "", oid)).To(BeNil())
+			Expect(c.Writes(rookIndexPool, "", shard)).To(BeZero())
+		},
+		Entry("type 9, main's md5, past a v20.2.4 radosgw's table", cksum.Type(9)),
+		Entry("xxh3, which rgw-go does not compute", cksum.XXH3),
+	)
 
 	It("writes nothing when no extra pool resolves", func(ctx SpecContext) {
 		editRoot(c, meta.ZoneInfoOID(putZoneID), meta.DecodeZoneParams, func(z *meta.ZoneParams) {
