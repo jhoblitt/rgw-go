@@ -564,6 +564,7 @@ var _ = Describe("Evaluator", func() {
 			},
 			Entry("s3:PutBucketObjectLockConfiguration", policy.S3PutBucketObjectLockConfiguration),
 			Entry("s3:PutBucketVersioning", policy.S3PutBucketVersioning),
+			Entry("s3:PutBucketAcl, for an ACL other than private", policy.S3PutBucketAcl),
 		)
 	})
 

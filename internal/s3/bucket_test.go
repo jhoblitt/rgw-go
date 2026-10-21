@@ -12,6 +12,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
+	"github.com/jhoblitt/rgw-go/internal/authz"
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/memstore"
@@ -221,6 +222,44 @@ var _ = Describe("create_bucket, delete_bucket, stat_bucket and get_bucket_locat
 			rec = serveReq(h, http.MethodGet, "/plain?object-lock", nil)
 			Expect(rec.Body.String()).To(HaveSuffix(`<Rule><DefaultRetention><Mode>GOVERNANCE</Mode><Days>1</Days></DefaultRetention></Rule></ObjectLockConfiguration>`))
 		})
+		// Amazon S3's CreateBucket reference, retrieved 2026-10-21: "if you
+		// specify an access control list (ACL) and set it to public-read,
+		// public-read-write, authenticated-read, or if you explicitly specify
+		// any other custom ACLs, both s3:CreateBucket and s3:PutBucketAcl
+		// permissions are required".
+		DescribeTable("authorizes as s3:PutBucketAcl a CreateBucket naming an ACL other than private",
+			func(ctx SpecContext, needsACL bool, hdr ...string) {
+				env.Authz = authz.New(authz.DefaultConfig(denc.Squid))
+				policies := denc.NewEncoder()
+				denc.EncodeMap(policies, map[string]string{"p": `{"Version":"2012-10-17","Statement":[` +
+					`{"Effect":"Deny","Action":"s3:PutBucketAcl","Resource":"arn:aws:s3:::plain"}]}`},
+					(*denc.Encoder).String, (*denc.Encoder).String)
+				auth := s3.AuthenticatorFunc(func(context.Context, *http.Request, op.PayloadForms) (*op.AuthResult, error) {
+					return &op.AuthResult{Identity: op.Identity{
+						User: &bob.Info, Owner: meta.UserOwner(bob.Info.UserID), OpMask: bob.Info.OpMask,
+						Attrs: map[string][]byte{"user.rgw.user-policy": policies.Bytes()},
+					}}, nil
+				})
+				rec := serveReq(s3.NewHandler(env, auth, testConfig(s3.Config{})), http.MethodPut, "/plain", nil, hdr...)
+				_, err := store.GetBucket(ctx, "", "plain")
+				if needsACL {
+					Expect(rec.Code).To(Equal(http.StatusForbidden), rec.Body.String())
+					Expect(rec.Body.String()).To(ContainSubstring("<Code>AccessDenied</Code>"))
+					Expect(err).To(MatchError(op.ErrNoSuchBucket), "nothing created")
+					return
+				}
+				Expect(rec.Code).To(Equal(http.StatusOK), rec.Body.String())
+				Expect(err).NotTo(HaveOccurred())
+			},
+			Entry("public-read", true, "x-amz-acl", "public-read"),
+			Entry("public-read-write", true, "x-amz-acl", "public-read-write"),
+			Entry("authenticated-read", true, "x-amz-acl", "authenticated-read"),
+			Entry("another canned ACL, bucket-owner-full-control", true, "x-amz-acl", "bucket-owner-full-control"),
+			Entry("a grant header", true, "x-amz-grant-read", `id="alice"`),
+			Entry("a grant header naming the requester alone", true, "x-amz-grant-full-control", `id="bob"`),
+			Entry("private, which needs s3:CreateBucket alone", false, "x-amz-acl", "private"),
+			Entry("no ACL", false),
+		)
 		It("creates a bucket with object lock whose versioning PutBucketVersioning refuses to suspend with 409", func(ctx SpecContext) {
 			const suspend = `<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Suspended</Status></VersioningConfiguration>`
 			Expect(put("/plain", "", "x-amz-bucket-object-lock-enabled", "true").Code).To(Equal(200))

@@ -2524,6 +2524,40 @@ review and verified against the tree.
   for success
   ([rgw_rest_s3.cc:2554-2555](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2554-L2555),
   [rgw_rest_s3.cc:2707-2708](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2707-L2708)).
+- **CreateBucket with an ACL other than private is authorized as
+  s3:PutBucketAcl too.** radosgw's CreateBucket authorizes s3:CreateBucket
+  alone, whatever ACL the request's headers build
+  ([rgw_op.cc:3215-3244](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3215-L3244),
+  [rgw_op.cc:3443-3472](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3443-L3472);
+  `docs/ceph-upstream-bugs.md`, "[radosgw's CreateBucket takes an ACL other
+  than private without
+  s3:PutBucketAcl](ceph-upstream-bugs.md#radosgws-createbucket-takes-an-acl-other-than-private-without-s3putbucketacl)").
+  Amazon S3's CreateBucket reference, retrieved 2026-10-21: "In your
+  `CreateBucket` request, if you specify an access control list (ACL) and
+  set it to `public-read`, `public-read-write`, `authenticated-read`, or if
+  you explicitly specify any other custom ACLs, both `s3:CreateBucket` and
+  `s3:PutBucketAcl` permissions are required. In your `CreateBucket`
+  request, if you set the ACL to `private`, or if you don't specify any
+  ACLs, only the `s3:CreateBucket` permission is required." rgw-go takes an
+  `x-amz-acl` other than `private`, and any `x-amz-grant-*` header, the
+  headers radosgw builds the bucket's ACL from, for an ACL that needs
+  s3:PutBucketAcl; it evaluates the action as it evaluates the object-lock
+  actions, on the new bucket's ARN against the requester's own policies, and
+  answers a denial with 403 AccessDenied, creating nothing. The canned ACLs
+  the page does not name, `bucket-owner-read` and
+  `bucket-owner-full-control`, need it too, as other custom ACLs, and so
+  does a grant header that names the requester alone. rgw-go makes the
+  check before it finds that the bucket exists, as Amazon S3 does, since the
+  rule follows the headers the request sends: a denied requester
+  re-creating a bucket it already owns with such an ACL gets 403 and the
+  bucket is left as it was. radosgw answers that re-create 200 when the ACL
+  is the bucket's own
+  ([rgw_rest_s3.cc:2554-2555](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2554-L2555),
+  [rgw_rest_s3.cc:2707-2708](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2707-L2708)),
+  and 409 BucketAlreadyExists, "Cannot modify existing access control
+  policy", when it is another
+  ([rgw_op.cc:3569-3578](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3569-L3578),
+  [rgw_op.cc:3797-3806](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3797-L3806)).
 - **A stored lifecycle configuration answers 501 until phase 2.** `GET
   /{bucket}?lifecycle` loads the bucket and authorizes
   `s3:GetLifecycleConfiguration` as radosgw's `RGWGetLC` does

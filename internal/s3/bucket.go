@@ -87,7 +87,8 @@ func writeEmpty(w http.ResponseWriter, r *op.Request, status int) {
 // v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2593-L2703):
 // the name checked unless the request is a system user's, the ACL built from
-// the headers, the body read and parsed, a "zonegroup:placement" constraint
+// the headers and whether they name one other than private, the body read
+// and parsed, a "zonegroup:placement" constraint
 // split, x-amz-storage-class taken as the placement's class, and the
 // object-lock header carried for the op to check. Each header is read by its
 // last value, as RGWEnv::set keeps the last of a repeated header
@@ -103,6 +104,8 @@ func createBucketParams(ctx context.Context, r *op.Request, o *op.CreateBucket) 
 		return err
 	}
 	o.ACL = policy
+	canned, _ := op.HeaderValue(r.Header, "X-Amz-Acl")
+	o.NonPrivateACL = canned != "" && canned != "private" || authz.HasGrantHeader(r.Header)
 	body, err := readParamBody(r, invalidRange)
 	if err != nil && !errors.Is(err, op.ErrMissingContentLength) {
 		return err
