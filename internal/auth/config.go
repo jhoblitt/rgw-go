@@ -24,7 +24,9 @@ type Config struct {
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6163-L6166 at v20.2.4),
 	// though
 	// https://github.com/ceph/ceph/blob/v19.2.6/src/common/options/rgw.yaml.in#L911-L916
-	// documents it as presigned-only; rgw-go mirrors radosgw.
+	// documents it as presigned-only; rgw-go mirrors radosgw. A POST object
+	// form is authenticated whatever it says, as radosgw's browser-upload
+	// abstractor never reads it (Verifier.AuthenticateBrowserUpload).
 	DisablePresignedURLs bool
 	// Insecure is rgw_sigv4_insecure (default false): it skips the checks
 	// that host and every x-amz-* header but x-amz-content-sha256 are signed

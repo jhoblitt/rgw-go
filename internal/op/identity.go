@@ -177,6 +177,12 @@ const (
 	// names every parameter.
 	RouteSigV4Header
 	RouteSigV4Query
+	// RouteBrowserUpload is a POST object form's credentials, whose signature
+	// covers the form's policy document and nothing of the request's query.
+	// It reads neither the query's meta nor its encryption settings, and an
+	// identity on it takes nothing from the query, a system user's rgwx-
+	// parameters included.
+	RouteBrowserUpload
 
 	numAuthRoutes
 )

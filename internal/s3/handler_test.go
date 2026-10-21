@@ -1064,4 +1064,16 @@ var _ = Describe("AnonymousOnly", func() {
 		_, err := s3.AnonymousOnly{}.Authenticate(ctx, req, 0)
 		Expect(err).To(MatchError(op.ErrNotImplemented), "an empty Authorization header")
 	})
+	It("refuses every browser upload's credentials, as does a function adapted to Authenticate", func(ctx SpecContext) {
+		creds := op.BrowserUploadCredentials{AccessKey: "AKALICE", Signature: "sig", Policy: "e30="}
+		res, err := s3.AnonymousOnly{}.AuthenticateBrowserUpload(ctx, creds)
+		Expect(err).To(MatchError(op.ErrNotImplemented), "AnonymousOnly")
+		Expect(res).To(BeNil(), "AnonymousOnly")
+		anon := s3.AuthenticatorFunc(func(context.Context, *http.Request, op.PayloadForms) (*op.AuthResult, error) {
+			return &op.AuthResult{Identity: op.Anonymous(), Route: op.RouteAnonymous}, nil
+		})
+		res, err = anon.AuthenticateBrowserUpload(ctx, creds)
+		Expect(err).To(MatchError(op.ErrNotImplemented), "AuthenticatorFunc")
+		Expect(res).To(BeNil(), "AuthenticatorFunc never answers its function's anonymous identity")
+	})
 })

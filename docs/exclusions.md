@@ -4679,6 +4679,46 @@ does the following.
   header-signed PutObject with `?x-amz-meta-x=1`. Run against both
   releases' clusters on 2026-10-14, rgw-go stored the signed metadata
   alone, and radosgw stored `x` as well.
+- **A browser upload's identity takes nothing from the query.** radosgw
+  authenticates a POST object form's credentials inside the op, through
+  `create_apl_local`, which wraps the local applier in `SysReqApplier`
+  ([rgw_auth_s3.h:186](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.h#L186) at v19.2.7,
+  [rgw_auth_s3.h:188](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.h#L188) at v20.2.4).
+  For a system user's form its `load_acct_info` reads `rgwx-uid` from the
+  request's query and makes the user or account it names the request's
+  owner
+  ([rgw_auth_filters.h:283-317](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_filters.h#L283-L317) at v19.2.7,
+  [rgw_auth_filters.h:305-345](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_filters.h#L305-L345) at v20.2.4),
+  for whom `get_policy` then builds the stored object's ACL
+  ([rgw_rest_s3.cc:3246-3247](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3246-L3247) at v19.2.7,
+  [rgw_rest_s3.cc:3382-3383](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3382-L3383) at v20.2.4).
+  The form's signature covers its policy document and nothing of the query
+  (`AWSBrowserUploadAbstractor`,
+  [rgw_rest_s3.cc:6157-6212](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6157-L6212) at v19.2.7,
+  [rgw_rest_s3.cc:6687-6742](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6687-L6742) at v20.2.4),
+  so whoever holds a system user's signed form chooses that owner
+  (`docs/ceph-upstream-bugs.md`, "[radosgw takes a system key's rgwx-uid
+  from a query its signature does not
+  cover](ceph-upstream-bugs.md#radosgw-takes-a-system-keys-rgwx-uid-from-a-query-its-signature-does-not-cover)").
+  rgw-go's browser-upload identity takes nothing from the query, on both
+  releases (`Verifier.AuthenticateBrowserUpload`, whose result's route,
+  `op.RouteBrowserUpload`, reads none of it): a system user's form stores
+  its object as the system user's own. Only radosgw's multisite connection
+  sends `rgwx-` parameters, and it sends no form, so no client rgw-go
+  serves loses one.
+- **A SigV4 browser upload's credential must hold a slash.** radosgw splits
+  a form's `x-amz-credential` at its first `/` into the key id and the
+  scope, and for a credential without one takes the whole credential as
+  both, as `substr(npos + 1)` is the whole string
+  ([rgw_rest_s3.cc:6176-6181](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6176-L6181) at v19.2.7,
+  [rgw_rest_s3.cc:6706-6711](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6706-L6711) at v20.2.4),
+  so it accepts a form signed under the signing key of that scope
+  (`docs/ceph-upstream-bugs.md`, "[radosgw takes a SigV4 browser upload's
+  credential without a slash as both its key id and its
+  scope](ceph-upstream-bugs.md#radosgw-takes-a-sigv4-browser-uploads-credential-without-a-slash-as-both-its-key-id-and-its-scope)").
+  AWS's credential is a key id and then its scope. rgw-go refuses such a
+  form on both releases with 403 AccessDenied, radosgw's answer to every
+  failed browser-upload authentication. No SDK signs a form so.
 
 ### Authorization differences
 
