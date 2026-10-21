@@ -5,11 +5,13 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/cls/version"
 	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -261,6 +263,39 @@ var _ = Describe("StatObject and PrefetchObject", func() {
 		_, err = s.StatObject(ctx, plain, meta.ObjKey{Name: "bad.bin"})
 		Expect(err).To(MatchError(op.ErrUnknown))
 		Expect(err).To(MatchError(ContainSubstring("plain/bad.bin")))
+	})
+
+	DescribeTable("decodes user.rgw.cksum into Checksum, and one it cannot read as none, failing neither the stat nor the prefetch",
+		func(ctx SpecContext, attr []byte, want *cksum.Cksum) {
+			head(marker+"_ck.bin", []byte("x"), map[string][]byte{meta.AttrETag: []byte("e"), meta.AttrCksum: attr})
+			st, err := s.StatObject(ctx, plain, meta.ObjKey{Name: "ck.bin"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Checksum).To(Equal(want), "the stat")
+			Expect(st.Attrs).To(HaveKeyWithValue(meta.AttrCksum, attr), "the attr stays among the attrs")
+			st, err = s.PrefetchObject(ctx, plain, meta.ObjKey{Name: "ck.bin"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Checksum).To(Equal(want), "the prefetch")
+		},
+		Entry("a version 2 record", cksumRecord(cksum.CRC32, be32(0xcbf43926), cksum.FlagFullObject),
+			&cksum.Cksum{Type: cksum.CRC32, Digest: be32(0xcbf43926), Flags: cksum.FlagFullObject}),
+		Entry("a version 1 record, which has no flags and decodes with 0, as Cksum::decode reads it",
+			slices.Concat([]byte{1, 1, 8, 0, 0, 0, 1, 0, 4, 0}, be32(0xcbf43926)),
+			&cksum.Cksum{Type: cksum.CRC32, Digest: be32(0xcbf43926)}),
+		Entry("a record with a byte past it, which radosgw's checksum-mode GET asserts on and rgw-go leaves unread",
+			slices.Concat(cksumRecord(cksum.SHA1, make([]byte, 20), 0), []byte{0x99}),
+			&cksum.Cksum{Type: cksum.SHA1, Digest: make([]byte, 20)}),
+		Entry("a type-9 record, which a v20.2.4 radosgw would look up past its table", cksumRecord(9, make([]byte, 16), 0), nil),
+		Entry("a truncated record", cksumRecord(cksum.CRC32, be32(0xcbf43926), 0)[:12], nil),
+	)
+
+	It("logs at debug level a user.rgw.cksum it reads as none, naming the object and the decode error", func(ctx SpecContext) {
+		var logs bytes.Buffer
+		DeferCleanup(driver.CaptureDebugLog(&logs))
+		head(marker+"_ck.bin", []byte("x"), map[string][]byte{meta.AttrETag: []byte("e"), meta.AttrCksum: cksumRecord(9, make([]byte, 16), 0)})
+		st, err := s.StatObject(ctx, plain, meta.ObjKey{Name: "ck.bin"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.Checksum).To(BeNil())
+		Expect(logs.String()).To(MatchRegexp(`"level":"DEBUG","msg":"[^"]*checksum[^"]*","bucket":"plain","key":"ck.bin","error":"[^"]*type 9 has no id[^"]*"`))
 	})
 
 	It("refuses a corrupt manifest with UnknownError, radosgw's -EIO", func(ctx SpecContext) {

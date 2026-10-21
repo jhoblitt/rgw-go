@@ -4,21 +4,30 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/crc32"
+	"hash/crc64"
 	"io"
 	"math/rand/v2"
 	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
+	"testing"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/cls/refcount"
 	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/cls/version"
@@ -1072,3 +1081,319 @@ var _ = Describe("PutObject into a compressing class", func() {
 		Expect(ok).To(BeTrue(), "the same class under its name compresses")
 	})
 })
+
+// check9 is the check string of the CRC catalog, whose CRC32 is 0xCBF43926,
+// CRC32C 0xE3069283 and CRC-64/NVME 0xAE8B14860A799888.
+var check9 = []byte("123456789")
+
+func be32(v uint32) []byte { return binary.BigEndian.AppendUint32(nil, v) }
+func be64(v uint64) []byte { return binary.BigEndian.AppendUint64(nil, v) }
+
+// check9Digests is each writable type's digest of check9, as a record stores
+// it: a CRC big-endian, computed without rgw-go's cksum package.
+func check9Digests() map[cksum.Type][]byte {
+	s1, s256, s512 := sha1.Sum(check9), sha256.Sum256(check9), sha512.Sum512(check9)
+	return map[cksum.Type][]byte{
+		cksum.CRC32: be32(0xcbf43926), cksum.CRC32C: be32(0xe3069283), cksum.CRC64NVME: be64(0xae8b14860a799888),
+		cksum.SHA1: s1[:], cksum.SHA256: s256[:], cksum.SHA512: s512[:],
+	}
+}
+
+// cksumRecord hand-builds the user.rgw.cksum Cksum::encode writes:
+// ENCODE_START(2, 1)'s struct_v, compat and u32 length, then the u16 type,
+// the u16 digest size, the digest and the u16 flags.
+func cksumRecord(t cksum.Type, digest []byte, flags uint16) []byte {
+	body := binary.LittleEndian.AppendUint16(nil, uint16(t))
+	body = binary.LittleEndian.AppendUint16(body, uint16(len(digest))) //nolint:gosec // a digest is at most 64 bytes
+	body = binary.LittleEndian.AppendUint16(append(body, digest...), flags)
+	return slices.Concat([]byte{2, 1}, binary.LittleEndian.AppendUint32(nil, uint32(len(body))), body) //nolint:gosec // as above
+}
+
+// eofReader is a body that records whether it has returned io.EOF.
+type eofReader struct {
+	r     io.Reader
+	ended bool
+}
+
+func (e *eofReader) Read(p []byte) (int, error) {
+	n, err := e.r.Read(p)
+	if errors.Is(err, io.EOF) {
+		e.ended = true
+	}
+	return n, err
+}
+
+// suppliedArmor is a ChecksumRequest's Expected that supplies digest's armor,
+// counting its calls into asked.
+func suppliedArmor(digest []byte, asked *int) func() (string, bool) {
+	return func() (string, bool) {
+		*asked++
+		return base64.StdEncoding.EncodeToString(digest), true
+	}
+}
+
+// expectReadableChecksums asserts that every user.rgw.cksum a write op set on
+// an object of the data pool, and every checksum a part record sent to the
+// extra pool's meta objects carries, is a record a v20.2.4 radosgw reads:
+// one cksum.DecodeCksum takes, of a type of at most 8, its index into
+// radosgw's table. It reads the ops, not the objects: the PUT fixture's fake
+// cluster is a Squid one, whose mp_upload_part_info_update stores the record
+// as a Squid OSD re-encodes it, without the checksum.
+func expectReadableChecksums(c *fakerados.Cluster) {
+	GinkgoHelper()
+	check := func(where string, b []byte) {
+		d := denc.NewDecoder(b)
+		got := cksum.DecodeCksum(d)
+		Expect(d.Err()).NotTo(HaveOccurred(), where)
+		Expect(got.Type).To(BeNumerically("<=", cksum.CRC64NVME), where)
+	}
+	for _, pool := range []string{testDataPool, extraPoolName} {
+		for _, oid := range slices.Compact(slices.Sorted(slices.Values(c.WriteOrder(pool, "")))) {
+			for _, w := range c.WritesTo(pool, "", oid) {
+				for _, st := range w.Steps() {
+					switch st := st.(type) {
+					case *radosclient.SetXattrStep:
+						if st.Name == meta.AttrCksum {
+							check(oid, st.Value)
+						}
+					case *radosclient.ExecStep:
+						if st.Method != "mp_upload_part_info_update" {
+							continue
+						}
+						upd := rgwcls.DecodeMPUploadPartInfoUpdateOp(denc.NewDecoder(st.In))
+						d := denc.NewDecoder(upd.Info)
+						info := meta.DecodeUploadPartInfo(d)
+						Expect(d.Err()).NotTo(HaveOccurred(), "%s %s", oid, upd.PartKey)
+						if info.Cksum != nil {
+							Expect(info.Cksum[0]).To(Equal(byte(1)), "%s %s: the optional's presence byte", oid, upd.PartKey)
+							check(oid+" "+upd.PartKey, info.Cksum[1:])
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+var _ = Describe("PutObject's checksum", func() {
+	var (
+		c       *fakerados.Cluster
+		s       *driver.Store
+		rec     *op.BucketRecord
+		key     meta.ObjKey
+		mtime   time.Time
+		attrs   map[string][]byte
+		headOID string
+		shard   string
+	)
+	BeforeEach(func(ctx SpecContext) {
+		mtime = time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+		c = newPutCluster()
+		clock := mtime
+		c.SetClock(func() time.Time { return clock })
+		s = openPutStore(ctx, c, denc.Squid, nil, mtime)
+		rec = testBucket(putBucketID, 11)
+		seedShards(c, rec)
+		seedRecordInstance(c, rec)
+		key = meta.ObjKey{Name: "k"}
+		attrs = map[string][]byte{meta.AttrACL: encode(acl.DefaultPolicy(alice, "Alice"))}
+		headOID = putBucketID + "_k"
+		shard = indexShardOID(rec, "k")
+	})
+	AfterEach(func() { expectReadableChecksums(c) })
+	put := func(ctx context.Context, body io.Reader, size int, p op.PutParams) (*op.PutResult, error) {
+		p.Attrs, p.Size, p.Tag = attrs, int64(size), "t"
+		return s.PutObject(ctx, rec, key, body, p)
+	}
+
+	DescribeTable("stores the body's checksum as user.rgw.cksum, the record Cksum::encode writes, in the guarded head write",
+		func(ctx SpecContext, rel denc.Release, t cksum.Type) {
+			s = openPutStore(ctx, c, rel, nil, mtime)
+			digest := check9Digests()[t]
+			var asked int
+			res, err := put(ctx, bytes.NewReader(check9), len(check9), op.PutParams{Checksum: &op.ChecksumRequest{Type: t, Expected: suppliedArmor(digest, &asked)}})
+			Expect(err).NotTo(HaveOccurred())
+			want := &cksum.Cksum{Type: t, Digest: digest}
+			Expect(res.Checksum).To(Equal(want), "the result, flags 0 as finalize leaves them")
+			Expect(asked).To(Equal(1), "the supplied value is asked for once")
+			Expect(c.Writes(testDataPool, "", headOID)).To(Equal(1), "no write of its own")
+			Expect(c.LastWrite(testDataPool, "", headOID).Steps()).To(ContainElement(
+				&radosclient.SetXattrStep{Name: meta.AttrCksum, Value: cksumRecord(t, digest, 0)}))
+			st, err := s.StatObject(ctx, rec, key)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Checksum).To(Equal(want), "the stat")
+		},
+		Entry("CRC32 on Squid", denc.Squid, cksum.CRC32),
+		Entry("CRC32C on Tentacle", denc.Tentacle, cksum.CRC32C),
+		Entry("CRC64NVME on Squid", denc.Squid, cksum.CRC64NVME),
+		Entry("SHA1 on Tentacle", denc.Tentacle, cksum.SHA1),
+		Entry("SHA256 on Squid", denc.Squid, cksum.SHA256),
+		Entry("SHA512 on Tentacle", denc.Tentacle, cksum.SHA512),
+	)
+
+	It("stores the request's flags exactly as given", func(ctx SpecContext) {
+		req := &op.ChecksumRequest{Type: cksum.CRC32C, Flags: cksum.FlagFullObject}
+		res, err := put(ctx, bytes.NewReader(check9), len(check9), op.PutParams{Checksum: req})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Checksum.Flags).To(Equal(cksum.FlagFullObject), "no V2: finalize replaces the constructor's flags")
+		Expect(c.Object(testDataPool, "", headOID).Xattrs).To(HaveKeyWithValue(meta.AttrCksum, cksumRecord(cksum.CRC32C, be32(0xe3069283), cksum.FlagFullObject)))
+	})
+
+	It("checksums a body of tails and a compressed body over the plaintext, asking for the value only once the body has ended", func(ctx SpecContext) {
+		withCompressionClasses(c, compression.Zstd)
+		s = openPutStore(ctx, c, denc.Squid, nil, mtime)
+		body := hexNoise(9 << 20)
+		sum := sha256.Sum256(body)
+		for _, class := range []string{"", compClass(compression.Zstd)} {
+			r := &eofReader{r: bytes.NewReader(body)}
+			var early bool
+			req := &op.ChecksumRequest{Type: cksum.SHA256, Expected: func() (string, bool) {
+				early = early || !r.ended
+				return base64.StdEncoding.EncodeToString(sum[:]), true
+			}}
+			res, err := put(ctx, r, len(body), op.PutParams{StorageClass: class, Checksum: req})
+			Expect(err).NotTo(HaveOccurred(), "class %q", class)
+			Expect(early).To(BeFalse(), "class %q: asked before the body's io.EOF, when a trailer's value is not there yet", class)
+			Expect(res.Checksum).To(Equal(&cksum.Cksum{Type: cksum.SHA256, Digest: sum[:]}), "class %q", class)
+		}
+	})
+
+	It("checksums a CRC64NVME body read in small pieces as hash/crc64 does the body whole", func(ctx SpecContext) {
+		body := hexNoise(1<<20 + 5)
+		want := be64(crc64.Checksum(body, crc64.MakeTable(0x9a6c9329ac4bc9b5)))
+		var asked int
+		res, err := put(ctx, &cappedReader{r: bytes.NewReader(body), n: 1000}, len(body),
+			op.PutParams{Checksum: &op.ChecksumRequest{Type: cksum.CRC64NVME, Expected: suppliedArmor(want, &asked)}})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Checksum).To(Equal(&cksum.Cksum{Type: cksum.CRC64NVME, Digest: want}))
+	})
+
+	DescribeTable("stores the checksum unverified when the request supplies no value",
+		func(ctx SpecContext, expected func() (string, bool)) {
+			_, err := put(ctx, bytes.NewReader(check9), len(check9), op.PutParams{Checksum: &op.ChecksumRequest{Type: cksum.CRC32, Expected: expected}})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(c.Object(testDataPool, "", headOID).Xattrs).To(HaveKeyWithValue(meta.AttrCksum, cksumRecord(cksum.CRC32, be32(0xcbf43926), 0)))
+		},
+		Entry("no Expected", nil),
+		Entry("an Expected that answers it has no value", func() (string, bool) { return "not the checksum", false }),
+	)
+
+	It("refuses a body whose checksum is not the value supplied with BadDigest, writing no head and removing its tails", func(ctx SpecContext) {
+		var asked int
+		other := crc32.Checksum([]byte("other"), crc32.MakeTable(crc32.Castagnoli))
+		_, err := put(ctx, bytes.NewReader(mibPattern(5)), 5<<20, op.PutParams{Checksum: &op.ChecksumRequest{Type: cksum.CRC32C, Expected: suppliedArmor(be32(other), &asked)}})
+		Expect(err).To(MatchError(op.ErrBadDigest))
+		Expect(err).To(MatchError(ContainSubstring("crc32c")), "the error names the checksum, not the Content-MD5")
+		Expect(c.Writes(testDataPool, "", tailOID(putPrefix, 1))).To(Equal(2), "the tail was written, then removed")
+		Expect(poolObjects(ctx, c, testDataPool, "")).To(BeEmpty(), "no head was written")
+		Expect(c.Writes(rookIndexPool, "", shard)).To(BeZero())
+	})
+
+	It("compares the value supplied with the armor as a string, so another spelling of the digest is BadDigest", func(ctx SpecContext) {
+		armor := base64.StdEncoding.EncodeToString(be32(0xcbf43926))
+		unpadded := strings.TrimRight(armor, "=")
+		_, err := put(ctx, bytes.NewReader(check9), len(check9), op.PutParams{Checksum: &op.ChecksumRequest{Type: cksum.CRC32, Expected: func() (string, bool) { return unpadded, true }}})
+		Expect(err).To(MatchError(op.ErrBadDigest), "strcmp(%q, %q), rgw_cksum_pipe.h:202-211 at v20.2.4", unpadded, armor)
+	})
+
+	DescribeTable("checks what arrived before the checksum, never asking for its value",
+		func(ctx SpecContext, body string, size int, p op.PutParams, quota bool, want error) {
+			if quota {
+				rec.Info.Quota = meta.Quota{MaxSize: 4, MaxObjects: -1, CheckOnRaw: true, Enabled: true}
+			}
+			var asked int
+			p.Checksum = &op.ChecksumRequest{Type: cksum.CRC32, Expected: suppliedArmor([]byte("not the crc"), &asked)}
+			_, err := put(ctx, strings.NewReader(body), size, p)
+			Expect(err).To(MatchError(want))
+			Expect(asked).To(BeZero(), "the checksum's value, which is asked for only when its check runs")
+			Expect(poolObjects(ctx, c, testDataPool, "")).To(BeEmpty())
+		},
+		Entry("a body short of its length is RequestTimeout", "abc", 10, op.PutParams{}, false, op.ErrRequestTimeout),
+		Entry("a body over the quota is QuotaExceeded", string(check9), len(check9), op.PutParams{}, true, op.ErrQuotaExceeded),
+		Entry("a wrong Content-MD5 is its BadDigest, the checksum wrong too", string(check9), len(check9),
+			op.PutParams{ContentMD5: md5sumOf("other")}, false, op.ErrBadDigest),
+	)
+
+	DescribeTable("refuses a type a v20.2.4 radosgw cannot read with InvalidArgument, before it reads the body or writes anything",
+		func(ctx SpecContext, t cksum.Type) {
+			var read atomic.Int64
+			body := &countingReader{r: bytes.NewReader(mibPattern(5)), n: &read}
+			_, err := put(ctx, body, 5<<20, op.PutParams{Checksum: &op.ChecksumRequest{Type: t}})
+			Expect(err).To(MatchError(op.ErrInvalidArgument))
+			Expect(read.Load()).To(BeZero(), "the body")
+			Expect(poolObjects(ctx, c, testDataPool, "")).To(BeEmpty(), "a tail or a head")
+			Expect(c.Writes(rookIndexPool, "", shard)).To(BeZero(), "the index")
+		},
+		Entry("type 9, main's md5", cksum.Type(9)),
+		Entry("type 10, main's xxhash64", cksum.Type(10)),
+		Entry("type 11, main's xxhash128", cksum.Type(11)),
+		Entry("type 65535", cksum.Type(65535)),
+		Entry("xxhash3, which rgw-go does not compute", cksum.XXH3),
+	)
+})
+
+var _ = Describe("the CRC64NVME batch", func() {
+	DescribeTable("is no larger than the body, and none where hash/crc64 runs a byte at a time anyway",
+		func(t cksum.Type, size int64, written, want int) {
+			got, err := driver.ChecksumBatchForTest(&op.ChecksumRequest{Type: t}, size, make([]byte, written))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got).To(Equal(want))
+		},
+		Entry("none for a 9-byte body", cksum.CRC64NVME, int64(9), 9, 0),
+		Entry("none for a 2047-byte body, all of it below the 2048 bytes crc64's slicing needs", cksum.CRC64NVME, int64(2047), 2047, 0),
+		Entry("a 2048-byte body's own length", cksum.CRC64NVME, int64(2048), 1, 2048),
+		Entry("a 100 KiB body's own length", cksum.CRC64NVME, int64(100<<10), 1, 100<<10),
+		Entry("128 KiB for a 1 MiB body", cksum.CRC64NVME, int64(1<<20), 1, 128<<10),
+		Entry("128 KiB for a body of unknown length, once it is written", cksum.CRC64NVME, int64(-1), 1, 128<<10),
+		Entry("none for a body of unknown length never written", cksum.CRC64NVME, int64(-1), 0, 0),
+		Entry("none for a CRC32C body", cksum.CRC32C, int64(1<<20), 1, 0),
+	)
+})
+
+// cappedReader yields r in reads of at most n bytes, as a request body yields
+// what each TLS record or socket read carries.
+type cappedReader struct {
+	r io.Reader
+	n int
+}
+
+func (p *cappedReader) Read(b []byte) (int, error) { return p.r.Read(b[:min(len(b), p.n)]) }
+
+// BenchmarkPutObjectChecksum measures a 4 MiB PutObject on fakerados, a
+// head-only object, without a checksum and with each CRC, its body read in
+// pieces of 1 KiB, of a TLS record's 16 KiB and of 128 KiB. Run it alone:
+// go test -tags=ceph_preview -run '^$' -bench PutObjectChecksum ./internal/driver/
+func BenchmarkPutObjectChecksum(b *testing.B) {
+	RegisterTestingT(b)
+	b.Cleanup(driver.CaptureLog(io.Discard))
+	ctx := b.Context()
+	c := newPutCluster()
+	s := openPutStore(ctx, c, denc.Tentacle, nil, time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC))
+	b.Cleanup(func() { Expect(s.Close()).To(Succeed()) })
+	rec := testBucket(putBucketID, 11)
+	seedShards(c, rec)
+	seedRecordInstance(c, rec)
+	attrs := map[string][]byte{meta.AttrACL: encode(acl.DefaultPolicy(alice, "Alice"))}
+	body := hexNoise(4 << 20)
+	for _, piece := range []int{1 << 10, 16 << 10, 128 << 10} {
+		for _, t := range []cksum.Type{cksum.None, cksum.CRC32C, cksum.CRC64NVME} {
+			b.Run(fmt.Sprintf("%s/%dKiB", t.Info().Name, piece>>10), func(b *testing.B) {
+				var req *op.ChecksumRequest
+				if t != cksum.None {
+					req = &op.ChecksumRequest{Type: t}
+				}
+				p := op.PutParams{Attrs: attrs, Size: int64(len(body)), Tag: "t", Checksum: req}
+				b.SetBytes(int64(len(body)))
+				b.ReportAllocs()
+				for b.Loop() {
+					// The cluster records every write op, the head's data
+					// with it.
+					c.ResetCounters()
+					if _, err := s.PutObject(ctx, rec, meta.ObjKey{Name: "k"}, &cappedReader{r: bytes.NewReader(body), n: piece}, p); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}

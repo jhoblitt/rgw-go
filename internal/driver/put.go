@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/md5" //nolint:gosec // an S3 ETag is the MD5 of the data
@@ -15,7 +16,9 @@ import (
 	"slices"
 	"time"
 
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/compression"
+	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
@@ -30,10 +33,16 @@ import (
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4469-L4800 at v20.2.4):
 // the tails while the body streams, compressed as the destination
 // placement's storage class says, then the checks on what arrived (its
-// length, the quota on the bytes received, the Content-MD5), then the head
-// write. A write that fails or loses a race deletes the tails it wrote,
-// unless the head write timed out and may yet land.
+// length, the quota on the bytes received, the Content-MD5, the checksum),
+// then the head write. A write that fails or loses a race deletes the tails
+// it wrote, unless the head write timed out and may yet land. A checksum
+// request of a type rgw-go does not compute is refused before anything is
+// read or written (newChecksumSink).
 func (s *Store) PutObject(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, body io.Reader, p op.PutParams) (*op.PutResult, error) {
+	ck, err := newChecksumSink(p.Checksum, p.Size)
+	if err != nil {
+		return nil, fmt.Errorf("putting %s/%s: %w", rec.Info.Bucket.Name, key.Name, err)
+	}
 	tag := p.Tag
 	if tag == "" {
 		tag = s.w.randTag()
@@ -44,7 +53,7 @@ func (s *Store) PutObject(ctx context.Context, rec *op.BucketRecord, key meta.Ob
 	}
 	return s.putStream(ctx, rec, key, body, l, streamWrite{
 		tag: tag, attrs: p.Attrs, size: p.Size, mtime: p.Mtime, ifMatch: p.IfMatch, ifNoneMatch: p.IfNoneMatch,
-		client: true, etag: p.ETag, contentMD5: p.ContentMD5, compression: s.compressionType(l.tailRule),
+		client: true, etag: p.ETag, contentMD5: p.ContentMD5, checksum: ck, compression: s.compressionType(l.tailRule),
 	})
 }
 
@@ -65,6 +74,9 @@ type streamWrite struct {
 	client     bool
 	etag       string
 	contentMD5 []byte
+	// checksum, when set, computes the plaintext's checksum, which is
+	// checked after the Content-MD5 and stored as user.rgw.cksum.
+	checksum *checksumSink
 	// compression is the destination's compression type, which compresses
 	// the body unless it is empty or none (storeFor). encrypted marks a
 	// body an encryption filter stores, which is compressed only where the
@@ -76,12 +88,14 @@ type streamWrite struct {
 // putStream writes body as AtomicObjectProcessor does, after its prepare,
 // which planPut is: the body's plaintext stage, the stored stage made from
 // it, whose bytes the tails stream and the head keeps, and the head through
-// writeMeta. The body's length, the quota and the Content-MD5 are checked on
-// the plaintext. The manifest and the index entry take the stored size. A
-// write the stored stage compressed stores its user.rgw.compression. The
-// index entry's accounted size is the orig_size of attrs'
-// user.rgw.compression when its type is not none, as copy_obj_data passes
-// it
+// writeMeta. The body's length, the quota, the Content-MD5 and the checksum
+// are checked on the plaintext, in RGWPutObj::execute's order
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4662-L4790 at v20.2.4),
+// and the checksum's record joins the head's attrs. The manifest and the
+// index entry take the stored size. A write the stored stage compressed
+// stores its user.rgw.compression. The index entry's accounted size is the
+// orig_size of attrs' user.rgw.compression when its type is not none, as
+// copy_obj_data passes it
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5098-L5108 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5368-L5379 at v20.2.4),
 // and the plaintext's length otherwise, as RGWPutObj::execute passes
@@ -102,6 +116,9 @@ func (s *Store) putStream(ctx context.Context, rec *op.BucketRecord, key meta.Ob
 	if w.contentMD5 != nil || w.client && w.etag == "" {
 		h = md5.New() //nolint:gosec // an S3 ETag is the MD5 of the data
 		sinks = append(sinks, h)
+	}
+	if w.checksum != nil {
+		sinks = append(sinks, w.checksum)
 	}
 	limit := uint64(math.MaxUint64)
 	if w.client {
@@ -124,6 +141,10 @@ func (s *Store) putStream(ctx context.Context, rec *op.BucketRecord, key meta.Ob
 	}
 	if err == nil && w.contentMD5 != nil && !bytes.Equal(h.Sum(nil), w.contentMD5) {
 		err = op.ErrBadDigest
+	}
+	var sum checksumResult
+	if err == nil && w.checksum != nil {
+		sum, err = w.checksum.finish(s.release)
 	}
 	if err == nil {
 		err = tw.drain()
@@ -148,6 +169,9 @@ func (s *Store) putStream(ctx context.Context, rec *op.BucketRecord, key meta.Ob
 	if ci, ok := stored.compression(); ok {
 		attrs[meta.AttrCompression] = encodeAt(ci, s.release)
 	}
+	if sum.attr != nil {
+		attrs[meta.AttrCksum] = sum.attr
+	}
 	accounted := plain.n
 	if compressed {
 		accounted = orig
@@ -170,13 +194,117 @@ func (s *Store) putStream(ctx context.Context, rec *op.BucketRecord, key meta.Ob
 	if res.canceled {
 		tw.discard()
 	}
-	return &op.PutResult{ETag: etag, Size: size, Mtime: res.mtime, Epoch: res.epoch}, nil
+	return &op.PutResult{ETag: etag, Size: size, Mtime: res.mtime, Epoch: res.epoch, Checksum: sum.cksum}, nil
+}
+
+// checksumSink is RGWPutObj_Cksum
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L157-L215 at v20.2.4)
+// as a plaintext sink: the digest of the body as the client sent it, before
+// compression, verified and recorded once the body is read. Squid's radosgw
+// has no checksum filter; rgw-go computes one on both releases, the record
+// being an attr of its own.
+type checksumSink struct {
+	req *op.ChecksumRequest
+	h   hash.Hash
+	// batchSize is the size of the buffer that gathers a CRC64NVME digest's
+	// Writes (crc64Batch), 0 for none; batch is that buffer, made on the
+	// first Write, so a body never written allocates none.
+	batchSize int
+	batch     *bufio.Writer
+}
+
+// crc64Batch is the least a CRC64NVME digest is written at a time, but for
+// the body's last bytes. For a polynomial other than ISO and ECMA, hash/crc64
+// builds its 16 KiB slicing-by-8 table anew on every Write of 2048 bytes or
+// more, and runs a byte at a time below that (go1.27.3
+// src/hash/crc64/crc64.go:141-178), while a request body arrives in TLS
+// records of 16 KiB or less. Unbatched, a 4 MiB PUT read in 1 KiB pieces
+// took 2.1 times as long as one without a checksum; batched, every piece
+// size costs what 128 KiB pieces do, about 1.3 times
+// (BenchmarkPutObjectChecksum). A body of a known length shorter than the
+// batch takes a buffer of its length, and one shorter than crc64Slicing
+// none, as it is hashed a byte at a time however it is written.
+const crc64Batch = 128 << 10
+
+// crc64Slicing is the least Write hash/crc64 slices for a custom polynomial.
+const crc64Slicing = 2048
+
+// newChecksumSink is the sink of req for a body of size bytes, -1 when
+// unknown, and nil for no request. A type that is not cksum.Type.Writable,
+// which cksum.NewHash refuses, is InvalidArgument, so no caller that skipped
+// the op's parsing stores a type a v20.2.4 radosgw would look up past the
+// end of its table
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L88-L99 at v20.2.4).
+func newChecksumSink(req *op.ChecksumRequest, size int64) (*checksumSink, error) {
+	if req == nil {
+		return nil, nil
+	}
+	h, err := cksum.NewHash(req.Type)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", op.ErrInvalidArgument, err)
+	}
+	c := &checksumSink{req: req, h: h}
+	switch {
+	case req.Type != cksum.CRC64NVME:
+	case size < 0 || size >= crc64Batch:
+		c.batchSize = crc64Batch
+	case size >= crc64Slicing:
+		c.batchSize = int(size)
+	}
+	return c, nil
+}
+
+func (c *checksumSink) Write(p []byte) (int, error) {
+	if c.batchSize == 0 {
+		return c.h.Write(p)
+	}
+	if c.batch == nil {
+		c.batch = bufio.NewWriterSize(c.h, c.batchSize)
+	}
+	return c.batch.Write(p)
+}
+
+// checksumResult is a write's checksum and the user.rgw.cksum that stores it,
+// both nil for a write without one.
+type checksumResult struct {
+	cksum *cksum.Cksum
+	attr  []byte
+}
+
+// finish is the checksum of the plaintext the sink took, with the request's
+// flags, and its encoded record, once the body is read: Expected is asked
+// for its value only then, as an aws-chunked trailer carries it after the
+// body. A value that is not the checksum's armor, compared as the strings
+// RGWPutObj_Cksum::verify compares
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L202-L211 at v20.2.4),
+// is BadDigest. A request that supplies no value stores the checksum
+// unverified, as radosgw's does
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4764-L4776 at v20.2.4).
+// The record is checked with Cksum.Valid before it is encoded, so a record
+// radosgw's decoder would take unchecked fails the write rather than panic.
+func (c *checksumSink) finish(rel denc.Release) (checksumResult, error) {
+	if c.batch != nil {
+		if err := c.batch.Flush(); err != nil {
+			return checksumResult{}, fmt.Errorf("%w: hashing the body: %w", op.ErrInternalError, err)
+		}
+	}
+	sum := cksum.Finish(c.req.Type, c.h, c.req.Flags)
+	if c.req.Expected != nil {
+		if want, ok := c.req.Expected(); ok && want != sum.Armor() {
+			return checksumResult{}, fmt.Errorf("%w: the %s checksum of the body is %s, not %q",
+				op.ErrBadDigest, c.req.Type.Info().Name, sum.Armor(), want)
+		}
+	}
+	if err := sum.Valid(); err != nil {
+		return checksumResult{}, fmt.Errorf("%w: the computed checksum: %w", op.ErrInternalError, err)
+	}
+	return checksumResult{cksum: &sum, attr: encodeAt(sum, rel)}, nil
 }
 
 // plaintext is a write's first stage: the body as RGWPutObj::execute's loop
 // reads it, before any filter makes a stored form of it. Every byte goes to
 // the sinks, which compute what is taken over the data as the client sent it
-// (the MD5), and n counts them.
+// (the MD5 and the checksum), and n counts them.
 //
 // A body past max is EntityTooLarge in get_data's order
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1073-L1106 at v19.2.7,

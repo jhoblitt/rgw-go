@@ -126,8 +126,8 @@ type UploadPartInfo struct {
 	// sorted, each once.
 	PastPrefixes []string
 	// Cksum is Tentacle's std::optional<rgw::cksum::Cksum>, carried as
-	// encoded since rgw-go computes no checksums: nil when absent, else the
-	// presence byte 1 and the checksum's own ENCODE_START frame.
+	// encoded: nil when absent, else the presence byte 1 and the checksum's
+	// own ENCODE_START frame, as cksum.Cksum encodes it.
 	Cksum []byte
 }
 

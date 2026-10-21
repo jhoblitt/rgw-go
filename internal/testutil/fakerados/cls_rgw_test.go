@@ -1,9 +1,12 @@
 package fakerados_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
+	"log"
+	"log/slog"
 	"maps"
 	"slices"
 	"syscall"
@@ -12,6 +15,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -283,6 +287,21 @@ var _ = Describe("RGWClass's index transaction", func() {
 	})
 })
 
+// captureSlog sends slog's default logger to the buffer it returns until the
+// spec ends, then puts back the logger, and the log package's writer and
+// flags, which slog.SetDefault redirects.
+func captureSlog() *bytes.Buffer {
+	buf := &bytes.Buffer{}
+	oldLogger, oldWriter, oldFlags := slog.Default(), log.Writer(), log.Flags()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(buf, nil)))
+	DeferCleanup(func() {
+		slog.SetDefault(oldLogger)
+		log.SetOutput(oldWriter)
+		log.SetFlags(oldFlags)
+	})
+	return buf
+}
+
 var _ = Describe("RGWClass's mp_upload_part_info_update", func() {
 	const (
 		extra   = "zone.rgw.buckets.non-ec"
@@ -331,11 +350,37 @@ var _ = Describe("RGWClass's mp_upload_part_info_update", func() {
 		return info
 	}
 
-	It("stores the part under its key, re-encoded at Squid as the emulated class's OSD does", func(ctx SpecContext) {
-		info := part("k.2~id")
-		Expect(update(ctx, info, denc.Tentacle)).To(Succeed())
-		Expect(c.Object(extra, "", metaOID).Omap[key]).To(Equal(encodeAt(info, denc.Squid)))
-	})
+	DescribeTable("stores the part under its key, re-encoded at the release of the OSD the fake emulates",
+		func(ctx SpecContext, osd string, want denc.Release, wantCksum, warns bool) {
+			if osd != "" {
+				c.SetRequiredOSDRelease(osd)
+			}
+			logs := captureSlog()
+			e := denc.NewEncoder()
+			cksum.Cksum{Type: cksum.CRC32C, Digest: []byte{0xe3, 0x06, 0x92, 0x83}, Flags: cksum.FlagFullObject}.Encode(e, denc.Tentacle)
+			info := part("k.2~id")
+			info.Cksum = slices.Concat([]byte{1}, e.Bytes())
+			Expect(update(ctx, info, denc.Tentacle)).To(Succeed())
+			Expect(c.Object(extra, "", metaOID).Omap[key]).To(Equal(encodeAt(info, want)))
+			if wantCksum {
+				Expect(stored().Cksum).To(Equal(info.Cksum), "the checksum kept")
+			} else {
+				Expect(stored().Cksum).To(BeNil(), "the checksum dropped")
+			}
+			newer := ContainSubstring("require_osd_release is newer than every known release")
+			if warns {
+				Expect(logs.String()).To(newer, "the warning driver.Open logs for such a name")
+			} else {
+				Expect(logs.String()).NotTo(newer)
+			}
+		},
+		Entry("a Squid OSD, the fake's default, stores version 5, dropping a Tentacle checksum (cls_rgw.cc:4396-4398, rgw_basic_types.h:268-276 at v19.2.7)",
+			"", denc.Squid, false, false),
+		Entry("a Tentacle OSD stores version 6, the checksum kept (cls_rgw.cc:4798-4800, rgw_basic_types.h:286-295 at v20.2.4)",
+			"tentacle", denc.Tentacle, true, false),
+		Entry("an OSD of a release newer than every known one stores Tentacle's version 6, as the store encodes for it",
+			"vampire", denc.Tentacle, true, true),
+	)
 
 	It("carries the stored part's prefix and past prefixes into the new part's, as a set", func(ctx SpecContext) {
 		Expect(update(ctx, part("k.2~id"), denc.Squid)).To(Succeed())

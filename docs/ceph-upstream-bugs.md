@@ -14912,13 +14912,18 @@ Every new entry adds its row to this table, in document order.
   which any client that may read the object can send. Only corruption or
   another writer of the attr in RADOS can plant the bytes.
 - **Releases:** v20.2.4 and main f6f2529dd9e.
-- **rgw-go:** not affected yet: it reads no checksum attr.
-  `cksum.DecodeCksum` reads one record and leaves what follows it to its
-  caller (`internal/cksum/record.go`).
+- **rgw-go:** not affected. `StatObject` and `PrefetchObject` decode the
+  attr into the object's checksum with `cksum.DecodeCksum`, which reads one
+  record and leaves the bytes after it unread, as radosgw's iterator readers
+  do, so such an attr reads as its record. An attr that does not decode
+  reads as no checksum and fails no read of the object
+  (`internal/driver/stat.go`, `internal/cksum/record.go`). Every attr
+  rgw-go writes is one record, encoded whole.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task WP-1, 2026-10-15, tracing the readers of
   `Cksum::decode`. Its review set the class and listed the iterator
-  readers the same day. Derived from the source, not reproduced.
+  readers the same day. Phase 2 task WP-8 added rgw-go's reader,
+  2026-10-20. Derived from the source, not reproduced.
 
 ## cls_rgw mis-sorts and cannot list versions whose epoch is 2^32 or more
 

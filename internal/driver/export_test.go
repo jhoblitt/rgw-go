@@ -4,6 +4,7 @@ import (
 	"context"
 	"hash"
 	"io"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -20,6 +21,34 @@ import (
 
 // CaptureLog is captureLog for the external specs.
 var CaptureLog = captureLog
+
+// CaptureDebugLog is CaptureLog keeping slog's debug lines, which
+// captureLog's handler drops.
+func CaptureDebugLog(w io.Writer) (restore func()) {
+	restore = captureLog(w)
+	slog.SetDefault(slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	return restore
+}
+
+// ChecksumBatchForTest writes p, unless it is empty, to the checksum sink of
+// req for a body of size bytes, -1 when unknown, as the plaintext stage
+// writes its sinks, and returns the size of the CRC64NVME batch the sink
+// then holds, 0 for none.
+func ChecksumBatchForTest(req *op.ChecksumRequest, size int64, p []byte) (int, error) {
+	c, err := newChecksumSink(req, size)
+	if err != nil {
+		return 0, err
+	}
+	if len(p) > 0 {
+		if _, err := c.Write(p); err != nil {
+			return 0, err
+		}
+	}
+	if c.batch == nil {
+		return 0, nil
+	}
+	return c.batch.Size(), nil
+}
 
 // ReadAccount is readAccount for the external specs.
 var ReadAccount = (*Store).readAccount
