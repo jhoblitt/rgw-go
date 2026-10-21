@@ -6,7 +6,8 @@
     {"source":"f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3","admitted":"base"},
     {"source":"ab228b1b9f0dc8cbc52f6dcbc649519212421c8d","admitted":"base","reason":"s3-tests ab228b1b9f0 merges jhoblitt/ceph PRs 1 to 9, whose module-level imports and helpers in test_headers.py and change to test_s3.py's _has_target_object_key_format the additive proof does not admit"},
     {"source":"7cfa64a52af0070f454b0709cf76f3db03604c98","admitted":"base","reason":"s3-tests 7cfa64a52af merges jhoblitt/ceph PRs 10 to 14, whose module-level imports, comments and helpers in test_s3.py the additive proof does not admit"},
-    {"source":"462c9b0334422a0b3e6d639c7f89453b9cb62cbf","admitted":"additive"}
+    {"source":"462c9b0334422a0b3e6d639c7f89453b9cb62cbf","admitted":"additive"},
+    {"source":"e9c8467b1145b7c82aab61288c649780b6031948","admitted":"additive"}
   ],
   "tests": {
     "s3tests.functional.test_headers::test_bucket_create_bad_authorization_empty": [

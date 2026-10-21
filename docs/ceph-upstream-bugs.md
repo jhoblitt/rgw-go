@@ -318,6 +318,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's PutBucketEncryption stores a configuration without the elements it cannot find](#radosgws-putbucketencryption-stores-a-configuration-without-the-elements-it-cannot-find) | pending | [ceph/ceph#71247](https://github.com/ceph/ceph/pull/71247), [ceph/ceph#72634](https://github.com/ceph/ceph/pull/72634) |  |
 | [radosgw writes GetBucketEncryption's BucketKeyEnabled as True, which botocore reads as false](#radosgw-writes-getbucketencryptions-bucketkeyenabled-as-true-which-botocore-reads-as-false) | pending | pending |  |
 | [radosgw stores an AES256 default with a bucket key that fails every write it applies to](#radosgw-stores-an-aes256-default-with-a-bucket-key-that-fails-every-write-it-applies-to) | pending | pending |  |
+| [radosgw's PutBucketEncryption and DeleteBucketEncryption answer without CORS headers](#radosgws-putbucketencryption-and-deletebucketencryption-answer-without-cors-headers) | pending | pending |  |
 | [radosgw's PutBucketWebsite answers InvalidArgument for a document that does not parse](#radosgws-putbucketwebsite-answers-invalidargument-for-a-document-that-does-not-parse) | pending | pending |  |
 | [radosgw writes a website redirect's key, host and protocol raw into its Location](#radosgw-writes-a-website-redirects-key-host-and-protocol-raw-into-its-location) | pending | pending |  |
 | [radosgw answers a CORS request with the first rule whose origin matches](#radosgw-answers-a-cors-request-with-the-first-rule-whose-origin-matches) | [#77575](https://tracker.ceph.com/issues/77575), [#77584](https://tracker.ceph.com/issues/77584), [#77586](https://tracker.ceph.com/issues/77586) | [ceph/ceph#69190](https://github.com/ceph/ceph/pull/69190), [ceph/ceph#69647](https://github.com/ceph/ceph/pull/69647), [ceph/ceph#69648](https://github.com/ceph/ceph/pull/69648) |  |
@@ -16631,7 +16632,12 @@ Every new entry adds its row to this table, in document order.
   `SSEAlgorithm` its document names, and a `KMSMasterKeyID` beside any
   algorithm or none, and answers 200, where Amazon S3 takes five
   algorithms and a key id only with `aws:kms` or `aws:kms:dsse`. Not
-  security-relevant. Unreproduced: derived from the source.
+  security-relevant. The 200 for an algorithm outside the five was
+  reproduced on running radosgw v19.2.7 and v20.2.4 on 2026-10-20 by an
+  s3-test in jhoblitt/ceph d61f0d0fe8a, merged into `rgw-go-s3tests` by
+  [jhoblitt/ceph#16](https://github.com/jhoblitt/ceph/pull/16)
+  (Evidence); a key id beside another algorithm is derived from the
+  source.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
   `rgw_bucket_encryption.h`, `rgw_bucket_encryption.cc`, `rgw_xml.h` and
   `rgw_xml.cc` are identical at the two tags.
@@ -16656,6 +16662,13 @@ Every new entry adds its row to this table, in document order.
     [types.go:4845-4898](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.2/service/s3/types/types.go#L4845-L4898)).
     That it refuses the others with MalformedXML is expected, not verified
     here.
+  - Reproduced on the rooket clusters, `quay.io/ceph/ceph:v19.2.7` and
+    `:v20.2.4`, on 2026-10-20, through boto3 1.43.116.
+    `test_put_bucket_encryption_unknown_algorithm_refused` puts an `AES256`
+    configuration, then sends one naming `AES-256`, and on both releases
+    radosgw answered it 200 where the test expects 400 MalformedXML. The
+    test stops there, so what was stored was not read back. rgw-go passes
+    it on both releases.
 - **Impact:** a client that names an algorithm Amazon S3 refuses, such as
   a misspelled `AES-256` or `aes256`, or a KMS key beside `AES256`, is told
   the default is set. The writes that read the default then fail with 400
@@ -16713,7 +16726,8 @@ Every new entry adds its row to this table, in document order.
   A configuration radosgw stored this way decodes and renders as stored.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 planning, 2026-10-13, from the source; confirmed by
-  Task BC-23, 2026-10-16. Not reproduced.
+  Task BC-23, 2026-10-16. The 200 for an unknown algorithm reproduced on
+  running v19.2.7 and v20.2.4 by Task BC-25's s3-tests, 2026-10-20.
 
 ## radosgw's PutBucketEncryption stores a configuration without the elements it cannot find
 
@@ -16722,7 +16736,11 @@ Every new entry adds its row to this table, in document order.
   not find under the name and in the place it looks for is stored without
   it, and the request answers 200, so an owner who asked for a default
   algorithm, or for SSE-C to be blocked, is told it is set while it is
-  not. Unreproduced: derived from the source.
+  not. A misspelled `SSEAlgorithm` was reproduced on running radosgw
+  v19.2.7 and v20.2.4 on 2026-10-20 by an s3-test in jhoblitt/ceph
+  d61f0d0fe8a, merged into `rgw-go-s3tests` by
+  [jhoblitt/ceph#16](https://github.com/jhoblitt/ceph/pull/16)
+  (Evidence); the other documents are derived from the source.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
   `rgw_bucket_encryption.cc`, `rgw_xml.h` and `rgw_xml.cc` are identical
   at the two tags.
@@ -16752,6 +16770,13 @@ Every new entry adds its row to this table, in document order.
     Go carries it,
     [api.go:20217-20221](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L20217-L20221)).
     That it refuses these documents is expected, not verified here.
+  - Reproduced on the rooket clusters, `quay.io/ceph/ceph:v19.2.7` and
+    `:v20.2.4`, on 2026-10-20.
+    `test_put_bucket_encryption_misspelled_element_refused` puts an
+    `AES256` configuration, then sends
+    `<SseAlgorithm>AES256</SseAlgorithm>` in a hand-signed request with
+    its Content-MD5, and on both releases radosgw answered it 200 where
+    the test expects 400 MalformedXML. rgw-go passes it on both releases.
 - **Impact:** a misspelled or misplaced algorithm leaves the bucket with
   no default, so on a radosgw with a key server the writes that name no
   encryption are stored unencrypted while the owner was told the default
@@ -16775,14 +16800,20 @@ Every new entry adds its row to this table, in document order.
   `BlockedEncryptionTypes`, and its squid backport,
   [ceph/ceph#72634](https://github.com/ceph/ceph/pull/72634), is open.
 - **Found:** phase 2 Task BC-23, 2026-10-16, reading `decode_xml` for
-  rgw-go's parser. Derived from the source, not reproduced.
+  rgw-go's parser. Derived from the source; a misspelled `SSEAlgorithm`
+  reproduced on running v19.2.7 and v20.2.4 by Task BC-25's s3-tests,
+  2026-10-20.
 
 ## radosgw writes GetBucketEncryption's BucketKeyEnabled as True, which botocore reads as false
 
 - **Kind:** defect, S3-correctness: GetBucketEncryption writes a bucket
   key that is on as `<BucketKeyEnabled>True</BucketKeyEnabled>`, and
   botocore, under boto3 and the AWS CLI, reads any boolean text but `true`
-  as false. Not security-relevant. Unreproduced: derived from the source.
+  as false. Not security-relevant. Reproduced on running radosgw v19.2.7
+  and v20.2.4 on 2026-10-20 by an s3-test in jhoblitt/ceph d61f0d0fe8a,
+  merged into `rgw-go-s3tests` by
+  [jhoblitt/ceph#16](https://github.com/jhoblitt/ceph/pull/16)
+  (Evidence).
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
   `rgw_bucket_encryption.cc`, `rgw_xml.h` and `rgw_xml.cc` are identical
   at the two tags.
@@ -16813,19 +16844,29 @@ Every new entry adds its row to this table, in document order.
     ([serializers.go:15433-15443](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.2/service/s3/serializers.go#L15433-L15443),
     smithy-go's
     [value.go:159-161](https://github.com/aws/smithy-go/blob/v1.28.4/encoding/xml/value.go#L159-L161)).
+  - Reproduced on the rooket clusters, `quay.io/ceph/ceph:v19.2.7` and
+    `:v20.2.4`, on 2026-10-20, through boto3 and botocore 1.43.116, whose
+    parser reads the flag as 1.43.6's does.
+    `test_get_bucket_encryption_kms_bucket_key_enabled` puts `aws:kms`
+    with a key id and `BucketKeyEnabled` true, and on both releases the
+    GetBucketEncryption that followed read back the algorithm and the key
+    id with `BucketKeyEnabled` false. rgw-go passes it on both releases.
 - **Impact:** a boto3 or AWS CLI client reads back `BucketKeyEnabled`
   false for a bucket whose default enables it, so one that checks the
   setting after it set it sees it off. The stored configuration, and what
-  a write does with it, are unaffected. No s3-test reads the flag.
+  a write does with it, are unaffected. Of the s3-tests,
+  `test_get_bucket_encryption_kms_bucket_key_enabled` alone reads the
+  flag.
 - **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
 - **rgw-go:** differs: `sse.BucketEncryptionConfig.MarshalS3XML`
   (`internal/sse/xml.go`) writes `true`, as the SDKs write it
   (docs/exclusions.md, "GetBucketEncryption writes BucketKeyEnabled as
-  true"). rgw-go does not serve GetBucketEncryption yet.
+  true").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task BC-23, 2026-10-16, reading `dump_xml` for
-  rgw-go's renderer, and botocore's parser. Derived from the source, not
-  reproduced.
+  rgw-go's renderer, and botocore's parser. Derived from the source, and
+  reproduced on running v19.2.7 and v20.2.4 by Task BC-25's s3-tests,
+  2026-10-20.
 
 ## radosgw stores an AES256 default with a bucket key that fails every write it applies to
 
@@ -16871,6 +16912,73 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task BC-23, 2026-10-16, tracing what a stored default
   does to a write. Derived from the source, not reproduced.
+
+## radosgw's PutBucketEncryption and DeleteBucketEncryption answer without CORS headers
+
+- **Kind:** defect, S3-correctness: PutBucketEncryption and
+  DeleteBucketEncryption send their responses without the CORS headers the
+  bucket's configuration gives the request's origin and method, so a
+  browser keeps a page on another origin from reading them, though the
+  write took effect. GetBucketEncryption's responses carry them, and so
+  does a refusal answered through `abort_early`, a 403 among them. Not
+  security-relevant: a header is missing, and no request is allowed that
+  the configuration does not allow. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - Both ops' `send_response` end the header with `end_header(s)`, naming
+    no op: PutBucketEncryption's
+    ([rgw_rest_s3.cc:3877-3884](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3877-L3884),
+    [rgw_rest_s3.cc:4328-4335](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4328-L4335))
+    and DeleteBucketEncryption's
+    ([rgw_rest_s3.cc:3906-3915](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3906-L3915),
+    [rgw_rest_s3.cc:4357-4366](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4357-L4366)).
+    GetBucketEncryption's names its op
+    ([rgw_rest_s3.cc:3896](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3896),
+    [rgw_rest_s3.cc:4347](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4347)).
+  - `end_header`'s op defaults to none
+    ([rgw_rest.h:699-705](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.h#L699-L705),
+    [rgw_rest.h:711-717](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.h#L711-L717)),
+    and only with an op does it call `dump_access_control`
+    ([rgw_rest.cc:603-605](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L603-L605),
+    [rgw_rest.cc:608-610](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L608-L610)),
+    which writes the headers `generate_cors_headers` derives from the
+    bucket's configuration
+    ([rgw_rest.cc:556-569](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L556-L569),
+    [rgw_rest.cc:561-574](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L561-L574)).
+  - `send_response` answers every outcome of `execute`: `complete` calls
+    it
+    ([rgw_op.h:294-296](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L294-L296),
+    [rgw_op.h:307-309](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L307-L309))
+    once `execute` returns
+    ([rgw_process.cc:251-260](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L251-L260),
+    [rgw_process.cc:254-263](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L254-L263)).
+    So the 200 and the 204 carry no CORS headers, nor do the errors
+    `execute` sets: PutBucketEncryption's 411 MissingContentLength and 416
+    InvalidRange from `read_all_input`, its 400 MalformedXML, and a failed
+    forward or write of either op
+    ([rgw_op.cc:8772-8867](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8772-L8867),
+    [rgw_op.cc:9740-9835](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9740-L9835)).
+  - A refusal from `verify_permission` returns before `execute`
+    ([rgw_process.cc:225-236](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L225-L236),
+    [rgw_process.cc:225-239](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L225-L239)),
+    and `process_request` answers it through `abort_early` with the op
+    ([rgw_process.cc:405-407](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L405-L407),
+    [rgw_process.cc:412-414](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L412-L414)),
+    which ends the header with `end_header(s, op)`
+    ([rgw_rest.cc:746](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L746),
+    [rgw_rest.cc:746](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L746)),
+    so a 403 carries the headers.
+- **Impact:** a page on another origin that the bucket's CORS
+  configuration allows can set or delete the bucket's default encryption
+  but cannot read the answer: the browser reports a failure for a write
+  that succeeded, and hides the error document of one that failed.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
+- **rgw-go:** decided with its CORS response headers, Task BC-7, which
+  sets them on every S3 response and lists the routes radosgw omits them
+  from. rgw-go sends no CORS headers on any response yet.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 unit B, Task BC-25, 2026-10-20, reading the two ops'
+  `send_response`; its review traced the 403 through `abort_early`.
+  Derived from the source, not reproduced.
 
 ## radosgw's PutBucketWebsite answers InvalidArgument for a document that does not parse
 
