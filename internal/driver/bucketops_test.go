@@ -157,6 +157,25 @@ var _ = Describe("CreateBucket and DeleteBucket", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(again.Info.Bucket.ID).To(Equal(zoneID+".4155.2"), "next_bucket_id counts up")
 		})
+		DescribeTable("writes a bucket with object lock versioned, its obj_lock RGWObjectLock(), and one without with neither",
+			func(ctx SpecContext, lock bool, flags uint32, objLock meta.RawStruct) {
+				p := params("plain")
+				p.ObjectLock = lock
+				rec, err := s.CreateBucket(ctx, p)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(rec.Info.Flags).To(Equal(flags))
+				data := c.Object(rookMetaPool, rookRoot, ".bucket.meta.plain:"+rec.Info.Bucket.ID).Data
+				Expect(data).To(Equal(encode(rec.Info)))
+				stored := meta.DecodeBucketInfo(denc.NewDecoder(data))
+				Expect(stored.Flags).To(Equal(flags), "rgw_rados.cc:2404-2406 at v19.2.7, :2496-2498 at v20.2.4")
+				Expect(stored.ObjLock).To(Equal(objLock), "RGWObjectLock() as RGWObjectLock::encode writes it, which v19.2.7 and v20.2.4 write alike")
+				got, err := s.GetBucket(ctx, "", "plain")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(got.Info.Flags).To(Equal(flags))
+			},
+			Entry("with object lock", true, uint32(meta.BucketVersioned|meta.BucketObjLockEnabled), meta.RawStruct{1, 1, 2, 0, 0, 0, 1, 0}),
+			Entry("without", false, uint32(0), meta.RawStruct(nil)),
+		)
 		It("gives the index rgw_override_bucket_index_max_shards shards, unclamped, when it is set", func(ctx SpecContext) {
 			st := open(ctx, map[string]string{"rgw_override_bucket_index_max_shards": "3"})
 			rec, err := st.CreateBucket(ctx, params("plain"))

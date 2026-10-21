@@ -123,6 +123,20 @@ var _ = Describe("admin bucket routes", func() {
 		Expect(b).To(HavePrefix(`<?xml version="1.0" encoding="UTF-8"?><stats><bucket>test</bucket><tenant></tenant><versioning>off</versioning><zonegroup>`))
 		Expect(b).To(ContainSubstring(`<usage><rgw.main><size>`))
 	})
+	It("GET /admin/bucket?bucket= dumps a bucket created with object lock as versioned with object_lock_enabled", func() {
+		o := meta.UserOwner(meta.UserID{ID: "admin"})
+		e := denc.NewEncoder()
+		acl.DefaultPolicy(o, "This is admin").Encode(e, denc.Squid)
+		_, err := fx.store.CreateBucket(context.Background(), op.CreateBucketParams{
+			Name: "locked", Owner: o, Zonegroup: fx.store.ZoneGroup().ID, Placement: meta.PlacementRule{Name: "default-placement"},
+			Attrs: map[string][]byte{meta.AttrACL: e.Bytes()}, ObjectLock: true,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		m := stats("/admin/bucket?bucket=locked")
+		Expect(m).To(HaveKeyWithValue("object_lock_enabled", true), "obj_lock_enabled(), rgw_bucket.cc:1403 at v19.2.7, :1568 at v20.2.4")
+		Expect(m).To(HaveKeyWithValue("versioning", "enabled"))
+		Expect(stats("/admin/bucket?bucket=test")).To(HaveKeyWithValue("object_lock_enabled", false))
+	})
 	It("writes Tentacle's reshard fields and read_tracker", func() {
 		setup(denc.Tentacle)
 		rec, err := fx.store.GetBucket(context.Background(), "", "test")

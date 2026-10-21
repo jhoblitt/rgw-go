@@ -412,6 +412,31 @@ func Run(newEnv func(ctx context.Context) (*op.Env, func())) {
 			Expect(got.Attrs).To(Equal(map[string][]byte{meta.AttrACL: aclOf(u), attrProbe: []byte("info")}))
 		})
 
+		It("creates a bucket with object lock versioned, its lock enabled with no rule, and one without with neither", func(ctx SpecContext) {
+			u := newUser(ctx, "owner")
+			for _, lock := range []bool{true, false} {
+				name := fmt.Sprintf("%s-lock-%t", prefix, lock)
+				p := createParams(u, name, meta.Quota{})
+				p.ObjectLock = lock
+				rec, err := env.Buckets.CreateBucket(ctx, p)
+				Expect(err).NotTo(HaveOccurred(), "creating %s", name)
+				DeferCleanup(func(ctx context.Context) {
+					cur, gerr := env.Buckets.GetBucket(ctx, "", name)
+					Expect(gerr).NotTo(HaveOccurred(), "reading %s back to remove it", name)
+					Expect(env.Buckets.DeleteBucket(ctx, cur)).To(Succeed(), "deleting %s", name)
+				})
+				want, wantLock := uint32(0), meta.ObjectLock{}
+				if lock {
+					want, wantLock = meta.BucketVersioned|meta.BucketObjLockEnabled, meta.ObjectLock{Enabled: true}
+				}
+				Expect(rec.Info.Flags).To(Equal(want), "the record CreateBucket returned, lock %t", lock)
+				got, err := env.Buckets.GetBucket(ctx, "", name)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(got.Info.Flags).To(Equal(want), "lock %t", lock)
+				Expect(got.Info.ObjectLock()).To(Equal(wantLock), "lock %t", lock)
+			}
+		})
+
 		It("writes a bucket's object lock with PutBucketInfo, which GetBucket reads back, rule replaced and removed", func(ctx SpecContext) {
 			u := newUser(ctx, "owner")
 			name := prefix + "-lock"

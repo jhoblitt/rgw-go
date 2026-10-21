@@ -9,13 +9,29 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
+	"github.com/jhoblitt/rgw-go/internal/authz"
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
+	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/memstore"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/op/opfakes"
 	"github.com/jhoblitt/rgw-go/internal/policy"
 )
+
+// policyStatement is an identity policy statement of effect on action and
+// resource.
+func policyStatement(effect, action, resource string) string {
+	return `{"Effect":"` + effect + `","Action":"` + action + `","Resource":"` + resource + `"}`
+}
+
+// userPolicyAttr is a user.rgw.user-policy attr holding one policy of stmts.
+func userPolicyAttr(stmts ...string) []byte {
+	doc := `{"Version":"2012-10-17","Statement":[` + strings.Join(stmts, ",") + `]}`
+	e := denc.NewEncoder()
+	denc.EncodeMap(e, map[string]string{"p": doc}, (*denc.Encoder).String, (*denc.Encoder).String)
+	return e.Bytes()
+}
 
 // messageOf is the message an op error carries.
 func messageOf(err error) string {
@@ -330,23 +346,76 @@ var _ = Describe("bucket ops", func() {
 			lock := func(v string) func(*op.CreateBucket) {
 				return func(o *op.CreateBucket) { o.ObjectLock, o.HasObjectLock = v, true }
 			}
-			DescribeTable("answers NotImplemented for true in any case and creates nothing",
+			DescribeTable("creates the bucket versioned with object lock enabled and RGWObjectLock(), for true in any case",
 				func(ctx SpecContext, v string) {
-					_, _, err := create(ctx, bob, "plain", lock(v))
-					Expect(err).To(MatchError(op.ErrNotImplemented))
-					_, err = store.GetBucket(ctx, "", "plain")
-					Expect(err).To(MatchError(op.ErrNoSuchBucket))
+					o, _, err := create(ctx, bob, "plain", lock(v))
+					Expect(err).NotTo(HaveOccurred())
+					Expect(o.Existed).To(BeFalse())
+					rec, err := store.GetBucket(ctx, "", "plain")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(rec.Info.Flags).To(Equal(uint32(meta.BucketVersioned|meta.BucketObjLockEnabled)),
+						"rgw_rest_s3.cc:2542-2548 and rgw_rados.cc:2404-2406 at v19.2.7")
+					Expect(rec.Info.VersioningEnabled()).To(BeTrue())
+					Expect(rec.Info.ObjLock).To(BeNil(), "RGWBucketInfo's obj_lock is RGWObjectLock(), which a nil ObjLock stands for")
+					Expect(rec.Info.ObjectLock()).To(Equal(meta.ObjectLock{Enabled: true}), "enabled with no rule, rgw_object_lock.h:102 at v19.2.7")
+					Expect(o.Result.Info.Flags).To(Equal(rec.Info.Flags))
 				},
 				Entry("true", "true"),
 				Entry("TRUE", "TRUE"),
+				Entry("True", "True"),
 			)
+			It("hands the store obj_lock_enabled for true and not otherwise", func(ctx SpecContext) {
+				buckets := &opfakes.FakeBucketStore{}
+				buckets.GetBucketReturns(nil, op.ErrNoSuchBucket)
+				buckets.CreateBucketStub = store.CreateBucket
+				env.Buckets = buckets
+				_, _, err := create(ctx, bob, "locked", lock("true"))
+				Expect(err).NotTo(HaveOccurred())
+				_, _, err = create(ctx, bob, "unlocked", lock("false"))
+				Expect(err).NotTo(HaveOccurred())
+				_, _, err = create(ctx, bob, "plain")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(buckets.CreateBucketCallCount()).To(Equal(3))
+				for i, want := range []bool{true, false, false} {
+					_, p := buckets.CreateBucketArgsForCall(i)
+					Expect(p.ObjectLock).To(Equal(want), "create %d", i)
+				}
+			})
 			It("refuses a value other than true or false", func(ctx SpecContext) {
 				_, _, err := create(ctx, bob, "plain", lock("maybe"))
-				Expect(err).To(MatchError(op.ErrInvalidArgument), "rgw_rest_s3.cc:2534-2540")
+				Expect(err).To(MatchError(op.ErrInvalidArgument), "rgw_rest_s3.cc:2542-2548 at v19.2.7")
+				_, err = store.GetBucket(ctx, "", "plain")
+				Expect(err).To(MatchError(op.ErrNoSuchBucket))
 			})
-			It("creates an ordinary bucket for false", func(ctx SpecContext) {
-				_, _, err := create(ctx, bob, "plain", lock("False"))
+			DescribeTable("creates a bucket with neither flag for a header of false in any case, or none",
+				func(ctx SpecContext, edit []func(*op.CreateBucket)) {
+					_, _, err := create(ctx, bob, "plain", edit...)
+					Expect(err).NotTo(HaveOccurred())
+					rec, err := store.GetBucket(ctx, "", "plain")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(rec.Info.Flags).To(BeZero())
+				},
+				Entry("False", []func(*op.CreateBucket){lock("False")}),
+				Entry("no header", []func(*op.CreateBucket){}),
+			)
+			It("answers the owner's re-create of a bucket without object lock as having existed, changing nothing", func(ctx SpecContext) {
+				_, _, err := create(ctx, bob, "plain")
 				Expect(err).NotTo(HaveOccurred())
+				before, err := store.GetBucket(ctx, "", "plain")
+				Expect(err).NotTo(HaveOccurred())
+				o, _, err := create(ctx, bob, "plain", lock("true"))
+				Expect(err).NotTo(HaveOccurred(), "-ERR_BUCKET_EXISTS, rgw_sal_rados.cc:173-185 at v19.2.7")
+				Expect(o.Existed).To(BeTrue())
+				after, err := store.GetBucket(ctx, "", "plain")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(after).To(Equal(before))
+			})
+			It("refuses another owner's bucket of the name as BucketAlreadyExists", func(ctx SpecContext) {
+				_, _, err := create(ctx, bob, "plain")
+				Expect(err).NotTo(HaveOccurred())
+				alice.Info.MaxBuckets = 0
+				_, _, err = create(ctx, alice, "plain", lock("true"))
+				Expect(err).To(MatchError(op.ErrBucketAlreadyExists))
 			})
 			It("is checked after the permission check", func(ctx SpecContext) {
 				o := &op.CreateBucket{}
@@ -354,6 +423,95 @@ var _ = Describe("bucket ops", func() {
 				r := request(bob, "plain")
 				r.Identity = op.Anonymous()
 				Expect(op.Run(ctx, o, r)).To(MatchError(op.ErrAccessDenied))
+			})
+
+			// Amazon S3's CreateBucket reference, retrieved 2026-10-21: "if you
+			// set x-amz-bucket-object-lock-enabled to true, the
+			// s3:PutBucketObjectLockConfiguration and s3:PutBucketVersioning
+			// permissions are required".
+			Describe("authorized for the actions Amazon S3 requires beside s3:CreateBucket", func() {
+				BeforeEach(func() { env.Authz = authz.New(authz.DefaultConfig(denc.Squid)) })
+				// createUnder is bob's CreateBucket of plain, edited by edit, under
+				// a user policy of stmts.
+				createUnder := func(ctx context.Context, admin bool, edit func(*op.CreateBucket), stmts ...string) error {
+					o := &op.CreateBucket{ACL: policyOf(bob)}
+					if edit != nil {
+						edit(o)
+					}
+					r := request(bob, "plain")
+					r.Identity.Admin = admin
+					if len(stmts) > 0 {
+						r.Identity.Attrs = map[string][]byte{"user.rgw.user-policy": userPolicyAttr(stmts...)}
+					}
+					return op.Run(ctx, o, r)
+				}
+				absent := func(ctx context.Context) {
+					GinkgoHelper()
+					_, err := store.GetBucket(ctx, "", "plain")
+					Expect(err).To(MatchError(op.ErrNoSuchBucket), "nothing created")
+				}
+				locked := func(ctx context.Context) {
+					GinkgoHelper()
+					rec, err := store.GetBucket(ctx, "", "plain")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(rec.Info.ObjLockEnabled()).To(BeTrue())
+				}
+
+				DescribeTable("refuses a bucket with object lock with 403 AccessDenied, creating nothing, when the policy denies either on the bucket",
+					func(ctx SpecContext, action string) {
+						err := createUnder(ctx, false, lock("true"), policyStatement("Deny", action, "arn:aws:s3:::plain"))
+						Expect(err).To(MatchError(op.ErrAccessDenied))
+						absent(ctx)
+					},
+					Entry("s3:PutBucketObjectLockConfiguration", "s3:PutBucketObjectLockConfiguration"),
+					Entry("s3:PutBucketVersioning", "s3:PutBucketVersioning"),
+				)
+				It("creates it when the policy allows both", func(ctx SpecContext) {
+					Expect(createUnder(ctx, false, lock("true"),
+						policyStatement("Allow", "s3:CreateBucket", "arn:aws:s3:::plain"),
+						policyStatement("Allow", "s3:PutBucketObjectLockConfiguration", "arn:aws:s3:::plain"),
+						policyStatement("Allow", "s3:PutBucketVersioning", "arn:aws:s3:::plain"))).To(Succeed())
+					locked(ctx)
+				})
+				It("evaluates both on the new bucket's ARN, so a Deny of another bucket does not refuse it", func(ctx SpecContext) {
+					Expect(createUnder(ctx, false, lock("true"),
+						policyStatement("Deny", "s3:PutBucketObjectLockConfiguration", "arn:aws:s3:::other"),
+						policyStatement("Deny", "s3:PutBucketVersioning", "arn:aws:s3:::other"))).To(Succeed())
+					locked(ctx)
+				})
+				DescribeTable("asks for neither without object lock",
+					func(ctx SpecContext, edit func(*op.CreateBucket)) {
+						Expect(createUnder(ctx, false, edit,
+							policyStatement("Deny", "s3:PutBucketObjectLockConfiguration", "*"),
+							policyStatement("Deny", "s3:PutBucketVersioning", "*"))).To(Succeed())
+						rec, err := store.GetBucket(ctx, "", "plain")
+						Expect(err).NotTo(HaveOccurred())
+						Expect(rec.Info.Flags).To(BeZero())
+					},
+					Entry("a header of false", lock("false")),
+					Entry("no header", nil),
+				)
+				It("checks the header's value first, answering a value other than true or false 400", func(ctx SpecContext) {
+					err := createUnder(ctx, false, lock("maybe"), policyStatement("Deny", "s3:PutBucketVersioning", "*"))
+					Expect(err).To(MatchError(op.ErrInvalidArgument))
+					absent(ctx)
+				})
+				It("lets an admin through either denial, as Run lets one through the permission check", func(ctx SpecContext) {
+					Expect(createUnder(ctx, true, lock("true"),
+						policyStatement("Deny", "s3:PutBucketObjectLockConfiguration", "*"),
+						policyStatement("Deny", "s3:PutBucketVersioning", "*"))).To(Succeed())
+					locked(ctx)
+				})
+				It("refuses the owner's re-create of a bucket it already owns, before finding that the bucket exists", func(ctx SpecContext) {
+					Expect(createUnder(ctx, false, nil)).To(Succeed())
+					before, err := store.GetBucket(ctx, "", "plain")
+					Expect(err).NotTo(HaveOccurred())
+					err = createUnder(ctx, false, lock("true"), policyStatement("Deny", "s3:PutBucketVersioning", "arn:aws:s3:::plain"))
+					Expect(err).To(MatchError(op.ErrAccessDenied), "radosgw answers it 200, rgw_rest_s3.cc:2554-2555 at v19.2.7")
+					after, err := store.GetBucket(ctx, "", "plain")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(after).To(Equal(before), "the record unchanged")
+				})
 			})
 		})
 		Describe("a requested bucket index", func() {

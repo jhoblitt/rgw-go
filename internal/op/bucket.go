@@ -27,6 +27,10 @@ type CreateBucketParams struct {
 	// Attrs are the instance xattrs to write, the ACL among them.
 	Attrs map[string][]byte
 	Quota meta.Quota
+	// ObjectLock is create_bucket's obj_lock_enabled: the instance is
+	// written with BUCKET_VERSIONED and BUCKET_OBJ_LOCK_ENABLED, and its
+	// object lock is RGWObjectLock(), enabled with no rule.
+	ObjectLock bool
 	// Exclusive asks for an exclusive create, which every create is: see
 	// BucketStore.CreateBucket for an existing name.
 	Exclusive bool

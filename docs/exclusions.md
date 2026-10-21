@@ -2491,14 +2491,39 @@ review and verified against the tree.
   [rgw_op.cc:5846-5865](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5846-L5865)),
   which needs SSE-C decryption, which phase 4 adds, or a key server, which
   is excluded.
-- **CreateBucket with object lock answers 501 until phase 2.** A
-  CreateBucket with `x-amz-bucket-object-lock-enabled: true`, in any case,
-  answers 501 NotImplemented and creates nothing, until object lock and
-  versioning are served. radosgw creates the bucket versioned with object
-  lock enabled (`rgw_rest_s3.cc:2534-2540` and
-  `driver/rados/rgw_rados.cc:2391-2393` at v19.2.6, `:2695-2701` and
-  `:2496-2498` at v20.2.4). Any other value but `false` is 400
-  InvalidArgument from both, after the permission check.
+- **CreateBucket with object lock is authorized as
+  s3:PutBucketObjectLockConfiguration and s3:PutBucketVersioning too.**
+  radosgw's CreateBucket authorizes s3:CreateBucket alone on the new bucket,
+  whatever `x-amz-bucket-object-lock-enabled` asks
+  ([rgw_op.cc:3215-3244](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3215-L3244),
+  [rgw_op.cc:3443-3472](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3443-L3472);
+  `docs/ceph-upstream-bugs.md`, "[radosgw's CreateBucket with object lock
+  skips the two permissions Amazon S3 requires for
+  it](ceph-upstream-bugs.md#radosgws-createbucket-with-object-lock-skips-the-two-permissions-amazon-s3-requires-for-it)").
+  Amazon S3's CreateBucket reference, retrieved 2026-10-21, requires both:
+  "In your `CreateBucket` request, if you set
+  `x-amz-bucket-object-lock-enabled` to true, the
+  `s3:PutBucketObjectLockConfiguration` and `s3:PutBucketVersioning`
+  permissions are required." Once the header reads true, rgw-go evaluates
+  each against the requester's own policies on the new bucket's ARN, as it
+  evaluates s3:CreateBucket, since no bucket policy exists yet, and answers
+  a denial of either with 403 AccessDenied, creating nothing. A user outside
+  an account whose policies decide neither is allowed both, as it is
+  s3:CreateBucket; an account's user needs a policy that allows each. An
+  admin is let through a denial, as through the permission check. So where
+  radosgw creates a bucket with object lock for a requester a policy denies
+  either action, rgw-go refuses it. rgw-go makes the check before it finds
+  that the bucket exists, as Amazon S3 does, since the rule follows the
+  headers the request sends: a denied requester re-creating a bucket it
+  already owns, with the header true, gets 403 and the bucket is left as it
+  was. radosgw answers such a re-create, when its placement and ACL match
+  the bucket's, 200, taking the -ERR_BUCKET_EXISTS of its owner's existing
+  bucket
+  ([rgw_sal_rados.cc:173-208](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L173-L208),
+  [rgw_sal_rados.cc:183-225](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L183-L225))
+  for success
+  ([rgw_rest_s3.cc:2554-2555](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2554-L2555),
+  [rgw_rest_s3.cc:2707-2708](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2707-L2708)).
 - **A stored lifecycle configuration answers 501 until phase 2.** `GET
   /{bucket}?lifecycle` loads the bucket and authorizes
   `s3:GetLifecycleConfiguration` as radosgw's `RGWGetLC` does

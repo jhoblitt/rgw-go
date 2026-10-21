@@ -204,20 +204,23 @@ func checkOwnerMaxBuckets(ctx context.Context, r *Request) error {
 // v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3686-L3880)
 // for a single-site S3 request. After Params, the object-lock header is
-// checked as get_params checks it
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2534-L2540;
-// v20.2.4
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2695-L2701),
-// and a bucket with object lock is NotImplemented until object lock is
-// served. A requested index is NotImplemented too, for a bucket that does
-// not exist, after every check radosgw makes before it creates one
+// checked as get_params checks it, true or false in any case and any other
+// value InvalidArgument
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2542-L2548 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2695-L2701 at v20.2.4).
+// A bucket with object lock is then authorized as
+// s3:PutBucketObjectLockConfiguration and s3:PutBucketVersioning on the new
+// bucket, as Amazon S3 requires and radosgw does not (verifyCreateActions).
+// A requested index is NotImplemented, for a bucket that does not exist,
+// after every check radosgw makes before it creates one
 // (docs/exclusions.md). The location constraint picks the bucket's
 // zonegroup, the placement is selected, and a bucket of the name that exists
 // must match the request's zonegroup, placement and ACL. The bucket is then
-// created for the ACL's owner with the ACL as its user.rgw.acl. A bucket
-// that existed and is the owner's is Existed; one that is another owner's is
-// BucketAlreadyExists, which radosgw answers as created when that owner's
-// create lands during this one (docs/exclusions.md).
+// created for the ACL's owner with the ACL as its user.rgw.acl, and with
+// object lock when the header is true. A bucket that existed and is the
+// owner's is Existed, whatever object lock it has; one that is another
+// owner's is BucketAlreadyExists, which radosgw answers as created when that
+// owner's create lands during this one (docs/exclusions.md).
 //
 // r.BucketRec carries the usage log's owner and payer, radosgw's
 // s->bucket_owner and s->bucket: none before the existing bucket is read,
@@ -231,12 +234,18 @@ func (o *CreateBucket) Execute(ctx context.Context, r *Request) error {
 			return err
 		}
 	}
+	lock := false
 	if o.HasObjectLock {
 		switch {
 		case strings.EqualFold(o.ObjectLock, "true"):
-			return ErrNotImplemented
+			lock = true
 		case !strings.EqualFold(o.ObjectLock, "false"):
 			return ErrInvalidArgument
+		}
+	}
+	if lock {
+		if err := verifyCreateActions(ctx, r, policy.S3PutBucketObjectLockConfiguration, policy.S3PutBucketVersioning); err != nil {
+			return err
 		}
 	}
 	zi := r.Env.Zone
@@ -277,7 +286,7 @@ func (o *CreateBucket) Execute(ctx context.Context, r *Request) error {
 	r.BucketRec = &BucketRecord{Info: meta.BucketInfo{Owner: owner}}
 	rec, err := r.Env.Buckets.CreateBucket(ctx, CreateBucketParams{
 		Tenant: r.Tenant, Name: r.Bucket, Owner: owner, Zonegroup: bucketZG.ID, Placement: rule,
-		Attrs: map[string][]byte{meta.AttrACL: e.Bytes()}, Exclusive: true,
+		Attrs: map[string][]byte{meta.AttrACL: e.Bytes()}, ObjectLock: lock, Exclusive: true,
 	})
 	if rec != nil {
 		r.BucketRec.Info.RequesterPays = rec.Info.RequesterPays
@@ -290,6 +299,29 @@ func (o *CreateBucket) Execute(ctx context.Context, r *Request) error {
 		return err
 	}
 	o.Result = rec
+	return nil
+}
+
+// verifyCreateActions authorizes each of actions, which Amazon S3 requires
+// beside s3:CreateBucket for what the request asks of the new bucket, as the
+// requester's own policies decide s3:CreateBucket: no bucket policy exists
+// yet. Amazon S3's CreateBucket reference, retrieved 2026-10-21: "if you set
+// x-amz-bucket-object-lock-enabled to true, the
+// s3:PutBucketObjectLockConfiguration and s3:PutBucketVersioning permissions
+// are required". radosgw's verify_permission checks s3:CreateBucket alone
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3215-L3244 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3443-L3472 at v20.2.4;
+// docs/exclusions.md, "CreateBucket with object lock is authorized as
+// s3:PutBucketObjectLockConfiguration and s3:PutBucketVersioning too"). An
+// admin is let through a denial as Run lets one through the permission
+// check.
+func verifyCreateActions(ctx context.Context, r *Request, actions ...policy.Action) error {
+	for _, a := range actions {
+		err := VerifyUserPermission(ctx, r, a)
+		if err != nil && (IsBeforeVerify(err) || !r.Identity.Admin || !isAccessDenial(err)) {
+			return err
+		}
+	}
 	return nil
 }
 

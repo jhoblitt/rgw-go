@@ -543,6 +543,28 @@ var _ = Describe("Evaluator", func() {
 			acct = withUserPolicy(acct, doc(stmt("Allow", "", "s3:ListAllMyBuckets", "*", "")))
 			Expect(f.eval.VerifyUser(f.ctx, f.req(acct, "", ""), policy.S3ListAllMyBuckets)).To(Succeed(), "allowed")
 		})
+
+		// Amazon S3's CreateBucket reference, retrieved 2026-10-21: "if you set
+		// x-amz-bucket-object-lock-enabled to true, the
+		// s3:PutBucketObjectLockConfiguration and s3:PutBucketVersioning
+		// permissions are required".
+		DescribeTable("must be allowed each action S3 authorizes beside s3:CreateBucket on the new bucket's ARN",
+			func(a policy.Action) {
+				create := func(id op.Identity) *op.Request {
+					r := f.req(id, "newbkt", "")
+					r.Method = http.MethodPut
+					return r
+				}
+				acct := accountIdentity(ownAcct, "acct", meta.IdentityRGW)
+				Expect(f.eval.VerifyUser(f.ctx, create(acct), a)).To(MatchError(op.ErrAccessDenied), "no policy")
+				other := withUserPolicy(acct, doc(stmt("Allow", "", a.String(), "arn:aws:s3:::otherbkt", "")))
+				Expect(f.eval.VerifyUser(f.ctx, create(other), a)).To(MatchError(op.ErrAccessDenied), "allowed on another bucket")
+				mine := withUserPolicy(acct, doc(stmt("Allow", "", a.String(), "arn:aws:s3:::newbkt", "")))
+				Expect(f.eval.VerifyUser(f.ctx, create(mine), a)).To(Succeed(), "allowed on the new bucket")
+			},
+			Entry("s3:PutBucketObjectLockConfiguration", policy.S3PutBucketObjectLockConfiguration),
+			Entry("s3:PutBucketVersioning", policy.S3PutBucketVersioning),
+		)
 	})
 
 	Describe("tenants", func() {
