@@ -7860,19 +7860,6 @@ does the following.
   [rgw_op.cc:7295-7341](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7295-L7341)).
   A completion of an upload without a checksum type, every Squid upload
   among them, reads no checksum header, as radosgw compares none for it.
-- **An UploadPart reads its upload's meta object twice.** rgw-go's
-  UploadPart reads the upload's info before it reads the part's body, as
-  radosgw's `get_info` does
-  ([rgw_op.cc:4244-4260](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4244-L4260),
-  [rgw_op.cc:4453-4469](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4453-L4469)),
-  for the upload's checksum type, and the RADOS driver's `PutPart` reads it
-  again for the part's placement (`internal/driver/mp_part.go:341-344`).
-  radosgw's part writer makes no second read: it only writes the part's
-  record into the meta object
-  ([rgw_putobj_processor.cc:572-591](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L572-L591),
-  [rgw_putobj_processor.cc:611-630](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L611-L630)).
-  The cost is one more meta-object read, a RADOS round trip, per UploadPart
-  on both releases; nothing stored or answered differs.
 
 ### Bucket index differences
 
