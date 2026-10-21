@@ -550,5 +550,106 @@ var _ = Describe("CreateBucket and DeleteBucket", func() {
 			Expect(st.DeleteBucket(ctx, rec)).To(MatchError(op.ErrNoSuchKey), "check_bucket_empty lists shard objects Tentacle never created")
 			Expect(c.Object(rookMetaPool, rookRoot, "plain")).NotTo(BeNil())
 		})
+
+		Describe("of a bucket's lifecycle entry", func() {
+			var rec *op.BucketRecord
+			var lcKey, lcShard string
+			BeforeEach(func(ctx SpecContext) {
+				var err error
+				rec, err = s.CreateBucket(ctx, params("plain"))
+				Expect(err).NotTo(HaveOccurred())
+				lcKey = ":plain:" + rec.Info.Bucket.Marker
+				lcShard = lcShardOf(lcKey)
+			})
+			// withLC gives the bucket a lifecycle configuration and its entry,
+			// as PutBucketLifecycleConfiguration leaves them.
+			withLC := func(ctx context.Context) {
+				GinkgoHelper()
+				Expect(s.PutBucketAttrs(ctx, rec, map[string][]byte{op.AttrLC: {1}}, nil)).To(Succeed())
+				Expect(s.SetEntry(ctx, rec)).To(Succeed())
+				Expect(lcEntries(c)).To(HaveKey(lcKey))
+			}
+
+			It("drops the entry of a bucket carrying user.rgw.lc as the delete's last step, and releases the shard", func(ctx SpecContext) {
+				withLC(ctx)
+				instance := ".bucket.meta.plain:" + rec.Info.Bucket.ID
+				var instanceThen *fakerados.Object
+				var listedThen []string
+				shardsThen := -1
+				c.BeforeWrite(rookLCPool, rookLCNS, lcShard, func(*fakerados.Object) {
+					instanceThen = c.Object(rookMetaPool, rookRoot, instance)
+					listedThen = linked(ctx, s, aliceOwner)
+					shardsThen = len(shards())
+				})
+				before := c.Writes(rookLCPool, rookLCNS, lcShard)
+				Expect(s.DeleteBucket(ctx, rec)).To(Succeed())
+				Expect(c.Writes(rookLCPool, rookLCNS, lcShard)-before).To(Equal(1), "remove_bucket_config's rm_entry")
+				Expect(instanceThen).To(BeNil(), "the instance went before the entry")
+				Expect(shardsThen).To(BeZero(), "and the index")
+				Expect(listedThen).To(BeEmpty(), "and the owner's entry")
+				Expect(lcEntries(c)).To(BeEmpty())
+				Expect(c.Locks(rookLCPool, rookLCNS, lcShard, "lc_process")).To(BeEmpty())
+			})
+
+			It("removes and unlinks the bucket though its context ends in the wait for a shard another holder locked, leaving the entry", func(ctx SpecContext) {
+				withLC(ctx)
+				pool, err := c.Pool(ctx, rookLCPool, rookLCNS)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(pool.LockExclusive(ctx, lcShard, "lc_process", "lc_thrd: 0", "", time.Hour, 0)).To(Succeed(), "as a gateway that stopped holding it leaves it")
+				dctx, cancel := context.WithCancel(ctx)
+				defer cancel()
+				waits := 0
+				driver.SetLCSleepForTest(s, func(wctx context.Context, _ time.Duration) error {
+					waits++
+					cancel()
+					return wctx.Err()
+				})
+				Expect(s.DeleteBucket(dctx, rec)).To(Succeed(), "the entry's removal is logged, not returned")
+				Expect(waits).To(Equal(1), "the context ended in the first wait")
+				Expect(c.Object(rookMetaPool, rookRoot, "plain")).To(BeNil())
+				Expect(instances("plain")).To(BeEmpty())
+				Expect(shards()).To(BeEmpty(), "the index is cleaned")
+				Expect(linked(ctx, s, aliceOwner)).To(BeEmpty(), "the owner's list names no bucket that is gone")
+				Expect(lcEntries(c)).To(HaveKey(lcKey), "an entry whose bucket no longer loads, which a lifecycle pass drops")
+				Expect(c.Locks(rookLCPool, rookLCNS, lcShard, "lc_process")).To(ConsistOf(HaveField("Cookie", "lc_thrd: 0")), "the holder's lock stays")
+			})
+
+			It("reads user.rgw.lc from the instance it reloads, not from the caller's record", func(ctx SpecContext) {
+				stale := *rec
+				withLC(ctx)
+				Expect(stale.Attrs).NotTo(HaveKey(op.AttrLC))
+				Expect(s.DeleteBucket(ctx, &stale)).To(Succeed(), "RadosBucket::remove's load_bucket, rgw_sal_rados.cc:356-360 at v19.2.7")
+				Expect(lcEntries(c)).To(BeEmpty())
+			})
+
+			It("makes no lifecycle call for a bucket without user.rgw.lc", func(ctx SpecContext) {
+				Expect(s.DeleteBucket(ctx, rec)).To(Succeed())
+				Expect(c.Objects(rookLCPool, rookLCNS)).To(BeEmpty(), "no shard locked or written")
+			})
+
+			It("removes the bucket though the entry's removal fails, leaving the entry for the lifecycle worker", func(ctx SpecContext) {
+				withLC(ctx)
+				c.FailNextWrite(rookLCPool, rookLCNS, lcShard, syscall.EIO)
+				Expect(s.DeleteBucket(ctx, rec)).To(Succeed(), "remove casts remove_bucket_config's result to void, rgw_sal_rados.cc:402-407 at v19.2.7")
+				Expect(c.Object(rookMetaPool, rookRoot, "plain")).To(BeNil())
+				Expect(instances("plain")).To(BeEmpty())
+				Expect(linked(ctx, s, aliceOwner)).To(BeEmpty())
+				Expect(lcEntries(c)).To(HaveKey(lcKey), "bucket_lc_process drops an entry whose bucket does not load")
+			})
+
+			It("keeps the entry of a bucket whose removal fails after the multipart abort", func(ctx SpecContext) {
+				withLC(ctx)
+				c.BeforeWrite(rookMetaPool, rookRoot, "plain", func(o *fakerados.Object) {
+					c.BeforeWrite(rookMetaPool, rookRoot, "plain", nil)
+					o.Xattrs[version.XattrName] = encode(version.ObjVersion{Ver: 9, Tag: "other"})
+				})
+				before := c.Writes(rookLCPool, rookLCNS, lcShard)
+				Expect(s.DeleteBucket(ctx, rec)).To(MatchError(op.ErrConcurrentModification))
+				Expect(instances("plain")).To(HaveLen(1), "the bucket stays")
+				Expect(c.Writes(rookLCPool, rookLCNS, lcShard)).To(Equal(before),
+					"radosgw drops the entry before delete_bucket can fail, leaving the configuration without it (docs/ceph-upstream-bugs.md)")
+				Expect(lcEntries(c)).To(HaveKey(lcKey))
+			})
+		})
 	})
 })

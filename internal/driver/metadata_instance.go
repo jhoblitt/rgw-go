@@ -178,8 +178,9 @@ func (s *Store) refuseIDElsewhere(ctx context.Context, b meta.BucketID) error {
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L2866-L2887 at v19.2.7),
 // on Tentacle too, whose decode reads no obj_lock
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2606-L2647 at v20.2.4).
-// The lifecycle configuration and topic mappings radosgw updates after the
-// write are not kept by rgw-go yet.
+// After the index the bucket's lifecycle entry follows the written attrs
+// (putInstanceLC). The topic mappings radosgw updates after the write are
+// not kept by rgw-go yet.
 //
 // Each refusal comes before anything is written:
 //   - an attr outside user.rgw. is ErrInvalidArgument (op.RefuseRawAttrs),
@@ -291,9 +292,40 @@ func (s *Store) putInstance(ctx context.Context, key string, e op.MetadataEntry,
 	if err != nil {
 		return err
 	}
-	slog.DebugContext(ctx, "not updating the lifecycle configuration or topic mappings of a put bucket instance (rgw_bucket.cc:2900-2944 at v19.2.6)",
+	err = s.putInstanceLC(ctx, &info, attrs, old)
+	if err != nil {
+		return err
+	}
+	slog.DebugContext(ctx, "not updating the topic mappings of a put bucket instance (rgw_bucket.cc:2930-2944 at v19.2.7)",
 		slog.String("bucket", info.Bucket.Name))
 	return nil
+}
+
+// putInstanceLC is put_post's update of the lifecycle index: the bucket's
+// entry set when the written attrs carry user.rgw.lc, and removed when only
+// the stored instance old's did, v20.2.4's rule
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L3010-L3040 at v20.2.4),
+// on Squid too, whose put also removes it when neither did
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L2900-L2928 at v19.2.7),
+// an entry no configuration the bucket held implied. Either failure fails
+// the put after its write, as both releases' put_post returns it, under
+// the row radosgw's error table gives its errno: a shard whose lock stays
+// held is EBUSY, 503.
+func (s *Store) putInstanceLC(ctx context.Context, info *meta.BucketInfo, attrs map[string][]byte, old *instance) error {
+	_, set := attrs[op.AttrLC]
+	var had bool
+	if old != nil {
+		_, had = old.attrs[op.AttrLC]
+	}
+	rec := &op.BucketRecord{Info: *info}
+	var err error
+	switch {
+	case set:
+		err = s.SetEntry(ctx, rec)
+	case had:
+		err = s.RemoveEntry(ctx, rec)
+	}
+	return op.FromRADOS(err, op.ScopeService)
 }
 
 // refuseNULPlacement is op.RefuseNUL over the names an instance document

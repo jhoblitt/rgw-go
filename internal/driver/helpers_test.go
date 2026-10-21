@@ -2,6 +2,7 @@ package driver_test
 
 import (
 	"maps"
+	"strconv"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -172,6 +173,29 @@ func conf(kv map[string]string) *cephconf.Options {
 // rookRoot is the namespace of rookMetaPool that holds the zone's
 // domain_root, where a bucket's entry point and instance live.
 const rookRoot = "root"
+
+// rookLCPool and rookLCNS hold the lifecycle shards of the zone
+// seedRookZone seeds, its lc_pool.
+const rookLCPool, rookLCNS = "ceph-objectstore.rgw.log", "lc"
+
+// lcShardOf is the shard of conf's 32 that files the lifecycle entry key.
+func lcShardOf(key string) string {
+	return "lc." + strconv.FormatUint(uint64(meta.StrHashLinux(key)%7877%32), 10)
+}
+
+// lcEntries is every entry the zone's lifecycle shards hold, by key.
+func lcEntries(c *fakerados.Cluster) map[string]rgwcls.LCEntry {
+	GinkgoHelper()
+	out := map[string]rgwcls.LCEntry{}
+	for oid, obj := range c.Objects(rookLCPool, rookLCNS) {
+		for k, b := range obj.Omap {
+			d := denc.NewDecoder(b)
+			out[k] = rgwcls.DecodeLCEntry(d)
+			Expect(d.Err()).NotTo(HaveOccurred(), "%s holds %q", oid, k)
+		}
+	}
+	return out
+}
 
 // seedVersioned stores data under oid in the domain root with attrs and
 // version v in its cls_version xattr.

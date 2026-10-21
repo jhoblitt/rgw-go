@@ -1655,9 +1655,19 @@ review and verified against the tree.
     answers 409 BucketAlreadyExists, as either would share another bucket's
     index or objects; the check lists the instances' keys, which carry
     their ids, and reads each instance for its marker, one read per
-    instance. The instance's
-    lifecycle configuration and topic mappings, which radosgw updates
-    after the write, are not kept by rgw-go yet.
+    instance. After the write and the index, the bucket's lifecycle
+    entry is set when the document's attrs carry `user.rgw.lc` and removed
+    when only the stored instance's did, as v20.2.4's put does
+    ([rgw_bucket.cc:3010-3040](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L3010-L3040)),
+    and a failure of either fails the put after its write, as on both
+    releases, a shard whose lock stays held answering 503
+    ServiceUnavailable. rgw-go keeps that rule on Squid, where v19.2.7's
+    put also removes the entry when neither carries the attr
+    ([rgw_bucket.cc:2900-2928](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L2900-L2928)):
+    that removes only an entry no configuration the bucket held implied,
+    and fails a put that leaves lifecycle alone whenever the shard's lock
+    stays held. The instance's topic mappings, which radosgw updates after
+    the write, are not kept by rgw-go yet.
   - The bucket puts serialize on a bucket claim, an object per bucket id
     in the domain root's pool under the domain root's namespace with
     `.rgw-go-bucket-claims` appended (`root.rgw-go-bucket-claims` in a
@@ -5621,6 +5631,34 @@ differ, rgw-go does the following.
     counted, as radosgw counts the abort it makes of it; the delete goes on
     and leaves its meta object and parts. The emptiness check lets the
     delete reach it only for a head without a visible index entry.
+- **A bucket delete removes the lifecycle entry once the bucket is gone.**
+  For a bucket whose attrs carry `user.rgw.lc`, both gateways remove its
+  entry from its lifecycle shard after the multipart abort, and neither
+  fails the delete when that removal fails
+  ([rgw_sal_rados.cc:402-407](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L402-L407),
+  [rgw_sal_rados.cc:419-424](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L419-L424)).
+  radosgw removes it before `delete_bucket`, whose second emptiness check
+  or entry point removal can still fail and leave the bucket with its
+  lifecycle configuration and without its entry, so its rules never run
+  again (`docs/ceph-upstream-bugs.md`, "[radosgw's bucket delete drops the
+  lifecycle entry of a bucket it then fails to
+  remove](ceph-upstream-bugs.md#radosgws-bucket-delete-drops-the-lifecycle-entry-of-a-bucket-it-then-fails-to-remove)").
+  rgw-go removes it as the delete's last step, after the owner's list
+  entry, reading the attr from the instance it removed, so a delete that
+  fails before, as one a live rename refuses or one that loses its entry
+  point to another write does, keeps the entry. The removal waits for the
+  shard's lock up to 50 s, as radosgw's does, and a delete whose request
+  ends in that wait, or whose entry removal fails, has already removed
+  the bucket. The entry it leaves names a bucket the name no longer
+  loads, or loads with another marker, which radosgw's next lifecycle
+  pass on the shard drops, as `bucket_lc_process` answers -ENOENT for it
+  ([rgw_lc.cc:1697-1718](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1697-L1718),
+  [rgw_lc.cc:2430-2440](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2430-L2440),
+  [rgw_lc.cc:1753-1774](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1753-L1774),
+  [rgw_lc.cc:2497-2506](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2497-L2506)).
+  rgw-go's own lifecycle worker drops it too once it does what
+  `bucket_lc_process` does. Until then, in a zone where no radosgw
+  lifecycle thread runs, nothing drops it.
 - **A retried bucket write stops when the name names another bucket.**
   PutBucketPolicy, DeleteBucketPolicy, PutBucketTagging,
   DeleteBucketTagging, PutBucketWebsite, DeleteBucketWebsite,

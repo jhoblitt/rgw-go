@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"maps"
 	"strings"
+	"syscall"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
+	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/cls/version"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/driver"
@@ -1148,6 +1150,78 @@ var _ = Describe("MetadataStore", func() {
 			got, err := s.GetBucketInstance(ctx, plain.Info.Bucket)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(got.Info.RequesterPays).To(BeFalse())
+		})
+
+		Describe("of the bucket's lifecycle entry", func() {
+			var key, lcKey, lcShard string
+			BeforeEach(func() {
+				key = "plain:" + plain.Info.Bucket.ID
+				lcKey = ":plain:" + plain.Info.Bucket.Marker
+				lcShard = lcShardOf(lcKey)
+			})
+			// passed is the entry a lifecycle pass leaves, which a set resets.
+			passed := func() rgwcls.LCEntry {
+				return rgwcls.LCEntry{Bucket: lcKey, StartTime: 1760961600, Status: rgwcls.LCStatusComplete}
+			}
+			fresh := func() rgwcls.LCEntry { return rgwcls.LCEntry{Bucket: lcKey, Status: rgwcls.LCStatusUninitial} }
+
+			DescribeTable("sets the entry when the document carries user.rgw.lc and removes it when only the stored instance did",
+				func(ctx SpecContext, stored, put bool, want func() rgwcls.LCEntry, writes int) {
+					if stored {
+						Expect(s.PutBucketAttrs(ctx, plain, map[string][]byte{op.AttrLC: {1}}, nil)).To(Succeed())
+					}
+					Expect(s.SetEntry(ctx, plain)).To(Succeed())
+					c.Object(rookLCPool, rookLCNS, lcShard).Omap[lcKey] = encode(passed())
+					data, v := instDoc(ctx, key, func(bi *meta.BucketCompleteInfo) {
+						delete(bi.Attrs, op.AttrLC)
+						if put {
+							bi.Attrs[op.AttrLC] = []byte{2}
+						}
+					})
+					before := c.Writes(rookLCPool, rookLCNS, lcShard)
+					Expect(s.Put(ctx, "bucket.instance", key, op.MetadataEntry{Data: data}, op.PutMetadataOptions{IfVersion: &v})).To(Succeed())
+					Expect(c.Writes(rookLCPool, rookLCNS, lcShard) - before).To(Equal(writes))
+					Expect(c.Locks(rookLCPool, rookLCNS, lcShard, "lc_process")).To(BeEmpty())
+					if want == nil {
+						Expect(lcEntries(c)).To(BeEmpty())
+						return
+					}
+					Expect(lcEntries(c)).To(Equal(map[string]rgwcls.LCEntry{lcKey: want()}))
+				},
+				Entry("on neither, leaving an entry the stored instance never implied, v20.2.4's rule, on Squid too", false, false, passed, 0),
+				Entry("on the stored instance alone, removing it", true, false, nil, 1),
+				Entry("on the document alone, setting it", false, true, fresh, 1),
+				Entry("on both, setting it again", true, true, fresh, 1),
+			)
+
+			It("sets the entry of a new instance whose document carries user.rgw.lc, and touches no shard for one without", func(ctx SpecContext) {
+				info := freshInfo("bare", "z.1.10")
+				data, err := json.Marshal(meta.BucketCompleteInfo{Info: info})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(s.Put(ctx, "bucket.instance", "bare:z.1.10", op.MetadataEntry{Data: data}, op.PutMetadataOptions{})).To(Succeed())
+				Expect(c.Objects(rookLCPool, rookLCNS)).To(BeEmpty(), "no old instance, so no removal")
+				info = freshInfo("fresh", "z.1.9")
+				data, err = json.Marshal(meta.BucketCompleteInfo{Info: info, Attrs: meta.AttrsJSON{op.AttrLC: {1}}})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(s.Put(ctx, "bucket.instance", "fresh:z.1.9", op.MetadataEntry{Data: data}, op.PutMetadataOptions{})).To(Succeed())
+				Expect(lcEntries(c)).To(Equal(map[string]rgwcls.LCEntry{":fresh:z.1.9": {Bucket: ":fresh:z.1.9", Status: rgwcls.LCStatusUninitial}}))
+			})
+
+			It("fails the put after its write when the entry cannot be set, with radosgw's row for the errno", func(ctx SpecContext) {
+				data, v := instDoc(ctx, key, func(bi *meta.BucketCompleteInfo) {
+					bi.Info.RequesterPays = true
+					bi.Attrs[op.AttrLC] = []byte{1}
+				})
+				c.FailNextWrite(rookLCPool, rookLCNS, lcShard, syscall.EBUSY)
+				err := s.Put(ctx, "bucket.instance", key, op.MetadataEntry{Data: data}, op.PutMetadataOptions{IfVersion: &v})
+				Expect(err).To(MatchError(op.ErrServiceUnavailable), "put_post returns set_bucket_config's -EBUSY, 503 at rgw_common.cc:134 at v19.2.7")
+				got, gerr := s.GetBucketInstance(ctx, plain.Info.Bucket)
+				Expect(gerr).NotTo(HaveOccurred())
+				Expect(got.Info.RequesterPays).To(BeTrue(), "the instance was written first")
+				Expect(got.Attrs).To(HaveKey(op.AttrLC))
+				Expect(lcEntries(c)).To(BeEmpty())
+				Expect(c.Locks(rookLCPool, rookLCNS, lcShard, "lc_process")).To(BeEmpty())
+			})
 		})
 	})
 
