@@ -121,8 +121,9 @@ func DecodeGetResultReply(d *denc.Decoder) GetResultReply {
 
 // Check mirrors OTP::check's first call: otp_check checks req.Val against
 // the device req.ID and records the outcome under req.Token, unless the
-// device already holds five checks from its last step, when it records
-// nothing (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L108-L125 at v19.2.7 and v20.2.4).
+// device already holds five checks from the last step_size seconds, a window
+// that slides with the OSD's clock rather than a TOTP step, when it records
+// nothing (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L108-L127 at v19.2.7 and v20.2.4).
 // It is a write method, so op is a write op, as Tentacle's OTP::check sends
 // it (https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_client.cc#L71-L73 at v20.2.4).
 // Squid's IoCtx::exec reaches the OSD as a write as well, since the OSD
@@ -160,10 +161,11 @@ func LookupCheck(op *radosclient.ReadOp, req CheckOp, r denc.Release) *CheckLook
 }
 
 // Record decodes the check once the op has run: the newest the device
-// recorded under the token in its last step, or, when there is none, the
-// token with CheckUnknown. A check whose result is not CheckSuccess comes
-// with ErrCheckRefused. The method's own failure is returned as it is, so an
-// object holding no device with the id reads as radosclient.ErrNotFound.
+// recorded under the token in the last step_size seconds, or, when there is
+// none, the token with CheckUnknown. A check whose result is not
+// CheckSuccess comes with ErrCheckRefused. The method's own failure is
+// returned as it is, so an object holding no device with the id reads as
+// radosclient.ErrNotFound.
 func (l *CheckLookup) Record() (OTPCheck, error) {
 	ret, err := clsutil.DecodeReply(l.res, Class, MethodGetResult, DecodeGetResultReply)
 	if err != nil {
