@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -15,8 +16,10 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/cls/refcount"
 	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
+	"github.com/jhoblitt/rgw-go/internal/compression"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -690,3 +693,304 @@ func seedCompressedSource(ctx context.Context, c *fakerados.Cluster, s *driver.S
 	Expect(err).NotTo(HaveOccurred())
 	return st
 }
+
+// snappyClass and zlibClass are the PUT fixture's classes that compress with
+// snappy and zlib, once withCompressionClasses has made them.
+var snappyClass, zlibClass = compClass(compression.Snappy), compClass(compression.Zlib)
+
+// compositeFlags are the flags of a checksum combined as a composite.
+const compositeFlags = cksum.FlagV2 | cksum.FlagCombined | cksum.FlagComposite
+
+var _ = Describe("a copy's compression and checksum records", func() {
+	var (
+		c      *fakerados.Cluster
+		s      *driver.Store
+		rec    *op.BucketRecord
+		mtime  time.Time
+		plain  []byte
+		srcKey meta.ObjKey
+		srcOID string
+		dstKey meta.ObjKey
+		dstOID string
+		shard  string
+	)
+	BeforeEach(func() {
+		mtime = time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+		c = newPutCluster()
+		withCompressionClasses(c, compression.Snappy, compression.Zlib, "random")
+		clock := mtime
+		c.SetClock(func() time.Time { return clock })
+		rec = testBucket(putBucketID, 11)
+		seedShards(c, rec)
+		seedRecordInstance(c, rec)
+		plain = hexNoise(10 << 20)
+		srcKey, srcOID = meta.ObjKey{Name: "src"}, putBucketID+"_src"
+		dstKey, dstOID = meta.ObjKey{Name: "dst"}, putBucketID+"_dst"
+		shard = indexShardOID(rec, "dst")
+	})
+	// prefetched reads the source's state once its index completions are
+	// done; the copy that follows draws fixedRand(secondPrefix).
+	prefetched := func(ctx context.Context) *op.ObjectState {
+		GinkgoHelper()
+		settle(s)
+		st, err := s.PrefetchObject(ctx, rec, srcKey)
+		Expect(err).NotTo(HaveOccurred())
+		s.SetRandForTest(fixedRand(secondPrefix))
+		return st
+	}
+	// source PUTs plain as the source under class, through a Store opened at
+	// rel, and returns its prefetched state.
+	source := func(ctx context.Context, rel denc.Release, class string) *op.ObjectState {
+		GinkgoHelper()
+		s = openPutStore(ctx, c, rel, nil, mtime)
+		_, err := s.PutObject(ctx, rec, srcKey, bytes.NewReader(plain), op.PutParams{
+			Attrs: attrsWithACL(initiator), Size: int64(len(plain)), Tag: "tx-src", StorageClass: class,
+		})
+		Expect(err).NotTo(HaveOccurred())
+		return prefetched(ctx)
+	}
+	// multipartSource completes plain as the source in two parts, of 5 MiB
+	// and the rest, through a Store opened at rel, and returns its prefetched
+	// state.
+	multipartSource := func(ctx context.Context, rel denc.Release) *op.ObjectState {
+		GinkgoHelper()
+		s = openPutStore(ctx, c, rel, nil, mtime)
+		up, err := s.CreateUpload(ctx, rec, srcKey, op.UploadParams{
+			Owner: initiator, OwnerName: "Alice", Placement: meta.PlacementRule{Name: "default-placement"}, Attrs: attrsWithACL(initiator),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		var parts []op.CompletePart
+		for i, b := range [][]byte{plain[:5<<20], plain[5<<20:]} {
+			res, perr := s.PutPart(ctx, up, i+1, bytes.NewReader(b), op.PutParams{Attrs: attrsWithACL(initiator), Size: int64(len(b))})
+			Expect(perr).NotTo(HaveOccurred())
+			parts = append(parts, op.CompletePart{Number: i + 1, ETag: res.ETag})
+		}
+		_, err = s.Complete(ctx, up, parts)
+		Expect(err).NotTo(HaveOccurred())
+		st := prefetched(ctx)
+		Expect(st.Manifest.PartsCount()).To(Equal(2))
+		return st
+	}
+	copyTo := func(ctx context.Context, st *op.ObjectState, class string, replace bool) {
+		GinkgoHelper()
+		_, err := s.CopyObject(ctx, st, rec, dstKey, op.CopyParams{Attrs: attrsWithACL(initiator), ReplaceAttrs: replace, StorageClass: class, Tag: "tx-copy"})
+		Expect(err).NotTo(HaveOccurred())
+		settle(s)
+	}
+	// stored is st's stored bytes, as Read::read hands them over.
+	stored := func(ctx context.Context, st *op.ObjectState) []byte {
+		GinkgoHelper()
+		var b bytes.Buffer
+		Expect(s.ReadStoredForTest(ctx, st, 0, st.Size, &b)).To(Succeed())
+		return b.Bytes()
+	}
+	// expectHint expects every write of the copy's tails in testDataPool, and
+	// its head's write_full, hinted INCOMPRESSIBLE when hinted and not
+	// otherwise.
+	expectHint := func(hinted bool) {
+		GinkgoHelper()
+		tails := tailHints(c, secondPrefix)
+		Expect(tails).NotTo(BeEmpty(), "the copy has tails")
+		after := afterWriteFull(c.LastWrite(testDataPool, "", dstOID).Steps())
+		if hinted {
+			Expect(tails).To(HaveEach(radosclient.AllocHintFlags(512)), "add_write_hint, rgw_putobj_processor.cc:146-155 at v20.2.4")
+			Expect(after).To(Equal(&radosclient.SetAllocHintStep{Flags: 512}), "_do_write_meta, rgw_rados.cc:3330-3334 at v20.2.4")
+			return
+		}
+		Expect(tails).To(HaveEach(radosclient.AllocHintFlags(0)))
+		Expect(after).NotTo(BeAssignableToTypeOf(&radosclient.SetAllocHintStep{}))
+	}
+	// streamed reports whether the copy's head names tails of its own, which
+	// copy_obj_data writes, rather than the source's.
+	streamed := func(src *op.ObjectState) bool {
+		GinkgoHelper()
+		m := meta.DecodeManifest(denc.NewDecoder(c.Object(testDataPool, "", dstOID).Xattrs[meta.AttrManifest]))
+		Expect(m.Prefix).To(BeElementOf(src.Manifest.Prefix, "."+secondPrefix+"_"))
+		return m.Prefix != src.Manifest.Prefix
+	}
+
+	// compressionCase is a streamed copy of the source PUT under srcClass into
+	// dstClass. want is the codec the copy is stored in, "" for none; raw is
+	// whether it holds the source's stored bytes and compression info, and
+	// hinted whether that raw copy is hinted INCOMPRESSIBLE.
+	type compressionCase struct {
+		srcClass, dstClass, want string
+		raw, hinted              bool
+	}
+	DescribeTable("compresses an uncompressed source as the destination's class says, and copies a compressed one raw",
+		func(ctx SpecContext, rel denc.Release, cc compressionCase) {
+			src := source(ctx, rel, cc.srcClass)
+			Expect(src.Compression != nil).To(Equal(cc.srcClass == snappyClass), "the source's form")
+			c.ResetCounters()
+			copyTo(ctx, src, cc.dstClass, false)
+			Expect(streamed(src)).To(BeTrue())
+			dst, err := s.StatObject(ctx, rec, dstKey)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(readBack(ctx, s, dst, 0, 10<<20)).To(Equal(plain), "the copy reads back as its source")
+			got := stored(ctx, dst)
+			head := c.Object(testDataPool, "", dstOID)
+			switch {
+			case cc.raw:
+				Expect(head.Xattrs).To(HaveKeyWithValue(meta.AttrCompression, src.Attrs[meta.AttrCompression]), "the source's compression info, block map included")
+				Expect(got).To(Equal(stored(ctx, src)), "the source's stored bytes, undecoded")
+				expectHint(cc.hinted)
+			case cc.want != "":
+				Expect(dst.Compression).NotTo(BeNil(), "user.rgw.compression")
+				Expect([]any{dst.Compression.Type, dst.Compression.OrigSize}).To(Equal([]any{cc.want, uint64(10 << 20)}))
+				Expect(dst.Compression.Blocks).To(HaveLen(3), "one block per rgw_max_chunk_size of plaintext")
+				Expect(len(got)).To(BeNumerically("<", 10<<20), "the stored bytes are the codec's")
+				expectHint(true)
+			default:
+				Expect(head.Xattrs).NotTo(HaveKey(meta.AttrCompression))
+				Expect(got).To(Equal(plain), "the plaintext as it is")
+			}
+			en, ok := c.Entry(rookIndexPool, "", shard, "dst")
+			Expect(ok).To(BeTrue())
+			Expect([]uint64{en.Meta.Size, en.Meta.AccountedSize}).To(Equal([]uint64{uint64(len(got)), 10 << 20}),
+				"the stored size, and the plaintext's accounted")
+		},
+		Entry("Squid: an uncompressed source into a zlib class is compressed, where Squid's radosgw stores it as it is",
+			denc.Squid, compressionCase{dstClass: zlibClass, want: compression.Zlib}),
+		Entry("Tentacle: an uncompressed source into a zlib class is compressed, as RGWCopyObjDPF compresses it",
+			denc.Tentacle, compressionCase{dstClass: zlibClass, want: compression.Zlib}),
+		Entry("Squid: an uncompressed source into a class without a compression type is stored as it is",
+			denc.Squid, compressionCase{dstClass: "COLD"}),
+		Entry("Tentacle: a snappy source into a zlib class keeps its snappy blocks, hinted as set_compressed marks the copy, where Tentacle's radosgw encodes it with zlib",
+			denc.Tentacle, compressionCase{srcClass: snappyClass, dstClass: zlibClass, want: compression.Snappy, raw: true, hinted: true}),
+		Entry("Squid: a snappy source into a zlib class keeps its snappy blocks, unhinted, as copy_obj_data copies them",
+			denc.Squid, compressionCase{srcClass: snappyClass, dstClass: zlibClass, want: compression.Snappy, raw: true}),
+		Entry("Tentacle: a snappy source into a class without a compression type keeps its snappy blocks, unhinted, where Tentacle's radosgw stores it decoded",
+			denc.Tentacle, compressionCase{srcClass: snappyClass, want: compression.Snappy, raw: true}),
+		Entry("Tentacle: a snappy source into a random class keeps its snappy blocks, unhinted, as rgw-go loads no codec for random",
+			denc.Tentacle, compressionCase{srcClass: snappyClass, dstClass: compClass("random"), want: compression.Snappy, raw: true}),
+	)
+
+	DescribeTable("copies the stored bytes and both records as they are under the raw flag, as transition_obj's copy_obj_data runs without a data-processor factory",
+		func(ctx SpecContext, srcClass string) {
+			source(ctx, denc.Tentacle, srcClass)
+			record := cksumRecord(cksum.CRC32C, be32(0xe3069283), compositeFlags)
+			c.Object(testDataPool, "", srcOID).Xattrs[meta.AttrCksum] = record
+			src := prefetched(ctx)
+			attrs := maps.Clone(src.Attrs)
+			delete(attrs, meta.AttrIDTag)
+			delete(attrs, meta.AttrTailTag)
+			_, err := s.CopyDataForTest(ctx, src, rec, dstKey, zlibClass, attrs, true)
+			Expect(err).NotTo(HaveOccurred())
+			settle(s)
+			dst, err := s.StatObject(ctx, rec, dstKey)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(stored(ctx, dst)).To(Equal(stored(ctx, src)), "the source's stored bytes, though the class compresses with zlib")
+			expectHint(false)
+			head := c.Object(testDataPool, "", dstOID)
+			Expect(head.Xattrs).To(HaveKeyWithValue(meta.AttrCksum, record), "a composite record, on an object without parts")
+			if b, ok := src.Attrs[meta.AttrCompression]; ok {
+				Expect(head.Xattrs).To(HaveKeyWithValue(meta.AttrCompression, b))
+			} else {
+				Expect(head.Xattrs).NotTo(HaveKey(meta.AttrCompression))
+			}
+			Expect(readBack(ctx, s, dst, 0, 10<<20)).To(Equal(plain))
+		},
+		Entry("an uncompressed source stays uncompressed", ""),
+		Entry("a snappy source keeps its snappy blocks and compression info", snappyClass),
+	)
+
+	// checksumCase is a copy under the storage class class, "" sharing the
+	// tails and COLD streaming them, with REPLACE when replace, of a source
+	// whose user.rgw.cksum carries flags; multipart sources have two parts.
+	// kept is whether the copy carries the record.
+	type checksumCase struct {
+		multipart, replace bool
+		flags              uint16
+		class              string
+		kept               bool
+	}
+	DescribeTable("carries the source's checksum record as set_copy_attrs does, and drops one a copy that streams would misread",
+		func(ctx SpecContext, rel denc.Release, cc checksumCase) {
+			if cc.multipart {
+				multipartSource(ctx, rel)
+			} else {
+				source(ctx, rel, "")
+			}
+			record := cksumRecord(cksum.CRC32C, be32(0xe3069283), cc.flags)
+			c.Object(testDataPool, "", srcOID).Xattrs[meta.AttrCksum] = record
+			src := prefetched(ctx)
+			Expect(src.Checksum).NotTo(BeNil())
+			copyTo(ctx, src, cc.class, cc.replace)
+			Expect(streamed(src)).To(Equal(cc.class != ""))
+			head := c.Object(testDataPool, "", dstOID)
+			if cc.kept {
+				Expect(head.Xattrs).To(HaveKeyWithValue(meta.AttrCksum, record))
+			} else {
+				Expect(head.Xattrs).NotTo(HaveKey(meta.AttrCksum))
+			}
+			dst, err := s.StatObject(ctx, rec, dstKey)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(readBack(ctx, s, dst, 0, 10<<20)).To(Equal(plain))
+		},
+		Entry("Squid: COPY keeps a record on a copy that shares the tails",
+			denc.Squid, checksumCase{kept: true}),
+		Entry("Tentacle: COPY keeps a record on a copy that streams",
+			denc.Tentacle, checksumCase{class: "COLD", kept: true}),
+		Entry("Tentacle: REPLACE drops it from a copy that shares the tails, rgw_rados.cc:3866-3876 at v20.2.4",
+			denc.Tentacle, checksumCase{replace: true}),
+		Entry("Squid: REPLACE drops it from a copy that streams",
+			denc.Squid, checksumCase{replace: true, class: "COLD"}),
+		Entry("Tentacle: a composite record stays on a copy that shares the tails",
+			denc.Tentacle, checksumCase{flags: compositeFlags, kept: true}),
+		Entry("Squid: a composite record is dropped from a copy that streams",
+			denc.Squid, checksumCase{flags: compositeFlags, class: "COLD"}),
+		Entry("Tentacle: a multipart source's composite record stays on a copy that shares its parts",
+			denc.Tentacle, checksumCase{multipart: true, flags: compositeFlags, kept: true}),
+		Entry("Tentacle: a multipart source's composite record is dropped from a copy that streams, which has no parts",
+			denc.Tentacle, checksumCase{multipart: true, flags: compositeFlags, class: "COLD"}),
+		Entry("Tentacle: a multipart source's record with neither V2 nor FULL_OBJECT, COMPOSITE to get_checksum_type, is dropped from a copy that streams",
+			denc.Tentacle, checksumCase{multipart: true, flags: cksum.FlagCombined, class: "COLD"}),
+		Entry("Squid: a multipart source's full-object CRC rides a copy that streams",
+			denc.Squid, checksumCase{multipart: true, flags: cksum.FlagV2 | cksum.FlagCombined | cksum.FlagFullObject, class: "COLD", kept: true}),
+		Entry("Tentacle: a multipart source's full-object CRC without V2, as a one-part upload's is, rides a copy that streams",
+			denc.Tentacle, checksumCase{multipart: true, flags: cksum.FlagCombined | cksum.FlagFullObject, class: "COLD", kept: true}),
+	)
+
+	It("computes no checksum for a copy, as RGWCopyObj computes none", func(ctx SpecContext) {
+		src := source(ctx, denc.Tentacle, "")
+		res, err := s.CopyObject(ctx, src, rec, dstKey, op.CopyParams{Attrs: attrsWithACL(initiator), StorageClass: zlibClass, Tag: "tx-copy"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Checksum).To(BeNil())
+		Expect(c.Object(testDataPool, "", dstOID).Xattrs).NotTo(HaveKey(meta.AttrCksum), "the source has none")
+	})
+
+	It("recompresses a compressed source's decoded range into a copied part, as PutPart compresses a part", func(ctx SpecContext) {
+		src := source(ctx, denc.Squid, snappyClass)
+		Expect(src.Compression).NotTo(BeNil())
+		up, err := s.CreateUpload(ctx, rec, meta.ObjKey{Name: "k"}, op.UploadParams{
+			Owner: initiator, OwnerName: "Alice", Placement: meta.PlacementRule{Name: "default-placement", StorageClass: zlibClass}, Attrs: attrsWithACL(initiator),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		res, err := s.CopyPart(ctx, up, 1, src, op.ByteRange{Offset: 1 << 20, Length: 6 << 20})
+		Expect(err).NotTo(HaveOccurred())
+		want := plain[1<<20 : 7<<20]
+		Expect(res.ETag).To(Equal(md5hex(want)), "the MD5 of the decoded range")
+		info := storedPart(c, metaOID(rec, "k", up.ID), "part.00000001")
+		ci := info.Compression
+		Expect([]any{ci.Type, ci.OrigSize, info.AccountedSize}).To(Equal([]any{compression.Zlib, uint64(6 << 20), uint64(6 << 20)}),
+			"the upload's codec, not the source's")
+		prefix := "k." + up.ID
+		partStored := slices.Clone(c.Object(testDataPool, "", partHeadOID(prefix, 1)).Data)
+		for i := 1; c.Object(testDataPool, "", partShadowOID(prefix, 1, i)) != nil; i++ {
+			partStored = append(partStored, c.Object(testDataPool, "", partShadowOID(prefix, 1, i)).Data...)
+		}
+		dec, err := compression.NewDecoder(ci.Type)
+		Expect(err).NotTo(HaveOccurred())
+		var back []byte
+		for i, b := range ci.Blocks {
+			end := ci.OrigSize
+			if i+1 < len(ci.Blocks) {
+				end = ci.Blocks[i+1].OldOfs
+			}
+			got, err := dec.Decode(nil, partStored[b.NewOfs:b.NewOfs+b.Len], int(end-b.OldOfs), ci.CompressorMessage) //nolint:gosec // spec sizes are small
+			Expect(err).NotTo(HaveOccurred(), "block %d", i)
+			back = append(back, got...)
+		}
+		Expect(back).To(Equal(want))
+	})
+})
