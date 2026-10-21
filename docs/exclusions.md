@@ -3780,6 +3780,12 @@ v20.2.4 tags, rgw-go does the following.
     PutObject is not one: once its body is read, its write and its second
     quota check go on under a context detached from the request's
     (`internal/driver/put.go`), and the multipart writes detach the same way.
+    Nor is a DeleteBucket past its removal's claim: from the entry point's
+    read through the owner's list entry it runs to its end, and only its
+    last step, the lifecycle entry's removal, stops with the request,
+    leaving an entry for a bucket that is gone ("A bucket delete removes
+    the lifecycle entry once the bucket is gone"; `DeleteBucket`,
+    `internal/driver/bucketops.go`).
     A CompleteMultipartUpload or AbortMultipartUpload stopped while its
     `RGWCompleteMultipart` lock request is in flight, which may still land,
     sends the unlock under the cookie of that one attempt (`lockMeta`,

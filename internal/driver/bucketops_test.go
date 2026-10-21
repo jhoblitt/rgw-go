@@ -541,6 +541,22 @@ var _ = Describe("CreateBucket and DeleteBucket", func() {
 			Expect(linked(ctx, st, aliceOwner)).To(Equal([]string{"plain:" + second.Info.Bucket.ID}),
 				"radosgw unlinks by name and drops the new bucket from its owner's list, rgw_sal_rados.cc:461-462")
 		})
+		It("finishes its removal once begun, cleaning the index and unlinking the owner, though the request's context ends", func(ctx SpecContext) {
+			rec, err := s.CreateBucket(ctx, params("plain"))
+			Expect(err).NotTo(HaveOccurred())
+			dctx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			instance := ".bucket.meta.plain:" + rec.Info.Bucket.ID
+			c.AfterWrite(rookMetaPool, rookRoot, instance, func() {
+				if c.Object(rookMetaPool, rookRoot, instance) == nil {
+					cancel()
+				}
+			})
+			Expect(s.DeleteBucket(dctx, rec)).To(Succeed(), "radosgw's removal steps run to their end once begun")
+			Expect(dctx.Err()).To(MatchError(context.Canceled), "the context ended once the instance was removed")
+			Expect(shards()).To(BeEmpty(), "the index is cleaned")
+			Expect(linked(ctx, s, aliceOwner)).To(BeEmpty(), "the owner's list names no bucket that is gone")
+		})
 		It("answers Tentacle's NoSuchKey for an indexless bucket it created, and keeps the bucket", func(ctx SpecContext) {
 			c.SetRequiredOSDRelease("tentacle")
 			indexless()
