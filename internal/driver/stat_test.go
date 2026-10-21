@@ -281,9 +281,8 @@ var _ = Describe("StatObject and PrefetchObject", func() {
 		Entry("a version 1 record, which has no flags and decodes with 0, as Cksum::decode reads it",
 			slices.Concat([]byte{1, 1, 8, 0, 0, 0, 1, 0, 4, 0}, be32(0xcbf43926)),
 			&cksum.Cksum{Type: cksum.CRC32, Digest: be32(0xcbf43926)}),
-		Entry("a record with a byte past it, which radosgw's checksum-mode GET asserts on and rgw-go leaves unread",
-			slices.Concat(cksumRecord(cksum.SHA1, make([]byte, 20), 0), []byte{0x99}),
-			&cksum.Cksum{Type: cksum.SHA1, Digest: make([]byte, 20)}),
+		Entry("a record with a byte past it, which radosgw's checksum-mode GET asserts on and its other readers leave unread",
+			slices.Concat(cksumRecord(cksum.SHA1, make([]byte, 20), 0), []byte{0x99}), nil),
 		Entry("a type-9 record, which a v20.2.4 radosgw would look up past its table", cksumRecord(9, make([]byte, 16), 0), nil),
 		Entry("a truncated record", cksumRecord(cksum.CRC32, be32(0xcbf43926), 0)[:12], nil),
 	)

@@ -951,6 +951,43 @@ var _ = Describe("a copy's compression and checksum records", func() {
 			denc.Tentacle, checksumCase{multipart: true, flags: cksum.FlagCombined | cksum.FlagFullObject, class: "COLD", kept: true}),
 	)
 
+	DescribeTable("drops from a copy that streams a checksum attr cksum.DecodeAttr refuses, and keeps it on one that shares the tails, as set_copy_attrs does",
+		func(ctx SpecContext, attr []byte, class string, kept bool) {
+			source(ctx, denc.Tentacle, "")
+			c.Object(testDataPool, "", srcOID).Xattrs[meta.AttrCksum] = attr
+			src := prefetched(ctx)
+			Expect(src.Checksum).To(BeNil(), "the source reads as having none")
+			copyTo(ctx, src, class, false)
+			Expect(streamed(src)).To(Equal(class != ""))
+			head := c.Object(testDataPool, "", dstOID)
+			if kept {
+				Expect(head.Xattrs).To(HaveKeyWithValue(meta.AttrCksum, attr))
+			} else {
+				Expect(head.Xattrs).NotTo(HaveKey(meta.AttrCksum))
+			}
+		},
+		Entry("a composite record with a byte past it, which Tentacle's iterator readers would show as the copy's FULL_OBJECT checksum, streamed",
+			slices.Concat(cksumRecord(cksum.CRC32C, be32(0xe3069283), compositeFlags), []byte{0x99}), "COLD", false),
+		Entry("a full-object record with a byte past it, on which Tentacle's checksum-mode GET aborts, streamed",
+			slices.Concat(cksumRecord(cksum.CRC32C, be32(0xe3069283), cksum.FlagFullObject), []byte{0x99}), "COLD", false),
+		Entry("a record of type 9, streamed", cksumRecord(9, make([]byte, 16), 0), "COLD", false),
+		Entry("a composite record with a byte past it, on a copy that shares the tails",
+			slices.Concat(cksumRecord(cksum.CRC32C, be32(0xe3069283), compositeFlags), []byte{0x99}), "", true),
+	)
+	It("keeps a checksum attr cksum.DecodeAttr refuses under the raw flag, as transition_obj copies every attr", func(ctx SpecContext) {
+		source(ctx, denc.Tentacle, "")
+		attr := slices.Concat(cksumRecord(cksum.CRC32C, be32(0xe3069283), compositeFlags), []byte{0x99})
+		c.Object(testDataPool, "", srcOID).Xattrs[meta.AttrCksum] = attr
+		src := prefetched(ctx)
+		attrs := maps.Clone(src.Attrs)
+		delete(attrs, meta.AttrIDTag)
+		delete(attrs, meta.AttrTailTag)
+		_, err := s.CopyDataForTest(ctx, src, rec, dstKey, "COLD", attrs, true)
+		Expect(err).NotTo(HaveOccurred())
+		settle(s)
+		Expect(c.Object(testDataPool, "", dstOID).Xattrs).To(HaveKeyWithValue(meta.AttrCksum, attr))
+	})
+
 	It("computes no checksum for a copy, as RGWCopyObj computes none", func(ctx SpecContext) {
 		src := source(ctx, denc.Tentacle, "")
 		res, err := s.CopyObject(ctx, src, rec, dstKey, op.CopyParams{Attrs: attrsWithACL(initiator), StorageClass: zlibClass, Tag: "tx-copy"})

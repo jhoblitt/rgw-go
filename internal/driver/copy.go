@@ -463,7 +463,11 @@ func (s *Store) unrefTails(refs []objRef, tag string) {
 // factory
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5184-L5257 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5417-L5490 at v20.2.4):
-// the stored bytes and attrs as they are. Without it the copy is
+// the stored bytes and attrs as they are, a user.rgw.cksum rgw-go cannot read
+// included, as radosgw keeps every attr but the two tags
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5227-L5228 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5460-L5461 at v20.2.4).
+// Without it the copy is
 // CopyObject's, which Tentacle's RGWCopyObjDPF filters
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5770-L5893 at v20.2.4):
 // an uncompressed source is compressed as the destination placement's
@@ -471,7 +475,8 @@ func (s *Store) unrefTails(refs []objRef, tag string) {
 // as it is; a compressed source is still copied raw, where Tentacle's
 // radosgw decodes it and encodes the copy as the destination says
 // (docs/exclusions.md, "A copy that streams a compressed source copies its
-// stored bytes"); and a composite checksum is dropped (compositeChecksum).
+// stored bytes"); and a checksum record the copy cannot carry is dropped
+// (droppedChecksum).
 func (s *Store) copyData(ctx context.Context, src *op.ObjectState, dst *op.BucketRecord, dstKey meta.ObjKey, storageClass string, attrs map[string][]byte, mtime time.Time, raw bool) (*op.PutResult, error) {
 	l, err := s.planPut(ctx, dst, dstKey, storageClass)
 	if err != nil {
@@ -479,9 +484,9 @@ func (s *Store) copyData(ctx context.Context, src *op.ObjectState, dst *op.Bucke
 	}
 	w := streamWrite{tag: s.w.randTag(), attrs: attrs, size: int64(src.Size), mtime: mtime} //nolint:gosec // an object size is far below 2^63
 	if !raw {
-		if _, ok := attrs[meta.AttrCksum]; ok {
+		if b, ok := attrs[meta.AttrCksum]; ok {
 			var drop bool
-			if drop, err = compositeChecksum(src); err != nil {
+			if drop, err = droppedChecksum(src, b); err != nil {
 				return nil, err
 			}
 			if drop {
@@ -524,9 +529,24 @@ func (s *Store) codecLoads(typ string) bool {
 	return !errors.Is(err, compression.ErrUnknownCodec)
 }
 
-// compositeChecksum reports whether src's checksum record would be misread
-// on a copy without parts: one whose flags make it composite, or, on a
-// source with parts, one with neither V2 nor FULL_OBJECT, which
+// droppedChecksum reports whether a copy that streams drops b, the
+// user.rgw.cksum it would carry from src: an attr cksum.DecodeAttr refuses,
+// which radosgw's readers of the copy would read unsafely or each their own
+// way (docs/ceph-upstream-bugs.md, "radosgw aborts on a checksum-mode GET of
+// an object whose checksum attr has bytes past its record" and "radosgw's
+// checksum decode overruns its digest buffer and its type table"), or a
+// record compositeChecksum reports.
+func droppedChecksum(src *op.ObjectState, b []byte) (bool, error) {
+	c, err := cksum.DecodeAttr(b)
+	if err != nil {
+		return true, nil //nolint:nilerr // an attr no reader takes alike is dropped, not an error
+	}
+	return compositeChecksum(src, c)
+}
+
+// compositeChecksum reports whether c, src's checksum record, would be
+// misread on a copy without parts: one whose flags make it composite, or,
+// on a source with parts, one with neither V2 nor FULL_OBJECT, which
 // get_checksum_type takes for a composite written before CRC combining
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L382-L399 at v20.2.4).
 // Either combines the parts' checksums, which a reader of an object without
@@ -534,11 +554,8 @@ func (s *Store) codecLoads(typ string) bool {
 // lacks V2 but holds FULL_OBJECT, and its value is the object's CRC
 // (docs/ceph-upstream-bugs.md, "radosgw reports a single-part CRC upload's
 // full-object checksum as COMPOSITE").
-func compositeChecksum(src *op.ObjectState) (bool, error) {
-	c := src.Checksum
+func compositeChecksum(src *op.ObjectState, c cksum.Cksum) (bool, error) {
 	switch {
-	case c == nil:
-		return false, nil
 	case c.Composite():
 		return true, nil
 	case c.Flags&(cksum.FlagV2|cksum.FlagFullObject) != 0 || src.Manifest == nil:

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/policy"
 )
@@ -30,7 +31,23 @@ type ListParts struct {
 	Owner acl.Owner
 	// StorageClass is the upload's, STANDARD when its placement names none.
 	StorageClass string
-	Result       ListPartsResult
+	// ChecksumAlgorithm and ChecksumType are the upload's checksum type and
+	// how its completion combines the parts' checksums, FULL_OBJECT or
+	// COMPOSITE (uploadChecksumType), only for a type AWS defines, as
+	// radosgw reports only those; cksum.None and "" otherwise, as for every
+	// Squid upload. They come from the upload's multipart_upload_info, where
+	// radosgw reads the meta object's user.rgw.cksum, which nothing writes,
+	// and reports no ChecksumType
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7617-L7630 and
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4695-L4698 at v20.2.4;
+	// docs/ceph-upstream-bugs.md, "radosgw's ListParts never reports its
+	// upload's checksum algorithm").
+	ChecksumAlgorithm cksum.Type
+	ChecksumType      string
+	// Result is the page; each part's Checksum is its record's, only for a
+	// type AWS defines, as radosgw renders a part's
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4709-L4713 at v20.2.4).
+	Result ListPartsResult
 
 	// loadErr is a failure to read the upload or the object, which Execute
 	// answers once the requester is authorized.
@@ -111,7 +128,7 @@ func (o *ListParts) VerifyPermission(ctx context.Context, r *Request) error {
 // get_info's NoSuchUpload, for an empty upload id too, whose meta object
 // "<key>..meta" no upload has; the meta object's ACL, whose owner the result
 // names and which is -EIO when it does not decode; the upload's storage
-// class; then the page.
+// class and checksum; then the page.
 func (o *ListParts) Execute(ctx context.Context, r *Request) error {
 	if o.loadErr != nil {
 		return o.loadErr
@@ -127,12 +144,30 @@ func (o *ListParts) Execute(ctx context.Context, r *Request) error {
 		o.Owner = p.Owner
 	}
 	o.StorageClass = o.Upload.Placement.CanonicalStorageClass()
+	if uc := o.Upload.Checksum; uc.Type.Info().AWS {
+		o.ChecksumAlgorithm, o.ChecksumType = uc.Type, uploadChecksumType(uc)
+	}
 	res, err := r.Env.Multipart.ListParts(ctx, o.Upload, o.Marker, o.MaxParts)
 	if err != nil {
 		return err
 	}
+	for i := range res.Parts {
+		if c := res.Parts[i].Checksum; c != nil && !c.Type.Info().AWS {
+			res.Parts[i].Checksum = nil
+		}
+	}
 	o.Result = res
 	return nil
+}
+
+// uploadChecksumType is how a completion of an upload of checksum uc
+// combines its parts' checksums (cksum.NewCombiner): FULL_OBJECT for a CRC
+// whose flags do not say COMPOSITE, else COMPOSITE.
+func uploadChecksumType(uc UploadChecksum) string {
+	if uc.Type.Info().CRC && uc.Flags&cksum.FlagComposite == 0 {
+		return cksum.FullObjectType
+	}
+	return cksum.CompositeType
 }
 
 // Complete does nothing: the handler logs usage once the response is written.

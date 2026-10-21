@@ -61,6 +61,26 @@ func DecodeCksum(d *denc.Decoder) Cksum {
 	return c
 }
 
+// DecodeAttr decodes b, a user.rgw.cksum attr, as the one record it holds:
+// DecodeCksum's refusals, and denc.ErrMalformed for bytes past the record.
+// No radosgw writes such an attr, and its readers disagree on one: the
+// checksum-mode GET decodes the attr as a whole buffer, which asserts that
+// nothing follows
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/include/encoding.h#L632-L638 at v20.2.4),
+// where its other readers decode the record and leave the rest. On any
+// failure it returns the zero Cksum.
+func DecodeAttr(b []byte) (Cksum, error) {
+	d := denc.NewDecoder(b)
+	c := DecodeCksum(d)
+	if err := d.Err(); err != nil {
+		return Cksum{}, err
+	}
+	if n := d.Remaining(); n > 0 {
+		return Cksum{}, fmt.Errorf("%w: %d bytes past the checksum record", denc.ErrMalformed, n)
+	}
+	return c, nil
+}
+
 // Valid refuses what DecodeCksum refuses: a type with no id, or a digest
 // whose length is not the type's digest size.
 func (c Cksum) Valid() error {
@@ -91,9 +111,11 @@ func (c Cksum) Composite() bool {
 	return c.Flags&mask == mask
 }
 
+// The checksum types ObjectType and PartType name, as x-amz-checksum-type
+// and the ChecksumType element carry them.
 const (
-	fullObject = "FULL_OBJECT"
-	composite  = "COMPOSITE"
+	FullObjectType = "FULL_OBJECT"
+	CompositeType  = "COMPOSITE"
 )
 
 // ObjectType is get_checksum_type, an object's x-amz-checksum-type:
@@ -104,9 +126,9 @@ const (
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L382-L399 at v20.2.4).
 func (c Cksum) ObjectType(multipart bool) string {
 	if !multipart || c.Flags&FlagV2 != 0 && !c.Composite() {
-		return fullObject
+		return FullObjectType
 	}
-	return composite
+	return CompositeType
 }
 
 // PartType is main's get_part_checksum_type, a part's x-amz-checksum-type:
@@ -115,7 +137,7 @@ func (c Cksum) ObjectType(multipart bool) string {
 // at main). A part's record lacks V2, so ObjectType would call it COMPOSITE.
 func (c Cksum) PartType() string {
 	if c.Flags&FlagComposite != 0 {
-		return composite
+		return CompositeType
 	}
-	return fullObject
+	return FullObjectType
 }
