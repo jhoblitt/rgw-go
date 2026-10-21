@@ -42,7 +42,6 @@ type options struct {
 	lcThreadDelay       time.Duration // rgw_lc_thread_delay, 0 ms
 	lcDebugInterval     time.Duration // rgw_lc_debug_interval, -1 s: the length of a lifecycle day when positive
 	lcWorkTime          lcWorkTime    // rgw_lifecycle_work_time, 00:00-06:00; zero with lcThreads off
-	lcMaxRules          int           // rgw_lc_max_rules, 1000
 	lcAutoSessionClear  bool          // rgwlc_auto_session_clear, true
 	lcSkipBucketStep    bool          // rgwlc_skip_bucket_step, false
 
@@ -92,7 +91,6 @@ func readOptions(conf *cephconf.Options) (options, error) {
 		lcLockMaxTime:       time.Duration(uint32(readOption(&r, conf.Int64, "rgw_lc_lock_max_time"))) * time.Second, //nolint:gosec // narrowed as utime_t's seconds narrow it
 		lcThreadDelay:       countToDuration(readOption(&r, conf.Int64, "rgw_lc_thread_delay"), time.Millisecond),
 		lcDebugInterval:     secondsToDuration(readOption(&r, conf.Int64, "rgw_lc_debug_interval")),
-		lcMaxRules:          saturate(readOption(&r, conf.Uint64, "rgw_lc_max_rules"), math.MaxInt),
 		lcAutoSessionClear:  readOption(&r, conf.Bool, "rgwlc_auto_session_clear"),
 		lcSkipBucketStep:    readOption(&r, conf.Bool, "rgwlc_skip_bucket_step"),
 

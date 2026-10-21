@@ -21,7 +21,8 @@ var alwaysBoundRoutes = []string{
 	"bucket/stat_bucket", "bucket/get_bucket_location", "bucket/get_acls", "bucket/put_acls",
 	"bucket/get_bucket_policy", "bucket/put_bucket_policy", "bucket/delete_bucket_policy",
 	"bucket/get_bucket_tags", "bucket/put_bucket_tags", "bucket/delete_bucket_tags",
-	"bucket/get_lifecycle", "bucket/multi_object_delete", "bucket/list_bucket_multiparts",
+	"bucket/get_lifecycle", "bucket/put_lifecycle", "bucket/delete_lifecycle",
+	"bucket/multi_object_delete", "bucket/list_bucket_multiparts",
 
 	"object/get_obj", "object/get_obj_tags", "object/get_obj_attrs", "object/get_acls", "object/put_obj",
 	"object/copy_obj", "object/delete_obj", "object/put_acls", "object/put_obj_tags", "object/delete_obj_tags",

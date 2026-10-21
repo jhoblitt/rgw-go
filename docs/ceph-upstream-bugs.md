@@ -403,6 +403,10 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's CreateBucket with object lock skips the two permissions Amazon S3 requires for it](#radosgws-createbucket-with-object-lock-skips-the-two-permissions-amazon-s3-requires-for-it) | pending | pending | ✓ |
 | [radosgw's CreateBucket checks s3:PutBucketOwnershipControls before it reads x-amz-object-ownership](#radosgws-createbucket-checks-s3putbucketownershipcontrols-before-it-reads-x-amz-object-ownership) | pending | pending | ✓ |
 | [radosgw's CreateBucket takes an ACL other than private without s3:PutBucketAcl](#radosgws-createbucket-takes-an-acl-other-than-private-without-s3putbucketacl) | pending | pending | ✓ |
+| [Squid stores a lifecycle configuration on an indexless bucket, which its worker cannot list](#squid-stores-a-lifecycle-configuration-on-an-indexless-bucket-which-its-worker-cannot-list) | pending | pending |  |
+| [radosgw's lifecycle configuration put and delete fail on a lost bucket race instead of retrying](#radosgws-lifecycle-configuration-put-and-delete-fail-on-a-lost-bucket-race-instead-of-retrying) | pending | pending | ✓ |
+| [radosgw's PutBucketLifecycle compares 16 bytes of a Content-MD5 of any length](#radosgws-putbucketlifecycle-compares-16-bytes-of-a-content-md5-of-any-length) | pending | pending | ✓ |
+| [radosgw's PutBucketLifecycle logs the body's MD5 as a C string, reading past its stack array](#radosgws-putbucketlifecycle-logs-the-bodys-md5-as-a-c-string-reading-past-its-stack-array) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -6498,8 +6502,11 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw's from_base64 reads before an all-'=' input
 
-- **Kind:** defect, a denial of service: any request that reaches
-  `rgw::from_base64` with an input of only '=' ends the gateway. Unfixed
+- **Kind:** defect, a denial of service in a build with
+  `-D_GLIBCXX_ASSERTIONS`, which el9 RPMs carry: there, any request that
+  reaches `rgw::from_base64` with an input of only '=' ends the gateway.
+  Without the flag, a value of 16 characters or more is a heap
+  out-of-bounds read, and a shorter one decodes to empty. Unfixed
   through main. Unreproduced: derived from the source, with the throwing
   call compiled and run.
 - **Evidence:** paths are under `src/rgw/`; `rgw_b64.h` is the same at
@@ -6507,15 +6514,33 @@ Every new entry adds its row to this table, in document order.
   - `from_base64` returns an empty string for an empty view
     (`rgw_b64.h:64-65`), then strips trailing '=' with
     `while (sview.back() == '=') sview.remove_suffix(1)` and no further
-    empty check (`:76-77`). An all-'=' input such as "====" is not empty,
-    so `back()` is called; once the last '=' is dropped the view is empty
-    and the next `back()` reads before the start of the buffer.
-  - Under `-D_GLIBCXX_ASSERTIONS` that `back()` aborts; without it, it is a
-    heap out-of-bounds read. el9 RPMs compile with the flag: `ceph.spec.in`
+    empty check (`:76-77`). An all-'=' input is not empty, so `back()` is
+    called; once the last '=' is dropped the view is empty and the next
+    `back()` reads before the start of the buffer. A short trigger such as
+    "====" aborts only in a build with `-D_GLIBCXX_ASSERTIONS`; sixteen or
+    more '=' reach the out-of-bounds read in any build, so a reproducer
+    uses at least sixteen.
+  - Under `-D_GLIBCXX_ASSERTIONS` that `back()` aborts. Without it, it
+    reads the byte before the view, and what that byte is depends on the
+    string under the view. For a value of 16 characters or more it is the
+    heap's, before the string's buffer: an out-of-bounds read. If that byte
+    is itself '=', `remove_suffix(1)` wraps the view's length to SIZE_MAX,
+    the loop walks backwards one byte at a time until it meets a byte that
+    is not '=', and the decode that follows (`:79-80`) runs over a view
+    whose length has wrapped. The read is one byte in the usual case, and
+    the mechanism permits a longer one; what the decode then does is not
+    worked here. For one of
+    15 characters or fewer in the request's env, where beast keeps each
+    header as a `std::string` (`rgw_asio_client.cc:27-65` and
+    `rgw_env.cc:22-25`, the same at v19.2.7 and v20.2.4), the buffer is the
+    string's inline one, so under libstdc++'s C++11 string ABI the byte is
+    the high byte of the string's own length field: in the object, and 0.
+    The loop then stops, and the value decodes to empty. el9 RPMs compile
+    with the flag: `ceph.spec.in`
     exports `CXXFLAGS=$RPM_OPT_FLAGS` (`:1360-1361` at v19.2.6, `:1401-1402`
     at v20.2.4) and redhat-rpm-config's optflags carry
     `-Wp,-D_GLIBCXX_ASSERTIONS` (verified on this fc43 host; el9 not
-    verified here). Neither outcome is a C++ exception, so a caller's
+    verified here). The abort is not a C++ exception, so a caller's
     try/catch does not catch it, and the multi-threaded gateway ends.
   - The callers decode base64 from client input: the SSE-C customer key and
     its MD5, with the copy-source variants (`rgw_crypt.cc:1058` and `:1081`,
@@ -6529,10 +6554,11 @@ Every new entry adds its row to this table, in document order.
     `rgw_s3_auth_use_sts` or `rgw_s3_auth_use_ldap` is set (both default
     false; `rgw_auth_s3.h:91` and `rgw_rest_s3.cc:6200`); the others decode
     after authentication.
-- **Impact:** with STS or LDAP S3 auth enabled, an unauthenticated request
-  naming such a token ends the gateway and every request it is serving.
-  Otherwise any authenticated tenant ends it with one SSE-C or lifecycle
-  request, repeatably, until the request stops.
+- **Impact:** in a build with the flag, and with STS or LDAP S3 auth
+  enabled, an unauthenticated request naming such a token ends the gateway
+  and every request it is serving. Otherwise, in such a build, any
+  authenticated tenant ends it with one SSE-C or lifecycle request,
+  repeatably, until the request stops.
 - **Releases:** v19.2.6, v20.2.4 and main (06adccc25d6, 2026-10-01;
   6cafff02b39, 2026-10-04), where `from_base64` is unchanged.
 - **rgw-go:** not affected. `fromBase64` of an input that is empty once its
@@ -23100,3 +23126,228 @@ Every new entry adds its row to this table, in document order.
   permissions on the same Amazon S3 page; ceph main's BlockPublicAcls check
   found by the controller and verified here. Derived from the source, not
   reproduced.
+
+## Squid stores a lifecycle configuration on an indexless bucket, which its worker cannot list
+
+- **Kind:** defect, S3-correctness, not security-relevant: Squid's
+  PutBucketLifecycleConfiguration on an indexless bucket answers 200 and
+  stores rules its lifecycle worker never applies. Unreproduced: derived
+  from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - v19.2.7's `RGWPutLC::execute` checks nothing of the bucket's index
+    before it parses the body and calls `set_bucket_config`
+    ([rgw_op.cc:5933-6028](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5933-L6028)),
+    which stores `user.rgw.lc` and sets the bucket's lc entry
+    ([rgw_lc.cc:2636-2666](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2636-L2666)).
+  - The worker lists a rule's objects through the bucket index,
+    `LCObjsLister::fetch`'s `bucket->list`
+    ([rgw_lc.cc:379-383](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L379-L383)).
+    An indexless bucket has no index objects, and the listing opens shard
+    objects named from the layout's normal shard count
+    ([svc_bi_rados.cc:191-215](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_bi_rados.cc#L191-L215)),
+    which do not exist; commit fa4c5cebd2b, which v20.2.4 carries, says
+    ListObjects on such a bucket "would attempt to list index shard
+    objects that don't exist and fail with 404 (NoSuchKey)".
+  - v20.2.4 refuses the put first, 405 MethodNotAllowed "Indexless buckets
+    do not support lifecycle policy"
+    ([rgw_op.cc:6594-6599](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6594-L6599)),
+    from commit 76bd3d4b5e7, "rgw: reject PutBucketLifecycleConfiguration
+    on indexless buckets", which v19.2.7 lacks.
+- **Impact:** on Squid a client is told its lifecycle rules are in force on
+  an indexless bucket, and no object ever expires, transitions or has its
+  upload aborted, as each pass's listing of the bucket fails.
+- **Releases:** v19.2.7; fixed in v20.2.4 by 76bd3d4b5e7. main not checked.
+- **rgw-go:** refuses it on both releases with v20.2.4's 405 and message
+  (`PutBucketLifecycle.Execute`, `internal/op/lifecycle.go`;
+  `docs/exclusions.md`, "PutBucketLifecycleConfiguration refuses an
+  indexless bucket on Squid too").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 planning (defect LL-7), recorded by task C6,
+  2026-10-21. Derived from the source, not reproduced.
+
+## radosgw's lifecycle configuration put and delete fail on a lost bucket race instead of retrying
+
+- **Kind:** defect, cosmetic: a PutBucketLifecycleConfiguration or
+  DeleteBucketLifecycle that races another write of the bucket's instance
+  fails with 409 ConcurrentModification, where radosgw's other bucket
+  configuration writes read the bucket again and retry. Not
+  security-relevant. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `set_bucket_config` stores the configuration with one
+    `merge_and_store_attrs`
+    ([rgw_lc.cc:2642-2654](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2642-L2654),
+    [rgw_lc.cc:2710-2721](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2710-L2721)),
+    which writes under the bucket's `objv_tracker` as the request loaded it
+    ([rgw_sal_rados.cc:771-778](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L771-L778),
+    [rgw_sal_rados.cc:789-796](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L789-L796)).
+  - `remove_bucket_config` erases the attr with one `put_info`
+    ([rgw_lc.cc:2676-2684](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2676-L2684),
+    [rgw_lc.cc:2743-2751](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2743-L2751)),
+    under the same tracker
+    ([rgw_sal_rados.cc:753-757](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L753-L757),
+    [rgw_sal_rados.cc:771-775](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L771-L775)).
+  - Neither goes through `retry_raced_bucket_write`, which the tagging,
+    policy, website, encryption, CORS and public-access-block writes use
+    (`docs/exclusions.md`, "A PutBucketAcl that loses a race is retried,
+    and every retried ACL, policy or tagging write is authorized again"),
+    so a version another write moved fails the write with -ECANCELED, 409
+    ConcurrentModification
+    ([rgw_common.cc:141](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L141),
+    [rgw_common.cc:143](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L143)).
+- **Impact:** a lifecycle put or delete concurrent with any other write of
+  the bucket's instance (an ACL, a tag set, a policy, a quota change) fails
+  and must be retried by the client. Nothing is stored wrongly.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** retries both through `RetryRacedBucketWrite`, authorizing
+  each retry again (`internal/op/lifecycle.go`; `docs/exclusions.md`, "A
+  lifecycle configuration put or delete that loses a race is retried, and
+  authorized again").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 planning (defect LL-9), recorded by task C6,
+  2026-10-21. Derived from the source, not reproduced.
+
+## radosgw's PutBucketLifecycle compares 16 bytes of a Content-MD5 of any length
+
+- **Kind:** defect, cosmetic: the comparison takes 16 bytes of the decoded
+  value however long it is, so radosgw takes some values that are not the
+  body's MD5; any other value that is not the body's is 400 BadDigest. Not
+  security-relevant: the over-read in the same block's log line is its own
+  entry, "[radosgw's PutBucketLifecycle logs the body's MD5 as a C string, reading past its stack array](#radosgws-putbucketlifecycle-logs-the-bodys-md5-as-a-c-string-reading-past-its-stack-array)". Unreproduced: derived from the source,
+  with task C6's review's compiled check of the string's layout.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWPutLC::execute` decodes the header with `rgw::from_base64` into a
+    `std::optional<std::string>`
+    ([rgw_op.cc:5945-5958](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5945-L5958),
+    [rgw_op.cc:6611-6624](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6611-L6624)),
+    which keeps whatever length the text decodes to, an empty one included
+    ([rgw_b64.h:61-82](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_b64.h#L61-L82),
+    [rgw_b64.h:61-82](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_b64.h#L61-L82)).
+  - It then compares `CEPH_CRYPTO_MD5_DIGESTSIZE`, 16, bytes of
+    `content_md5_bin->c_str()` with the body's MD5
+    ([rgw_op.cc:5980-5988](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5980-L5988),
+    [rgw_op.cc:6646-6654](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6646-L6654)).
+    Under libstdc++'s C++11 string ABI, which Ceph's build leaves in place,
+    a value of 15 bytes or fewer sits in the string's 16-byte inline
+    buffer, so the read stays within the object, and:
+    - a 15-byte value is compared as its 15 bytes and its terminating NUL,
+      so one equal to the MD5's first 15 bytes is taken when the MD5's last
+      byte is 0, one body in 256;
+    - below 15 bytes, the bytes after the NUL are ones the string never
+      set: `from_base64` builds its result from a single-pass iterator, and
+      libstdc++'s move into the optional copies the length and the NUL
+      alone, so the comparison reads indeterminate bytes;
+    - a value longer than 16 bytes whose first 16 are the body's MD5 is
+      taken.
+
+    Task C6's review compiled the decode and the comparison: decoded
+    lengths 0, 3 and 15 keep all 16 compared bytes inside the optional's
+    object.
+  - A value of '=' alone does not reach the comparison: `from_base64` reads
+    before it ("[radosgw's from_base64 reads before an all-'='
+    input](#radosgws-from_base64-reads-before-an-all--input)"), which ends
+    a build with `-D_GLIBCXX_ASSERTIONS`.
+- **Impact:** none on a correct client. radosgw takes a value of more than
+  16 bytes with the MD5 as its prefix, and for one body in 256 a 15-byte
+  prefix; any other wrong value is BadDigest, though only after the body is
+  read, where S3 answers 400 InvalidDigest to a value that is not a 16-byte
+  digest.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** answers a Content-MD5 that does not decode, or decodes to
+  other than 16 bytes, with 400 InvalidDigest before reading the body
+  (`lifecycleContentMD5`, `internal/op/lifecycle.go`; `docs/exclusions.md`,
+  "PutBucketLifecycleConfiguration answers a Content-MD5 that is not a
+  16-byte digest with InvalidDigest, before reading the body").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 planning (defect LL-10), recorded by task C6,
+  2026-10-21. Derived from the source, not reproduced.
+
+## radosgw's PutBucketLifecycle logs the body's MD5 as a C string, reading past its stack array
+
+- **Kind:** defect, memory safety, possibly security-relevant: on a
+  PutBucketLifecycleConfiguration whose Content-MD5 the body does not
+  match, radosgw logs the body's MD5, a 16-byte stack array that holds no
+  terminator, through `std::ostream`'s `operator<<(const unsigned char*)`,
+  which reads it as a NUL-terminated string: past the array's end, through
+  the stack bytes that follow, to the first zero byte. Those bytes go into
+  the gateway's log. Unreproduced on a running radosgw: derived from the
+  source, with the copied code run under AddressSanitizer.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWPutLC::execute` declares `unsigned char
+    data_hash_res[CEPH_CRYPTO_MD5_DIGESTSIZE]`, fills it with the body's
+    MD5, and on a mismatch logs it at level 5 after the supplied value,
+    `<< ", calculated content md5: " << data_hash_res`
+    ([rgw_op.cc:5972-5989](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5972-L5989),
+    [rgw_op.cc:6638-6655](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6638-L6655);
+    the log line at [rgw_op.cc:5982-5986](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5982-L5986),
+    [rgw_op.cc:6648-6652](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6648-L6652)).
+    The array decays to `const unsigned char*`, whose `operator<<` streams
+    characters up to a NUL, and Ceph defines no overload of its own for
+    `unsigned char*` or for arrays (task C6's review, a search of `src/`
+    at both tags). An MD5 holds no zero byte (255/256)^16 of the time,
+    about 94%, so a read past the array is the usual case, not a corner
+    one.
+  - **The reach:** the line is at level 5, and the rgw subsystem's default
+    `SUBSYS(rgw, 1, 5)`
+    ([subsys.h:62](https://github.com/ceph/ceph/blob/v19.2.7/src/common/subsys.h#L62),
+    [subsys.h:62](https://github.com/ceph/ceph/blob/v20.2.4/src/common/subsys.h#L62))
+    gathers levels up to 5: `should_gather` tests a line's level against
+    the larger of the log and gather levels
+    ([SubsystemMap.h:39](https://github.com/ceph/ceph/blob/v19.2.7/src/log/SubsystemMap.h#L39) and
+    [SubsystemMap.h:88-91](https://github.com/ceph/ceph/blob/v19.2.7/src/log/SubsystemMap.h#L88-L91),
+    [SubsystemMap.h:40](https://github.com/ceph/ceph/blob/v20.2.4/src/log/SubsystemMap.h#L40) and
+    [SubsystemMap.h:88-91](https://github.com/ceph/ceph/blob/v20.2.4/src/log/SubsystemMap.h#L88-L91)),
+    and `dout_impl` formats a line's arguments inside `if (should_gather)`
+    ([dout.h:170](https://github.com/ceph/ceph/blob/v19.2.7/src/common/dout.h#L170),
+    [dout.h:170](https://github.com/ceph/ceph/blob/v20.2.4/src/common/dout.h#L170)).
+    So at the shipped default the line is formatted into the in-memory log
+    ring on every mismatch, and written to the log file at `debug_rgw` 5 or
+    more, by the admin socket's `log dump`, or in a crash dump: the gather
+    rule of "[Tentacle's radosgw aborts on a POST upload that names a checksum algorithm but sends no checksum](#tentacles-radosgw-aborts-on-a-post-upload-that-names-a-checksum-algorithm-but-sends-no-checksum)". Any requester with
+    s3:PutLifecycleConfiguration on a bucket reaches it, with a Content-MD5
+    that is not the body's.
+  - **The confirmation is of the copied code:** task C6's review copied
+    the block into a scratch program and ran it under clang++
+    `-fsanitize=address`, which reports "stack-buffer-overflow ... READ of
+    size 17 ... strlen ... operator<<(..., unsigned char const*)". That is
+    the copied code's behaviour, not a released radosgw's: how far the
+    read runs in radosgw's own frame, and whether a zero byte of the stack
+    protector's canary (`-fstack-protector-strong`, which Ceph sets for
+    GNU) bounds it, was not checked.
+  - **The sweep found one site.** rgw holds fifteen `unsigned
+    char[CEPH_CRYPTO_MD5_DIGESTSIZE]` stack arrays at each tag: at v19.2.7
+    `driver/posix/rgw_sal_posix.cc:2269`, `driver/rados/rgw_bucket.cc:2408`,
+    `driver/rados/rgw_etag_verifier.cc:93`, `:109` and `:170`,
+    `driver/rados/rgw_rados.cc:6204`, `driver/rados/rgw_zone.cc:370`,
+    `rgw_crypt.cc:1101`, `rgw_file.cc:1939`, `rgw_keystone.cc:40` and
+    `rgw_op.cc:4147`, `:4630`, `:5976`, `:6569` and `:7602`, with the motr
+    driver's `unsigned char md5[16]` (`driver/motr/rgw_sal_motr.cc:3740`),
+    which v20.2.4 no longer carries; at v20.2.4 `rgw_sal_posix.cc:3445`,
+    `rgw_bucket.cc:2557`, `rgw_etag_verifier.cc:93`, `:109` and `:170`,
+    `rgw_rados.cc:6818`, `rgw_zone.cc:370`, `rgw_crypt.cc:1116`,
+    `rgw_file.cc:1939`, `rgw_keystone.cc:41` and `rgw_op.cc:4356`, `:4924`,
+    `:6642`, `:7457` and `:8504`. Of every `unsigned char` array and pointer
+    `src/rgw` declares, `data_hash_res` is the only one either tag streams
+    with `<<`, and no `src/rgw` line streams a byte array cast to `char*`
+    (task C6's fix round, a script over each file's declarations and every
+    `<<` of them, across line breaks; rgw-bug-reproduction's sweep at
+    v20.2.4 found the same fifteen arrays and the same one site).
+- **Impact:** stack contents escape into log custody: the bytes are
+  readable by whoever reads the gateway's log or a crash dump, the
+  operator, not by the requester, who receives the error document alone. A
+  fault would need the read to cross an unmapped page, which a 16-byte
+  array in the middle of a frame makes very unlikely.
+- **Fix shape:** log the digest hex-encoded, as `buf_to_hex` formats the
+  supplied MD5 in `RGWPutObj::execute`
+  ([rgw_op.cc:4196](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4196),
+  [rgw_op.cc:4405](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4405)).
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** not affected: it logs no digest bytes. A Content-MD5 refusal
+  carries at most the decoded value's length (`lifecycleContentMD5`,
+  `internal/op/lifecycle.go`), and a mismatch carries nothing of either
+  digest.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** task C6's review, 2026-10-21, reading the block "[radosgw's
+  PutBucketLifecycle compares 16 bytes of a Content-MD5 of any
+  length](#radosgws-putbucketlifecycle-compares-16-bytes-of-a-content-md5-of-any-length)"
+  cites; derived from the source, with the copied code run under
+  AddressSanitizer, not reproduced on a running radosgw.
