@@ -153,12 +153,19 @@ func Record(format Format, suite string, meta map[string]string, files []string)
 // skipped for having no entry, or reported adds, after those, "<entry>:
 // known difference matches no test", the entry as ParseKnown read it.
 //
+// The tests are base's, cand's and sel's. A ledger test that sel does not
+// select and cand lacks is not compared and prints nothing; Dropped names the
+// ones a comparison of the gate set would judge. An entry that matches such a
+// test is not reported for matching no test, unless a comparison of every
+// test would skip that test too: its last entry is retired, or is current and
+// unstable.
+//
 // Diff refuses to compare, and returns an error, when cand lacks base's
 // source key, release or ceph_version, or, unless allowMetaDrift is set,
 // carries a source other than the chain's head or another release.
 // allowMetaDrift also compares a test whose last entry was recorded under
 // another Ceph version.
-func Diff(base *Ledger, cand Result, allowMetaDrift bool, known KnownList) ([]string, error) {
+func Diff(base *Ledger, cand Result, allowMetaDrift bool, known KnownList, sel Selection) ([]string, error) {
 	var drift []string
 	for _, m := range []struct{ key, want string }{{base.SourceKey, base.head()}, {metaRelease, base.Release}} {
 		switch got, ok := cand.Meta[m.key]; {
@@ -183,12 +190,19 @@ func Diff(base *Ledger, cand Result, allowMetaDrift bool, known KnownList) ([]st
 	for id := range cand.Outcomes {
 		ids[id] = true
 	}
+	for id := range sel.ids {
+		ids[id] = true
+	}
 
+	// matched marks the entries that match a compared test, and outside
+	// those that match a ledger test sel leaves out.
 	matched := make([]bool, len(known.entries))
+	outside := make([]bool, len(known.entries))
 	var diffs []string
 	for _, id := range slices.Sorted(maps.Keys(ids)) {
 		c, inCand := cand.Outcomes[id]
 		last, inBase := base.last(id)
+		unselected := !inCand && !sel.holds(id)
 		var line string
 		switch {
 		case !inBase:
@@ -206,6 +220,10 @@ func Diff(base *Ledger, cand Result, allowMetaDrift bool, known KnownList) ([]st
 		case last.Unstable:
 			continue
 		}
+		if unselected {
+			known.match(id, outside)
+			continue
+		}
 		strict, either := known.match(id, matched)
 		if line != "" {
 			diffs = append(diffs, line)
@@ -220,7 +238,7 @@ func Diff(base *Ledger, cand Result, allowMetaDrift bool, known KnownList) ([]st
 		}
 	}
 	for i, k := range known.entries {
-		if !matched[i] {
+		if !matched[i] && !outside[i] {
 			diffs = append(diffs, k.String()+": known difference matches no test")
 		}
 	}

@@ -1,5 +1,18 @@
 package parity
 
+import (
+	"maps"
+	"slices"
+)
+
+// SelectionIDs returns the ids s selects, sorted, for the specs.
+func SelectionIDs(s Selection) []string {
+	return slices.Sorted(maps.Keys(s.ids))
+}
+
+// DroppedSummary exposes droppedSummary to the specs.
+var DroppedSummary = droppedSummary
+
 // CodeSpan exposes codeSpan to the specs.
 var CodeSpan = codeSpan
 

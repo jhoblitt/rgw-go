@@ -260,6 +260,182 @@ var _ = Describe("the parity command", func() {
 			Expect(stdout).To(Equal("s3tests.functional.test_s3::test_a: known difference no longer differs\n"))
 		})
 
+		Describe("given --selection", func() {
+			var cand, selection string
+
+			BeforeEach(func(ctx SpecContext) {
+				cand = result(ctx, "cand.json", candMeta(), "testdata/run-short.xml")
+				selection = filepath.Join(dir, "run.ids")
+			})
+
+			// selectTests writes the node ids of test_s3.py's tests names to
+			// the selection file.
+			selectTests := func(names ...string) {
+				var text strings.Builder
+				for _, name := range names {
+					text.WriteString("s3tests/functional/test_s3.py::" + name + "\n")
+				}
+				Expect(os.WriteFile(selection, []byte(text.String()), 0o600)).To(Succeed())
+			}
+
+			It("exits 1 for a selected test the candidate lacks", func(ctx SpecContext) {
+				selectTests("test_a", "test_f")
+				status, stdout, _ := run(ctx, "diff", "--baseline", baseline, "--candidate", cand, "--selection", selection)
+				Expect(status).To(Equal(1))
+				Expect(stdout).To(Equal("s3tests.functional.test_s3::test_f: baseline passed, candidate missing\n"))
+			})
+
+			Describe("and --gate-only", func() {
+				var gateOnly string
+
+				// dropped is what diff prints for the ledger's test_f, which
+				// the run-short candidate lacks, dropped from a selection.
+				const dropped = "dropped from the pr set: 1 ledger tests the selection no longer runs and no gate-only " +
+					"line names, which the next comparison of the gate set judges\n" +
+					"  s3tests.functional.test_s3::test_f: baseline passed\n"
+
+				BeforeEach(func() {
+					gateOnly = filepath.Join(dir, "run.gate-only.ids")
+					Expect(os.WriteFile(gateOnly, nil, 0o600)).To(Succeed())
+					selectTests("test_a", "test_b", "test_c", "test_d", "test_e")
+				})
+
+				It("lists a ledger test the selection drops that no gate-only line names, and exits 0", func(ctx SpecContext) {
+					status, stdout, stderr := run(ctx, "diff", "--baseline", baseline, "--candidate", cand,
+						"--selection", selection, "--gate-only", gateOnly)
+					Expect(status).To(Equal(0), stderr)
+					Expect(stdout).To(Equal(dropped))
+				})
+
+				It("compares only the tests the run selected, and lists the dropped test without --gate-only too", func(ctx SpecContext) {
+					status, stdout, stderr := run(ctx, "diff", "--baseline", baseline, "--candidate", cand, "--selection", selection)
+					Expect(status).To(Equal(0), stderr)
+					Expect(stdout).To(Equal(dropped))
+				})
+
+				It("lists nothing for a gate-only test", func(ctx SpecContext) {
+					Expect(os.WriteFile(gateOnly, []byte("s3tests/functional/test_s3.py::test_f\n"), 0o600)).To(Succeed())
+					status, stdout, stderr := run(ctx, "diff", "--baseline", baseline, "--candidate", cand,
+						"--selection", selection, "--gate-only", gateOnly)
+					Expect(status).To(Equal(0), stderr)
+					Expect(stdout).To(BeEmpty())
+				})
+
+				It("lists the dropped tests after the differences, and counts them in the summary", func(ctx SpecContext) {
+					known := filepath.Join(dir, "known.txt")
+					Expect(os.WriteFile(known, []byte("s3tests.functional.test_s3::test_gone\n"), 0o600)).To(Succeed())
+					status, stdout, stderr := run(ctx, "diff", "--baseline", baseline, "--candidate", cand, "--known", known,
+						"--selection", selection, "--gate-only", gateOnly)
+					Expect(status).To(Equal(1))
+					Expect(stdout).To(Equal("s3tests.functional.test_s3::test_gone: known difference matches no test\n" + dropped))
+					Expect(stderr).To(ContainSubstring("1 differences between " + baseline + " and " + cand +
+						", and 1 ledger tests dropped from the pr set"))
+				})
+
+				Describe("and --summary", func() {
+					var summary string
+
+					BeforeEach(func() {
+						summary = filepath.Join(dir, "summary.md")
+						Expect(os.WriteFile(summary, []byte("earlier\n"), 0o600)).To(Succeed())
+					})
+
+					It("appends the dropped tests to the summary file, under the same heading, as markdown",
+						func(ctx SpecContext) {
+							status, _, stderr := run(ctx, "diff", "--baseline", baseline, "--candidate", cand,
+								"--selection", selection, "--gate-only", gateOnly, "--summary", summary)
+							Expect(status).To(Equal(0), stderr)
+							Expect(readText(summary)).To(Equal("earlier\n" +
+								"### dropped from the pr set: 1 ledger tests the selection no longer runs and no gate-only " +
+								"line names, which the next comparison of the gate set judges\n\n" +
+								"```\ns3tests.functional.test_s3::test_f: baseline passed\n```\n\n"))
+						})
+
+					It("leaves the summary file alone when no test is dropped", func(ctx SpecContext) {
+						Expect(os.WriteFile(gateOnly, []byte("s3tests/functional/test_s3.py::test_f\n"), 0o600)).To(Succeed())
+						status, _, stderr := run(ctx, "diff", "--baseline", baseline, "--candidate", cand,
+							"--selection", selection, "--gate-only", gateOnly, "--summary", summary)
+						Expect(status).To(Equal(0), stderr)
+						Expect(readText(summary)).To(Equal("earlier\n"))
+					})
+
+					It("creates no summary file when no test is dropped", func(ctx SpecContext) {
+						absent := filepath.Join(dir, "absent.md")
+						status, _, stderr := run(ctx, "diff", "--baseline", baseline, "--candidate", cand, "--summary", absent)
+						Expect(status).To(Equal(1), stderr)
+						Expect(absent).NotTo(BeAnExistingFile())
+					})
+
+					It("exits 2 for a summary file it cannot write, naming it", func(ctx SpecContext) {
+						bad := filepath.Join(dir, "missing", "summary.md")
+						status, _, stderr := run(ctx, "diff", "--baseline", baseline, "--candidate", cand,
+							"--selection", selection, "--summary", bad)
+						Expect(status).To(Equal(2))
+						Expect(stderr).To(ContainSubstring("writing the summary"))
+					})
+				})
+
+				It("takes it from the command line only, never PARITY_GATE_ONLY or the config file", func(ctx SpecContext) {
+					named := filepath.Join(dir, "named.ids")
+					Expect(os.WriteFile(named, []byte("s3tests/functional/test_s3.py::test_f\n"), 0o600)).To(Succeed())
+					GinkgoT().Setenv("PARITY_GATE_ONLY", named)
+					cfg := filepath.Join(dir, "parity.yaml")
+					Expect(os.WriteFile(cfg, []byte("gate-only: "+named+"\n"), 0o600)).To(Succeed())
+					status, stdout, stderr := run(ctx, "diff", "--config", cfg, "--baseline", baseline, "--candidate", cand,
+						"--selection", selection)
+					Expect(status).To(Equal(0), stderr)
+					Expect(stdout).To(Equal(dropped))
+				})
+
+				DescribeTable("exits 2",
+					func(ctx SpecContext, args func() []string, want string) {
+						status, stdout, stderr := run(ctx, append([]string{"diff", "--baseline", baseline, "--candidate", cand}, args()...)...)
+						Expect(status).To(Equal(2))
+						Expect(stdout).To(BeEmpty())
+						Expect(stderr).To(ContainSubstring(want))
+					},
+					Entry("for --gate-only without --selection",
+						func() []string { return []string{"--gate-only", gateOnly} }, "--gate-only is for --selection"),
+					Entry("for a gate-only file that is not there",
+						func() []string {
+							return []string{"--selection", selection, "--gate-only", filepath.Join(dir, "missing.ids")}
+						}, "reading the gate-only tests"),
+					Entry("for a gate-only line that is not a node id",
+						func() []string {
+							Expect(os.WriteFile(gateOnly, []byte("s3tests.functional.test_s3::test_f\n"), 0o600)).To(Succeed())
+							return []string{"--selection", selection, "--gate-only", gateOnly}
+						}, "is not a pytest node id"),
+				)
+			})
+
+			It("takes it from the command line only, never PARITY_SELECTION or the config file", func(ctx SpecContext) {
+				selectTests("test_a")
+				GinkgoT().Setenv("PARITY_SELECTION", selection)
+				cfg := filepath.Join(dir, "parity.yaml")
+				Expect(os.WriteFile(cfg, []byte("selection: "+selection+"\n"), 0o600)).To(Succeed())
+				status, stdout, _ := run(ctx, "diff", "--config", cfg, "--baseline", baseline, "--candidate", cand)
+				Expect(status).To(Equal(1))
+				Expect(stdout).To(Equal("s3tests.functional.test_s3::test_f: baseline passed, candidate missing\n"))
+			})
+
+			DescribeTable("exits 2 for a selection it cannot read",
+				func(ctx SpecContext, text *string, want string) {
+					if text != nil {
+						Expect(os.WriteFile(selection, []byte(*text), 0o600)).To(Succeed())
+					}
+					status, stdout, stderr := run(ctx, "diff", "--baseline", baseline, "--candidate", cand, "--selection", selection)
+					Expect(status).To(Equal(2))
+					Expect(stdout).To(BeEmpty())
+					Expect(stderr).To(ContainSubstring(selection))
+					Expect(stderr).To(ContainSubstring(want))
+				},
+				Entry("that is not there", nil, "no such file"),
+				Entry("that names no test", new(""), "names no test"),
+				Entry("that holds a line that is not a node id", new("s3tests.functional.test_s3::test_a\n"),
+					"is not a pytest node id"),
+			)
+		})
+
 		DescribeTable("exits 2 when it cannot compare",
 			func(ctx SpecContext, want string, args func(cand string) []string) {
 				cand := result(ctx, "cand.json", candMeta(), "testdata/run2.xml")

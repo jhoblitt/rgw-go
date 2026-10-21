@@ -1,0 +1,13 @@
+s3tests/functional/test_ids.py::test_plain
+s3tests/functional/test_ids.py::test_param[a/b]
+s3tests/functional/test_ids.py::test_param[c::d]
+s3tests/functional/test_ids.py::test_param[e.py]
+s3tests/functional/test_ids.py::test_param[f[g]]
+s3tests/functional/test_ids.py::test_param[x-y]
+s3tests/functional/test_ids.py::test_pairs[1-s3]
+s3tests/functional/test_ids.py::test_pairs[2-v4]
+s3tests/functional/test_ids.py::TestGroup::test_method
+s3tests/functional/test_ids.py::TestGroup::test_method_param[one]
+s3tests/functional/test_ids.py::TestGroup::test_method_param[two::three]
+
+11 tests collected in 0.01s

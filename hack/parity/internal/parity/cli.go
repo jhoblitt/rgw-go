@@ -345,11 +345,12 @@ func parseMeta(pairs []string) (map[string]string, error) {
 
 func newDiffCmd(v *viper.Viper) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "diff --baseline LEDGER --candidate FILE [--known FILE] [--allow-meta-drift]",
+		Use: "diff --baseline LEDGER --candidate FILE [--known FILE] [--selection FILE [--gate-only FILE]] " +
+			"[--summary FILE] [--allow-meta-drift]",
 		Short: "Compare a candidate result with a ledger",
 		Args:  cobra.NoArgs,
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
-			if err := bindFlags(v, cmd, "baseline", "candidate", "known", "allow-meta-drift"); err != nil {
+			if err := bindFlags(v, cmd, "baseline", "candidate", "known", "allow-meta-drift", "summary"); err != nil {
 				return err
 			}
 			return require(v, "baseline", "candidate")
@@ -373,15 +374,34 @@ func newDiffCmd(v *viper.Viper) *cobra.Command {
 					return err
 				}
 			}
-			diffs, err := Diff(base, cand, v.GetBool("allow-meta-drift"), known)
+			sel, err := readSelectionFlags(cmd)
 			if err != nil {
 				return err
 			}
+			diffs, err := Diff(base, cand, v.GetBool("allow-meta-drift"), known, sel)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
 			for _, d := range diffs {
-				fmt.Fprintln(cmd.OutOrStdout(), SafeLine(d))
+				fmt.Fprintln(out, SafeLine(d))
+			}
+			dropped := Dropped(base, cand, sel)
+			if len(dropped) > 0 {
+				fmt.Fprintln(out, droppedHeading(len(dropped)))
+				for _, id := range dropped {
+					fmt.Fprintln(out, SafeLine("  "+droppedLine(base, id)))
+				}
+			}
+			if err := appendSummary(v.GetString("summary"), droppedSummary(base, dropped)); err != nil {
+				return err
 			}
 			if len(diffs) > 0 {
-				return failed(fmt.Errorf("%d differences between %s and %s", len(diffs), baseline, candidate))
+				summary := fmt.Sprintf("%d differences between %s and %s", len(diffs), baseline, candidate)
+				if len(dropped) > 0 {
+					summary += fmt.Sprintf(", and %d ledger tests dropped from the pr set", len(dropped))
+				}
+				return failed(errors.New(summary))
 			}
 			return nil
 		},
@@ -391,7 +411,47 @@ func newDiffCmd(v *viper.Viper) *cobra.Command {
 	f.String("candidate", "", "the candidate result file (PARITY_CANDIDATE)")
 	f.String("known", "", "a file of regular expressions over test ids whose outcomes are expected to differ, or after \"~ \" may differ (PARITY_KNOWN)")
 	f.Bool("allow-meta-drift", false, "compare even when the candidate ran at another source, release or Ceph version (PARITY_ALLOW_META_DRIFT)")
+	// --selection and --gate-only are never bound into viper, so that no
+	// stray PARITY_ variable or config file narrows a comparison that names
+	// neither.
+	f.String("selection", "", "a file of the pytest node ids the candidate's run selected, one a line; a ledger "+
+		"test it does not name, which the candidate lacks, is not compared; command line only")
+	f.String("gate-only", "", "a file of the pytest node ids of the gate-only tests the --selection run left out, "+
+		"one a line, which are not listed as dropped; command line only")
+	f.String("summary", "", "a file to append a markdown list of the dropped tests to, when there are any, "+
+		"such as a CI job's summary (PARITY_SUMMARY)")
 	return cmd
+}
+
+// readSelectionFlags returns the selection diff's --selection and
+// --gate-only files name, or the zero Selection for neither.
+func readSelectionFlags(cmd *cobra.Command) (Selection, error) {
+	path, err := cmd.Flags().GetString("selection")
+	if err != nil {
+		return Selection{}, err
+	}
+	gateOnly, err := cmd.Flags().GetString("gate-only")
+	if err != nil {
+		return Selection{}, err
+	}
+	if path == "" {
+		if gateOnly != "" {
+			return Selection{}, errors.New("--gate-only is for --selection")
+		}
+		return Selection{}, nil
+	}
+	sel, err := readSelection(path)
+	if err != nil || gateOnly == "" {
+		return sel, err
+	}
+	data, err := readFile(gateOnly)
+	if err != nil {
+		return Selection{}, fmt.Errorf("reading the gate-only tests: %w", err)
+	}
+	if sel, err = sel.WithGateOnly(bytes.NewReader(data)); err != nil {
+		return Selection{}, fmt.Errorf("%s: %w", gateOnly, err)
+	}
+	return sel, nil
 }
 
 func newCheckCmd(v *viper.Viper) *cobra.Command {
@@ -472,6 +532,23 @@ func newCheckCmd(v *viper.Viper) *cobra.Command {
 	return cmd
 }
 
+// appendSummary appends the markdown summary to the file, creating it,
+// unless either is empty.
+func appendSummary(file, summary string) error {
+	if file == "" || summary == "" {
+		return nil
+	}
+	f, err := os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) //nolint:gosec // the summary file the command line names
+	if err != nil {
+		return fmt.Errorf("writing the summary: %w", err)
+	}
+	_, werr := f.WriteString(summary)
+	if err := errors.Join(werr, f.Close()); err != nil {
+		return fmt.Errorf("writing the summary: %w", err)
+	}
+	return nil
+}
+
 // checkBase runs check --base: it prints each problem and appends the
 // summary to the --summary file.
 func checkBase(cmd *cobra.Command, v *viper.Viper, base string, paths []string) error {
@@ -482,15 +559,8 @@ func checkBase(cmd *cobra.Command, v *viper.Viper, base string, paths []string) 
 	if err != nil {
 		return err
 	}
-	if file := v.GetString("summary"); file != "" && rep.Summary != "" {
-		f, err := os.OpenFile(file, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) //nolint:gosec // the summary file the command line names
-		if err != nil {
-			return fmt.Errorf("writing the summary: %w", err)
-		}
-		_, werr := f.WriteString(rep.Summary)
-		if err := errors.Join(werr, f.Close()); err != nil {
-			return fmt.Errorf("writing the summary: %w", err)
-		}
+	if err := appendSummary(v.GetString("summary"), rep.Summary); err != nil {
+		return err
 	}
 	for _, p := range rep.Problems {
 		fmt.Fprintln(cmd.OutOrStdout(), SafeLine(p))
@@ -712,6 +782,18 @@ func newFmtCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func readSelection(path string) (Selection, error) {
+	data, err := readFile(path)
+	if err != nil {
+		return Selection{}, fmt.Errorf("reading the selection: %w", err)
+	}
+	sel, err := ParseSelection(bytes.NewReader(data))
+	if err != nil {
+		return Selection{}, fmt.Errorf("%s: %w", path, err)
+	}
+	return sel, nil
 }
 
 func readKnown(path string) (KnownList, error) {

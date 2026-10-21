@@ -7,7 +7,8 @@
 //	    RUN-FILE...
 //	go run ./hack/parity record --format junit|gotest --suite NAME --ledger FILE [--subset] [--reasons FILE]
 //	    [--draft NOTE] [--pin-reason REASON] [--pin-file FILE] [--meta k=v]... RUN-FILE RUN-FILE...
-//	go run ./hack/parity diff --baseline LEDGER --candidate FILE [--known FILE] [--allow-meta-drift]
+//	go run ./hack/parity diff --baseline LEDGER --candidate FILE [--known FILE]
+//	    [--selection FILE [--gate-only FILE]] [--summary FILE] [--allow-meta-drift]
 //	go run ./hack/parity check --old LEDGER --new LEDGER [--list-reasoned] [--draft]
 //	go run ./hack/parity check --base COMMIT [--head COMMIT] [--repo DIR] [--run-sh FILE] [--pin-file FILE]
 //	    [--clone DIR | --ceph-repo URL] [--summary FILE] [PATH...]
@@ -17,13 +18,14 @@
 //	go run ./hack/parity migrate BASELINE...
 //	go run ./hack/parity fmt LEDGER...
 //
-// --meta, record's --draft and --pin-reason, check's --draft and pin's
-// --ledger are read from the command line only. Every other flag can also
-// come from the environment, as PARITY_ and its name upper-cased with "-" as
-// "_" (PARITY_OUT, PARITY_ALLOW_META_DRIFT, PARITY_CONFIG), and every other
-// flag but --config from the config file --config names, under its own name,
-// in any format viper reads by the file's extension (YAML, JSON, TOML). The
-// command line wins over the environment, and the environment over the file.
+// --meta, record's --draft and --pin-reason, diff's --selection and
+// --gate-only, check's --draft and pin's --ledger are read from the command
+// line only. Every other flag can also come from the environment, as PARITY_
+// and its name upper-cased with "-" as "_" (PARITY_OUT,
+// PARITY_ALLOW_META_DRIFT, PARITY_CONFIG), and every other flag but --config
+// from the config file --config names, under its own name, in any format
+// viper reads by the file's extension (YAML, JSON, TOML). The command line
+// wins over the environment, and the environment over the file.
 // The root's --log-level (debug, info, warn or error; info by default) and
 // --log-format (json or text; json by default) set the logger, which writes
 // to stderr.
@@ -217,13 +219,44 @@
 // it. The lines for a retired test the candidate runs and for a stale test
 // are printed whatever the list says.
 //
+// --selection names the file of the pytest node ids the candidate's run
+// selected, one a line, as hack/s3tests/run.sh leaves them in its .ids file,
+// for a run of fewer tests than the ledger holds, such as the per-pull-request
+// set. Each node id is read as the id pytest's junit report gives its test,
+// classname "::" name: the parametrization, from the first "[", stays as it
+// is, and of the rest, split at "::", the file path's slashes become dots,
+// its .py goes, and the last part is the name, the others the classname. A
+// ledger test the selection does not name and the candidate lacks is not
+// compared, so it never fails the run; every other test is compared as above,
+// so a selected test the candidate lacks is missing and one the ledger lacks
+// has no baseline entry. --gate-only names the file of the gate-only tests
+// the run left out, in the same form, as run.sh leaves them in its
+// .gate-only.ids file; it may name none. Each other unselected test the
+// candidate lacks, unless its last entry retires it, is listed after the
+// differences, under the line "dropped from the pr set: <n> ledger tests
+// ...", as "  <test>: baseline <outcome>", and counted in the summary diff
+// prints when it fails: a test the selection no longer runs, such as one a new
+// deselect line removes. A comparison of the gate set names it missing, or
+// stale when its last entry is, and skips one whose last entry is current and
+// unstable, which the next full record of the gate set retires. --summary
+// FILE appends that list, when it is not empty, to FILE as markdown, the line
+// as a heading and the tests in a code block no ledger text can close, for a
+// CI job's summary to show a pull request's reviewer. A
+// known-difference entry that matches no compared test is not reported when
+// it matches an unselected test, unless a comparison of every test would skip
+// that test too, its last entry retired, or current and unstable; one that
+// matches neither still fails the run. diff refuses a selection that names no
+// test, a line of either file that is not a node id, FILE.py::NAME, and
+// --gate-only without --selection.
+//
 // diff refuses to compare when the candidate lacks the ledger's source key,
 // release or ceph_version, or carries a source other than the chain's head
 // or another release; --allow-meta-drift lets the source and release
 // differ, and compares a last entry recorded under another Ceph version,
 // never a key go missing. A selection change, such as a deselect list's,
 // shows as a test with no entry or one missing, until a record enters or
-// retires it.
+// retires it; under --selection, a test the change removes is listed as
+// dropped instead.
 //
 // # Pinning
 //
@@ -301,7 +334,8 @@
 // "\". The summary puts each value in a code span or a code block that it
 // cannot close and that Markdown reads back as the value.
 //
-// diff exits 0 when it prints nothing and 1 when it prints a difference;
+// diff exits 0 when it prints no difference, whatever dropped tests it lists,
+// and 1 when it prints one;
 // check and validate exit 1 when they print a problem; record, pin and
 // migrate exit 1 when they cannot do their work. All exit 2 for a refused
 // command line, and diff, check and validate for files they refuse to
