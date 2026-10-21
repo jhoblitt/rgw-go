@@ -554,8 +554,12 @@ review and verified against the tree.
   good. rgw-go never assumes the reserved size equals the sum of the
   outstanding reservations.
 - **Class methods that both modify and return data.** Such methods, for
-  example the user-stats reset in the user class and on Tentacle the OLH
-  link and instance-unlink methods, return their data only when the
+  example the user-stats reset in the user class and, on ceph main though
+  in neither floor release, the OLH link and instance-unlink methods, which
+  answer the epoch they used
+  ([cls_rgw.cc:1927-1929](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/cls/rgw/cls_rgw.cc#L1927-L1929),
+  [cls_rgw.cc:2173-2176](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/cls/rgw/cls_rgw.cc#L2173-L2176), at
+  d8552606423; "OLH epochs differ by OSD release"), return their data only when the
   operation carries the return-vector flag, which the librados C API
   exposes for read-op operate but not for write-op exec, whose signature
   has no output buffer. The OSD classifies a class call as a write from
@@ -564,11 +568,35 @@ review and verified against the tree.
   it gates persistent notifications rather than a corner case: the 2pc
   queue reserve returns the reservation id in a write op's reply, and
   radosgw runs it with the return-vector flag on every persistent event.
-- **OLH epochs differ by OSD release.** With an epoch of zero in the
-  request, the Squid class assigns the next epoch itself and returns
-  nothing, while main uses the current time in nanoseconds and returns
-  the committed epoch. A gateway at Tentacle feature level on a Squid
-  OSD handles both. This lands with versioning in phase 2.
+- **OLH epochs differ by OSD release.** Squid's and Tentacle's cls_rgw
+  take an OLH link or unlink whose epoch is 0 as the name's next epoch, 2
+  for its first, 1 being a converted plain entry's
+  ([cls_rgw.cc:1503-1517](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1503-L1517),
+  [cls_rgw.cc:1630-1644](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1630-L1644)), and
+  apply a named epoch below the entry's without moving the current
+  version: the link writes the version non-current, the unlink removes its
+  list entry and logs its removal
+  ([cls_rgw.cc:1751-1759](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1751-L1759),
+  [cls_rgw.cc:1917-1928](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1917-L1928);
+  [cls_rgw.cc:1892-1901](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1892-L1901),
+  [cls_rgw.cc:2064-2076](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2064-L2076)). And
+  neither release's link or unlink answers anything
+  ([cls_rgw.cc:1652-1865](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1652-L1865),
+  [cls_rgw.cc:1867-2018](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1867-L2018);
+  [cls_rgw.cc:1781-2000](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1781-L2000),
+  [cls_rgw.cc:2002-2159](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2002-L2159)). rgw-go
+  sends epoch 0 in every link and unlink an S3 request makes, as radosgw
+  does for a requester that is not a system user
+  ([rgw_op.h:2117-2143](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2117-L2143),
+  [rgw_op.h:2280-2306](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2280-L2306)), and decodes no
+  epoch reply on either floor. Only a request that keeps a version's own
+  epoch names one: a lifecycle transition's link, and the link that puts
+  back a version whose removal was refused. The class on main takes the
+  time in nanoseconds for an epoch of 0 and answers the epoch it used
+  ([cls_rgw.cc:1865](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/cls/rgw/cls_rgw.cc#L1865),
+  [cls_rgw.cc:1927-1929](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/cls/rgw/cls_rgw.cc#L1927-L1929),
+  [cls_rgw.cc:2173-2176](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/cls/rgw/cls_rgw.cc#L2173-L2176), at
+  d8552606423), which neither floor carries.
 - **Compression: decode all four codecs on read.** radosgw may have
   written zlib, snappy, zstd or lz4 depending on the zone's placement
   configuration. rgw-go reads all four from the first release, whatever
@@ -7642,6 +7670,82 @@ rgw-go does the following.
   On a Tentacle cluster, a read of such a bucket's index stats therefore
   fails with ENOENT in rgw-go where radosgw fails with -EIO, or succeeds in
   rgw-go, counting the header-less shard as empty, where radosgw fails.
+- **A versioned write awaits its index completion.** radosgw finishes a
+  write's bucket index entry with a `bucket_complete_op` it sends with
+  `aio_operate` and does not wait for, and a versioned write then links
+  the version under its name's OLH entry
+  ([rgw_rados.cc:3352-3375](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3352-L3375),
+  [rgw_rados.cc:9714](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9714);
+  [rgw_rados.cc:3473-3496](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3473-L3496),
+  [rgw_rados.cc:10450](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10450)).
+  librados keeps one client's operations on one object in the order they
+  were sent, so the completion reaches the index shard before the link,
+  which reads the instance entry the completion wrote
+  ([cls_rgw.cc:1670](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1670),
+  [cls_rgw.cc:1811](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1811)). rgw-go's
+  completions reach a shard in no set order (`docs/cgo-limitations.md`,
+  "Bucket index completions to one shard can land out of order"). A link
+  that landed first would list the version from its pending instance
+  entry, with no size or ETag, and the completion would then reset that
+  entry's flags to `FLAG_VER` alone, dropping its current flag
+  ([cls_rgw.cc:1064](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1064),
+  [cls_rgw.cc:1199](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1199)). So rgw-go's
+  versioned write sends its ADD completion and waits for the class's
+  answer before it links (`indexOp.completeSync`,
+  `internal/driver/indexop.go`). The request is radosgw's, behind the
+  reshard guard: a refusal from a resharding shard is waited out and the
+  completion sent again to the shard the bucket then names, and a shard
+  that is gone is found again from the bucket. The completion manager
+  resends a refused completion without its object locator, as radosgw's
+  does; the awaited completion keeps it, which changes nothing stored once
+  the prepare has made the entry. Any other failure, the class's or the
+  guard's, is the write's to answer, where radosgw's unawaited completion
+  leaves the pending entry for listing to reconcile. An error does not
+  prove the completion did not land, since one that a context end or a
+  timeout interrupted can land later, so the write never links after one.
+  Unversioned writes keep radosgw's unawaited completion. The cost is a
+  round trip to the index shard per versioned write that radosgw does not
+  wait for, though the OSD applies the two operations in turn either way.
+  Versioning is not served yet; the awaited completion lands with the
+  versioned PutObject.
+- **An index read of a versioned key that finds its shard gone reads the
+  shard the bucket now names.** radosgw reads a name's pending OLH log from
+  the shard its cached bucket instance names, and `bi_get` of the name's OLH
+  entry or of a version's entry from the shard its caller's bucket info
+  names, once each
+  ([rgw_rados.cc:8237-8256](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8237-L8256),
+  [rgw_rados.cc:9490-9501](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9490-L9501);
+  [rgw_rados.cc:8983-9002](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8983-L9002),
+  [rgw_rados.cc:10239-10250](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10239-L10250)).
+  A shard object a reshard removed answers ENOENT, which `bi_get` also
+  answers for an entry that is not there. rgw-go keeps the shard its
+  request found, so on ENOENT from any of these reads it reads the bucket
+  instance again,
+  past its metadata cache, and when that puts the name on another shard
+  reads there, within ten tries (`indexOp.readShard`,
+  `internal/driver/indexop.go`); only an ENOENT from the shard the bucket
+  now names is the answer. So a versioned write or delete whose bucket a
+  reshard committed under it reads the log and the OLH entry from the new
+  shard, where radosgw, reading through bucket info that still names the
+  old shard, answers ENOENT; and rgw-go never takes a removed shard's
+  ENOENT for an absent OLH entry, which would settle a refused version
+  removal as final while its log entries sit on the new shard (the
+  exclusion "A replay passes over a version removal that the writer's
+  expected write tag refuses"). rgw-go resolves a version's entry the
+  same way: its one to three reads, in the class's `read_key_entry` order,
+  start again from the plain key on the shard the bucket now names
+  (`getInstanceEntry`, `internal/driver/olh_index.go`), where radosgw's
+  `bi_get_instance`, which its versioned delete alone calls, answers the
+  removed shard's ENOENT
+  ([rgw_rados.cc:5908](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5908),
+  [rgw_rados.cc:6520](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6520)). rgw-go
+  decides on that answer where radosgw makes no such decision: whether to
+  put back the list entry of a version whose removal was refused, whether a
+  named version is a delete marker, answered 405, or missing, answered 404,
+  and whether a listing's null version is a marker. A stale shard's
+  not-found would put each wrong. Each such ENOENT, that of an entry that is
+  not there included, costs a read of the bucket instance. Versioning is
+  not served yet.
 
 ### Bucket listing differences
 

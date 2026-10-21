@@ -97,6 +97,14 @@ type indexOp struct {
 	// v20.2.4
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4169).
 	noLog bool
+	// bilogFlags are the RGWBILogFlags of the op, VERSIONED_OP for a
+	// versioned write's, as _do_write_meta sets them
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3317-L3319 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3438-L3440 at v20.2.4).
+	// Every completion and cancel carries them, and so does Squid's prepare;
+	// the class reads them only when it logs the change to the bucket index
+	// log.
+	bilogFlags uint16
 }
 
 // newIndexOp starts the index change of key in rec's bucket under tag, or,
@@ -149,16 +157,13 @@ func (x *indexOp) zonesTrace() []string {
 // zones_trace
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_client.cc#L164-L175 at v20.2.4).
 func (x *indexOp) prepareOp(mod rgw.ModifyOp) *radosclient.WriteOp {
-	w := radosclient.NewWriteOp()
-	w.AssertExists()
-	rgw.GuardBucketResharding(w, x.s.release)
 	p := rgw.PrepareOp{Op: mod, Key: x.clsKey(), Tag: x.tag, Locator: x.obj.Key.Locator()}
 	if x.s.release < denc.Tentacle {
 		p.LogOp = x.logOp()
+		p.BILogFlags = x.bilogFlags
 		p.ZonesTrace = x.zonesTrace()
 	}
-	rgw.BucketPrepareOp(w, p, x.s.release)
-	return w
+	return x.guardedOp(func(w *radosclient.WriteOp) { rgw.BucketPrepareOp(w, p, x.s.release) })
 }
 
 // completeOp is cls_obj_complete_op's write op
@@ -166,18 +171,108 @@ func (x *indexOp) prepareOp(mod rgw.ModifyOp) *radosclient.WriteOp {
 // v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10413-L10455).
 func (x *indexOp) completeOp(c rgw.CompleteOp) *radosclient.WriteOp {
+	return x.guardedOp(func(w *radosclient.WriteOp) { rgw.BucketCompleteOp(w, c, x.s.release) })
+}
+
+// guardedOp is the write op every index shard write of radosgw's takes: the
+// shard must exist, assert_exists, and must not be resharding, the guard
+// answering -ERR_BUSY_RESHARDING, ahead of the class call that call adds.
+func (x *indexOp) guardedOp(call func(w *radosclient.WriteOp)) *radosclient.WriteOp {
 	w := radosclient.NewWriteOp()
 	w.AssertExists()
 	rgw.GuardBucketResharding(w, x.s.release)
-	rgw.BucketCompleteOp(w, c, x.s.release)
+	call(w)
 	return w
+}
+
+// guardedWrite sends call's class call in a guardedOp to the current shard
+// inside guardReshard, the shape of the OLH index calls RGWRados makes
+// through its own guard_reshard (v19.2.7
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7912-L7966,
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8575-L8629).
+// That guard finds the shard from the bucket instance on every try; this one
+// keeps the shard until a busy answer's wait or a missing shard reads the
+// instance again.
+func (x *indexOp) guardedWrite(ctx context.Context, call func(w *radosclient.WriteOp)) error {
+	return x.guardReshard(ctx, func(sh indexShard) error {
+		_, err := sh.pool.Write(ctx, sh.oid, x.guardedOp(call), radosclient.OpFlagNone)
+		return err
+	})
+}
+
+// completeSync is complete's ADD completion, sent and awaited: complete's
+// request, locator included, on the reshard-guarded path the completion
+// manager's resend takes without it, whose answer, the class's or the
+// guard's, it returns where complete would leave a failure for listing to
+// reconcile. An error does not prove the completion did not land: a context
+// that ends, or an OSD that times out, while the op is in flight leaves it to
+// land later. So after any error the caller must not link, as a completion
+// landing after the link is what the wait prevents. A versioned write awaits
+// it before its link, which reads the instance entry the completion writes
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1670 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1811 at v20.2.4):
+// radosgw's unawaited completion reaches the shard first because librados
+// keeps one client's ops to one object in order, and rgw-go's completions
+// keep no order (docs/cgo-limitations.md, "Bucket index completions to one
+// shard can land out of order"; docs/exclusions.md, "A versioned write
+// awaits its index completion").
+func (x *indexOp) completeSync(ctx context.Context, ver rgw.EntryVer, m rgw.DirEntryMeta) error {
+	if x.blind {
+		return nil
+	}
+	c := x.completion(rgw.OpAdd, ver, m)
+	return x.guardedWrite(ctx, func(w *radosclient.WriteOp) { rgw.BucketCompleteOp(w, c, x.s.release) })
+}
+
+// readShard runs read, a read without the reshard guard as radosgw's index
+// reads are, on the current shard. A shard object a reshard removed answers
+// ENOENT as a missing entry does, so an ENOENT reads the bucket instance
+// again and, when it puts the name on another shard, reads there, within
+// reshardRetries tries: only an ENOENT from the shard the bucket now names
+// is read's answer. radosgw's read_olh_log finds the shard from the cached
+// instance once per call (v19.2.7
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8237-L8243,
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8983-L8989)
+// and its bi_get from the bucket info its caller holds (v19.2.7
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9490-L9495,
+// v20.2.4
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10239-L10244),
+// and neither reads again (docs/exclusions.md, "An index read of a versioned
+// key that finds its shard gone reads the shard the bucket now names").
+func (x *indexOp) readShard(ctx context.Context, read func(sh indexShard) error) error {
+	var err error
+	for i := range reshardRetries {
+		sh, serr := x.currentShard(ctx)
+		if serr != nil {
+			return serr
+		}
+		err = read(sh)
+		if !errors.Is(err, radosclient.ErrNotFound) || i == reshardRetries-1 {
+			return err
+		}
+		if rerr := x.s.refreshIndexOp(ctx, x); rerr != nil {
+			return rerr
+		}
+		next, nerr := x.currentShard(ctx)
+		switch {
+		case nerr != nil:
+			return nerr
+		case next.oid == sh.oid:
+			return err
+		}
+		slog.DebugContext(ctx, "bucket index shard is gone; reading the shard the bucket now names",
+			slog.String("bucket", x.obj.Bucket.Name), slog.String("shard", sh.oid), slog.String("next", next.oid))
+	}
+	return err
 }
 
 // completion is the bucket_complete_op request of mod for the object.
 func (x *indexOp) completion(mod rgw.ModifyOp, ver rgw.EntryVer, m rgw.DirEntryMeta) rgw.CompleteOp {
 	return rgw.CompleteOp{
 		Op: mod, Key: x.clsKey(), Locator: x.obj.Key.Locator(), Ver: ver, Meta: m, Tag: x.tag,
-		LogOp: x.logOp(), ZonesTrace: x.zonesTrace(), RemoveObjs: x.removeObjs,
+		LogOp: x.logOp(), BILogFlags: x.bilogFlags, ZonesTrace: x.zonesTrace(), RemoveObjs: x.removeObjs,
 	}
 }
 

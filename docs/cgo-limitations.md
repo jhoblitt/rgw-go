@@ -336,15 +336,22 @@ benchmark was re-run.
   same entry. A failed UploadPart shows it: the part head's ADD completion
   can land after the prepare, or the completion, of the DEL that removes
   the head.
-- **Cost:** none found. cls_rgw refuses a completion whose tag is no longer
-  pending with EINVAL (`cls/rgw/cls_rgw.cc:1065-1072` at v19.2.6,
-  `:1200-1207` at v20.2.4), and turns one whose epoch is not past the
+- **Cost:** one round trip to the index shard on every versioned write. A
+  versioned write's link reads the instance entry its ADD completion writes,
+  and a link that reached the shard first would list the version without
+  its size or ETag, so the write waits for its completion before it links
+  (`indexOp.completeSync`, `internal/driver/indexop.go`; `docs/exclusions.md`,
+  "A versioned write awaits its index completion"), where radosgw sends both
+  without waiting. Elsewhere none found. cls_rgw refuses a completion whose
+  tag is no longer pending with EINVAL (`cls/rgw/cls_rgw.cc:1065-1072` at
+  v19.2.6, `:1200-1207` at v20.2.4), and turns one whose epoch is not past the
   entry's, in the same pool, into a cancel (`:1082-1086`, `:1217-1221`). So a
   late ADD after the DEL completed is refused, and one between the DEL's
   prepare and completion is undone by the completion: the entry ends removed
   in every order, and the driver's vanished-upload spec takes the shard's
   operations in any order (`internal/driver/mp_part_test.go`). A
-  submit-then-await seam would restore librados' order.
+  submit-then-await seam would restore librados' order, and would let a
+  versioned write submit its completion and its link without waiting.
 
 ### The objecter throttle blocks the submitting thread
 
