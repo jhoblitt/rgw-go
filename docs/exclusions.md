@@ -8065,10 +8065,13 @@ following.
 
 ### Lifecycle differences
 
-rgw-go decides what a lifecycle rule does to a listed object as radosgw's
-`rgw_lc.cc` does at the v19.2.7 and v20.2.4 tags (`lifecycle.Decide`,
-`internal/lifecycle/decide.go`). rgw-go does not yet run the worker, so
-these entries describe the decisions it will take.
+rgw-go decides what a lifecycle rule does to a listed object, and what
+`x-amz-expiration` and `x-amz-abort-date` name, as radosgw's `rgw_lc.cc`
+does at the v19.2.7 and v20.2.4 tags (`lifecycle.Decide`,
+`lifecycle.ExpirationHeader` and `lifecycle.AbortHeader`,
+`internal/lifecycle/decide.go` and `headers.go`). rgw-go does not yet run
+the worker or send the headers ("No x-amz-expiration", under "Object read
+differences"), so these entries describe the decisions both will take.
 Where rgw-go differs, it does the following, as the design's compatibility
 rule asks (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:284-298`):
 the correct S3 result, in RADOS state radosgw reads as its own.
@@ -8190,13 +8193,64 @@ the correct S3 result, in RADOS state radosgw reads as its own.
   ([rgw_lc.cc:1030-1050](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1030-L1050),
   [rgw_lc.cc:1050-1070](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1050-L1070)),
   counts the object's tags whose value matches the rule's for their key,
-  so a tag set that repeats a key can stand in for a tag it lacks
-  (docs/ceph-upstream-bugs.md, "[radosgw's lifecycle tag filter counts an
+  so a tag set that repeats a key can stand in for a tag it lacks, and
+  `s3_expiration_header` reads only the first value of a repeated key
+  ([rgw_lc.cc:2830-2848](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2830-L2848),
+  [rgw_lc.cc:2893-2911](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2893-L2911);
+  docs/ceph-upstream-bugs.md, "[radosgw's lifecycle tag filter counts an
   object's repeated tag key toward the rule's other
   tags](ceph-upstream-bugs.md#radosgws-lifecycle-tag-filter-counts-an-objects-repeated-tag-key-toward-the-rules-other-tags)").
-  rgw-go takes a rule for an object only when each tag of the rule is
-  among the object's, its key with its value. The two agree on every tag
-  set without a repeated key, which S3 refuses.
+  rgw-go takes a rule for an object, in the worker and the header alike,
+  only when each tag of the rule is among the object's, its key with its
+  value. The two agree on every tag set without a repeated key, which S3
+  refuses.
+- **x-amz-expiration names the Expiration rule alone on Tentacle.**
+  v20.2.4's `s3_expiration_header` gives a request that names a version a
+  header, and for a key with an instance, which a GET or HEAD of a current
+  version with a version ID also passes, takes the date from the rule's
+  NoncurrentVersionExpiration
+  ([rgw_lc.cc:2817-2952](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2817-L2952);
+  docs/ceph-upstream-bugs.md, "[radosgw's x-amz-expiration reports a
+  NoncurrentVersionExpiration
+  rule](ceph-upstream-bugs.md#radosgws-x-amz-expiration-reports-a-noncurrentversionexpiration-rule)").
+  rgw-go computes v19.2.7's form on both releases
+  ([rgw_lc.cc:2750-2888](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2750-L2888)):
+  the Expiration rule alone, and no header for a request that names a
+  version. Squid and rgw-go agree.
+- **Lifecycle header dates past 24855 days or real_time are not wrapped.**
+  radosgw counts DaysAfterInitiation in `int` seconds, which overflow past
+  24855 days, and an Expiration's Days in 64-bit nanoseconds, which
+  overflow past about 106751, and either date wraps past real_time's last
+  instant in 2554
+  ([rgw_lc.cc:2932-2935](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2932-L2935),
+  [rgw_lc.cc:2996-2999](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2996-L2999);
+  [rgw_lc.cc:2859-2863](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2859-L2863),
+  [rgw_lc.cc:2923-2927](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2923-L2927);
+  docs/ceph-upstream-bugs.md, "[radosgw's lifecycle headers wrap a date
+  past 24855 days or
+  real_time](ceph-upstream-bugs.md#radosgws-lifecycle-headers-wrap-a-date-past-24855-days-or-real_time)").
+  rgw-go counts in 64-bit seconds and names the date the days give. Rules
+  of fewer days, all a client is likely to send, get the same date from
+  both.
+- **Lifecycle headers name the midnight the worker acts at.** radosgw's
+  x-amz-expiration and x-amz-abort-date take the midnight UTC that begins
+  the mtime's day, plus the days and one more
+  ([rgw_lc.cc:2859-2863](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2859-L2863),
+  [rgw_lc.cc:2923-2927](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2923-L2927);
+  [rgw_lc.cc:2932-2935](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2932-L2935),
+  [rgw_lc.cc:2996-2999](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2996-L2999)),
+  while its worker acts once midnight is the days past the mtime's whole
+  second (`obj_has_expired`,
+  [rgw_lc.cc:272-302](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L272-L302),
+  [rgw_lc.cc:272-302](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L272-L302)).
+  For an object written in a day's first second the headers name the day
+  after the one the worker acts on (docs/ceph-upstream-bugs.md,
+  "[radosgw's lifecycle headers name the day after the worker acts for an
+  object written in a day's first
+  second](ceph-upstream-bugs.md#radosgws-lifecycle-headers-name-the-day-after-the-worker-acts-for-an-object-written-in-a-days-first-second)").
+  rgw-go names the first midnight UTC at least the days past the mtime's
+  second, the one a worker in UTC acts at, so for that object it names a
+  day earlier than radosgw. Every other mtime gets radosgw's date.
 
 ## Pending
 
