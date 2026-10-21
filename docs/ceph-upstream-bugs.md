@@ -337,6 +337,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [Tentacle's POST policy excepts a field whose name holds a NUL after a checksum algorithm's](#tentacles-post-policy-excepts-a-field-whose-name-holds-a-nul-after-a-checksum-algorithms) | pending | pending |  |
 | [radosgw's JSON parser recurses without limit on a POST policy's nesting](#radosgws-json-parser-recurses-without-limit-on-a-post-policys-nesting) | pending | pending |  |
 | [radosgw's POST policy never expires when its expiration is before 1970](#radosgws-post-policy-never-expires-when-its-expiration-is-before-1970) | pending | pending |  |
+| [Tentacle's radosgw aborts on a POST upload that names a checksum algorithm but sends no checksum](#tentacles-radosgw-aborts-on-a-post-upload-that-names-a-checksum-algorithm-but-sends-no-checksum) | pending | pending | ✓ |
 | [radosgw's DeleteBucketCors refuses, and keeps, a CORS configuration that does not decode](#radosgws-deletebucketcors-refuses-and-keeps-a-cors-configuration-that-does-not-decode) | none | none | ✓ |
 | [cls_rgw's bucket_list ignores its start key when it cannot read that key's instance entry](#cls_rgws-bucket_list-ignores-its-start-key-when-it-cannot-read-that-keys-instance-entry) | pending | pending |  |
 | [Squid's radosgw serves a request with no Host as S3 when s3website outranks s3](#squids-radosgw-serves-a-request-with-no-host-as-s3-when-s3website-outranks-s3) | [#66748](https://tracker.ceph.com/issues/66748), [#66820](https://tracker.ceph.com/issues/66820) | [ceph/ceph#58339](https://github.com/ceph/ceph/pull/58339) |  |
@@ -18682,6 +18683,174 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task BC-30, 2026-10-19, transcribing the expiry
   check. Not reproduced on a running system.
+
+## Tentacle's radosgw aborts on a POST upload that names a checksum algorithm but sends no checksum
+
+- **Kind:** defect, possibly security-relevant (availability): a remote
+  crash. A POST object upload that carries the ordinary header
+  `x-amz-checksum-algorithm: CRC32` and no checksum value ends the radosgw
+  process, a denial of service that an anonymous client can send wherever a
+  bucket policy allows anonymous `s3:PutObject`. Tentacle and main; Squid
+  has no checksum code. Reproduced on a disposable cluster (Evidence).
+- **Evidence:** paths are under `src/`; each pair of links is v20.2.4's,
+  then main d8552606's.
+  - The frontend files each request header in the request's environment
+    under `HTTP_` and its name in capitals, a dash made an underscore
+    ([rgw_asio_client.cc:36-66](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_client.cc#L36-L66),
+    [rgw_asio_client.cc:38-58](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_asio_client.cc#L38-L58)),
+    so the header is `HTTP_X_AMZ_CHECKSUM_ALGORITHM` there.
+    `cksum_algorithm_hdr` returns it, or `x-amz-sdk-checksum-algorithm`, with
+    its value
+    ([rgw_cksum_pipe.h:65-82](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L65-L82),
+    [rgw_cksum_pipe.h:71-111](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_cksum_pipe.h#L71-L111)),
+    and `RGWPutObj_Cksum::Factory` builds a checksum filter holding that
+    header and its value for an algorithm it knows
+    ([rgw_cksum_pipe.cc:40-73](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.cc#L40-L73),
+    [rgw_cksum_pipe.cc:40-73](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_cksum_pipe.cc#L40-L73)).
+    `RGWPostObj::execute`
+    ([rgw_op.cc:4905](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4905),
+    [rgw_op.cc:5404](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_op.cc#L5404))
+    calls the factory with no override type
+    ([rgw_op.cc:4994-5006](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4994-L5006),
+    [rgw_op.cc:5494-5506](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_op.cc#L5494-L5506)),
+    so its filter's header always holds the algorithm's name.
+  - `expected(const RGWEnv&)` returns the `const char*` that `RGWEnv::get`
+    finds under `HTTP_X_AMZ_CHECKSUM_` and the algorithm's name, which is
+    nullptr when the algorithm is known but the request sent no value
+    ([rgw_cksum_pipe.h:193-200](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L193-L200),
+    [rgw_cksum_pipe.h:221-228](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_cksum_pipe.h#L221-L228)):
+    `RGWEnv::get` answers its default, nullptr, for a variable the
+    environment lacks
+    ([rgw_env.cc:46-67](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_env.cc#L46-L67),
+    [rgw_env.cc:46-67](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_env.cc#L46-L67);
+    [rgw_common.h:503](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L503),
+    [rgw_common.h:519](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_common.h#L519)).
+  - `verify()` returns
+    `VerifyResult(cksum_hdr.first && hv && !std::strcmp(hv, cv.c_str()), _cksum)`
+    ([rgw_cksum_pipe.h:202-211](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L202-L211),
+    [rgw_cksum_pipe.h:230-239](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_cksum_pipe.h#L230-L239)).
+    A null `hv` makes the result false, so an absent value counts as a
+    mismatch, not as none supplied, and that routes the request into the
+    fatal branch.
+  - `RGWPostObj::execute` conditions success on `std::get<0>(cksum_verify)`
+    alone, and its mismatch branch passes `hdr.second`, `cksum->to_armor()`
+    and `cksum_filter->expected(*s->info.env)` raw into
+    `ldpp_dout_fmt(this, 4, ...)`
+    ([rgw_op.cc:5095-5117](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5095-L5117),
+    [rgw_op.cc:5605-5627](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_op.cc#L5605-L5627);
+    the call at
+    [rgw_op.cc:5107-5112](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5107-L5112),
+    [rgw_op.cc:5617-5622](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_op.cc#L5617-L5622)).
+    Of the three, `expected`'s is the null one: `to_armor` returns a
+    `std::string`, and `hdr.second` holds the algorithm's name.
+  - `ldpp_dout_fmt` formats its arguments with `fmt::print`
+    ([dout_fmt.h:50-56](https://github.com/ceph/ceph/blob/v20.2.4/src/common/dout_fmt.h#L50-L56),
+    [dout_fmt.h:50-56](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/common/dout_fmt.h#L50-L56)),
+    and libfmt refuses a null `const char*` by throwing
+    `fmt::format_error("string pointer is null")`. Nothing between the call
+    site and the frontend's request loop catches it:
+    - `rgw_process_authenticated` calls `op->execute(y)` with no handler of
+      its own
+      ([rgw_process.cc:254-260](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L254-L260),
+      [rgw_process.cc:348-354](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_process.cc#L348-L354));
+    - `process_request` catches only `ceph::crypto::DigestException`
+      ([rgw_process.cc:345-420](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L345-L420),
+      [rgw_process.cc:437-489](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_process.cc#L437-L489));
+    - beast's completion handler for each connection's coroutine rethrows
+      what the coroutine ended with
+      ([rgw_asio_frontend.cc:1133-1135](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L1133-L1135),
+      [rgw_asio_frontend.cc:1220-1222](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_asio_frontend.cc#L1220-L1222);
+      for TLS
+      [rgw_asio_frontend.cc:1116-1118](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L1116-L1118),
+      [rgw_asio_frontend.cc:1203-1205](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_asio_frontend.cc#L1203-L1205));
+    - the threads that run the frontend's `io_context` call `ioctx.run()`
+      with no handler
+      ([context_pool.h:60-87](https://github.com/ceph/ceph/blob/v20.2.4/src/common/async/context_pool.h#L60-L87),
+      [context_pool.h:61-88](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/common/async/context_pool.h#L61-L88)).
+
+    So `std::terminate` kills the process.
+  - **The gather rule is why it fires at the shipped default.** `dout_impl`
+    evaluates and formats a line's arguments inside `if (should_gather)`
+    ([dout.h:170](https://github.com/ceph/ceph/blob/v20.2.4/src/common/dout.h#L170),
+    [dout.h:170](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/common/dout.h#L170)),
+    and `should_gather` returns `level <= m_gather_levels[sub]`
+    ([SubsystemMap.h:88-91](https://github.com/ceph/ceph/blob/v20.2.4/src/log/SubsystemMap.h#L88-L91),
+    [SubsystemMap.h:90-93](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/log/SubsystemMap.h#L90-L93)).
+    `m_gather_levels` holds the larger of the log level and the gather level
+    ([SubsystemMap.h:40](https://github.com/ceph/ceph/blob/v20.2.4/src/log/SubsystemMap.h#L40),
+    [SubsystemMap.h:42](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/log/SubsystemMap.h#L42)),
+    which is 5 at `SUBSYS(rgw, 1, 5)`
+    ([subsys.h:62](https://github.com/ceph/ceph/blob/v20.2.4/src/common/subsys.h#L62),
+    [subsys.h:63](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/common/subsys.h#L63)),
+    so 4 <= 5 and the format call runs. No log file is involved. At that
+    default a line falls in one of three regimes:
+    - a level of at most 1 is written to the log;
+    - levels 2 to 5 are gathered to the in-memory ring only, and written on
+      a crash or by the admin socket's `log dump`: the regime of the
+      `SUBSYS` bullet of "[radosgw's verify_mfa logs an x-amz-mfa value that
+      does not split in two, its code
+      included](#radosgws-verify_mfa-logs-an-x-amz-mfa-value-that-does-not-split-in-two-its-code-included)";
+    - levels above 5 are not evaluated at all.
+  - **The fix precedent is `RGWPutObj::execute`**
+    ([rgw_op.cc:4757-4791](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4757-L4791),
+    [rgw_op.cc:5271-5305](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_op.cc#L5271-L5305)).
+    It captures `expected_ck` once and conditions success on
+    `(!expected_ck) || std::get<0>(cksum_verify)`, so an absent checksum
+    counts as valid, and it guards its format arguments with
+    `(!!expected_ck) ? expected_ck : "(checksum unavailable)"`. Its mismatch
+    branch still passes `hdr.second` unguarded
+    ([rgw_op.cc:4781-4786](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4781-L4786),
+    [rgw_op.cc:5295-5300](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_op.cc#L5295-L5300)).
+    That is safe only because the branch is reached with a non-null
+    `expected_ck`, which `expected` returns only when `cksum_hdr.second` is
+    set, and `hdr` is that `cksum_hdr`; the sibling does not guard every
+    argument.
+  - **Measured** on a disposable cluster (cluster batch 5). The minimal
+    trigger is the ordinary header `x-amz-checksum-algorithm: CRC32` on a
+    POST object form that sends no checksum value. It takes no NUL and no
+    crafted field name: the trick of "[Tentacle's POST policy excepts a field
+    whose name holds a NUL after a checksum
+    algorithm's](#tentacles-post-policy-excepts-a-field-whose-name-holds-a-nul-after-a-checksum-algorithms)"
+    is not needed.
+    - radosgw aborts under `debug_rgw` 20/20 and under 1/5, the shipped
+      default, and survives under 0/0.
+    - Eight aborts across three request routes, each with container exit
+      code 134, the identical exception and message and the stack signature
+      86720a45fc6b; no control request aborted.
+    - An anonymous client with no credential reaches it where a bucket
+      policy permits anonymous `s3:PutObject`. Authorization gates it: a 403
+      control leaves the gateway up.
+  - **Attribution caveat:** no symbolised frame, no debugger and no
+    sanitiser build. Attribution rests on the exception message, log
+    adjacency, the guarded sibling not aborting, and the 0/0 A/B.
+- **Impact:** every request the process was serving fails, and the gateway
+  is down until it is restarted; the client can repeat it at will. Any
+  requester the bucket allows `s3:PutObject`, the one permission
+  `RGWPostObj::verify_permission` asks for
+  ([rgw_op.cc:4885-4898](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4885-L4898),
+  [rgw_op.cc:5384-5397](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/rgw_op.cc#L5384-L5397)),
+  can send it, an anonymous one where a bucket policy grants that to
+  anonymous.
+- **Releases:** Tentacle, checked at v20.2.4, and main d8552606. v21.1.2
+  carries the same code
+  ([rgw_op.cc:5499-5521](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L5499-L5521),
+  [rgw_cksum_pipe.h:215-233](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_cksum_pipe.h#L215-L233)),
+  not run there. Squid is not affected: `src/rgw/rgw_cksum.h` does not exist
+  at v19.2.6 or v19.2.7 (`git ls-tree` finds nothing), because the checksum
+  subsystem, ceph commit 8ff3417193 (2024-07-03), postdates the Squid cut and
+  is first tagged in v20.0.0. So the evidence is v20.2.4's and main's, not
+  the usual pair of floors.
+- **rgw-go:** not affected. It serves no POST object yet: its dispatch sends
+  a bucket POST that names no other op to `post_obj`
+  (`internal/s3/dispatch.go:241-248`), which no route binds
+  (`internal/s3/postobject.go:10`), so the handler answers this request 501
+  NotImplemented, as it answers every POST object that passes
+  authentication, and reads no checksum field (`internal/s3/handler.go:426-430`;
+  `docs/exclusions.md`, "PutObject and CopyObject authorize a request before
+  they read what the store holds for it").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** rgw-bug-reproduction's triage of phase 2 task BC-30,
+  2026-10-20; reproduced on a disposable cluster.
 
 ## radosgw's DeleteBucketCors refuses, and keeps, a CORS configuration that does not decode
 
