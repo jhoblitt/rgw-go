@@ -351,6 +351,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's lifecycle grammar reads its numbers as text](#radosgws-lifecycle-grammar-reads-its-numbers-as-text) | pending | pending | ✓ |
 | [radosgw's lifecycle Date wraps past 2554 and expires at once](#radosgws-lifecycle-date-wraps-past-2554-and-expires-at-once) | pending | pending | ✓ |
 | [radosgw-admin lc list omits a shard's entries past its first 1024 when max-entries is above 1024](#radosgw-admin-lc-list-omits-a-shards-entries-past-its-first-1024-when-max-entries-is-above-1024) | pending | pending | ✓ |
+| [radosgw verifies no checksum value sent without an algorithm header](#radosgw-verifies-no-checksum-value-sent-without-an-algorithm-header) | pending | pending |  |
+| [radosgw does not verify a CRC64NVME or xxh3 upload's part sent without an algorithm header](#radosgw-does-not-verify-a-crc64nvme-or-xxh3-uploads-part-sent-without-an-algorithm-header) | pending | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -14867,7 +14869,12 @@ Every new entry adds its row to this table, in document order.
   digest size other than the type's with `denc.ErrMalformed`, and
   `cksum.Cksum.Encode` panics rather than write either
   (`internal/cksum/record.go`). It writes nothing radosgw would not, so
-  there is no exclusion.
+  there is no exclusion. Its write ops also refuse a request naming MD5,
+  XXHASH64 or XXHASH128, the types main stores as 9 to 11, with 400
+  InvalidArgument before the body, once the S3 handler hands them the
+  checksum headers (`internal/op/checksumreq.go`;
+  `docs/exclusions.md`, "A checksum algorithm rgw-go does not compute is
+  refused at write").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** the phase 2 write-path research, 2026-10-13
   (`docs/superpowers/plans/2026-10-13-phase-2/research/research-writepath.md`,
@@ -19644,3 +19651,125 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task C4's review, 2026-10-20, checking lc_list_entries'
   page cap. Derived from the source, not reproduced.
+
+## radosgw verifies no checksum value sent without an algorithm header
+
+- **Kind:** defect, S3-correctness, not found by us: upstream has fixed it
+  on main and from v21.0.0. A PutObject or UploadPart that supplies a
+  checksum value, as an `x-amz-checksum-<alg>` header or a trailer
+  `x-amz-trailer` lists, without naming its algorithm in
+  `x-amz-checksum-algorithm` or `x-amz-sdk-checksum-algorithm`, is stored
+  without the value being compared, and, unless it is a part of an upload
+  with a checksum type, without any checksum. No stored data is damaged,
+  and it is not security-relevant. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`, at v20.2.4 unless a link names
+  main; v19.2.7 has no checksum code.
+  - `RGWPutObj_Cksum::Factory` builds the put's checksum filter from the
+    algorithm header `cksum_algorithm_hdr` finds, `x-amz-checksum-algorithm`
+    else `x-amz-sdk-checksum-algorithm`, and without one from the type a
+    part's upload passes; with neither it builds none
+    ([rgw_cksum_pipe.cc:40-73](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.cc#L40-L73),
+    [rgw_cksum_pipe.h:65-82](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L65-L82),
+    [rgw_op.cc:4471-4472](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4471-L4472),
+    [rgw_op.cc:4601-4611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4601-L4611)).
+  - Without a filter, `RGWPutObj::execute` computes no checksum, compares
+    nothing and stores no `user.rgw.cksum`
+    ([rgw_op.cc:4757-4790](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4757-L4790)).
+    A value header sits in the request's environment, and a listed trailer
+    is put there as the body completes
+    ([rgw_auth_s3.cc:1459-1487](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1459-L1487)),
+    but only a filter's `expected` reads either
+    ([rgw_cksum_pipe.h:193-211](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L193-L211)).
+  - main at f6f2529dd9e fixes it: `cksum_algorithm_hdr` also takes the
+    algorithm from the first checksum trailer `x-amz-trailer` lists, then
+    from the first `x-amz-checksum-<alg>` header in its table's order
+    ([rgw_cksum_pipe.h:71-111](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_cksum_pipe.h#L71-L111)),
+    from 1bd625a613a, "rgw_cksum: select checksum algo from only a
+    checksum trailer header", and 572289a2c7f, "rgw: recognize checksum
+    from x-amz-checksum-{type} alone", which v21.0.0 carries and no v20
+    tag does. Its comment names a client that sends the value alone, "a
+    checksum header and payload" from "golang sdk v2"
+    ([rgw_cksum_pipe.h:101-102](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_cksum_pipe.h#L101-L102)).
+- **Impact:** a client that supplies only the value, or only a checksum
+  trailer, gets no integrity check from a v20.2.4 radosgw: a body that
+  differs from its checksum is stored, and for a PutObject the object
+  keeps no checksum for a GET with checksum mode to show. Amazon S3
+  verifies such a value.
+- **Releases:** v20.2.4. Fixed on main f6f2529dd9e and from v21.0.0.
+  v19.2.7 has no checksum code.
+- **rgw-go:** differs in its op layer, which the S3 handler does not reach
+  yet (`docs/exclusions.md`, "Client checksums are ignored until phase
+  2"). It takes the algorithm from the one value header or checksum
+  trailer and verifies the value, and refuses two values, or one of
+  another algorithm than the algorithm header's, with 400 InvalidRequest
+  before the body (`internal/op/checksumreq.go`; `docs/exclusions.md`, "A
+  checksum value without an algorithm header names its algorithm and is
+  verified").
+- **Upstream:** pending; prior art not searched.
+- **Found:** the phase 2 write-path research, 2026-10-13
+  (`docs/superpowers/plans/2026-10-13-phase-2/research/research-writepath.md`,
+  §6, defect 6); recorded by phase 2 task WP-6, 2026-10-20, which found
+  main's fix. Derived from the source, not reproduced; task WP-14
+  reproduces it.
+
+## radosgw does not verify a CRC64NVME or xxh3 upload's part sent without an algorithm header
+
+- **Kind:** defect, S3-correctness, not found by us: upstream has fixed it
+  in effect on main and from v21.0.0, where a value names the algorithm
+  before the upload's type does. A part of an upload created with the
+  CRC64NVME or the xxh3 checksum type, sent without an algorithm header,
+  is stored with its upload's checksum computed and the value it supplies
+  never compared. No stored data is damaged, and it is not
+  security-relevant. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`, at v20.2.4 unless a link names
+  main; v19.2.7 has no checksum code.
+  - A part without an algorithm header gets the filter of its upload's
+    type, `multipart_cksum_type`, with the header pair
+    `cksum_algorithm_hdr(override_type)` gives
+    ([rgw_op.cc:4471-4472](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4471-L4472),
+    [rgw_cksum_pipe.cc:63-70](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.cc#L63-L70)).
+  - That table has no case for crc64nvme, whose pair is null, and names
+    xxh3 `XX3`
+    ([rgw_cksum_pipe.h:33-63](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L33-L63)).
+  - `expected` looks the value up as `HTTP_X_AMZ_CHECKSUM_<name>` from the
+    pair's name and answers nothing for a null pair
+    ([rgw_cksum_pipe.h:193-200](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L193-L200)),
+    and `RGWPutObj::execute` stores the computed checksum whenever
+    `expected` answers nothing
+    ([rgw_op.cc:4757-4790](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4757-L4790)).
+    So a CRC64NVME part's `x-amz-checksum-crc64nvme` is never read, and an
+    xxh3 part's value is looked for as `x-amz-checksum-xx3`, which no
+    client sends, rather than as `x-amz-checksum-xxh3`.
+  - main at f6f2529dd9e still has no crc64nvme case, and names type 3
+    `XXHASH3`
+    ([rgw_cksum_pipe.h:33-69](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_cksum_pipe.h#L33-L69)),
+    but takes a lone value header or checksum trailer for the algorithm
+    header first
+    ([rgw_cksum_pipe.h:71-111](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_cksum_pipe.h#L71-L111);
+    "[radosgw verifies no checksum value sent without an algorithm
+    header](#radosgw-verifies-no-checksum-value-sent-without-an-algorithm-header)"),
+    so there only a part that supplies no value at all takes the upload's
+    type, and it has nothing to compare.
+- **Impact:** a client that sends a CRC64NVME or xxh3 upload's parts with
+  their value and no algorithm header gets no integrity check: a part that
+  differs from its checksum is stored, and the upload's combined checksum
+  is that of the bytes stored. A client checking the combination against
+  its own finds the mismatch only after the upload completes.
+- **Releases:** v20.2.4. On main f6f2529dd9e, and from v21.0.0, the
+  inference reaches it first. v19.2.7 has no checksum code.
+- **rgw-go:** differs in its op layer, which the S3 handler does not reach
+  yet (`docs/exclusions.md`, "Client checksums are ignored until phase
+  2"). A part's lone value header or checksum trailer names its algorithm,
+  which must be its upload's, and its value is compared for every type
+  rgw-go computes, CRC64NVME included; rgw-go computes no xxh3 and answers
+  a part of an xxh3 upload with 501 NotImplemented
+  (`internal/op/checksumreq.go`; `docs/exclusions.md`, "A checksum value
+  without an algorithm header names its algorithm and is verified" and "A
+  checksum algorithm rgw-go does not compute is refused at write").
+- **Upstream:** pending; prior art not searched.
+- **Found:** the phase 2 write-path research, 2026-10-13
+  (`docs/superpowers/plans/2026-10-13-phase-2/research/research-writepath.md`,
+  §6, defect 4, its part half; its completion half is task WP-9's);
+  recorded by phase 2 task WP-6, 2026-10-20, which added the xxh3 case and
+  main's inference. Derived from the source, not reproduced; task WP-14
+  reproduces it.

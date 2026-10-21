@@ -35,6 +35,9 @@ type InitMultipart struct {
 	// placement checked, ahead of the block of public ACLs. It fills the
 	// inputs it reads, the ACL among them.
 	Params func(ctx context.Context, o *InitMultipart) error
+	// ChecksumField is the request's checksum fields, which
+	// ChecksumForCreate reads (ChecksumInput).
+	ChecksumField func(name string) (string, bool)
 
 	UploadID string
 	Upload   *Upload
@@ -75,7 +78,8 @@ func (o *InitMultipart) VerifyPermission(ctx context.Context, r *Request) error 
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L606-L613 at v20.2.4),
 // which radosgw checks before verify_permission and so before anything
 // get_params reads; a bucket with a default encryption is refused, as
-// get_encryption_defaults comes first in get_params; Params runs, and a
+// get_encryption_defaults comes first in get_params; Params runs, then the
+// checksum fields get_params reads last (ChecksumForCreate), and a
 // public ACL under the bucket's block of public ACLs is refused, as
 // PutObject refuses one, where radosgw checks no block for
 // CreateMultipartUpload, whose ACL the completed object takes
@@ -97,6 +101,10 @@ func (o *InitMultipart) Execute(ctx context.Context, r *Request) error {
 			return err
 		}
 	}
+	uc, err := ChecksumForCreate(ChecksumInput{Field: o.ChecksumField}, r.Env.Zone.Release())
+	if err != nil {
+		return err
+	}
 	if blockPublicACLs(r.BucketRec) && o.ACL.IsPublic() {
 		return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
 	}
@@ -117,7 +125,7 @@ func (o *InitMultipart) Execute(ctx context.Context, r *Request) error {
 		ownerName = r.Identity.User.DisplayName
 	}
 	up, err := r.Env.Multipart.CreateUpload(ctx, r.BucketRec, r.Object, UploadParams{
-		Owner: r.Identity.Owner, OwnerName: ownerName, Placement: o.dest, Attrs: attrs,
+		Owner: r.Identity.Owner, OwnerName: ownerName, Placement: o.dest, Attrs: attrs, Checksum: uc,
 	})
 	if err != nil {
 		return err

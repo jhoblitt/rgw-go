@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/policy"
@@ -87,11 +88,16 @@ type PutObject struct {
 	// requester is authorized, the placement checked and a public canned ACL
 	// refused. It fills the inputs it reads, the ACL among them.
 	Authorized func(ctx context.Context, o *PutObject) error
+	// ChecksumField is the request's checksum fields, which ChecksumForPut
+	// reads with the request's Trailers (ChecksumInput).
+	ChecksumField func(name string) (string, bool)
 
 	ETag  string
 	Mtime time.Time
 	// VersionID is "" until versioning is implemented.
 	VersionID string
+	// Checksum is the checksum the store computed, nil for none.
+	Checksum *cksum.Cksum
 }
 
 var _ Op = (*PutObject)(nil)
@@ -145,9 +151,11 @@ func (o *PutObject) VerifyPermission(ctx context.Context, r *Request) error {
 // and v20.2.4) and RGWPutObj::execute in its order
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4142-L4574 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4351-L4867 at v20.2.4):
-// the key, the quota for a body of known length, and the write, whose attrs
-// gain the policy and, when the request tags the object with any tag, the
-// tag set (encode_obj_tags_attr,
+// the key, the quota for a body of known length, the checksum request,
+// before the body as RGWPutObj_Cksum::Factory reads it (ChecksumForPut;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4601-L4611 at v20.2.4),
+// and the write, whose attrs gain the policy and, when the request tags the
+// object with any tag, the tag set (encode_obj_tags_attr,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.h#L2247-L2255 at v19.2.6).
 // The write tag is the request id.
 func (o *PutObject) Execute(ctx context.Context, r *Request) error {
@@ -192,14 +200,19 @@ func (o *PutObject) Execute(ctx context.Context, r *Request) error {
 	if o.Tags != nil && o.Tags.Len() > 0 {
 		attrs[tags.Attr] = encodeAt(*o.Tags, release)
 	}
-	res, err := r.Env.Objects.PutObject(ctx, r.BucketRec, r.Object, o.Body, PutParams{
+	ck, body, err := ChecksumForPut(ChecksumInput{Field: o.ChecksumField, Trailers: r.Trailers, Body: o.Body}, release)
+	if err != nil {
+		return err
+	}
+	res, err := r.Env.Objects.PutObject(ctx, r.BucketRec, r.Object, body, PutParams{
 		Attrs: attrs, Size: o.Size, StorageClass: o.StorageClass,
 		IfMatch: storeCondition(o.IfMatch), IfNoneMatch: storeCondition(o.IfNoneMatch), Tag: r.ID, ContentMD5: o.ContentMD5,
+		Checksum: ck,
 	})
 	if err != nil {
 		return err
 	}
-	o.ETag, o.Mtime, o.VersionID = res.ETag, res.Mtime, res.Version
+	o.ETag, o.Mtime, o.VersionID, o.Checksum = res.ETag, res.Mtime, res.Version, res.Checksum
 	return nil
 }
 

@@ -519,7 +519,8 @@ func LogAuthError(ctx context.Context, err error) {
 // ApplyAuth gives r the authenticated identity and the route it
 // authenticated on (op.AuthResult.Route); when the authenticator replaces
 // the request body with a reader that verifies the payload as it is read,
-// that reader and its length; and a SigV2 presigned request's signed query
+// that reader and its length; the trailers that reader keeps
+// (op.AuthResult.Trailers); and a SigV2 presigned request's signed query
 // meta (op.AuthResult.QueryMeta) as headers of a copy of r's, with every
 // query parameter it was read from gone, so that each read of the request,
 // its stored attrs and sts:authentication among them, takes it as if sent as
@@ -528,6 +529,7 @@ func LogAuthError(ctx context.Context, err error) {
 func ApplyAuth(r *op.Request, res *op.AuthResult) {
 	r.Identity = res.Identity
 	r.AuthRoute = res.Route
+	r.Trailers = res.Trailers
 	if res.Body != nil {
 		r.Body = res.Body
 		r.ContentLength = res.ContentLength
