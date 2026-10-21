@@ -293,7 +293,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [cls_rgw mis-sorts and cannot list versions whose epoch is 2^32 or more](#cls_rgw-mis-sorts-and-cannot-list-versions-whose-epoch-is-232-or-more) | pending | [ceph/ceph#62469](https://github.com/ceph/ceph/pull/62469) |  |
 | [cls_rgw's read_olh_log reads the first epoch of an empty pending log](#cls_rgws-read_olh_log-reads-the-first-epoch-of-an-empty-pending-log) | pending | pending | ✓ |
 | [cls_rgw's bucket_link_olh drops the REMOVE_INSTANCE it logs for a delete marker at an older epoch](#cls_rgws-bucket_link_olh-drops-the-remove_instance-it-logs-for-a-delete-marker-at-an-older-epoch) | pending | [ceph/ceph#62469](https://github.com/ceph/ceph/pull/62469), [ceph/ceph#67661](https://github.com/ceph/ceph/pull/67661) |  |
-| [cls_rgw's bucket_link_olh unlinks the null version's list entry before it checks the epoch](#cls_rgws-bucket_link_olh-unlinks-the-null-versions-list-entry-before-it-checks-the-epoch) | pending | pending |  |
+| [cls_rgw's bucket_link_olh unlinks the null version's list entry before it checks the epoch](#cls_rgws-bucket_link_olh-unlinks-the-null-versions-list-entry-before-it-checks-the-epoch) | pending | pending | ✓ |
 | [cls_rgw's bucket_unlink_instance at an older epoch leaves a delete marker's instance entry](#cls_rgws-bucket_unlink_instance-at-an-older-epoch-leaves-a-delete-markers-instance-entry) | pending | pending |  |
 | [radosgw's zstd compress leaks its compression stream when libzstd fails](#radosgws-zstd-compress-leaks-its-compression-stream-when-libzstd-fails) | [#73522](https://tracker.ceph.com/issues/73522) | [ceph/ceph#65915](https://github.com/ceph/ceph/pull/65915) |  |
 | [radosgw's rate limiter answers SlowDown for a rate-limit attr that does not decode](#radosgws-rate-limiter-answers-slowdown-for-a-rate-limit-attr-that-does-not-decode) | pending | pending |  |
@@ -302,9 +302,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw reports a single-part CRC upload's full-object checksum as COMPOSITE](#radosgw-reports-a-single-part-crc-uploads-full-object-checksum-as-composite) | pending | pending | ✓ |
 | [radosgw's bucket instance JSON drops a Swift container's web listing settings](#radosgws-bucket-instance-json-drops-a-swift-containers-web-listing-settings) | pending | pending |  |
 | [radosgw's Swift container metadata writes turn off a redirect-only S3 website](#radosgws-swift-container-metadata-writes-turn-off-a-redirect-only-s3-website) | pending | pending |  |
-| [radosgw's apply_olh_log applies a same-epoch link the class did not make current](#radosgws-apply_olh_log-applies-a-same-epoch-link-the-class-did-not-make-current) | pending | pending |  |
-| [cls_rgw's OLH log trim drops an unapplied link at the trimmed epoch](#cls_rgws-olh-log-trim-drops-an-unapplied-link-at-the-trimmed-epoch) | pending | pending |  |
-| [radosgw's clear_olh clears the index's OLH entry after a failed head removal](#radosgws-clear_olh-clears-the-indexs-olh-entry-after-a-failed-head-removal) | pending | pending |  |
+| [radosgw's apply_olh_log applies a same-epoch link the class did not make current](#radosgws-apply_olh_log-applies-a-same-epoch-link-the-class-did-not-make-current) | pending | pending | ✓ |
+| [cls_rgw's OLH log trim drops an unapplied link at the trimmed epoch](#cls_rgws-olh-log-trim-drops-an-unapplied-link-at-the-trimmed-epoch) | pending | pending | ✓ |
+| [radosgw's clear_olh clears the index's OLH entry after a failed head removal](#radosgws-clear_olh-clears-the-indexs-olh-entry-after-a-failed-head-removal) | pending | pending | ✓ |
 | [radosgw's versioned write fails when the key's OLH head goes between its read and its init](#radosgws-versioned-write-fails-when-the-keys-olh-head-goes-between-its-read-and-its-init) | pending | pending | ✓ |
 | [radosgw's follow_olh answers the version that was current before the replay it runs](#radosgws-follow_olh-answers-the-version-that-was-current-before-the-replay-it-runs) | pending | pending |  |
 | [cls_otp's otp_set puts an array as long as the seed on the OSD's stack](#cls_otps-otp_set-puts-an-array-as-long-as-the-seed-on-the-osds-stack) | none | [ceph/ceph#68014](https://github.com/ceph/ceph/pull/68014) |  |
@@ -15979,10 +15979,17 @@ Every new entry adds its row to this table, in document order.
     [rgw_rados.cc:9228-9242](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9228-L9242)).
     With `olh.ver` below the shared epoch every link at it passes the
     first test, so the one logged last becomes `olh.info`.
-  - Only a request that names its epoch can link at the entry's own, and
-    only multisite names one: a system request's `rgwx-versioned-epoch`,
+  - Only a request that names its epoch can link at the entry's own. In
+    one zone a lifecycle transition names the version's own epoch
+    ([rgw_lc.cc:1515-1516](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1515-L1516),
+    [rgw_lc.cc:1561-1562](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1561-L1562)),
+    which is the entry's own while no link or unlink has followed that
+    version's link, so a single zone links at the entry's epoch, but only
+    the version whose link set it, and every link at that epoch names one
+    instance. Two instances at one epoch take an epoch that radosgw's own
+    multisite connection names: a system request's `rgwx-versioned-epoch`,
     as "cls_rgw mis-sorts and cannot list versions whose epoch is 2^32 or
-    more" cites, and data sync, as "cls_rgw's bucket_link_olh drops the
+    more" cites, or data sync, as "cls_rgw's bucket_link_olh drops the
     REMOVE_INSTANCE it logs for a delete marker at an older epoch" traces.
 - **Impact:** in a multisite zone, two links of a key at one epoch that
   both land before either is replayed, the second with the larger
@@ -16048,9 +16055,13 @@ Every new entry adds its row to this table, in document order.
     [rgw_rados.cc:9169-9171](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9169-L9171)).
     The head keeps the earlier link, and the writer's pending attr stays
     until it expires.
-  - Only a request that names its epoch can link at the entry's own, and
-    only multisite names one, as "radosgw's apply_olh_log applies a
-    same-epoch link the class did not make current" traces.
+  - Only a request that names its epoch can link at the entry's own. In
+    one zone that is a lifecycle transition of the version whose link set
+    the entry's epoch, as "radosgw's apply_olh_log applies a same-epoch
+    link the class did not make current" traces, and the trim drops that
+    link with the head already on its version, leaving only its pending
+    attr. A link of another version at that epoch takes an epoch that
+    radosgw's own multisite connection names.
   - That entry is the opposite case: a replay applies a same-epoch link the
     class did not make current, where this trim drops one the class did.
     It differs from "cls_rgw's bucket_link_olh drops the REMOVE_INSTANCE it
