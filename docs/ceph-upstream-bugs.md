@@ -394,6 +394,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's ListObjectVersions lists the key-marker's versions again without a version-id-marker](#radosgws-listobjectversions-lists-the-key-markers-versions-again-without-a-version-id-marker) | pending | pending |  |
 | [cls_rgw's start-key delimiter test reads a null version's list key as a common prefix](#cls_rgws-start-key-delimiter-test-reads-a-null-versions-list-key-as-a-common-prefix) | pending | pending |  |
 | [radosgw's bucket removal with purge leaves a key's older versions behind when a page ends on one of its versions](#radosgws-bucket-removal-with-purge-leaves-a-keys-older-versions-behind-when-a-page-ends-on-one-of-its-versions) | pending | pending |  |
+| [cls_otp checks a code at the low 32 bits of the OSD's clock](#cls_otp-checks-a-code-at-the-low-32-bits-of-the-osds-clock) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -3207,9 +3208,12 @@ Every new entry adds its row to this table, in document order.
   check until the entry is cleared) reachable only by a cluster-service or
   admin actor, not a cross-privilege escalation.
 - **Releases:** every release checked, v19.2.2 through main.
-- **rgw-go:** no cls_otp client yet (phase 2, MFA). When it writes OTP
-  entries it must reject a zero `step_size`, and it must not divide by a
-  stored `step_size` without guarding it.
+- **rgw-go:** when it writes OTP entries it must reject a zero
+  `step_size`, and it must not divide by a stored `step_size` without
+  guarding it. fakerados's otp class answers EIO where the OSD faults: a
+  check on a device of step 0 whose code verifies at liboath's 30 seconds.
+  A code liboath refuses never reaches the division, so that check is
+  recorded as a failure (`internal/testutil/fakerados/cls_otp_check.go`).
 - **Upstream:** [#80948](https://tracker.ceph.com/issues/80948). Its fix,
   [ceph/ceph#72250](https://github.com/ceph/ceph/pull/72250), a draft, adds a
   file-local `effective_step_size()` that uses liboath's default time step
@@ -3225,7 +3229,10 @@ Every new entry adds its row to this table, in document order.
 
 ## cls_otp computes the replay index from an unsigned window distance
 
-- **Kind:** defect, unfixed through main.
+- **Kind:** defect, conditional, possibly security-relevant (MFA one-time
+  use), unfixed through main. A code the user has used verifies again in
+  the later steps of its window (Replay of one code, below), which matters
+  to whoever holds the user's keys and learns such a code.
 - **Evidence:** verify calls `oath_totp_validate2(..., window, nullptr, otp)`
   (v19.2.6 `cls_otp.cc:133-136`), discarding the signed position
   out-parameter, and sets the replay index to the return value plus the
@@ -3238,18 +3245,76 @@ Every new entry adds its row to this table, in document order.
   ahead of the true step, so replay handling misfires: legitimate codes for
   the intervening steps are refused, and an earlier code can be accepted
   after a later one within the window. No code outside the window is
-  accepted, so it does not bypass MFA.
+  accepted, but a code inside it verifies again in later steps (Replay of
+  one code, below).
+- **Replay of one code:** the same code also verifies again.
+  - A code checked in its own step `n` stores `last_success = n`. One step
+    later liboath finds it at distance 1 behind the counter, so the index is
+    `1 + (n + 1) = n + 2`, above `last_success`, and the code is accepted
+    again. It is accepted once more in each later step while it stays in the
+    window. The function is byte-identical at both tags
+    ([cls_otp.cc:129-153](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L129-L153),
+    [cls_otp.cc:129-153](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L129-L153)).
+  - At oath-toolkit 2.6.9, the window search also goes backward, generating
+    the code of `nts - iter`
+    ([totp.c:575](https://github.com/jas4711/oath-toolkit/blob/oath-toolkit-2.6.9/liboath/totp.c#L575)).
+    A match either way returns the absolute distance, `return iter`
+    ([totp.c:566](https://github.com/jas4711/oath-toolkit/blob/oath-toolkit-2.6.9/liboath/totp.c#L566),
+    [totp.c:589](https://github.com/jas4711/oath-toolkit/blob/oath-toolkit-2.6.9/liboath/totp.c#L589)).
+    Only `*otp_pos` is signed: `iter` forward and `-iter` backward
+    ([totp.c:565](https://github.com/jas4711/oath-toolkit/blob/oath-toolkit-2.6.9/liboath/totp.c#L565),
+    [totp.c:588](https://github.com/jas4711/oath-toolkit/blob/oath-toolkit-2.6.9/liboath/totp.c#L588)).
+  - Measured on 2026-10-21 by rgw-go's controller session with a C program
+    that transcribes verify against liboath 2.6.9 built from its release
+    tree, at `otp_info_t`'s defaults. One 6-digit code of step 37037036 was
+    accepted at steps 37037036, 37037037 and 37037038, where liboath answered
+    distances 0, 1 and 2 with `otp_pos` 0, -1 and -2, for indexes 37037036,
+    37037038 and 37037040. It was refused at step 37037039, outside the
+    window. The fresh code of step 37037037, checked after those replays,
+    was refused at index 37037037. Which liboath release the Ceph images
+    ship is unverified.
+  - One code therefore passes `window + 1` checks, one per step: three at
+    `otp_info_t`'s defaults, a step of 30 seconds and a window of 2
+    ([cls_otp_types.h:40-41](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_types.h#L40-L41),
+    [cls_otp_types.h:40-41](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_types.h#L40-L41)).
+    `radosgw-admin mfa create` keeps them unless `--totp-seconds` or
+    `--totp-window` is positive
+    ([rgw_admin.cc:10824-10830](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10824-L10830),
+    [radosgw-admin.cc:11415-11421](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L11415-L11421)).
+  - So a code seen in one MFA request verifies another for up to `window`
+    steps after its own, against RFC 6238's one-time use (section 5.2).
+  - Possibly security-relevant; sent to rgw-bug-reproduction. Found by phase
+    2 task V13b, 2026-10-20, when fakerados's emulation of the class
+    accepted a reused code. Not reproduced on a running cluster.
+- **One-time use, across entries:** cls_otp keeps one `last_success`
+  counter per device, and it does not reliably enforce one-time use. Besides
+  this replay, the registry records:
+  - "[radosgw's otp replay state stays in the zone that recorded it](#radosgws-otp-replay-state-stays-in-the-zone-that-recorded-it)":
+    each zone keeps its own counter, so a code used at one zone is accepted
+    once more at each other zone;
+  - "[radosgw's verify_mfa logs an x-amz-mfa value that does not split in two, its code included](#radosgws-verify_mfa-logs-an-x-amz-mfa-value-that-does-not-split-in-two-its-code-included)":
+    it logs a code no check has consumed at level 5, which default settings
+    gather into the in-memory log ring. This replay keeps such a code
+    verifying even after the user's own request has used it.
 - **Releases:** every release checked, v19.2.2 through main.
-- **rgw-go:** no cls_otp client yet (phase 2, MFA). If it reproduces the
-  replay index it must take the direction from the position out-parameter,
-  not from the return value.
+- **rgw-go:** affected as radosgw is: the class runs in the OSD, and rgw-go
+  calls it as radosgw does. fakerados's otp class computes the index as the
+  class does (`internal/testutil/fakerados/cls_otp_check.go`), and its spec
+  "verifies a used code again in each later step of its window" pins the
+  replay (`internal/testutil/fakerados/cls_otp_check_test.go`).
 - **Upstream:** [#80949](https://tracker.ceph.com/issues/80949), which we
   filed. Its fix, [ceph/ceph#72253](https://github.com/ceph/ceph/pull/72253),
   a draft, passes `&otp_pos` and sets the index to
   `(secs - otp.time_ofs) / otp.step_size + otp_pos`. It changes the same
   statement as [ceph/ceph#72250](https://github.com/ceph/ceph/pull/72250),
   #80948's fix; the two are independent, and whichever merges second needs a
-  one-line rebase.
+  one-line rebase. ceph/ceph#72253's signed `otp_pos` fixes both faces: the
+  index of a code of step `n` is `n` at every step, so intervening codes
+  are no longer refused and a used code's second check fails. #80949
+  describes only the refusal of intervening codes: its description says "It
+  does not bypass MFA", as does its note 373349, and neither mentions the
+  replay (read 2026-10-21). Its update is pending through
+  rgw-bug-reproduction.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-013); liboath premise
   verified 2026-09-27 and confirmed at oath-toolkit-2.6.11, whose
   `liboath/totp.c` returns the absolute position and carries its sign only in
@@ -22390,3 +22455,52 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task V9's re-review, 2026-10-21, tracing rgw-go's
   purge pagers; verified at v19.2.7 and v20.2.4 by V9's fix round 2.
   Derived from the source, not reproduced.
+
+## cls_otp checks a code at the low 32 bits of the OSD's clock
+
+- **Kind:** defect, S3-correctness, latent until 2106-02-07T06:28:16Z: from
+  then on the otp class refuses every code an authenticator shows. Not
+  security-relevant: the wrap lifts the five-attempt limit, but
+  `otp_get_result` trims the check just recorded the same way and so can
+  never answer `OTP_CHECK_SUCCESS`. Unfixed at v19.2.7 and v20.2.4.
+  Unreproduced: derived from the source.
+- **Evidence:**
+  - `otp_instance::verify` casts the check's time to `uint32_t secs` and
+    hands liboath `secs` as its `time_t now`
+    ([cls_otp.cc:129-136](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L129-L136),
+    [cls_otp.cc:129-136](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L129-L136)).
+    liboath counts the TOTP steps from that `time_t`
+    ([totp.c:251-264](https://github.com/jas4711/oath-toolkit/blob/oath-toolkit-2.6.9/liboath/totp.c#L251-L264),
+    [totp.c:543-546](https://github.com/jas4711/oath-toolkit/blob/oath-toolkit-2.6.9/liboath/totp.c#L543-L546)
+    at oath-toolkit 2.6.9).
+  - From 2106-02-07T06:28:16Z the cast wraps to 1970, so liboath makes the
+    codes of a time 2^32 seconds earlier, and a code made at the true time
+    fails.
+  - A check's stored time wraps the same way, as a `real_time` encodes 32
+    bits of seconds
+    ([encoding.h:341-354](https://github.com/ceph/ceph/blob/v19.2.7/src/include/encoding.h#L341-L354),
+    [encoding.h:342-355](https://github.com/ceph/ceph/blob/v20.2.4/src/include/encoding.h#L342-L355)).
+    So `trim_expired` drops every stored check as older than the window,
+    and `otp_get_result` answers `OTP_CHECK_UNKNOWN` for the check just
+    recorded
+    ([cls_otp.cc:98-106](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L98-L106),
+    [cls_otp.cc:155-169](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L155-L169),
+    the same at v20.2.4).
+  - It is the 32-bit truncation of seconds that "[radosgw's parse_time
+    wraps a date outside 1970 to
+    2106](#radosgws-parse_time-wraps-a-date-outside-1970-to-2106)" and
+    "[radosgw's SigV2 date check wraps the request time to 32
+    bits](#radosgws-sigv2-date-check-wraps-the-request-time-to-32-bits)"
+    record.
+- **Impact:** after 2106-02-07 every MFA check fails, so radosgw refuses
+  every request that needs MFA, such as deleting an object version in a
+  bucket with MFA delete enabled. Nothing is affected before then.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** affected as radosgw is: the class runs in the OSD, and rgw-go
+  calls it as radosgw does. fakerados's otp class reproduces the cast
+  (`internal/testutil/fakerados/cls_otp_check.go`; spec "verifies the code
+  of the low 32 bits of the clock's seconds, as verify casts the time to
+  uint32_t", `internal/testutil/fakerados/cls_otp_check_test.go`).
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task V13b, 2026-10-20, emulating `otp_check`; checked
+  at v19.2.7 and v20.2.4, derived from the source, not reproduced.
