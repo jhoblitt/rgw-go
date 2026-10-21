@@ -42,7 +42,7 @@ func PurgeBucket(ctx context.Context, env *Env, rec *BucketRecord) error {
 		if !res.Truncated {
 			break
 		}
-		p.Marker = res.NextMarker
+		p.Marker, p.MarkerInstance = res.NextMarker, res.NextMarkerInstance
 	}
 	return env.Buckets.DeleteBucket(ctx, rec)
 }

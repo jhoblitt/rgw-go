@@ -103,12 +103,12 @@ func (o *CheckBucketIndex) Execute(ctx context.Context, r *Request) error {
 // indexCheckPage at a time, handing each page's entries to fn. A listing
 // that answers truncated without moving its marker is an InternalError.
 func eachPage(ctx context.Context, env *Env, rec *BucketRecord, ns string, versions bool, fn func([]ObjectEntry)) error {
-	marker := ""
+	var marker, instance string
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		res, err := env.Buckets.ListObjects(ctx, rec, ListObjectsParams{NS: ns, ListVersions: versions, Marker: marker, MaxKeys: indexCheckPage})
+		res, err := env.Buckets.ListObjects(ctx, rec, ListObjectsParams{NS: ns, ListVersions: versions, Marker: marker, MarkerInstance: instance, MaxKeys: indexCheckPage})
 		if err != nil {
 			return err
 		}
@@ -116,10 +116,10 @@ func eachPage(ctx context.Context, env *Env, rec *BucketRecord, ns string, versi
 		if !res.Truncated {
 			return nil
 		}
-		if res.NextMarker == marker {
+		if res.NextMarker == marker && res.NextMarkerInstance == instance {
 			return fmt.Errorf("%w: the listing of bucket %s made no progress past %q", ErrInternalError, rec.Info.Bucket.Name, marker)
 		}
-		marker = res.NextMarker
+		marker, instance = res.NextMarker, res.NextMarkerInstance
 	}
 }
 

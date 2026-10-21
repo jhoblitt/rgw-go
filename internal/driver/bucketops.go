@@ -358,7 +358,7 @@ const emptinessPage = 1000
 // first, and checks one whose empty id RGWZoneGroup::equals takes for this
 // zonegroup.
 func (s *Store) checkBucketEmpty(ctx context.Context, rec *op.BucketRecord) error {
-	var marker rgwcls.ObjKey
+	var marker listPos
 	for {
 		entries, truncated, last, err := s.listUnordered(ctx, rec, marker, "", emptinessPage, true)
 		if err != nil {

@@ -205,8 +205,8 @@ var _ = Describe("ListObjects", func() {
 		Expect(res.Entries).To(Equal([]op.ObjectEntry{{
 			Key: meta.ObjKey{Name: "k"}, Size: 7, Mtime: indexMtime, ETag: "e-k",
 			Owner: meta.UserOwner(meta.UserID{ID: "alice"}), OwnerDisplayName: "Alice",
-			StorageClass: meta.StorageClassStandard, IsLatest: true, Exists: true, Appendable: true,
-		}}), "accounted_size is the listed Size, an empty class is STANDARD, an unversioned entry is current")
+			StorageClass: meta.StorageClassStandard, IsLatest: true, Exists: true, Appendable: true, Category: rgwcls.CategoryMain,
+		}}), "accounted_size is the listed Size, an empty class is STANDARD, an unversioned entry is current, at epoch 0")
 	})
 	It("reconciles a pending entry against its head and drops one whose head is gone", func(ctx SpecContext) {
 		seedEntry(pending(entry("gone", 1), "tx1"))

@@ -72,7 +72,7 @@ func (s *Store) PurgeBypassGC(ctx context.Context, rec *op.BucketRecord) error {
 		if !res.Truncated {
 			break
 		}
-		params.Marker = res.NextMarker
+		params.Marker, params.MarkerInstance = res.NextMarker, res.NextMarkerInstance
 	}
 	if err := p.stop(nil); err != nil {
 		return err
