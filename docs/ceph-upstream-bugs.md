@@ -471,7 +471,8 @@ Every new entry adds its row to this table, in document order.
 
 ## cls_rgw complete_op writes a stale epoch back when it cancels
 
-- **Kind:** defect, a regression; unfixed through main.
+- **Kind:** defect, a regression, data corruption of the index entry's
+  metadata; unfixed through main.
 - **Evidence:** at v19.2.6 `bucket_complete_op` turns a completion whose
   epoch is not newer than the entry's into a cancel (`cls_rgw.cc:1082-1086`),
   but first copies the op's version onto the entry (`:1094`), and the cancel
@@ -508,6 +509,18 @@ Every new entry adds its row to this table, in document order.
   `set_attrs` call on failure, as does the removal of a multipart upload's
   meta object (`internal/driver/mp_cleanup.go`); `indexop_test.go` pins the
   request and the entry version it leaves.
+  - It applies to a version's instance entry as to a plain entry:
+    `bucket_complete_op` reads either through `read_key_entry`, then runs
+    the same check, copy and write-back
+    ([cls_rgw.cc:1047-1117](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1047-L1117),
+    [cls_rgw.cc:1182-1251](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1182-L1251)). On a
+    versioned bucket the completions and cancels of one version's writes
+    meet it: the null version's repeated writes, and attribute changes on a
+    version, which radosgw completes on its instance key. Awaiting a versioned
+    write's completion (`docs/exclusions.md`, "A versioned write awaits its
+    index completion") orders it before that writer's own link only, not
+    against another writer's completion, so on either kind of entry the
+    class decides and no client can work around it.
 - **Upstream:** [#80894](https://tracker.ceph.com/issues/80894), filed
   2026-09-26 with the same analysis, both triggers and the regression from
   8b27472bbd8; its backports are tentacle and umbrella. Our
