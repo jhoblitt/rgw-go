@@ -76,6 +76,12 @@ func (s *Store) DeleteObject(ctx context.Context, rec *op.BucketRecord, key meta
 // otherwise than by timing out cancels the prepare. st is the head as read.
 // The removal runs to its end whatever the client does.
 func (s *Store) removeHead(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, hashName string, st *op.ObjectState, w *radosclient.WriteOp, counted bool) error {
+	return s.removeHeadFlagged(ctx, rec, key, hashName, st, w, counted, 0)
+}
+
+// removeHeadFlagged is removeHead whose index prepare, completion and cancel
+// carry bilogFlags, the RGWBILogFlags delete_obj's caller gives it.
+func (s *Store) removeHeadFlagged(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, hashName string, st *op.ObjectState, w *radosclient.WriteOp, counted bool, bilogFlags uint16) error {
 	ref, err := s.headRef(ctx, rec, key)
 	if err != nil {
 		return err
@@ -88,6 +94,7 @@ func (s *Store) removeHead(ctx context.Context, rec *op.BucketRecord, key meta.O
 	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7087-L7093).
 	x := s.newIndexOp(rec, key, "")
 	x.hashName = hashName
+	x.bilogFlags = bilogFlags
 	if err = x.prepare(ctx, rgw.OpDel); err != nil {
 		return op.FromRADOS(err, op.ScopeObject)
 	}

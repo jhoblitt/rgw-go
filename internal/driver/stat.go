@@ -26,7 +26,33 @@ func (s *Store) PrefetchObject(ctx context.Context, rec *op.BucketRecord, key me
 	return s.readHead(ctx, rec, key, true)
 }
 
-// readHead is RGWRados::raw_obj_stat
+// readHead is statHead for a read that would follow the OLH, which rgw-go
+// does not do: it refuses the OLH head of a versioned object.
+func (s *Store) readHead(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, prefetch bool) (*op.ObjectState, error) {
+	st, err := s.statHead(ctx, rec, key, prefetch)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := st.Attrs[meta.AttrOLHVer]; ok {
+		slog.InfoContext(ctx, "refusing the olh head of a versioned object: versioning is not implemented",
+			slog.String("bucket", rec.Info.Bucket.Name), slog.String("key", st.Key.Name))
+		return nil, fmt.Errorf("%w: %s/%s is the olh head of a versioned object", op.ErrNotImplemented, rec.Info.Bucket.Name, st.Key.Name)
+	}
+	return st, nil
+}
+
+// readOLHHead is get_obj_state without following the OLH, as set_olh and
+// unlink_obj_instance read the key's OLH head
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8694 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8793 at v19.2.7;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9440 at v20.2.4,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9539 at v20.2.4):
+// statHead with no prefetch, which reads an OLH head as any other head.
+func (s *Store) readOLHHead(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey) (*op.ObjectState, error) {
+	return s.statHead(ctx, rec, key, false)
+}
+
+// statHead is RGWRados::raw_obj_stat
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L8827-L8870 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9771-L9814 at v20.2.4)
 // followed by the decoding get_obj_state_impl does
@@ -34,7 +60,7 @@ func (s *Store) PrefetchObject(ctx context.Context, rec *op.BucketRecord, key me
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6874-L7051 at v20.2.4):
 // one RADOS op that reads the head's version, every xattr, the stat and,
 // with prefetch, its first rgw_max_chunk_size bytes.
-func (s *Store) readHead(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, prefetch bool) (*op.ObjectState, error) {
+func (s *Store) statHead(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, prefetch bool) (*op.ObjectState, error) {
 	ref, err := s.headRef(ctx, rec, key)
 	if errors.Is(err, radosclient.ErrNotFound) {
 		// radosgw's stat creates a missing data pool, opening it with create
@@ -155,11 +181,6 @@ func decodeState(ctx context.Context, st *op.ObjectState) error {
 	}
 	st.StorageClass = string(st.Attrs[meta.AttrStorageClass])
 	st.ContentType = strings.TrimRight(string(st.Attrs[meta.AttrContentType]), "\x00")
-	if _, ok := st.Attrs[meta.AttrOLHVer]; ok {
-		slog.InfoContext(ctx, "refusing the olh head of a versioned object: versioning is not implemented",
-			slog.String("bucket", rec.Info.Bucket.Name), slog.String("key", st.Key.Name))
-		return fmt.Errorf("%w: %s/%s is the olh head of a versioned object", op.ErrNotImplemented, rec.Info.Bucket.Name, st.Key.Name)
-	}
 	return nil
 }
 

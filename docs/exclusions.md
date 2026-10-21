@@ -7645,11 +7645,17 @@ does the following.
     [cls_rgw.cc:1630-1644](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1630-L1644)).
     rgw-go then writes `olh.ver` back to that epoch. The link at epoch 2
     lands its `olh.info` only when the tie-break applies it, its instance
-    sorting before the head's current one; the next link lands in any case.
-    radosgw's replay writes nothing to the head, and its GET answers 404
-    until a link's epoch reaches the old `olh.ver`. While the new writer's
-    pending attr remains, the follow's `update_olh` is refused and the
-    follow answers ENOENT
+    sorting before the head's current one, and the next link lands but in
+    one window. A replay that read the head and the log before the epoch-2
+    apply, such as a reader's beside the epoch-2 writer's own, can land
+    after the next link's apply: its guard finds the `olh.ver` it read,
+    written back up again, and its tie-break against the `olh.info` it read
+    can write the epoch-2 link over the next one, so that `olh.info` names
+    an older version than the index's current one until the key's next
+    link. radosgw's replay writes nothing to the head while the log's last
+    epoch is below the old `olh.ver`, and its GET answers 404 meanwhile.
+    While the new writer's pending attr remains, the follow's `update_olh`
+    is refused and the follow answers ENOENT
     ([rgw_rados.cc:8987-8996](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8987-L8996),
     [rgw_rados.cc:9733-9742](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9733-L9742)).
     Afterwards `olh.info` still names the version whose unlink led to the
@@ -7663,7 +7669,15 @@ does the following.
     `astate->exists` and answers ENOENT
     ([rgw_rados.cc:7056-7058](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7056-L7058),
     [rgw_rados.cc:7718-7720](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7718-L7720)).
-    rgw-go's outcome serves the key better.
+    At the old `olh.ver` radosgw's tie-break decides, its epoch fixed at
+    the old one
+    ([rgw_rados.cc:8484-8485](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8484-L8485),
+    [rgw_rados.cc:9230-9231](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9230-L9231)):
+    a link there lands only when its instance sorts before the stale
+    `olh.info`'s, and the restarted log's epoch-2 link can land over the
+    class's current one, the state rgw-go's window leaves, reached without
+    concurrency. Outside that window rgw-go's outcome serves the key
+    better, and inside it no worse than radosgw's.
 
   Versioning is not served yet; the retry lands with the update that runs
   the replay.
@@ -7701,12 +7715,126 @@ does the following.
   replay meets the entry. Until then a replay can still remove the version
   as radosgw's does, guarded only on the write tag it reads: one by another
   reader running alongside the writer's own, one after the writer's head op
-  failed and its retry never landed, and the replay of a re-tagged entry's
-  kept log. That is the window the
+  failed and its retry never landed, every later replay after a trim that
+  kept failing, and the replay of a re-tagged entry's kept log. That is the window the
   versioned delete with `Expect` keeps as radosgw's own, where a replay by
   another reader, which does not know `Expect`, removes what it reads.
   radosgw has no `Expect`, so a radosgw writer never meets this case.
   Versioning is not served yet.
+- **rgw-go removes the instance a failed versioned write made.** A
+  versioned write writes its version's head and completes the version's
+  instance entry in the bucket index before it links the version under the
+  key's OLH. When the link fails, radosgw's `set_olh` cancels its pending
+  modification and returns the error
+  ([rgw_rados.cc:8715-8737](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8715-L8737),
+  [rgw_rados.cc:9461-9483](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9461-L9483)),
+  leaving the head and an instance entry that no listing shows, which
+  `radosgw-admin bucket check` reports. rgw-go removes them, as its
+  unversioned delete removes an object, with the head's removal guarded on
+  its write tag (`removeFailedVersion`, `internal/driver/olh.go`), when the
+  write gives up on an answer that proves no link of it landed: the class's
+  or the OSD's, the reshard guard's, the write's condition, or every one of
+  radosgw's 100 attempts lost to another writer; the awaited completion
+  before the link fails it the same way (exclusion "A versioned write
+  awaits its index completion"). A timeout, a context that ended or a
+  closed connection leaves the outcome unknown, and a version removed after
+  a link that did land would be listed with no head, so then rgw-go removes
+  nothing, as radosgw. It removes no delete marker, which has no head, and
+  not the null version, whose head is the key's OLH head. A removal that
+  fails, such as one a resharding shard still refuses past the reshard
+  guard's waits, leaves the version as radosgw leaves it, logged. A failed
+  versioned delete makes no version and removes none. Versioning is not
+  served yet.
+- **A versioned write retries when the key's OLH head goes between its read
+  and its init.** radosgw's `set_olh` reads the key's OLH head and then
+  inits a pending modification on it, which asserts that a head it read
+  still exists; it retries the init's ECANCELED alone and returns its
+  ENOENT
+  ([rgw_rados.cc:8689-8706](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8689-L8706),
+  [rgw_rados.cc:9435-9452](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9435-L9452)).
+  The head goes when the deletion of the key's last version clears the
+  OLH, so a versioned write racing that deletion fails with 404 NoSuchKey
+  after its version is written (`docs/ceph-upstream-bugs.md`,
+  "[radosgw's versioned write fails when the key's OLH head goes between
+  its read and its
+  init](ceph-upstream-bugs.md#radosgws-versioned-write-fails-when-the-keys-olh-head-goes-between-its-read-and-its-init)").
+  rgw-go's `setOLH` (`internal/driver/olh.go`) takes that ENOENT, on a head
+  its read found, as it takes ECANCELED: its next attempt, within radosgw's
+  100, reads the head again, finds none, creates it and links, and the
+  write succeeds with its version current, which is the state a write
+  that came after the deletion leaves. A versioned delete answers the same
+  ENOENT NoSuchKey, as radosgw's does: the key it names has no versions
+  left. Versioning is not served yet.
+- **A versioned link or unlink that logs nothing removes its own pending
+  attr.** radosgw's `set_olh` records a pending modification on the key's
+  OLH head before its link, and only the replay of the link's log entry
+  removes it. A link naming an epoch below the OLH entry's writes the
+  version non-current and logs nothing
+  ([cls_rgw.cc:1751-1760](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1751-L1760),
+  [cls_rgw.cc:1892-1901](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1892-L1901)),
+  and `apply_olh_log` returns at once on an empty log
+  ([rgw_rados.cc:8423-8425](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8423-L8425),
+  [rgw_rados.cc:9169-9171](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9169-L9171)),
+  so the attr stays until `rgw_olh_pending_timeout_sec`, an hour by
+  default, expires it. Until then every read of the key runs `update_olh`
+  from `follow_olh`
+  ([rgw_rados.cc:8984-8996](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8984-L8996),
+  [rgw_rados.cc:9730-9742](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9730-L9742)).
+  A lifecycle transition of a noncurrent version sends such a link, naming
+  the version's own epoch
+  ([rgw_lc.cc:1515-1516](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1515-L1516),
+  [rgw_lc.cc:1561-1562](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1561-L1562)).
+  An unlink naming an epoch comes from a system request's
+  `rgwx-versioned-epoch`
+  ([rgw_op.cc:5268-5285](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5268-L5285),
+  [rgw_op.cc:5657-5674](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5657-L5674))
+  or from data sync's `RGWAsyncRemoveObj`
+  ([rgw_cr_rados.cc:946](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_cr_rados.cc#L946),
+  [rgw_cr_rados.cc:1001](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_cr_rados.cc#L1001)),
+  and only radosgw's own multisite connection sends `rgwx-` parameters.
+  rgw-go removes its own pending attr after its replay, as a failed link's
+  cancel removes it, when the replay, reading the log from its start, read
+  every page and found no entry under the modification's op tag
+  (`finishOLHModification`, `internal/driver/olh.go`); an unlink that logs
+  nothing, of a delete marker at an older epoch, does the same. An entry
+  another writer applied and trimmed had its attr removed by that apply, so
+  the removal finds nothing, and an entry still in the log keeps its attr,
+  for the next reader's replay. With `skip_olh_obj_update` there is no
+  replay and the attr stays, as radosgw leaves it. Versioning is not served
+  yet.
+- **A versioned link or unlink whose outcome is unknown keeps its pending
+  attr.** radosgw's `set_olh` cancels its pending modification on every
+  failed link, a timeout included
+  ([rgw_rados.cc:8715-8717](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8715-L8717),
+  [rgw_rados.cc:9461-9463](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9461-L9463)),
+  and `unlink_obj_instance` on every failed unlink
+  ([rgw_rados.cc:8823-8824](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8823-L8824),
+  [rgw_rados.cc:9569-9570](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9569-L9570)),
+  though one that timed out may still land, and then no read of the key
+  replays it (`docs/ceph-upstream-bugs.md`, "[radosgw's set_olh cancels the
+  pending attr of a link that timed out, though it may have
+  landed](ceph-upstream-bugs.md#radosgws-set_olh-cancels-the-pending-attr-of-a-link-that-timed-out-though-it-may-have-landed)").
+  rgw-go keeps the attr when the failure leaves the outcome unknown, a
+  timeout, a context that ended or a closed connection (`outcomeUnknown`,
+  `internal/driver/olh.go`), and cancels it on any other failure, as
+  radosgw does. The best-effort update after the failure, which radosgw
+  runs too, applies a link or unlink that has landed by its read of the
+  log; one that lands later is applied by the next read of the key, whose
+  follow replays the log while the attr remains
+  ([rgw_rados.cc:8984-8996](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8984-L8996),
+  [rgw_rados.cc:9730-9742](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9730-L9742)),
+  or by the key's next writer. A timed-out unlink that lands thus has its
+  version removed by rgw-go's next read of the key, where radosgw's GET
+  keeps serving the unlinked version until the key next changes, as it
+  keeps serving the previous version after a timed-out link that lands.
+  A link or unlink that never landed leaves the attr until a follow
+  expires it past `rgw_olh_pending_timeout_sec`, an hour by
+  default, as `check_pending_olh_entries` expires any pending attr
+  ([rgw_rados.cc:8904-8934](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8904-L8934),
+  [rgw_rados.cc:9650-9680](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9650-L9680));
+  until then each read of the key runs a replay that finds nothing to
+  apply, and the attr refuses the clear of the key's OLH, as any writer's
+  pending attr does. Versioning is not served yet.
 - **zlib's compressor message states the window rgw-go deflates with.**
   radosgw's zlib compressor deflates with `compressor_zlib_winsize` and
   stores that value as each object's `compressor_message`
