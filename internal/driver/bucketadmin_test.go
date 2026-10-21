@@ -434,6 +434,46 @@ var _ = Describe("BucketAdminStore", func() {
 			Expect(listOwnerBuckets(ctx, aliceOwner)).To(ConsistOf("renamed-name"))
 			Expect(rec.Info.Bucket.Name).To(Equal("renamed-name"))
 		})
+		Describe("of a bucket carrying user.rgw.lc", func() {
+			var rec *op.BucketRecord
+			var oldKey, newKey string
+			BeforeEach(func(ctx SpecContext) {
+				rec = createBucket(ctx, "initial-name", aliceOwner)
+				Expect(s.PutBucketAttrs(ctx, rec, map[string][]byte{op.AttrLC: {1}}, nil)).To(Succeed())
+				Expect(s.SetEntry(ctx, rec)).To(Succeed())
+				oldKey = ":initial-name:" + rec.Info.Bucket.Marker
+				newKey = ":renamed-name:" + rec.Info.Bucket.Marker
+				Expect(lcEntries(c)).To(HaveKey(oldKey))
+			})
+
+			It("moves the lifecycle entry to the new name, which radosgw's rename leaves under the old one", func(ctx SpecContext) {
+				Expect(s.ChangeBucketOwner(ctx, rec, aliceOwner, "Alice", &meta.BucketID{Name: "renamed-name"})).To(Succeed())
+				Expect(lcEntries(c)).To(Equal(map[string]rgwcls.LCEntry{newKey: {Bucket: newKey, Status: rgwcls.LCStatusUninitial}}),
+					"the entry's key holds the bucket's name (docs/ceph-upstream-bugs.md)")
+				Expect(c.Locks(rookLCPool, rookLCNS, lcShardOf(newKey), "lc_process")).To(BeEmpty())
+				Expect(c.Locks(rookLCPool, rookLCNS, lcShardOf(oldKey), "lc_process")).To(BeEmpty())
+			})
+
+			It("completes the rename when the new entry cannot be filed", func(ctx SpecContext) {
+				c.FailNextWrite(rookLCPool, rookLCNS, lcShardOf(newKey), syscall.EIO)
+				Expect(s.ChangeBucketOwner(ctx, rec, aliceOwner, "Alice", &meta.BucketID{Name: "renamed-name"})).To(Succeed())
+				got, err := s.GetBucket(ctx, "", "renamed-name")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(got.Attrs).NotTo(HaveKey(op.RenameIntentAttr), "the rename finished")
+				Expect(lcEntries(c)).To(BeEmpty(), "the old entry goes all the same, as its name no longer loads the bucket")
+			})
+
+			It("leaves the index alone when only the owner changes", func(ctx SpecContext) {
+				before := lcEntries(c)
+				Expect(s.ChangeBucketOwner(ctx, rec, bobOwner, "Bob", nil)).To(Succeed())
+				Expect(lcEntries(c)).To(Equal(before))
+			})
+		})
+		It("files no lifecycle entry for a renamed bucket without user.rgw.lc", func(ctx SpecContext) {
+			rec := createBucket(ctx, "initial-name", aliceOwner)
+			Expect(s.ChangeBucketOwner(ctx, rec, aliceOwner, "Alice", &meta.BucketID{Name: "renamed-name"})).To(Succeed())
+			Expect(c.Objects(rookLCPool, rookLCNS)).To(BeEmpty())
+		})
 		It("refuses a new name another bucket holds, writing nothing", func(ctx SpecContext) {
 			rec := createBucket(ctx, "mine", aliceOwner)
 			theirs := createBucket(ctx, "theirs", carolOwner)
@@ -531,11 +571,13 @@ var _ = Describe("BucketAdminStore", func() {
 				{rookMetaPool, rookRoot, dstInst + "#2"},
 			}
 		}
-		// failRename runs the rename of src to dst for bob with its write at
-		// step failing, and expects it to fail.
-		failRename := func(ctx context.Context, step int) string {
+		// failRenameWith runs the rename of src to dst for bob with its write
+		// at step failing, for the bucket setup changes first, and expects it
+		// to fail.
+		failRenameWith := func(ctx context.Context, step int, setup func(*op.BucketRecord)) string {
 			GinkgoHelper()
 			rec := createBucket(ctx, "src", aliceOwner)
+			setup(rec)
 			id := rec.Info.Bucket.ID
 			f := renameWrites(id)[step]
 			if oid, second := strings.CutSuffix(f.oid, "#2"); second {
@@ -549,6 +591,10 @@ var _ = Describe("BucketAdminStore", func() {
 			Expect(s.ChangeBucketOwner(ctx, rec, bobOwner, "Bob", &meta.BucketID{Name: "dst"})).NotTo(Succeed())
 			holds(ctx, id)
 			return id
+		}
+		failRename := func(ctx context.Context, step int) string {
+			GinkgoHelper()
+			return failRenameWith(ctx, step, func(*op.BucketRecord) {})
 		}
 		// retryRename is the same request again: the old name, or, once it
 		// no longer loads, the new name its rename's record names, as
@@ -1070,6 +1116,21 @@ var _ = Describe("BucketAdminStore", func() {
 				id := failRename(ctx, step)
 				Expect(retryRename(ctx)).To(Succeed())
 				completed(ctx, id)
+			},
+			renameSteps,
+		)
+		DescribeTable("moves the lifecycle entry of a bucket carrying user.rgw.lc when the retry of a rename that failed at any write completes",
+			func(ctx context.Context, step int) {
+				var srcKey, dstKey string
+				id := failRenameWith(ctx, step, func(rec *op.BucketRecord) {
+					Expect(s.PutBucketAttrs(ctx, rec, map[string][]byte{op.AttrLC: {1}}, nil)).To(Succeed())
+					Expect(s.SetEntry(ctx, rec)).To(Succeed())
+					srcKey, dstKey = ":src:"+rec.Info.Bucket.Marker, ":dst:"+rec.Info.Bucket.Marker
+				})
+				Expect(lcEntries(c)).To(Equal(map[string]rgwcls.LCEntry{srcKey: {Bucket: srcKey}}), "the failed attempt moves no entry")
+				Expect(retryRename(ctx)).To(Succeed())
+				completed(ctx, id)
+				Expect(lcEntries(c)).To(Equal(map[string]rgwcls.LCEntry{dstKey: {Bucket: dstKey}}))
 			},
 			renameSteps,
 		)

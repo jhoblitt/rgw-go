@@ -428,8 +428,10 @@ const maxRemoveRetries = 20
 // race as op.ErrRemovalRaced once the removal's claim is cleared
 // (releaseRemoval). The instance follows, under
 // the version read, then the index of the generation that read names, whose
-// failure is logged, and last the owner's list entry, whose failure is
-// returned.
+// failure is logged, the owner's list entry, whose failure is returned, and
+// last the bucket's lifecycle entry (removeLCEntry). The steps from the
+// entry point's read through the owner's list entry run past the end of
+// ctx; the lifecycle entry's removal does not.
 //
 // radosgw answers a delete whose instance removal lost to another write
 // with success, leaving the instance, the index and the owner's entry
@@ -468,28 +470,68 @@ func (s *Store) DeleteBucket(ctx context.Context, rec *op.BucketRecord) error {
 	if cur, lerr = s.claimRemoval(ctx, cur); lerr != nil {
 		return lerr
 	}
-	e, err := s.readEntryPoint(ctx, b.Tenant, b.Name)
+	// From the entry point's read on, the removal runs to its end, as
+	// radosgw's does: a request that ended between its steps would leave the
+	// owner's list naming a bucket that is gone, and its index, and a read
+	// failing for an ended request would leave the entry point while the
+	// instance went.
+	rctx := context.WithoutCancel(ctx)
+	e, err := s.readEntryPoint(rctx, b.Tenant, b.Name)
 	switch {
 	case err != nil:
 		if !errors.Is(err, op.ErrNoSuchBucket) {
-			slog.ErrorContext(ctx, "could not read the bucket entry point; leaving it", slog.String("bucket", b.Name), slog.Any("error", err))
+			slog.ErrorContext(rctx, "could not read the bucket entry point; leaving it", slog.String("bucket", b.Name), slog.Any("error", err))
 		}
 	case b.ID != "" && e.ep.Bucket.ID != b.ID:
 	default:
-		if rerr := s.removeEntryPoint(ctx, b.Tenant, b.Name, &objv{read: e.v.read}); rerr != nil {
-			return s.releaseRemoval(ctx, cur, rerr)
+		if rerr := s.removeEntryPoint(rctx, b.Tenant, b.Name, &objv{read: e.v.read}); rerr != nil {
+			return s.releaseRemoval(rctx, cur, rerr)
 		}
 	}
-	if cur, err = s.removeCurrentInstance(ctx, cur); err != nil {
+	if cur, err = s.removeCurrentInstance(rctx, cur); err != nil {
 		return err
 	}
-	if err := s.cleanIndex(ctx, &cur.Info); err != nil {
-		slog.WarnContext(ctx, "could not remove bucket index", slog.String("bucket", b.Name), slog.Any("error", err))
+	if err := s.cleanIndex(rctx, &cur.Info); err != nil {
+		slog.WarnContext(rctx, "could not remove bucket index", slog.String("bucket", b.Name), slog.Any("error", err))
 	}
-	if err := s.unlinkInstance(ctx, cur.Info.Owner, b); err != nil {
+	if err := s.unlinkInstance(rctx, cur.Info.Owner, b); err != nil {
 		return fmt.Errorf("unlinking bucket %s from %s: %w", b.Name, cur.Info.Owner, op.FromRADOS(err, op.ScopeBucket))
 	}
+	s.removeLCEntry(ctx, cur)
 	return nil
+}
+
+// removeLCEntry is remove's removal of the bucket's lifecycle entry, made
+// when rec, the instance the delete removed, carries user.rgw.lc. A failure
+// is logged and ignored, as remove casts it to void
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L402-L407 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L419-L424 at v20.2.4):
+// the entry left names a bucket its name no longer loads, or loads with
+// another marker, which a lifecycle pass drops as radosgw's
+// bucket_lc_process does
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1697-L1718 at v19.2.7
+// and https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2430-L2440,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1753-L1774 at v20.2.4
+// and https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2497-L2506).
+// rgw-go runs no lifecycle pass of its own yet, so in a zone with no
+// radosgw lifecycle thread nothing drops it.
+//
+// radosgw removes the entry before delete_bucket, which can still fail and
+// leave the bucket with its configuration and without its entry
+// (docs/ceph-upstream-bugs.md, "radosgw's bucket delete drops the
+// lifecycle entry of a bucket it then fails to remove"), so DeleteBucket
+// removes it as its last step, once the bucket is gone, and on the
+// request's context, unlike the removal before it: its wait for a shard
+// another holder locked lasts up to 50 s, which a client that leaves or a
+// drain that expires must be able to end, and ending it leaves only the
+// entry.
+func (s *Store) removeLCEntry(ctx context.Context, rec *op.BucketRecord) {
+	if _, ok := rec.Attrs[op.AttrLC]; !ok {
+		return
+	}
+	if err := s.RemoveEntry(ctx, rec); err != nil {
+		slog.WarnContext(ctx, "could not remove the removed bucket's lifecycle entry", slog.String("bucket", rec.Info.Bucket.Name), slog.Any("error", err))
+	}
 }
 
 // removeCurrentInstance removes cur's instance under the version cur was

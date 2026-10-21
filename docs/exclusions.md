@@ -1268,6 +1268,28 @@ review and verified against the tree.
       through the old name between the attempts is lost too
       (docs/ceph-upstream-bugs.md, "radosgw's bucket rename loses a bucket
       config write made through the old name").
+  - A bucket rename moves the lifecycle entry to the new name. An entry is
+    keyed by the bucket's tenant, name and marker, and radosgw's rename
+    moves none, so the renamed bucket's rules stop running
+    (docs/ceph-upstream-bugs.md, "[radosgw's bucket rename leaves the
+    renamed bucket out of the lifecycle
+    index](ceph-upstream-bugs.md#radosgws-bucket-rename-leaves-the-renamed-bucket-out-of-the-lifecycle-index)").
+    Once a rename of a bucket carrying `user.rgw.lc` completes, its retry
+    included, rgw-go files the entry under the new name and removes the
+    one under the old, logging a failure of either; a failure to file it
+    leaves the bucket out of the index, as radosgw's rename does. An old
+    entry left behind names a name that no longer loads the bucket, which
+    radosgw's lifecycle pass drops, as for a delete ("A bucket delete
+    removes the lifecycle entry once the bucket is gone"), and rgw-go's own
+    worker once it does what `bucket_lc_process` does; until then, in a
+    zone where no radosgw lifecycle thread runs, nothing drops it. A
+    DeleteBucketLifecycle on the new name that lands between the rename's
+    last instance write and its filing of the entry leaves an entry for a
+    bucket without `user.rgw.lc`. radosgw's pass keeps such an entry and
+    skips the bucket
+    ([rgw_lc.cc:1776-1783](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1776-L1783)),
+    which costs one bucket load per pass until the bucket's next lifecycle
+    configuration put or delete, or its removal.
   - The owners' bucket list entries a link removes are the ACL owner's and
     the instance owner's when it differs, each only while it names the
     bucket's instance, and a failure is returned; radosgw removes the ACL
@@ -1655,9 +1677,19 @@ review and verified against the tree.
     answers 409 BucketAlreadyExists, as either would share another bucket's
     index or objects; the check lists the instances' keys, which carry
     their ids, and reads each instance for its marker, one read per
-    instance. The instance's
-    lifecycle configuration and topic mappings, which radosgw updates
-    after the write, are not kept by rgw-go yet.
+    instance. After the write and the index, the bucket's lifecycle
+    entry is set when the document's attrs carry `user.rgw.lc` and removed
+    when only the stored instance's did, as v20.2.4's put does
+    ([rgw_bucket.cc:3010-3040](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L3010-L3040)),
+    and a failure of either fails the put after its write, as on both
+    releases, a shard whose lock stays held answering 503
+    ServiceUnavailable. rgw-go keeps that rule on Squid, where v19.2.7's
+    put also removes the entry when neither carries the attr
+    ([rgw_bucket.cc:2900-2928](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L2900-L2928)):
+    that removes only an entry no configuration the bucket held implied,
+    and fails a put that leaves lifecycle alone whenever the shard's lock
+    stays held. The instance's topic mappings, which radosgw updates after
+    the write, are not kept by rgw-go yet.
   - The bucket puts serialize on a bucket claim, an object per bucket id
     in the domain root's pool under the domain root's namespace with
     `.rgw-go-bucket-claims` appended (`root.rgw-go-bucket-claims` in a
@@ -3748,6 +3780,12 @@ v20.2.4 tags, rgw-go does the following.
     PutObject is not one: once its body is read, its write and its second
     quota check go on under a context detached from the request's
     (`internal/driver/put.go`), and the multipart writes detach the same way.
+    Nor is a DeleteBucket past its removal's claim: from the entry point's
+    read through the owner's list entry it runs to its end, and only its
+    last step, the lifecycle entry's removal, stops with the request,
+    leaving an entry for a bucket that is gone ("A bucket delete removes
+    the lifecycle entry once the bucket is gone"; `DeleteBucket`,
+    `internal/driver/bucketops.go`).
     A CompleteMultipartUpload or AbortMultipartUpload stopped while its
     `RGWCompleteMultipart` lock request is in flight, which may still land,
     sends the unlock under the cookie of that one attempt (`lockMeta`,
@@ -5621,6 +5659,34 @@ differ, rgw-go does the following.
     counted, as radosgw counts the abort it makes of it; the delete goes on
     and leaves its meta object and parts. The emptiness check lets the
     delete reach it only for a head without a visible index entry.
+- **A bucket delete removes the lifecycle entry once the bucket is gone.**
+  For a bucket whose attrs carry `user.rgw.lc`, both gateways remove its
+  entry from its lifecycle shard after the multipart abort, and neither
+  fails the delete when that removal fails
+  ([rgw_sal_rados.cc:402-407](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L402-L407),
+  [rgw_sal_rados.cc:419-424](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L419-L424)).
+  radosgw removes it before `delete_bucket`, whose second emptiness check
+  or entry point removal can still fail and leave the bucket with its
+  lifecycle configuration and without its entry, so its rules never run
+  again (`docs/ceph-upstream-bugs.md`, "[radosgw's bucket delete drops the
+  lifecycle entry of a bucket it then fails to
+  remove](ceph-upstream-bugs.md#radosgws-bucket-delete-drops-the-lifecycle-entry-of-a-bucket-it-then-fails-to-remove)").
+  rgw-go removes it as the delete's last step, after the owner's list
+  entry, reading the attr from the instance it removed, so a delete that
+  fails before, as one a live rename refuses or one that loses its entry
+  point to another write does, keeps the entry. The removal waits for the
+  shard's lock up to 50 s, as radosgw's does, and a delete whose request
+  ends in that wait, or whose entry removal fails, has already removed
+  the bucket. The entry it leaves names a bucket the name no longer
+  loads, or loads with another marker, which radosgw's next lifecycle
+  pass on the shard drops, as `bucket_lc_process` answers -ENOENT for it
+  ([rgw_lc.cc:1697-1718](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1697-L1718),
+  [rgw_lc.cc:2430-2440](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2430-L2440),
+  [rgw_lc.cc:1753-1774](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1753-L1774),
+  [rgw_lc.cc:2497-2506](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2497-L2506)).
+  rgw-go's own lifecycle worker drops it too once it does what
+  `bucket_lc_process` does. Until then, in a zone where no radosgw
+  lifecycle thread runs, nothing drops it.
 - **A retried bucket write stops when the name names another bucket.**
   PutBucketPolicy, DeleteBucketPolicy, PutBucketTagging,
   DeleteBucketTagging, PutBucketWebsite, DeleteBucketWebsite,

@@ -95,6 +95,12 @@ func (s *Store) SetSweepLimitForTest(n int) { s.sweepLimit = n }
 // against.
 func SetHeadStaterForTest(s *Store, h HeadStater) { s.heads = h }
 
+// SetLCSleepForTest makes sleep the wait between tries of a lifecycle shard
+// another holder has locked.
+func SetLCSleepForTest(s *Store, sleep func(ctx context.Context, d time.Duration) error) {
+	s.lc.sleep = sleep
+}
+
 // HoldSuggestSlotsForTest takes every slot listing suggestions are sent
 // under until release runs.
 func HoldSuggestSlotsForTest(s *Store) (release func()) {
