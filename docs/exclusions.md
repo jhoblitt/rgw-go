@@ -4059,6 +4059,174 @@ v20.2.4 tags, rgw-go does the following.
   (`op.GetBucketCORS`,
   `op.PutBucketCORS`, `op.DeleteBucketCORS` and `op.OptionsCORS`,
   `internal/op/cors.go`).
+- **A POST form part ends only at a delimiter line.** radosgw's POST form
+  reader takes `--` and the boundary anywhere for a part's end, with the
+  CRLF before it when there is one
+  ([rgw_rest.cc:1173-1220](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1173-L1220) at v19.2.7,
+  [rgw_rest.cc:1173-1220](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1173-L1220) at v20.2.4):
+  in a part's data, so a file or field whose data holds that text mid-line
+  is cut there, and in a part's header lines, which `read_line` reads with
+  the same `index_of`, so a header holding it, a filename for one, is cut
+  there and ends the part's headers
+  ([rgw_rest.cc:1294-1300](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1294-L1300) at v19.2.7,
+  [rgw_rest.cc:1294-1300](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1294-L1300) at v20.2.4;
+  [rgw_rest.cc:1359-1361](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1359-L1361) at v19.2.7,
+  [rgw_rest.cc:1359-1361](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1359-L1361) at v20.2.4)
+  (docs/ceph-upstream-bugs.md, "[radosgw cuts a POST upload's file at its
+  boundary's text
+  mid-line](ceph-upstream-bugs.md#radosgw-cuts-a-post-uploads-file-at-its-boundarys-text-mid-line)").
+  rgw-go ends a part only at a delimiter line, as RFC 2046 section 5.1.1
+  defines it for multipart/form-data (RFC 7578): `--` and the boundary at
+  the start of a line, which the body, a part's data and every CRLF start,
+  then, for the close delimiter, `--`, then transport padding, spaces and
+  tabs, which RFC 2046 says "receivers MUST be able to handle", then CRLF,
+  or for the close delimiter the body's end (`delimiterEnd`,
+  `internal/s3/postform.go`). It takes at most 256 bytes of padding
+  (`formMaxPadding`), so a delimiter is decided within its buffer. A line
+  that goes on from the boundary to padding or `--` and does not complete a
+  delimiter, with more padding than that, other text after the padding or
+  after the close's `--`, or a close ended by a bare LF, is 400
+  InvalidArgument, "Malformed request", and with no message in a part after
+  the file, wherever it falls: RFC 2046 keeps the boundary delimiter out of
+  a part, so no conforming composer sends one, and Amazon S3 answers a body
+  that is not well-formed multipart/form-data MalformedPOSTRequest. A
+  boundary followed by other text, such as `--Bxyz`, is data. radosgw
+  closes the form at any line that starts with `--`, the boundary and `--`,
+  whatever follows
+  ([rgw_rest.cc:1279-1283](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1279-L1283) at v19.2.7,
+  [rgw_rest.cc:1279-1283](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1279-L1283) at v20.2.4):
+  as the form's last line it stores the file as sent, and inside the file's
+  data it stores the file cut there. So a client that ends its form with a
+  bare-LF close, which RFC 2046's CRLF forbids, is refused here where
+  radosgw stores its file. A header line is read whole, to its CRLF. radosgw ends the
+  part at a padded delimiter too, but reads the padding and its CRLF as the
+  next part's empty header block, so that part loses its name
+  (docs/ceph-upstream-bugs.md, "[radosgw reads the part after a padded POST
+  form delimiter without its
+  headers](ceph-upstream-bugs.md#radosgw-reads-the-part-after-a-padded-post-form-delimiter-without-its-headers)").
+  rgw-go skips a preamble before the first delimiter, which radosgw reads
+  as the first part's header lines, refusing a line without a colon and
+  misfiling the first part after one with a colon
+  ([rgw_rest.cc:1311-1370](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1311-L1370) at v19.2.7,
+  [rgw_rest.cc:1311-1370](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1311-L1370) at v20.2.4)
+  (docs/ceph-upstream-bugs.md, "[radosgw parses a POST form's preamble as
+  its first part's header
+  lines](ceph-upstream-bugs.md#radosgw-parses-a-post-forms-preamble-as-its-first-parts-header-lines)").
+  A part delimiter among a part's header lines, which radosgw skips once at
+  the part's start and otherwise takes for the end of the headers, is 400
+  InvalidArgument, "Malformed request". A close delimiter there ends the
+  form in both, and after the file part, where radosgw's
+  `complete_get_params` then answers 400 for want of the part's data
+  ([rgw_rest_s3.cc:3256-3278](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3256-L3278) at v19.2.7,
+  [rgw_rest_s3.cc:3392-3414](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3392-L3414) at v20.2.4),
+  rgw-go reads it as the form's end.
+- **A POST form that ends before its file part's delimiter is refused.**
+  radosgw's part loop ends with no error when a field's data ends at the
+  close delimiter
+  ([rgw_rest_s3.cc:2923-2971](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2923-L2971) at v19.2.7,
+  [rgw_rest_s3.cc:3049-3097](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3049-L3097) at v20.2.4),
+  so a form with no file part goes on to store the object from what
+  follows the close delimiter; and `get_data` reads a file part that no
+  delimiter ends up to the body's end, which the write stores
+  ([rgw_rest_s3.cc:3280-3303](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3280-L3303) at v19.2.7,
+  [rgw_rest_s3.cc:3416-3439](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3416-L3439) at v20.2.4;
+  [rgw_op.cc:4695-4721](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4695-L4721) at v19.2.7,
+  [rgw_op.cc:5008-5035](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5008-L5035) at v20.2.4)
+  (docs/ceph-upstream-bugs.md, "[radosgw stores a POST form with no file
+  part, or a file part no delimiter
+  ends](ceph-upstream-bugs.md#radosgw-stores-a-post-form-with-no-file-part-or-a-file-part-no-delimiter-ends)").
+  Amazon S3's error list answers the first IncorrectNumberOfFilesInPostRequest,
+  "POST requires exactly one file upload per request.", and a body that is
+  not well-formed multipart/form-data MalformedPOSTRequest, "The body of
+  your POST request is not well-formed multipart/form-data.", both 400
+  (aws-sdk-go's copy of the list,
+  [api.go:20085-20087](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L20085-L20087) and
+  [api.go:20213-20215](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L20213-L20215) at v1.55.8).
+  rgw-go refuses both with 400 InvalidArgument, as its error set is
+  radosgw's table, which has neither code (`internal/op/errors.go:50`): a
+  form that closes before its file part, wherever it closes, with "Malformed
+  request", as radosgw answers one that closes where a part's headers
+  start; and a body that ends before a delimiter it needs, in the preamble,
+  a part's headers, a field or the file, with "Couldn't find boundary",
+  radosgw's answer to a field whose delimiter it cannot find
+  (`formReader.Fields` and `formFile.Read`, `internal/s3/postform.go`).
+- **A POST form field's name holds no control byte.** radosgw keeps a
+  part's `name` parameter whole: `index_of` ends a header line only at a
+  CRLF or the boundary, `read_form_part_header` takes the name from the
+  line's `name` parameter
+  ([rgw_rest.cc:1311-1370](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1311-L1370) at v19.2.7,
+  [rgw_rest.cc:1311-1370](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1311-L1370) at v20.2.4),
+  and `get_params` files the part under it
+  ([rgw_rest_s3.cc:2968-2970](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2968-L2970) at v19.2.7,
+  [rgw_rest_s3.cc:3094-3096](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3094-L3096) at v20.2.4),
+  a NUL, a CR, an LF or any other control byte included. Its part map
+  compares names as C strings, so a name holding a NUL is the name before
+  the NUL to every lookup, which Tentacle's checksum exception reads past
+  (docs/ceph-upstream-bugs.md, "[Tentacle's POST policy excepts a field
+  whose name holds a NUL after a checksum
+  algorithm's](ceph-upstream-bugs.md#tentacles-post-policy-excepts-a-field-whose-name-holds-a-nul-after-a-checksum-algorithms)").
+  rgw-go answers a part before the file whose name holds a byte below 0x20
+  or DEL 400 InvalidArgument, "A form field name holds a control
+  character" (`formReader.Fields`, `internal/s3/postform.go`): kept whole,
+  an `x-amz-meta-` name would reach an xattr name, which go-ceph hands
+  librados as a C string (`WriteOp.SetXattr`), and a GET's response header.
+  A part's header names, Content-Disposition's among them, are compared
+  over all their bytes, where radosgw's `stringcasecmp` ends them at a NUL.
+  Parts after the file, which neither gateway keeps, are not checked.
+- **A POST form's fields before its file are bounded.** radosgw reads every
+  part before the file into memory, each up to `rgw_max_chunk_size` and
+  with no bound on their number, before it compares the request's
+  Content-Length with `rgw_max_put_size` and before it authenticates the
+  form
+  ([rgw_op.cc:4576-4590](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4576-L4590) at v19.2.7,
+  [rgw_op.cc:4869-4883](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4869-L4883) at v20.2.4),
+  and its frontend puts no limit on a body
+  ([rgw_asio_frontend.cc:248-258](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L248-L258) at v19.2.7,
+  [rgw_asio_frontend.cc:249-259](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L249-L259) at v20.2.4)
+  (docs/ceph-upstream-bugs.md, "[radosgw holds every POST form field in
+  memory before it authenticates the
+  form](ceph-upstream-bugs.md#radosgw-holds-every-post-form-field-in-memory-before-it-authenticates-the-form)").
+  rgw-go lets the parts before the file's data, the preamble and their
+  header lines included, take at most `rgw_max_chunk_size` and 1 MiB of the
+  body, room for one field of radosgw's largest beside the rest of a form,
+  and answers a form past that 400 InvalidArgument with the description
+  Amazon S3 gives its MaxPostPreDataLengthExceededError, "Your POST request
+  fields preceding the upload file were too large." (`formFieldsAllowance`
+  and `errFormTooLarge`, `internal/s3/postform.go`). Amazon S3 publishes no
+  number for its own bound, so this one is rgw-go's choice. rgw-go answers a
+  part header line that, with its CRLF, is longer than the window radosgw
+  finds a line end in, `rgw_max_chunk_size`, 2 and the boundary's length
+  ([rgw_rest.cc:1195-1200](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1195-L1200) at v19.2.7,
+  [rgw_rest.cc:1195-1200](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1195-L1200) at v20.2.4;
+  [rgw_rest.cc:1222-1254](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1222-L1254) at v19.2.7,
+  [rgw_rest.cc:1222-1254](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1222-L1254) at v20.2.4),
+  400 InvalidArgument with no message, as radosgw answers a header line it
+  cannot parse. radosgw's window is narrower when input is left over from
+  the last read, since it reads more only when `rgw_max_chunk_size` passes
+  what it holds
+  ([rgw_rest.cc:1230](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1230) at v19.2.7,
+  [rgw_rest.cc:1230](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1230) at v20.2.4), so rgw-go's
+  bound is its widest; radosgw cuts a longer line at the window and reads
+  the rest as the next header line (docs/ceph-upstream-bugs.md, "[radosgw
+  cuts a POST form header line longer than its read window and reads the
+  rest as another header
+  line](ceph-upstream-bugs.md#radosgw-cuts-a-post-form-header-line-longer-than-its-read-window-and-reads-the-rest-as-another-header-line)").
+- **A quoted POST form parameter keeps its semicolons.** radosgw splits the
+  parameters of the request's Content-Type and of a part's
+  Content-Disposition at every `;`
+  ([rgw_rest.cc:1112-1145](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1112-L1145) at v19.2.7,
+  [rgw_rest.cc:1112-1145](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1112-L1145) at v20.2.4),
+  so `filename="my;cat.jpg"` gives the filename `"my`, which a key's
+  `${filename}` then takes (docs/ceph-upstream-bugs.md, "[radosgw cuts a
+  POST form's quoted parameter at a
+  semicolon](ceph-upstream-bugs.md#radosgw-cuts-a-post-forms-quoted-parameter-at-a-semicolon)").
+  In rgw-go a parameter whose value opens with a double quote runs to the
+  closing quote, a `;` inside it included, as RFC 2045's quoted-string
+  holds one (section 5.1) (`parseFormParams`, `internal/s3/postform.go`).
+  It reads the parameters otherwise as radosgw does: names compared
+  exactly, a later one replacing an earlier, and a value unquoted only when
+  both its ends are quotes; the Content-Type's type is compared exactly
+  too, as radosgw compares it.
 
 ### Request authentication differences
 
