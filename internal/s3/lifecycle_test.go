@@ -77,9 +77,102 @@ var _ = Describe("bucket lifecycle routes", func() {
 		Expect(lc.Invocations()).To(BeEmpty(), "no entry set or removed")
 	}
 
-	It("binds the put and delete routes in every handler", func() {
+	It("binds the three routes in every handler", func() {
 		h := newHandler(w.store, s3.AnonymousOnly{}, s3.Config{})
-		Expect(s3.BoundRoutesForTest(h)).To(ContainElements("bucket/put_lifecycle", "bucket/delete_lifecycle"))
+		Expect(s3.BoundRoutesForTest(h)).To(ContainElements("bucket/get_lifecycle", "bucket/put_lifecycle", "bucket/delete_lifecycle"))
+	})
+
+	Describe("GET", func() {
+		// expectDocument checks rec is 200 with doc after the XML
+		// declaration, as application/xml, with the length the frontend adds.
+		expectDocument := func(rec *httptest.ResponseRecorder, doc string) {
+			GinkgoHelper()
+			Expect(rec.Code).To(Equal(http.StatusOK), rec.Body.String())
+			Expect(rec.Header().Get("Content-Type")).To(Equal("application/xml"), "to_mime_type, rgw_rest_s3.cc:3718 at v19.2.7")
+			want := `<?xml version="1.0" encoding="UTF-8"?>` + doc
+			Expect(rec.Body.String()).To(Equal(want), "dump_start, then encode_xml, rgw_rest_s3.cc:3719-3725 at v19.2.7")
+			Expect(rec.Header().Get("Content-Length")).To(Equal(strconv.Itoa(len(want))))
+			Expect(rec.Header()).NotTo(HaveKey("Accept-Ranges"), "the length the frontend adds, not dump_content_length's")
+		}
+
+		It("is 404 NoSuchLifecycleConfiguration, in radosgw's error document, for a bucket without one", func() {
+			rec := w.send(w.alice, http.MethodGet, target, "")
+			expectLCError(rec, http.StatusNotFound, "NoSuchLifecycleConfiguration", "")
+			Expect(rec.Header().Get("Content-Type")).To(Equal("application/xml"))
+			Expect(rec.Header().Get("Content-Length")).To(Equal(strconv.Itoa(rec.Body.Len())),
+				"ERR_NO_SUCH_LC through end_header's error branch, rgw_rest_s3.cc:3711-3712 and rgw_rest.cc:620-624 at v19.2.7")
+		})
+		It("renders the stored configuration under LifecycleConfiguration in S3's namespace", func(ctx SpecContext) {
+			w.setBucketAttrs(ctx, map[string][]byte{op.AttrLC: lcEncoded(lcSetConfig())})
+			expectDocument(w.send(w.alice, http.MethodGet, target, ""), lcDocument(
+				`<Rule><ID>rule1</ID><Prefix>test1/</Prefix><Status>Enabled</Status><Expiration><Days>1</Days></Expiration></Rule>`))
+		})
+		It("is 404 NoSuchLifecycleConfiguration for a stored configuration without rules, which radosgw renders with none (docs/exclusions.md)",
+			func(ctx SpecContext) {
+				w.setBucketAttrs(ctx, map[string][]byte{op.AttrLC: lcEncoded(lifecycle.Configuration{})})
+				expectLCError(w.send(w.alice, http.MethodGet, target, ""), http.StatusNotFound, "NoSuchLifecycleConfiguration", "")
+			})
+		It("answers a stored configuration that does not decode with 500 UnknownError, radosgw's -EIO", func(ctx SpecContext) {
+			w.setBucketAttrs(ctx, map[string][]byte{op.AttrLC: {1}})
+			expectLCError(w.send(w.alice, http.MethodGet, target, ""), http.StatusInternalServerError, "UnknownError", "")
+		})
+		It("refuses a requester the bucket's ACL refuses with 403 AccessDenied, with a configuration or without", func(ctx SpecContext) {
+			expectDenied := func(state string) {
+				GinkgoHelper()
+				rec := w.send(w.bob, http.MethodGet, target, "")
+				Expect(rec.Code).To(Equal(http.StatusForbidden), "%s: %s", state, rec.Body.String())
+				Expect(rec.Body.String()).To(ContainSubstring("<Code>AccessDenied</Code>"), state)
+			}
+			expectDenied("without a configuration")
+			w.setBucketAttrs(ctx, map[string][]byte{op.AttrLC: lcEncoded(lcSetConfig())})
+			expectDenied("with a configuration")
+		})
+	})
+
+	// Rook's bucket provisioner reconciles an OBC's bucketLifecycle by
+	// reading the bucket's configuration, treating NoSuchLifecycleConfiguration
+	// as none, and putting the OBC's when they differ or deleting the
+	// bucket's when the OBC has none (rook v1.20.7,
+	// pkg/operator/ceph/object/bucket/provisioner.go:812-887). The bodies are
+	// what aws-sdk-go-v2's s3 serializer writes for the rules of Rook's
+	// documented example (Documentation/Storage-Configuration/Object-Storage-RGW/ceph-object-bucket-claim.md:57-77),
+	// each rule's members in its order (service/s3 v1.98.0,
+	// serializers.go:12452-12566).
+	It("serves Rook's bucket/lifecycle sequence: read none, put, read back, update, read back, delete, read none", func(ctx SpecContext) {
+		const (
+			abortRule = `<Rule><AbortIncompleteMultipartUpload><DaysAfterInitiation>1</DaysAfterInitiation></AbortIncompleteMultipartUpload>` +
+				`<ID>AbortIncompleteMultipartUploads</ID><Prefix></Prefix><Status>Enabled</Status></Rule>`
+			expireRule = `<Rule><Expiration><Days>30</Days></Expiration><ID>ExpireAfter30Days</ID><Prefix></Prefix><Status>Enabled</Status></Rule>`
+			// The rules as dump_xml writes them back.
+			abortDump = `<Rule><ID>AbortIncompleteMultipartUploads</ID><Prefix></Prefix><Status>Enabled</Status>` +
+				`<AbortIncompleteMultipartUpload><DaysAfterInitiation>1</DaysAfterInitiation></AbortIncompleteMultipartUpload></Rule>`
+			expireDump = `<Rule><ID>ExpireAfter30Days</ID><Prefix></Prefix><Status>Enabled</Status><Expiration><Days>30</Days></Expiration></Rule>`
+			expire60   = `<Rule><Expiration><Days>60</Days></Expiration><ID>ExpireAfter30Days</ID><Prefix></Prefix><Status>Enabled</Status></Rule>`
+			dump60     = `<Rule><ID>ExpireAfter30Days</ID><Prefix></Prefix><Status>Enabled</Status><Expiration><Days>60</Days></Expiration></Rule>`
+		)
+		read := func() *httptest.ResponseRecorder { return w.send(w.alice, http.MethodGet, target, "") }
+		expectNone := func() {
+			GinkgoHelper()
+			rec := read()
+			Expect(rec.Code).To(Equal(http.StatusNotFound), rec.Body.String())
+			Expect(rec.Body.String()).To(ContainSubstring("<Code>NoSuchLifecycleConfiguration</Code>"), "the code Rook takes for none")
+		}
+		expectRules := func(rules ...string) {
+			GinkgoHelper()
+			rec := read()
+			Expect(rec.Code).To(Equal(http.StatusOK), rec.Body.String())
+			Expect(rec.Body.String()).To(Equal(`<?xml version="1.0" encoding="UTF-8"?>` + lcDocument(rules...)))
+		}
+
+		expectNone()
+		expectEmptyXML(w.send(w.alice, http.MethodPut, target, lcDocument(abortRule, expireRule)), http.StatusOK)
+		expectRules(abortDump, expireDump)
+		expectEmptyXML(w.send(w.alice, http.MethodPut, target, lcDocument(abortRule, expire60)), http.StatusOK)
+		expectRules(abortDump, dump60)
+		expectEmptyXML(w.send(w.alice, http.MethodDelete, target, ""), http.StatusNoContent)
+		expectNone()
+		Expect(lc.SetEntryCallCount()).To(Equal(2))
+		Expect(lc.RemoveEntryCallCount()).To(Equal(1))
 	})
 
 	It("puts with 200 and no body, storing the configuration and then the bucket's entry", func(ctx SpecContext) {

@@ -4,8 +4,26 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/jhoblitt/rgw-go/internal/lifecycle"
 	"github.com/jhoblitt/rgw-go/internal/op"
 )
+
+// getLifecycle is get_lifecycle (RGWGetLC_ObjStore_S3::send_response,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3708-L3726 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4159-L4177 at v20.2.4):
+// the stored configuration as lifecycle.Marshal writes it, under
+// LifecycleConfiguration in S3's namespace, after the XML declaration
+// dump_start writes, as application/xml. An error is its error document
+// alone, as send_response encodes the configuration only when the op
+// succeeded.
+func getLifecycle(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
+	o := &op.GetBucketLifecycle{}
+	if err := op.Run(ctx, o, r); err != nil {
+		return err
+	}
+	writeDocument(w, r, lifecycle.Marshal(o.Config))
+	return nil
+}
 
 // putLifecycle is put_lifecycle, RGWPutLC_ObjStore_S3, whose op reads and
 // parses the body once it has authorized the request: 200 with no body

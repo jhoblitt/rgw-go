@@ -19849,8 +19849,12 @@ Every new entry adds its row to this table, in document order.
   "PutBucketLifecycleConfiguration refuses a document whose root is not
   LifecycleConfiguration"). The prefix map of the empty configuration
   radosgw stores this way holds no rule, so the worker finds nothing to do.
-  How GetBucketLifecycleConfiguration answers it is task C6's to decide
-  (`docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md`).
+  GetBucketLifecycleConfiguration answers it with 404
+  NoSuchLifecycleConfiguration, as for a bucket with no configuration,
+  where radosgw answers 200 with no Rule (`GetBucketLifecycle.Execute`,
+  `internal/op/lifecycle.go`; `docs/exclusions.md`,
+  "GetBucketLifecycleConfiguration answers a stored configuration without
+  rules with 404").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task C1, 2026-10-20, transcribing
   PutBucketLifecycleConfiguration's parse. Derived from the source, not

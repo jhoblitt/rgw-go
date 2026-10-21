@@ -35,7 +35,6 @@ func bucketHandlers() map[string]HandlerFunc {
 		"get_bucket_tags":      getBucketTags,
 		"put_bucket_tags":      putBucketTags,
 		"delete_bucket_tags":   deleteBucketTags,
-		"get_lifecycle":        getLifecycle,
 		"multi_object_delete":  deleteObjects,
 	}
 }

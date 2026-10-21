@@ -17,8 +17,8 @@ import (
 
 // The bucket subresource ops of this file are rgw_op.cc's RGWGetACLs and
 // RGWPutACLs at bucket scope, RGWGetBucketPolicy, RGWPutBucketPolicy,
-// RGWDeleteBucketPolicy, RGWGetBucketTags, RGWPutBucketTags,
-// RGWDeleteBucketTags and RGWGetLC. Each loads the bucket in Init, so a
+// RGWDeleteBucketPolicy, RGWGetBucketTags, RGWPutBucketTags and
+// RGWDeleteBucketTags. Each loads the bucket in Init, so a
 // missing bucket is NoSuchBucket before the permission check, and authorizes
 // its action against the bucket. The forward to the metadata master each
 // write makes is a no-op on a single zone, which is its own master.
@@ -564,52 +564,3 @@ func (o *DeleteBucketTagging) Execute(ctx context.Context, r *Request) error {
 
 // Complete does nothing: the handler logs usage once the response is written.
 func (*DeleteBucketTagging) Complete(context.Context, *Request) {}
-
-// GetBucketLifecycle is RGWGetLC
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.h#L1631-L1646 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1785-L1801 at v20.2.4)
-// with RGWGetLC_ObjStore_S3::execute
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3658-L3676 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4139-L4157 at v20.2.4).
-// rgw-go renders no lifecycle configuration yet, so it serves only a bucket
-// without one.
-type GetBucketLifecycle struct{}
-
-var _ Op = (*GetBucketLifecycle)(nil)
-
-// Name is RGWGetLC::name.
-func (*GetBucketLifecycle) Name() string { return "get_lifecycle" }
-
-// Action is s3:GetLifecycleConfiguration.
-func (*GetBucketLifecycle) Action() policy.Action { return policy.S3GetLifecycleConfiguration }
-
-// OpMask is RGW_OP_TYPE_READ.
-func (*GetBucketLifecycle) OpMask() uint32 { return OpTypeRead }
-
-// Init loads the bucket.
-func (*GetBucketLifecycle) Init(ctx context.Context, r *Request) error { return loadBucket(ctx, r) }
-
-// VerifyPermission is RGWGetLC::verify_permission
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5759-L5770;
-// v20.2.4
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6405-L6416).
-func (o *GetBucketLifecycle) VerifyPermission(ctx context.Context, r *Request) error {
-	return verifyBucketAction(ctx, r, o)
-}
-
-// Execute is RGWGetLC_ObjStore_S3::execute up to the decode: a bucket without
-// the lifecycle attr is -ENOENT, which send_response answers as
-// ERR_NO_SUCH_LC, 404 NoSuchLifecycleConfiguration with no message
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3678-L3696 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4159-L4177 at v20.2.4).
-// radosgw tests the attr's presence, so an empty one counts as a
-// configuration; any configuration is NotImplemented (docs/exclusions.md).
-func (*GetBucketLifecycle) Execute(_ context.Context, r *Request) error {
-	if _, ok := r.BucketRec.Attrs[AttrLC]; !ok {
-		return ErrNoSuchLifecycleConfiguration
-	}
-	return fmt.Errorf("%w: rendering the lifecycle configuration of bucket %s", ErrNotImplemented, r.BucketRec.Info.Bucket.Name)
-}
-
-// Complete does nothing: the handler logs usage once the response is written.
-func (*GetBucketLifecycle) Complete(context.Context, *Request) {}
