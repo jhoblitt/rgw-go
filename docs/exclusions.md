@@ -8340,19 +8340,186 @@ following.
   keeps at most `rgw_bucket_index_max_aio` in flight, each for at most 30
   seconds; a shard's suggestions that find no free slot are dropped, and the
   next listing of the same entries suggests them again.
-- **A shard that answers advance-and-retry fails an ordered listing.**
-  cls_rgw's `bucket_list` answers `RGWBIAdvanceAndRetryError` (-EFBIG) with
-  a marker when eight omap reads find nothing visible, and radosgw's
-  ordered listing lists that shard again from the marker
-  (`cls/rgw/cls_rgw_client.cc:99-110` and `:161-166` at v19.2.6;
-  `ListReader`, `rgw/services/svc_bi_rados.cc:948-965` at v20.2.4).
-  rgw-go's seam keeps no output for a class call that fails, so its
-  ordered listing fails with 500 UnknownError instead. The unordered
-  listing is the same in both: radosgw's reads the shard with
-  `rgw_rados_operate` directly and fails with 500 too (`:10071` at v19.2.6,
-  `:10993` at v20.2.4). Only a run of delete markers or noncurrent
-  versions longer than eight reads makes a shard answer so, and versioning
-  is not served yet.
+- **An unordered listing lists a shard that answers advance-and-retry
+  again from its marker.** cls_rgw's `bucket_list` answers
+  `RGWBIAdvanceAndRetryError` (-EFBIG) when eight omap reads list nothing,
+  with its reply encoded and the marker to go on from in it
+  ([cls_rgw.cc:680-693](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L680-L693),
+  [cls_rgw.cc:730-743](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L730-L743)); a listing without
+  versions meets it on a run of delete markers and noncurrent versions
+  longer than those reads. radosgw's ordered listing lists the shard again
+  from the marker
+  ([cls_rgw_client.cc:99-110](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_client.cc#L99-L110),
+  [cls_rgw_client.cc:161-166](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_client.cc#L161-L166);
+  [svc_bi_rados.cc:948-968](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bi_rados.cc#L948-L968)),
+  and so does rgw-go's. radosgw's unordered listing reads each shard with
+  `rgw_rados_operate` and fails with the -EFBIG, 500 UnknownError
+  ([rgw_rados.cc:10264-10272](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L10264-L10272),
+  [rgw_rados.cc:10990-10998](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10990-L10998);
+  `docs/ceph-upstream-bugs.md`, "radosgw's unordered listing fails on a
+  shard that answers advance-and-retry"). rgw-go's lists the shard again
+  from the marker, as does DeleteBucket's emptiness check, which lists
+  through it. A marker past a name's versions, the name and 0x01, is also
+  the key of an object named so, which a read after it leaves out
+  (`docs/ceph-upstream-bugs.md`, "cls_rgw's listing can skip an object
+  whose name is another versioned name and 0x01"), so rgw-go lists such a
+  shard again after the name, NUL and `w` instead, which sorts after every
+  list key of the name and before the object. A reply whose marker is
+  empty or would start the shard again where it started fails either
+  listing with 500 UnknownError, where radosgw's ordered
+  listing lists the shard again, from that start key without end on
+  Tentacle ([svc_bi_rados.cc:954-956](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bi_rados.cc#L954-L956))
+  and from the shard's first key on Squid
+  ([cls_rgw_client.cc:351-370](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_client.cc#L351-L370)).
+- **A versions listing starts after every version of a key-marker given
+  alone.** radosgw passes a `key-marker` without a `version-id-marker` to
+  the class as a start key without an instance
+  ([rgw_rest_s3.cc:1758-1759](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1758-L1759),
+  [rgw_rest_s3.cc:1861-1862](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1861-L1862)),
+  which `encode_list_index_key` takes as the name's plain key
+  ([cls_rgw.cc:360-363](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L360-L363),
+  [cls_rgw.cc:410-413](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L410-L413)),
+  before the name's list keys, so the page lists the key-marker's own
+  versions (`docs/ceph-upstream-bugs.md`, "radosgw's ListObjectVersions
+  lists the key-marker's versions again without a version-id-marker"). AWS
+  starts after the key, every version of it included (versitygw#2178; the
+  AWS API reference's `key-marker` example for ListObjectVersions). rgw-go
+  starts after the name, NUL and `w`, which sorts after every list key of
+  the name and before the name and 0x01
+  ([cls_rgw.cc:302-323](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L302-L323),
+  [cls_rgw.cc:352-373](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L352-L373)),
+  so the page starts at the next name. An object named like the key, NUL
+  and more that sorts at or before that start is left out; radosgw lists
+  it. Under a delimiter that ends the name, NUL and `w`, such as `w`, the
+  class takes that start for a common prefix and starts after it and 0xFF
+  ([cls_rgw.cc:548-554](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L548-L554),
+  [cls_rgw.cc:598-604](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L598-L604)),
+  so the names that extend the name, NUL and `w` are left out too, where
+  radosgw lists them. Either needs an object name that holds a NUL, which,
+  as far as the source shows, only a browser POST's `key` can store in
+  radosgw (`docs/ceph-upstream-bugs.md`,
+  "radosgw's policy match cuts an object name at a NUL that its RADOS name
+  keeps"). Task V14b confirms AWS's answer from a captured response before
+  rgw-go claims parity here. radosgw names `null` as the next
+  `version-id-marker` for an entry without an instance, so a client that
+  pages by the returned markers never sends a `key-marker` alone.
+- **A versions listing resumes after the null delete marker its
+  version-id-marker names.** radosgw passes a `version-id-marker` of `null`
+  to the class as the instance `null`
+  ([rgw_rest_s3.cc:1758-1759](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1758-L1759),
+  [rgw_rest_s3.cc:1861-1862](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1861-L1862)),
+  which `encode_list_index_key` looks up at the null version's data key
+  alone ([cls_rgw.cc:366-381](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L366-L381),
+  [cls_rgw.cc:416-431](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L416-L431)). A null
+  delete marker's instance entry has a key of its own
+  ([cls_rgw.cc:1399-1400](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1399-L1400),
+  [cls_rgw.cc:1526-1527](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1526-L1527)), so after a
+  page that ended on one, which `NextVersionIdMarker` names `null`, radosgw
+  starts past every version of the key, or, while the null version the
+  marker replaced awaits its removal, after that version's old list key
+  ([cls_rgw.cc:1712-1734](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1712-L1734),
+  [cls_rgw.cc:1853-1875](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1853-L1875)): the key's older
+  versions are not listed (`docs/ceph-upstream-bugs.md`, "radosgw's
+  ListObjectVersions skips a key's older versions after a null delete
+  marker"). rgw-go reads the null version with `getInstanceEntry`, in the
+  class's `read_key_entry` order, and when it finds one starts right after
+  that version's list key, at the key and NUL ("A versions listing resumes
+  after the null version it last visited"), which `encode_list_index_key`
+  takes whole as a start key without an instance
+  ([cls_rgw.cc:360-363](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L360-L363),
+  [cls_rgw.cc:410-413](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L410-L413)). Finding
+  no null version, or an unversioned object's entry, it starts past every
+  version of the name, after the name, NUL and `w`, where the class starts
+  at the name and 0x01 and so leaves out an object named so
+  (`docs/ceph-upstream-bugs.md`, "cls_rgw's listing can skip an object
+  whose name is another versioned name and 0x01") and any named like the
+  name, NUL and more that sorts after rgw-go's start. That costs a versions
+  page that starts at `null` one to three `bi_get` reads and, when the
+  last finds nothing, one read of the bucket instance past its cache,
+  which tells a missing entry from a shard a reshard removed ("An index
+  read of a versioned key that finds its shard gone reads the shard the
+  bucket now names"). The listing's next marker names `null` for the null
+  version and no instance for an unversioned object, and resumes after
+  either when copied back. rgw-go's S3 layer passes no `version-id-marker`
+  until ListObjectVersions is served.
+- **A versions listing resumes after the null version it last visited.**
+  radosgw resumes each round of a listing, and each further read of a shard
+  in its unordered listing, after the key of the last entry visited
+  ([rgw_rados.cc:10130-10133](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L10130-L10133),
+  [rgw_rados.cc:10856-10859](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10856-L10859);
+  [rgw_rados.cc:10303](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L10303),
+  [rgw_rados.cc:11029](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L11029)).
+  The null version's key has no instance, which the class takes as the
+  name's plain key ([cls_rgw.cc:360-363](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L360-L363),
+  [cls_rgw.cc:410-413](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L410-L413)), so a round that
+  ends on it lists the name's newer versions, and the null version, again
+  into the same page (`docs/ceph-upstream-bugs.md`, "radosgw's versions
+  listing repeats a key's newer versions when a round ends on its null
+  version"). A round ends short of the page where a truncated shard runs out
+  first, as one key's many versions do on a bucket of several shards.
+  rgw-go resumes right after the null version's list key, at the key and
+  NUL, the next key in byte order, which `bucket_list` takes whole. The
+  list key ends in NUL `i`, so a delimiter that ends so
+  would make the class take it for a common prefix and start past the
+  versions of its epoch
+  ([cls_rgw.cc:548-554](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L548-L554),
+  [cls_rgw.cc:598-604](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L598-L604);
+  `docs/ceph-upstream-bugs.md`, "cls_rgw's start-key delimiter test reads a
+  null version's list key as a common prefix"). A delimiter can end the key
+  and NUL only in NUL, and the class's jump then lands at the key, NUL and
+  0xFF, still before the epoch's versions, so rgw-go's listing keeps them
+  where radosgw's own resume from a `version-id-marker` of `null` skips
+  them. An unordered listing that resumes there starts on the shard of the
+  entry's object name, which rgw-go carries beside the key, as radosgw
+  hashes a marker's whole name. A listing without versions
+  resumes as radosgw's does, since the class skips the rest of the start
+  key's name there ([cls_rgw.cc:610-623](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L610-L623),
+  [cls_rgw.cc:660-673](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L660-L673)).
+- **A listing sends no repair for the null version's list entry.** A
+  listing checks an index entry with a pending op, or one that is not there,
+  against its head, and `check_disk_state` suggests the repair under the
+  listed entry's own key
+  ([rgw_rados.cc:10569-10571](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L10569-L10571) and
+  [rgw_rados.cc:10663-10667](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L10663-L10667);
+  [rgw_rados.cc:11297-11299](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L11297-L11299) and
+  [rgw_rados.cc:11391-11395](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L11391-L11395)).
+  `dir_suggest_changes` applies it under `encode_obj_index_key`
+  ([cls_rgw.cc:2249-2250](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2249-L2250),
+  [cls_rgw.cc:2419-2420](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2419-L2420)), which for the
+  null version's list entry is the plain key, on a versioned name the
+  version marker. The marker has no pending op and index version 0, so the
+  class removes it, or overwrites it with the list entry and adds that entry
+  to the bucket's stats
+  ([cls_rgw.cc:2309-2374](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2309-L2374),
+  [cls_rgw.cc:2479-2542](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2479-L2542);
+  `docs/ceph-upstream-bugs.md`, "radosgw's listing repair of a null
+  version's list entry overwrites or removes the key's version marker").
+  rgw-go makes the head check as radosgw does but sends no suggestion for
+  such an entry, so it keeps its pending op and the next listing checks it
+  again. A named version's repair goes as radosgw sends it and reaches the
+  version's instance entry, never its list entry
+  (`docs/ceph-upstream-bugs.md`, "radosgw's listing never repairs a
+  version's list entry"). rgw-go's own versioned writes leave no list entry
+  pending, since each awaits its index completion before its link ("A
+  versioned write awaits its index completion").
+- **An ordered listing reads the shards the bucket names after a reshard
+  removes its own.** radosgw lists through the bucket instance its request
+  read, so a shard a reshard removed under the listing answers ENOENT and
+  the listing fails with 404 NoSuchKey
+  ([rgw_rados.cc:9906-9915](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9906-L9915),
+  [rgw_rados.cc:10631-10639](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10631-L10639)).
+  When a shard answers ENOENT, rgw-go's ordered listing reads the bucket
+  instance again, past its metadata cache, and when it names other shards
+  lists the round again from them, from the key the round started after,
+  up to ten times (`reshardedRecord`, `internal/driver/list.go`). The keys
+  an ordered listing resumes from name no shard, so its page has no gap or
+  repeat. An ENOENT from a shard the bucket still names, or from a bucket
+  that is gone, is the listing's answer, 404 NoSuchKey, after one read of
+  the bucket instance. The unordered listing's position names a shard of the
+  layout it read, so it fails as radosgw's does, and an unordered listing
+  paged across a reshard skips and repeats entries as radosgw's does
+  (`docs/ceph-upstream-bugs.md`, "radosgw's unordered listing skips and
+  repeats entries across a reshard").
 - **A system user's listing carries no sync fields.** For a system user's
   request radosgw adds `RgwxTag` to each entry, `VersionedEpoch` and
   `RgwxMtime` to each version, reads `objs-container` and the

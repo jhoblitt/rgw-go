@@ -38,12 +38,24 @@ type ListObjectsParams struct {
 	Delimiter string
 	// Marker is the key name, in NS, to start after; "" starts at the
 	// beginning.
-	Marker  string
-	MaxKeys int
+	Marker string
+	// MarkerInstance is the version of Marker to start after, a
+	// version-id-marker as sent. In a versions listing with a Marker, ""
+	// starts past every version of Marker, as S3 does for a key-marker
+	// alone, where radosgw lists them again (docs/exclusions.md, "A versions
+	// listing starts after every version of a key-marker given alone");
+	// "null" starts after the null version, a null delete marker included
+	// (docs/exclusions.md, "A versions listing resumes after the null delete
+	// marker its version-id-marker names"), or past every version when there
+	// is none; an instance starts after that version, or past every version
+	// of Marker when it is gone, as cls_rgw resolves its start key
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L358-L390 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L408-L440 at v20.2.4).
+	MarkerInstance string
+	MaxKeys        int
 	// NS is the index namespace: "" for objects, "multipart" for uploads.
 	NS string
-	// ListVersions returns every version and delete marker. Versioning is
-	// not implemented yet.
+	// ListVersions returns every version and delete marker.
 	ListVersions bool
 	// AllowUnordered is radosgw's non-standard allow-unordered: the shards
 	// are listed one after another rather than merged, which no delimiter
@@ -76,14 +88,18 @@ type ObjectEntry struct {
 	Owner            meta.Owner
 	OwnerDisplayName string
 	StorageClass     string
-	// IsLatest, DeleteMarker and Exists are the versioned-listing flags;
-	// versioning is not implemented yet.
+	// IsLatest, DeleteMarker and Exists are the versioned-listing flags.
 	IsLatest     bool
 	DeleteMarker bool
 	Exists       bool
 	// Appendable is that the object was written by AppendObject, which the
 	// listings render as its Type.
 	Appendable bool
+	// VersionedEpoch is the entry's versioned_epoch, the OLH epoch its
+	// version was linked at, 0 for an unversioned object.
+	VersionedEpoch uint64
+	// Category is the entry's RGWObjCategory, as cls/rgw names them.
+	Category uint8
 }
 
 // ListObjectsResult is one page of a listing.
@@ -94,6 +110,17 @@ type ListObjectsResult struct {
 	// NextMarker is the marker for the next page when Truncated: the name,
 	// in ListObjectsParams.NS, of the last entry or common prefix counted.
 	NextMarker string
+	// NextMarkerInstance is that entry's instance: "null" for the null
+	// version, as S3's NextVersionIdMarker names it
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1817-L1825 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1920-L1928 at v20.2.4),
+	// and empty for an unversioned object and a common prefix. A listing
+	// resumes after the page with NextMarker and NextMarkerInstance copied
+	// back unchanged as Marker and MarkerInstance. A caller that deletes what
+	// it lists restarts each page from an empty marker instead, or lists until
+	// a pass finds nothing: a marker whose version is gone starts past the
+	// rest of its name.
+	NextMarkerInstance string
 }
 
 //counterfeiter:generate . BucketStore

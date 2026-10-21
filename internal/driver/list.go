@@ -31,7 +31,11 @@ import (
 //counterfeiter:generate . HeadStater
 
 // HeadStater is the one object-store method the listing's disk check needs:
-// an object's head as get_obj_state reads it.
+// the head of the key it names as get_obj_state reads it for
+// check_disk_state, without following an OLH
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L10552 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L11280 at v20.2.4),
+// so the null version's is the OLH head itself.
 type HeadStater interface {
 	StatObject(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey) (*op.ObjectState, error)
 }
@@ -51,6 +55,15 @@ const (
 	// suggestTimeout bounds a listing's background index suggestion, which
 	// radosgw sends with aio_operate and never waits for.
 	suggestTimeout = 30 * time.Second
+	// pastVersions, after a name, is a start key past every list key of the
+	// name, the name, NUL "v" and more
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L302-L315 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L352-L365 at v20.2.4),
+	// and before the name and 0x01, cls_rgw_after_versions's key
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L319-L323 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L369-L373 at v20.2.4),
+	// which is also the plain key of an object named so.
+	pastVersions = "\x00w"
 )
 
 // ListObjects implements op.BucketStore: RGWRados::Bucket::List::list_objects,
@@ -69,15 +82,22 @@ func (s *Store) ListObjects(ctx context.Context, rec *op.BucketRecord, p op.List
 }
 
 // listObjectsOrdered is list_objects_ordered
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L1802-L2159). The
-// marker and prefix become index key names in p.NS; with a delimiter a marker inside a common
-// prefix moves past it. Each round asks listOrdered for what the page still lacks, with the round
-// as the expansion factor, and walks the entries: an unparsable name is skipped, so is an entry
-// that is not visible unless versions are listed; a name outside p.NS ends a namespaced listing
-// and is skipped by a plain one, which moves its marker past a run of namespaced names; then the
-// prefix filter, the delimiter rollup, p.NameFilter and the page bound. Rounds end when the cls
-// listing is complete, at least half the page is filled, or after eight rounds with anything, or
-// when the marker stops moving.
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L1815-L2172 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1905-L2262 at v20.2.4).
+// The marker and its instance, and the prefix, become index keys in p.NS;
+// with a delimiter a marker inside a common prefix moves past it, its
+// instance dropped, and otherwise the listing starts where markerStart puts
+// it. Each round asks listOrdered for what the page still lacks, with the
+// round as the expansion factor, from where the last round's last entry
+// visited resumes, and walks the entries: an unparsable name is skipped, so
+// is an entry that is not visible unless versions are listed; a name outside
+// p.NS ends a namespaced listing and is skipped by a plain one, which moves
+// its marker past a run of namespaced names; then the prefix filter, the
+// delimiter rollup, p.NameFilter and the page bound. Rounds end when the cls
+// listing is complete, at least half the page is filled, or after eight
+// rounds with anything, or when the marker stops moving. A round whose shard
+// a reshard removed is listed again from the shards the bucket now names
+// (reshardedRecord).
 //
 // cls_filtered starts false here and cls_bucket_list_ordered only ANDs into
 // it
@@ -89,12 +109,20 @@ func (s *Store) ListObjects(ctx context.Context, rec *op.BucketRecord, p op.List
 func (s *Store) listObjectsOrdered(ctx context.Context, rec *op.BucketRecord, p op.ListObjectsParams) (op.ListObjectsResult, error) {
 	maxN := min(max(p.MaxKeys, 0), listAbsoluteMax)
 	readAhead := max(s.opts.listMinReadahead, maxN)
-	cur := rgwcls.ObjKey{Name: meta.ObjKey{Name: p.Marker, NS: p.NS}.IndexKeyName()}
+	// cur is radosgw's cur_marker, and start the key bucket_list is sent,
+	// which differs from it where resumeAfter and markerStart say.
+	cur := rgwcls.ObjKey{Name: meta.ObjKey{Name: p.Marker, NS: p.NS}.IndexKeyName(), Instance: p.MarkerInstance}
 	prefix := meta.ObjKey{Name: p.Prefix, NS: p.NS}.IndexKeyName()
-	if p.Delimiter != "" {
-		if skip, ok := pastDelimiter(cur.Name, prefix, p.Delimiter); ok {
-			cur = rgwcls.ObjKey{Name: skip}
+	var start rgwcls.ObjKey
+	if skip, ok := pastDelimiter(cur.Name, prefix, p.Delimiter); p.Delimiter != "" && ok {
+		cur = rgwcls.ObjKey{Name: skip}
+		start = cur
+	} else {
+		pos, err := s.markerStart(ctx, rec, p, cur)
+		if err != nil {
+			return op.ListObjectsResult{}, err
 		}
+		start = pos.after
 	}
 	var (
 		res       op.ListObjectsResult
@@ -105,23 +133,38 @@ func (s *Store) listObjectsOrdered(ctx context.Context, rec *op.BucketRecord, p 
 	)
 rounds:
 	for attempt := uint16(1); ; attempt++ {
-		if attempt > 1 && prev == cur {
+		if attempt > 1 && prev == start {
 			slog.ErrorContext(ctx, "bucket listing marker failed to make forward progress",
-				slog.String("bucket", rec.Info.Bucket.Name), slog.Int("attempt", int(attempt)), slog.String("marker", cur.Name))
+				slog.String("bucket", rec.Info.Bucket.Name), slog.Int("attempt", int(attempt)), slog.String("marker", start.Name))
 			break
 		}
-		prev = cur
+		prev = start
 		want := uint32(readAhead + 1 - count) //nolint:gosec // radosgw passes the int as a uint32 num_entries
-		entries, trunc, last, visited, err := s.listOrdered(ctx, rec, cur, prefix, p.Delimiter, want, p.ListVersions, attempt)
+		round, err := s.listOrdered(ctx, rec, start, prefix, p.Delimiter, want, p.ListVersions, attempt)
+		for range reshardRetries {
+			if !errors.Is(err, radosclient.ErrNotFound) {
+				break
+			}
+			next, rerr := s.reshardedRecord(ctx, rec)
+			if rerr != nil {
+				return op.ListObjectsResult{}, rerr
+			}
+			if next == nil {
+				break
+			}
+			slog.DebugContext(ctx, "bucket index shard is gone; listing the shards the bucket now names", slog.String("bucket", rec.Info.Bucket.Name))
+			rec = next
+			round, err = s.listOrdered(ctx, rec, start, prefix, p.Delimiter, want, p.ListVersions, attempt)
+		}
 		if err != nil {
 			return op.ListObjectsResult{}, err
 		}
-		truncated = trunc
-		if visited {
-			cur = last
+		truncated = round.truncated
+		if round.visited {
+			cur, start = round.last, resumeAfter(round.lastIndex, round.last, p.ListVersions).after
 		}
-		for i := range entries {
-			e := &entries[i]
+		for i := range round.entries {
+			e := &round.entries[i]
 			key, ok := meta.ParseIndexKeyName(e.Key.Name)
 			if !ok {
 				slog.ErrorContext(ctx, "could not parse object name", slog.String("bucket", rec.Info.Bucket.Name), slog.String("key", e.Key.Name))
@@ -145,14 +188,14 @@ rounds:
 						skip = rgwcls.ObjKey{Name: "_^\xFF"}
 					}
 					if keyLess(cur, skip) {
-						cur = skip
+						cur, start = skip, skip
 						break // to another round from past the run
 					}
 				}
 				continue
 			}
 			if count < maxN {
-				res.NextMarker = key.Name
+				res.NextMarker, res.NextMarkerInstance = key.Name, nextInstance(e)
 			}
 			if !strings.HasPrefix(key.Name, p.Prefix) {
 				continue
@@ -165,7 +208,7 @@ rounds:
 							truncated = true
 							break rounds
 						}
-						res.NextMarker = pk
+						res.NextMarker, res.NextMarkerInstance = pk, ""
 						prefixes[pk] = true
 						count++
 					}
@@ -192,6 +235,7 @@ rounds:
 		if p.Delimiter != "" {
 			if skip, ok := pastDelimiter(cur.Name, prefix, p.Delimiter); ok && skip > cur.Name {
 				cur = rgwcls.ObjKey{Name: skip}
+				start = cur
 			}
 		}
 		if !truncated || count >= (maxN+1)/2 || (attempt > listSoftAttempts && count >= 1) {
@@ -203,9 +247,132 @@ rounds:
 		res.CommonPrefixes = slices.Sorted(maps.Keys(prefixes))
 	}
 	if !truncated {
-		res.NextMarker = ""
+		res.NextMarker, res.NextMarkerInstance = "", ""
 	}
 	return res, nil
+}
+
+// listPos is where a listing goes on from: after, the key bucket_list
+// starts after, and name, the index key name of the object it follows, whose
+// shard the unordered listing starts on, as radosgw hashes the marker's
+// whole name
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L10215-L10246 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10941-L10972 at v20.2.4).
+type listPos struct {
+	after rgwcls.ObjKey
+	name  string
+}
+
+// markerStart is where a listing from marker, p's marker as an index key,
+// starts. The class resolves a marker through encode_list_index_key
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L358-L390 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L408-L440 at v20.2.4),
+// and so does rgw-go's listing, but for a versions listing's marker with no
+// instance or the instance null:
+//   - With no instance the listing starts past every version of the name,
+//     where the class starts after the name's plain key and lists them again
+//     (docs/exclusions.md, "A versions listing starts after every version
+//     of a key-marker given alone").
+//   - With null it starts after the null version getInstanceEntry finds, in
+//     read_key_entry's order. The class looks for it at the null data key
+//     alone, which a null delete marker does not have, and starts past every
+//     version of the name, or after an older null version the marker's link
+//     left for its writer to remove (docs/exclusions.md, "A versions listing
+//     resumes after the null delete marker its version-id-marker names").
+//     Finding no null version, or an unversioned object's entry, it starts
+//     past every version of the name, where the class would too but for an
+//     object named like it and 0x01.
+//
+// A marker whose version is gone therefore starts past the rest of its name,
+// whatever instance it names, as a deleting pager's does (nextInstance).
+func (s *Store) markerStart(ctx context.Context, rec *op.BucketRecord, p op.ListObjectsParams, marker rgwcls.ObjKey) (listPos, error) {
+	past := listPos{after: rgwcls.ObjKey{Name: marker.Name + pastVersions}, name: marker.Name}
+	if !p.ListVersions || p.Marker == "" {
+		return listPos{after: marker, name: marker.Name}, nil
+	}
+	switch marker.Instance {
+	case "":
+		return past, nil
+	case meta.NullInstance:
+	default:
+		return listPos{after: marker, name: marker.Name}, nil
+	}
+	en, err := s.getInstanceEntry(ctx, rec, meta.ObjKey{Name: p.Marker, NS: p.NS})
+	switch {
+	case errors.Is(err, radosclient.ErrNotFound):
+		return past, nil
+	case err != nil:
+		return listPos{}, fmt.Errorf("reading the null version of %q in bucket %s: %w", p.Marker, rec.Info.Bucket.Name, err)
+	case en.Flags&rgwcls.FlagVer == 0:
+		return past, nil
+	}
+	return resumeAfter(rgwcls.ListIndexKey(en.Key, en.VersionedEpoch), en.Key, true), nil
+}
+
+// resumeAfter is where a listing that visited the entry stored under the
+// index key k, whose own key is key, goes on from: after key, as radosgw's
+// marker is the key of the last entry visited
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L10130-L10133 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10856-L10859 at v20.2.4),
+// but in a versions listing for the null version. Its key has no instance,
+// so the class would start after the name's plain key and list the name's
+// newer versions again (docs/exclusions.md, "A versions listing resumes
+// after the null version it last visited"). Its list key k ends in NUL "i",
+// so a delimiter that ends so would make the class start past every version
+// of k's epoch
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L548-L554 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L598-L604 at v20.2.4).
+// The listing starts after k and NUL instead, which no key lies between it
+// and k. bucket_list takes either whole as a start key with no instance, and
+// a delimiter that ends in NUL moves it only to k, NUL and 0xFF, still before
+// the epoch's versions, whose instances are alphanumeric.
+func resumeAfter(k string, key rgwcls.ObjKey, listVersions bool) listPos {
+	if listVersions && key.Instance == "" && k != key.Name {
+		return listPos{after: rgwcls.ObjKey{Name: k + "\x00"}, name: key.Name}
+	}
+	return listPos{after: key, name: key.Name}
+}
+
+// nextInstance is the next marker's instance for the entry e: its own, null
+// for the null version, which has none, as S3's NextVersionIdMarker names it
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1817-L1825 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1920-L1928 at v20.2.4),
+// so that the marker resumes after it when copied back.
+//
+// A verbatim round trip resumes after the last listed entry. A caller that
+// deletes what it lists sends back a marker whose version is gone, which
+// starts past the rest of that name (markerStart), so it restarts each page
+// from an empty marker, or lists until a pass finds nothing. radosgw's bucket
+// removal pages by the marker and leaves those versions behind
+// (docs/ceph-upstream-bugs.md, "radosgw's bucket removal with purge leaves a
+// key's older versions behind when a page ends on one of its versions").
+func nextInstance(e *rgwcls.DirEntry) string {
+	if e.Key.Instance == "" && e.Flags&rgwcls.FlagVer != 0 {
+		return meta.NullInstance
+	}
+	return e.Key.Instance
+}
+
+// reshardedRecord reads rec's bucket instance again, past the metadata cache,
+// and returns it when its current index generation names other shards than
+// rec's, as a reshard that removed one of rec's leaves it; nil when it names
+// the same shards, or the bucket is gone, so that the ENOENT a shard answered
+// is the listing's (docs/exclusions.md, "An ordered listing reads the shards
+// the bucket names after a reshard removes its own").
+func (s *Store) reshardedRecord(ctx context.Context, rec *op.BucketRecord) (*op.BucketRecord, error) {
+	o := s.instanceObj(rec.Info.Bucket)
+	s.sysobj.cache.invalidateRemove(normalName(o.pool, o.oid))
+	next, err := s.GetBucketInstance(ctx, rec.Info.Bucket)
+	switch {
+	case errors.Is(err, op.ErrNoSuchBucket):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("reading bucket %s again for its index shards: %w", rec.Info.Bucket.Name, err)
+	}
+	if slices.Equal(shardOIDs(&next.Info, next.Info.Layout.Current), shardOIDs(&rec.Info, rec.Info.Layout.Current)) {
+		return nil, nil
+	}
+	return next, nil
 }
 
 // pastDelimiter is the marker past the common prefix name falls in: name up
@@ -247,7 +414,8 @@ func visible(e *rgwcls.DirEntry) bool {
 // name parsed from it with its instance: the accounted size as the Size
 // radosgw lists, the owner as stored, none for an empty one, an empty
 // storage class as STANDARD
-// (get_canonical_storage_class), and the version flags.
+// (get_canonical_storage_class), the version flags, the versioned epoch and
+// the category.
 func objectEntry(key meta.ObjKey, e *rgwcls.DirEntry) op.ObjectEntry {
 	var owner meta.Owner
 	if e.Meta.Owner != "" {
@@ -265,6 +433,8 @@ func objectEntry(key meta.ObjKey, e *rgwcls.DirEntry) op.ObjectEntry {
 		DeleteMarker:     e.Flags&rgwcls.FlagDeleteMarker != 0,
 		Exists:           e.Exists,
 		Appendable:       e.Meta.AppendableValue,
+		VersionedEpoch:   e.VersionedEpoch,
+		Category:         e.Meta.Category,
 	}
 }
 
@@ -295,9 +465,22 @@ type shardTracker struct {
 
 func (t *shardTracker) atEnd() bool { return t.pos >= len(t.names) }
 
+// orderedRound is what one listOrdered call found: the entries kept, in
+// name order; whether any shard has more; and the last entry visited, kept or
+// dropped, by its own key and the index key it was listed under, which
+// visited says there was.
+type orderedRound struct {
+	entries   []rgwcls.DirEntry
+	truncated bool
+	last      rgwcls.ObjKey
+	lastIndex string
+	visited   bool
+}
+
 // listOrdered is cls_bucket_list_ordered
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9614-L9945):
-// one bucket_list per shard of the current index generation, at most
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9810-L10141 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10535-L10867 at v20.2.4):
+// one bucketList per shard of the current index generation, at most
 // rgw_bucket_index_max_aio in flight, for calcPerShard entries scaled by
 // the expansion factor, then a merge of the replies by name. An entry that
 // is not there and is neither a delete marker nor a common prefix, or has a
@@ -305,18 +488,16 @@ func (t *shardTracker) atEnd() bool { return t.pos >= len(t.names) }
 // dropped. The merge stops at numEntries, or when a truncated shard runs
 // out, since the next name could be on it. The suggestions the checks made
 // are sent, and the listing is truncated when any shard has entries left.
-// last is the key of the last entry visited, kept or dropped, and visited
-// is false when there was none.
 func (s *Store) listOrdered(ctx context.Context, rec *op.BucketRecord, startAfter rgwcls.ObjKey, prefix, delimiter string,
 	numEntries uint32, listVersions bool, attempt uint16,
-) (entries []rgwcls.DirEntry, truncated bool, last rgwcls.ObjKey, visited bool, err error) {
+) (round orderedRound, err error) {
 	pool, oids, err := s.indexShards(ctx, rec)
 	if err != nil {
-		return nil, false, rgwcls.ObjKey{}, false, err
+		return orderedRound{}, err
 	}
 	shardCount := uint32(len(oids)) //nolint:gosec // a shard count fits a u32
 	if shardCount == 0 {
-		return nil, false, rgwcls.ObjKey{}, false, fmt.Errorf("%w: the bucket index shard count of %s is 0", op.ErrInvalidBucketState, rec.Info.Bucket.Name)
+		return orderedRound{}, fmt.Errorf("%w: the bucket index shard count of %s is 0", op.ErrInvalidBucketState, rec.Info.Bucket.Name)
 	}
 	perShard := calcPerShard(numEntries, shardCount)
 	switch {
@@ -327,7 +508,7 @@ func (s *Store) listOrdered(ctx context.Context, rec *op.BucketRecord, startAfte
 		perShard = numEntries
 	}
 	if perShard == 0 {
-		return nil, false, rgwcls.ObjKey{}, false, fmt.Errorf("%w: unable to calculate the entries to read from each index shard of %s", op.ErrInvalidBucketState, rec.Info.Bucket.Name)
+		return orderedRound{}, fmt.Errorf("%w: unable to calculate the entries to read from each index shard of %s", op.ErrInvalidBucketState, rec.Info.Bucket.Name)
 	}
 	trackers := make([]shardTracker, len(oids))
 	g, gctx := errgroup.WithContext(ctx)
@@ -342,7 +523,7 @@ func (s *Store) listOrdered(ctx context.Context, rec *op.BucketRecord, startAfte
 		})
 	}
 	if werr := g.Wait(); werr != nil {
-		return nil, false, rgwcls.ObjKey{}, false, werr
+		return orderedRound{}, werr
 	}
 	// check_disk_state's removals carry the index pool and epoch 0: the
 	// listing's reads are asynchronous, so get_last_version has nothing.
@@ -366,17 +547,17 @@ func (s *Store) listOrdered(ctx context.Context, rec *op.BucketRecord, startAfte
 		keep := true
 		if needsDiskCheck(&ent, true) {
 			if keep, err = s.checkDiskState(ctx, rec, indexVer, &ent, updates, t.oid); err != nil {
-				return nil, false, rgwcls.ObjKey{}, false, err
+				return orderedRound{}, err
 			}
 		}
-		last, visited = ent.Key, true
+		round.last, round.lastIndex, round.visited = ent.Key, name, true
 		if keep {
 			if i, ok := listed[name]; ok {
 				slog.WarnContext(ctx, "reassigned a listed entry, which should not happen", slog.String("key", name))
-				entries[i] = ent
+				round.entries[i] = ent
 			} else {
-				listed[name] = len(entries)
-				entries = append(entries, ent)
+				listed[name] = len(round.entries)
+				round.entries = append(round.entries, ent)
 				count++
 			}
 		}
@@ -399,17 +580,19 @@ func (s *Store) listOrdered(ctx context.Context, rec *op.BucketRecord, startAfte
 	s.suggest(ctx, pool, updates)
 	for i := range trackers {
 		if !trackers[i].atEnd() || trackers[i].ret.IsTruncated {
-			truncated = true
+			round.truncated = true
 			break
 		}
 	}
-	return entries, truncated, last, visited, nil
+	return round, nil
 }
 
 // needsDiskCheck is the test both shard listings make before
 // check_disk_state
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9823-L9827,
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L10083-L10084):
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L10019-L10031 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L10279-L10287 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10743-L10755 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L11005-L11013 at v20.2.4):
 // an entry with a pending op, or one that is not there and is not a delete
 // marker, nor, in the ordered listing, a common prefix.
 func needsDiskCheck(e *rgwcls.DirEntry, ordered bool) bool {
@@ -436,21 +619,60 @@ func (s *Store) indexShards(ctx context.Context, rec *op.BucketRecord) (radoscli
 	return pool, shardOIDs(&rec.Info, rec.Info.Layout.Current), nil
 }
 
-// bucketList runs one bucket_list on the shard oid and returns the reply and
+// bucketList runs bucket_list on the shard oid and returns the reply and
 // the version the read returned. A shard the OSD does not find is radosgw's
-// -ENOENT, NoSuchKey, and a reply that does not decode its -EIO.
+// -ENOENT, NoSuchKey, and a reply that does not decode its -EIO. A shard
+// that answers RGWBIAdvanceAndRetryError, having read only entries the
+// listing skips, is listed again from the marker in its reply, as radosgw's
+// ordered listing lists it again
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_client.cc#L99-L110 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_client.cc#L161-L166 at v19.2.7;
+// ListReader,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bi_rados.cc#L948-L968 at v20.2.4).
+// The unordered listing does too, where radosgw's fails (docs/exclusions.md,
+// "An unordered listing lists a shard that answers advance-and-retry again
+// from its marker"). A marker past a name's versions, the name and 0x01,
+// is listed again from past the name's versions instead (retryAfter). A
+// reply whose marker is empty or the start key again fails with
+// UnknownError, where radosgw's would list the same keys again without end.
 func (s *Store) bucketList(ctx context.Context, pool radosclient.Pool, oid string, l rgwcls.ListOp) (rgwcls.ListRet, uint64, error) {
-	rop := radosclient.NewReadOp()
-	r := rgwcls.BucketList(rop, l, s.release)
-	ver, err := pool.Read(ctx, oid, rop, radosclient.OpFlagNone)
-	if err != nil {
-		return rgwcls.ListRet{}, 0, fmt.Errorf("listing index shard %s: %w", oid, op.FromRADOS(err, op.ScopeObject))
+	for {
+		rop := radosclient.NewReadOp()
+		r := rgwcls.BucketList(rop, l, s.release)
+		ver, rerr := pool.Read(ctx, oid, rop, radosclient.OpFlagNone)
+		ret, retry, err := r.Reply()
+		switch {
+		case retry && (ret.Marker == rgwcls.ObjKey{} || retryAfter(ret.Marker) == l.StartObj):
+			return rgwcls.ListRet{}, 0, fmt.Errorf("%w: index shard %s answered advance-and-retry with no marker past %q", op.ErrUnknown, oid, l.StartObj.Name)
+		case retry:
+			l.StartObj = retryAfter(ret.Marker)
+			continue
+		case rerr != nil && err != nil && errors.Is(rerr, radosclient.ErrTooBig):
+			return rgwcls.ListRet{}, 0, fmt.Errorf("listing index shard %s: %w: %w", oid, op.FromRADOS(rerr, op.ScopeObject), err)
+		case rerr != nil:
+			return rgwcls.ListRet{}, 0, fmt.Errorf("listing index shard %s: %w", oid, op.FromRADOS(rerr, op.ScopeObject))
+		case err != nil:
+			return rgwcls.ListRet{}, 0, fmt.Errorf("%w: listing index shard %s: %w", op.ErrUnknown, oid, err)
+		}
+		return ret, ver, nil
 	}
-	ret, err := r.Result()
-	if err != nil {
-		return rgwcls.ListRet{}, 0, fmt.Errorf("%w: listing index shard %s: %w", op.ErrUnknown, oid, err)
+}
+
+// retryAfter is the key a shard that answered advance-and-retry is listed
+// again after: the reply's marker m, but for one past a name's versions, the
+// name and 0x01
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L617-L618 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L667-L668 at v20.2.4),
+// the name and pastVersions, before an object named like that marker, which
+// a read after it leaves out (docs/ceph-upstream-bugs.md, "cls_rgw's listing
+// can skip an object whose name is another versioned name and 0x01"). An
+// object's own key named so lists it again only to skip it again, since the
+// class answered so having listed nothing.
+func retryAfter(m rgwcls.ObjKey) rgwcls.ObjKey {
+	if name, ok := strings.CutSuffix(m.Name, "\x01"); ok && name != "" && m.Instance == "" {
+		return rgwcls.ObjKey{Name: name + pastVersions}
 	}
-	return ret, ver, nil
+	return m
 }
 
 // checkDiskState is check_disk_state
@@ -475,6 +697,19 @@ func (s *Store) bucketList(ctx context.Context, pool radosclient.Pool, oid strin
 // rgw-go checks a plain object in the data pool whatever its name
 // (docs/exclusions.md, "A plain object whose name ends in .meta is checked
 // where it is stored").
+//
+// dir_suggest_changes applies a change under encode_obj_index_key
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2249-L2250 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2419-L2420 at v20.2.4),
+// so a version's reaches its instance entry and never the list entry it was
+// made from (docs/ceph-upstream-bugs.md, "radosgw's listing never repairs a
+// version's list entry"); rgw-go sends it so, as radosgw does. The null
+// version's list entry has no instance, so its change would land on the
+// name's plain key, the version marker, which an update overwrites and a
+// removal removes (docs/ceph-upstream-bugs.md, "radosgw's listing repair of a
+// null version's list entry overwrites or removes the key's version
+// marker"): for it rgw-go sends nothing (docs/exclusions.md, "A listing sends
+// no repair for the null version's list entry").
 func (s *Store) checkDiskState(ctx context.Context, rec *op.BucketRecord, indexVer rgwcls.EntryVer, ent *rgwcls.DirEntry,
 	updates map[string][]rgwcls.Suggestion, oid string,
 ) (keep bool, err error) {
@@ -491,10 +726,16 @@ func (s *Store) checkDiskState(ctx context.Context, rec *op.BucketRecord, indexV
 		return false, err
 	}
 	logOp := s.zone.Zone.LogData
+	record := func(change byte) {
+		if ent.Key.Instance == "" && ent.Flags&rgwcls.FlagVer != 0 {
+			return
+		}
+		updates[oid] = append(updates[oid], rgwcls.Suggestion{Op: change, Log: logOp, Entry: *ent})
+	}
 	ent.PendingMap = nil
 	if ent.Flags&rgwcls.FlagDeleteMarker == 0 && !st.Exists {
 		ent.Ver = indexVer
-		updates[oid] = append(updates[oid], rgwcls.Suggestion{Op: rgwcls.SuggestRemove, Log: logOp, Entry: *ent})
+		record(rgwcls.SuggestRemove)
 		return false, nil
 	}
 	m := &ent.Meta
@@ -530,7 +771,7 @@ func (s *Store) checkDiskState(ctx context.Context, rec *op.BucketRecord, indexV
 		ent.Tag = tag
 	}
 	ent.Exists = true
-	updates[oid] = append(updates[oid], rgwcls.Suggestion{Op: rgwcls.SuggestUpdate, Log: logOp, Entry: *ent})
+	record(rgwcls.SuggestUpdate)
 	return true, nil
 }
 
@@ -665,21 +906,28 @@ func (s *Store) suggest(ctx context.Context, pool radosclient.Pool, updates map[
 }
 
 // listObjectsUnordered is list_objects_unordered
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2181-L2330):
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L2194-L2343 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2284-L2433 at v20.2.4):
 // rounds of listUnordered with a read-ahead of up to 100 entries past the
-// page, while the shards have more and the page is not over. The next marker
-// follows every parsable entry read while the page has room, before the entry
-// is filtered; only the page's last counted entry can leave it, since a
-// listing ends truncated only once the page is full. An unparsable name, an
-// entry that is not visible unless versions are listed, one outside p.NS, one
+// page, while the shards have more and the page is not over, from where
+// markerStart puts the marker and its instance and then from where the last
+// round's last entry resumes. The next marker, name and instance, follows
+// every parsable entry read while the page has room, before the entry is
+// filtered; only the page's last counted entry can leave it, since a listing
+// ends truncated only once the page is full. An unparsable name, an entry
+// that is not visible unless versions are listed, one outside p.NS, one
 // p.NameFilter refuses
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2297-L2303)
 // and one outside the prefix are then skipped. No common prefixes are formed.
 func (s *Store) listObjectsUnordered(ctx context.Context, rec *op.BucketRecord, p op.ListObjectsParams) (op.ListObjectsResult, error) {
 	maxN := min(max(p.MaxKeys, 0), listAbsoluteMax)
 	readAhead := uint32(maxN + min(maxN, listUnorderedReadAhead)) //nolint:gosec // at most 2 * listAbsoluteMax
-	cur := rgwcls.ObjKey{Name: meta.ObjKey{Name: p.Marker, NS: p.NS}.IndexKeyName()}
+	marker := rgwcls.ObjKey{Name: meta.ObjKey{Name: p.Marker, NS: p.NS}.IndexKeyName(), Instance: p.MarkerInstance}
 	prefix := meta.ObjKey{Name: p.Prefix, NS: p.NS}.IndexKeyName()
+	cur, err := s.markerStart(ctx, rec, p, marker)
+	if err != nil {
+		return op.ListObjectsResult{}, err
+	}
 	var (
 		res       op.ListObjectsResult
 		count     int
@@ -698,10 +946,14 @@ rounds:
 		for i := range entries {
 			e := &entries[i]
 			key, ok := meta.ParseIndexKeyName(e.Key.Name)
-			if ok && count < maxN {
-				// next_marker.set(index_key) parses the raw name and keeps
-				// the name it held when the parse fails.
-				res.NextMarker = key.Name
+			if count < maxN {
+				// next_marker.set(index_key) parses the raw name, which keeps
+				// the name it held when the parse fails, and clears the
+				// instance before it sets the entry's.
+				res.NextMarkerInstance = ""
+				if ok {
+					res.NextMarker, res.NextMarkerInstance = key.Name, nextInstance(e)
+				}
 			}
 			if !ok {
 				slog.ErrorContext(ctx, "could not parse object name", slog.String("bucket", rec.Info.Bucket.Name), slog.String("key", e.Key.Name))
@@ -722,40 +974,43 @@ rounds:
 	}
 	res.Truncated = truncated
 	if !truncated {
-		res.NextMarker = ""
+		res.NextMarker, res.NextMarkerInstance = "", ""
 	}
 	return res, nil
 }
 
 // listUnordered is cls_bucket_list_unordered
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9965-L10155):
-// the shards one after another, from the one startAfter hashes to (a
-// multipart upload's meta entry by its upload's key,
-// parse_index_hash_source) or from the first, each read with bucket_list
-// and no delimiter until numEntries are listed and one more is seen, which
-// makes the listing truncated. An entry is checked against its head as
-// listOrdered checks one, the removals carrying the shard read's version,
-// and the suggestions are sent. last is the last entry listed, valid when
-// any is. A start key that does not parse is radosgw's -EINVAL.
-func (s *Store) listUnordered(ctx context.Context, rec *op.BucketRecord, startAfter rgwcls.ObjKey, prefix string,
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L10161-L10351 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10887-L11079 at v20.2.4):
+// the shards one after another, from the one the name of start's object
+// hashes to (a multipart upload's meta entry by its upload's key,
+// parse_index_hash_source) or, with no start key, from the first, each read
+// with bucketList and no delimiter until numEntries are listed and one more
+// is seen, which makes the listing truncated. A shard read again continues
+// from where the last entry visited resumes (resumeAfter). An entry is
+// checked against its head as listOrdered checks one, the removals carrying
+// the shard read's version, and the suggestions are sent. last is where the
+// last entry listed resumes, valid when any is. A start object whose name
+// does not parse is radosgw's -EINVAL.
+func (s *Store) listUnordered(ctx context.Context, rec *op.BucketRecord, start listPos, prefix string,
 	numEntries uint32, listVersions bool,
-) (entries []rgwcls.DirEntry, truncated bool, last rgwcls.ObjKey, err error) {
+) (entries []rgwcls.DirEntry, truncated bool, last listPos, err error) {
 	pool, oids, err := s.indexShards(ctx, rec)
 	if err != nil {
-		return nil, false, rgwcls.ObjKey{}, err
+		return nil, false, listPos{}, err
 	}
 	numShards := uint32(len(oids)) //nolint:gosec // a shard count fits a u32
 	var shard uint32
-	if startAfter.Name != "" {
-		k, ok := meta.ParseIndexKeyName(startAfter.Name)
+	if start.after.Name != "" {
+		k, ok := meta.ParseIndexKeyName(start.name)
 		if !ok {
-			return nil, false, rgwcls.ObjKey{}, fmt.Errorf("%w: invalid start marker %q", op.ErrInvalidArgument, startAfter.Name)
+			return nil, false, listPos{}, fmt.Errorf("%w: invalid start marker %q", op.ErrInvalidArgument, start.name)
 		}
 		if k.Name != "" {
 			src := k.Name
 			if k.NS == meta.NSMultipart {
 				if src, ok = indexHashSource(k.Name); !ok {
-					return nil, false, rgwcls.ObjKey{}, fmt.Errorf("%w: no index hash source in %q", op.ErrInvalidArgument, k.Name)
+					return nil, false, listPos{}, fmt.Errorf("%w: no index hash source in %q", op.ErrInvalidArgument, k.Name)
 				}
 			}
 			shard, _ = meta.IndexShard(src, numShards)
@@ -763,14 +1018,14 @@ func (s *Store) listUnordered(ctx context.Context, rec *op.BucketRecord, startAf
 	}
 	indexVer := rgwcls.EntryVer{Pool: pool.ID()}
 	updates := map[string][]rgwcls.Suggestion{}
-	marker := startAfter
+	marker := start
 	var count uint32
 shards:
 	for count <= numEntries && shard < numShards {
 		oid := oids[shard]
-		ret, ver, err := s.bucketList(ctx, pool, oid, rgwcls.ListOp{StartObj: marker, NumEntries: numEntries, FilterPrefix: prefix, ListVersions: listVersions})
+		ret, ver, err := s.bucketList(ctx, pool, oid, rgwcls.ListOp{StartObj: marker.after, NumEntries: numEntries, FilterPrefix: prefix, ListVersions: listVersions})
 		if err != nil {
-			return nil, false, rgwcls.ObjKey{}, err
+			return nil, false, listPos{}, err
 		}
 		indexVer.Epoch = ver
 		for _, name := range slices.Sorted(maps.Keys(ret.Dir.Entries)) {
@@ -778,24 +1033,25 @@ shards:
 			keep := true
 			if needsDiskCheck(&ent, false) {
 				if keep, err = s.checkDiskState(ctx, rec, indexVer, &ent, updates, oid); err != nil {
-					return nil, false, rgwcls.ObjKey{}, err
+					return nil, false, listPos{}, err
 				}
 			}
 			if !keep {
-				marker = ent.Key
+				marker = resumeAfter(name, ent.Key, listVersions)
 				continue
 			}
 			if count >= numEntries {
 				truncated = true
 				break shards
 			}
-			marker, last = ent.Key, ent.Key
+			marker = resumeAfter(name, ent.Key, listVersions)
+			last = marker
 			entries = append(entries, ent)
 			count++
 		}
 		if !ret.IsTruncated {
 			shard++
-			marker = rgwcls.ObjKey{}
+			marker = listPos{}
 		}
 	}
 	s.suggest(ctx, pool, updates)

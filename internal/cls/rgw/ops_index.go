@@ -1,6 +1,9 @@
 package rgw
 
 import (
+	"fmt"
+	"syscall"
+
 	"github.com/jhoblitt/rgw-go/internal/cls/internal/clsutil"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
@@ -362,6 +365,32 @@ type ListResult struct {
 // Result decodes the listing once the op has run.
 func (res *ListResult) Result() (ListRet, error) {
 	return clsutil.DecodeReply(res.res, Class, methodBucketList, DecodeListRet)
+}
+
+// advanceAndRetry is RGWBIAdvanceAndRetryError, -EFBIG
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_const.h#L11 at v19.2.7
+// and v20.2.4).
+const advanceAndRetry = -int32(syscall.EFBIG)
+
+// Reply decodes the listing as ClsBucketIndexOpCtx does, on success and on
+// RGWBIAdvanceAndRetryError, which bucket_list answers with its reply already
+// encoded
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_client.cc#L96-L110 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_client.cc#L35-L49 at v20.2.4).
+// retry reports the latter: the reply is truncated with no entries, and its
+// Marker is where to list the shard again from. Any other answer is Result's.
+func (res *ListResult) Reply() (ret ListRet, retry bool, err error) {
+	out, rval, err := res.res.Reply()
+	if err != nil || rval != advanceAndRetry {
+		ret, err = res.Result()
+		return ret, false, err
+	}
+	d := denc.NewDecoder(out)
+	ret = DecodeListRet(d)
+	if err := d.Err(); err != nil {
+		return ListRet{}, false, fmt.Errorf("%s: decoding %s reply: %w", Class, methodBucketList, err)
+	}
+	return ret, true, nil
 }
 
 // BucketList adds bucket_list, which lists up to l.NumEntries entries after
