@@ -112,16 +112,7 @@ func (v *Verifier) Authenticate(ctx context.Context, req *http.Request, payloads
 	// user on the key's id alone, so it is marked Unverified: nothing the
 	// request causes may be charged to that user, a rate limit's charge
 	// included (docs/ceph-upstream-bugs.md).
-	idView := rv
-	if isPreflight(rv) {
-		// A system user's rgwx-uid would have the preflight's answer say
-		// whether the user or account it names loads, and so that the key is
-		// a system user's, to anyone holding the key's id; radosgw takes it
-		// (docs/exclusions.md).
-		noSys := *rv
-		noSys.sysParams = map[string]string{}
-		idView = &noSys
-	} else {
+	if !isPreflight(rv) {
 		var match bool
 		if match, err = d.verify(key.Secret); err != nil {
 			return nil, err
@@ -129,6 +120,20 @@ func (v *Verifier) Authenticate(ctx context.Context, req *http.Request, payloads
 		if !match {
 			return nil, op.ErrSignatureDoesNotMatch
 		}
+	}
+	// A system user's rgwx-uid is taken only where the signature covers it,
+	// in SigV4's canonical query; radosgw takes it on every route
+	// (docs/exclusions.md). A preflight's would have its answer say whether
+	// the user or account it names loads, and so that the key is a system
+	// user's, to anyone holding the key's id. SigV2 signs no rgwx- parameter
+	// (signedSubresourcesV2, qsMetaV2), so a SigV2 one would let whoever
+	// holds a system user's presigned URL, or resends its header-signed
+	// request, choose the owner.
+	idView := rv
+	if isPreflight(rv) || ver == versionV2 {
+		noSys := *rv
+		noSys.sysParams = map[string]string{}
+		idView = &noSys
 	}
 	id, err := v.identity(ctx, idView, rec, d.accessKey, key, account)
 	if err != nil {
