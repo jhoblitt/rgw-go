@@ -397,6 +397,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [cls_otp checks a code at the low 32 bits of the OSD's clock](#cls_otp-checks-a-code-at-the-low-32-bits-of-the-osds-clock) | pending | pending | ✓ |
 | [radosgw reports a partNumber read's checksum as the multipart object's composite](#radosgw-reports-a-partnumber-reads-checksum-as-the-multipart-objects-composite) | pending | [ceph/ceph#66042](https://github.com/ceph/ceph/pull/66042) |  |
 | [radosgw's ListParts never reports its upload's checksum algorithm](#radosgws-listparts-never-reports-its-uploads-checksum-algorithm) | pending | pending | ✓ |
+| [radosgw's bucket delete drops the lifecycle entry of a bucket it then fails to remove](#radosgws-bucket-delete-drops-the-lifecycle-entry-of-a-bucket-it-then-fails-to-remove) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -22625,3 +22626,75 @@ Every new entry adds its row to this table, in document order.
   §6, defect 8); recorded by phase 2 task WP-12, 2026-10-21, which checked
   it at v20.2.4 and main f6f2529dd9e and added the missing `ChecksumType`.
   Derived from the source, not reproduced; task WP-14 reproduces it.
+
+## radosgw's bucket delete drops the lifecycle entry of a bucket it then fails to remove
+
+- **Kind:** defect, S3-correctness of lifecycle: a bucket delete that fails
+  after its multipart abort leaves the bucket, with its lifecycle
+  configuration, out of the lifecycle index, so no lifecycle pass runs its
+  rules again. Not security-relevant: it takes a delete of the bucket, and
+  it grants and exposes nothing; it keeps what the configuration would
+  expire. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RadosBucket::remove` lists the bucket and refuses one with objects,
+    aborts its multipart uploads, then removes the bucket's lifecycle entry
+    when its attrs carry `user.rgw.lc`, casting the result to void, all
+    before `delete_bucket` runs
+    ([rgw_sal_rados.cc:371-450](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L371-L450),
+    [rgw_sal_rados.cc:388-467](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L388-L467)).
+    The removal goes through `remove_bucket_config` with `update_attrs`
+    false, which leaves the attr and only removes the entry under the
+    shard's lock
+    ([rgw_lc.cc:2668-2693](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2668-L2693),
+    [rgw_lc.cc:2735-2760](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2735-L2760)).
+  - `delete_bucket` can still fail: its second emptiness check returns
+    -ENOTEMPTY for an object written since `remove`'s listing, and the
+    entry point's removal under the version read returns its error; on
+    either the bucket stays
+    ([rgw_rados.cc:5320-5358](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5320-L5358),
+    [rgw_rados.cc:5945-5999](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5945-L5999)).
+    Tentacle adds a third, `check_remote_bucket_empty`, on a zone that
+    syncs bucket metadata
+    ([rgw_rados.cc:5952-5966](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5952-L5966)).
+    `RGWDeleteBucket::execute` returns `remove`'s -ENOTEMPTY, 409
+    BucketNotEmpty, and turns only -ECANCELED into success
+    ([rgw_op.cc:3792-3797](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3792-L3797),
+    [rgw_op.cc:4001](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4001);
+    [rgw_common.cc:126](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L126),
+    [rgw_common.cc:127](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L127)).
+  - Only an entry puts a bucket in a lifecycle pass. One is set again only
+    by a lifecycle configuration put (`set_bucket_config`, from
+    PutBucketLifecycleConfiguration or a sync module's coroutine), by a
+    bucket instance metadata put, or by an operator's `radosgw-admin lc
+    reshard fix`, which adds the missing entry of a bucket whose attrs carry
+    the configuration
+    ([rgw_op.cc:6023](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6023),
+    [rgw_cr_tools.cc:118-120](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_cr_tools.cc#L118-L120),
+    [rgw_bucket.cc:2900-2928](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L2900-L2928),
+    [rgw_lc.cc:2703-2748](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2703-L2748);
+    [rgw_op.cc:6689](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6689),
+    [rgw_cr_tools.cc:118](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_cr_tools.cc#L118),
+    [rgw_bucket.cc:3010-3040](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L3010-L3040),
+    [rgw_lc.cc:2770-2815](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2770-L2815)).
+- **Impact:** a PutObject that lands while a DeleteBucket aborts the
+  bucket's uploads, waits up to 50 s for the lifecycle shard's lock, or
+  syncs the owner's stats makes the delete answer 409 BucketNotEmpty, and
+  the bucket keeps its objects and its lifecycle configuration, which
+  GetBucketLifecycleConfiguration still returns, but none of its rules runs
+  again: objects meant to expire stay, and uploads meant to be aborted keep
+  their parts, until the configuration is put again or an operator runs
+  `radosgw-admin lc reshard fix`. The order is the opposite of what
+  heals itself: an entry left for a bucket that is gone is dropped by the next pass, as `bucket_lc_process` answers -ENOENT for it
+  ([rgw_lc.cc:1697-1718](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1697-L1718),
+  [rgw_lc.cc:2430-2440](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2430-L2440);
+  [rgw_lc.cc:1753-1774](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1753-L1774),
+  [rgw_lc.cc:2497-2506](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2497-L2506)).
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** removes the entry as the delete's last step, once the bucket
+  is gone, so a delete that fails before keeps it (`Store.removeLCEntry` and
+  `Store.DeleteBucket`, `internal/driver/bucketops.go`;
+  `docs/exclusions.md`, "A bucket delete removes the lifecycle entry once
+  the bucket is gone").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C7, 2026-10-21, reading `RadosBucket::remove` at
+  both tags. Derived from the source, not reproduced.
