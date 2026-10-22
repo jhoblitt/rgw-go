@@ -530,3 +530,55 @@ Each fix below that is not this document lands on main before phase 2's tasks st
   - A plan or registry entry that states a security property of a defect works the attack, or cites a measurement, before it states the property.
   - A plan review checks each such claim the same way.
 - **Candidate home:** writing-plans (security claims); the plan review brief; the registry's entry rules.
+
+## PP-33: Entering a worktree isolated every agent in the session
+
+- **Severity:** Major. **Status:** open.
+- **Observed:** on 2026-10-21 the controller entered a worktree to write a process docs PR while three agents ran. The harness then refused every agent's Bash calls and writes under `.claude/worktrees/` with "session is isolated in the worktree .../docs-pp-load-budget". One review lost its writes to the ledger and a timing run. The controller left the worktree, and told the other two agents to retry what was refused.
+- **Cost:** a review's report was written to a temporary path and copied back, one measurement was lost, and two agents spent tool rounds on refused commands.
+- **Improvement:**
+  - The controller never enters a worktree while an agent runs.
+  - A controller-side commit is built without a checkout, through a temporary index in the main clone (`git read-tree`, `hash-object`, `update-index`, `commit-tree`), then pushed and shipped like any other.
+- **Candidate home:** subagent-driven-development (controller-side commits during a run); the global CLAUDE.md's worktree rule.
+
+## PP-34: An upstream guard was cited without checking that it runs
+
+- **Severity:** Major. **Status:** open.
+- **Observed:**
+  - The controller told rgw-bug-reproduction that CreateBucket's x-amz-object-ownership permission was already checked on ceph main, citing the guard in `RGWCreateBucket::verify_permission`. The session advised leading a security report with that guard as upstream's own pattern.
+  - Both had checked that the guard exists, and neither that it runs. Its input is set only in `get_params`, which runs after `verify_permission`, so the guard never refuses anything. L2's re-review caught it.
+  - The same day, the same reading error appeared twice more in cross-session triage: a parameter map keyed by name, which overwrites repeats, and a build-flag condition missing from a crash claim.
+- **Cost:** a withdrawn framing on two security entries in two sessions, one new registry entry, and a plan citation that names a 403 its release never returns.
+- **Improvement:**
+  - A claim that radosgw already handles a case holds only once the claim shows when the handler's inputs are set, against the call order.
+  - The task review brief now says so.
+  - Before a written claim about what code does is sent, the writer asks under what condition it is false.
+- **Candidate home:** the task review brief (done); code-conventions' `references/bug-reports.md`; the registry's entry rules.
+
+## PP-35: Host resources stayed held after the work that took them
+
+- **Severity:** Minor. **Status:** open.
+- **Observed:**
+  - The build wrapper ran `flock FILE command`, which hands the lock descriptor to the command. An rgw-go started with `make rgw-go-up` inherited it and held the host-wide build lock for as long as it ran, so the next build waited 10 minutes.
+  - Both rooket clusters were found up from earlier work, with no run using them.
+- **Cost:** a stalled agent, and two idle clusters' load on the owner's desktop for an unknown time.
+- **Improvement:**
+  - The wrapper runs `flock -o`, so a daemon the command leaves running does not hold the lock. Fixed 2026-10-21.
+  - A task that brings a cluster up tears it down at its end, or says in its report that it left it up and why.
+- **Candidate home:** the controller's build wrapper (done); the rooket skill's teardown rule.
+
+## PP-36: A dispatch asked an agent for writes its role forbids
+
+- **Severity:** Minor. **Status:** open.
+- **Observed:** the s3-tests stage-1 dispatch asked a code-worker to push branches and open jhoblitt/ceph PRs. The code-worker role forbids remote writes, so it stopped before them, and the controller pushed and opened the PR itself.
+- **Cost:** a hand-back round, and a PR step done late.
+- **Improvement:** a dispatch gives an agent only work its role allows. Pushes, PRs and merges stay with the controller, which holds the owner's grant for them.
+- **Candidate home:** subagent-driven-development (dispatch shape); the dispatch environment.
+
+## PP-37: The harness refused a subagent's write of its own report
+
+- **Severity:** Minor. **Status:** open.
+- **Observed:** on 2026-10-21 the harness refused an implementer's write of its fix-round section to its report file ("subagents must not write report files"), where earlier rounds had written theirs. The implementer did not work around it, and gave the section in its reply.
+- **Cost:** the report file lacks one round. The section exists only in the hand-back and its notes file.
+- **Improvement:** every dispatch says what to do when a write is refused, which is to put the content in the reply, and the controller files that content where the next reader looks for it.
+- **Candidate home:** the dispatch environment's report contract.
