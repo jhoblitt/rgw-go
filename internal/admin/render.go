@@ -44,25 +44,6 @@ func (q Request) newFormatter() formatter.Formatter {
 	}
 }
 
-// statusNames is http_codes
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L44-L88 at v19.2.6
-// and v20.2.4), the text dump_errno hands the formatter, which
-// HTMLFormatter prints.
-var statusNames = map[int]string{
-	100: "Continue", 200: "OK", 201: "Created", 202: "Accepted", 204: "No Content",
-	205: "Reset Content", 206: "Partial Content", 207: "Multi Status", 208: "Already Reported",
-	300: "Multiple Choices", 301: "Moved Permanently", 302: "Found", 303: "See Other",
-	304: "Not Modified", 305: "User Proxy", 306: "Switch Proxy", 307: "Temporary Redirect",
-	308: "Permanent Redirect", 400: "Bad Request", 401: "Unauthorized", 402: "Payment Required",
-	403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 406: "Not Acceptable",
-	407: "Proxy Authentication Required", 408: "Request Timeout", 409: "Conflict", 410: "Gone",
-	411: "Length Required", 412: "Precondition Failed", 413: "Request Entity Too Large",
-	414: "Request-URI Too Long", 415: "Unsupported Media Type",
-	416: "Requested Range Not Satisfiable", 417: "Expectation Failed",
-	422: "Unprocessable Entity", 498: "Rate Limited", 500: "Internal Server Error",
-	501: "Not Implemented", 503: "Slow Down", 507: "Insufficient Storage",
-}
-
 // WriteBody writes a body an op's flusher started: RGWRESTFlusher::do_start's
 // dump_errno and dump_start, flushed with the headers by end_header, whose
 // output_footer closes HTML's status page, then the op's dump
@@ -72,7 +53,7 @@ var statusNames = map[int]string{
 // A dump that calls Fail writes nothing, and WriteBody returns the failure.
 func WriteBody(w http.ResponseWriter, r *op.Request, q Request, dump func(formatter.Formatter)) error {
 	f := q.newFormatter()
-	f.SetStatus(http.StatusOK, statusNames[http.StatusOK])
+	f.SetStatus(http.StatusOK, formatter.StatusName(http.StatusOK))
 	f.OutputHeader()
 	f.OutputFooter()
 	head := bytes.Clone(f.Bytes())
@@ -152,7 +133,7 @@ func refuseAuth(ctx context.Context, w http.ResponseWriter, r *op.Request, q Req
 // writeErrorDocument renders e as WriteError's document.
 func writeErrorDocument(w http.ResponseWriter, r *op.Request, q Request, e *op.Error) {
 	f := q.newFormatter()
-	f.SetStatus(e.Status, statusNames[e.Status])
+	f.SetStatus(e.Status, formatter.StatusName(e.Status))
 	f.OutputHeader()
 	if q.Format != FormatHTML {
 		f.OpenObjectSection("Error")

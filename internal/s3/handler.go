@@ -31,6 +31,10 @@ type Handler struct {
 	cfg     Config
 	metrics op.Metrics
 	routes  map[routeKey]HandlerFunc
+	// website serves a website request's GET and HEAD at every scope, in
+	// place of the route table's handler; nil answers them NotImplemented,
+	// as an unbound route is answered.
+	website HandlerFunc
 	// inflight is SimpleThrottler's outstanding_requests: cfg.InFlight, or a
 	// count of the handler's own.
 	inflight *atomic.Int64
@@ -308,7 +312,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L2276-L2318 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2298-L2340 at v20.2.4):
 // preprocess's refusal of a NUL in the URL, RGWRESTMgr_S3::get_handler's
-// refusal of an object's subresource at bucket scope, then
+// refusal of an object's subresource at bucket scope, which its website
+// branch never makes (websiteDispatch), then
 // RGWHandler_REST_S3::init's refusal of a copy source parse_copy_location
 // cannot parse
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5026-L5041 at v19.2.6,
@@ -337,7 +342,7 @@ func (h *Handler) parse(req *http.Request, now time.Time) (Parsed, error) {
 		return p, err
 	}
 	r := p.Req
-	if r.Scope() == op.ScopeBucket && hasObjectSubresource(r.Query) {
+	if !r.Website && r.Scope() == op.ScopeBucket && hasObjectSubresource(r.Query) {
 		return p, op.ErrMethodNotAllowed
 	}
 	if v, ok := copySource(r); ok {
@@ -424,6 +429,9 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 	}
 
 	fn := h.routes[routeKey{route.Scope, route.Name}]
+	if r.Website {
+		fn = h.website
+	}
 	if fn == nil {
 		WriteError(ctx, w, r, op.ErrNotImplemented)
 		return

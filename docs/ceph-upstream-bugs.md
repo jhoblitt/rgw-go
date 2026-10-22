@@ -421,6 +421,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's website GetObject redirects a missing part only under a tag-conditioned policy](#radosgws-website-getobject-redirects-a-missing-part-only-under-a-tag-conditioned-policy) | pending | pending | ✓ |
 | [radosgw answers a GET or HEAD naming a delete marker's version 404 NoSuchKey](#radosgw-answers-a-get-or-head-naming-a-delete-markers-version-404-nosuchkey) | pending | pending | ✓ |
 | [radosgw's attr writes put a null-current OLH head's OLH attrs back, reverting a link that lands in between](#radosgws-attr-writes-put-a-null-current-olh-heads-olh-attrs-back-reverting-a-link-that-lands-in-between) | pending | pending | ✓ |
+| [radosgw sends a website error page one byte past its Content-Length](#radosgw-sends-a-website-error-page-one-byte-past-its-content-length) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -24271,3 +24272,60 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 Task V6's review, 2026-10-22, tracing `SetObjectAttrs`
   on a followed state; the window checked at both tags in V6's fix round.
   Derived from the source, not reproduced.
+
+## radosgw sends a website error page one byte past its Content-Length
+
+- **Kind:** defect, S3-correctness (HTTP framing); found by us. One more
+  input to the sink of "[radosgw sends a public access block after
+  GetPublicAccessBlock's error document, past its
+  Content-Length](#radosgw-sends-a-public-access-block-after-getpublicaccessblocks-error-document-past-its-content-length)":
+  `end_header`'s error branch takes the Content-Length from the formatter
+  and then flushes more than that as the body. Unfixed at v19.2.7 and
+  v20.2.4. Derived from the source, not reproduced.
+- **Evidence:**
+  - The S3 handler gives a website request an HTML formatter
+    ([rgw_rest_s3.cc:5290-5294](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5290-L5294),
+    [rgw_rest_s3.cc:5820-5824](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5820-L5824)), and `reallocate_formatter`
+    makes it pretty for a website request,
+    `new HTMLFormatter(s->prot_flags & RGW_REST_WEBSITE)`
+    ([rgw_rest.cc:1807-1808](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1807-L1808),
+    [rgw_rest.cc:1806-1807](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1806-L1807)); S3's XML formatter is not pretty
+    ([rgw_rest.cc:1801](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1801),
+    [rgw_rest.cc:1800](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1800)).
+  - `end_header`'s error branch writes the page into the formatter and
+    sends `get_len()`, the length of what the formatter holds, as the
+    Content-Length
+    ([rgw_rest.cc:620-624](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L620-L624),
+    [rgw_rest.cc:625-629](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L625-L629); `XMLFormatter::get_len`,
+    [Formatter.cc:585-588](https://github.com/ceph/ceph/blob/v19.2.7/src/common/Formatter.cc#L585-L588),
+    [Formatter.cc:593-596](https://github.com/ceph/ceph/blob/v20.2.4/src/common/Formatter.cc#L593-L596)), and then flushes the formatter as
+    the body for anything but a HEAD
+    ([rgw_rest.cc:652-654](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L652-L654) and
+    [rgw_rest.cc:303-314](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L303-L314),
+    [rgw_rest.cc:657-659](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L657-L659) and
+    [rgw_rest.cc:303-314](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L303-L314)).
+  - `XMLFormatter::flush`, which `HTMLFormatter` keeps, writes one more
+    line break after a pretty formatter's output when there is any
+    ([Formatter.cc:400-413](https://github.com/ceph/ceph/blob/v19.2.7/src/common/Formatter.cc#L400-L413),
+    [Formatter.cc:408-421](https://github.com/ceph/ceph/blob/v20.2.4/src/common/Formatter.cc#L408-L421)), so the body is the page and an LF,
+    one byte longer than its Content-Length.
+  - No layer below cuts the byte, as the sibling entry's evidence shows
+    for its surplus: the buffering and length-controlling filters leave a
+    body with a length alone, and beast's `write_data` writes what it is
+    given.
+- **Trigger:** any website request but a HEAD that radosgw answers with
+  its HTML error page: a GET of a key that names no object on a bucket with
+  no error document, a refused read, a PUT or a POST to the website
+  endpoint.
+- **Impact:** the response runs one LF past its Content-Length. A client
+  or proxy that reads the next response on a kept-alive connection meets
+  the LF before that response's status line, and one that does not skip
+  it fails the response. The byte is always an LF, which no requester
+  chooses.
+- **Releases:** v19.2.7 and v20.2.4. Not checked on main.
+- **rgw-go:** differs: its website error page ends at its Content-Length
+  (`writeHTMLError`, `internal/s3/html.go`; `docs/exclusions.md`, "A
+  website error page ends at its Content-Length").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 unit B, Task BC-15, 2026-10-22, porting the website
+  endpoint's HTML error page. Derived from the source, not reproduced.
