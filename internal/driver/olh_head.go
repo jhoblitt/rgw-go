@@ -104,23 +104,31 @@ type olhCondGuard struct {
 // and gets an olh.info naming itself, so the change is not seen; it and a
 // missing head get fresh write and OLH tags and an empty olh.ver. A lost
 // exclusive create is ECANCELED. cond, when not nil, adds its guard ahead of
-// every set, so that it sees other writers only; a missing head needs none,
-// the exclusive create refusing whatever another writer made. On success
-// head is updated as radosgw updates its state: it exists, holds the pending
-// attr, and holds the new tags it was given, but not the olh.info or olh.ver
-// written. It returns the op tag and the olh.ver head was read with.
-func (s *Store) olhInitModification(ctx context.Context, head *op.ObjectState, cond *olhCondGuard) (opTag string, ver []byte, err error) {
+// every set, so that it sees other writers only, and expectTag, when not
+// nil, adds there cmpxattr(user.rgw.idtag, EQ, expectTag), which init itself
+// sets on a head without an OLH tag. A missing head needs neither: the
+// exclusive create refuses whatever another writer made, where a cmpxattr
+// on a missing object answers ENOENT rather than reading the xattr as empty
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L6403-L6408 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L6472-L6477 at v20.2.4).
+// On success head is updated as radosgw updates its state: it exists, holds
+// the pending attr, and holds the new tags it was given, but not the
+// olh.info or olh.ver written. It returns the op tag and the olh.ver head
+// was read with.
+func (s *Store) olhInitModification(ctx context.Context, head *op.ObjectState, cond *olhCondGuard, expectTag []byte) (opTag string, ver []byte, err error) {
 	if head.Key.Instance != "" {
 		return "", nil, fmt.Errorf("initializing an olh modification of %s: the head names instance %q", head.Key.Name, head.Key.Instance)
 	}
-	_, hasTag := head.Attrs[meta.AttrOLHIDTag]
-	hasTag = hasTag && head.Exists
+	hasTag := olhTagged(head)
 	w := radosclient.NewWriteOp()
 	if !head.Exists {
 		w.Create(true)
 	} else {
 		w.AssertExists()
 		w.SetMtime(head.Mtime)
+		if expectTag != nil {
+			w.CmpXattr(meta.AttrIDTag, radosclient.CmpEQ, expectTag)
+		}
 		if cond != nil {
 			w.CmpXattr(meta.AttrOLHInfo, radosclient.CmpEQ, cond.info)
 			if cond.noPending {
@@ -166,6 +174,14 @@ func (s *Store) olhInitModification(ctx context.Context, head *op.ObjectState, c
 	head.Exists = true
 	head.Attrs[name] = pending
 	return opTag, ver, nil
+}
+
+// olhTagged reports whether head exists with an OLH tag, which
+// olhInitModification guards on and keeps; it gives any other head fresh
+// write and OLH tags.
+func olhTagged(head *op.ObjectState) bool {
+	_, ok := head.Attrs[meta.AttrOLHIDTag]
+	return ok && head.Exists
 }
 
 // olhCancelModification is olh_cancel_modification

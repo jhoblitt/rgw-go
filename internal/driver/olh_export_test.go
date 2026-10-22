@@ -4,43 +4,19 @@ import (
 	"context"
 	"time"
 
-	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 )
 
-// OLHLink is olhLink for the external specs, whose Cond returns an
-// OLHCondGuard.
-type OLHLink struct {
-	DeleteMarker  bool
-	Meta          rgw.DirEntryMeta
-	Epoch         uint64
-	UnmodSince    time.Time
-	HighPrecision bool
-	SkipUpdate    bool
-	Cond          func(ctx context.Context, head *op.ObjectState) (*OLHCondGuard, error)
-	ExpectTag     []byte
-}
+// OLHLink is olhLink for the external specs.
+type OLHLink = olhLink
 
 // OLHUnlink is olhUnlink for the external specs.
 type OLHUnlink = olhUnlink
 
 // SetOLHForTest is setOLH for the external specs.
 func (s *Store) SetOLHForTest(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p OLHLink) error {
-	l := olhLink{
-		DeleteMarker: p.DeleteMarker, Meta: p.Meta, Epoch: p.Epoch, UnmodSince: p.UnmodSince,
-		HighPrecision: p.HighPrecision, SkipUpdate: p.SkipUpdate, ExpectTag: p.ExpectTag,
-	}
-	if p.Cond != nil {
-		l.Cond = func(ctx context.Context, head *op.ObjectState) (*olhCondGuard, error) {
-			g, err := p.Cond(ctx, head)
-			if g == nil {
-				return nil, err
-			}
-			return &olhCondGuard{info: g.Info, noPending: g.NoPending}, err
-		}
-	}
-	return s.setOLH(ctx, rec, key, l)
+	return s.setOLH(ctx, rec, key, p)
 }
 
 // UnlinkObjInstanceForTest is unlinkObjInstance for the external specs.
@@ -90,9 +66,24 @@ func SplitOLHTailForTest(err error) (OLHTail, bool, error) {
 	return OLHTail{Last: tail.tail.last, Clear: tail.tail.clear, Keep: tail.tail.keep, OpTag: tail.tail.opTag}, true, rest
 }
 
-// OLHAttempts and OLHReplayRetries are olhAttempts and olhReplayRetries for
-// the external specs.
+// OLHAttempts, OLHReplayRetries, OLHCondBackoffs and OLHCondListPage are
+// olhAttempts, olhReplayRetries, olhCondBackoffs and olhCondListPage for the
+// external specs.
 const (
 	OLHAttempts      = olhAttempts
 	OLHReplayRetries = olhReplayRetries
+	OLHCondBackoffs  = olhCondBackoffs
+	OLHCondListPage  = olhCondListPage
 )
+
+// OLHCondBackoffForTest is olhCondBackoff for the external specs.
+func OLHCondBackoffForTest(n int) time.Duration { return olhCondBackoff(n) }
+
+// OLHCondStaleForTest is olhCondStale for the external specs.
+func OLHCondStaleForTest() time.Duration { return olhCondStale() }
+
+// SetCondSleepForTest makes sleep how s's conditional links wait out a
+// backoff.
+func SetCondSleepForTest(s *Store, sleep func(ctx context.Context, d time.Duration) error) {
+	s.condSleep = sleep
+}

@@ -107,13 +107,20 @@ type OLHCondGuard struct {
 	NoPending bool
 }
 
-// OLHInitModificationForTest is olhInitModification for the external specs.
+// OLHInitModificationForTest is olhInitModification with no expected write
+// tag for the external specs.
 func (s *Store) OLHInitModificationForTest(ctx context.Context, head *op.ObjectState, cond *OLHCondGuard) (opTag string, ver []byte, err error) {
+	return s.OLHInitModificationExpectingForTest(ctx, head, cond, nil)
+}
+
+// OLHInitModificationExpectingForTest is olhInitModification for the
+// external specs.
+func (s *Store) OLHInitModificationExpectingForTest(ctx context.Context, head *op.ObjectState, cond *OLHCondGuard, expectTag []byte) (opTag string, ver []byte, err error) {
 	var g *olhCondGuard
 	if cond != nil {
 		g = &olhCondGuard{info: cond.Info, noPending: cond.NoPending}
 	}
-	return s.olhInitModification(ctx, head, g)
+	return s.olhInitModification(ctx, head, g, expectTag)
 }
 
 // OLHCancelModificationForTest is olhCancelModification for the external
