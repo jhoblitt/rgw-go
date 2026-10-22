@@ -38,7 +38,8 @@ func (r *Runner) useRadosgw(ctx context.Context, st *state) error {
 
 // startRgwGo restarts rgw-go through rgw-go-up.sh with GODEBUG=gctrace=1 and
 // RGW_GO_FLAGS, checks both gateways' entities hold the parity options,
-// which rgw-go-up.sh sets, and reads where rgw-go serves, its metrics
+// which rgw-go-up.sh sets but for radosgw's rgw_enable_lc_threads, which the
+// LC mode holds, and reads where rgw-go serves, its metrics
 // address, its pid and its frontends. From the restart on, the run's exit
 // stops rgw-go, a failed restart's included.
 func (r *Runner) startRgwGo(ctx context.Context, st *state) error {

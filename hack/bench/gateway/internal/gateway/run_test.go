@@ -304,6 +304,14 @@ var _ = Describe("Runner.Run", func() {
 			Expect(w.trace()).NotTo(ContainSubstring("user"))
 		})
 
+		It("a radosgw left in an LC mode, naming the mode switch that restores the parity mode", func(ctx SpecContext) {
+			w := newWorld("radosgw")
+			w.options[radosgwEntity+" rgw_enable_lc_threads"] = "true"
+			Expect(w.run(ctx, w.config(gateway.Settings{}))).To(MatchError(
+				"client.rgw.ceph.objectstore.a holds rgw_enable_lc_threads=true, not the parity setting false: " +
+					"run make lc-mode LC=off RELEASE=tentacle first"))
+		})
+
 		It("an rgw-go whose entity lacks a parity option once rgw-go-up.sh ran, and stops rgw-go", func(ctx SpecContext) {
 			w := newWorld("rgw-go")
 			w.options["client.rgw.rgw-go rgw_usage_log_tick_interval"] = "30"

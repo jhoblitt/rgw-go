@@ -67,9 +67,11 @@
 // through hack/rooket/rgw-go-up.sh with GODEBUG=gctrace=1 and RGW_GO_FLAGS, and
 // stops it through rgw-go-down.sh when the run ends; a radosgw run refuses to
 // start while an rgw-go runs against the cluster. Both refuse a gateway whose
-// entity does not hold the parity options, which rgw-go-up.sh sets; the
-// command reads them from the release's chart values, which make
-// parity-options-check holds equal to hack/rooket/lib.sh's parity_options.
+// entity does not hold the parity options, naming what sets the one it
+// lacks: rgw-go-up.sh, but for radosgw's rgw_enable_lc_threads, which the
+// LC mode holds and make lc-mode LC=off restores. The command reads them
+// from the release's chart values, which make parity-options-check holds
+// equal to hack/rooket/lib.sh's parity_options.
 //
 // The sampler reads the gateway's process once a second, appending to
 // samples-<profile>.csv, under the header time,utime,stime,threads,rss_kib,

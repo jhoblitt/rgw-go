@@ -1,10 +1,14 @@
 // Command s3tests decides which s3-tests the parity set runs, from the lists
-// beside it, for run.sh, which runs them.
+// beside it, for run.sh, which runs them, and readies a release's rooket
+// cluster for the lifecycle tests among them.
 //
 //	go run ./hack/s3tests expr [--lists DIR] [--set pr|gate] [--tests FILE]
 //	go run ./hack/s3tests select [--lists DIR] [--set pr|gate] [--tests FILE] [--unfiltered FILE]
 //	    [--gate-only-ids FILE] <COLLECTION
 //	go run ./hack/s3tests hash [--lists DIR]
+//	go run ./hack/s3tests lc-mode --release squid|tentacle --mode off|radosgw|rgw-go|both [--rooket PATH]
+//	    [--root DIR] [--make PATH]
+//	go run ./hack/s3tests classes [--release squid|tentacle [--rooket PATH] [--root DIR]]
 //
 // The gate set is the tests pytest collects from test_s3.py and
 // test_headers.py less those carrying a marker excluded-markers.txt lists,
@@ -55,17 +59,39 @@
 // each. With no include line, it is the deselect lists' digest alone. The
 // gate-only lines stay out, so that a run of either set carries the digest.
 //
+// lc-mode sets an LC mode, the gateways whose lifecycle workers run: off,
+// the parity mode, under which phase 1's set is recorded and compared,
+// radosgw, rgw-go, or both. It sets radosgw's rgw_enable_lc_threads in the
+// object store's rgwConfig, waits for Rook to reconcile it, and restarts the
+// radosgw when the one running started before the option last changed,
+// waiting until the service map lists one started after the change. It then
+// restarts rgw-go through make -C ROOT rgw-go-up, its option given as
+// RGW_GO_LC_THREADS and the serve flags rgw-go-up.sh recorded in
+// rgw-go.flags as RGW_GO_FLAGS, when it runs with another option, and starts
+// it, with none, when none runs and the mode runs its worker. A gateway that
+// already runs as the mode says is left alone. It prints what each gateway
+// runs with, a line each.
+//
+// classes prints the storage classes the s3-tests conf names beside
+// STANDARD, comma-separated, as run.sh writes them into storage_classes.
+// Given --release, it first adds them to the default placement of the
+// radosgw's zonegroup and zone, on the STANDARD class's data pool and
+// uncompressed, with the Rook operator's radosgw-admin, and commits the
+// realm's period when that changed it or the period lacks one, waiting for
+// the radosgw to reload it; it prints the classes' place instead, and warns
+// when an rgw-go runs, which reads the zone only when it starts.
+//
 // Each flag can also come from the environment, as S3TESTS_LISTS,
 // S3TESTS_SET, S3TESTS_TESTS, S3TESTS_UNFILTERED, S3TESTS_GATE_ONLY_IDS,
-// S3TESTS_LOG_LEVEL and so on, or from the config file --config or
-// S3TESTS_CONFIG names; a flag given, even empty, beats both. The root's
-// --log-level (debug, info, warn or error; info by default) and --log-format
-// (json or text; json by default) set the logger, which writes to stderr.
-// s3tests exits 0 when it has done its work, 1 when select refuses the set or
-// expr the TESTS file, and 2 for anything else: a refused command line, a
-// --set other than pr or gate among them, a list, a TESTS file or a
-// collection file it cannot read, and a --gate-only-ids file it cannot
-// write.
+// S3TESTS_MODE, S3TESTS_LOG_LEVEL and so on, or from the config file
+// --config or S3TESTS_CONFIG names; a flag given, even empty, beats both.
+// The root's --log-level (debug, info, warn or error; info by default) and
+// --log-format (json or text; json by default) set the logger, which writes
+// to stderr. s3tests exits 0 when it has done its work, 1 when select
+// refuses the set or expr the TESTS file, and 2 for anything else: a refused
+// command line, a --set other than pr or gate among them, a list, a TESTS
+// file or a collection file it cannot read, a --gate-only-ids file it cannot
+// write, and a cluster lc-mode or classes could not ready.
 //
 // Managed by go-conventions (references/layout.md owns the main shape).
 package main

@@ -154,9 +154,10 @@ long dropped any that stopped.
   and the objects in `plain`, a compressed one with its `storage_class` and
   `compression`.
 - `ceph.client.rgw.rgw-go.keyring`, `rgw-go.log`, `rgw-go.pid`,
-  `rgw-go.endpoint` and `rgw-go.metrics`, from `rgw-go-up.sh`: rgw-go's key,
-  its JSON log, its process, its S3 URL and its metrics address.
-  `rgw-go-down.sh` removes the last three.
+  `rgw-go.flags`, `rgw-go.endpoint` and `rgw-go.metrics`, from
+  `rgw-go-up.sh`: rgw-go's key, its JSON log, its process, the serve flags it
+  was started with, one a line, its S3 URL and its metrics address.
+  `rgw-go-down.sh` removes the last four.
 
 ## Population
 
@@ -193,6 +194,10 @@ unless `radosgw-admin object stat` shows the object compressed with the
 codec. The other objects hold pseudo-random bytes seeded by the key; either
 way a rerun writes the same data. The script is safe to rerun against a
 populated cluster.
+
+`make populate` then adds the storage classes the s3-tests conf names, as
+"Lifecycle runs" describes, before any rgw-go starts: rgw-go reads the zone
+only when it starts.
 
 Rook's operator writes the realm, zonegroup, zone and periods with the
 `radosgw-admin` of its own image, Ceph 20.2.4 in Rook v1.20.7. `populate.sh`
@@ -253,7 +258,10 @@ the requests; `rgw_d3n_l1_local_datacache_enabled` false, so that no read
 cache sits between the gateway and RADOS; the three usage options the
 rgw/admin suite needs; and `rgw_lc_debug_interval` 10, a lifecycle day of
 10 s, the day s3-tests' lifecycle tests wait on, which no request reads.
-`parity_options` in `lib.sh` lists them.
+`parity_options` in `lib.sh` lists them. `rgw_enable_lc_threads` is the LC
+mode's (see "Lifecycle runs"): the script gives rgw-go's entity
+`RGW_GO_LC_THREADS`, false unless `make lc-mode` passes true, and leaves the
+radosgw's to the object store's `rgwConfig`.
 
 None of them is a startup-only option to the monitors, so `ceph config set`
 reaches the running radosgw at once and `ceph config show` reports the new
@@ -563,6 +571,7 @@ ignored by git, holds each release's binary and each builder's Go build cache.
 make gate RELEASE=squid                                # first: the gate counts the zone's users
 make s3tests RELEASE=squid GATEWAY=radosgw RUN=try1    # GATEWAY=rgw-go runs the same set against rgw-go
 make s3tests RELEASE=squid GATEWAY=radosgw SET=gate    # the gate set, gate-only tests included
+make s3tests RELEASE=squid GATEWAY=radosgw LC=radosgw  # in an LC mode, under "Lifecycle runs"
 ```
 
 `hack/s3tests/run.sh` runs s3-tests, the suite ceph/ceph carries in
@@ -597,7 +606,9 @@ markers and without it, which alone holds the include list's tests; the
 command picks the set's node ids from the two collections and the lists, and
 pytest runs exactly those ids, in collection order (`go doc ./hack/s3tests`).
 `run.sh` gives the command every flag, so that neither an `S3TESTS_` variable
-the command would read nor a config file one names changes a run.
+the command would read nor a config file one names changes a run. Each run
+of `make s3tests` first sets the LC mode `LC` names, `off` by default (see
+"Lifecycle runs").
 
 `run.sh` creates the s3-tests users with `radosgw-admin`, with fixed keys so
 that every run writes the same conf: `s3tests-main`, `s3tests-alt`,
@@ -724,6 +735,72 @@ marker still listed removes, and gate-only lines for those the pr set cannot
 afford, and records the tests they free in both ledgers, as "Adding tests"
 below does.
 
+## Lifecycle runs
+
+```sh
+make lc-mode RELEASE=squid LC=radosgw                  # radosgw's lifecycle worker alone
+make s3tests RELEASE=squid GATEWAY=radosgw LC=radosgw TESTS=lc.txt
+make lc-mode RELEASE=squid LC=off                      # the parity mode again
+```
+
+The LC mode is harness configuration: which gateways run their lifecycle
+worker. `off`, the parity mode, runs neither, and phase 1's set is recorded
+and compared under it; `radosgw` and `rgw-go` run that gateway's alone,
+the gateway under test's; `both` runs both, which then share the zone's
+lifecycle shards. `make lc-mode` sets the mode `LC` names, `off` by
+default. Every s3-tests target, `make s3tests`, `make s3tests-parity`,
+`make s3tests-record` and `make s3tests-record-tests`, sets its own `LC`
+first, and each result and ledger entry it records carries it as the meta
+`lc`. `make admin-suite`, and with it `make admin-record` and `make
+admin-parity`, sets the parity mode first. The gateway comparison checks both
+entities for every parity option, so it runs in the parity mode only, and
+names `make lc-mode LC=off` for a radosgw left in another.
+
+radosgw reads `rgw_enable_lc_threads` only when it builds its store, at
+startup and at each realm reload, and Rook writes the radosgw entity's options
+from the object store's `rgwConfig` at every reconcile, so a `ceph config set`
+alone would not outlast the next one. `make lc-mode` therefore sets the option
+in the running object store's `rgwConfig`, waits until Rook has reconciled it
+(`status.observedGeneration`), and then, as `rgw-go-up.sh` does for the parity
+options, restarts the radosgw when the one running started before the option
+last changed in a section it reads, and waits until the service map lists one
+started after the change. rgw-go reads the option once, when it starts, from
+its own entity, which `rgw-go-up.sh` sets from `RGW_GO_LC_THREADS`: `make
+lc-mode` restarts rgw-go through `make rgw-go-up` with the mode's value when
+it runs with another, giving it as `RGW_GO_FLAGS` the serve flags
+`rgw-go.flags` records, and starts one, with none, for a mode that runs its
+worker when none runs; for a mode that runs none, no rgw-go is started. It
+refuses, before it changes either gateway, a recorded flag `RGW_GO_FLAGS`
+cannot carry through make and the shell, naming the restart to make by hand,
+and an rgw-go with no `rgw-go.flags` record at all, such as one started before
+`rgw-go-up.sh` kept one: `make rgw-go-up` once, with the flags that rgw-go
+should keep, writes the record. A later `make rgw-go-up` gives rgw-go the
+parity value again, and `make cluster-up` against a running cluster restores
+the chart's `rgwConfig`, which is why each s3-tests target sets its mode
+afresh. `make lc-mode` prints what each gateway runs with: the running
+radosgw's option, as `ceph config show` reports it, with its start, and
+rgw-go's entity's, with its pid. rgw-go registers no daemon with the manager,
+so its entity's value stands for the running rgw-go's, and a change to it made
+by hand while rgw-go runs goes unseen.
+
+The lifecycle tests also need storage classes. `make populate` adds two
+plain ones, `LUKEWARM` and `FROZEN`, the names Ceph's own lifecycle suite
+gives them, through `hack/s3tests classes --release`, to the default
+placement of the radosgw's zonegroup and zone, on the STANDARD class's data
+pool and uncompressed, with the Rook operator's `radosgw-admin`, as
+`populate.sh` adds its compressing classes. It commits the realm's period
+only when it added one or the period lacks one, and waits for the radosgw to
+reload it. An rgw-go that runs then reads the zone only when it starts, so
+the command warns that it knows none of the new classes until `make
+rgw-go-up` restarts it. `run.sh` writes the two, as `hack/s3tests classes`
+prints them, into `storage_classes` in the conf's `[s3 main]`; s3-tests adds
+STANDARD itself, and its transition tests skip below three classes.
+s3-tests' own `lc_debug_interval` stays at its default, 10 s, the day
+`rgw_lc_debug_interval` gives both gateways. `test_copy_enc` and
+`test_copy_part_enc` take a parametrization for each pair of classes when
+they are collected, but carry the excluded `encryption` marker, so the set
+stays as it was.
+
 ## Parity baselines
 
 `test/s3tests/baseline/<release>.json` is radosgw's baseline on that
@@ -788,7 +865,7 @@ it.
 
 ```sh
 make gate RELEASE=squid            # first: the gate counts the zone's users
-make rgw-go-up RELEASE=squid       # sets the parity options on radosgw's entity too
+make rgw-go-up RELEASE=squid       # sets the parity options on radosgw's entity too, but its LC option
 make s3tests-record RELEASE=squid  # REASONS=FILE for changed outcomes; OUT=FILE appends to another ledger
 ```
 
@@ -796,8 +873,10 @@ make s3tests-record RELEASE=squid  # REASONS=FILE for changed outcomes; OUT=FILE
 twice, as `RUN=base1` and `RUN=base2`, and appends both runs to `OUT`, by
 default `test/s3tests/baseline/<release>.json`, with the meta `release`,
 `ceph_version` from `manifest.json`, `gateway=radosgw`, `s3tests_commit`,
-`deselect` and `pytest_freeze`. It refuses to start before `make rgw-go-up`,
-so that radosgw records under the parity options rgw-go is compared under.
+`deselect`, `pytest_freeze` and `lc`, the LC mode. It refuses to start
+before `make rgw-go-up`, so that radosgw records under the parity options
+rgw-go is compared under, its `rgw_enable_lc_threads` the mode each run's
+`make lc-mode` sets.
 A record that would change an outcome or an unstable flag, or retire a test,
 stops and names each one; nothing is written. Each needs a line in
 `REASONS`, a file of a test id, blanks and the reason, one a line:
@@ -925,8 +1004,8 @@ make rgw-go-down RELEASE=squid
 `make s3tests-parity` runs the pr set, or with `SET=gate` the gate set,
 against the rgw-go `make rgw-go-up` started, as `make s3tests GATEWAY=rgw-go
 RUN=parity`, records the run in `out/<release>/s3tests-rgw-go.json` with the
-release, the Ceph version from `manifest.json`, the s3-tests commit and the
-deselect digest, and compares it with `BASELINE`, by default
+release, the Ceph version from `manifest.json`, the s3-tests commit, the
+deselect digest and the LC mode, and compares it with `BASELINE`, by default
 `test/s3tests/baseline/<release>.json`. It needs a populated cluster, for
 `manifest.json`. A run of the pr set is compared over the tests it selected
 alone, `bin/parity diff --selection` reading the run's `.ids` and
@@ -1108,7 +1187,7 @@ binary panicked, or the gateway could not be reached.
 been pinned at:
 
 ```sh
-make rgw-go-up RELEASE=squid     # sets the parity options on radosgw's entity too
+make rgw-go-up RELEASE=squid     # sets the parity options on radosgw's entity too, but its LC option
 make admin-record RELEASE=squid  # REASONS=FILE for changed outcomes; OUT=FILE appends to another ledger
 ```
 
@@ -1117,14 +1196,14 @@ make admin-record RELEASE=squid  # REASONS=FILE for changed outcomes; OUT=FILE a
 `test/admin/baseline/<release>.json`, with the meta `release`, `ceph_version`
 from `manifest.json`, `gateway=radosgw`, `go_ceph_tag` and `deselect`. Like
 `make s3tests-record` it refuses to start before `make rgw-go-up`, so that
-radosgw records under the parity options rgw-go is compared under, and it
-stops on a changed outcome or unstable flag, or a retired subtest, that
-`REASONS` gives no reason for. A subtest whose outcome differed between the
-runs is `unstable`, and a comparison skips it. The comparison refuses a run
-at another go-ceph tag than the ledger's head or for another release, and
-names each subtest stale under another Ceph version, so bumping
-`GO_CEPH_TAG` or a Ceph pin records both releases' ledgers in the same
-change.
+radosgw records under the parity options rgw-go is compared under, the parity
+mode's `rgw_enable_lc_threads` set by `make admin-suite`'s `make lc-mode
+LC=off`, and it stops on a changed outcome or unstable flag, or a retired
+subtest, that `REASONS` gives no reason for. A subtest whose outcome differed
+between the runs is `unstable`, and a comparison skips it. The comparison
+refuses a run at another go-ceph tag than the ledger's head or for another
+release, and names each subtest stale under another Ceph version, so bumping
+`GO_CEPH_TAG` or a Ceph pin records both releases' ledgers in the same change.
 
 Each baseline holds the suite's 82 subtests less the two the deselect list
 skips. On both releases radosgw fails

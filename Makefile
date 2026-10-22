@@ -216,9 +216,15 @@ need-release:
 cluster-up: need-release ## Start the RELEASE cluster and write its client config
 	ROOKET=$(ROOKET_BIN) hack/rooket/up.sh $(RELEASE)
 
+# After the data set, populate adds the storage classes the s3-tests conf
+# names, before any rgw-go starts: rgw-go reads the zone only when it starts.
+# The command is given every flag, so that no S3TESTS_ variable or config
+# file changes what it adds.
 .PHONY: populate
-populate: need-release ## Write the fixed data set through the RELEASE cluster's radosgw
+populate: need-release ## Write the fixed data set through the RELEASE cluster's radosgw and add the storage classes s3-tests names
 	ROOKET=$(ROOKET_BIN) hack/rooket/populate.sh $(RELEASE)
+	go run ./hack/s3tests classes --config "" --log-level info --log-format json --release $(RELEASE) \
+	  --rooket $(ROOKET_BIN) --root $(CURDIR)
 
 # Every package outside test/ whose specs carry the integration label; the
 # gate is make gate's. -ginkgo.fail-on-empty fails a package whose filter
@@ -272,13 +278,30 @@ GATEWAY ?= radosgw
 RUN ?= local
 TESTS ?=
 SET ?= pr
+# The LC mode, the gateways whose lifecycle workers run: off, the parity
+# mode, radosgw, rgw-go, or both. Each s3-tests target sets it first, and
+# each record and parity run carries it as the meta lc; the admin suite runs
+# in the parity mode.
+LC ?= off
+
+# lc-mode is given every flag, so that no S3TESTS_ variable or config file
+# changes what it sets. The make it restarts rgw-go with is named through a
+# variable of its own: make -n runs a recipe line that names $(MAKE) itself.
+LC_MODE_MAKE = $(MAKE)
+
+.PHONY: lc-mode
+lc-mode: need-release ## Run the lifecycle workers LC (off|radosgw|rgw-go|both) names on the RELEASE cluster
+	go run ./hack/s3tests lc-mode --config "" --log-level info --log-format json --release $(RELEASE) --mode $(LC) \
+	  --rooket $(ROOKET_BIN) --root $(CURDIR) --make $(LC_MODE_MAKE)
 
 .PHONY: s3tests
-s3tests: need-release ## Run the s3-tests SET (pr|gate), or the TESTS file's tests of it, against GATEWAY (radosgw|rgw-go) on the RELEASE cluster; junit under hack/s3tests/out/
+s3tests: need-release ## Run the s3-tests SET (pr|gate), or the TESTS file's tests of it, against GATEWAY (radosgw|rgw-go) on the RELEASE cluster in the LC mode; junit under hack/s3tests/out/
+	$(MAKE) lc-mode RELEASE=$(RELEASE) LC=$(LC)
 	ROOKET=$(ROOKET_BIN) hack/s3tests/run.sh $(RELEASE) $(GATEWAY) $(RUN) $(SET) $(TESTS)
 
 .PHONY: admin-suite
-admin-suite: need-release ## Run go-ceph's rgw/admin suite at its pinned tag against GATEWAY on the RELEASE cluster; go test -json under hack/admin/_out/
+admin-suite: need-release ## Run go-ceph's rgw/admin suite at its pinned tag against GATEWAY on the RELEASE cluster in the parity mode; go test -json under hack/admin/_out/
+	$(MAKE) lc-mode RELEASE=$(RELEASE) LC=off
 	ROOKET=$(ROOKET_BIN) hack/admin/run.sh $(RELEASE) $(GATEWAY) $(RUN)
 
 # hack/parity's package doc owns the ledger, the result file and the
@@ -321,11 +344,12 @@ SUMMARY ?=
 
 .PHONY: s3tests-parity
 s3tests-parity: need-release ## Run the s3-tests SET (pr|gate) against rgw-go and compare with radosgw's ledger
-	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=rgw-go RUN=parity SET=$(SET) TESTS=
+	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=rgw-go RUN=parity SET=$(SET) TESTS= LC=$(LC)
 	go build -o bin/parity ./hack/parity
 	bin/parity record --format junit --suite s3tests --out $(CLUSTER_OUT)/s3tests-rgw-go.json \
 	  --meta release=$(RELEASE) --meta ceph_version=$$(jq -r .ceph_version $(CLUSTER_OUT)/manifest.json) --meta gateway=rgw-go \
 	  --meta s3tests_commit=$$(hack/s3tests/run.sh --print-commit) --meta deselect=$$(hack/s3tests/run.sh --print-deselect) \
+	  --meta lc=$(LC) \
 	  hack/s3tests/out/$(RELEASE)-rgw-go-parity.xml
 	bin/parity diff --baseline $(BASELINE) --candidate $(CLUSTER_OUT)/s3tests-rgw-go.json --known test/s3tests/known-differences-$(RELEASE).txt \
 	  $(if $(SUMMARY),--summary "$(SUMMARY)") \
@@ -352,7 +376,7 @@ ADMIN_RECORD_OUT = $(or $(OUT),test/admin/baseline/$(RELEASE).json)
 
 .PHONY: admin-record
 admin-record: need-release ## Run go-ceph's rgw/admin suite twice against radosgw, after rgw-go-up, and append it to the ledger OUT (default test/admin/baseline/RELEASE.json)
-	@test -f $(CLUSTER_OUT)/rgw-go.endpoint || { echo "run make rgw-go-up RELEASE=$(RELEASE) first: radosgw records under the parity options it sets" >&2; exit 1; }
+	@test -f $(CLUSTER_OUT)/rgw-go.endpoint || { echo "run make rgw-go-up RELEASE=$(RELEASE) first: radosgw records under the parity options it sets, its LC option the mode make lc-mode sets" >&2; exit 1; }
 	$(MAKE) admin-suite RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base1
 	$(MAKE) admin-suite RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base2
 	go build -o bin/parity ./hack/parity
@@ -380,28 +404,30 @@ deselect=$$(hack/s3tests/run.sh --print-deselect) && \
 freeze=$$(sha256sum hack/s3tests/out/$(RELEASE)-radosgw-$(2).freeze | cut -c1-12) && \
 bin/parity record --format junit --suite s3tests --ledger $(S3TESTS_RECORD_OUT) --pin-file hack/s3tests/PIN $(3) $(RECORD_FLAGS) \
   --meta release=$(RELEASE) --meta ceph_version=$$ceph_version --meta gateway=radosgw \
-  --meta s3tests_commit=$$commit --meta deselect=$$deselect --meta pytest_freeze=$$freeze \
+  --meta s3tests_commit=$$commit --meta deselect=$$deselect --meta pytest_freeze=$$freeze --meta lc=$(LC) \
   hack/s3tests/out/$(RELEASE)-radosgw-$(1).xml hack/s3tests/out/$(RELEASE)-radosgw-$(2).xml
 endef
 
 # rgw-go-up sets the parity options on radosgw's entity as well as rgw-go's,
-# so a baseline recorded after it is radosgw under the options rgw-go is
-# compared under; its endpoint file is the sign it has run. A recording runs
-# the gate set whatever SET says: a full record retires every ledger test it
-# did not run, which would retire the gate-only tests.
+# but for rgw_enable_lc_threads, which each run's make lc-mode sets through
+# the object store's rgwConfig, so a baseline recorded after it is radosgw
+# under the options rgw-go is compared under; its endpoint file is the sign it
+# has run. A recording runs the gate set whatever SET says: a full record
+# retires every ledger test it did not run, which would retire the gate-only
+# tests.
 .PHONY: s3tests-record
 s3tests-record: need-release ## Run the s3-tests gate set twice against radosgw, after rgw-go-up, and append it to the ledger OUT (default test/s3tests/baseline/RELEASE.json)
-	@test -f $(CLUSTER_OUT)/rgw-go.endpoint || { echo "run make rgw-go-up RELEASE=$(RELEASE) first: radosgw records under the parity options it sets" >&2; exit 1; }
-	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base1 SET=gate TESTS=
-	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base2 SET=gate TESTS=
+	@test -f $(CLUSTER_OUT)/rgw-go.endpoint || { echo "run make rgw-go-up RELEASE=$(RELEASE) first: radosgw records under the parity options it sets, its LC option the mode make lc-mode sets" >&2; exit 1; }
+	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base1 SET=gate TESTS= LC=$(LC)
+	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base2 SET=gate TESTS= LC=$(LC)
 	$(call s3tests_append,base1,base2)
 
 .PHONY: s3tests-record-tests
 s3tests-record-tests: need-release ## Run the TESTS file's s3-tests, of the gate set, twice against radosgw, after rgw-go-up, and append them alone to the ledger OUT (default test/s3tests/baseline/RELEASE.json)
 	@test -n "$(TESTS)" || { echo "set TESTS to a file of pytest node ids, one a line, such as make s3tests-pin writes" >&2; exit 1; }
-	@test -f $(CLUSTER_OUT)/rgw-go.endpoint || { echo "run make rgw-go-up RELEASE=$(RELEASE) first: radosgw records under the parity options it sets" >&2; exit 1; }
-	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=tests1 SET=gate TESTS=$(TESTS)
-	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=tests2 SET=gate TESTS=$(TESTS)
+	@test -f $(CLUSTER_OUT)/rgw-go.endpoint || { echo "run make rgw-go-up RELEASE=$(RELEASE) first: radosgw records under the parity options it sets, its LC option the mode make lc-mode sets" >&2; exit 1; }
+	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=tests1 SET=gate TESTS=$(TESTS) LC=$(LC)
+	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=tests2 SET=gate TESTS=$(TESTS) LC=$(LC)
 	$(call s3tests_append,tests1,tests2,--subset)
 
 # A clone of Ceph that holds the s3-tests pin and NEW, the commit to pin.

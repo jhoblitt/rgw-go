@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/jhoblitt/rgw-go/hack/s3tests/internal/clusterconf"
 	"github.com/jhoblitt/rgw-go/internal/version"
 )
 
@@ -36,23 +37,29 @@ func ExitStatus(err error) int {
 	}
 }
 
-// Run executes the s3tests command against args and returns the first
-// error, which ExitStatus maps to the exit status.
+// Run executes the s3tests command against args, reaching the cluster
+// through the host, and returns the first error, which ExitStatus maps to
+// the exit status.
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	return RunWith(ctx, args, stdin, stdout, stderr, clusterconf.HostDeps())
+}
+
+// RunWith is Run with lc-mode reaching the cluster through deps.
+func RunWith(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, deps clusterconf.Deps) error {
 	// cobra reads os.Args[1:] in place of nil args.
 	if args == nil {
 		args = []string{}
 	}
-	cmd := newRootCmd(stdin, stdout, stderr)
+	cmd := newRootCmd(stdin, stdout, stderr, deps)
 	cmd.SetArgs(args)
 	return cmd.ExecuteContext(ctx)
 }
 
-func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
+func newRootCmd(stdin io.Reader, stdout, stderr io.Writer, deps clusterconf.Deps) *cobra.Command {
 	v := viper.New()
 	cmd := &cobra.Command{
 		Use:           "s3tests",
-		Short:         "Decide which s3-tests the parity set runs",
+		Short:         "Decide which s3-tests the parity set runs, and ready the cluster for its lifecycle tests",
 		Version:       version.String(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -70,7 +77,8 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	pf.String("log-format", "json", "log format: json or text (S3TESTS_LOG_FORMAT)")
 	pf.String("lists", defaultLists, "the directory of "+MarkersFile+", the deselect lists, the include lists and "+
 		GateOnlyFile+" (S3TESTS_LISTS)")
-	cmd.AddCommand(newExprCmd(v), newSelectCmd(v), newHashCmd(v))
+	cmd.AddCommand(newExprCmd(v), newSelectCmd(v), newHashCmd(v), clusterconf.NewLCModeCmd(v, deps),
+		clusterconf.NewClassesCmd(v, deps))
 	return cmd
 }
 
