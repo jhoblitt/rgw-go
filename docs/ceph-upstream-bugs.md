@@ -428,6 +428,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw serves a website's custom error document for every error status, where S3 serves it for 4XX only](#radosgw-serves-a-websites-custom-error-document-for-every-error-status-where-s3-serves-it-for-4xx-only) | pending | pending | ✓ |
 | [radosgw logs a served error document as a 200 success](#radosgw-logs-a-served-error-document-as-a-200-success) | pending | pending | ✓ |
 | [cls_rgw's bucket_unlink_instance promotes the next version at its own epoch, discarding the epoch it passes](#cls_rgws-bucket_unlink_instance-promotes-the-next-version-at-its-own-epoch-discarding-the-epoch-it-passes) | pending | pending | ✓ |
+| [cls_otp verifies a code of any length from 6 to 8 digits against any device](#cls_otp-verifies-a-code-of-any-length-from-6-to-8-digits-against-any-device) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -24720,3 +24721,50 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 Task V5c fix round 2, 2026-10-22, recording what fix
   round 1 met when a mutation did not bite; derived from the source and the
   emulator, not reproduced.
+
+## cls_otp verifies a code of any length from 6 to 8 digits against any device
+
+- **Kind:** defect, possibly security-relevant (low), conditional.
+  `otp_instance::verify` hands the code to `oath_totp_validate2`, which takes
+  the digit count from `strlen(otp)`, and `otp_info_t` stores no digit count,
+  so a device whose authenticator shows 8 or 7 digits also verifies a code
+  of 6. Unfixed at v19.2.7 and v20.2.4. Unreproduced: derived from
+  the source and shown on rgw-go's emulator of the class; a reproduction
+  needs a cluster.
+- **Evidence:**
+  - `otp_instance::verify` hands liboath the code as `val.c_str()`
+    ([cls_otp.cc:129-136](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L129-L136),
+    [cls_otp.cc:129-136](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L129-L136)).
+  - `oath_totp_validate2` takes the digit count from the code itself,
+    passing `strlen (otp)` to the walk (`liboath/totp.c:251-260` at
+    oath-toolkit v2.6.15-2-g11a716b), and the HOTP generator accepts any
+    count from 6 to 8 (`liboath/hotp.c:136-137` at the same version).
+  - `otp_info_t` stores no digit count: a type, an id, the seed and its
+    type and parsed form, a time offset, a step and a window
+    ([cls_otp_types.h:31-77](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_types.h#L31-L77),
+    [cls_otp_types.h:31-77](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_types.h#L31-L77)),
+    and `radosgw-admin mfa create` takes none
+    ([rgw_admin.cc:4057-4068](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L4057-L4068),
+    [radosgw-admin.cc:4281-4292](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L4281-L4292)).
+  - So the class checks a code with as many digits as the request sends,
+    and the six-digit code of a step is the last six digits of its
+    eight-digit code: both are the same truncated HMAC, modulo 10^6 and
+    10^8.
+- **Impact:** Ceph has no digit-count setting, so a guess at a device's
+  code has 10^6 values for every device, whatever its authenticator shows.
+  An operator who issues 8-digit authenticators gets no extra strength from
+  them: a six-digit guess at the code's last six digits verifies. That is no
+  drop below anything Ceph offers, and guessing stays limited to five checks
+  per device in step_size seconds.
+- **Releases:** v19.2.7 and v20.2.4, where the class and its types are the
+  same.
+- **rgw-go:** inherits it, as the device stores no digit count to check a
+  code against. The class verifies the code, and `(*Store).VerifyMFA`'s own
+  walk over the seed takes the digit count from the code as liboath does
+  (`internal/driver/mfa.go`), pinned by the spec "verifies a code by its last
+  six digits, as the class takes the digit count from the code"
+  (`internal/driver/mfa_test.go`). fakerados's otp class counts the digits
+  as the class does (`internal/testutil/fakerados/cls_otp_check.go`).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 Task V13c's review, 2026-10-22, reading `verify` beside
+  liboath's walk; checked at both tags in V13c's fix round.
