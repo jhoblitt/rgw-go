@@ -414,6 +414,11 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw parses a POST form's preamble as its first part's header lines](#radosgw-parses-a-post-forms-preamble-as-its-first-parts-header-lines) | pending | pending | ✓ |
 | [radosgw cuts a POST form header line longer than its read window and reads the rest as another header line](#radosgw-cuts-a-post-form-header-line-longer-than-its-read-window-and-reads-the-rest-as-another-header-line) | pending | pending | ✓ |
 | [radosgw reads the part after a padded POST form delimiter without its headers](#radosgw-reads-the-part-after-a-padded-post-form-delimiter-without-its-headers) | pending | pending | ✓ |
+| [radosgw answers a website GET of an object with a redirect location twice](#radosgw-answers-a-website-get-of-an-object-with-a-redirect-location-twice) | pending | pending | ✓ |
+| [radosgw's website file test decodes the key a second time](#radosgws-website-file-test-decodes-the-key-a-second-time) | pending | pending | ✓ |
+| [radosgw stores a POST upload's x-amz-website-redirect-location with its CR and LF and sends it raw](#radosgw-stores-a-post-uploads-x-amz-website-redirect-location-with-its-cr-and-lf-and-sends-it-raw) | pending | pending | ✓ |
+| [radosgw copies an empty x-amz-website-redirect-location attr from a null pointer](#radosgw-copies-an-empty-x-amz-website-redirect-location-attr-from-a-null-pointer) | pending | pending | ✓ |
+| [radosgw's website GetObject redirects a missing part only under a tag-conditioned policy](#radosgws-website-getobject-redirects-a-missing-part-only-under-a-tag-conditioned-policy) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -17388,7 +17393,10 @@ Every new entry adds its row to this table, in document order.
   - The empty host: a URL parser that follows the WHATWG URL standard skips
     the extra slashes of `http:///`, so a key `evil.com/x` sends the client
     to `evil.com`. Only a request without a Host meets it, and browsers
-    always send one, so it reaches no one but the requester.
+    always send one, so it reaches no one but the requester, unless a
+    cache in front of radosgw forwards such a request and stores the
+    answer under a key without the client's Host, which would serve the
+    redirect to others; no such cache was checked.
   - The owner's host and protocol: the bucket's own website responses carry
     the header lines its configuration wrote. That reaches past the bucket
     only where buckets' websites share a parent domain, as a `Set-Cookie`
@@ -17402,9 +17410,12 @@ Every new entry adds its row to this table, in document order.
   Location carries no CR, LF, `?`, `#` or bare `%` from a key. Its frontend
   writes headers through net/http (`internal/frontend/server.go`), which
   also rewrites each CR and LF in a header value to a space
-  (`net/http/header.go:139` and `:206-207` at Go 1.27.1). It builds the
-  empty-host form as radosgw does; it serves no website endpoint yet, and
-  the task that serves one decides that case. Not affected by the owner's
+  (`net/http/header.go:139` and `:206-207` at Go 1.27.1). Not affected by
+  the empty host: `op.WebsiteRedirect` declines a redirect to the request's
+  host for a request that sent none, as `ErrUnsafeRedirect`
+  (`internal/op/website_get.go`; `docs/exclusions.md`, "A website redirect
+  to the request's host is refused for a request with no Host"). Not
+  affected by the owner's
   host and protocol: `website.Apply` declines, as `ErrUnsafeRedirect`, a
   host holding a byte at or below 0x20, or 0x7F, and a protocol other than
   `http` or `https`, which covers a configuration radosgw stored, and the
@@ -23827,4 +23838,295 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task BC-29's fix round, 2026-10-21, taking RFC 2046's
   transport padding after the task's review. Derived from the source, not
+  reproduced.
+
+## radosgw answers a website GET of an object with a redirect location twice
+
+- **Kind:** defect, possibly security-relevant: two complete responses to
+  one request, which puts a kept-alive connection's responses out of step
+  with its requests (CWE-444); found by us. Unfixed at v19.2.7 and v20.2.4.
+  Derived from the source, not reproduced.
+- **Evidence:**
+  - The website endpoint's GetObject finds
+    `user.rgw.x-amz-website-redirect-location` among the object's attrs in
+    `send_response_data`, writes the status, `Content-Length: 0`, the
+    Location and the end of the header section, and returns
+    `-ERR_WEBSITE_REDIRECT` without setting `sent_header`
+    ([rgw_rest_s3.cc:274-292](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L274-L292),
+    [rgw_rest_s3.cc:271-289](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L271-L289)).
+  - A GET with data to read reaches it from the read's data callback,
+    `get_data_cb`
+    ([rgw_op.cc:2155-2160](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2155-L2160),
+    [rgw_op.cc:2390-2395](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2390-L2395)). Its error fails the read,
+    and `execute` goes to `done_err`, which calls `send_response_data_error`
+    ([rgw_op.cc:2443-2461](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2443-L2461),
+    [rgw_op.cc:2675-2693](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2675-L2693)).
+  - The website op's `send_response_data_error` calls S3's, which calls
+    `send_response_data(bl, 0, 0)`, the website override again
+    ([rgw_rest_s3.cc:294-297](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L294-L297) and
+    [rgw_rest_s3.cc:332-336](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L332-L336),
+    [rgw_rest_s3.cc:291-294](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L291-L294) and
+    [rgw_rest_s3.cc:335-339](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L335-L339)). It finds the attr
+    again and writes a second status line and header section.
+  - Nothing refuses the second. `ClientIO::send_status` writes a status
+    line, and `complete_header` ends a header section, each time it is
+    called
+    ([rgw_asio_client.cc:109-118](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L109-L118) and
+    [rgw_asio_client.cc:143-165](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L143-L165) at v19.2.7 and
+    v20.2.4). The client IO filters pass a second status on,
+    `ConLenControllingFilter` and `ReorderingFilter` starting over at it
+    ([rgw_client_io_filters.h:342-352](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_client_io_filters.h#L342-L352) and
+    [rgw_client_io_filters.h:410-415](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_client_io_filters.h#L410-L415) at v19.2.7 and
+    v20.2.4).
+  - Without `?torrent`, a HEAD, or a GET of an empty object, calls
+    `send_response_data` once, on the path for nothing to read, and returns
+    ([rgw_op.cc:2436-2439](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2436-L2439),
+    [rgw_op.cc:2668-2671](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2668-L2671)).
+  - With `?torrent`, `execute` calls `send_response_data` with the torrent
+    file `rgw_read_torrent_file` builds, and goes to `done_err` on its
+    error, before that path, for a GET or a HEAD of any size
+    ([rgw_op.cc:2276-2297](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2276-L2297),
+    [rgw_op.cc:2512-2533](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2512-L2533)): one more input to the same
+    second call. The read needs the object's torrent info, the
+    `user.rgw.torrent` attr or the `rgw.torrent` omap key older releases
+    wrote (`get_torrent_info`,
+    [rgw_sal_rados.cc:2466-2496](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2466-L2496),
+    [rgw_sal_rados.cc:3058-3088](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3058-L3088)). Only PutObject
+    writes the attr: `get_torrent_filter` gives it a torrent filter when
+    `rgw_torrent_flag`, false by default, is set
+    ([rgw_op.cc:4110-4126](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4110-L4126),
+    [rgw_op.cc:4319-4335](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4319-L4335)), and it stores the filter's
+    `RGW_ATTR_TORRENT`
+    ([rgw_op.cc:4470-4477](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4470-L4477),
+    [rgw_op.cc:4702-4709](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4702-L4709)). Only a POST upload writes the
+    redirect attr, so no one S3 write at either tag leaves both on an
+    object. Whether a POST upload over a head that holds the older omap key
+    keeps that key was not checked.
+- **Trigger:** a website GET of an object with a body that holds the attr,
+  which a POST upload writes from its `RGW_AMZ_WEBSITE_REDIRECT_LOCATION`
+  field
+  ([rgw_rest_s3.cc:3048-3061](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3048-L3061),
+  [rgw_rest_s3.cc:3187-3200](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3187-L3200)); or a website GET or HEAD
+  with `?torrent` of an object that holds the attr and torrent info, of
+  any size. A website's objects are usually public, so the request needs
+  no credentials.
+- **Impact:** the connection carries two complete 301 responses, each with
+  `Content-Length: 0`, for one request. A client that reads one response
+  per request takes the second for the answer to its next request on the
+  connection. A proxy that does so, and reuses its connections to radosgw
+  across clients, would answer another client's next request with the
+  uploader's redirect.
+- **Releases:** v19.2.7 and v20.2.4. Not checked on main.
+- **rgw-go:** not affected. It decides the redirect once the read has the
+  attrs and before anything is sent, and answers it once
+  (`GetObject.websiteObjectRedirect`, `internal/op/website_get.go`;
+  `docs/exclusions.md`, "An object's website redirect is answered once").
+  It serves no website endpoint yet.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 unit B, Task BC-14, 2026-10-22, porting the website
+  GetObject's redirect. Derived from the source, not reproduced.
+
+## radosgw's website file test decodes the key a second time
+
+- **Kind:** defect, S3-correctness; found by us. Unfixed at v19.2.7 and
+  v20.2.4. Derived from the source, not reproduced.
+- **Evidence:**
+  - `RGWREST::preprocess` decodes the path with `url_decode`
+    ([rgw_rest.cc:2187](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2187),
+    [rgw_rest.cc:2204](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2204)), `get_manager` hands out the relative
+    URI from the decoded one
+    ([rgw_rest.cc:2295-2296](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2295-L2296),
+    [rgw_rest.cc:2312-2313](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2312-L2313)), and `init_from_header` takes
+    the object's name from it
+    ([rgw_rest_s3.cc:4964-4980](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4964-L4980),
+    [rgw_rest_s3.cc:5494-5510](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5494-L5510)).
+  - `web_dir` passes that name through `url_decode` again, drops one
+    trailing `/`, and stats the result
+    ([rgw_rest_s3.cc:5346-5370](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5346-L5370),
+    [rgw_rest_s3.cc:5876-5896](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5876-L5896)). `url_decode` stops at a
+    `%` with fewer than two bytes after it, returns the empty string at a
+    bad hex digit, and turns a `+` after a `?` into a space
+    ([rgw_common.cc:1701-1734](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1701-L1734),
+    [rgw_common.cc:1764-1797](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1764-L1797)).
+  - `retarget` hands `web_dir`'s answer to `get_effective_key` as
+    `is_file`
+    ([rgw_rest_s3.cc:5409](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5409),
+    [rgw_rest_s3.cc:5935](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5935)), which reads it for a key that is
+    not empty and does not end in `/`: an object is read as it is, any
+    other key as the key, `/` and the index suffix (`get_effective_key`,
+    [rgw_website.cc:116-133](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L116-L133),
+    [rgw_website.cc:116-133](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L116-L133)).
+- **Trigger:** a website GET or HEAD of a key that holds a `%`, or a `?`
+  and later a `+`, and does not end in `/`.
+- **Impact:** another key decides whether the key names an object. An
+  object `100%`, requested as `/100%25`, is stat'ed as `100`; with no `100`
+  radosgw reads `100%/index.html` in its place, and with a `100` but no
+  `100%` it reads `100%` and answers NoSuchKey where `100%/index.html`
+  exists. A `%` before a byte above 0x7f in the decoded key is also one
+  more input to the hex table read of "[url_decode reads outside its hex
+  table for a byte above 0x7f after
+  "%"](#url_decode-reads-outside-its-hex-table-for-a-byte-above-0x7f-after-)".
+- **Releases:** v19.2.7 and v20.2.4. Not checked on main.
+- **rgw-go:** not affected. `GetObject.isFile` stats the key the request
+  names (`internal/op/website_get.go`; `docs/exclusions.md`, "A website
+  request's file test reads its key decoded once"). It serves no website
+  endpoint yet.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 unit B, Task BC-14, 2026-10-22, porting `web_dir`.
+  Derived from the source, not reproduced.
+
+## radosgw stores a POST upload's x-amz-website-redirect-location with its CR and LF and sends it raw
+
+- **Kind:** defect, possibly security-relevant: response-header injection
+  and response splitting (CWE-113); found by us. One more input to two
+  sinks the registry names: the stored header value of "[radosgw stores a
+  POST upload's x-amz-meta fields with their CR and LF and sends them raw
+  on
+  GET](#radosgw-stores-a-post-uploads-x-amz-meta-fields-with-their-cr-and-lf-and-sends-them-raw-on-get)",
+  on the S3 endpoint, and the Location of "[radosgw writes a website
+  redirect's key, host and protocol raw into its
+  Location](#radosgw-writes-a-website-redirects-key-host-and-protocol-raw-into-its-location)",
+  on the website endpoint. Unfixed at v19.2.7 and v20.2.4. Derived from
+  the source, not reproduced.
+- **Evidence:**
+  - A POST form field's value keeps its CR and LF (the x-amz-meta entry's
+    evidence). `get_params` stores the `x-amz-website-redirect-location`
+    field's bytes as `user.rgw.x-amz-website-redirect-location` with a NUL
+    appended and nothing checked
+    ([rgw_rest_s3.cc:3048-3061](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3048-L3061),
+    [rgw_rest_s3.cc:3187-3200](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3187-L3200)).
+  - The S3 endpoint's GET and HEAD send the attr as
+    `x-amz-website-redirect-location` through `rgw_to_http_attrs`
+    ([rgw_rest.cc:111](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L111),
+    [rgw_rest.cc:111](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L111)), whose `rgw_to_http_attrs.find` match
+    `send_response_data` copies with only its trailing NULs dropped
+    ([rgw_rest_s3.cc:552-564](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L552-L564),
+    [rgw_rest_s3.cc:661-673](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L661-L673)).
+  - The website endpoint copies the attr into `s->redirect` and sends it
+    as Location with `dump_redirect`
+    ([rgw_rest_s3.cc:274-292](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L274-L292),
+    [rgw_rest_s3.cc:271-289](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L271-L289)), and `dump_redirect` passes
+    the string on as it is
+    ([rgw_rest.cc:440-443](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L440-L443),
+    [rgw_rest.cc:440-443](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L440-L443)).
+- **Trigger:** a POST upload whose `x-amz-website-redirect-location` field
+  holds a CR LF and a header line, or a CR LF CR LF and text. The policy's
+  condition for the field may be a `starts-with` with an empty prefix,
+  which passes any value (the x-amz-meta entry's trigger).
+- **Impact:** every reader of the object, on either endpoint, receives the
+  header lines the uploader wrote; an empty line ends the header section
+  and makes the uploader's text the start of the body.
+- **Releases:** v19.2.7 and v20.2.4. Not checked on main.
+- **rgw-go:** not affected. It writes the header and, once its website
+  endpoint is served, the Location through net/http, which rewrites each
+  CR and LF in a header value to a space (`docs/exclusions.md`, "A stored
+  header value's CR and LF go out as spaces"). It writes no such attr until
+  it serves POST object, whose write refuses or folds the field's CR and LF
+  (task BC-32).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 unit B, Task BC-14, 2026-10-22, tracing where the
+  website GetObject's redirect location comes from. Derived from the
+  source, not reproduced.
+
+## radosgw copies an empty x-amz-website-redirect-location attr from a null pointer
+
+- **Kind:** defect, robustness: undefined behaviour on an attr no radosgw
+  write leaves; found by us. Unfixed at v19.2.7 and v20.2.4. Derived from
+  the source, not reproduced.
+- **Evidence:**
+  - The website endpoint's GetObject copies the attr into its Location
+    string with `s->redirect = bl.c_str()`
+    ([rgw_rest_s3.cc:279](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L279),
+    [rgw_rest_s3.cc:276](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L276)).
+  - `bufferlist::c_str()` returns a null pointer for an empty list
+    ([buffer.cc:1472-1486](https://github.com/ceph/ceph/blob/v19.2.7/src/common/buffer.cc#L1472-L1486),
+    [buffer.cc:1541-1555](https://github.com/ceph/ceph/blob/v20.2.4/src/common/buffer.cc#L1541-L1555)), and assigning a null
+    `const char*` to a `std::string` is undefined; libstdc++ takes its
+    `strlen`. An attr without a NUL is copied past its end until a NUL
+    turns up.
+  - The one radosgw writer of the attr, POST upload, appends a NUL to its
+    `RGW_AMZ_WEBSITE_REDIRECT_LOCATION` field
+    ([rgw_rest_s3.cc:3048-3061](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3048-L3061),
+    [rgw_rest_s3.cc:3187-3200](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3187-L3200)); PutObject does not store
+    the header at either tag.
+- **Trigger:** a website GET or HEAD of an object whose attr is empty, or
+  holds no NUL, as only a writer other than radosgw's S3 API leaves it.
+- **Impact:** a fault that would end the radosgw process, and every
+  request it serves; not reproduced.
+- **Releases:** v19.2.7 and v20.2.4. Not checked on main.
+- **rgw-go:** not affected. It takes the attr up to its first NUL, an empty
+  one as an empty Location (`GetObject.websiteObjectRedirect`,
+  `internal/op/website_get.go`; `docs/exclusions.md`, "An object's website
+  redirect is answered once"), and writes no such attr until it serves POST
+  object, whose plan stores the field with a NUL appended, as radosgw's
+  POST upload does (task BC-32).
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 unit B, Task BC-14, 2026-10-22, porting the website
+  GetObject's redirect. Derived from the source, not reproduced.
+
+## radosgw's website GetObject redirects a missing part only under a tag-conditioned policy
+
+- **Kind:** defect, S3-correctness (cosmetic): the answer to one request
+  depends on whether any policy names a tag condition; found by us.
+  Unfixed at v19.2.7 and v20.2.4. Derived from the source, not reproduced.
+- **Evidence:**
+  - The website endpoint's GetObject looks for
+    `user.rgw.x-amz-website-redirect-location` in `attrs`
+    ([rgw_rest_s3.cc:274-292](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L274-L292),
+    [rgw_rest_s3.cc:271-289](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L271-L289)), which `execute` copies from
+    `s->object->get_attrs()` after `read_op->prepare`, whatever prepare
+    returned
+    ([rgw_op.cc:2259-2265](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2259-L2265),
+    [rgw_op.cc:2495-2501](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2495-L2501)). `get_attrs` is the sal object's
+    own `state.attrset`
+    ([rgw_sal_store.h:229](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_sal_store.h#L229),
+    [rgw_sal_store.h:318](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_sal_store.h#L318)).
+  - `RadosReadOp::prepare` points `params.attrs` at that set
+    ([rgw_sal_rados.cc:2858](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2858),
+    [rgw_sal_rados.cc:3693](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3693)), and `Read::prepare`
+    copies the head's attrs into it only past the part redirect, whose
+    `-ERR_INVALID_PART` returns come first
+    ([rgw_rados.cc:7076-7092](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7076-L7092) and
+    [rgw_rados.cc:7118-7119](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7118-L7119),
+    [rgw_rados.cc:7738-7754](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7738-L7754) and
+    [rgw_rados.cc:7780-7781](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7780-L7781)).
+  - `read_permissions` does not fill it: `get_obj_policy_from_attr` reads
+    the ACL with the read op's `get_attr`
+    ([rgw_op.cc:300-302](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L300-L302),
+    [rgw_op.cc:343-345](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L343-L345)), and `Read::get_attr` reads the
+    `RGWObjectCtx` state `get_state` loads
+    ([rgw_rados.cc:6489-6502](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6489-L6502) and
+    [rgw_rados.cc:6614-6617](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6614-L6617),
+    [rgw_rados.cc:7103-7116](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7103-L7116) and
+    [rgw_rados.cc:7228-7231](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7228-L7231)).
+  - `RGWGetObj::verify_permission` calls `rgw_iam_add_objtags` when
+    `rgw_check_policy_condition` finds `s3:ExistingObjectTag`,
+    `s3:ResourceTag` or a `${s3:ResourceTag` value in the bucket, identity
+    or session policies
+    ([rgw_op.cc:985-987](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L985-L987) and
+    [rgw_op.cc:776-825](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L776-L825),
+    [rgw_op.cc:1140-1142](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1140-L1142) and
+    [rgw_op.cc:812-861](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L812-L861)), and its `get_obj_attrs` loads the
+    head's attrs into the sal object's set through `read_attrs`
+    ([rgw_op.cc:727-738](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L727-L738) and
+    [rgw_sal_rados.cc:2368-2400](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2368-L2400),
+    [rgw_op.cc:757-768](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L757-L768) and
+    [rgw_sal_rados.cc:2960-2992](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2960-L2992)).
+  - So a part refusal reaches `send_response_data_error` with `attrs` empty
+    and is answered 400 InvalidPart, unless such a policy loaded the attrs,
+    when the same refusal is answered with the object's 301.
+- **Trigger:** a website GET or HEAD with a `partNumber` an object holding
+  the attr has not: a part a multipart object lacks, or any part but 1 of
+  an object that is not multipart. The answer turns on whether any policy
+  the request is judged by names such a condition, in any statement.
+- **Impact:** the same request is InvalidPart or a redirect by a policy
+  that does not concern it; no access changes.
+- **Releases:** v19.2.7 and v20.2.4. Not checked on main.
+- **rgw-go:** differs: it answers InvalidPart whatever the policies name
+  (`GetObject.websiteObjectRedirect`, `internal/op/website_get.go`;
+  `docs/exclusions.md`, "A website GET of a part the object has not is
+  InvalidPart under any policy"). It serves no website endpoint yet.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 unit B, Task BC-14's review, 2026-10-22, tracing where
+  the website GetObject's attrs come from. Derived from the source, not
   reproduced.
