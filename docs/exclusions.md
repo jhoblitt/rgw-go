@@ -6867,7 +6867,11 @@ does the following.
   the header for a missing object as for any other, where Tentacle
   answers 404 with `x-amz-delete-marker: false` to a requester who may
   list the bucket (`RGWHandler_REST_Obj_S3::op_get`,
-  `rgw_rest_s3.cc:5360-5378` at v20.2.4).
+  `rgw_rest_s3.cc:5360-5378` at v20.2.4). A website GET of a missing key
+  whose bucket's error document is missing too gets the header twice from
+  Tentacle, once from each key's `read_permissions`, the error document's
+  in `serve_errordoc`
+  ([rgw_rest_s3.cc:6011](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6011)), and once from rgw-go.
 - **A website redirect's Location carries the new key percent-encoded.**
   radosgw builds a website redirect's Location as the protocol, `://`, the
   host, `/` and the new key: `ReplaceKeyPrefixWith` followed by the
@@ -6910,7 +6914,9 @@ does the following.
   the request's, holds such a byte, or whose protocol is not `http` or
   `https`, is declined (`website.Apply`, `ErrUnsafeRedirect`), and the
   website endpoint, once served, answers 500 InternalError where radosgw
-  sends the redirect. That covers a configuration radosgw stored, which
+  sends the redirect, with its HTML page, which neither a routing rule nor
+  the error document then replaces (`websiteGet.errorHandler`,
+  `internal/s3/website_serve.go`). That covers a configuration radosgw stored, which
   rgw-go reads as it is. A host of other bytes, non-ASCII ones included,
   is written as it is, as radosgw writes it.
 - **A website redirect to the request's host is refused for a request with
@@ -6939,8 +6945,9 @@ does the following.
   ([rgw_rest.cc:2189-2190](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2189-L2190),
   [rgw_rest.cc:2206-2207](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2206-L2207)). The refusal matches
   `website.ErrUnsafeRedirect` but keeps its 400, where the stored host and
-  protocol refusals above are 500. A rule that names its host redirects
-  whatever Host the request sent. net/http refuses an HTTP/1.1 request without a Host header
+  protocol refusals above are 500, and like them it meets no routing rule
+  and no error document. A rule that names its host redirects whatever
+  Host the request sent. net/http refuses an HTTP/1.1 request without a Host header
   ("Host header refusals", above), so the case is an HTTP/1.0 request
   without one, or a request whose Host header is empty.
 - **A website request's file test reads its key decoded once.** Whether a
@@ -6976,8 +6983,15 @@ does the following.
   in place of each refusal the read makes once it has the attrs, which is
   past the part redirect, the conditionals among them; a part refusal
   stands ("A website GET of a part the object has not is InvalidPart under
-  any policy", below). The Location is the attr up to its first NUL,
-  as radosgw reads it. An empty attr, which radosgw's POST upload never
+  any policy", below). A bucket's error document holding the attr is one
+  more case: radosgw's `serve_errordoc` reads it with the website
+  GetObject, with its data for a GET and a HEAD alike
+  ([rgw_rest_s3.cc:5450-5464](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5450-L5464),
+  [rgw_rest_s3.cc:5976-5990](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5976-L5990)), and answers a document with
+  data with that 301 twice; rgw-go answers the document's redirect once,
+  for a GET and a HEAD, in place of the error (`websiteGet.serveErrorDoc`,
+  `internal/s3/website_serve.go`). The Location is the attr up to its
+  first NUL, as radosgw reads it. An empty attr, which radosgw's POST upload never
   writes and which radosgw copies from a null pointer
   ("[radosgw copies an empty x-amz-website-redirect-location attr from a
   null
@@ -6998,6 +7012,92 @@ does the following.
   policy](ceph-upstream-bugs.md#radosgws-website-getobject-redirects-a-missing-part-only-under-a-tag-conditioned-policy)").
   rgw-go answers InvalidPart whatever the policies name
   (`GetObject.websiteObjectRedirect`, `internal/op/website_get.go`).
+- **A website redirect's code below 200 or above 999 is answered 301.**
+  radosgw answers a website redirect, retarget's or the error handler's,
+  at the `HttpRedirectCode` its rule stores, and `abort_early` answers one
+  of 200 with WebsiteRedirect's 301
+  ([rgw_rest.cc:702-706](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L702-L706),
+  [rgw_rest.cc:707-711](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L707-L711)). Only the admin API's metadata JSON
+  stores a code outside 301-399 (`RGWRedirectInfo::decode_json`,
+  [rgw_website.cc:142-148](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L142-L148),
+  [rgw_website.cc:142-148](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L142-L148)), and radosgw writes any other code
+  into its status line as it is (`ClientIO::send_status`,
+  [rgw_asio_client.cc:109-118](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L109-L118),
+  [rgw_asio_client.cc:109-118](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_client.cc#L109-L118)), a code its status names
+  lack with a null reason phrase (`docs/ceph-upstream-bugs.md`,
+  "[radosgw writes a status its name table lacks with a null reason
+  phrase](ceph-upstream-bugs.md#radosgw-writes-a-status-its-name-table-lacks-with-a-null-reason-phrase)").
+  net/http panics at a status outside 100-999, writes 100-199 other than
+  101 as an interim response that does not end the response, and 101 as a
+  switch of protocol (`net/http/server.go:1166-1180` and `:1223-1227` at
+  Go 1.27.1), none of them the redirect radosgw's status line names, so
+  rgw-go answers a code below 200 or above 999 with 301
+  (`redirectStatus`, `internal/s3/website_serve.go`). A code from 201 to
+  999 is answered as stored, from 400 on with the HTML error page, which
+  names no Code, as radosgw's does.
+- **A website error document is read whole and unconditionally.** radosgw
+  serves a bucket's error document in place of an error its website
+  endpoint meets before the GetObject executes, under that error's status
+  (`serve_errordoc`,
+  [rgw_rest_s3.cc:5460-5531](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5460-L5531),
+  [rgw_rest_s3.cc:5986-6057](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5986-L6057)). It clears the read's Range and
+  conditionals, but the read's execute takes them back from the request,
+  with its `partNumber`, `?torrent` and, on Tentacle, its checksum mode
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's website error document read
+  takes the request's Range and conditionals
+  back](ceph-upstream-bugs.md#radosgws-website-error-document-read-takes-the-requests-range-and-conditionals-back)"),
+  so a Range serves part of the document under the error's status. An
+  If-None-Match or If-Modified-Since the document meets answers the
+  error's status with the document's Last-Modified, ETag, Cache-Control
+  and Expires, and no body or Content-Type
+  ([rgw_rest_s3.cc:631-646](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L631-L646),
+  [rgw_rest_s3.cc:740-755](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L740-L755)); a conditional the document
+  fails, a part it has not, or any other failure of the read's execute,
+  an SSE-C document read without its key among them, answers the error's
+  status with an empty `binary/octet-stream` body. rgw-go reads the
+  document whole and unconditionally, with the request's SSE-C headers and
+  `response-*` overrides, which radosgw reads outside `get_params`, and
+  answers the original error's HTML page when that read fails before its
+  response starts, as radosgw does for a failure before the read's
+  execute, such as a missing or private document
+  (`websiteGet.serveErrorDoc`, `internal/s3/website_serve.go`).
+- **A website HEAD's error document has no body.** radosgw reads a
+  bucket's error document for a website HEAD as for a GET, with its data,
+  and sends that data after the HEAD's header, past the response's end
+  (`docs/ceph-upstream-bugs.md`, "[radosgw sends a website HEAD the error
+  document's
+  body](ceph-upstream-bugs.md#radosgw-sends-a-website-head-the-error-documents-body)").
+  rgw-go answers the HEAD with the document's headers alone
+  (`websiteGet.serveErrorDoc`, `internal/s3/website_serve.go`).
+- **A website error document is served for a 4XX error only.** radosgw's
+  website error handler serves the bucket's error document for every
+  error that reaches it once the bucket has loaded, whatever its status,
+  under that status, and under -1, with a null reason phrase, for an
+  error its S3 table has no row for (`docs/ceph-upstream-bugs.md`,
+  "[radosgw serves a website's custom error document for every error
+  status, where S3 serves it for 4XX
+  only](ceph-upstream-bugs.md#radosgw-serves-a-websites-custom-error-document-for-every-error-status-where-s3-serves-it-for-4xx-only)"
+  and "[radosgw writes a status its name table lacks with a null reason
+  phrase](ceph-upstream-bugs.md#radosgw-writes-a-status-its-name-table-lacks-with-a-null-reason-phrase)").
+  Amazon S3 "returns your custom error document for only the HTTP 4XX
+  class of error codes"
+  (https://docs.aws.amazon.com/AmazonS3/latest/userguide/CustomErrorDocSupport.html),
+  and rgw-go serves it for 400-499 only, under the error's status; a 5xx,
+  UnknownError among them, gets the HTML error page
+  (`websiteGet.errorHandler`, `internal/s3/website_serve.go`). Routing
+  rules are unchanged: a rule matches any status, -1 for UnknownError, as
+  radosgw's does.
+- **A website error document's request is logged under the error's
+  status.** radosgw logs a request it answered with the error document
+  as a success with status 200, which the document's read sets before it
+  writes the custom status
+  ([rgw_rest_s3.cc:402-404](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L402-L404),
+  [rgw_rest_s3.cc:405-407](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L405-L407)), so its usage entry counts a
+  successful op under the bucket's name (`docs/ceph-upstream-bugs.md`,
+  "[radosgw logs a served error document as a 200
+  success](ceph-upstream-bugs.md#radosgw-logs-a-served-error-document-as-a-200-success)").
+  rgw-go logs the status it sent, so a 404's entry counts no successful op
+  and takes the bucket name `-` (`op.LogUsage`, `internal/op/usagelog.go`).
 - **A partNumber read shows its part's checksum bare.** In the op layer,
   which the S3 handler does not render yet ("Stored checksums are not
   shown"), a checksum-mode GET or HEAD with `partNumber` reports the part

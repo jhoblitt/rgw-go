@@ -60,18 +60,21 @@ var scopeNames = [...]string{op.ScopeService: "service", op.ScopeBucket: "bucket
 // every other route answering NotImplemented. It binds each entry of
 // serviceHandlers, bucketHandlers and objectHandlers to its map's scope, each
 // entry of a featureRoutes set to that set's scope, and each entry of
-// multipartHandlers to the one scope Dispatch routes its name in. It panics
+// multipartHandlers to the one scope Dispatch routes its name in, and serves
+// a website request's GET and HEAD with the website GetObject. It panics
 // on a scope Dispatch never routes, an entry whose scope Dispatch never
 // routes its name to, a multipartHandlers entry routed in more than one
 // scope, and a scope and name bound twice, across the maps and sets alike.
 func NewHandler(env *op.Env, auth Authenticator, cfg Config) *Handler {
-	return buildHandler(env, auth, cfg, unitHandlers{
+	h := buildHandler(env, auth, cfg, unitHandlers{
 		service:   serviceHandlers(),
 		bucket:    bucketHandlers(),
 		object:    objectHandlers(env),
 		multipart: multipartHandlers(env),
 		sets:      featureRoutes(env, auth),
 	})
+	h.website = websiteGetObject(env)
+	return h
 }
 
 func buildHandler(env *op.Env, auth Authenticator, cfg Config, u unitHandlers) *Handler {
