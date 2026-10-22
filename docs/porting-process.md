@@ -582,3 +582,49 @@ Each fix below that is not this document lands on main before phase 2's tasks st
 - **Cost:** the report file lacks one round. The section exists only in the hand-back and its notes file.
 - **Improvement:** every dispatch says what to do when a write is refused, which is to put the content in the reply, and the controller files that content where the next reader looks for it.
 - **Candidate home:** the dispatch environment's report contract.
+
+## PP-38: A review the plan required was skipped at merge
+
+- **Severity:** Major. **Status:** open.
+- **Observed:** the owner's P3 gives V5b a Fable review after its task review, and the task's brief says so. V5b merged as #445 after its task review and the controller's interdiff checks, with no Fable review. The gap was found only when V5c, which shares that review, was dispatched.
+- **Cost:** V5b's OLH writes, which change state both gateways share, have been on main since 2026-10-21 without the review the owner asked for. The shared review now covers V5b after the fact, and a finding in it lands on main as a follow-up instead of before the merge.
+- **Improvement:** the ship step reads the task's **Review:** line and refuses to merge until every review it names has a report in the unit's workspace.
+- **Candidate home:** subagent-driven-development (the per-task loop's exit); the controller's ship scripts.
+
+## PP-39: A seam fixed before its consumers existed hid the state it hands them
+
+- **Severity:** Minor. **Status:** open.
+- **Observed:**
+  - The plan gave V5c olh_cond.go and V4's init, but its rules have to run inside V5b's setOLH, between the class's link and the replay, so V5c changed olh.go past its brief. Its condition seam also changed shape, to take the resolved current state.
+  - The plan routes V7a's and V7b's null-version write conditions through that seam. A null write puts its head before setOLH, so the condition would see the write's own data, and a failed condition could not be undone. V5c's review found it, and setOLH now refuses a condition there.
+- **Cost:** two rulings past the brief, an Important finding, and carries into V7a, V7b and V8a.
+- **Improvement:**
+  - A plan seam says which state its consumer sees, and when, not only its signature.
+  - A task whose rule must run inside another task's function lists that function's file.
+- **Candidate home:** writing-plans (seams); the plan review's checklist.
+
+## PP-40: GitHub's views lagged a push, and the merge tooling read the lag as a result
+
+- **Severity:** Minor. **Status:** open.
+- **Observed:**
+  - After the force-push that rebased #445, the PR's head still showed the old commit, so the merge gate failed on a head mismatch.
+  - After the rebase of #461, the runs API's `head_sha` filter returned no runs for minutes, so merge_when_green reported "CI: 0 runs" and stopped. A gate run named by the commit passed.
+- **Cost:** two re-armed merges and the minutes spent finding why.
+- **Improvement:**
+  - The ship scripts wait until the PR's head is the pushed commit.
+  - They also wait until the runs filter returns that commit's runs before judging CI.
+  - An empty answer straight after a push is a lag, not a result.
+- **Candidate home:** github-conventions' "Watching CI"; the controller's merge scripts (done).
+
+## PP-41: The controller's sandboxed and unsandboxed commands saw different temporary directories
+
+- **Severity:** Minor. **Status:** open.
+- **Observed:**
+  - The controller wrote the registry to `$TMPDIR` from a command run outside the sandbox, where TMPDIR is /tmp. It then read `$TMPDIR` from sandboxed commands, where TMPDIR is /tmp/claude-1000, and found an older copy from 2026-10-19 there.
+  - The Found-by-us sweep's first count, 48 rows, came from that copy. A later run on the current file found 72.
+  - The same day, the controller's commit helper took a relative message path, which `git -C` resolved against the clone, so the commit failed.
+- **Cost:** one analysis redone, and one failed commit.
+- **Improvement:**
+  - Controller scripts name absolute paths under /tmp/claude-1000 whenever their commands mix sandbox modes.
+  - Each helper resolves its path arguments before it changes directory. The commit helper does so now.
+- **Candidate home:** the global CLAUDE.md's sandbox notes; the controller's helpers (done for the commit helper).
