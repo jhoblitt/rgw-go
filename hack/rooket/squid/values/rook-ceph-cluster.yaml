@@ -33,6 +33,7 @@ cephObjectStores:
           rgw_enable_usage_log: "true"
           rgw_usage_log_tick_interval: "1"
           rgw_usage_log_flush_threshold: "1"
+          rgw_lc_debug_interval: "10"
         # Rook passes the radosgw --rgw-frontends="beast port=80" and then
         # these flags, so this frontend is the one its argument parsing keeps
         # (rook pkg/operator/ceph/object/spec.go). It replaces Rook's whole

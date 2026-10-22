@@ -52,7 +52,7 @@ var (
 	parity = map[string]string{
 		"rgw_dynamic_resharding": "false", "rgw_enable_gc_threads": "false", "rgw_enable_lc_threads": "false",
 		"rgw_run_sync_thread": "false", "rgw_d3n_l1_local_datacache_enabled": "false", "rgw_enable_usage_log": "true",
-		"rgw_usage_log_tick_interval": "1", "rgw_usage_log_flush_threshold": "1",
+		"rgw_usage_log_tick_interval": "1", "rgw_usage_log_flush_threshold": "1", "rgw_lc_debug_interval": "10",
 	}
 )
 

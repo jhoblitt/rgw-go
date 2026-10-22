@@ -17,6 +17,7 @@ ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-to
 ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_enable_usage_log
 ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_usage_log_tick_interval
 ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_usage_log_flush_threshold
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_lc_debug_interval
 ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_dynamic_resharding
 ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_enable_gc_threads
 ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_enable_lc_threads
@@ -25,6 +26,7 @@ ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-to
 ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_enable_usage_log
 ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_usage_log_tick_interval
 ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_usage_log_flush_threshold
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_lc_debug_interval
 ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- radosgw-admin zonegroup get --rgw-realm=ceph-objectstore --rgw-zonegroup=ceph-objectstore --rgw-zone=ceph-objectstore
 ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_dynamic_resharding
 ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_enable_gc_threads
@@ -34,6 +36,7 @@ ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-to
 ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_enable_usage_log
 ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_usage_log_tick_interval
 ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_usage_log_flush_threshold
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config show client.rgw.ceph.objectstore.a rgw_lc_debug_interval
 ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_dynamic_resharding
 ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_enable_gc_threads
 ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_enable_lc_threads
@@ -42,6 +45,7 @@ ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-to
 ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_enable_usage_log
 ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_usage_log_tick_interval
 ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_usage_log_flush_threshold
+ROOKET_NAME=rgw-go-tentacle rooket kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph --connect-timeout=20 --rados-mon-op-timeout=20 config get client.rgw.rgw-go rgw_lc_debug_interval
 REPO/hack/bench/out/elbencho --version
 ROOKET_NAME=rgw-go-tentacle rooket version
 go version

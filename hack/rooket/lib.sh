@@ -13,9 +13,10 @@ readonly rooket=${ROOKET:-rooket}
 readonly usage_options=(rgw_enable_usage_log=true rgw_usage_log_tick_interval=1 rgw_usage_log_flush_threshold=1)
 # What both gateways run with when they are compared, as option=value: no
 # background worker beside the requests, no local read cache between the
-# gateway and RADOS, and the usage options.
+# gateway and RADOS, the usage options, and a lifecycle day of 10 s, the day
+# s3-tests' lifecycle tests wait on, which only a lifecycle worker reads.
 readonly parity_options=(rgw_dynamic_resharding=false rgw_enable_gc_threads=false rgw_enable_lc_threads=false
-	rgw_run_sync_thread=false rgw_d3n_l1_local_datacache_enabled=false "${usage_options[@]}")
+	rgw_run_sync_thread=false rgw_d3n_l1_local_datacache_enabled=false "${usage_options[@]}" rgw_lc_debug_interval=10)
 
 die() {
 	echo "${script}: $*" >&2

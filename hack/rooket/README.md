@@ -250,8 +250,10 @@ under "go-ceph's rgw/admin suite" below), so that both gateways run alike:
 `rgw_dynamic_resharding`, `rgw_enable_gc_threads`, `rgw_enable_lc_threads`
 and `rgw_run_sync_thread` false, so that no background worker runs beside
 the requests; `rgw_d3n_l1_local_datacache_enabled` false, so that no read
-cache sits between the gateway and RADOS; and the three usage options the
-rgw/admin suite needs. `parity_options` in `lib.sh` lists them.
+cache sits between the gateway and RADOS; the three usage options the
+rgw/admin suite needs; and `rgw_lc_debug_interval` 10, a lifecycle day of
+10 s, the day s3-tests' lifecycle tests wait on, which no request reads.
+`parity_options` in `lib.sh` lists them.
 
 None of them is a startup-only option to the monitors, so `ceph config set`
 reaches the running radosgw at once and `ceph config show` reports the new

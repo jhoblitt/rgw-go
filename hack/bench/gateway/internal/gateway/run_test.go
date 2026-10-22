@@ -25,7 +25,8 @@ import (
 
 // The command goldens are the commands the comparison's shell script ran at
 // a6ffa64, before this command replaced it, traced with stubbed commands for
-// each gateway, the defaults and BENCH_SMOKE=1,
+// each gateway, the defaults and BENCH_SMOKE=1, with the checks of the parity
+// options the chart values have gained since,
 // less the sampler's start and the CPU profile's fetch, which ran in the
 // background, so that their place among the rest raced.
 var _ = Describe("Runner.Run", func() {
@@ -168,7 +169,8 @@ var _ = Describe("Runner.Run", func() {
       "rgw_d3n_l1_local_datacache_enabled": "false",
       "rgw_enable_usage_log": "` + usage + `",
       "rgw_usage_log_tick_interval": "1",
-      "rgw_usage_log_flush_threshold": "1"
+      "rgw_usage_log_flush_threshold": "1",
+      "rgw_lc_debug_interval": "10"
 `
 		}
 		Expect(w.readFile("config.json")).To(Equal(`{
