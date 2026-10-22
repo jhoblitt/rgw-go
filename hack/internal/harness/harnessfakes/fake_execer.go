@@ -5,7 +5,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
+	"github.com/jhoblitt/rgw-go/hack/internal/harness"
 )
 
 type FakeExecer struct {

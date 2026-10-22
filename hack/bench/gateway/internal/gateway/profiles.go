@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
+	"github.com/jhoblitt/rgw-go/hack/internal/harness"
 )
 
 // el is elbencho against endpoint as bench, without live statistics.

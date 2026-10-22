@@ -13,7 +13,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
+	"github.com/jhoblitt/rgw-go/hack/internal/harness"
 )
 
 var pidPattern = regexp.MustCompile(`^\d+$`)

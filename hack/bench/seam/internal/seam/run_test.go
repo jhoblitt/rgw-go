@@ -16,9 +16,9 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 
-	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
-	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness/harnessfakes"
 	"github.com/jhoblitt/rgw-go/hack/bench/seam/internal/seam"
+	"github.com/jhoblitt/rgw-go/hack/internal/harness"
+	"github.com/jhoblitt/rgw-go/hack/internal/harness/harnessfakes"
 )
 
 var _ = Describe("Runner.Run of the limiter re-run", func() {

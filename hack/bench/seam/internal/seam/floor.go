@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
+	"github.com/jhoblitt/rgw-go/hack/internal/harness"
 )
 
 // resolveFloorImage settles the image whose rados runs the floor: the Ceph
