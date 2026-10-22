@@ -427,6 +427,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw writes a status its name table lacks with a null reason phrase](#radosgw-writes-a-status-its-name-table-lacks-with-a-null-reason-phrase) | pending | pending | ✓ |
 | [radosgw serves a website's custom error document for every error status, where S3 serves it for 4XX only](#radosgw-serves-a-websites-custom-error-document-for-every-error-status-where-s3-serves-it-for-4xx-only) | pending | pending | ✓ |
 | [radosgw logs a served error document as a 200 success](#radosgw-logs-a-served-error-document-as-a-200-success) | pending | pending | ✓ |
+| [cls_rgw's bucket_unlink_instance promotes the next version at its own epoch, discarding the epoch it passes](#cls_rgws-bucket_unlink_instance-promotes-the-next-version-at-its-own-epoch-discarding-the-epoch-it-passes) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -16392,7 +16393,23 @@ Every new entry adds its row to this table, in document order.
   its replay, and has no end when that writer stops between them: the first
   read after the stop runs the replay and answers 404, and the reads after
   it serve the next version. A read that meets another writer's new link
-  instead serves the version current before it, which still exists.
+  instead serves the version current before it, which still exists. A
+  conditional versioned write reads the current version for its
+  precondition through the same `follow_olh`
+  ([rgw_rados.cc:3187-3197](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3187-L3197) and
+  [rgw_rados.cc:6624-6644](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6624-L6644),
+  [rgw_rados.cc:3284-3294](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3284-L3294) and
+  [rgw_rados.cc:7238-7258](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7238-L7258)),
+  so while another writer's link is logged and unreplayed it compares its
+  condition with the version current before that link: an If-Match on the
+  linked version's ETag answers 412, and one on the version before it
+  passes and links over the newer one. A replay that another writer
+  refuses, `update_olh`'s ECANCELED, becomes ENOENT, and the write then
+  evaluates on no current version
+  ([rgw_rados.cc:8989-8995](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8989-L8995) and
+  [rgw_rados.cc:3190-3191](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3190-L3191),
+  [rgw_rados.cc:9735-9741](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9735-L9741) and
+  [rgw_rados.cc:3287-3288](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3287-L3288)).
 - **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
 - **rgw-go:** `followOLH` (`internal/driver/olh_head.go`) resolves the
   target from the head as it was read, as radosgw's does, pinned by the
@@ -16404,7 +16421,13 @@ Every new entry adds its row to this table, in document order.
   pending modification answers the version current after it"), so they do
   not reproduce it: pinned by the spec "answers the next version when the
   replay it runs removes the current one" in
-  `internal/driver/stat_olh_test.go`.
+  `internal/driver/stat_olh_test.go`. A conditional versioned write does not
+  either: `followOLHHead` (`internal/driver/olh_cond.go`) reads the head
+  again after a replay that applied anything or that another writer
+  refused, and evaluates the condition on that read, pinned by the specs
+  "is applied before the condition is evaluated, so If-Match on its version
+  succeeds" and "is evaluated on the head read again when another reader's
+  replay refused the follow's" in `internal/driver/olh_cond_test.go`.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task V4's review, 2026-10-15, tracing the stale answer
   V4 reproduces; derived from the source, not reproduced.
@@ -24612,3 +24635,60 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 unit B, Task BC-15's review, 2026-10-22, reading
   `send_response_data`'s custom status. Derived from the source, not
   reproduced.
+
+## cls_rgw's bucket_unlink_instance promotes the next version at its own epoch, discarding the epoch it passes
+
+- **Kind:** defect, cosmetic: the epoch `write` is given for the promoted
+  version is lost, so the version keeps its old list epoch. No S3-visible
+  effect found in a single zone; a cost on the key afterwards. Not
+  security-relevant. Unreproduced: derived from the source and from
+  fakerados's emulation of the class.
+- **Evidence:** paths are under `src/` unless named.
+  - Unlinking the current version promotes the next one with
+    `BIVerObjEntry next(hctx, next_key); next.write(olh.get_epoch(), true)`,
+    at v20.2.4 `next.write(olh.get_epoch(), true, header)`, on an entry never
+    read
+    ([cls_rgw.cc:1947-1948](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1947-L1948),
+    [cls_rgw.cc:2094-2095](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2094-L2095)).
+  - `write` skips `unlink_list_entry`, the unread entry's `versioned_epoch`
+    being 0, sets `versioned_epoch = epoch` and calls `write_entries`
+    ([cls_rgw.cc:1410-1427](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1410-L1427),
+    [cls_rgw.cc:1537-1554](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1537-L1554)),
+    whose `init()` on an uninitialized entry reads the stored entry back
+    over `instance_entry`, stored epoch included, before writing it under
+    its old list key with FLAG_CURRENT
+    ([cls_rgw.cc:1388-1408](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1388-L1408),
+    [cls_rgw.cc:1332-1343](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1332-L1343);
+    [cls_rgw.cc:1514-1535](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1514-L1535),
+    [cls_rgw.cc:1458-1470](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1458-L1470)).
+  - A lifecycle transition names the version's own epoch
+    ([rgw_lc.cc:1515-1516](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1515-L1516),
+    [rgw_lc.cc:1561-1562](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1561-L1562)),
+    now below the OLH entry's for a promoted version, so its link takes
+    the old-epoch path: the version rewritten with its current flag kept,
+    nothing logged, no bucket index log entry
+    ([cls_rgw.cc:1751-1760](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1751-L1760),
+    [cls_rgw.cc:1892-1901](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1892-L1901)),
+    and its pending attr left, since `apply_olh_log` returns on an empty log
+    ([rgw_rados.cc:8423-8425](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8423-L8425),
+    [rgw_rados.cc:9169-9171](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9169-L9171)).
+- **Impact:** none on S3's answers in a single zone: the promoted version
+  is the newest remaining, so the listing's order and IsLatest hold. After
+  a transition of such a version, every read of the key runs `update_olh`
+  from `follow_olh` until `rgw_olh_pending_timeout_sec` expires the attr
+  ([rgw_rados.cc:8984-8996](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8984-L8996),
+  [rgw_rados.cc:9730-9742](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9730-L9742)),
+  and the attr refuses the key's OLH clear meanwhile.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it in fakerados (`rgwBucketUnlinkInstance`,
+  `internal/testutil/fakerados/cls_rgw_olh.go`). The check after a
+  conditional link relies on it: an unlink of the current version leaves no
+  entry above the epoch the writer read, so the check requires the version
+  the condition matched, and a current delete marker, still listed
+  (`checkOLHLink`, `prepareOLHAttempt`, `internal/driver/olh_cond.go`). A
+  conditional link does not wait on the attr a transition leaves once it is
+  older than the wait's floor (`olhCondStale`).
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 Task V5c fix round 2, 2026-10-22, recording what fix
+  round 1 met when a mutation did not bite; derived from the source and the
+  emulator, not reproduced.
