@@ -3247,6 +3247,11 @@ Every new entry adds its row to this table, in document order.
   check on a device of step 0 whose code verifies at liboath's 30 seconds.
   A code liboath refuses never reaches the division, so that check is
   recorded as a failure (`internal/testutil/fakerados/cls_otp_check.go`).
+  `(*Store).VerifyMFA` reads the device before it checks and sends no check
+  for a device of step 0, which it does not verify, so no rgw-go request
+  faults the OSD (`internal/driver/mfa.go`; spec "is not verified, the class
+  not called, for a device of step 0, where a good code faults the OSD",
+  `internal/driver/mfa_test.go`).
 - **Upstream:** [#80948](https://tracker.ceph.com/issues/80948). Its fix,
   [ceph/ceph#72250](https://github.com/ceph/ceph/pull/72250), a draft, adds a
   file-local `effective_step_size()` that uses liboath's default time step
@@ -3330,11 +3335,32 @@ Every new entry adds its row to this table, in document order.
     gather into the in-memory log ring. This replay keeps such a code
     verifying even after the user's own request has used it.
 - **Releases:** every release checked, v19.2.2 through main.
-- **rgw-go:** affected as radosgw is: the class runs in the OSD, and rgw-go
-  calls it as radosgw does. fakerados's otp class computes the index as the
-  class does (`internal/testutil/fakerados/cls_otp_check.go`), and its spec
-  "verifies a used code again in each later step of its window" pins the
-  replay (`internal/testutil/fakerados/cls_otp_check_test.go`).
+- **rgw-go:** calls the class as radosgw does, so the class stores the same
+  index, but `(*Store).VerifyMFA` does not verify a code the device may have
+  accepted before. It reads the device's record first, guards the check on
+  it, and repeats liboath's walk over the device's seed to learn on which
+  side of the check's step the class found the code and how far. A code
+  found behind whose step is at or below the last success the record held
+  is refused (`internal/driver/mfa.go`; `docs/exclusions.md`, "An MFA code
+  the device may have accepted before does not verify"). That refuses every
+  reuse through rgw-go, and some fresh codes radosgw verifies, which the
+  exclusion lists; radosgw on the same zone still verifies the reuse.
+  - The rule depends on the fix. With ceph/ceph#72253 the index is the
+    code's own step, so the class refuses a used code itself and rgw-go's
+    rule is the class's own: a code found behind verifies when its step is
+    above the last success, as the fixed class requires. For a code its
+    walk does not find, rgw-go falls back to the stored index, and there it
+    verifies an index below the check's step, which only that fix stores
+    (the floors' class only on an unsigned int wrap), pinned by the rows
+    "ceph/ceph#72253's index, one step late" and "two steps late" in
+    `internal/driver/mfa_internal_test.go`.
+  - fakerados's otp class computes the index as the class does
+    (`internal/testutil/fakerados/cls_otp_check.go`), and its spec
+    "verifies a used code again in each later step of its window" pins the
+    replay (`internal/testutil/fakerados/cls_otp_check_test.go`); the
+    driver's spec "is not verified for a code used again in each later step
+    of its window, which the class accepts" pins rgw-go's refusal
+    (`internal/driver/mfa_test.go`).
 - **Upstream:** [#80949](https://tracker.ceph.com/issues/80949), which we
   filed. Its fix, [ceph/ceph#72253](https://github.com/ceph/ceph/pull/72253),
   a draft, passes `&otp_pos` and sets the index to
@@ -18242,9 +18268,11 @@ Every new entry adds its row to this table, in document order.
   - A single zone is unaffected: its gateways share one otp object.
 - **Releases:** checked at v19.2.7 and v20.2.4, where the class, the
   document, the check and the sync are the same.
-- **rgw-go:** serves no MFA check yet. Its planned check reads the local
-  zone's otp object, as radosgw's does, so it is affected the same way until
-  a task decides otherwise.
+- **rgw-go:** affected the same way. `(*Store).VerifyMFA` checks on the
+  local zone's otp object, as radosgw's check does
+  (`internal/driver/mfa.go`), and its refusal of a code the device may have
+  accepted before reads that zone's last success alone (`docs/exclusions.md`,
+  "An MFA code the device may have accepted before does not verify").
 - **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
   searched.
 - **Found:** phase 2 Task WP-17's review, 2026-10-19, while tracing what the
