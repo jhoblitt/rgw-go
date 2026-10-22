@@ -66,13 +66,10 @@ func otpAdminMethods(now func() time.Time) methodTable {
 	}
 }
 
-// The omap keys of the header and of a device's instance, which is the
-// prefix and the device's id
+// otpHeaderKey is the omap key of the header; a device's instance is under
+// otp.InstanceKey
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L45-L46 at v19.2.7 and v20.2.4).
-const (
-	otpHeaderKey = "header"
-	otpKeyPrefix = "otp/"
-)
+const otpHeaderKey = "header"
 
 // otpHeader is otp_header, ENCODE_START(1, 1): the ids of the object's
 // devices, a set
@@ -100,38 +97,8 @@ func decodeOTPHeader(d *denc.Decoder) otpHeader {
 	return h
 }
 
-// otpInstance is otp_instance, ENCODE_START(1, 1): a device, the checks of
-// its codes in the current window, and the TOTP counter of its last
-// successful check
-// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L66-L95 at v19.2.7 and v20.2.4).
-// Its fields are exported so that fmt prints OTP through otp.OTPInfo's
-// Format, which leaves the seed and seed_bin out.
-type otpInstance struct {
-	OTP         otp.OTPInfo
-	LastChecks  []otp.OTPCheck
-	LastSuccess uint64
-}
-
-// Encode mirrors otp_instance::encode.
-func (i otpInstance) Encode(e *denc.Encoder, r denc.Release) {
-	f := e.BeginStruct(1, 1)
-	i.OTP.Encode(e, r)
-	denc.EncodeSlice(e, i.LastChecks, func(e *denc.Encoder, c otp.OTPCheck) { c.Encode(e, r) })
-	e.U64(i.LastSuccess)
-	e.EndStruct(f)
-}
-
-// decodeOTPInstance mirrors otp_instance::decode, DECODE_START(1).
-func decodeOTPInstance(d *denc.Decoder) otpInstance {
-	f := d.BeginStruct(1)
-	i := otpInstance{
-		OTP:         otp.DecodeOTPInfo(d),
-		LastChecks:  denc.DecodeSlice(d, otp.DecodeOTPCheck),
-		LastSuccess: d.U64(),
-	}
-	d.EndStruct(f)
-	return i
-}
+// otpInstance is otp_instance, a device's record, in the client's encoding.
+type otpInstance = otp.Instance
 
 // otpReadHeader is read_header: the stored header, an empty one when the
 // object, its header key or the key's value is missing, and EIO for one that
@@ -161,12 +128,12 @@ func otpWriteHeader(call *ClassCall, h otpHeader) {
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L171-L193 at v19.2.7 and v20.2.4).
 func otpGetInstance(call *ClassCall, id string) (inst otpInstance, rval int32) {
 	omap, _ := call.StoredOmap()
-	b, ok := omap[otpKeyPrefix+id]
+	b, ok := omap[otp.InstanceKey(id)]
 	if !ok {
 		return otpInstance{}, -int32(syscall.ENOENT)
 	}
 	d := denc.NewDecoder(b)
-	inst = decodeOTPInstance(d)
+	inst = otp.DecodeInstance(d)
 	if d.Err() != nil {
 		return otpInstance{}, -int32(syscall.EIO)
 	}
@@ -176,7 +143,7 @@ func otpGetInstance(call *ClassCall, id string) (inst otpInstance, rval int32) {
 // otpWriteInstance is write_otp_instance: the device stored under its id,
 // which creates a missing object.
 func otpWriteInstance(call *ClassCall, inst otpInstance) {
-	call.Create().Omap[otpKeyPrefix+inst.OTP.ID] = encodeSquid(inst)
+	call.Create().Omap[otp.InstanceKey(inst.OTP.ID)] = encodeSquid(inst)
 }
 
 // otpRemoveInstance is remove_otp_instance: the device's key removed, and
@@ -189,7 +156,7 @@ func otpRemoveInstance(call *ClassCall, id string) int32 {
 	if obj == nil {
 		return -int32(syscall.ENOENT)
 	}
-	delete(obj.Omap, otpKeyPrefix+id)
+	delete(obj.Omap, otp.InstanceKey(id))
 	return 0
 }
 

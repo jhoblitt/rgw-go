@@ -428,6 +428,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw serves a website's custom error document for every error status, where S3 serves it for 4XX only](#radosgw-serves-a-websites-custom-error-document-for-every-error-status-where-s3-serves-it-for-4xx-only) | pending | pending | ✓ |
 | [radosgw logs a served error document as a 200 success](#radosgw-logs-a-served-error-document-as-a-200-success) | pending | pending | ✓ |
 | [cls_rgw's bucket_unlink_instance promotes the next version at its own epoch, discarding the epoch it passes](#cls_rgws-bucket_unlink_instance-promotes-the-next-version-at-its-own-epoch-discarding-the-epoch-it-passes) | pending | pending | ✓ |
+| [cls_otp verifies a code of any length from 6 to 8 digits against any device](#cls_otp-verifies-a-code-of-any-length-from-6-to-8-digits-against-any-device) | pending | pending | ✓ |
+| [radosgw-admin mfa resync stores an offset half a step from its fit at an odd window](#radosgw-admin-mfa-resync-stores-an-offset-half-a-step-from-its-fit-at-an-odd-window) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -3247,6 +3249,11 @@ Every new entry adds its row to this table, in document order.
   check on a device of step 0 whose code verifies at liboath's 30 seconds.
   A code liboath refuses never reaches the division, so that check is
   recorded as a failure (`internal/testutil/fakerados/cls_otp_check.go`).
+  `(*Store).VerifyMFA` reads the device before it checks and sends no check
+  for a device of step 0, which it does not verify, so no rgw-go request
+  faults the OSD (`internal/driver/mfa.go`; spec "is not verified, the class
+  not called, for a device of step 0, where a good code faults the OSD",
+  `internal/driver/mfa_test.go`).
 - **Upstream:** [#80948](https://tracker.ceph.com/issues/80948). Its fix,
   [ceph/ceph#72250](https://github.com/ceph/ceph/pull/72250), a draft, adds a
   file-local `effective_step_size()` that uses liboath's default time step
@@ -3330,11 +3337,32 @@ Every new entry adds its row to this table, in document order.
     gather into the in-memory log ring. This replay keeps such a code
     verifying even after the user's own request has used it.
 - **Releases:** every release checked, v19.2.2 through main.
-- **rgw-go:** affected as radosgw is: the class runs in the OSD, and rgw-go
-  calls it as radosgw does. fakerados's otp class computes the index as the
-  class does (`internal/testutil/fakerados/cls_otp_check.go`), and its spec
-  "verifies a used code again in each later step of its window" pins the
-  replay (`internal/testutil/fakerados/cls_otp_check_test.go`).
+- **rgw-go:** calls the class as radosgw does, so the class stores the same
+  index, but `(*Store).VerifyMFA` does not verify a code the device may have
+  accepted before. It reads the device's record first, guards the check on
+  it, and repeats liboath's walk over the device's seed to learn on which
+  side of the check's step the class found the code and how far. A code
+  found behind whose step is at or below the last success the record held
+  is refused (`internal/driver/mfa.go`; `docs/exclusions.md`, "An MFA code
+  the device may have accepted before does not verify"). That refuses every
+  reuse through rgw-go, and some fresh codes radosgw verifies, which the
+  exclusion lists; radosgw on the same zone still verifies the reuse.
+  - The rule depends on the fix. With ceph/ceph#72253 the index is the
+    code's own step, so the class refuses a used code itself and rgw-go's
+    rule is the class's own: a code found behind verifies when its step is
+    above the last success, as the fixed class requires. For a code its
+    walk does not find, rgw-go falls back to the stored index, and there it
+    verifies an index below the check's step, which only that fix stores
+    (the floors' class only on an unsigned int wrap), pinned by the rows
+    "ceph/ceph#72253's index, one step late" and "two steps late" in
+    `internal/driver/mfa_internal_test.go`.
+  - fakerados's otp class computes the index as the class does
+    (`internal/testutil/fakerados/cls_otp_check.go`), and its spec
+    "verifies a used code again in each later step of its window" pins the
+    replay (`internal/testutil/fakerados/cls_otp_check_test.go`); the
+    driver's spec "is not verified for a code used again in each later step
+    of its window, which the class accepts" pins rgw-go's refusal
+    (`internal/driver/mfa_test.go`).
 - **Upstream:** [#80949](https://tracker.ceph.com/issues/80949), which we
   filed. Its fix, [ceph/ceph#72253](https://github.com/ceph/ceph/pull/72253),
   a draft, passes `&otp_pos` and sets the index to
@@ -18242,9 +18270,11 @@ Every new entry adds its row to this table, in document order.
   - A single zone is unaffected: its gateways share one otp object.
 - **Releases:** checked at v19.2.7 and v20.2.4, where the class, the
   document, the check and the sync are the same.
-- **rgw-go:** serves no MFA check yet. Its planned check reads the local
-  zone's otp object, as radosgw's does, so it is affected the same way until
-  a task decides otherwise.
+- **rgw-go:** affected the same way. `(*Store).VerifyMFA` checks on the
+  local zone's otp object, as radosgw's check does
+  (`internal/driver/mfa.go`), and its refusal of a code the device may have
+  accepted before reads that zone's last success alone (`docs/exclusions.md`,
+  "An MFA code the device may have accepted before does not verify").
 - **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
   searched.
 - **Found:** phase 2 Task WP-17's review, 2026-10-19, while tracing what the
@@ -24692,3 +24722,112 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 Task V5c fix round 2, 2026-10-22, recording what fix
   round 1 met when a mutation did not bite; derived from the source and the
   emulator, not reproduced.
+
+## cls_otp verifies a code of any length from 6 to 8 digits against any device
+
+- **Kind:** defect, possibly security-relevant (low), conditional.
+  `otp_instance::verify` hands the code to `oath_totp_validate2`, which takes
+  the digit count from `strlen(otp)`, and `otp_info_t` stores no digit count,
+  so a device whose authenticator shows 8 or 7 digits also verifies a code
+  of 6. Unfixed at v19.2.7 and v20.2.4. Unreproduced: derived from
+  the source and shown on rgw-go's emulator of the class; a reproduction
+  needs a cluster.
+- **Evidence:**
+  - `otp_instance::verify` hands liboath the code as `val.c_str()`
+    ([cls_otp.cc:129-136](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L129-L136),
+    [cls_otp.cc:129-136](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L129-L136)).
+  - `oath_totp_validate2` takes the digit count from the code itself,
+    passing `strlen (otp)` to the walk (`liboath/totp.c:251-260` at
+    oath-toolkit v2.6.15-2-g11a716b), and the HOTP generator accepts any
+    count from 6 to 8 (`liboath/hotp.c:136-137` at the same version).
+  - `otp_info_t` stores no digit count: a type, an id, the seed and its
+    type and parsed form, a time offset, a step and a window
+    ([cls_otp_types.h:31-77](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_types.h#L31-L77),
+    [cls_otp_types.h:31-77](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_types.h#L31-L77)),
+    and `radosgw-admin mfa create` takes none
+    ([rgw_admin.cc:4057-4068](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L4057-L4068),
+    [radosgw-admin.cc:4281-4292](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L4281-L4292)).
+  - So the class checks a code with as many digits as the request sends,
+    and the six-digit code of a step is the last six digits of its
+    eight-digit code: both are the same truncated HMAC, modulo 10^6 and
+    10^8.
+- **Impact:** Ceph has no digit-count setting, so a guess at a device's
+  code has 10^6 values for every device, whatever its authenticator shows.
+  An operator who issues 8-digit authenticators gets no extra strength from
+  them: a six-digit guess at the code's last six digits verifies. That is no
+  drop below anything Ceph offers, and guessing stays limited to five checks
+  per device in step_size seconds.
+- **Releases:** v19.2.7 and v20.2.4, where the class and its types are the
+  same.
+- **rgw-go:** inherits it, as the device stores no digit count to check a
+  code against. The class verifies the code, and `(*Store).VerifyMFA`'s own
+  walk over the seed takes the digit count from the code as liboath does
+  (`internal/driver/mfa.go`), pinned by the spec "verifies a code by its last
+  six digits, as the class takes the digit count from the code"
+  (`internal/driver/mfa_test.go`). fakerados's otp class counts the digits
+  as the class does (`internal/testutil/fakerados/cls_otp_check.go`).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 Task V13c's review, 2026-10-22, reading `verify` beside
+  liboath's walk; checked at both tags in V13c's fix round.
+
+## radosgw-admin mfa resync stores an offset half a step from its fit at an odd window
+
+- **Kind:** defect, S3-correctness (low), not security-relevant. After a
+  resync of a device whose window is odd, the device's steps end half a step
+  from its authenticator's. At a window of 1 the shift can leave the device
+  ahead of the authenticator, and the otp class then refuses fresh codes
+  that radosgw would verify on a device whose offset matched. At windows 3
+  and 5 the shift leaves the device behind the authenticator, its codes are
+  found ahead or at distance 0, and nothing fresh is refused; the half step
+  only moves the device within its window. Unfixed at v19.2.7 and v20.2.4.
+  Unreproduced: derived from the source and a model.
+- **Evidence:**
+  - `scan_totp` probes time offsets 0, -step, +2 step, -3 step and so on,
+    whole steps, until the first code verifies at an offset with a window of
+    1 and the second at that offset less a step, and then stores
+    `*pofs = time_ofs - step_size + step_size * totp.window / 2`
+    ([rgw_admin.cc:3061-3108](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L3061-L3108),
+    the store at [rgw_admin.cc:3097](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L3097);
+    [radosgw-admin.cc:3258-3305](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L3258-L3305),
+    the store at [radosgw-admin.cc:3294](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L3294)).
+  - The fit is a whole number of steps, and so is the shift,
+    `step_size * totp.window / 2 - step_size`, at an even window: the fit
+    itself at a window of 2, one step more at 4. At an odd window the shift
+    holds half a step: the fit less 15 s at a window of 1, plus 15 s at 3,
+    with 30-second steps.
+  - `mfa resync` stores that offset in the device through `create_mfa`
+    ([rgw_admin.cc:10965-11028](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10965-L11028),
+    [radosgw-admin.cc:11557-11621](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L11557-L11621)),
+    and an odd window is reachable: `mfa create --totp-window` sets any
+    positive window
+    ([rgw_admin.cc:10828-10830](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10828-L10830),
+    [radosgw-admin.cc:11419-11421](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L11419-L11421)).
+- **Impact:** at a window of 1, a device the resync left ahead of its
+  authenticator finds the authenticator's code one step behind in one half
+  of each step, and the class's unsigned replay index does the rest
+  ("[cls_otp computes the replay index from an unsigned window
+  distance](#cls_otp-computes-the-replay-index-from-an-unsigned-window-distance)").
+  Modelled with liboath's walk, the class's verify and `scan_totp` (rgw-go's
+  re-review models, 2026-10-22), each window's consequence:
+  - window 1: after a resync of an authenticator two steps behind, which
+    stores 45 s where the fit is 60 s, requests 15 s apart have the class
+    refuse each fresh code and verify the same code sent again, through
+    radosgw as well. Over whole-step drifts of -3 to 5 steps and six scan
+    phases, the class refuses a fresh code at 15-s requests in 30 of the 54
+    cases;
+  - windows 3 and 5: the device ends 15 s to 105 s behind the
+    authenticator, and the class refuses no fresh code in any of the 54;
+  - windows 2 and 4, whose shift is whole steps: the same, none of the 54.
+    After a window-2 resync of the authenticator two steps behind, which
+    stores 60 s, the 15-s requests have every fresh code verified and only
+    the reuses refused.
+- **Releases:** v19.2.7 and v20.2.4, where `scan_totp` is the same.
+- **rgw-go:** has no radosgw-admin; it checks devices the operator's
+  radosgw-admin resynced. On such a device it meets the class's refusals,
+  and its own one-time rule refuses the codes found behind there as well
+  (`docs/exclusions.md`, "An MFA code the device may have accepted before
+  does not verify", which also states what resync cures).
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 Task V13c's fix-round re-review, 2026-10-22, modelling
+  `scan_totp` beside the class; the formula checked at both tags in V13c's
+  second fix round.

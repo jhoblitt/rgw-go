@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
+	"github.com/jhoblitt/rgw-go/internal/cls/otp"
 	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/cls/version"
 	"github.com/jhoblitt/rgw-go/internal/denc"
@@ -62,6 +63,7 @@ func seedRookZone(c *fakerados.Cluster, store string, withPeriod bool) rookZone 
 		UserSwiftPool: meta.ParsePool(store + ".rgw.meta:users.swift"),
 		AccountPool:   meta.ParsePool(store + ".rgw.meta:accounts"),
 		OIDCPool:      meta.ParsePool(store + ".rgw.meta:oidc"),
+		OTPPool:       meta.ParsePool(store + ".rgw.meta:otp"),
 		GCPool:        meta.ParsePool(store + ".rgw.log:gc"),
 		LCPool:        meta.ParsePool(store + ".rgw.log:lc"),
 		LogPool:       meta.ParsePool(store + ".rgw.log"),
@@ -103,6 +105,16 @@ func seedRookZone(c *fakerados.Cluster, store string, withPeriod bool) rookZone 
 // rookMetaPool is the pool whose namespaces hold the metadata of the zone
 // seedRookZone seeds for the store "ceph-objectstore".
 const rookMetaPool = "ceph-objectstore.rgw.meta"
+
+// rookOTPNS is the namespace of rookMetaPool that holds the zone's
+// otp_pool, the users' MFA devices.
+const rookOTPNS = "otp"
+
+// registerOTPClass registers the otp class an MFA check calls, reading the
+// OSD's clock from now.
+func registerOTPClass(c *fakerados.Cluster, now func() time.Time) {
+	c.RegisterClassMethods(otp.Class, fakerados.OTPClassAt(now), fakerados.OTPMethods, fakerados.OTPWriteMethods)
+}
 
 // seedUser stores info in that zone as radosgw's PutOperation does: the
 // users.uid object holding the RGWUID and the RGWUserInfo, with attrs and
