@@ -42,10 +42,12 @@ const (
 // 0 letting the class take the OLH entry's next, and unmod_since, compared
 // in whole seconds unless HighPrecision. SkipUpdate is
 // skip_olh_obj_update, which leaves the replay to the name's next update.
-// Cond, when set, is a conditional write's condition, run on the head each
-// attempt reads, whose guard that attempt's init carries; its error ends
-// the write with nothing linked. ExpectTag, when not nil, is the write tag
-// the replay's removal of a version the link logged for removal must find.
+// Cond, when set, is a conditional write's condition, which the link
+// commits only if it held when the link landed (olh_cond.go). ExpectTag,
+// when not nil, is the user.rgw.idtag the OLH head must hold, absent read as
+// empty, checked on the head each attempt reads and in its init, and the
+// write tag the replay's removal of a version the link logged for removal
+// must find.
 type olhLink struct {
 	DeleteMarker  bool
 	Meta          rgw.DirEntryMeta
@@ -56,10 +58,6 @@ type olhLink struct {
 	Cond          olhCondition
 	ExpectTag     []byte
 }
-
-// olhCondition evaluates a conditional link's condition on the OLH head an
-// attempt read, and returns the guard that attempt's init carries.
-type olhCondition func(ctx context.Context, head *op.ObjectState) (*olhCondGuard, error)
 
 // olhUnlink is an unlink's request, unlink_obj_instance's arguments: the
 // epoch, as a link's, NullVersion for a request that named the null
@@ -77,6 +75,9 @@ type olhUnlink struct {
 // replay, as a gateway that dies there leaves the name: the pending attr
 // and the log entry wait for the next reader's replay.
 var olhStopAfterLink func(s *Store) bool
+
+// stopsAfterLink reports whether olhStopAfterLink stops s's writers.
+func (s *Store) stopsAfterLink() bool { return olhStopAfterLink != nil && olhStopAfterLink(s) }
 
 // setOLH is set_olh
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8669-L8762 at v19.2.7,
@@ -103,11 +104,18 @@ var olhStopAfterLink func(s *Store) bool
 //     any other runs a best-effort update unless p.SkipUpdate, and is
 //     returned.
 //   - The replay is finishOLHModification's, whose ECANCELED is success.
+//   - p.ExpectTag and p.Cond add their checks to each attempt before its
+//     init (prepareOLHAttempt), and a conditional link is checked after it
+//     lands, before the replay (checkOLHLink). Each backoff of a conditional
+//     link waiting for other writers is one of the olhAttempts.
 //
 // When setOLH gives up before a link of its own landed, on an answer that
 // proves none did, it removes the version itself, as removeFailedVersion
-// says; once one landed it removes nothing, whatever it then returns, so its
-// caller never removes the version.
+// says, and so it does whatever the answer when an attempt ends before its
+// init, in its head read or in prepareOLHAttempt; once one landed it removes
+// nothing, whatever it then returns, so its caller never removes the
+// version. A conditional link the check voids is removed by that check's
+// unlink.
 func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p olhLink) error {
 	what := versionName(rec, key)
 	idx := s.newOLHIndex(rec, key)
@@ -118,19 +126,32 @@ func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKe
 		}
 		return err
 	}
+	// beforeInit ends an attempt that sent no init. Every earlier attempt
+	// ended before its link or on the class's refusal of it, so no link of
+	// the write can land, even when the context that ended was the client's:
+	// the version is removed past it.
+	beforeInit := func(err error) error {
+		err = fmt.Errorf("linking %s: %w", what, err)
+		if !p.DeleteMarker {
+			s.removeUnlinkedVersion(context.WithoutCancel(ctx), idx.x.rec, key, err)
+		}
+		return err
+	}
+	var wait olhCondWait
 	for range olhAttempts {
 		head, err := s.readOLHHead(ctx, rec, olhHeadKey(key))
 		if err != nil {
-			return unlinked(fmt.Errorf("linking %s: %w", what, err))
+			return beforeInit(err)
 		}
-		var guard *olhCondGuard
-		if p.Cond != nil {
-			if guard, err = p.Cond(ctx, head); err != nil {
-				return unlinked(fmt.Errorf("linking %s: %w", what, err))
-			}
+		a, err := s.prepareOLHAttempt(ctx, idx, head, key, p, &wait)
+		switch {
+		case err != nil:
+			return beforeInit(err)
+		case a.wait:
+			continue
 		}
-		found := head.Exists
-		opTag, _, err := s.olhInitModification(ctx, head, guard)
+		found, tagged := head.Exists, olhTagged(head)
+		opTag, _, err := s.olhInitModification(ctx, head, a.guard, p.ExpectTag)
 		switch {
 		case errors.Is(err, radosclient.ErrCanceled), found && errors.Is(err, radosclient.ErrNotFound):
 			continue
@@ -139,7 +160,12 @@ func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKe
 		}
 		err = idx.linkOLH(ctx, head, key, opTag, f)
 		if err == nil {
-			return s.finishOLHModification(ctx, idx, head, opTag, p.SkipUpdate, p.ExpectTag)
+			if a.check != nil && !s.stopsAfterLink() {
+				if cerr := s.checkOLHLink(ctx, idx, key, a.check, p.SkipUpdate); cerr != nil {
+					return cerr
+				}
+			}
+			return s.finishOLHModification(ctx, idx, head, opTag, p.SkipUpdate, olhReplayTag(p.ExpectTag, head, tagged))
 		}
 		if !outcomeUnknown(err) {
 			s.olhCancelModification(ctx, head, opTag)
@@ -169,27 +195,54 @@ func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKe
 // keeps its pending attr, as setOLH's link does. The class's ENOENT, the
 // version not there, and init's, the head its read found gone, answer
 // NoSuchKey. The unlink makes no version, so a failed one removes none.
+// p.ExpectTag guards the replay's removal of the version alone, the init
+// comparing no write tag: its caller checks the version's head before the
+// unlink.
 func (s *Store) unlinkObjInstance(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p olhUnlink) error {
+	_, err := s.unlinkVersion(ctx, rec, key, p)
+	return err
+}
+
+// unlinkOutcome is what an unlinkVersion that returned did to the version.
+type unlinkOutcome int
+
+const (
+	// unlinkNotSent: no unlink of the version was sent, or the class
+	// refused it, so the version stays linked.
+	unlinkNotSent unlinkOutcome = iota
+	// unlinkUnknown: the unlink was sent and its outcome is unknown.
+	unlinkUnknown
+	// unlinkLanded: the unlink landed; its replay may have failed.
+	unlinkLanded
+	// unlinkGone: the class found no such version to unlink.
+	unlinkGone
+)
+
+// unlinkVersion is unlinkObjInstance, reporting as well what it did to the
+// version, which a caller that must know whether the version stays linked
+// reads.
+func (s *Store) unlinkVersion(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p olhUnlink) (unlinkOutcome, error) {
 	what := versionName(rec, key)
 	idx := s.newOLHIndex(rec, key)
 	f := olhUnlinkFields{epoch: p.Epoch, nullVersion: p.NullVersion}
 	for range olhAttempts {
 		head, err := s.readOLHHead(ctx, rec, olhHeadKey(key))
 		if err != nil {
-			return fmt.Errorf("unlinking %s: %w", what, err)
+			return unlinkNotSent, fmt.Errorf("unlinking %s: %w", what, err)
 		}
-		opTag, _, err := s.olhInitModification(ctx, head, nil)
+		opTag, _, err := s.olhInitModification(ctx, head, nil, nil)
 		switch {
 		case errors.Is(err, radosclient.ErrCanceled):
 			continue
 		case err != nil:
-			return unlinkError(what, err)
+			return unlinkNotSent, unlinkError(what, err)
 		}
 		err = idx.unlinkInstance(ctx, head, key, opTag, f)
 		if err == nil {
-			return s.finishOLHModification(ctx, idx, head, opTag, p.SkipUpdate, p.ExpectTag)
+			return unlinkLanded, s.finishOLHModification(ctx, idx, head, opTag, p.SkipUpdate, p.ExpectTag)
 		}
-		if !outcomeUnknown(err) {
+		unknown := outcomeUnknown(err)
+		if !unknown {
 			s.olhCancelModification(ctx, head, opTag)
 		}
 		if errors.Is(err, radosclient.ErrCanceled) {
@@ -198,9 +251,15 @@ func (s *Store) unlinkObjInstance(ctx context.Context, rec *op.BucketRecord, key
 		if !p.SkipUpdate {
 			s.updateOLHAfterFailure(ctx, idx, head)
 		}
-		return unlinkError(what, err)
+		switch {
+		case unknown:
+			return unlinkUnknown, unlinkError(what, err)
+		case errors.Is(err, radosclient.ErrNotFound):
+			return unlinkGone, unlinkError(what, err)
+		}
+		return unlinkNotSent, unlinkError(what, err)
 	}
-	return fmt.Errorf("%w: unlinking %s: every one of %d attempts lost to another writer", op.ErrUnknown, what, olhAttempts)
+	return unlinkNotSent, fmt.Errorf("%w: unlinking %s: every one of %d attempts lost to another writer", op.ErrUnknown, what, olhAttempts)
 }
 
 // unlinkError is an unlink's failure, NoSuchKey for an ENOENT.
@@ -238,7 +297,7 @@ func unlinkError(what string, err error) error {
 // apply, so the removal finds nothing, and an entry still in the log keeps
 // its attr, which makes the next follow apply it.
 func (s *Store) finishOLHModification(ctx context.Context, idx *bucketOLHIndex, head *op.ObjectState, opTag string, skip bool, expectTag []byte) error {
-	if skip || (olhStopAfterLink != nil && olhStopAfterLink(s)) {
+	if skip || s.stopsAfterLink() {
 		return nil
 	}
 	r := olhReplay{opTag: opTag, expectTag: expectTag}
@@ -286,12 +345,16 @@ func (s *Store) updateOLH(ctx context.Context, rec *op.BucketRecord, head *op.Ob
 // last pass saw: opTag and expectTag are the writer's op tag and the write
 // tag the removals logged under it must find, both empty for a reader's
 // replay. readAll is set when the last pass read every page of the log, and
-// own when one of those pages held an entry under opTag.
+// own when one of those pages held an entry under opTag; applied once any
+// pass's head op has landed, and raced once another writer's guard has
+// refused one.
 type olhReplay struct {
 	opTag     string
 	expectTag []byte
 	readAll   bool
 	own       bool
+	applied   bool
+	raced     bool
 }
 
 // replayOLH replays head's pending log through idx, the index of head's
@@ -314,6 +377,7 @@ func (s *Store) replayOLH(ctx context.Context, idx *bucketOLHIndex, head *op.Obj
 	for {
 		pass, canceled, err := s.replayPass(ctx, idx, cur, r, &retries)
 		refused = errors.Join(refused, pass)
+		r.raced = r.raced || canceled
 		if !canceled || retries >= olhReplayRetries || ctx.Err() != nil {
 			return refused, err
 		}
@@ -367,6 +431,7 @@ func (s *Store) replayPass(ctx context.Context, idx *bucketOLHIndex, cur *op.Obj
 			return refused, errors.Is(err, radosclient.ErrCanceled), err
 		}
 		if last > 0 {
+			r.applied = true
 			cur.Attrs[meta.AttrOLHVer] = []byte(strconv.FormatUint(last, 10))
 			if err = s.rerunOLHTail(ctx, idx, cur, err, retries); err != nil && !finalRefusal(err) {
 				return refused, false, err
@@ -551,7 +616,16 @@ func (b *bucketOLHIndex) removeInstance(ctx context.Context, key meta.ObjKey, ex
 // bucket check (docs/exclusions.md, "rgw-go removes the instance a failed
 // versioned write made").
 func (s *Store) removeFailedVersion(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, cause error) {
-	if key.Instance == "" || outcomeUnknown(cause) {
+	if outcomeUnknown(cause) {
+		return
+	}
+	s.removeUnlinkedVersion(ctx, rec, key, cause)
+}
+
+// removeUnlinkedVersion is removeFailedVersion for a version no link of
+// which can land, whatever cause says.
+func (s *Store) removeUnlinkedVersion(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, cause error) {
+	if key.Instance == "" {
 		return
 	}
 	err := s.newOLHIndex(rec, key).removeInstance(ctx, key, nil)

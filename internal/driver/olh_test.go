@@ -441,17 +441,17 @@ var _ = Describe("the versioned link and unlink", func() {
 			Expect(olhVer()).To(Equal("3"))
 		})
 
-		It("carries the guard its condition returns on the head each attempt read in that attempt's init", func(ctx SpecContext) {
+		It("evaluates its condition on the version current on the head the attempt read and guards the init on that head's olh.info", func(ctx SpecContext) {
 			put(ctx, "v1")
 			var seen []string
-			cond := func(_ context.Context, h *op.ObjectState) (*driver.OLHCondGuard, error) {
-				seen = append(seen, string(h.Attrs[meta.AttrOLHVer]))
-				return &driver.OLHCondGuard{Info: h.Attrs[meta.AttrOLHInfo]}, nil
+			cond := func(_ context.Context, cur *op.ObjectState) (bool, error) {
+				seen = append(seen, cur.Key.Instance)
+				return false, nil
 			}
 			info := slices.Clone(olhHead().Xattrs[meta.AttrOLHInfo])
 			c.ResetCounters()
 			Expect(s.SetOLHForTest(ctx, rec, write(ctx, "v2"), driver.OLHLink{Cond: cond})).To(Succeed())
-			Expect(seen).To(Equal([]string{"2"}), "run once, on the head the attempt read")
+			Expect(seen).To(Equal([]string{"v1"}), "run once, on the version current on the head the attempt read")
 			init := c.WritesTo(testDataPool, "", olhHeadOID(version("")))[0]
 			Expect(init.Steps()).To(ContainElement(&radosclient.CmpXattrStep{Name: meta.AttrOLHInfo, Op: radosclient.CmpEQ, Value: info}))
 			settled(shard, "v2", "v1", "v2")
@@ -461,8 +461,8 @@ var _ = Describe("the versioned link and unlink", func() {
 			put(ctx, "v1")
 			v := write(ctx, "v2")
 			c.ResetCounters()
-			cond := func(context.Context, *op.ObjectState) (*driver.OLHCondGuard, error) {
-				return nil, op.ErrPreconditionFailed
+			cond := func(context.Context, *op.ObjectState) (bool, error) {
+				return false, op.ErrPreconditionFailed
 			}
 			err := s.SetOLHForTest(ctx, rec, v, driver.OLHLink{Cond: cond})
 			Expect(err).To(MatchError(op.ErrPreconditionFailed))
@@ -495,8 +495,14 @@ var _ = Describe("the versioned link and unlink", func() {
 			})
 
 			It("answers the refusal of the null version's removal by its expected write tag", func(ctx SpecContext) {
-				null(ctx)
-				err := s.SetOLHForTest(ctx, rec, version(""), marker([]byte("another-tag")))
+				tag := null(ctx)
+				c.AfterWrite(testDataPool, "", olhHeadOID(version("")), func() {
+					// After the marker's init, which compared the tag, the null
+					// version's head is written again.
+					c.AfterWrite(testDataPool, "", olhHeadOID(version("")), nil)
+					olhHead().Xattrs[meta.AttrIDTag] = []byte("rewritten")
+				})
+				err := s.SetOLHForTest(ctx, rec, version(""), marker(tag))
 				Expect(err).To(MatchError(driver.ErrRemovalRefused))
 				_, unfinished := driver.UnfinishedOLHTail(err)
 				Expect(unfinished).To(BeFalse(), "final")

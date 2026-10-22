@@ -7230,7 +7230,31 @@ does the following.
   the cost is one more head read, only on a read that ran a replay. A
   second read that finds the head gone, the replay having removed the
   key's last version, answers 404, and one that finds the head no longer
-  an OLH head answers the object it finds.
+  an OLH head answers the object it finds. A conditional versioned write
+  evaluates its condition the same way. Each
+  attempt follows the key's OLH head, replaying a pending modification,
+  reads the head again when the replay applied anything or another writer
+  refused a pass of it, and evaluates the condition on the version that
+  read finds current (`followOLHHead`, `internal/driver/olh_cond.go`).
+  radosgw's precondition check reads the current version through the same
+  `follow_olh`
+  ([rgw_rados.cc:3187-3197](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3187-L3197) and
+  [rgw_rados.cc:6624-6644](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6624-L6644) at v19.2.7,
+  [rgw_rados.cc:3284-3294](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3284-L3294) and
+  [rgw_rados.cc:7238-7258](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7238-L7258) at v20.2.4),
+  so it evaluates on the version current before the replay. When the
+  replay is refused, `follow_olh` turns `update_olh`'s ECANCELED into ENOENT
+  and the write evaluates on no current version
+  ([rgw_rados.cc:8989-8995](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8989-L8995) and
+  [rgw_rados.cc:3190-3191](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3190-L3191) at v19.2.7,
+  [rgw_rados.cc:9735-9741](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9735-L9741) and
+  [rgw_rados.cc:3287-3288](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3287-L3288) at v20.2.4),
+  where rgw-go reads the head again and evaluates on that read. So while
+  another writer's link stays logged and unreplayed, an If-Match on the
+  linked version's ETag answers 412 through radosgw and succeeds through
+  rgw-go, and one on the version before it the other way round. Both
+  gateways' replays write the same state. Versioned writes are not served
+  yet.
 - **A read of a versioned key named without a version id sends no
   x-amz-version-id.** radosgw's GET and HEAD answer with the id of the
   version they resolved: `Read::prepare` keeps the version it followed to
@@ -8501,15 +8525,21 @@ does the following.
   leaving the head and an instance entry that no listing shows, which
   `radosgw-admin bucket check` reports. rgw-go removes them, as its
   unversioned delete removes an object, with the head's removal guarded on
-  its write tag (`removeFailedVersion`, `internal/driver/olh.go`), when the
-  write gives up on an answer that proves no link of it landed: the class's
-  or the OSD's, the reshard guard's, the write's condition, or every one of
-  radosgw's 100 attempts lost to another writer; the awaited completion
-  before the link fails it the same way (exclusion "A versioned write
-  awaits its index completion"). A timeout, a context that ended or a
-  closed connection leaves the outcome unknown, and a version removed after
-  a link that did land would be listed with no head, so then rgw-go removes
-  nothing, as radosgw. It removes no delete marker, which has no head, and
+  its write tag (`removeFailedVersion`, `removeUnlinkedVersion`,
+  `internal/driver/olh.go`), when the write gives up on an answer that
+  proves no link of it landed: the class's or the OSD's, the reshard
+  guard's, the write's condition, or every one of radosgw's 100 attempts
+  lost to another writer; the awaited completion before the link fails it
+  the same way (exclusion "A versioned write awaits its index completion").
+  So does any failure of an attempt before its init, in its read of the OLH
+  head or in what it checks before the init, a timeout and a context that
+  ended included: every earlier attempt ended before its link or on the
+  class's refusal of it, so no link of the write is outstanding, and the
+  removal runs on past a client's context that ended. A timeout, a context
+  that ended or a closed connection at the init or after it leaves the
+  outcome unknown, and a version removed after a link that did land would
+  be listed with no head, so then rgw-go removes nothing, as radosgw. It
+  removes no delete marker, which has no head, and
   not the null version, whose head is the key's OLH head. A removal that
   fails, such as one a resharding shard still refuses past the reshard
   guard's waits, leaves the version as radosgw leaves it, logged. A failed

@@ -48,6 +48,9 @@ type Store struct {
 	w       *writer
 	mp      mpOptions
 	lc      lcIndex
+	// condSleep, when set, is how a conditional link waits out a backoff
+	// (waitOLHPending); sleepCtx when nil.
+	condSleep func(ctx context.Context, d time.Duration) error
 	// headBufs holds the *[]byte buffers prefetches read the head into.
 	headBufs sync.Pool
 	// readBufs holds the *[]byte buffers of rgw_get_obj_max_req_size that
