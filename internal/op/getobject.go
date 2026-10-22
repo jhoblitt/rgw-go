@@ -56,6 +56,13 @@ type GetObject struct {
 	Secure bool
 	// ChecksumMode is x-amz-checksum-mode, "" when absent.
 	ChecksumMode string
+	// Retarget is the website endpoint's retarget, which Init runs between
+	// its bucket load and its object read (website_get.go). It is nil for
+	// S3, and for the error document's read, which serve_errordoc makes
+	// without one
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5477-L5489 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6003-L6015 at v20.2.4).
+	Retarget *WebsiteRetarget
 	// Sink receives the status, through the handler's wrapper, and the body.
 	Sink Sink
 
@@ -128,13 +135,14 @@ func (o *GetObject) OpMask() uint32 { return OpTypeRead }
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L631-L649 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L524 and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L661-L679 at v20.2.4).
-// A missing bucket is NoSuchBucket before any object is read. The head is
-// read with the prefetch prefetch_data asks for, which Read::prepare later
-// finds in its cache.
+// A missing bucket is NoSuchBucket before any object is read. With Retarget
+// set on a website request, the website endpoint's retarget runs between the
+// two loads. The head is read with the prefetch prefetch_data asks for, which
+// Read::prepare later finds in its cache.
 func (o *GetObject) Init(ctx context.Context, r *Request) error {
 	o.Versioned = r.Object.Instance != ""
 	o.VersionID = r.Object.Instance
-	if err := loadBucket(ctx, r); err != nil {
+	if err := o.initBucket(ctx, r); err != nil {
 		return err
 	}
 	st, err := o.readHead(ctx, r.Env.Objects, r.BucketRec, r.Object)
@@ -422,7 +430,9 @@ func parseCondTime(v string) (*time.Time, error) {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7686-L7849 at v20.2.4)
 // over the head Init read. Tentacle counts the parts of any multipart object;
 // both releases count them for a part redirect, and radosgw reports the count
-// only when prepare succeeds.
+// only when prepare succeeds. Past the part redirect, where prepare hands the
+// attrs to execute, a website request's object may answer with its redirect
+// (websiteObjectRedirect).
 func (o *GetObject) prepare(ctx context.Context, r *Request, since, unmodSince *time.Time) error {
 	head := o.CondState
 	var count *int
@@ -447,7 +457,7 @@ func (o *GetObject) prepare(ctx context.Context, r *Request, since, unmodSince *
 			count = &n
 		}
 	}
-	if err := o.checkConditions(r, since, unmodSince); err != nil {
+	if err := o.websiteObjectRedirect(r, o.checkConditions(r, since, unmodSince)); err != nil {
 		return err
 	}
 	o.PartsCount = count
