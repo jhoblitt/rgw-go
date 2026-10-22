@@ -3726,7 +3726,8 @@ renders its responses and error documents as radosgw's `end_header` and
 `abort_early` do. Where the two differ, checked against the v19.2.6 and
 v20.2.4 tags, rgw-go does the following.
 
-- **Every document is XML.** radosgw's S3 handler chooses its formatter
+- **Every document is XML, and every website error page HTML.** radosgw's
+  S3 handler chooses its formatter
   per request: the `format` query parameter when it is `xml`, `json` or
   `html`, and otherwise the `Accept` header's type when it is `text/xml`,
   `application/xml`, `application/json` or `text/html`, so `format=json` or
@@ -3740,8 +3741,27 @@ v20.2.4 tags, rgw-go does the following.
   `{"Code":"InvalidRequest","Message":"","RequestId":"…","HostId":"…"}`
   or its 405 MethodNotAllowed, and `Content-Type: application/json`
   (`rgw_rest.cc:2182-2186`, `:2290-2304` and `:676-681` at v19.2.6,
-  `:2204-2208`, `:2312-2326` and `:681-686` at v20.2.4). rgw-go renders
-  every S3 document and error document as XML, those included.
+  `:2204-2208`, `:2312-2326` and `:681-686` at v20.2.4). Its website
+  endpoint chooses the same way, from HTML by default
+  ([rgw_rest_s3.cc:5290-5294](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5290-L5294),
+  [rgw_rest_s3.cc:5820-5824](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5820-L5824)), so `format=xml` or
+  `Accept: application/xml` turns its error pages into XML documents.
+  rgw-go renders every S3 document and error document as XML, those
+  included, and every error it answers a website request with once the
+  request is parsed as the HTML page radosgw's website endpoint writes by
+  default (`htmlErrorPage`, `internal/s3/html.go`), whatever `format` and
+  `Accept` say.
+- **A website error page ends at its Content-Length.** radosgw writes a
+  website request's error page through a pretty HTMLFormatter
+  ([rgw_rest.cc:1807-1808](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1807-L1808),
+  [rgw_rest.cc:1806-1807](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1806-L1807)) and sends the page's length before
+  the flush, which ends a pretty formatter's output with one more line
+  break, so a GET's page runs one LF past its Content-Length
+  (`docs/ceph-upstream-bugs.md`, "[radosgw sends a website error page one
+  byte past its
+  Content-Length](ceph-upstream-bugs.md#radosgw-sends-a-website-error-page-one-byte-past-its-content-length)").
+  rgw-go sends the page alone, the bytes its Content-Length counts
+  (`writeHTMLError`, `internal/s3/html.go`).
 - **GetBucketEncryption writes BucketKeyEnabled as true.** radosgw writes
   a bucket key that is on as `True`, which botocore, and so boto3 and the
   AWS CLI, reads as false (docs/ceph-upstream-bugs.md, "[radosgw writes
