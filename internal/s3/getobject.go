@@ -80,24 +80,44 @@ func newObjectReads(env *op.Env) *objectReads {
 // short body never passes for a whole one.
 func (g *objectReads) getObject(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o, paramErr := getObjectInput(r)
+	if err := g.runGetObject(ctx, w, r, o, deferredParams{Op: o, err: paramErr}); err != nil {
+		return getObjectFailure(w, o, err)
+	}
+	return nil
+}
+
+// runGetObject runs run, an op whose GetObject is o, for r, with o's
+// response rendered to w through getObjectSink, and returns run's error. A
+// failure after the header went out ends the connection (abortAfterStart).
+func (g *objectReads) runGetObject(ctx context.Context, w http.ResponseWriter, r *op.Request, o *op.GetObject, run op.Op) error {
 	sink := &getObjectSink{rw: w, w: sinkOf(w), r: r, o: o, attrHeaders: g.attrHeaders}
 	o.Sink = sink
-	err := op.Run(ctx, deferredParams{Op: o, err: paramErr}, r)
+	err := op.Run(ctx, run, r)
 	for _, attr := range sink.undecodable {
 		slog.WarnContext(ctx, "omitting x-amz-restore: a restore attr does not decode",
 			slog.String("bucket", r.Bucket), slog.String("key", r.Object.Name), slog.String("attr", attr))
 	}
-	switch {
-	case err == nil:
-		return nil
-	case sink.wrote:
-		slog.WarnContext(ctx, "object read failed after the response started",
-			slog.String("bucket", r.Bucket), slog.String("key", r.Object.Name), slog.Any("error", err))
-		// What was written goes out first, as radosgw's has, and the abort
-		// then ends the connection where the body stopped.
-		_ = http.NewResponseController(w).Flush() //nolint:errcheck // the connection is ended either way
-		panic(http.ErrAbortHandler)
-	case errors.Is(err, op.ErrNotModified):
+	if err != nil && sink.wrote {
+		abortAfterStart(ctx, w, r, err)
+	}
+	return err
+}
+
+// abortAfterStart ends a response whose header went out: what was written
+// goes out first, as radosgw's has, and the abort then ends the connection
+// where the body stopped.
+func abortAfterStart(ctx context.Context, w http.ResponseWriter, r *op.Request, err error) {
+	slog.WarnContext(ctx, "object read failed after the response started",
+		slog.String("bucket", r.Bucket), slog.String("key", r.Object.Name), slog.Any("error", err))
+	_ = http.NewResponseController(w).Flush() //nolint:errcheck // the connection is ended either way
+	panic(http.ErrAbortHandler)
+}
+
+// getObjectFailure answers err, a GetObject's failure before its header went
+// out, as send_response_data does: a 304 with its four headers, and a
+// compressed block's codec refusal by its errno (decodeFailure).
+func getObjectFailure(w http.ResponseWriter, o *op.GetObject, err error) error {
+	if errors.Is(err, op.ErrNotModified) {
 		setNotModifiedHeaders(w.Header(), o.State)
 		return err
 	}
