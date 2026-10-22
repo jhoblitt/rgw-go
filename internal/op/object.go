@@ -12,10 +12,20 @@ import (
 // ObjectState is what one head read tells about an object.
 type ObjectState struct {
 	Bucket *BucketRecord
+	// Key is the key whose head was read. A StatObject or PrefetchObject
+	// that followed a versioned key's OLH sets it to the key of the version
+	// it resolved, so Key.Instance is that version's id, empty for the null
+	// version.
 	Key    meta.ObjKey
 	Exists bool
-	Size   uint64
-	Mtime  time.Time
+	// DeleteMarker is set on a state that does not exist because the
+	// version it names is a delete marker: the current version of a key
+	// named without an instance, as follow_olh sets is_dm
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9760-L9764 at v20.2.4),
+	// or the version a request named.
+	DeleteMarker bool
+	Size         uint64
+	Mtime        time.Time
 	// Epoch is the version the head read returned.
 	Epoch uint64
 	Attrs map[string][]byte
@@ -168,13 +178,16 @@ type CopyParams struct {
 // ObjectStore reads and writes objects.
 type ObjectStore interface {
 	// StatObject reads the head's version, xattrs and stat in one op, without
-	// its data. A missing object returns a state with Exists false and no
+	// its data. A key named without an instance whose head is a versioned
+	// key's OLH is followed to its current version, whose head's state it
+	// returns. A missing object returns a state with Exists false and no
 	// error.
 	StatObject(ctx context.Context, rec *BucketRecord, key meta.ObjKey) (*ObjectState, error)
 	// PrefetchObject is StatObject plus the head's first rgw_max_chunk_size
 	// bytes in the same RADOS op, as RGWRados::raw_obj_stat reads them when
-	// radosgw's prefetch_data asks for a first chunk. A missing object
-	// returns a state with Exists false and no error.
+	// radosgw's prefetch_data asks for a first chunk; after a follow, the
+	// bytes of the version's head. A missing object returns a state with
+	// Exists false and no error.
 	PrefetchObject(ctx context.Context, rec *BucketRecord, key meta.ObjKey) (*ObjectState, error)
 	// ReadObject streams rng of st to sink, in order.
 	ReadObject(ctx context.Context, st *ObjectState, rng ByteRange, sink io.Writer) error

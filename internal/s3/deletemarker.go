@@ -22,12 +22,16 @@ import (
 //
 // radosgw's state is true only for an olh whose current version is a
 // delete marker (follow_olh,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9760-L9764 at v20.2.4),
-// a head rgw-go answers with 501 before any permission check. So a state r
-// already read for the key is false; otherwise, for ListParts of a missing
-// upload, whose state is the meta object's, the key is stated, and an olh
-// head, which rgw-go cannot read, sends no header (docs/exclusions.md).
-// radosgw ignores the load's other failures, keeping false.
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9760-L9764 at v20.2.4).
+// rgw-go sends false whatever the state says, a current delete marker's
+// included, whose state the object store marks DeleteMarker
+// (docs/exclusions.md, "Tentacle's x-amz-delete-marker is false, or absent,
+// on a missing object"). A state r already read for the key spares the
+// stat; otherwise, for ListParts of a missing upload, whose state is the meta
+// object's, the key is stated. A stat answering NotImplemented sends no
+// header, which neither of rgw-go's object stores answers: the driver's
+// StatObject follows an olh head to its version. radosgw ignores the load's
+// other failures, keeping false.
 func setMissingDeleteMarker(ctx context.Context, h http.Header, r *op.Request, err error) {
 	if r.Env == nil || r.Env.Zone == nil || r.Env.Zone.Release() < denc.Tentacle ||
 		r.Method != http.MethodGet && r.Method != http.MethodHead || r.Object.Name == "" || r.BucketRec == nil ||

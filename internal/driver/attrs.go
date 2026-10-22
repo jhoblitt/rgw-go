@@ -4,6 +4,7 @@ import (
 	"context"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
@@ -19,14 +20,18 @@ import (
 const restoreTemporary = 1
 
 // SetObjectAttrs is RGWRados::set_attrs
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6593-L6757 at v19.2.6,
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6779-L6943 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7393-L7593 at v20.2.4)
 // as RadosObject::set_obj_attrs calls it with FLAG_LOG_OP, which
 // modify_obj_attrs and delete_obj_attrs always pass
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L2378-L2429 at v19.2.6,
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2379-L2430 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2971-L3022 at v20.2.4).
 // st is the state the op's Init read, as radosgw's object context holds it;
-// a lost race is ErrConcurrentModification.
+// a lost race is ErrConcurrentModification. The attrs go to the head st
+// names and its index entry, a version's instance entry when st.Key names
+// one: for a key read without an instance, StatObject's state is the
+// version current on its OLH, as modify_obj_attrs writes the target its
+// get_obj_attrs followed to.
 func (s *Store) SetObjectAttrs(ctx context.Context, st *op.ObjectState, set map[string][]byte, rm []string) error {
 	rec := st.Bucket
 	key := st.Key
@@ -51,12 +56,20 @@ func (s *Store) SetObjectAttrs(ctx context.Context, st *op.ObjectState, set map[
 	if st.Key.Instance == "null" && st.Manifest == nil {
 		return op.ErrNoSuchKey
 	}
-	// rmattrs and attrs are std::maps: each name once, in byte order.
+	// rmattrs and attrs are std::maps: each name once, in byte order. The
+	// OLH attrs are left as they are on disk: radosgw writes back the ones it
+	// read, under a write tag the OLH protocol's head ops never change, which
+	// undoes a link applied since the read (docs/ceph-upstream-bugs.md,
+	// "radosgw's attr writes put a null-current OLH head's OLH attrs back,
+	// reverting a link that lands in between"; docs/exclusions.md, "An attr
+	// write leaves the OLH attrs as they are on disk").
 	for _, name := range slices.Compact(slices.Sorted(slices.Values(rm))) {
-		w.RmXattr(name)
+		if !strings.HasPrefix(name, meta.AttrOLHPrefix) {
+			w.RmXattr(name)
+		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(set)) {
-		if v := set[name]; len(v) > 0 {
+		if v := set[name]; len(v) > 0 && !strings.HasPrefix(name, meta.AttrOLHPrefix) {
 			w.SetXattr(name, v)
 		}
 	}

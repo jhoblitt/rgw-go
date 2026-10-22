@@ -255,7 +255,7 @@ func (e *Evaluator) objectFor(ctx context.Context, r *op.Request, a policy.Actio
 	if key.Name == "" {
 		return nil, nil
 	}
-	if f == formBucket && r.ObjState != nil && r.ObjState.Key == key {
+	if f == formBucket && r.ObjState != nil && loadedFor(r.ObjState, key) {
 		return r.ObjState, nil
 	}
 	if r.Env == nil || r.Env.Objects == nil {
@@ -270,4 +270,14 @@ func (e *Evaluator) objectFor(ctx context.Context, r *op.Request, a policy.Actio
 		return nil, fmt.Errorf("stat: %w", err)
 	}
 	return st, nil
+}
+
+// loadedFor reports whether st is the state of key: read for key itself, or,
+// for key named without an instance, followed through its OLH to a version,
+// whose key StatObject then carries.
+func loadedFor(st *op.ObjectState, key meta.ObjKey) bool {
+	if st.Key == key {
+		return true
+	}
+	return key.Instance == "" && st.Key.Name == key.Name && st.Key.NS == key.NS
 }

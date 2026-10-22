@@ -1547,6 +1547,21 @@ var _ = Describe("Evaluator", func() {
 				Expect(objects.StatObjectCallCount()).To(BeZero())
 			})
 
+			It("reuses the state its op loaded for the key when a follow resolved it to a version, but not another name's", func() {
+				f.setPolicy("priv", doc(stmt("Deny", `"*"`, "s3:DeleteObject", "arn:aws:s3:::priv/*",
+					`{"StringEquals": {"s3:ExistingObjectTag/protected": "true"}}`)))
+				loaded := func(key meta.ObjKey) error {
+					r := f.req(alice(), "priv", "prot")
+					r.Method = http.MethodDelete
+					r.ObjState.Key = key
+					return f.eval.VerifyBucket(f.ctx, r, policy.S3DeleteObject, acl.PermWrite)
+				}
+				Expect(loaded(meta.ObjKey{Name: "prot", Instance: "v1"})).To(MatchError(op.ErrAccessDenied))
+				Expect(objects.StatObjectCallCount()).To(BeZero(), "StatObject's state of a key named without an instance carries its current version's key")
+				Expect(loaded(meta.ObjKey{Name: "other", Instance: "v1"})).To(MatchError(op.ErrAccessDenied))
+				Expect(objects.StatObjectCallCount()).To(Equal(1), "a state of another name is not the key's")
+			})
+
 			It("adds no tags in DeleteObjects' per-key check", func() {
 				f.setPolicy("priv", doc(stmt("Deny", `"*"`, "s3:DeleteObject", "arn:aws:s3:::priv/*",
 					`{"StringEquals": {"s3:ExistingObjectTag/protected": "true"}}`)))

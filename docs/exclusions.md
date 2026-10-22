@@ -6837,13 +6837,11 @@ does the following.
   requester who may list the bucket (`rgw_op.cc:453-477` at v20.2.4), and
   to ListParts of a missing upload, whose policies are its meta object's
   while the state loaded is the key's (`:441-448`). v19.2.6 adds no such
-  header (`rgw_rest.cc:1893-1933`). In the object reads rgw-go serves it
-  sends the header where Tentacle does, always `false`: a key whose head
-  is an olh answers 501 NotImplemented
-  before any permission check, as every read of one does until versioning
-  is served, so the refusal meets such a key only in ListParts of a
-  missing upload. There rgw-go, which cannot read the olh, sends no
-  `x-amz-delete-marker`, where Tentacle sends `true` or `false`. The
+  header (`rgw_rest.cc:1893-1933`). In the object reads rgw-go serves, and
+  in ListParts of a missing upload, it sends the header where Tentacle
+  does, always `false`, also for a key whose current version is a delete
+  marker, where Tentacle sends `true`: the object store reports the marker
+  (`ObjectState.DeleteMarker`), which the S3 handler does not read. The
   object GETs rgw-go does not serve yet, GetObjectRetention,
   GetObjectLegalHold and `?layout`, answer 501 NotImplemented without
   the header for a missing object as for any other, where Tentacle
@@ -7089,6 +7087,53 @@ does the following.
   [rgw_rest.cc:843](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L843)
   at v20.2.4;
   [rgw_rest_s3.cc:551](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L551)).
+- **A read that replays a pending modification answers the version current
+  after it.** A GET, a HEAD and every other read of a versioned key named
+  without a version id follow the key's OLH. radosgw's `follow_olh` runs
+  `update_olh` while the OLH head carries a pending modification, then
+  resolves the current version from the head as it read it before that
+  replay, and `get_olh_target_state` reads that version's state
+  ([rgw_rados.cc:8984-9018](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8984-L9018),
+  [rgw_rados.cc:6238-6258](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6238-L6258);
+  [rgw_rados.cc:9730-9766](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9730-L9766),
+  [rgw_rados.cc:6852-6872](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6852-L6872)).
+  When the modification is the deletion of the current version by its
+  version id, whose writer has not run its own replay, the replay removes
+  that version's head and radosgw answers 404 NoSuchKey though the
+  previous version is current (`docs/ceph-upstream-bugs.md`, "[radosgw's
+  follow_olh answers the version that was current before the replay it
+  runs](ceph-upstream-bugs.md#radosgws-follow_olh-answers-the-version-that-was-current-before-the-replay-it-runs)").
+  rgw-go reads the OLH head again once the replay has run and resolves the
+  version from that read, running no second replay (`followHead`,
+  `internal/driver/stat.go`): it answers the version current after the
+  replay, there the previous one. The replay writes what radosgw's writes;
+  the cost is one more head read, only on a read that ran a replay. A
+  second read that finds the head gone, the replay having removed the
+  key's last version, answers 404, and one that finds the head no longer
+  an OLH head answers the object it finds.
+- **A read of a versioned key named without a version id sends no
+  x-amz-version-id.** radosgw's GET and HEAD answer with the id of the
+  version they resolved: `Read::prepare` keeps the version it followed to
+  ([rgw_rados.cc:7105](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7105),
+  [rgw_rados.cc:7767](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7767)),
+  `RadosReadOp::prepare` copies its instance to the request's object
+  ([rgw_sal_rados.cc:2864](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2864),
+  [rgw_sal_rados.cc:3699](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3699)),
+  and `RGWGetObj` takes `version_id` from that object
+  ([rgw_op.cc:2260](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2260),
+  [rgw_op.cc:2496](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2496))
+  and sends it
+  ([rgw_rest_s3.cc:469](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L469),
+  [rgw_rest_s3.cc:497](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L497)).
+  Tentacle's GetObjectAttributes does the same in
+  `RGWGetObjAttrs_ObjStore_S3::send_response`
+  ([rgw_rest_s3.cc:3999-4010](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3999-L4010)).
+  rgw-go's GET, HEAD and GetObjectAttributes send the version id the
+  request named, so a read of a versioned key named without one sends no
+  `x-amz-version-id` where radosgw sends the current version's. Neither
+  sends one when the current version is the null version, whose instance
+  is empty. Task V14a's GET and HEAD send the resolved version's id
+  (decision D4), which retires this difference.
 
 ### Object write differences
 
@@ -8072,14 +8117,14 @@ does the following.
     [ceph/ceph#72103](https://github.com/ceph/ceph/pull/72103)'s abort
     does. The parts' index entries stay, as in the PR. A record naming a
     version other than the key's own head answers 501 NotImplemented and
-    changes nothing, since rgw-go reads no version;
+    changes nothing, since the abort reads no version;
   - otherwise, when the head names an object of the upload, as a floor
     radosgw's completion leaves it, rgw-go answers 404 NoSuchUpload and
     changes nothing, where v19.2.6 and v20.2.4 queue the object's parts.
     The upload stays listed until the object is overwritten or deleted,
     which queues its tails, the parts, after which an abort succeeds;
   - a key whose head is a versioned object's olh answers 501
-    NotImplemented, as every read of one does until versioning is served.
+    NotImplemented.
 - **A copy keeps its tail references when its head write timed out.** A
   copy that shares its source's tails takes a refcount reference on each
   under its tag before it writes its head, as radosgw's `copy_obj` does.
@@ -8283,8 +8328,9 @@ does the following.
     concurrency. Outside that window rgw-go's outcome serves the key
     better, and inside it no worse than radosgw's.
 
-  Versioning is not served yet; the retry lands with the update that runs
-  the replay.
+  A read of a versioned key runs this replay, retry included, when it
+  meets a pending modification; the versioned writes, which run it too,
+  are not served yet.
 - **A replay passes over a version removal that the writer's expected write
   tag refuses.** radosgw's `apply_olh_log` removes each version its pending
   log names before its head op, and stops at a removal that fails with
@@ -8438,7 +8484,7 @@ does the following.
   [rgw_rados.cc:9650-9680](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9650-L9680));
   until then each read of the key runs a replay that finds nothing to
   apply, and the attr refuses the clear of the key's OLH, as any writer's
-  pending attr does. Versioning is not served yet.
+  pending attr does. The versioned writes are not served yet.
 - **zlib's compressor message states the window rgw-go deflates with.**
   radosgw's zlib compressor deflates with `compressor_zlib_winsize` and
   stores that value as each object's `compressor_message`
@@ -8779,6 +8825,22 @@ does the following.
   CRC](ceph-upstream-bugs.md#radosgw-stores-a-composite-crc-uploads-checksum-as-a-full-object-crc)").
   A copy that shares its source's tails keeps the record, and a multipart
   source's parts with it.
+- **An attr write leaves the OLH attrs as they are on disk.** radosgw's
+  PutObjectTagging, PutObjectAcl, PutObjectRetention and
+  PutObjectLegalHold write the object's whole attrset back through
+  `modify_obj_attrs`, following the key's OLH
+  ([rgw_sal_rados.cc:2402-2420](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2402-L2420),
+  [rgw_sal_rados.cc:2994-3012](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2994-L3012)).
+  When the current version is the null version, that attrset is the OLH
+  head's, `user.rgw.olh.ver`, `olh.info` and any pending attrs included,
+  and the write puts them back as read, guarded only by the write tag,
+  which the OLH protocol's head ops never change; a link or delete marker
+  applied between the read and the write is undone on the head
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's attr writes put a null-current OLH head's OLH attrs back, reverting a link that lands in between](ceph-upstream-bugs.md#radosgws-attr-writes-put-a-null-current-olh-heads-olh-attrs-back-reverting-a-link-that-lands-in-between)").
+  rgw-go's `SetObjectAttrs` (`internal/driver/attrs.go`) writes and
+  removes no `user.rgw.olh.` attr: they stay as the OLH protocol left them,
+  and the attrs asked for land as radosgw's do. The state written is the
+  one radosgw leaves when nothing lands in between.
 
 ### Bucket index differences
 
@@ -8879,11 +8941,14 @@ rgw-go does the following.
   [rgw_rados.cc:6520](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6520)). rgw-go
   decides on that answer where radosgw makes no such decision: whether to
   put back the list entry of a version whose removal was refused, whether a
-  named version is a delete marker, answered 405, or missing, answered 404,
-  and whether a listing's null version is a marker. A stale shard's
-  not-found would put each wrong. Each such ENOENT, that of an entry that is
-  not there included, costs a read of the bucket instance. Versioning is
-  not served yet.
+  named version without a head is a delete marker, which S3 answers 405,
+  or missing, and whether a listing's null version is a marker. A stale
+  shard's not-found would put each wrong. Each such ENOENT, that of an
+  entry that is not there included, costs a read of the bucket instance.
+  The reads of a versioned key are served and its writes are not; a named
+  delete marker and a missing version both answer 404 until Task V14a
+  sends the 405 (`docs/ceph-upstream-bugs.md`,
+  "[radosgw answers a GET or HEAD naming a delete marker's version 404 NoSuchKey](ceph-upstream-bugs.md#radosgw-answers-a-get-or-head-naming-a-delete-markers-version-404-nosuchkey)").
 
 ### Bucket listing differences
 

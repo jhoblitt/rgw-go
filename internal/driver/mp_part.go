@@ -302,7 +302,7 @@ func (s *Store) discardPart(ctx context.Context, rec *op.BucketRecord, key meta.
 // cache").
 func (s *Store) removePartHead(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, head meta.Obj, counted bool) {
 	ctx = context.WithoutCancel(ctx)
-	st, err := s.readHead(ctx, rec, head.Key, false)
+	st, err := s.readHead(ctx, rec, head.Key)
 	if err == nil && !st.Exists {
 		return
 	}

@@ -42,7 +42,7 @@ func (s *Store) DeleteObject(ctx context.Context, rec *op.BucketRecord, key meta
 	if key.Instance == "null" {
 		key.Instance = "" // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5768-L5770
 	}
-	st, err := s.readHead(ctx, rec, key, false)
+	st, err := s.readHead(ctx, rec, key)
 	if err != nil {
 		return err
 	}
