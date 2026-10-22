@@ -1296,12 +1296,13 @@ var _ = Describe("the versioned link and unlink", func() {
 	})
 
 	Describe("the unfollowed head read", func() {
-		It("reads an OLH head that StatObject refuses", func(ctx SpecContext) {
+		It("reads the OLH head itself, which StatObject follows to its version", func(ctx SpecContext) {
 			put(ctx, "v1")
-			_, err := s.StatObject(ctx, rec, meta.ObjKey{Name: "k"})
-			Expect(err).To(MatchError(op.ErrNotImplemented), "reads follow the OLH, which rgw-go does not do yet")
+			st, err := s.StatObject(ctx, rec, meta.ObjKey{Name: "k"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Key).To(Equal(version("v1")))
 			h := readHead(ctx)
-			Expect(h.Exists).To(BeTrue())
+			Expect([]any{h.Exists, h.Key}).To(Equal([]any{true, meta.ObjKey{Name: "k"}}))
 			Expect(h.Attrs).To(HaveKeyWithValue(meta.AttrOLHVer, []byte("2")))
 		})
 	})

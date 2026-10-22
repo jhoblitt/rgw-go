@@ -82,7 +82,7 @@ func NewStoreForTest(cluster radosclient.Cluster, zone ZoneForTest, cfg ReadConf
 		readCfg: readConfig{chunk: cfg.Chunk, maxReq: cfg.MaxReq, window: cfg.Window},
 		quota:   newStatsCaches(options{bucketQuotaCacheSize: 10000, bucketQuotaTTL: 600 * time.Second}, time.Now),
 	}
-	s.heads = s
+	s.heads = unfollowedHeads{s}
 	s.bgAIO = semaphore.NewWeighted(1)
 	return s
 }

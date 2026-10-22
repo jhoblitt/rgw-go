@@ -147,7 +147,7 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 		cluster: cluster, conf: conf, opts: opts, release: release, zone: zc, names: names, roots: roots, pools: pools, sysobj: sys, readCfg: readCfg,
 		mp: mp, lc: newLCIndex(), newTicker: newTimeTicker,
 	}
-	s.heads = s
+	s.heads = unfollowedHeads{s}
 	s.bgAIO = semaphore.NewWeighted(int64(opts.bucketIndexMaxAIO))
 	s.w = newWriter(ctx, s, wopts)
 	if err := s.gcInitialize(ctx); err != nil {

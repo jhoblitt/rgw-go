@@ -125,7 +125,7 @@ func (a *abortState) count(p meta.UploadPartInfo) {
 //     the meta object alone is removed, as ceph/ceph#72103's abort does
 //     (https://github.com/ceph/ceph/blob/2c1db8239cc/src/rgw/driver/rados/rgw_sal_rados.cc#L4236-L4263
 //     at its head 2c1db8239cc), and no part is listed or queued. A record
-//     naming a version other than the key's own head is 501, as rgw-go
+//     naming a version other than the key's own head is 501, as the abort
 //     reads no version;
 //   - otherwise, when the head names an object of the upload, an earlier
 //     completion left its meta object behind without a record (tracker
@@ -149,7 +149,7 @@ func (s *Store) abortRound(ctx context.Context, up *op.Upload, ref mpRef, a *abo
 	if err != nil {
 		return err
 	}
-	cur, err := s.readHead(ctx, up.Bucket, up.Key, false)
+	cur, err := s.readHead(ctx, up.Bucket, up.Key)
 	if err != nil {
 		return err
 	}
@@ -159,7 +159,7 @@ func (s *Store) abortRound(ctx context.Context, up *op.Upload, ref mpRef, a *abo
 	}
 	if tag, ok := ms.attrs[attrMPCompletionTag]; ok {
 		if inst, ok := ms.attrs[attrMPCompletionInstance]; ok && string(inst) != nullInstance {
-			return fmt.Errorf("%w: upload %s was completed into version %q of %s, which rgw-go does not read",
+			return fmt.Errorf("%w: upload %s was completed into version %q of %s, which the abort does not read",
 				op.ErrNotImplemented, up.ID, inst, up.Key.Name)
 		}
 		if cur.Exists && bytes.Equal(cur.Attrs[meta.AttrIDTag], tag) {

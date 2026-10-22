@@ -166,7 +166,7 @@ func (p *bypassPurge) stop(err error) error {
 // tag, then the head and its index entry removed; without one, nothing is
 // done here and the ordinary purge deletes the object.
 func (p *bypassPurge) object(ctx context.Context, key meta.ObjKey) error {
-	st, err := p.s.readHead(ctx, p.rec, key, false)
+	st, err := p.s.readHead(ctx, p.rec, key)
 	if err != nil {
 		return err
 	}

@@ -218,7 +218,7 @@ func (s *Store) writeMeta(ctx context.Context, hw *headWrite, x *indexOp) (headR
 			return res, err
 		}
 	}
-	st, err := s.readHead(ctx, hw.rec, hw.key, false)
+	st, err := s.readHead(ctx, hw.rec, hw.key)
 	if err != nil {
 		return headResult{}, err
 	}

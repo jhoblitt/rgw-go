@@ -13,8 +13,8 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/op"
 )
 
-// olhHeads is an object store whose StatObject refuses key k as the driver
-// refuses the olh head of a versioned object.
+// olhHeads is an object store whose StatObject refuses key k with
+// NotImplemented, which neither of rgw-go's object stores answers.
 type olhHeads struct {
 	op.ObjectStore
 	k string
@@ -65,7 +65,7 @@ var _ = Describe("x-amz-delete-marker on a missing object", func() {
 			Entry("ListParts of a missing upload, whose key does not exist", http.MethodGet, "/plain/nope?uploadId=2~nope"),
 			Entry("ListParts of a missing upload, whose key exists", http.MethodGet, "/plain/here?uploadId=2~nope"),
 		)
-		It("sends none when ListParts' key is the olh head rgw-go cannot read", func(ctx SpecContext) {
+		It("sends none when the stat of ListParts' key answers NotImplemented", func(ctx SpecContext) {
 			w.env.Objects = olhHeads{ObjectStore: w.env.Objects, k: "versioned"}
 			rec := w.send(w.alice, http.MethodGet, "/plain/versioned?uploadId=2~nope", "")
 			Expect(rec.Code).To(Equal(http.StatusNotFound), rec.Body.String())

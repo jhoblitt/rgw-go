@@ -216,7 +216,7 @@ func (s *Store) checkPartHeads(ctx context.Context, parts []meta.UploadPartInfo)
 // decode, as Tentacle's check decodes it and answers 200 either way
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7474-L7501 at v20.2.4).
 func (s *Store) checkPreviouslyCompleted(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, parts []op.CompletePart) (*op.ObjectState, bool) {
-	st, err := s.readHead(ctx, rec, key, false)
+	st, err := s.readHead(ctx, rec, key)
 	if err != nil || !st.Exists {
 		return nil, false
 	}
@@ -350,7 +350,7 @@ func (s *Store) completeLocked(ctx context.Context, up *op.Upload, ref mpRef, co
 	if herr := s.checkPartHeads(ctx, stored); herr != nil {
 		return nil, false, herr
 	}
-	cur, err := s.readHead(ctx, rec, key, false)
+	cur, err := s.readHead(ctx, rec, key)
 	if err != nil {
 		return nil, false, err
 	}
@@ -427,7 +427,7 @@ func (s *Store) replayRecorded(ctx context.Context, up *op.Upload, ref mpRef, ms
 	if inst, ok := ms.attrs[attrMPCompletionInstance]; ok && string(inst) != nullInstance {
 		return nil, false, refused
 	}
-	cur, err := s.readHead(ctx, up.Bucket, up.Key, false)
+	cur, err := s.readHead(ctx, up.Bucket, up.Key)
 	if err != nil {
 		return nil, false, err
 	}

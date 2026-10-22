@@ -303,21 +303,6 @@ var _ = Describe("StatObject and PrefetchObject", func() {
 		Expect(err).To(MatchError(op.ErrUnknown))
 	})
 
-	It("refuses an olh head with NotImplemented, logging it, after the decoding radosgw does first", func(ctx SpecContext) {
-		var logs bytes.Buffer
-		DeferCleanup(driver.CaptureLog(&logs))
-		olh := map[string][]byte{meta.AttrOLHVer: {1, 0, 0, 0, 0, 0, 0, 0}, meta.AttrPrefix + "olh.idtag": []byte("t")}
-		head(marker+"_v.bin", nil, olh)
-		_, err := s.StatObject(ctx, plain, meta.ObjKey{Name: "v.bin"})
-		Expect(err).To(MatchError(op.ErrNotImplemented))
-		Expect(logs.String()).To(ContainSubstring(`"msg":"refusing the olh head of a versioned object: versioning is not implemented","bucket":"plain","key":"v.bin"`))
-
-		olh[meta.AttrCompression] = []byte{0xff}
-		head(marker+"_v.bin", nil, olh)
-		_, err = s.StatObject(ctx, plain, meta.ObjKey{Name: "v.bin"})
-		Expect(err).To(MatchError(op.ErrUnknown), "get_obj_state_impl decodes the compression info before it checks is_olh")
-	})
-
 	It("issues one op: the version read, getxattrs, stat and, for a prefetch, one read of rgw_max_chunk_size at 0", func(ctx SpecContext) {
 		pool := &radosclientfakes.FakePool{}
 		pool.ReadStub = func(_ context.Context, _ string, rop *radosclient.ReadOp, _ radosclient.OpFlags) (uint64, error) {
