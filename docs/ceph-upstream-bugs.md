@@ -422,6 +422,11 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw answers a GET or HEAD naming a delete marker's version 404 NoSuchKey](#radosgw-answers-a-get-or-head-naming-a-delete-markers-version-404-nosuchkey) | pending | pending | ✓ |
 | [radosgw's attr writes put a null-current OLH head's OLH attrs back, reverting a link that lands in between](#radosgws-attr-writes-put-a-null-current-olh-heads-olh-attrs-back-reverting-a-link-that-lands-in-between) | pending | pending | ✓ |
 | [radosgw sends a website error page one byte past its Content-Length](#radosgw-sends-a-website-error-page-one-byte-past-its-content-length) | pending | pending | ✓ |
+| [radosgw's website error document read takes the request's Range and conditionals back](#radosgws-website-error-document-read-takes-the-requests-range-and-conditionals-back) | pending | pending | ✓ |
+| [radosgw sends a website HEAD the error document's body](#radosgw-sends-a-website-head-the-error-documents-body) | pending | pending | ✓ |
+| [radosgw writes a status its name table lacks with a null reason phrase](#radosgw-writes-a-status-its-name-table-lacks-with-a-null-reason-phrase) | pending | pending | ✓ |
+| [radosgw serves a website's custom error document for every error status, where S3 serves it for 4XX only](#radosgw-serves-a-websites-custom-error-document-for-every-error-status-where-s3-serves-it-for-4xx-only) | pending | pending | ✓ |
+| [radosgw logs a served error document as a 200 success](#radosgw-logs-a-served-error-document-as-a-200-success) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -23922,8 +23927,25 @@ Every new entry adds its row to this table, in document order.
   ([rgw_rest_s3.cc:3048-3061](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3048-L3061),
   [rgw_rest_s3.cc:3187-3200](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3187-L3200)); or a website GET or HEAD
   with `?torrent` of an object that holds the attr and torrent info, of
-  any size. A website's objects are usually public, so the request needs
-  no credentials.
+  any size; or a website GET or HEAD of a key that names no object, or of
+  one the requester may not read, on a bucket whose error document holds
+  the attr and has data. `serve_errordoc` reads the document with the
+  website GetObject, with its data whatever the request's method
+  ([rgw_rest_s3.cc:274-292](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L274-L292) and
+  [rgw_rest_s3.cc:5450-5464](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5450-L5464),
+  [rgw_rest_s3.cc:271-289](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L271-L289) and
+  [rgw_rest_s3.cc:5976-5990](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5976-L5990)), so a document with data
+  takes the data callback's path, as a GET of the object does, while an
+  empty one, whose `range_to_ofs` leaves `ofs` above `end`
+  ([rgw_sal.cc:429-449](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_sal.cc#L429-L449),
+  [rgw_sal.cc:426-446](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_sal.cc#L426-L446)), takes the path for
+  nothing to read and is answered once. The document's read sends the two
+  301s and no more: `serve_errordoc` ignores the read's `op_ret`, calls
+  `complete` and returns 0
+  ([rgw_rest_s3.cc:5528-5530](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5528-L5530),
+  [rgw_rest_s3.cc:6054-6056](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6054-L6056)), so `abort_early` writes
+  nothing more. A website's objects are usually public, so the request
+  needs no credentials.
 - **Impact:** the connection carries two complete 301 responses, each with
   `Content-Length: 0`, for one request. A client that reads one response
   per request takes the second for the answer to its next request on the
@@ -23932,10 +23954,11 @@ Every new entry adds its row to this table, in document order.
   uploader's redirect.
 - **Releases:** v19.2.7 and v20.2.4. Not checked on main.
 - **rgw-go:** not affected. It decides the redirect once the read has the
-  attrs and before anything is sent, and answers it once
-  (`GetObject.websiteObjectRedirect`, `internal/op/website_get.go`;
-  `docs/exclusions.md`, "An object's website redirect is answered once").
-  It serves no website endpoint yet.
+  attrs and before anything is sent, and answers it once, an error
+  document's too (`GetObject.websiteObjectRedirect`,
+  `internal/op/website_get.go`; `websiteGet.serveErrorDoc`,
+  `internal/s3/website_serve.go`; `docs/exclusions.md`, "An object's
+  website redirect is answered once"). It serves no website endpoint yet.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 unit B, Task BC-14, 2026-10-22, porting the website
   GetObject's redirect. Derived from the source, not reproduced.
@@ -24329,3 +24352,263 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, Task BC-15, 2026-10-22, porting the website
   endpoint's HTML error page. Derived from the source, not reproduced.
+
+## radosgw's website error document read takes the request's Range and conditionals back
+
+- **Kind:** defect, S3-correctness; found by us. Unfixed at v19.2.7 and
+  v20.2.4. Derived from the source, not reproduced.
+- **Evidence:**
+  - The website error handler serves a bucket's error document in place of
+    an error met before the GetObject executes, through `serve_errordoc`,
+    which builds a website GetObject, clears its Range and conditionals,
+    and sets the error's status as the read's own
+    ([rgw_rest_s3.cc:5460-5531](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5460-L5531),
+    [rgw_rest_s3.cc:5986-6057](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5986-L6057); the clearing at
+    [rgw_rest_s3.cc:5469-5473](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5469-L5473),
+    [rgw_rest_s3.cc:5995-5999](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5995-L5999)).
+  - The read's `execute` calls `get_params` first
+    ([rgw_op.cc:2239-2241](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2239-L2241),
+    [rgw_op.cc:2475-2477](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2475-L2477)). The website GetObject's
+    `get_params` skips the request's parameters only under its
+    `is_errordoc_request` flag
+    ([rgw_rest_s3website.h:79-99](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3website.h#L79-L99),
+    [rgw_rest_s3website.h:79-99](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3website.h#L79-L99)), which no constructor call
+    sets: `serve_errordoc` takes its op from `op_get`, and each handler's
+    `get_obj_op` builds it with the default constructor
+    ([rgw_rest_s3.cc:5587-5618](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5587-L5618),
+    [rgw_rest_s3.cc:6113-6144](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6113-L6144)).
+  - So S3's `get_params` runs: it reads `?torrent`, `partNumber` and, at
+    v20.2.4, the checksum mode
+    ([rgw_rest_s3.cc:299-330](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L299-L330),
+    [rgw_rest_s3.cc:296-333](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L296-L333)), and the base reads the
+    Range and the four conditional headers back from the request
+    (`RGWGetObj_ObjStore::get_params`,
+    [rgw_rest.cc:841-857](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L841-L857),
+    [rgw_rest.cc:841-857](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L841-L857)).
+  - Under the error's status, `send_response_data` sets no error
+    ([rgw_rest_s3.cc:402-412](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L402-L412),
+    [rgw_rest_s3.cc:405-415](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L405-L415)): a read that fails, a
+    conditional's 304 or 412, a range's 416 or a missing part's 400 among
+    them, goes to `done` and ends the header with no error body
+    ([rgw_rest_s3.cc:625-652](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L625-L652),
+    [rgw_rest_s3.cc:734-761](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L734-L761)), and a Range that holds
+    is dumped with the custom status
+    ([rgw_rest_s3.cc:414-415](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L414-L415),
+    [rgw_rest_s3.cc:417-418](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L417-L418)).
+- **Trigger:** a website GET of a key that names no object, on a bucket with
+  an error document, carrying a Range, an If-Match or If-Unmodified-Since
+  the document fails, an If-None-Match or If-Modified-Since it meets, or a
+  `partNumber`. A browser revalidating a cached page sends
+  If-Modified-Since or If-None-Match.
+- **Impact:** the reader gets the error's status with part of the
+  document, or with no body at all, in place of the document
+  `serve_errordoc` sets out to send; a revalidated error page comes back
+  empty.
+- **Releases:** v19.2.7 and v20.2.4. Not checked on main.
+- **rgw-go:** differs: it reads the document whole and unconditionally
+  (`websiteGet.serveErrorDoc`, `internal/s3/website_serve.go`;
+  `docs/exclusions.md`, "A website error document is read whole and
+  unconditionally").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 unit B, Task BC-15, 2026-10-22, porting
+  `serve_errordoc`. Derived from the source, not reproduced.
+
+## radosgw sends a website HEAD the error document's body
+
+- **Kind:** defect, possibly security-relevant: `serve_errordoc` reads the
+  error document with `op_get()`, so with its data whatever the request's
+  method, and `dump_body` writes the data with no method check, so a HEAD's
+  response carries a body. The blast radius: a response whose bytes run
+  past its end, bytes the error document's writer chose, which puts a
+  kept-alive connection's responses out of step with its requests
+  (CWE-444), on an unauthenticated request; found by us. One more input
+  to the sink "[radosgw answers a
+  website GET of an object with a redirect location
+  twice](#radosgw-answers-a-website-get-of-an-object-with-a-redirect-location-twice)"
+  and "[radosgw sends a public access block after GetPublicAccessBlock's
+  error document, past its
+  Content-Length](#radosgw-sends-a-public-access-block-after-getpublicaccessblocks-error-document-past-its-content-length)"
+  name: a response that writes more than its framing announces. Unfixed
+  at v19.2.7 and v20.2.4. Derived from the source, not reproduced.
+- **Evidence:**
+  - A website HEAD's op is the website GetObject without its data
+    (`op_head`,
+    [rgw_rest_s3.cc:5455-5458](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5455-L5458),
+    [rgw_rest_s3.cc:5981-5984](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5981-L5984)). A key that names no
+    object, or one the requester may not read, is refused in
+    `read_permissions`, and `abort_early` hands the refusal to the website
+    error handler, which serves the bucket's error document
+    ([rgw_rest_s3.cc:5571-5579](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5571-L5579),
+    [rgw_rest_s3.cc:6097-6105](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6097-L6105)).
+  - `serve_errordoc` takes its op from `op_get` whatever the request's
+    method
+    ([rgw_rest_s3.cc:5464](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5464),
+    [rgw_rest_s3.cc:5990](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5990)), so the read has its data
+    (`get_obj_op(true)`,
+    [rgw_rest_s3.cc:5450-5453](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5450-L5453),
+    [rgw_rest_s3.cc:5976-5979](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5976-L5979)). Its `execute` reads the
+    document and `send_response_data` sends the Content-Length of the
+    document and then its bytes
+    ([rgw_op.cc:2436-2457](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2436-L2457),
+    [rgw_op.cc:2668-2689](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2668-L2689); the length at
+    [rgw_rest_s3.cc:467](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L467),
+    [rgw_rest_s3.cc:495](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L495), the bytes at
+    [rgw_rest_s3.cc:659-664](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L659-L664),
+    [rgw_rest_s3.cc:768-773](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L768-L773)).
+  - `dump_body` checks no method
+    ([rgw_rest.cc:786-805](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L786-L805),
+    [rgw_rest.cc:786-805](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L786-L805)), where the formatter's flush skips
+    a HEAD
+    ([rgw_rest.cc:303-314](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L303-L314),
+    [rgw_rest.cc:303-314](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L303-L314)), and no layer below drops the
+    bytes, as the sibling entries' evidence shows for theirs.
+  - radosgw's own convention is to send a HEAD no body:
+    `rgw_flush_formatter_and_reset` and `rgw_flush_formatter` guard their
+    `dump_body` with `s->op != OP_HEAD`
+    ([rgw_rest.cc:309](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L309) and
+    [rgw_rest.cc:321](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L321),
+    [rgw_rest.cc:309](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L309) and
+    [rgw_rest.cc:321](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L321)), and the S3 HEAD's own GetObject has no data
+    to send; `serve_errordoc`'s path takes neither guard.
+- **Trigger:** a website HEAD of a key that names no object, or of a
+  private object, on a bucket with an error document. A website's objects
+  are usually public, so the request needs no credentials; the bytes are
+  the error document's, which whoever may write that object chooses, and
+  can be a whole HTTP response.
+- **Impact:** a response to HEAD has no body (RFC 9112 section 6.3), so a
+  client takes the document's bytes for the start of the next response on
+  the connection. A reverse proxy that pools its connections to radosgw
+  would hand them to another client's next request as that request's
+  response, one the document's writer chose.
+- **Releases:** v19.2.7 and v20.2.4. Not checked on main.
+- **rgw-go:** differs: a HEAD gets the document's headers alone
+  (`websiteGet.serveErrorDoc`, `internal/s3/website_serve.go`;
+  `docs/exclusions.md`, "A website HEAD's error document has no body").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 unit B, Task BC-15, 2026-10-22, porting
+  `serve_errordoc`. Derived from the source, not reproduced.
+
+## radosgw writes a status its name table lacks with a null reason phrase
+
+- **Kind:** defect, robustness: undefined behaviour in the status line;
+  found by us. Unfixed at v19.2.7 and v20.2.4. Derived from the source,
+  not reproduced.
+- **Evidence:**
+  - `dump_errno` hands `send_status` the status and
+    `http_status_names[status]`
+    ([rgw_rest.cc:337-345](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L337-L345),
+    [rgw_rest.cc:337-345](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L337-L345)), a `std::map` filled from
+    `http_codes`
+    ([rgw_rest.cc:44-88](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L44-L88) and
+    [rgw_rest.cc:211-213](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L211-L213),
+    [rgw_rest.cc:44-88](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L44-L88) and
+    [rgw_rest.cc:211-213](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L211-L213)), whose `operator[]` gives a null
+    pointer for a status the table lacks.
+  - `ClientIO::send_status` formats it with `%s`
+    ([rgw_asio_client.cc:109-118](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L109-L118),
+    [rgw_asio_client.cc:109-118](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_client.cc#L109-L118)); a null `%s` argument is
+    undefined, which glibc writes as `(null)`.
+  - Three paths reach it. The website error handler matches an error its
+    S3 table has no row for at -1 and has `serve_errordoc` send the error
+    document under that status
+    ([rgw_rest_s3.cc:5536-5542](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5536-L5542) and
+    [rgw_rest_s3.cc:5491-5493](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5491-L5493),
+    [rgw_rest_s3.cc:6062-6068](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6062-L6068) and
+    [rgw_rest_s3.cc:6017-6019](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6017-L6019);
+    [rgw_rest_s3.cc:402-404](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L402-L404),
+    [rgw_rest_s3.cc:405-407](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L405-L407)), so the line is
+    `HTTP/1.1 -1 (null)`. A website redirect answers the code its rule
+    stores, which the admin API's metadata JSON can make any `uint16`
+    (`RGWRedirectInfo::decode_json`,
+    [rgw_website.cc:142-148](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L142-L148),
+    [rgw_website.cc:142-148](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L142-L148)). And the 423 of ERR_LOCKED,
+    which the S3 table has
+    ([rgw_common.cc:130](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L130),
+    [rgw_common.cc:131](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L131)) and `http_codes` has not, answers the
+    admin API's metadata log lock held elsewhere
+    ([rgw_rest_log.cc:283-284](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rest_log.cc#L283-L284),
+    [rgw_rest_log.cc:284-285](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_log.cc#L284-L285)).
+- **Trigger:** a website request refused, once its bucket has loaded and
+  before its GetObject executes, with an errno radosgw's S3 table has no
+  row for, on a bucket with an error document: such as the `-EIO` of an
+  object whose ACL does not decode (`decode_policy`,
+  [rgw_op.cc:227-238](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L227-L238),
+  [rgw_op.cc:270-281](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L270-L281)), which `read_permissions` returns; a
+  website redirect whose stored code `http_codes` lacks; a metadata log
+  lock request on a shard another holds.
+- **Impact:** the status line's reason phrase is `(null)` under glibc,
+  and the behaviour is undefined elsewhere; `-1` is no status a client
+  parses.
+- **Releases:** v19.2.7 and v20.2.4. Not checked on main.
+- **rgw-go:** differs: net/http writes its own reason phrase, a website
+  error document is served for a 4XX error only, so never under -1, and a
+  redirect code below 200 or above 999 is answered 301
+  (`internal/s3/website_serve.go`; `docs/exclusions.md`, "A website error
+  document is served for a 4XX error only" and "A website redirect's code
+  below 200 or above 999 is answered 301").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 unit B, Task BC-15, 2026-10-22, porting the website
+  error handler's status. Derived from the source, not reproduced.
+
+## radosgw serves a website's custom error document for every error status, where S3 serves it for 4XX only
+
+- **Kind:** defect, S3-correctness; found by us. Unfixed at v19.2.7 and
+  v20.2.4. Derived from the source, not reproduced.
+- **Evidence:**
+  - The website error handler serves the bucket's error document for any
+    error that reaches it with the bucket loaded, whatever its status, and
+    for one with no row in the S3 error table, matched at -1
+    (`error_handler`,
+    [rgw_rest_s3.cc:5571-5579](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5571-L5579),
+    [rgw_rest_s3.cc:6097-6105](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6097-L6105); the status at
+    [rgw_rest_s3.cc:5536-5542](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5536-L5542),
+    [rgw_rest_s3.cc:6062-6068](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6062-L6068)).
+  - Amazon S3 serves it for 4XX only: "Amazon S3 returns your custom error
+    document for only the HTTP 4XX class of error codes"
+    (https://docs.aws.amazon.com/AmazonS3/latest/userguide/CustomErrorDocSupport.html,
+    fetched 2026-10-22 by the task review).
+- **Trigger:** a website request refused with a 5xx, or with an errno the
+  table has no row for, once its bucket has loaded, on a bucket with an
+  error document: an object whose ACL does not decode, or whose head read
+  fails with `-EIO`, or a request the rate limiter refuses before execute
+  (503 SlowDown).
+- **Impact:** a site's custom page, written for a missing page, goes out
+  for a server failure under its 5xx status, or under -1.
+- **Releases:** v19.2.7 and v20.2.4. Not checked on main.
+- **rgw-go:** differs: it serves the error document for 400-499 only
+  (`websiteGet.errorHandler`, `internal/s3/website_serve.go`;
+  `docs/exclusions.md`, "A website error document is served for a 4XX
+  error only").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 unit B, Task BC-15's review, 2026-10-22, against
+  Amazon S3's custom error document page. Derived from the source, not
+  reproduced.
+
+## radosgw logs a served error document as a 200 success
+
+- **Kind:** defect, cosmetic: usage accounting; found by us. Unfixed at
+  v19.2.7 and v20.2.4. Derived from the source, not reproduced.
+- **Evidence:**
+  - The error document's read sends the error's status as a custom status
+    after it clears the request's error, `set_req_state_err(s, 0)`
+    ([rgw_rest_s3.cc:402-404](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L402-L404),
+    [rgw_rest_s3.cc:405-407](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L405-L407)), which leaves `http_ret` at 200.
+  - `log_usage` takes the request for a success when `!is_err()`, and
+    keeps the bucket's name, which it replaces with `-` only for an error
+    404
+    ([rgw_log.cc:222-236](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_log.cc#L222-L236),
+    [rgw_log.cc:222-236](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_log.cc#L222-L236)); the ops log records an
+    `http_status` of 200 the same way.
+- **Trigger:** a website request answered with the bucket's error
+  document.
+- **Impact:** the usage log counts each error page served as a successful
+  op under the bucket, and the ops log records it as a 200, though the
+  client got a 404 or 403.
+- **Releases:** v19.2.7 and v20.2.4. Not checked on main.
+- **rgw-go:** differs: it logs the status it sent (`op.LogUsage`,
+  `internal/op/usagelog.go`; `docs/exclusions.md`, "A website error
+  document's request is logged under the error's status").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 unit B, Task BC-15's review, 2026-10-22, reading
+  `send_response_data`'s custom status. Derived from the source, not
+  reproduced.
