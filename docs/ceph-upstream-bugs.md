@@ -19897,7 +19897,8 @@ Every new entry adds its row to this table, in document order.
   stores a Date that is no calendar date, and drops an
   ExpiredObjectDeleteMarker of `1`;
   and GetBucketLifecycleConfiguration sends each back as it was written.
-  Unreproduced: derived from the source.
+  Reproduced on running v19.2.7 and v20.2.4 radosgw for the cases
+  its last Evidence bullet names.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
   `rgw_xml.h` and `rgw_lc_s3.cc` are identical at the two tags.
   - Days, Date and NewerNoncurrentVersions, a transition's days and date,
@@ -19984,6 +19985,13 @@ Every new entry adds its row to this table, in document order.
     An xs:boolean `1`, ` true ` with its white space, `True` and `yes`
     set no action, so `LCRule::valid` refuses the rule as InvalidArgument
     when it has no other action and it is stored without one otherwise.
+  - Reproduced on v19.2.7 and v20.2.4, 2026-10-21, by the lifecycle tests
+    of [jhoblitt/ceph#17](https://github.com/jhoblitt/ceph/pull/17):
+    radosgw stored, with 200, a negative ObjectSizeGreaterThan and a
+    negative ObjectSizeLessThan, and a NewerNoncurrentVersions of 0 and of
+    101; it took an Expiration Date of `2026-04-31T00:00:00Z` and one of
+    `2026-01-01`; and it refused with 400 InvalidArgument a rule whose only
+    action is an ExpiredObjectDeleteMarker of `1` or of `yes`.
 - **Impact:** an object-size range whose bounds differ in digit count is
   refused, or stored so that it matches nothing. A negative size is taken
   and read against its sender's meaning: `ObjectSizeLessThan -1`, which
@@ -20039,7 +20047,8 @@ Every new entry adds its row to this table, in document order.
   sign, where radosgw's stoull reads -n as 2^64 - n" pin it.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task C1, 2026-10-20, transcribing LCFilter_S3's
-  decode. Derived from the source, not reproduced.
+  decode. Derived from the source; reproduced on running clusters by
+  phase 2's s3-tests stage 1, 2026-10-21.
 
 ## radosgw's lifecycle Date wraps past 2554 and expires at once
 
@@ -23242,8 +23251,9 @@ Every new entry adds its row to this table, in document order.
   value however long it is, so radosgw takes some values that are not the
   body's MD5; any other value that is not the body's is 400 BadDigest. Not
   security-relevant: the over-read in the same block's log line is its own
-  entry, "[radosgw's PutBucketLifecycle logs the body's MD5 as a C string, reading past its stack array](#radosgws-putbucketlifecycle-logs-the-bodys-md5-as-a-c-string-reading-past-its-stack-array)". Unreproduced: derived from the source,
-  with task C6's review's compiled check of the string's layout.
+  entry, "[radosgw's PutBucketLifecycle logs the body's MD5 as a C string, reading past its stack array](#radosgws-putbucketlifecycle-logs-the-bodys-md5-as-a-c-string-reading-past-its-stack-array)". Its longer-value case is reproduced on running v19.2.7 and v20.2.4
+  radosgw; the shorter-value cases are derived from the source, with task
+  C6's review's compiled check of the string's layout.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
   - `RGWPutLC::execute` decodes the header with `rgw::from_base64` into a
     `std::optional<std::string>`
@@ -23276,6 +23286,11 @@ Every new entry adds its row to this table, in document order.
     before it ("[radosgw's from_base64 reads before an all-'='
     input](#radosgws-from_base64-reads-before-an-all--input)"), which ends
     a build with `-D_GLIBCXX_ASSERTIONS`.
+  - Reproduced on v19.2.7 and v20.2.4, 2026-10-21, by
+    `test_lifecycle_content_md5_not_a_digest` of
+    [jhoblitt/ceph#17](https://github.com/jhoblitt/ceph/pull/17): radosgw
+    took, with 200, a configuration whose Content-MD5 was the body's MD5
+    and one byte more. The run did not reach the shorter value.
 - **Impact:** none on a correct client. radosgw takes a value of more than
   16 bytes with the MD5 as its prefix, and for one body in 256 a 15-byte
   prefix; any other wrong value is BadDigest, though only after the body is
@@ -23289,7 +23304,8 @@ Every new entry adds its row to this table, in document order.
   16-byte digest with InvalidDigest, before reading the body").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 planning (defect LL-10), recorded by task C6,
-  2026-10-21. Derived from the source, not reproduced.
+  2026-10-21. Derived from the source; the longer-value case reproduced
+  on running clusters by phase 2's s3-tests stage 1, 2026-10-21.
 
 ## radosgw's PutBucketLifecycle logs the body's MD5 as a C string, reading past its stack array
 
@@ -23389,7 +23405,7 @@ Every new entry adds its row to this table, in document order.
   the upload is stored short, stored with other bytes than its file, or
   refused, with a success answer when it is stored. Not security-relevant:
   every byte stored is the uploader's own, and the policy still judges the
-  fields radosgw reads. Unreproduced: derived from the source.
+  fields radosgw reads. Reproduced on running v19.2.7 and v20.2.4 radosgw.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's; the reader
   in `rgw_rest.cc` is identical at the two tags.
   - `index_of` compares the boundary, `--` and the Content-Type's boundary
@@ -23441,6 +23457,11 @@ Every new entry adds its row to this table, in document order.
     ([rgw_rest.cc:1359-1361](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1359-L1361),
     [rgw_rest.cc:1359-1361](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1359-L1361)), so the
     rest of the line and the headers after it are read as the part's data.
+  - Reproduced on v19.2.7 and v20.2.4, 2026-10-21, by the s3-tests test
+    `test_post_object_boundary_inside_file_data` (commit ea7dea4dba8, not
+    yet merged: it waits for rgw-go to serve POST object): radosgw answered
+    204 to a form whose file holds `abc`, then `--` and the form's boundary
+    with more data on the same line, and the object read back as `abc`.
 - **Trigger:** a file holding `--` and its form's boundary inside a line:
   with the boundary `B`, `abc--B--def` is stored as `abc`, and `abc--B xyz`
   is refused. A field before the file holding `abc--B--def` stores `def`
@@ -23467,7 +23488,8 @@ Every new entry adds its row to this table, in document order.
   ea7dea4dba8, pending its merge into `rgw-go-s3tests`.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 planning, the B unit's defect 18, from the source;
-  recorded by task BC-29, 2026-10-21. Not reproduced on a running system.
+  recorded by task BC-29, 2026-10-21. Reproduced on running clusters by
+  phase 2's s3-tests stage 1, 2026-10-21.
 
 ## radosgw holds every POST form field in memory before it authenticates the form
 
