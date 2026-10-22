@@ -6808,7 +6808,13 @@ does the following.
   stores such values from its `x-amz-meta-*` fields
   (`docs/ceph-upstream-bugs.md`, "[radosgw stores a POST upload's
   x-amz-meta fields with their CR and LF and sends them raw on
-  GET](ceph-upstream-bugs.md#radosgw-stores-a-post-uploads-x-amz-meta-fields-with-their-cr-and-lf-and-sends-them-raw-on-get)").
+  GET](ceph-upstream-bugs.md#radosgw-stores-a-post-uploads-x-amz-meta-fields-with-their-cr-and-lf-and-sends-them-raw-on-get)")
+  and its `x-amz-website-redirect-location` field, which the website
+  endpoint sends as its Location ("[radosgw stores a POST upload's
+  x-amz-website-redirect-location with its CR and LF and sends it
+  raw](ceph-upstream-bugs.md#radosgw-stores-a-post-uploads-x-amz-website-redirect-location-with-its-cr-and-lf-and-sends-it-raw)");
+  rgw-go's website endpoint, once served, sends that Location through
+  net/http the same way.
 - **A user metadata name that is not a valid field name is not sent.**
   A PUT takes `x-amz-meta-*` names from the query string as well as the
   headers, and radosgw url-decodes a query name before it reads it
@@ -6889,6 +6895,91 @@ does the following.
   sends the redirect. That covers a configuration radosgw stored, which
   rgw-go reads as it is. A host of other bytes, non-ASCII ones included,
   is written as it is, as radosgw writes it.
+- **A website redirect to the request's host is refused for a request with
+  no Host.** radosgw builds a routing rule's Location with the request's
+  `HTTP_HOST` when the rule names no host, an empty one when the request
+  sent none or sent it empty
+  ([rgw_rest_s3.cc:5424](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5424) and
+  [rgw_rest_s3.cc:5555](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5555),
+  [rgw_rest_s3.cc:5950](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5950) and
+  [rgw_rest_s3.cc:6081](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6081)), so the Location starts
+  `http:///` or `https:///` and goes on with the key. RFC 9110 section
+  4.2.1 forbids a sender to generate an `http` URI with an empty host, and
+  a URL parser that follows the WHATWG standard takes the key's first
+  segment for the host (`docs/ceph-upstream-bugs.md`, "[radosgw writes a
+  website redirect's key, host and protocol raw into its
+  Location](ceph-upstream-bugs.md#radosgw-writes-a-website-redirects-key-host-and-protocol-raw-into-its-location)").
+  rgw-go refuses such a redirect (`op.WebsiteRedirect`,
+  `internal/op/website_get.go`) with 400 InvalidRequest, since the omission
+  is the client's: the row radosgw's error table gives `ERR_INVALID_REQUEST`
+  and `ERR_ZERO_IN_URL`
+  ([rgw_common.cc:62](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L62) and
+  [rgw_common.cc:136](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L136),
+  [rgw_common.cc:63](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L63) and
+  [rgw_common.cc:137](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L137)), the `ERR_ZERO_IN_URL` that
+  `RGWREST::preprocess` answers a request path holding a NUL with
+  ([rgw_rest.cc:2189-2190](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2189-L2190),
+  [rgw_rest.cc:2206-2207](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2206-L2207)). The refusal matches
+  `website.ErrUnsafeRedirect` but keeps its 400, where the stored host and
+  protocol refusals above are 500. A rule that names its host redirects
+  whatever Host the request sent. net/http refuses an HTTP/1.1 request without a Host header
+  ("Host header refusals", above), so the case is an HTTP/1.0 request
+  without one, or a request whose Host header is empty.
+- **A website request's file test reads its key decoded once.** Whether a
+  website request's key names an object decides between reading the key
+  and reading the key, `/` and the index suffix (`get_effective_key`,
+  [rgw_website.cc:116-133](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L116-L133),
+  [rgw_website.cc:116-133](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L116-L133)). radosgw stats the key after
+  `url_decode` has decoded it a second time (`web_dir`,
+  [rgw_rest_s3.cc:5346-5370](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5346-L5370),
+  [rgw_rest_s3.cc:5876-5896](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5876-L5896)), so a key holding `%` is
+  stat'ed under another name: `100%` as `100`, and a key with a `%` before
+  a byte that is no hex digit as the empty key, which names no object
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's website file test decodes the
+  key a second
+  time](ceph-upstream-bugs.md#radosgws-website-file-test-decodes-the-key-a-second-time)").
+  rgw-go stats the key the request names (`GetObject.isFile`,
+  `internal/op/website_get.go`), so a website GET of an object `100%`
+  serves it where radosgw reads `100%/index.html`. A key holding no `%`,
+  and no `+` after a `?`, is stat'ed alike.
+- **An object's website redirect is answered once.** radosgw answers a
+  website GET or HEAD of an object holding
+  `x-amz-website-redirect-location` with 301, that Location and no body,
+  from the op's own response
+  (`RGWGetObj_ObjStore_S3Website::send_response_data`,
+  [rgw_rest_s3.cc:274-292](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L274-L292),
+  [rgw_rest_s3.cc:271-289](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L271-L289)), and on a GET with data to
+  read it sends that response twice (`docs/ceph-upstream-bugs.md`,
+  "[radosgw answers a website GET of an object with a redirect location
+  twice](ceph-upstream-bugs.md#radosgw-answers-a-website-get-of-an-object-with-a-redirect-location-twice)").
+  rgw-go answers it once, decided once the read has the attrs and before
+  anything is sent (`GetObject.websiteObjectRedirect`,
+  `internal/op/website_get.go`), where radosgw answers it: on success, and
+  in place of each refusal the read makes once it has the attrs, which is
+  past the part redirect, the conditionals among them; a part refusal
+  stands ("A website GET of a part the object has not is InvalidPart under
+  any policy", below). The Location is the attr up to its first NUL,
+  as radosgw reads it. An empty attr, which radosgw's POST upload never
+  writes and which radosgw copies from a null pointer
+  ("[radosgw copies an empty x-amz-website-redirect-location attr from a
+  null
+  pointer](ceph-upstream-bugs.md#radosgw-copies-an-empty-x-amz-website-redirect-location-attr-from-a-null-pointer)"),
+  is an empty Location, as an attr of a NUL alone is on radosgw.
+- **A website GET of a part the object has not is InvalidPart under any
+  policy.** radosgw's website GetObject reads the redirect attr from the
+  attrs `Read::prepare` copies past its part redirect, whose refusals come
+  before
+  ([rgw_rados.cc:7066-7125](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7066-L7125),
+  [rgw_rados.cc:7728-7787](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7728-L7787)), so a GET or HEAD with a
+  `partNumber` an object holding `x-amz-website-redirect-location` has not
+  is 400 InvalidPart. When a bucket, identity or session policy names an
+  object tag or resource tag condition, its permission check loads the
+  object's attrs first, and the same request is the object's 301
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's website GetObject redirects a
+  missing part only under a tag-conditioned
+  policy](ceph-upstream-bugs.md#radosgws-website-getobject-redirects-a-missing-part-only-under-a-tag-conditioned-policy)").
+  rgw-go answers InvalidPart whatever the policies name
+  (`GetObject.websiteObjectRedirect`, `internal/op/website_get.go`).
 - **A partNumber read shows its part's checksum bare.** In the op layer,
   which the S3 handler does not render yet ("Stored checksums are not
   shown"), a checksum-mode GET or HEAD with `partNumber` reports the part
