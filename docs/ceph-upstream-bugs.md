@@ -419,6 +419,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw stores a POST upload's x-amz-website-redirect-location with its CR and LF and sends it raw](#radosgw-stores-a-post-uploads-x-amz-website-redirect-location-with-its-cr-and-lf-and-sends-it-raw) | pending | pending | ✓ |
 | [radosgw copies an empty x-amz-website-redirect-location attr from a null pointer](#radosgw-copies-an-empty-x-amz-website-redirect-location-attr-from-a-null-pointer) | pending | pending | ✓ |
 | [radosgw's website GetObject redirects a missing part only under a tag-conditioned policy](#radosgws-website-getobject-redirects-a-missing-part-only-under-a-tag-conditioned-policy) | pending | pending | ✓ |
+| [radosgw answers a GET or HEAD naming a delete marker's version 404 NoSuchKey](#radosgw-answers-a-get-or-head-naming-a-delete-markers-version-404-nosuchkey) | pending | pending | ✓ |
+| [radosgw's attr writes put a null-current OLH head's OLH attrs back, reverting a link that lands in between](#radosgws-attr-writes-put-a-null-current-olh-heads-olh-attrs-back-reverting-a-link-that-lands-in-between) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -15491,8 +15493,13 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** reproduces it in fakerados, whose `RGWClass` emulates the class
   (`rgwBucketUnlinkInstance`, `internal/testutil/fakerados/cls_rgw_olh.go`;
   pinned in `internal/testutil/fakerados/cls_rgw_olh_test.go`). The gateway
-  unlinks no versions yet; a reader that takes a delete marker's instance
-  entry from `bi_get` as proof the marker exists would take this one too.
+  unlinks no versions yet. A reader that takes a delete marker's instance
+  entry from `bi_get` as proof the marker exists would take this one too;
+  `StatObject`'s lookup of a named version that has no head decides a
+  delete marker from its list entry instead, so it takes this one for a
+  missing version (`namedVersion`, `internal/driver/stat.go`, pinned by the
+  spec "takes a delete marker whose list entry is gone for a missing
+  version" in `internal/driver/stat_olh_test.go`).
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 Task V3b, 2026-10-15, emulating the class in fakerados;
   derived from the source, not reproduced.
@@ -16381,11 +16388,17 @@ Every new entry adds its row to this table, in document order.
   it serve the next version. A read that meets another writer's new link
   instead serves the version current before it, which still exists.
 - **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
-- **rgw-go:** reproduces it: `followOLH` (`internal/driver/olh_head.go`)
-  resolves the target from the head as it was read, pinned by the spec
-  "runs the update for a pending attr left, then answers from the head as
-  it was read" in `internal/driver/olh_head_test.go`. The gateway serves no
-  versioned read yet.
+- **rgw-go:** `followOLH` (`internal/driver/olh_head.go`) resolves the
+  target from the head as it was read, as radosgw's does, pinned by the
+  spec "runs the update for a pending attr left, then answers from the
+  head as it was read" in `internal/driver/olh_head_test.go`. Its reads,
+  `StatObject` and `PrefetchObject`, read the head again once the update
+  has run and resolve the version from that read (`followHead`,
+  `internal/driver/stat.go`; `docs/exclusions.md`, "A read that replays a
+  pending modification answers the version current after it"), so they do
+  not reproduce it: pinned by the spec "answers the next version when the
+  replay it runs removes the current one" in
+  `internal/driver/stat_olh_test.go`.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task V4's review, 2026-10-15, tracing the stale answer
   V4 reproduces; derived from the source, not reproduced.
@@ -24130,3 +24143,131 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 unit B, Task BC-14's review, 2026-10-22, tracing where
   the website GetObject's attrs come from. Derived from the source, not
   reproduced.
+
+## radosgw answers a GET or HEAD naming a delete marker's version 404 NoSuchKey
+
+- **Kind:** defect, S3-correctness: a GET or HEAD whose `versionId` names a
+  delete marker answers 404 NoSuchKey, the answer for a version that does
+  not exist, where S3 answers 405 MethodNotAllowed with
+  `x-amz-delete-marker: true`. Not security-relevant: either answer is a
+  refusal, and the 404 goes only to an admin or a requester who may list
+  the bucket. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - A delete marker has no head object: the versioned delete links it under
+    the key's OLH through `set_olh` with the delete-marker flag and writes
+    no head
+    ([rgw_rados.cc:5853-5904](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5853-L5904),
+    [rgw_rados.cc:6465-6516](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6465-L6516)).
+  - A read naming an instance does not follow the OLH
+    ([rgw_rados.cc:6269](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6269), [rgw_rados.cc:6883](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6883)), and the stat of the
+    marker's head finds no object, so its state does not exist
+    ([rgw_rados.cc:6287-6306](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6287-L6306), [rgw_rados.cc:6901-6920](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6901-L6920)).
+    `Read::prepare` answers `-ENOENT` for it
+    ([rgw_rados.cc:7056-7058](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7056-L7058), [rgw_rados.cc:7718-7720](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7718-L7720)), the 404
+    NoSuchKey row of radosgw's S3 error table
+    ([rgw_common.cc:97](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L97), [rgw_common.cc:98](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L98)).
+  - Tentacle's `read_permissions` adds `x-amz-delete-marker` to that 404,
+    `false`, since the named instance is not followed and the state is no
+    delete marker
+    ([rgw_rest.cc:1936-1944](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1936-L1944)); Squid's adds no header
+    ([rgw_rest.cc:1898-1938](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1898-L1938)).
+  - S3 answers a GET or HEAD naming a delete marker's version with 405
+    MethodNotAllowed and `x-amz-delete-marker: true` (GetObject,
+    https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html, as
+    the phase 2 versioning research records it,
+    `docs/superpowers/plans/2026-10-13-phase-2/research/research-versioning.md`
+    §2.5 and §6; the page was not fetched for this entry).
+- **Impact:** a client cannot tell a delete marker's version id from one
+  that never existed: a version id taken from ListObjectVersions answers
+  404 for a marker, and the `x-amz-delete-marker` that would say so is
+  absent on Squid and `false` on Tentacle.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
+- **rgw-go:** the object store tells the two apart: `StatObject`'s lookup
+  of a named version that has no head sets `ObjectState.DeleteMarker` for a
+  delete marker that is listed (`namedVersion`, `internal/driver/stat.go`).
+  The S3 layer does not read it and answers 404 NoSuchKey, as radosgw does,
+  with Tentacle's `false`; Task V14a answers the 405 (decision D2).
+- **Upstream:** pending; prior art not searched.
+- **Found:** the phase 2 versioning research, 2026-10-13, as its defect 6;
+  registered by phase 2 Task V6's fix round, 2026-10-22, whose
+  `namedVersion` meets it. Derived from the source, not reproduced.
+
+## radosgw's attr writes put a null-current OLH head's OLH attrs back, reverting a link that lands in between
+
+- **Kind:** defect, security (possible): integrity of which version a
+  versioned key serves. An attr write on a key whose current version is the
+  null version writes the OLH head's OLH attrs back as it read them, so a
+  version linked, or a delete marker written, between its read and its
+  write is undone on the head. A requester allowed s3:PutObjectTagging,
+  s3:PutObjectAcl, s3:PutObjectRetention or s3:PutObjectLegalHold on the
+  key who races another writer rolls back which version reads serve, and
+  can likely hold the window open by stalling the request body. Prior art
+  not searched. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - The mechanical defect: `modify_obj_attrs` reads the object's whole
+    attrset through `get_obj_attrs`, which follows the OLH, sets the one
+    attr it changes, and writes the whole set back through `set_obj_attrs`
+    ([rgw_sal_rados.cc:2402-2420](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2402-L2420), [rgw_sal_rados.cc:2994-3012](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2994-L3012)).
+    `set_attrs` sets every entry of that set
+    ([rgw_rados.cc:6820-6842](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6820-L6842),
+    [rgw_rados.cc:7434-7456](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7434-L7456)),
+    guarded only by `user.rgw.idtag` as read, which its
+    `append_atomic_test` compares
+    ([rgw_rados.cc:6801](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6801) and
+    [rgw_rados.cc:6597-6612](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6597-L6612),
+    [rgw_rados.cc:7415](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7415) and
+    [rgw_rados.cc:7211-7226](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7211-L7226)).
+  - When the current version is the null version, the version the follow
+    resolves is the OLH head itself, whose state the object context already
+    holds
+    ([rgw_rados.cc:6238-6258](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6238-L6258) with [rgw_rados.cc:6275-6279](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6275-L6279);
+    [rgw_rados.cc:6852-6872](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6852-L6872) with [rgw_rados.cc:6889-6893](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6889-L6893)),
+    so the attrset carries `user.rgw.olh.ver`, `olh.info` and any
+    `olh.pending.*` attr.
+  - `apply_olh_log`'s head op is guarded on `olh.idtag` and `olh.ver`, sets
+    `olh.ver` and `olh.info` and removes the pending attrs, and never touches
+    `user.rgw.idtag`
+    ([rgw_rados.cc:8434-8443](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8434-L8443), [rgw_rados.cc:8505-8507](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8505-L8507), [rgw_rados.cc:8519-8527](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8519-L8527);
+    [rgw_rados.cc:9180-9189](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9180-L9189), [rgw_rados.cc:9251-9253](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9251-L9253),
+    [rgw_rados.cc:9265-9273](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9265-L9273)), and an OLH init writes it only on a head
+    that has no OLH tag yet
+    ([rgw_rados.cc:7842-7851](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7842-L7851), [rgw_rados.cc:8505-8514](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8505-L8514)). So a link applied
+    between the attr write's read and its write leaves its guard true, and
+    the write puts the old `olh.info` and `olh.ver` back.
+  - The window: the attrset written is the one `read_permissions` cached
+    before the request body is read, which the source shows at both tags.
+    PutObjectTagging, PutObjectAcl and the retention and legal hold puts
+    are object update ops, so `read_permissions` reads the object's policy
+    ([rgw_rest.cc:1915-1918](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1915-L1918), [rgw_rest.cc:1914-1917](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1914-L1917);
+    `do_read_permissions`, [rgw_op.cc:8016-8022](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8016-L8022), [rgw_op.cc:8921-8927](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L8921-L8927)).
+    That read goes through the request object's own context, which keeps
+    the followed state
+    (`rgw_build_object_policies` and `get_obj_policy_from_attr`,
+    [rgw_op.cc:631-649](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L631-L649) and [rgw_op.cc:300-302](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L300-L302), [rgw_op.cc:661-679](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L661-L679) and
+    [rgw_op.cc:343-345](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L343-L345); [rgw_sal_rados.cc:2828-2841](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2828-L2841), [rgw_sal_rados.cc:3663-3676](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3663-L3676);
+    `Read::get_attr`, [rgw_rados.cc:6489-6502](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6489-L6502), [rgw_rados.cc:7103-7116](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7103-L7116)).
+    The op reads its body
+    ([rgw_op.cc:1095](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1095) and [rgw_op.cc:5831](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5831); [rgw_op.cc:1294](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1294) and
+    [rgw_op.cc:6474](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6474)) before `modify_obj_attrs`
+    ([rgw_op.cc:1105](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1105) and [rgw_op.cc:5922](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5922); [rgw_op.cc:1323](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1323) and
+    [rgw_op.cc:6581](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6581)), whose `get_obj_attrs` takes the cached
+    state ([rgw_rados.cc:6275-6280](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6275-L6280), [rgw_rados.cc:6889-6894](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6889-L6894)). The
+    widening to the length of a stalled body is likely; it was not timed.
+- **Impact:** the head's `olh.info` names the null version again while the
+  bucket index lists the new version current: GETs and HEADs of the key
+  serve the null version, the version just written is listed current and
+  never read, and after a delete marker the deleted key reads back as the
+  null version. The head stays so until the key's next link. A pending attr
+  the read held and the replay removed is written back too, so reads run a
+  replay that finds nothing until `rgw_olh_pending_timeout_sec` expires it.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** not affected: `SetObjectAttrs` writes and removes no
+  `user.rgw.olh.` attr (`internal/driver/attrs.go`; docs/exclusions.md, "An
+  attr write leaves the OLH attrs as they are on disk"), pinned by the spec
+  "leaves the OLH attrs as they are on disk, so a link applied after the
+  read survives the write" in `internal/driver/stat_olh_test.go`. Its S3
+  attr writes refuse a bucket whose versioning was ever enabled.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 Task V6's review, 2026-10-22, tracing `SetObjectAttrs`
+  on a followed state; the window checked at both tags in V6's fix round.
+  Derived from the source, not reproduced.
