@@ -5072,6 +5072,107 @@ does the following.
   AWS's credential is a key id and then its scope. rgw-go refuses such a
   form on both releases with 403 AccessDenied, radosgw's answer to every
   failed browser-upload authentication. No SDK signs a form so.
+- **An MFA code the device may have accepted before does not verify.**
+  radosgw checks an `x-amz-mfa` code with cls_otp, which stores for each
+  success the check's TOTP step plus the window distance liboath found the
+  code at, without its sign, and refuses a code whose index is at or below
+  the last one stored
+  ([cls_otp.cc:129-153](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L129-L153),
+  [cls_otp.cc:129-153](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L129-L153)).
+  A code checked in a step after its own therefore stores an index ahead of
+  its step, and a used code verifies again once in each later step of its
+  window, `window + 1` times in all, three at the defaults
+  (`docs/ceph-upstream-bugs.md`, "[cls_otp computes the replay index from
+  an unsigned window
+  distance](ceph-upstream-bugs.md#cls_otp-computes-the-replay-index-from-an-unsigned-window-distance)").
+  rgw-go sends the class the same check, so the otp object holds what
+  radosgw's check leaves, but it reads the device's record first and
+  guards the check on it. When the class verifies a code, rgw-go repeats
+  liboath's walk over the device's seed from that record, to learn on which
+  side of the check's step the code lay and how far
+  (`internal/driver/mfa.go`). A code found ahead is of the step of its
+  index, which the class found above the last success, and verifies. A
+  code found behind is of the check's step less that distance, and
+  verifies only when that step is above the last success the record held:
+  every code the device accepted is of a step at or below the last success,
+  and the record keeps no codes to tell which. So no code verifies twice
+  through rgw-go, as RFC 6238 section 5.2 requires, and a code radosgw
+  verified does not verify again through rgw-go. That holds while 0 <=
+  secs - time_ofs < 2^32, with secs the check's time in seconds, where the
+  class's unsigned step is liboath's signed one. Only an admin writing
+  time_ofs into the device's record leaves that range: the class's index
+  then follows no code's step and the class verifies a used code itself,
+  and rgw-go gives the class's verdict.
+
+  Of the codes radosgw verifies, rgw-go refuses exactly these, wherever its
+  walk finds the code: a code found behind the check's step whose step is
+  at or below the device's last success before the check. Each is either
+  used again or fresh, and the record cannot tell which. Among the fresh
+  ones:
+  - a code of a step before the check's, after a code used late raised the
+    last success past it: the code of step n used in step n+1 stores n+2,
+    and the code of step n+1 used next in step n+2 is refused;
+  - an unused code of an earlier step, after a newer code: the code of step
+    n used in step n, then the code of step n-1 in the same step;
+  - the codes of an authenticator d steps behind, or of a user who reads
+    each code d steps late. The class records each refused code as a
+    success all the same, and raises the last success to its check's step
+    plus d, so at a cadence of 2d steps or less every request after the
+    first is refused, where radosgw verifies every one.
+
+  `radosgw-admin mfa resync` cures only part of that. Given two consecutive
+  codes, it probes time offsets in whole steps and stores the fit less a
+  step plus step_size * window / 2
+  ([rgw_admin.cc:3074-3105](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L3074-L3105),
+  [radosgw-admin.cc:3271-3302](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L3271-L3302);
+  the command,
+  [rgw_admin.cc:10965-11028](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10965-L11028),
+  [radosgw-admin.cc:11557-11621](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L11557-L11621)):
+  a whole number of steps, and half a step more at an odd window. So it
+  corrects a drift of whole steps at every window but 1: there the half step
+  can leave the device ahead of the authenticator, while at windows 3 and 5
+  it leaves the device behind it, where its codes are found ahead. An
+  authenticator a fraction of a step behind, or a code that reaches the
+  gateway after its step has ended, can still be refused at a cadence of two
+  steps or less: at window 2, an authenticator 5 s behind, used once a step
+  or once every two steps in the first 5 s of each step, is refused 7 times
+  in 8, where the class verifies all 8, and once every three steps is
+  verified every time. That is on the offset resync usually leaves for that
+  skew, 0, which a scan run in seconds 5 to 29 of a step stores; a scan in
+  the first 5 s stores 60 s, after which every code verifies. Short of that,
+  only setting the authenticator's clock right, or an admin writing
+  time_ofs into the device's record, ends it. radosgw is not free of it either: after a code
+  that arrives in a step after its own, its class refuses the next step's
+  current code, a fresh one, as the late code's index is its check's step
+  plus one (`docs/ceph-upstream-bugs.md`, "[cls_otp computes the replay index
+  from an unsigned window
+  distance](ceph-upstream-bugs.md#cls_otp-computes-the-replay-index-from-an-unsigned-window-distance)").
+
+  A code the class's liboath finds and rgw-go's walk does not, which only a
+  liboath that computes otherwise than RFC 6238 would give, falls back to
+  the index the check stored. rgw-go then also refuses a code of a step
+  after the check's within that distance of the last success, and, while
+  another check's success lands between its check and its lookup, a code
+  whose check's step less the distance that success's index shows is at or
+  below the last success; on a class with ceph/ceph#72253, whose index is
+  the code's own step, a code checked after its step verifies.
+
+  Each check costs three round trips, the record's read, the guarded check
+  and the lookup, where radosgw sends two. A record that changes between
+  the read and the check, as each recorded check changes it, at most five
+  times in a device's step_size seconds, cancels the check, and rgw-go
+  reads the record and sends the check again, six times at most, after
+  which the verification fails with an error. rgw-go also sends no check for a
+  device stored with a step of 0, where a good code faults the OSD
+  (`docs/ceph-upstream-bugs.md`, "[cls_otp divides by a stored step_size
+  that is never
+  validated](ceph-upstream-bugs.md#cls_otp-divides-by-a-stored-step_size-that-is-never-validated)"),
+  and does not verify its code; radosgw sends it, and a wrong code there
+  records a failed check. The refusal sees only the zone's otp object: a
+  code rgw-go verified still verifies through radosgw on the same zone in
+  the later steps of its window, and once at each other zone
+  ("[radosgw's otp replay state stays in the zone that recorded
+  it](ceph-upstream-bugs.md#radosgws-otp-replay-state-stays-in-the-zone-that-recorded-it)").
 
 ### Authorization differences
 
