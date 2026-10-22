@@ -429,6 +429,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw logs a served error document as a 200 success](#radosgw-logs-a-served-error-document-as-a-200-success) | pending | pending | ✓ |
 | [cls_rgw's bucket_unlink_instance promotes the next version at its own epoch, discarding the epoch it passes](#cls_rgws-bucket_unlink_instance-promotes-the-next-version-at-its-own-epoch-discarding-the-epoch-it-passes) | pending | pending | ✓ |
 | [cls_otp verifies a code of any length from 6 to 8 digits against any device](#cls_otp-verifies-a-code-of-any-length-from-6-to-8-digits-against-any-device) | pending | pending | ✓ |
+| [radosgw-admin mfa resync stores an offset half a step from its fit at an odd window](#radosgw-admin-mfa-resync-stores-an-offset-half-a-step-from-its-fit-at-an-odd-window) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -24768,3 +24769,65 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 Task V13c's review, 2026-10-22, reading `verify` beside
   liboath's walk; checked at both tags in V13c's fix round.
+
+## radosgw-admin mfa resync stores an offset half a step from its fit at an odd window
+
+- **Kind:** defect, S3-correctness (low), not security-relevant. After a
+  resync of a device whose window is odd, the device's steps end half a step
+  from its authenticator's. At a window of 1 the shift can leave the device
+  ahead of the authenticator, and the otp class then refuses fresh codes
+  that radosgw would verify on a device whose offset matched. At windows 3
+  and 5 the shift leaves the device behind the authenticator, its codes are
+  found ahead or at distance 0, and nothing fresh is refused; the half step
+  only moves the device within its window. Unfixed at v19.2.7 and v20.2.4.
+  Unreproduced: derived from the source and a model.
+- **Evidence:**
+  - `scan_totp` probes time offsets 0, -step, +2 step, -3 step and so on,
+    whole steps, until the first code verifies at an offset with a window of
+    1 and the second at that offset less a step, and then stores
+    `*pofs = time_ofs - step_size + step_size * totp.window / 2`
+    ([rgw_admin.cc:3061-3108](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L3061-L3108),
+    the store at [rgw_admin.cc:3097](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L3097);
+    [radosgw-admin.cc:3258-3305](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L3258-L3305),
+    the store at [radosgw-admin.cc:3294](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L3294)).
+  - The fit is a whole number of steps, and so is the shift,
+    `step_size * totp.window / 2 - step_size`, at an even window: the fit
+    itself at a window of 2, one step more at 4. At an odd window the shift
+    holds half a step: the fit less 15 s at a window of 1, plus 15 s at 3,
+    with 30-second steps.
+  - `mfa resync` stores that offset in the device through `create_mfa`
+    ([rgw_admin.cc:10965-11028](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10965-L11028),
+    [radosgw-admin.cc:11557-11621](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L11557-L11621)),
+    and an odd window is reachable: `mfa create --totp-window` sets any
+    positive window
+    ([rgw_admin.cc:10828-10830](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10828-L10830),
+    [radosgw-admin.cc:11419-11421](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L11419-L11421)).
+- **Impact:** at a window of 1, a device the resync left ahead of its
+  authenticator finds the authenticator's code one step behind in one half
+  of each step, and the class's unsigned replay index does the rest
+  ("[cls_otp computes the replay index from an unsigned window
+  distance](#cls_otp-computes-the-replay-index-from-an-unsigned-window-distance)").
+  Modelled with liboath's walk, the class's verify and `scan_totp` (rgw-go's
+  re-review models, 2026-10-22), each window's consequence:
+  - window 1: after a resync of an authenticator two steps behind, which
+    stores 45 s where the fit is 60 s, requests 15 s apart have the class
+    refuse each fresh code and verify the same code sent again, through
+    radosgw as well. Over whole-step drifts of -3 to 5 steps and six scan
+    phases, the class refuses a fresh code at 15-s requests in 30 of the 54
+    cases;
+  - windows 3 and 5: the device ends 15 s to 105 s behind the
+    authenticator, and the class refuses no fresh code in any of the 54;
+  - windows 2 and 4, whose shift is whole steps: the same, none of the 54.
+    After a window-2 resync of the authenticator two steps behind, which
+    stores 60 s, the 15-s requests have every fresh code verified and only
+    the reuses refused.
+- **Releases:** v19.2.7 and v20.2.4, where `scan_totp` is the same.
+- **rgw-go:** has no radosgw-admin; it checks devices the operator's
+  radosgw-admin resynced. On such a device it meets the class's refusals,
+  and its own one-time rule refuses the codes found behind there as well
+  (`docs/exclusions.md`, "An MFA code the device may have accepted before
+  does not verify", which also states what resync cures).
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 Task V13c's fix-round re-review, 2026-10-22, modelling
+  `scan_totp` beside the class; the formula checked at both tags in V13c's
+  second fix round.
