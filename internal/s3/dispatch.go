@@ -28,6 +28,9 @@ type Route struct {
 // among them (websiteConfigDisabled). The route carries its payload forms at
 // rel.
 func Dispatch(r *op.Request, rel denc.Release) (Route, error) {
+	if r.Website {
+		return websiteDispatch(r, rel)
+	}
 	scope := r.Scope()
 	// RGWRESTMgr_S3::get_handler returns no handler for a bucket request that
 	// names an object's subresource, whatever the method.

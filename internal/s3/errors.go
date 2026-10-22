@@ -24,9 +24,10 @@ type errorDocument struct {
 	HostID     xmltext.Text `xml:"HostId"`
 }
 
-// WriteError renders err as radosgw's S3 error document with the common
-// headers; it is what every HandlerFunc calls on failure and what other
-// protocol layers (admin) reuse. It is end_header's error branch
+// WriteError renders err as radosgw's S3 error document, or for a website
+// request its HTML error page, with the common headers; it is what every
+// HandlerFunc calls on failure and what other protocol layers (admin) reuse.
+// It is end_header's error branch
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L620-L624 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L625-L629 at v20.2.4),
 // so the length goes out through SetContentLength, with Accept-Ranges. The
@@ -46,14 +47,24 @@ func WriteError(ctx context.Context, w http.ResponseWriter, r *op.Request, err e
 	writeErrorDocument(w, r, e)
 }
 
-// writeErrorDocument renders e as WriteError's response.
+// writeErrorDocument renders e as WriteError's response: for a website
+// request the HTML page of the HTMLFormatter radosgw's S3 handler allocates
+// for one, as its default
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5290-L5294 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5820-L5824 at v20.2.4),
+// whatever the request's format parameter and Accept header ask for
+// (docs/exclusions.md, "Every document is XML, and every website error page
+// HTML").
 func writeErrorDocument(w http.ResponseWriter, r *op.Request, e *op.Error) {
-	if 200 <= e.Status && e.Status <= 399 {
+	switch {
+	case 200 <= e.Status && e.Status <= 399:
 		SetCommonHeaders(w, r)
 		w.WriteHeader(e.Status)
-		return
+	case r.Website:
+		writeHTMLError(w, r, e.Status, e.Code, e.Message)
+	default:
+		writeXML(w, r, e.Status, errorDocumentFor(r, e), true)
 	}
-	writeXML(w, r, e.Status, errorDocumentFor(r, e), true)
 }
 
 func errorDocumentFor(r *op.Request, e *op.Error) errorDocument {
