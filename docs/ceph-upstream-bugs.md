@@ -450,6 +450,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's lifecycle pass acts on the bucket record it loaded at its start](#radosgws-lifecycle-pass-acts-on-the-bucket-record-it-loaded-at-its-start) | pending | pending | ✓ |
 | [radosgw's lifecycle aborts an expired multipart upload without its completion lock](#radosgws-lifecycle-aborts-an-expired-multipart-upload-without-its-completion-lock) | pending | pending | ✓ |
 | [v21's ownership controls ops let an ACL grant change a bucket's object ownership](#v21s-ownership-controls-ops-let-an-acl-grant-change-a-buckets-object-ownership) | pending | pending | ✓ |
+| [v21's CreateBucket stores an ACL other than private on a bucket it makes BucketOwnerEnforced](#v21s-createbucket-stores-an-acl-other-than-private-on-a-bucket-it-makes-bucketownerenforced) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -23443,9 +23444,15 @@ Every new entry adds its row to this table, in document order.
     handler parses at init, so that check needs no change to the parsing.
 - **Releases:** ceph main d8552606 and v21.1.2 (v21.0.0 onward); not at
   v19.2.7 or v20.2.4, which read no ownership header.
-- **rgw-go:** not affected yet: CreateBucket reads no
-  `x-amz-object-ownership`, as neither floor does. Work that serves the
-  header has to make the permission check after the header is read.
+- **rgw-go:** does not reproduce it. CreateBucket authorizes
+  s3:PutBucketOwnershipControls on the new bucket against the requester's
+  own policies once its parameters, the header among them, are read, and
+  refuses a denial with 403 AccessDenied, creating nothing
+  (`verifyCreateActions`, `internal/op/bucketops.go`; `createBucketActions`,
+  `internal/authz/evaluator.go`; `docs/exclusions.md`, "CreateBucket with
+  x-amz-object-ownership is authorized as s3:PutBucketOwnershipControls
+  too"). The S3 handler does not read the header yet, so no request reaches
+  the check until it does.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task L2's scoped re-review, 2026-10-21, checking the
   sibling the CreateBucket-with-object-lock entry led with; verified here
@@ -26311,3 +26318,77 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task BC-28c, 2026-10-23, reading v21.1.2's ops beside
   the public access block's entry. Derived from the source, not reproduced.
+
+## v21's CreateBucket stores an ACL other than private on a bucket it makes BucketOwnerEnforced
+
+- **Kind:** defect, possibly security-relevant: PutBucketOwnershipControls
+  sets BucketOwnerEnforced only over a private bucket ACL, and CreateBucket
+  sets it beside whatever ACL its headers build, a public one or grants to
+  other users included. Under that setting the bucket's ACL still grants,
+  and no ACL write can replace it, so a bucket said to have its ACLs
+  disabled keeps an ACL that grants. At v21.1.2 and ceph main d8552606;
+  v19.2.7 and v20.2.4 read no ownership header. Unreproduced: derived from
+  the source.
+- **Evidence:**
+  - `RGWCreateBucket_ObjStore_S3::get_params` builds the bucket's ACL from
+    the request's ACL headers and parses `x-amz-object-ownership`
+    ([rgw_rest_s3.cc:2709-2711](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L2709-L2711),
+    [rgw_rest_s3.cc:2809-2816](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L2809-L2816) at v21.1.2),
+    and `RGWCreateBucket::execute` stores both in the new bucket's attrs
+    without comparing them
+    ([rgw_op.cc:4223-4237](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L4223-L4237) at v21.1.2;
+    [rgw_op.cc:4363-4367](https://github.com/ceph/ceph/blob/d8552606/src/rgw/rgw_op.cc#L4363-L4367) at d8552606).
+  - `rgw_op.cc` raises ERR_INVALID_BUCKET_ACL only in
+    `RGWPutBucketOwnershipControls::execute`, which refuses
+    BucketOwnerEnforced over any ACL but the default private one
+    ([rgw_op.cc:10282-10300](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L10282-L10300) at v21.1.2;
+    [rgw_op.cc:10444](https://github.com/ceph/ceph/blob/d8552606/src/rgw/rgw_op.cc#L10444) at d8552606).
+  - Under BucketOwnerEnforced only an object's ACL stops granting
+    ([rgw_common.cc:1630-1640](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_common.cc#L1630-L1640) at v21.1.2):
+    the bucket ACL check has no such test
+    ([rgw_common.cc:1446-1457](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_common.cc#L1446-L1457) at v21.1.2),
+    and `RGWPutACLs` refuses every ACL write
+    ([rgw_op.cc:6866-6871](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L6866-L6871) at v21.1.2).
+  - The canned-ACL refusal that looks like a guard here never fires on
+    CreateBucket, all at v21.1.2. `create_canned_acl` refuses a canned ACL
+    other than bucket-owner-full-control under BucketOwnerEnforced
+    ([rgw_acl_s3.cc:691-698](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_acl_s3.cc#L691-L698)), and
+    CreateBucket's `create_s3_policy` reaches it
+    ([rgw_rest_s3.cc:2641-2643](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L2641-L2643)), but passes
+    `s->bucket_object_ownership`. That field defaults to ObjectWriter
+    ([rgw_common.h:1416](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_common.h#L1416)) and is set only from a
+    loaded bucket's attrs, in `rgw_build_bucket_policies`
+    ([rgw_op.cc:682](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L682)), which CreateBucket's
+    `init_permissions` skips, even for a bucket that exists
+    ([rgw_rest.cc:1861-1864](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest.cc#L1861-L1864)). The request's
+    own header lands later, in `get_params`
+    ([rgw_rest_s3.cc:2809-2816](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L2809-L2816)), and the
+    grant-header path, `create_policy_from_headers`, takes no ownership at
+    all ([rgw_rest_s3.cc:2633-2638](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L2633-L2638),
+    [rgw_acl_s3.cc:709-714](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_acl_s3.cc#L709-L714)).
+  - Amazon S3's CreateBucket reference: "To set an ACL on a bucket as part
+    of a CreateBucket request, you must explicitly set S3 Object Ownership
+    for the bucket to a different value than the default,
+    BucketOwnerEnforced"
+    ([api.go:620-623](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L620-L623)).
+- **Impact:** a requester creates a bucket under BucketOwnerEnforced whose
+  ACL grants everyone read, or another user WRITE_ACP. Whoever reads the
+  setting takes the bucket's ACLs for disabled, yet the bucket ACL grants,
+  and its owner cannot replace that ACL without first leaving
+  BucketOwnerEnforced. A WRITE_ACP grant in it lets the grantee turn the
+  setting off ("[v21's ownership controls ops let an ACL grant change a bucket's object ownership](#v21s-ownership-controls-ops-let-an-acl-grant-change-a-buckets-object-ownership)").
+- **Releases:** v21.1.2 and ceph main d8552606; not v19.2.7 or v20.2.4.
+- **rgw-go:** does not reproduce it. CreateBucket refuses
+  BucketOwnerEnforced beside an ACL other than the default private one with
+  400 InvalidBucketAclWithObjectOwnership, creating nothing, by the
+  comparison PutBucketOwnershipControls makes, and builds
+  bucket-owner-full-control and bucket-owner-read as that private ACL, as
+  Amazon S3 ignores both on a bucket it creates (`enforcedOver`,
+  `internal/op/ownership.go`; `op.CreateBucket`, `internal/op/bucketops.go`;
+  `docs/exclusions.md`, "CreateBucket with x-amz-object-ownership is
+  authorized as s3:PutBucketOwnershipControls too"). The S3 handler does not
+  read the header yet.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task BC-28c, 2026-10-23, comparing v21.1.2's
+  CreateBucket with its PutBucketOwnershipControls against Amazon S3's
+  reference. Derived from the source, not reproduced.

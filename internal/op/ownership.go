@@ -208,6 +208,23 @@ func isPrivateACL(p acl.Policy) bool {
 	return samePolicy(p, acl.DefaultPolicy(meta.ParseOwner(p.Owner.ID), p.Owner.DisplayName))
 }
 
+// aclsDisabled is RGWPutACLs::execute's first check, which PutBucketAcl and
+// PutObjectAcl share
+// (https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L6866-L6871 at v21.1.2):
+// an ACL write to a bucket whose setting is BucketOwnerEnforced, or to an
+// object in it, is AccessControlListNotSupported with v21.1.2's message. The
+// setting is read as get_object_ownership reads it into
+// s->bucket_object_ownership
+// (https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L682 at v21.1.2),
+// so one that does not decode is ObjectWriter. A floor radosgw makes no such
+// check.
+func aclsDisabled(rec *BucketRecord) error {
+	if acl.OwnershipOf(rec.Attrs) == acl.BucketOwnerEnforced {
+		return ErrACLsNotSupported.WithMessage("Cannot set ACLs when ObjectOwnership is BucketOwnerEnforced.")
+	}
+	return nil
+}
+
 // DeleteBucketOwnershipControls is RGWDeleteBucketOwnershipControls
 // (https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L10336-L10358 at v21.1.2).
 type DeleteBucketOwnershipControls struct{}

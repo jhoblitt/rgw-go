@@ -2577,6 +2577,87 @@ review and verified against the tree.
   policy", when it is another
   ([rgw_op.cc:3569-3578](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3569-L3578),
   [rgw_op.cc:3797-3806](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3797-L3806)).
+- **CreateBucket with x-amz-object-ownership is authorized as
+  s3:PutBucketOwnershipControls too.** Neither floor reads the header: a
+  floor radosgw creates the bucket with no ownership setting, whatever the
+  header says
+  ([rgw_rest_s3.cc:2481-2550](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2481-L2550),
+  [rgw_rest_s3.cc:2593-2703](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2593-L2703)).
+  v21.1.2 reads it in `get_params`, refusing a value it does not parse with
+  400 InvalidArgument
+  ([rgw_rest_s3.cc:2809-2816](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L2809-L2816)), and stores
+  the setting in the new bucket's attrs
+  ([rgw_op.cc:4233-4237](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L4233-L4237)). Its
+  `verify_permission` checks s3:PutBucketOwnershipControls against the
+  value before `get_params` sets it, so the check never refuses
+  ([rgw_op.cc:3754-3759](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L3754-L3759),
+  [rgw_op.cc:4067](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L4067); `docs/ceph-upstream-bugs.md`,
+  "[radosgw's CreateBucket checks s3:PutBucketOwnershipControls before it
+  reads
+  x-amz-object-ownership](ceph-upstream-bugs.md#radosgws-createbucket-checks-s3putbucketownershipcontrols-before-it-reads-x-amz-object-ownership)").
+  Amazon S3's CreateBucket reference, retrieved 2026-10-21: "If your
+  `CreateBucket` request includes the `x-amz-object-ownership` header, then
+  the `s3:PutBucketOwnershipControls` permission is required." rgw-go stores
+  the setting as v21.1.2 does. Whatever the setting, it evaluates
+  s3:PutBucketOwnershipControls as it evaluates the object-lock actions, on
+  the new bucket's ARN against the requester's own policies, and answers a
+  denial with 403 AccessDenied, creating nothing, before it finds that the
+  bucket exists. Amazon S3's User Guide exempts one value: "No additional
+  permissions are needed when creating a bucket with the Object writer
+  setting applied"
+  (https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-ownership-new-bucket.html,
+  retrieved 2026-10-23), where the API reference asks for the permission
+  whenever the header is sent. rgw-go follows the API reference, the
+  operation's contract. An ObjectWriter the header names is stored as the
+  other two settings are, and afterwards only a holder of the action may
+  change it, through PutBucketOwnershipControls. A requester denied the
+  action loses nothing by leaving the header out, since a bucket without a
+  setting acts as ObjectWriter.
+
+  It also refuses BucketOwnerEnforced beside an ACL other than the default
+  private one with 400 InvalidBucketAclWithObjectOwnership, creating
+  nothing, again before it finds that the bucket exists: the requester's
+  re-create of its own bucket with the ACL that bucket holds is 400 where
+  v21.1.2 answers 200. Amazon S3's reference says "To set an ACL on a bucket
+  as part of a CreateBucket request, you must explicitly set S3 Object
+  Ownership for the bucket to a different value than the default,
+  BucketOwnerEnforced"
+  ([api.go:620-623](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L620-L623)),
+  and its troubleshooting page names the code: "if your `CreateBucket`
+  request sets Bucket owner enforced and specifies a bucket ACL that
+  provides access to an external AWS account, your request fails with a
+  `400` error and returns the InvalidBucketAclWithObjectOwnership error code"
+  (https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-ownership-error-responses.html,
+  retrieved 2026-10-23). Amazon S3's message is "Bucket cannot have ACLs set
+  with ObjectOwnership's BucketOwnerEnforced setting"; rgw-go sends the one
+  v21.1.2's PutBucketOwnershipControls gives such an ACL, "The bucket's ACL
+  must be made private before setting BucketOwnerEnforced.". The ACL is held
+  to what PutBucketOwnershipControls holds it to ("rgw-go stores and enforces
+  ownership controls a floor radosgw ignores", below), so a bucket under
+  BucketOwnerEnforced always holds a private ACL. `bucket-owner-full-control`
+  and `bucket-owner-read`, which CreateBucket otherwise builds with a grant
+  to an empty bucket owner, are built under the setting as the private ACL,
+  an ACL radosgw reads as any other: Amazon S3's canned ACL table says of
+  each, "If you specify this canned ACL when creating a bucket, Amazon S3
+  ignores it"
+  (https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html#canned-acl,
+  retrieved 2026-10-23). Each still needs s3:PutBucketAcl ("CreateBucket with
+  an ACL other than private is authorized as s3:PutBucketAcl too", above).
+  The private ACL is a new bucket's alone: a re-create compares either canned
+  ACL as radosgw builds it, so the owner's re-create of its private bucket
+  with either is 409 BucketAlreadyExists, "Cannot modify existing access
+  control policy", and its re-create of a bucket that holds radosgw's ACL for
+  it is 200, as radosgw answers both
+  ([rgw_op.cc:4194-4210](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L4194-L4210)).
+  v21.1.2 creates a BucketOwnerEnforced bucket with whatever ACL its headers
+  built (`docs/ceph-upstream-bugs.md`, "[v21's CreateBucket stores an ACL
+  other than private on a bucket it makes
+  BucketOwnerEnforced](ceph-upstream-bugs.md#v21s-createbucket-stores-an-acl-other-than-private-on-a-bucket-it-makes-bucketownerenforced)").
+  A re-create of the requester's own bucket that names another setting is
+  answered as having existed and changes nothing, as v21.1.2 answers it,
+  since its existing-bucket checks compare no setting. The S3 handler does
+  not read the header yet, so no request reaches either check until it
+  does.
 - **A requested bucket index answers 501 on Tentacle.** Tentacle's
   CreateBucket reads a `BucketIndex` element of `CreateBucketConfiguration`,
   whose `Type` and `NumShards` set the new bucket's index, and refuses a
@@ -5932,7 +6013,25 @@ rgw-go does the following.
     without one
     ([rgw_op.cc:10344-10358](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L10344-L10358)).
 
-  rgw-go differs from v21.1.2 in two ways. No ACL grant authorizes the
+  Under BucketOwnerEnforced, rgw-go refuses PutBucketAcl and PutObjectAcl
+  with 400 AccessControlListNotSupported, "Cannot set ACLs when
+  ObjectOwnership is BucketOwnerEnforced.", before it reads the body, as
+  v21.1.2 does
+  ([rgw_op.cc:6866-6871](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L6866-L6871)), and so does each
+  retry of a lost race against the setting that retry read, where v21.1.2
+  retries neither write. A floor radosgw stores the ACL: its `RGWPutACLs`
+  has no such check
+  ([rgw_op.cc:5824-5930](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5824-L5930),
+  [rgw_op.cc:6467-6590](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6467-L6590)).
+  CreateBucket stores the setting a request names, held to the same private
+  ACL under BucketOwnerEnforced ("CreateBucket with x-amz-object-ownership
+  is authorized as s3:PutBucketOwnershipControls too", above). Amazon S3
+  refuses both ACL writes: "Requests to set ACLs or update ACLs fail and
+  return the AccessControlListNotSupported error code"
+  ([api.go:8036-8041](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L8036-L8041),
+  [api.go:10562-10567](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L10562-L10567)).
+
+  Its three ops differ from v21.1.2's in two ways. No ACL grant authorizes the
   three. v21.1.2 falls back to the bucket's ACL with the READ_ACP and
   WRITE_ACP its `op_to_perm` maps the two actions to
   ([rgw_iam_policy.h:314-315](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_iam_policy.h#L314-L315),

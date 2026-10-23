@@ -104,6 +104,7 @@ func createBucketParams(ctx context.Context, r *op.Request, o *op.CreateBucket) 
 	}
 	o.ACL = policy
 	canned, _ := op.HeaderValue(r.Header, "X-Amz-Acl")
+	o.CannedACL = canned
 	o.NonPrivateACL = canned != "" && canned != "private" || authz.HasGrantHeader(r.Header)
 	body, err := readParamBody(r, invalidRange)
 	if err != nil && !errors.Is(err, op.ErrMissingContentLength) {

@@ -812,3 +812,130 @@ var _ = Describe("bucket ownership controls ops", func() {
 		})
 	})
 })
+
+// aclsNotSupported is v21.1.2's message for an ACL write under
+// BucketOwnerEnforced
+// (https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L6868-L6870 at v21.1.2).
+const aclsNotSupported = "Cannot set ACLs when ObjectOwnership is BucketOwnerEnforced."
+
+var _ = Describe("ACL writes under the bucket's ownership setting", func() {
+	var f *writeFixture
+	BeforeEach(func(ctx SpecContext) { f = newWriteFixture(ctx, denc.Squid) })
+
+	bucket := func(ctx context.Context) *op.BucketRecord {
+		GinkgoHelper()
+		rec, err := f.store.GetBucket(ctx, "", "plain")
+		Expect(err).NotTo(HaveOccurred())
+		return rec
+	}
+	publicRead := func() acl.Policy {
+		p := acl.DefaultPolicy(f.alice.Owner, "Alice")
+		p.ACL.AddGrant(acl.Grant{Type: acl.GranteeGroup, Group: acl.GroupAllUsers, Permission: acl.PermRead})
+		return p
+	}
+	// aclWrite is one of the two ACL ops, the request it serves and where it
+	// stores the ACL.
+	type aclWrite struct {
+		op     func(build func(acl.Policy) (acl.Policy, error)) op.Op
+		req    func() *op.Request
+		stored func(ctx context.Context) []byte
+	}
+	bucketACL := func() aclWrite {
+		return aclWrite{
+			op:  func(build func(acl.Policy) (acl.Policy, error)) op.Op { return &op.PutBucketACL{Build: build} },
+			req: func() *op.Request { return f.req(http.MethodPut, "plain", "") },
+			stored: func(ctx context.Context) []byte {
+				GinkgoHelper()
+				return bucket(ctx).Attrs[meta.AttrACL]
+			},
+		}
+	}
+	objectACL := func() aclWrite {
+		return aclWrite{
+			op:  func(build func(acl.Policy) (acl.Policy, error)) op.Op { return &op.PutObjectACL{Build: build} },
+			req: func() *op.Request { return f.req(http.MethodPut, "plain", "small") },
+			stored: func(ctx context.Context) []byte {
+				GinkgoHelper()
+				return f.stat(ctx, "small").Attrs[meta.AttrACL]
+			},
+		}
+	}
+	unread := func(acl.Policy) (acl.Policy, error) {
+		Fail("Build read the body")
+		return acl.Policy{}, nil
+	}
+	setting := func(ctx context.Context, b []byte) {
+		GinkgoHelper()
+		f.setBucketAttrs(ctx, map[string][]byte{acl.AttrOwnershipControls: b})
+	}
+
+	DescribeTable("refuses one under BucketOwnerEnforced with 400 AccessControlListNotSupported and v21.1.2's message, before it reads the body",
+		func(ctx SpecContext, mk func() aclWrite) {
+			w := mk()
+			setting(ctx, ownershipAttr(acl.BucketOwnerEnforced))
+			before := w.stored(ctx)
+			err := op.Run(ctx, w.op(unread), w.req())
+			Expect(err).To(MatchError(op.ErrACLsNotSupported), "rgw_op.cc:6866-6871 at v21.1.2, before get_params")
+			Expect(op.AsError(err).Status).To(Equal(http.StatusBadRequest))
+			Expect(messageOf(err)).To(Equal(aclsNotSupported))
+			Expect(w.stored(ctx)).To(Equal(before))
+		},
+		Entry("PutBucketAcl", bucketACL),
+		Entry("PutObjectAcl, by the setting of the object's bucket", objectACL),
+	)
+	DescribeTable("writes one under every other setting, as s->bucket_object_ownership reads the attr",
+		func(ctx SpecContext, mk func() aclWrite, attr []byte) {
+			w := mk()
+			if attr != nil {
+				setting(ctx, attr)
+			}
+			Expect(op.Run(ctx, w.op(func(acl.Policy) (acl.Policy, error) { return publicRead(), nil }), w.req())).To(Succeed())
+			Expect(w.stored(ctx)).To(Equal(encodedPolicy(publicRead())))
+		},
+		Entry("PutBucketAcl under BucketOwnerPreferred", bucketACL, ownershipAttr(acl.BucketOwnerPreferred)),
+		Entry("PutBucketAcl under ObjectWriter", bucketACL, ownershipAttr(acl.ObjectWriter)),
+		Entry("PutBucketAcl with no setting", bucketACL, nil),
+		Entry("PutBucketAcl under a setting that does not decode, which get_object_ownership reads as ObjectWriter, rgw_object_ownership.cc:91-106 at v21.1.2",
+			bucketACL, []byte{0xff}),
+		Entry("PutBucketAcl under a byte outside the three, which acts as ObjectWriter", bucketACL, ownershipAttr(7)),
+		Entry("PutObjectAcl under BucketOwnerPreferred", objectACL, ownershipAttr(acl.BucketOwnerPreferred)),
+		Entry("PutObjectAcl under ObjectWriter", objectACL, ownershipAttr(acl.ObjectWriter)),
+		Entry("PutObjectAcl with no setting", objectACL, nil),
+	)
+	DescribeTable("refuses a requester without WRITE_ACP with 403 before the setting is looked at",
+		func(ctx SpecContext, mk func() aclWrite) {
+			w := mk()
+			setting(ctx, ownershipAttr(acl.BucketOwnerEnforced))
+			r := w.req()
+			r.Identity = f.bob
+			Expect(op.Run(ctx, w.op(unread), r)).To(MatchError(op.ErrAccessDenied), "verify_permission runs before execute")
+		},
+		Entry("PutBucketAcl", bucketACL),
+		Entry("PutObjectAcl", objectACL),
+	)
+	It("refuses a PutBucketAcl retry once the write it lost to set BucketOwnerEnforced, leaving the ACL", func(ctx SpecContext) {
+		build := func(acl.Policy) (acl.Policy, error) {
+			// Another request sets the setting after this one loaded the
+			// bucket, so the first try loses the race.
+			setting(ctx, ownershipAttr(acl.BucketOwnerEnforced))
+			return publicRead(), nil
+		}
+		err := op.Run(ctx, &op.PutBucketACL{Build: build}, f.req(http.MethodPut, "plain", ""))
+		Expect(err).To(MatchError(op.ErrACLsNotSupported), "the retry reads the bucket again")
+		Expect(messageOf(err)).To(Equal(aclsNotSupported))
+		Expect(bucket(ctx).Attrs).To(HaveKeyWithValue(meta.AttrACL, f.aliceACL))
+	})
+	It("refuses a PutObjectAcl retry once the write it lost to set BucketOwnerEnforced on the object's bucket", func(ctx SpecContext) {
+		stub := &opfakes.FakeObjectStore{}
+		stub.StatObjectReturns(&op.ObjectState{Exists: true, Attrs: map[string][]byte{meta.AttrACL: f.aliceACL}}, nil)
+		stub.SetObjectAttrsStub = func(context.Context, *op.ObjectState, map[string][]byte, []string) error {
+			setting(ctx, ownershipAttr(acl.BucketOwnerEnforced))
+			return op.ErrConcurrentModification
+		}
+		f.env.Objects = stub
+		err := op.Run(ctx, &op.PutObjectACL{Build: func(acl.Policy) (acl.Policy, error) { return publicRead(), nil }},
+			f.req(http.MethodPut, "plain", "small"))
+		Expect(err).To(MatchError(op.ErrACLsNotSupported), "the retry reads the bucket again")
+		Expect(stub.SetObjectAttrsCallCount()).To(Equal(1), "the retry writes nothing")
+	})
+})
