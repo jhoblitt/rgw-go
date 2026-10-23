@@ -440,6 +440,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw before v19.2.7 and v20.2.1 checked a versioned write's conditions against the new instance](#radosgw-before-v1927-and-v2021-checked-a-versioned-writes-conditions-against-the-new-instance) | pending | [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348), [ceph/ceph#65949](https://github.com/ceph/ceph/pull/65949), [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932) | |
 | [radosgw's conditional versioned write checks its condition once and links unguarded](#radosgws-conditional-versioned-write-checks-its-condition-once-and-links-unguarded) | pending | pending | ✓ |
 | [radosgw checks a suspended bucket's write conditions against the OLH head](#radosgw-checks-a-suspended-buckets-write-conditions-against-the-olh-head) | pending | [ceph/ceph#71584](https://github.com/ceph/ceph/pull/71584), [ceph/ceph#72050](https://github.com/ceph/ceph/pull/72050) | |
+| [radosgw's versioned PutObject deletes its tails when its link fails](#radosgws-versioned-putobject-deletes-its-tails-when-its-link-fails) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -25469,3 +25470,57 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task V7a, 2026-10-22, tracing the head write's
   conditions at v19.2.7 and v20.2.4; the fix was then found in the local
   clone's history. Upstream found it first.
+
+## radosgw's versioned PutObject deletes its tails when its link fails
+
+- **Kind:** defect, data corruption: a versioned PutObject whose `set_olh`
+  fails with anything but a timeout deletes the tail objects its version's
+  head names, though the head stays and its link may have landed, current.
+  Not security-relevant: it needs an index or OSD failure. Unreproduced:
+  derived from the source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`.
+  - `_do_write_meta` writes the version's head and sends its index
+    completion, then calls `set_olh` and returns its failure
+    ([rgw_rados.cc:3332-3375](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3332-L3375) at v19.2.7,
+    [rgw_rados.cc:3453-3496](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3453-L3496) at v20.2.4).
+    `set_olh` fails both when the link fails and when the replay after a
+    link that landed fails other than with ECANCELED
+    ([rgw_rados.cc:8715-8759](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8715-L8759) at v19.2.7,
+    [rgw_rados.cc:9461-9505](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9461-L9505) at v20.2.4).
+  - `AtomicObjectProcessor::complete` keeps the tails it wrote only when
+    `write_meta` succeeded or timed out
+    ([rgw_putobj_processor.cc:393-405](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L393-L405) at v19.2.7,
+    [rgw_putobj_processor.cc:427-440](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L427-L440) at v20.2.4);
+    otherwise the writer's destructor deletes every object it wrote, which
+    for a PutObject is every tail and not the head
+    ([rgw_putobj_processor.cc:184-229](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L184-L229) at v19.2.7,
+    [rgw_putobj_processor.cc:212-257](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L212-L257) at v20.2.4).
+  - Nothing removes the version: `set_olh` cancels its pending modification
+    and leaves the head and its instance entry (`docs/exclusions.md`,
+    "rgw-go removes the instance a failed versioned write made").
+  - `copy_obj_data`, the copy that streams its source, completes through
+    the same processor
+    ([rgw_rados.cc:5150](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5150) at v19.2.7,
+    [rgw_rados.cc:5382-5385](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5382-L5385) at v20.2.4),
+    so a CopyObject into a versioned bucket that does not share its
+    source's tails meets the same. The timeout case was fixed by
+    23fcab7fc6b on Tentacle, first tagged in v20.2.0, and by its
+    cherry-pick 63505589868 on Squid, which v19.2.7 carries, each keeping
+    the tails after an ETIMEDOUT; "[radosgw's copy
+    drops its tail references after a head write that timed
+    out](#radosgws-copy-drops-its-tail-references-after-a-head-write-that-timed-out)"
+    is that fix's gap in the copy that shares its source's tails.
+- **Impact:** after such a failure the version's head names tails that are
+  gone. When the link had landed, the key's current version reads short or
+  fails past its head's bytes; when it had not, the version is reachable by
+  its id, which the failed write never returned, and through `bucket
+  check`. An object small enough to live in its head is not affected.
+- **Releases:** v19.2.7 and v20.2.4; main was not checked.
+- **rgw-go:** differs: once a versioned write's head is written its tails
+  stay whatever its completion or its link answers, and a removal of the
+  version sends them to the GC (`putStream`, `internal/driver/put.go`;
+  `docs/exclusions.md`, "A versioned write whose link fails keeps its
+  tails"). Pinned in `internal/driver/put_versioned_test.go`.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task V7a, 2026-10-22, tracing what a failed link
+  leaves; derived from the source, not reproduced.
