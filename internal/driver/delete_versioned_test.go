@@ -337,6 +337,32 @@ var _ = Describe("DeleteObject on a versioned bucket", func() {
 			})
 		})
 
+		It("keeps the data of a null write that links after the null delete marker, dropping the marker's removal of the null version", func(ctx SpecContext) {
+			converted(ctx)
+			suspend()
+			rw := newRGWWriter(c, s, rec, denc.Squid, "")
+			after(testDataPool, olhOID, 1, func() {
+				rw.Prepare(ctx)
+				rw.HeadWrite(ctx)
+				rw.Complete(ctx)
+				after(rookIndexPool, shard, 1, func() {
+					rw.ReadHead(ctx)
+					rw.InitRetrying(ctx)
+					rw.Link(ctx)
+				})
+			})
+			Expect(mustDel(ctx, "", op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "null", DeleteMarker: true}))
+			rw.ReadLog(ctx)
+			rw.Apply(ctx)
+			rw.Trim(ctx)
+			Expect(olhHead().Data).To(Equal([]byte("data-")), "the null write's data, which radosgw's replay removes")
+			Expect(markers()).To(BeEmpty(), "the null write's link took the marker's entries")
+			_, ok := instanceEntry("", false)
+			Expect(ok).To(BeTrue(), "the null write's instance entry")
+			Expect(listed()).To(Equal([]string{"", "v1"}))
+			current("")
+		})
+
 		It("leaves the pending attr and the log for the next update with SkipOLHUpdate", func(ctx SpecContext) {
 			put(ctx, "v1")
 			res := mustDel(ctx, "", op.DeleteParams{SkipOLHUpdate: true})

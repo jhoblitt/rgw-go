@@ -745,6 +745,33 @@ var _ = Describe("the OLH head operations", func() {
 			Expect(idx.Calls[2].Writes).To(Equal(1))
 		})
 
+		DescribeTable("drops a removal of the null version that a later link of null data follows",
+			func(ctx SpecContext, log map[uint64][]rgwcls.OLHLogEntry, removed []string) {
+				olhHead("2", info("v1", false), nil)
+				_, err := s.ApplyOLHLogForTest(ctx, idx, state(), log, "", nil)
+				Expect(err).NotTo(HaveOccurred())
+				var got []string
+				for _, call := range idx.Calls {
+					if call.Method == "removeInstance" {
+						got = append(got, call.Key.Instance)
+					}
+				}
+				Expect(got).To(Equal(removed))
+			},
+			Entry("a null write's link at a later epoch drops it",
+				map[uint64][]rgwcls.OLHLogEntry{3: {marker("", tagP), removal("", tagP)}, 4: {link("", tagQ)}}, []string(nil)),
+			Entry("a null write's link later in the same epoch drops it",
+				map[uint64][]rgwcls.OLHLogEntry{3: {removal("", tagP), link("", tagQ)}}, []string(nil)),
+			Entry("a null write's link before it keeps it",
+				map[uint64][]rgwcls.OLHLogEntry{3: {link("", tagQ)}, 4: {marker("", tagP), removal("", tagP)}}, []string{""}),
+			Entry("a null delete marker's link after it keeps it",
+				map[uint64][]rgwcls.OLHLogEntry{3: {removal("", tagP)}, 4: {marker("", tagQ)}}, []string{""}),
+			Entry("a named version's link after it keeps it",
+				map[uint64][]rgwcls.OLHLogEntry{3: {removal("", tagP)}, 4: {link("v2", tagQ)}}, []string{""}),
+			Entry("a named version's removal before a null write's link stays",
+				map[uint64][]rgwcls.OLHLogEntry{3: {removal("v0", tagP)}, 4: {link("", tagQ)}}, []string{"v0"}),
+		)
+
 		It("passes no tag guard without the writer's expected tag", func(ctx SpecContext) {
 			olhHead("2", info("v1", false), nil)
 			_, err := s.ApplyOLHLogForTest(ctx, idx, state(), map[uint64][]rgwcls.OLHLogEntry{3: {removal("v1", tagP)}}, tagP, nil)

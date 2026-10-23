@@ -352,11 +352,21 @@ func (s *Store) followOLH(ctx context.Context, head *op.ObjectState, update func
 // to remove. Those versions are removed through idx before the head op, the
 // entries carrying opTag guarded on expectTag when it is not nil; one already
 // gone is passed over, and any other failure stops the replay before the head
-// op, as radosgw's does. After the head op, finishOLHLog clears the OLH
-// marked for removal, and otherwise trims the log to the last epoch. It
-// returns the last epoch whenever the head op landed, and 0 when the replay
-// wrote nothing; a tail that did not finish comes with the last epoch and an
-// olhTailError naming the step left.
+// op, as radosgw's does. A removal of the null version that a later LINK_OLH
+// of null data follows, in log or, with nullLinkLater, on a later page of the
+// replay (replayPass), is dropped: the null version's removal names its key,
+// not the data it replaced
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1806-L1810 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1970-L1971 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1947-L1951 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2117-L2118 at v20.2.4),
+// and that link's write has put its own data in the head the two share,
+// where radosgw's replay removes it (docs/exclusions.md, "A replay keeps the
+// null data a later null link names"). After the head op, finishOLHLog
+// clears the OLH marked for removal, and otherwise trims the log to the last
+// epoch. It returns the last epoch whenever the head op landed, and 0 when
+// the replay wrote nothing; a tail that did not finish comes with the last
+// epoch and an olhTailError naming the step left.
 //
 // A removal expectTag refuses (errRemovalRefused, olhIndex) does not stop the
 // replay: it is passed over, and once the head op and the clear or trim have
@@ -369,7 +379,7 @@ func (s *Store) followOLH(ctx context.Context, head *op.ObjectState, update func
 // head was read with, where radosgw compares olh.ver in the OSD's u64 mode,
 // which librados' C API cannot send (docs/cgo-limitations.md). An apply that
 // another writer has moved past answers ECANCELED and writes nothing.
-func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectState, log map[uint64][]rgw.OLHLogEntry, opTag string, expectTag []byte) (uint64, error) {
+func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectState, log map[uint64][]rgw.OLHLogEntry, opTag string, expectTag []byte, nullLinkLater bool) (uint64, error) {
 	if len(log) == 0 {
 		return 0, nil
 	}
@@ -405,6 +415,9 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 			case rgw.OLHOpRemoveInstance:
 				removals = append(removals, e)
 			case rgw.OLHOpLinkOLH:
+				if nullDataLink(e) {
+					removals = slices.DeleteFunc(removals, func(r rgw.OLHLogEntry) bool { return r.Key.Instance == "" })
+				}
 				if linkEpoch < epoch || cur.Instance == "" || cur.Instance > e.Key.Instance {
 					link, remove = true, false
 					cur, deleteMarker = e.Key, e.DeleteMarker
@@ -416,6 +429,9 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 			}
 			w.RmXattr(meta.AttrOLHPendingPrefix + e.OpTag)
 		}
+	}
+	if nullLinkLater {
+		removals = slices.DeleteFunc(removals, func(r rgw.OLHLogEntry) bool { return r.Key.Instance == "" })
 	}
 	if link {
 		target := meta.OLHInfo{Target: meta.Obj{Bucket: head.Bucket.Info.Bucket, Key: indexToObjKey(cur)}, Removed: deleteMarker}

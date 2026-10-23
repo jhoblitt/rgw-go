@@ -26462,9 +26462,16 @@ Every new entry adds its row to this table, in document order.
   is lost and the listing names data that does not exist. Linked after the
   delete, the PUT should be the key's current version with its data.
 - **Releases:** v19.2.7 and v20.2.4; main was not checked.
-- **rgw-go:** reproduces it for both deletes: its replay removes the null
-  version's key guarded only on the write tag it reads
-  (`removeInstance`, `internal/driver/olh.go`).
+- **rgw-go:** does not reproduce it in its own replay, which drops a removal
+  of the null version that a later link of null data in the same replay
+  follows (`applyOLHLog`, `internal/driver/olh_head.go`;
+  `docs/exclusions.md`, "A replay keeps the null data a later null link
+  names"). On a mixed fleet radosgw's replay still removes the data
+  whenever it is the replay that applies the log, and a replay that runs
+  after the PUT's head write but before its link is in the log removes
+  it in rgw-go too, after which the PUT's link fails. Pinned in
+  `internal/driver/olh_head_test.go` and
+  `internal/driver/delete_versioned_test.go`.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V8c, 2026-10-23, checking a candidate the
   versioning plan recorded, widened to `versionId=null` by the task's

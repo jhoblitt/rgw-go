@@ -146,9 +146,10 @@ func (s *Store) FollowOLHForTest(ctx context.Context, head *op.ObjectState, upda
 	return s.followOLH(ctx, head, update)
 }
 
-// ApplyOLHLogForTest is applyOLHLog over idx for the external specs.
+// ApplyOLHLogForTest is applyOLHLog over idx for the external specs, of a
+// page no later page of whose replay links null data.
 func (s *Store) ApplyOLHLogForTest(ctx context.Context, idx *FakeOLHIndex, head *op.ObjectState, log map[uint64][]rgw.OLHLogEntry, opTag string, expectTag []byte) (uint64, error) {
-	return s.applyOLHLog(ctx, idx, head, log, opTag, expectTag)
+	return s.applyOLHLog(ctx, idx, head, log, opTag, expectTag, false)
 }
 
 // OLHTail is olhLogTail with its fields exported for the specs.

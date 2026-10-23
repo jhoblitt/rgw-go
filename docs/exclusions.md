@@ -9021,6 +9021,39 @@ does the following.
   another reader, which does not know `Expect`, removes what it reads.
   radosgw has no `Expect`, so a radosgw writer never meets this case.
   Versioning is not served yet.
+- **A replay keeps the null data a later null link names.** The null
+  version's removal is logged for the key with an empty instance, not for
+  the data it replaced: by a null delete marker's link
+  ([cls_rgw.cc:1712-1731](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1712-L1731) and
+  [cls_rgw.cc:1806-1810](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1806-L1810),
+  [cls_rgw.cc:1853-1872](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1853-L1872) and
+  [cls_rgw.cc:1947-1951](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1947-L1951))
+  and by the unlink of `versionId=null`
+  ([cls_rgw.cc:1970-1971](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1970-L1971),
+  [cls_rgw.cc:2117-2118](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2117-L2118)).
+  radosgw's replay removes whatever null data the key's head holds when it
+  runs
+  ([rgw_rados.cc:8530-8541](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8530-L8541),
+  [rgw_rados.cc:9275-9287](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9275-L9287)),
+  so a null PutObject that wrote its head before that link or unlink, and
+  linked after it before a replay ran, is listed current with its data and
+  its instance entry gone (`docs/ceph-upstream-bugs.md`, "[radosgw's null
+  version removal takes the data of a null PutObject that links after
+  it](ceph-upstream-bugs.md#radosgws-null-version-removal-takes-the-data-of-a-null-putobject-that-links-after-it)").
+  rgw-go's replay drops a removal of the null version that a later link of
+  null data in the same replay follows, on the removal's page of the log or
+  a later one (`applyOLHLog`, `internal/driver/olh_head.go`;
+  `nullLinkAfter`, `internal/driver/olh.go`): that write's head write put
+  its own data in the head the two share, and its link lists it current, so
+  the state left is the one a null PutObject made after the delete leaves,
+  which radosgw reads. Every rgw-go replay does this, a writer's own, a
+  reader's and a conditional writer's follow alike; a log without such a
+  later link is replayed as before. Two cases still lose the write's data. On a mixed
+  fleet, radosgw's replay on a radosgw gateway still removes it whenever it
+  is the replay that applies the log. And a replay that runs after the null
+  write's head write but before its link is in the log removes the data in
+  rgw-go too, after which that write's link fails, as through radosgw. The
+  S3 ops that reach it still answer 501 on a versioned bucket.
 - **rgw-go removes the instance a failed versioned write made.** A
   versioned write writes its version's head and completes the version's
   instance entry in the bucket index before it links the version under the
