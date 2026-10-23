@@ -26,10 +26,8 @@ type APIs struct {
 	WebsiteFirst bool
 	Admin        bool
 	// Ignored lists, once each and in order, every other name the option
-	// carried (swift, swift_auth, s3website, sts, iam, notifications,
-	// s3control, s3vectors, ...), for the startup log line that reports them.
-	// s3website is in it as well as in Website: rgw-go serves no request as
-	// a website one.
+	// carried (swift, swift_auth, sts, iam, notifications, s3control,
+	// s3vectors, ...), for the startup log line that reports them.
 	Ignored []string
 }
 
@@ -58,6 +56,7 @@ func EnabledAPIs(o *Options) (APIs, error) {
 				a.WebsiteFirst = !s3Named
 			}
 			a.S3, a.Website = true, true
+			continue
 		}
 		if !slices.Contains(a.Ignored, n) {
 			a.Ignored = append(a.Ignored, n)

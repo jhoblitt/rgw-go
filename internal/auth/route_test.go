@@ -10,6 +10,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 	"github.com/jhoblitt/rgw-go/internal/s3"
 	"github.com/jhoblitt/rgw-go/internal/vhost"
@@ -20,13 +21,9 @@ import (
 // hold the two to the same request target, as radosgw holds decoded_uri and
 // the canonical forms to req_info's request_uri and request_params.
 var _ = Describe("the route and the signatures", func() {
-	var (
-		dnsNames []string
-		cfg      s3.Config
-	)
+	var cfg s3.Config
 	BeforeEach(func() {
-		dnsNames = []string{"s3.example.com"}
-		cfg = s3.Config{DNSNames: dnsNames}
+		cfg = s3.Config{DNSNames: []string{"s3.example.com"}}
 	})
 
 	read := func(target, host string) *http.Request {
@@ -43,7 +40,7 @@ var _ = Describe("the route and the signatures", func() {
 	// within the bucket alone tells them apart.
 	signedV4Route := func(req *http.Request, rv *requestView) string {
 		path := rgwtext.URLDecode(canonicalURIV4(rv.rawPath), false)
-		b := vhost.Bucket(vhost.Hostname(req.Host), dnsNames)
+		b := vhost.Resolve(vhost.Hostname(req.Host), cfg.HostNames()).Bucket
 		if b == "" {
 			return path
 		}
@@ -57,11 +54,11 @@ var _ = Describe("the route and the signatures", func() {
 	DescribeTable("agree on every target the router serves",
 		func(target, host string) {
 			req := read(target, host)
-			Expect(s3.MalformedPath(req, cfg)).To(BeFalse(), "the router serves %q", target)
-			route := s3.DecodedURI(req, cfg)
+			Expect(s3.MalformedPath(req, cfg.HostNames())).To(BeFalse(), "the router serves %q", target)
+			route := s3.DecodedURI(req, cfg.HostNames())
 			rv := newRequestView(req)
 
-			resource, _, _ := strings.Cut(canonicalResourceV2(rv, dnsNames), "?")
+			resource, _, _ := strings.Cut(canonicalResourceV2(rv, cfg.HostNames()), "?")
 			Expect(route).To(Equal(rgwtext.URLDecode(resource, false)), "SigV2 canonical resource %q", resource)
 			Expect(route).To(Equal(signedV4Route(req, rv)), "SigV4 canonical URI %q", canonicalURIV4(rv.rawPath))
 
@@ -110,9 +107,84 @@ var _ = Describe("the route and the signatures", func() {
 		Entry("a Host that names no hostname, taken as the bucket", "/k", "bucket.example.org"),
 	)
 
+	// preprocess reads the Host once, the website names over the S3 ones,
+	// into the request_uri SigV2 signs, so a signature names the bucket the
+	// request is served from. One over the bucket the S3 names alone read
+	// would let a presigned URL for b.web, under the S3 name example.com,
+	// reach the bucket b that the website name web.example.com names.
+	DescribeTable("sign the bucket the router reads from a Host under the website names, for each rgw_enable_apis order",
+		func(apis, s3Name, webName, host, bucket string) {
+			a, err := cephconf.EnabledAPIs(cephconf.NewOptions(cephconf.MapGetter{"rgw_enable_apis": apis}))
+			Expect(err).NotTo(HaveOccurred())
+			cfg = s3.Config{DNSNames: []string{s3Name}, WebsiteNames: []string{webName}, Website: a.Website, WebsiteFirst: a.WebsiteFirst}
+			req := read("/k", host)
+			p, err := s3.ParseRequest(req, cfg, time.Unix(1, 0))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(p.Req.Bucket).To(Equal(bucket), "the bucket the request is served from")
+
+			route := s3.DecodedURI(req, cfg.HostNames())
+			rv := newRequestView(req)
+			resource, _, _ := strings.Cut(canonicalResourceV2(rv, cfg.HostNames()), "?")
+			Expect(rgwtext.URLDecode(resource, false)).To(Equal(route), "SigV2 canonical resource %q", resource)
+			signed, _, _ := strings.Cut(strings.TrimPrefix(resource, "/"), "/")
+			Expect(signed).To(Equal(bucket), "the bucket SigV2 signs")
+			Expect(route).To(Equal(signedV4Route(req, rv)), "SigV4 canonical URI")
+		},
+		Entry("s3 before s3website: a website host", "s3, s3website", "s3.example.com", "web.example.com", "web.example.com", "k"),
+		Entry("s3 before s3website: a bucket subdomain of a website host",
+			"s3, s3website", "s3.example.com", "web.example.com", "site.web.example.com", "site"),
+		Entry("s3 before s3website: a CNAME to a website host", "s3, s3website", "s3.example.com", "web.example.com", "www.example.org", "www.example.org"),
+		Entry("s3 before s3website: a plain S3 host", "s3, s3website", "s3.example.com", "web.example.com", "site.s3.example.com", "site"),
+		Entry("s3 before s3website: no Host", "s3, s3website", "s3.example.com", "web.example.com", "", "k"),
+		Entry("s3website before s3: a website host", "s3website, s3", "s3.example.com", "web.example.com", "web.example.com", "k"),
+		Entry("s3website before s3: a bucket subdomain of a website host",
+			"s3website, s3", "s3.example.com", "web.example.com", "site.web.example.com", "site"),
+		Entry("s3website before s3: a CNAME to a website host", "s3website, s3", "s3.example.com", "web.example.com", "www.example.org", "www.example.org"),
+		Entry("s3website before s3: a plain S3 host", "s3website, s3", "s3.example.com", "web.example.com", "site.s3.example.com", "site"),
+		Entry("s3website before s3: no Host", "s3website, s3", "s3.example.com", "web.example.com", "", "k"),
+		Entry("s3website without s3: a website host", "s3website", "s3.example.com", "web.example.com", "web.example.com", "k"),
+		Entry("s3website without s3: a bucket subdomain of a website host",
+			"s3website", "s3.example.com", "web.example.com", "site.web.example.com", "site"),
+		Entry("s3website without s3: a CNAME to a website host", "s3website", "s3.example.com", "web.example.com", "www.example.org", "www.example.org"),
+		Entry("s3website without s3: a plain S3 host", "s3website", "s3.example.com", "web.example.com", "site.s3.example.com", "site"),
+		Entry("s3website without s3: no Host", "s3website", "s3.example.com", "web.example.com", "", "k"),
+		Entry("s3 without s3website: a website host, taken whole as the bucket",
+			"s3", "s3.example.com", "web.example.com", "web.example.com", "web.example.com"),
+		Entry("s3 without s3website: a bucket subdomain of a website host, taken whole as the bucket",
+			"s3", "s3.example.com", "web.example.com", "site.web.example.com", "site.web.example.com"),
+		Entry("s3 without s3website: a CNAME to a website host", "s3", "s3.example.com", "web.example.com", "www.example.org", "www.example.org"),
+		Entry("s3 without s3website: a plain S3 host", "s3", "s3.example.com", "web.example.com", "site.s3.example.com", "site"),
+		Entry("s3 without s3website: no Host", "s3", "s3.example.com", "web.example.com", "", "k"),
+		Entry("a website name inside the S3 name, which the website API reads first",
+			"s3, s3website", "example.com", "web.example.com", "b.web.example.com", "b"),
+		Entry("a website name inside the S3 name, without the website API",
+			"s3", "example.com", "web.example.com", "b.web.example.com", "b.web"),
+		Entry("an S3 name inside the website name, which the website API still reads first",
+			"s3, s3website", "web.example.com", "example.com", "b.web.example.com", "b.web"),
+		Entry("an S3 name inside the website name, without the website API",
+			"s3", "web.example.com", "example.com", "b.web.example.com", "b"),
+		Entry("a website name alone, which lets a Host that names no hostname name the bucket whole",
+			"s3, s3website", "", "web.example.com", "bucket.example.org", "bucket.example.org"),
+		Entry("a website name alone without the website API, which counts toward the configured names all the same",
+			"s3", "", "web.example.com", "bucket.example.org", "bucket.example.org"),
+		Entry("a website host with a port, which req_info drops",
+			"s3, s3website", "s3.example.com", "web.example.com", "site.web.example.com:8080", "site"),
+		Entry("a website host in mixed case, the bucket in the Host's case",
+			"s3, s3website", "s3.example.com", "web.example.com", "Site.WEB.Example.com", "Site"),
+		Entry("a website host with a trailing dot, which ends in no name and is taken whole",
+			"s3, s3website", "s3.example.com", "web.example.com", "site.web.example.com.", "site.web.example.com."),
+		Entry("an IPv4 literal, never a bucket", "s3, s3website", "s3.example.com", "web.example.com", "192.0.2.1:7480", "k"),
+		Entry("an IPv6 literal, never a bucket", "s3, s3website", "s3.example.com", "web.example.com", "[2001:db8::1]:7480", "k"),
+		Entry("a name that is both an S3 and a website name", "s3, s3website", "example.com", "example.com", "b.example.com", "b"),
+		Entry("a website name that is a suffix of the S3 name, which the website API reads first",
+			"s3, s3website", "s3.example.com", "example.com", "b.s3.example.com", "b.s3"),
+		Entry("a website name that is a suffix of the S3 name, without the website API",
+			"s3", "s3.example.com", "example.com", "b.s3.example.com", "b"),
+	)
+
 	DescribeTable("leave to the router's refusal what radosgw would route elsewhere",
 		func(target, host string) {
-			Expect(s3.MalformedPath(read(target, host), cfg)).To(BeTrue(), "the router refuses %q", target)
+			Expect(s3.MalformedPath(read(target, host), cfg.HostNames())).To(BeTrue(), "the router refuses %q", target)
 		},
 		Entry("a bad hex digit in a query-held path", "http://s3.example.com?x=/b/%zz", "s3.example.com"),
 		Entry("a truncated escape in a query-held path", "http://s3.example.com?x=/b/k%4", "s3.example.com"),
@@ -128,7 +200,7 @@ var _ = Describe("the route and the signatures", func() {
 	DescribeTable("would route what the router refuses off the path SigV4 signs",
 		func(target, host, route, signed string) {
 			req := read(target, host)
-			Expect(s3.DecodedURI(req, cfg)).To(Equal(route), "radosgw's decoded_uri")
+			Expect(s3.DecodedURI(req, cfg.HostNames())).To(Equal(route), "radosgw's decoded_uri")
 			Expect(signedV4Route(req, newRequestView(req))).To(Equal(signed), "SigV4's")
 		},
 		Entry("a bad hex digit in the path, which SigV4 signs as the bucket's root",

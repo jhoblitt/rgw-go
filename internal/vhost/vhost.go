@@ -147,11 +147,6 @@ func Resolve(host string, n Names) Target {
 	return t
 }
 
-// Bucket is Resolve's bucket for host under the S3 names alone.
-func Bucket(host string, names []string) string {
-	return Resolve(host, Names{S3: names}).Bucket
-}
-
 // findHostInDomains is rgw_find_host_in_domains
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L260-L287 at v19.2.6
 // and v20.2.4). radosgw walks its hostname set in sorted order and stops at

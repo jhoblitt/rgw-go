@@ -67,7 +67,7 @@ const maxObjectNameLen = 1024
 // at, and PostAuthInit rejects it.
 func ParseRequest(req *http.Request, cfg Config, now time.Time) (Parsed, error) {
 	host := vhost.Hostname(req.Host)
-	target := vhost.Resolve(host, cfg.hostNames())
+	target := vhost.Resolve(host, cfg.HostNames())
 	// With s3website enabled and ranked above s3 every request is a website
 	// one, as at v20.2.4
 	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2162-L2168
@@ -75,10 +75,12 @@ func ParseRequest(req *http.Request, cfg Config, now time.Time) (Parsed, error) 
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2193-L2198);
 	// v19.2.7 flags only one with a Host
 	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2150-L2156),
-	// and rgw-go takes v20.2.4's rule on both releases.
+	// and rgw-go takes v20.2.4's rule on both releases (docs/exclusions.md,
+	// "On Squid, a request with no Host is a website request when s3website
+	// outranks s3").
 	website := target.Website || cfg.Website && cfg.WebsiteFirst
 	rawPath, rawQuery := vhost.RequestTarget(req)
-	uri := DecodedURI(req, cfg)
+	uri := DecodedURI(req, cfg.HostNames())
 	if strings.IndexByte(uri, 0) >= 0 {
 		return Parsed{}, op.ErrInvalidRequest // ERR_ZERO_IN_URL
 	}
@@ -136,7 +138,7 @@ func httpHost(req *http.Request) *string {
 
 // DecodedURI is decoded_uri, the path radosgw picks a request's API and
 // bucket by: url_decode of request_uri as preprocess leaves it, the target's
-// path with a bucket the Host names in front
+// path with a bucket the Host names under names in front
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L2154-L2161
 // and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L2182 at v19.2.6,
@@ -148,8 +150,8 @@ func httpHost(req *http.Request) *string {
 // absolute-form target: get_abs_path takes the path from the first '/' after
 // the authority, in the query if that is where it lies, and keeps a target
 // of another scheme whole, which names no bucket.
-func DecodedURI(req *http.Request, cfg Config) string {
-	return rgwtext.URLDecode(requestURI(req, cfg), false)
+func DecodedURI(req *http.Request, names vhost.Names) string {
+	return rgwtext.URLDecode(hostedURI(req, names), false)
 }
 
 // MalformedPath reports whether the URI DecodedURI decodes, the target's
@@ -161,24 +163,32 @@ func DecodedURI(req *http.Request, cfg Config) string {
 // included, while SigV4 signs that bucket in the Host and the path as "/",
 // the bucket's root; a malformed escape in the bucket itself serves another
 // bucket or none (docs/exclusions.md).
-func MalformedPath(req *http.Request, cfg Config) bool {
-	_, err := url.PathUnescape(requestURI(req, cfg))
+func MalformedPath(req *http.Request, names vhost.Names) bool {
+	_, err := url.PathUnescape(hostedURI(req, names))
 	return err != nil
 }
 
-// requestURI is req_info.request_uri as RGWREST::preprocess leaves it: the
-// target's path as the client sent it (vhost.RequestTarget), with a bucket
-// the Host names put in front of it.
+// requestURI is hostedURI under cfg's hostnames.
 func requestURI(req *http.Request, cfg Config) string {
+	return hostedURI(req, cfg.HostNames())
+}
+
+// hostedURI is req_info.request_uri as RGWREST::preprocess leaves it: the
+// target's path as the client sent it (vhost.RequestTarget), with a bucket
+// the Host names under names put in front of it.
+func hostedURI(req *http.Request, names vhost.Names) string {
 	path, _ := vhost.RequestTarget(req)
-	if b := vhost.Resolve(vhost.Hostname(req.Host), cfg.hostNames()).Bucket; b != "" {
+	if b := vhost.Resolve(vhost.Hostname(req.Host), names).Bucket; b != "" {
 		return withHostBucket(b, path)
 	}
 	return path
 }
 
-// hostNames are the hostnames RGWREST::preprocess finds a Host in.
-func (c Config) hostNames() vhost.Names {
+// HostNames are the hostnames RGWREST::preprocess finds a Host in. preprocess
+// reads the Host once, into the request_uri that routing, the admin API's
+// manager lookup and SigV2's canonical resource all read, so every reader of
+// a request's Host takes these names to name the bucket radosgw names.
+func (c Config) HostNames() vhost.Names {
 	return vhost.Names{S3: c.DNSNames, Website: c.WebsiteNames, WebsiteAPI: c.Website}
 }
 

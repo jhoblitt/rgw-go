@@ -2927,23 +2927,68 @@ following.
   radosgw serves no S3 and Swift at every path; rgw-go answers 405 to
   every request outside the admin API, as it does when `rgw_enable_apis`
   names neither `s3` nor `s3website`.
-- **The CNAME fallback resolves no CNAME and knows no s3website
-  hostnames.** When the Host matches none of its hostnames and
-  `rgw_resolve_cname` is set (it defaults to false), radosgw looks up the
-  Host's CNAME and matches that instead (`rgw_rest.cc:2086` at v19.2.6,
-  `:2103` at v20.2.4). A Host that matches nothing, looks like no IP
-  address and passes `validate_bucket_name` is the bucket when any
-  hostname is configured, the s3website ones included:
-  `rgw_dns_s3website_name` and the zonegroup's s3website hostnames
-  (`:235-238`, and `:2136-2143` at v19.2.6, `:2153-2160` at v20.2.4).
-  rgw-go matches the Host itself, never its CNAME, and takes it as the
-  bucket only when `rgw_dns_name` or the zonegroup's hostnames name one,
-  so with s3website hostnames alone the Host never names the bucket.
-  SigV2 signs that bucket in front of the path, as radosgw signs the URI
-  `RGWREST::preprocess` rewrote (`rgw_auth_s3.cc:249-254` at v19.2.6,
-  `:251-256` at v20.2.4), so a SigV2 request on a Host the two read
-  differently is signed over another resource in rgw-go and fails there
-  with 403 SignatureDoesNotMatch.
+- **The CNAME fallback resolves no CNAME.** When the Host matches none of
+  its hostnames and `rgw_resolve_cname` is set (it defaults to false),
+  radosgw's `resolve_cname` looks up the Host's CNAME, which preprocess
+  matches instead
+  ([rgw_rest.cc:2091-2130](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2091-L2130),
+  [rgw_rest.cc:2103-2142](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2103-L2142)),
+  against the S3 hostnames and, with `s3website` enabled, the website
+  ones, where a match makes the request a website one.
+  rgw-go matches the Host itself, never its CNAME, and reads it as radosgw
+  reads a Host that matches nothing: one that looks like no IP address and
+  passes `validate_bucket_name` is the bucket whole when any hostname is
+  configured, the website ones included, `rgw_dns_s3website_name` and the
+  zonegroup's `hostnames_s3website`
+  ([rgw_rest.cc:235-238](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L235-L238),
+  [rgw_rest.cc:235-238](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L235-L238);
+  [rgw_rest.cc:2141-2148](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2141-L2148),
+  [rgw_rest.cc:2153-2160](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2153-L2160)),
+  and makes a website request only when `s3website` ranks above `s3`.
+  SigV2 signs that bucket in front of the path, as radosgw signs the
+  `request_uri` that `RGWREST::preprocess` rewrote
+  ([rgw_auth_s3.cc:249-254](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L249-L254),
+  [rgw_auth_s3.cc:251-256](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L251-L256)),
+  so a SigV2 request on a Host the two read differently is signed over
+  another resource in rgw-go and fails there with 403
+  SignatureDoesNotMatch.
+- **On Squid, a request with no Host is a website request when `s3website`
+  outranks `s3`.** radosgw ranks each name of `rgw_enable_apis` by its
+  first place, an absent one below any named
+  ([rgw_rest.cc:2038-2051](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2038-L2051),
+  [rgw_rest.cc:2050-2063](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2050-L2063)),
+  and with `s3website` above `s3` sets `RGW_REST_WEBSITE`, the website
+  flag, on every request with a Host
+  ([rgw_rest.cc:2150-2156](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2150-L2156),
+  [rgw_rest.cc:2162-2168](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2162-L2168)).
+  Tentacle's sets `RGW_REST_WEBSITE` on a request with no Host too
+  ([rgw_rest.cc:2193-2198](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2193-L2198));
+  Squid's serves that request as S3. A request has no Host when its Host
+  header is absent, empty or a port alone, which `req_info` drops
+  ([rgw_common.cc:246-261](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L246-L261),
+  [rgw_common.cc:256-271](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L256-L271)).
+  rgw-go makes it a website request on both releases, the Tentacle feature
+  level for gateway-side request parsing (`docs/ceph-upstream-bugs.md`,
+  "[Squid's radosgw serves a request with no Host as S3 when s3website
+  outranks
+  s3](ceph-upstream-bugs.md#squids-radosgw-serves-a-request-with-no-host-as-s3-when-s3website-outranks-s3)").
+- **The hostnames are read at startup only.** rgw-go reads `rgw_dns_name`,
+  `rgw_dns_s3website_name` and its zonegroup's `hostnames` and
+  `hostnames_s3website` once, when it starts (`s3Config`,
+  `internal/cli/serve.go`), and has no realm reload, so a period commit that
+  changes the zonegroup's hostnames takes effect at its next restart. radosgw
+  reloads its realm on a period commit and runs `rgw_rest_init` again
+  ([rgw_realm_reloader.cc:181](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_realm_reloader.cc#L181),
+  [rgw_realm_reloader.cc:186](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_realm_reloader.cc#L186)),
+  which inserts the period's names into two static sets it never clears
+  ([rgw_rest.cc:182-183](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L182-L183),
+  [rgw_rest.cc:182-183](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L182-L183);
+  [rgw_rest.cc:215-238](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L215-L238),
+  [rgw_rest.cc:215-238](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L215-L238)), so it
+  adds a name on a reload and keeps a removed one until it restarts
+  (`docs/ceph-upstream-bugs.md`, "[radosgw keeps the hostnames a realm
+  reload drops until it
+  restarts](ceph-upstream-bugs.md#radosgw-keeps-the-hostnames-a-realm-reload-drops-until-it-restarts)").
 - **On Squid, `?attributes` is GetObjectAttributes.** The object
   `op_get` of Squid's radosgw has no attributes branch
   (`rgw_rest_s3.cc:4805-4821` at v19.2.6), so `GET /b/k?attributes` is
@@ -7500,8 +7545,8 @@ does the following.
   endpoint sends as its Location ("[radosgw stores a POST upload's
   x-amz-website-redirect-location with its CR and LF and sends it
   raw](ceph-upstream-bugs.md#radosgw-stores-a-post-uploads-x-amz-website-redirect-location-with-its-cr-and-lf-and-sends-it-raw)");
-  rgw-go's website endpoint, once served, sends that Location through
-  net/http the same way.
+  rgw-go's website endpoint sends that Location through net/http the same
+  way.
 - **A user metadata name that is not a valid field name is not sent.**
   A PUT takes `x-amz-meta-*` names from the query string as well as the
   headers, and radosgw url-decodes a query name before it reads it
@@ -7580,8 +7625,8 @@ does the following.
   parse or fit S3's schema", above). A redirect whose host, the rule's or
   the request's, holds such a byte, or whose protocol is not `http` or
   `https`, is declined (`website.Apply`, `ErrUnsafeRedirect`), and the
-  website endpoint, once served, answers 500 InternalError where radosgw
-  sends the redirect, with its HTML page, which neither a routing rule nor
+  website endpoint answers 500 InternalError where radosgw sends the
+  redirect, with its HTML page, which neither a routing rule nor
   the error document then replaces (`websiteGet.errorHandler`,
   `internal/s3/website_serve.go`). That covers a configuration radosgw stored, which
   rgw-go reads as it is. A host of other bytes, non-ASCII ones included,
@@ -8614,28 +8659,27 @@ does the following.
   non-atomic one without conditions or a create, so no reply from an OSD
   is known to reach this path.
 - **CompleteMultipartUpload's Location finds its domain without CNAME
-  lookups or website hostnames.** rgw-go builds the Location as
-  `compute_domain_uri` does, with no scheme under a configured name
+  lookups.** rgw-go builds the Location as `compute_domain_uri` does, with
+  no scheme under a configured name
   ([rgw_rest.h:805-818](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.h#L805-L818),
   [rgw_rest.h:817-830](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.h#L817-L830);
   `docs/ceph-upstream-bugs.md`, "[radosgw's CompleteMultipartUpload
   Location has no scheme under a configured
   domain](ceph-upstream-bugs.md#radosgws-completemultipartupload-location-has-no-scheme-under-a-configured-domain)"),
-  and takes the domain from `rgw_dns_name` and the zonegroup's hostnames
-  alone. radosgw also takes it from the name `rgw_resolve_cname` resolves
-  the Host to
-  ([rgw_rest.cc:2091-2130](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2091-L2130),
-  [rgw_rest.cc:2103-2142](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2103-L2142)),
-  where rgw-go writes `rgw_dns_name`, or the scheme and the Host. radosgw
-  never builds a Location under a website hostname: with the website API
-  enabled a Host in one makes a website request, and the website handler's
-  `op_post` is NULL
+  and takes the domain from `rgw_dns_name` and the zonegroup's hostnames.
+  Neither gateway builds a Location under a website hostname: with the
+  website API enabled a Host in one makes a website request, and the
+  website handler's `op_post` is NULL
   ([rgw_rest_s3website.h:34](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3website.h#L34),
   [rgw_rest_s3website.h:34](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3website.h#L34)),
   which `process_request` answers 405 MethodNotAllowed
   ([rgw_process.cc:325-329](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L325-L329),
-  [rgw_process.cc:327-331](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L327-L331)).
-  rgw-go knows no website hostname and completes such an upload. An
+  [rgw_process.cc:327-331](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L327-L331)),
+  as rgw-go's website dispatch answers it. radosgw also takes the domain
+  from the name `rgw_resolve_cname` resolves the Host to
+  ([rgw_rest.cc:2091-2130](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2091-L2130),
+  [rgw_rest.cc:2103-2142](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2103-L2142)),
+  where rgw-go writes `rgw_dns_name`, or the scheme and the Host. An
   HTTP/1.0 request that sends its Host empty gets `<HTTP_HOST>`, as one
   that sends none does: net/http does not tell them apart.
 - **A multipart upload with a retention or a legal hold on a bucket with

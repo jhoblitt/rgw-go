@@ -17,6 +17,7 @@ import (
 	. "github.com/onsi/gomega"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/jhoblitt/rgw-go/internal/admin"
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/cli"
 	"github.com/jhoblitt/rgw-go/internal/denc"
@@ -295,6 +296,19 @@ var _ = Describe("the router with the admin API", func() {
 		Expect(serve(h, "admin.s3.example.com", "/info")).To(Equal(adminStatus))
 	})
 
+	// The website name web.example.com, under the website API, reads
+	// admin.web.example.com as the bucket admin, which the S3 name
+	// example.com alone would read as admin.web.
+	DescribeTable("reads a website Host's bucket in front of the path it routes by",
+		func(host, path string, want int) {
+			cfg.DNSNames, cfg.WebsiteNames, cfg.Website = []string{"example.com"}, []string{"web.example.com"}, true
+			h := cli.NewAdminRouter(s3h, adminH, "/admin", env, cfg, nil)
+			Expect(serve(h, host, path)).To(Equal(want))
+		},
+		Entry("a website Host naming the bucket admin, with the path /info, to the admin API", "admin.web.example.com", "/info", adminStatus),
+		Entry("a website Host naming another bucket, with the key admin/x, to S3", "b.web.example.com", "/admin/x", http.StatusTeapot),
+	)
+
 	It("serves a nested rgw_admin_entry and answers 405 at its parent, which has no handler", func() {
 		conf := cephconf.NewOptions(cephconf.MapGetter{
 			"rgw_enable_apis": "s3, admin", "rgw_swift_url_prefix": "swift",
@@ -372,6 +386,34 @@ var _ = Describe("the router with the admin API", func() {
 	)
 })
 
+// The router finds the admin API on the path a Host's bucket is put in front
+// of, and the admin handler parses that path again; both must read the Host
+// under the same names, the website ones included, or the admin API refuses
+// the request the router sent it.
+var _ = Describe("the gateway's admin API behind the router", func() {
+	It("parses a website Host's path as the router read it", func() {
+		zone := new(opfakes.FakeZoneInfo)
+		zone.ReleaseReturns(denc.Squid)
+		env := &op.Env{HostID: "4107-zone-a-zonegroup", Metrics: op.NopMetrics{}, Zone: zone}
+		cfg := s3.Config{DNSNames: []string{"example.com"}, WebsiteNames: []string{"web.example.com"}, Website: true}
+		gw := cli.NewGatewayForTest(env, s3.AnonymousOnly{}, cfg)
+		adminH := gw.AdminHandler("admin")
+		var served []string
+		adminH.Register("get_info", func(_ context.Context, w http.ResponseWriter, r *op.Request, _ admin.Request) error {
+			served = append(served, r.Path)
+			admin.WriteEmpty(w, r, http.StatusOK)
+			return nil
+		})
+		h := cli.NewAdminRouter(gw.S3Handler(), adminH, "/admin", env, cfg, nil)
+		req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil)
+		req.Host, req.RequestURI = "admin.web.example.com", "/info"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		Expect(rec.Code).To(Equal(http.StatusOK), rec.Body.String())
+		Expect(served).To(Equal([]string{"/info"}), "get_info served")
+	})
+})
+
 var _ = Describe("S3Config", func() {
 	var (
 		opts cephconf.MapGetter
@@ -381,23 +423,70 @@ var _ = Describe("S3Config", func() {
 	BeforeEach(func() {
 		opts = cephconf.MapGetter{
 			"rgw_dns_name":                "s3.example.com, s3.internal",
+			"rgw_dns_s3website_name":      "web.example.com",
+			"rgw_enable_apis":             "s3, s3website, swift, swift_auth, admin, sts, iam, notifications",
 			"rgw_max_concurrent_requests": "1024",
 			"rgw_service_provider_name":   "",
 		}
 		zi = new(opfakes.FakeZoneInfo)
 		zi.ReleaseReturns(denc.Squid)
 		zi.ZoneReturns(meta.Zone{Name: "zone-a"})
-		zi.ZoneGroupReturns(meta.ZoneGroup{Name: "zonegroup", Hostnames: []string{"zg.example.com"}})
+		zi.ZoneGroupReturns(meta.ZoneGroup{
+			Name: "zonegroup", Hostnames: []string{"zg.example.com"}, HostnamesS3Website: []string{"zgweb.example.com"},
+		})
 	})
 
-	It("reads the options the S3 handler takes, rgw_dns_name joined with the zonegroup's hostnames", func() {
+	It("reads the options the S3 handler takes, each hostname option joined with the zonegroup's, as rgw_rest_init joins them", func() {
 		Expect(cli.S3Config(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)).To(Equal(s3.Config{
 			DNSNames:      []string{"s3.example.com", "s3.internal", "zg.example.com"},
+			WebsiteNames:  []string{"web.example.com", "zgweb.example.com"},
+			Website:       true,
 			MaxConcurrent: 1024,
 			TransIDSuffix: "-4107-zone-a",
 			ServerHeader:  "Ceph Object Gateway (squid)",
 		}))
 	})
+
+	// rgw_rest_init erases an empty name from each set.
+	It("takes no website name from an unset rgw_dns_s3website_name", func() {
+		opts["rgw_dns_s3website_name"] = ""
+		cfg, err := cli.S3Config(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.WebsiteNames).To(Equal([]string{"zgweb.example.com"}))
+	})
+
+	DescribeTable("takes the website API and its rank from rgw_enable_apis",
+		func(apis string, website, first bool) {
+			opts["rgw_enable_apis"] = apis
+			cfg, err := cli.S3Config(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)
+			Expect(err).NotTo(HaveOccurred())
+			Expect([]bool{cfg.Website, cfg.WebsiteFirst}).To(Equal([]bool{website, first}), "Website, WebsiteFirst")
+		},
+		Entry("s3 before s3website", "s3, s3website", true, false),
+		Entry("s3website before s3", "s3website, s3", true, true),
+		Entry("s3 alone", "s3, admin", false, false),
+	)
+
+	// rgw_rest_init inserts the option's value into the website set as it
+	// is, so bkt.web.b.com is in no website name, and the Host-as-bucket
+	// fallback takes the whole Host as an S3 request's bucket.
+	DescribeTable("reads rgw_dns_s3website_name whole, as rgw_rest_init does",
+		func(ctx SpecContext, websiteName string) {
+			opts["rgw_dns_s3website_name"] = websiteName
+			cfg, err := cli.S3Config(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.WebsiteNames).To(Equal([]string{websiteName, "zgweb.example.com"}))
+			req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/k", nil)
+			req.Host = "bkt.web.b.com"
+			p, err := s3.ParseRequest(req, cfg, time.Unix(1, 0))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(p.Req.Bucket).To(Equal("bkt.web.b.com"), "bucket")
+			Expect(p.Req.Website).To(BeFalse(), "website")
+		},
+		Entry("names joined with a comma", "web.a.com,web.b.com"),
+		Entry("names joined with a comma and a space", "web.a.com, web.b.com"),
+		Entry("names joined with a space", "web.a.com web.b.com"),
+	)
 
 	It("caps the requests it admits at the cap the store keeps the body budget for, not at a second read of the option", func() {
 		opts["rgw_max_concurrent_requests"] = "2"
@@ -438,11 +527,23 @@ var _ = Describe("S3Config", func() {
 		Entry("names joined with a tab", "s3.a.com\ts3.b.com"),
 	)
 
-	It("names an option it cannot read", func() {
-		delete(opts, "rgw_service_provider_name")
-		_, err := cli.S3Config(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)
-		Expect(err).To(MatchError(cephconf.ErrUnknownOption))
-		Expect(err).To(MatchError(HavePrefix("reading rgw_service_provider_name: ")))
+	DescribeTable("names an option it cannot read",
+		func(option string) {
+			delete(opts, option)
+			_, err := cli.S3Config(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)
+			Expect(err).To(MatchError(cephconf.ErrUnknownOption))
+			Expect(err).To(MatchError(HavePrefix("reading " + option + ": ")))
+		},
+		Entry("rgw_service_provider_name", "rgw_service_provider_name"),
+		Entry("rgw_dns_s3website_name", "rgw_dns_s3website_name"),
+		Entry("rgw_enable_apis", "rgw_enable_apis"),
+	)
+
+	It("gives the authenticator the hostnames the S3 handler reads a Host under, the website ones included", func() {
+		cfg, authCfg, err := cli.GatewayConfigs(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.WebsiteNames).NotTo(BeEmpty())
+		Expect(authCfg.HostNames).To(Equal(cfg.HostNames()))
 	})
 })
 

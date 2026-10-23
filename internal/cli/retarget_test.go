@@ -59,10 +59,10 @@ var _ = Describe("a signed request moved into an absolute-form target", func() {
 			Zone: store, Users: store, Accounts: store, Buckets: store, Objects: store, Multipart: store,
 			Stats: store, Usage: store, Metadata: store, Authz: op.OwnerOnly{}, Metrics: op.NopMetrics{},
 		}
-		acfg := auth.DefaultConfig()
-		acfg.DNSNames = []string{dnsName}
-		acfg.Now = func() time.Time { return signingTime }
 		cfg := s3.Config{DNSNames: []string{dnsName}}
+		acfg := auth.DefaultConfig()
+		acfg.HostNames = cfg.HostNames()
+		acfg.Now = func() time.Time { return signingTime }
 		s3h := s3.NewHandler(env, auth.New(acfg, store, store), cfg)
 		seen = make(chan served, 8)
 		for _, route := range []string{"get_obj", "get_acls", "get_obj_tags", "list_buckets", "get_usage", "list_bucket", "get_bucket_policy"} {

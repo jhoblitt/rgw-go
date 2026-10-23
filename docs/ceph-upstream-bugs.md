@@ -343,6 +343,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's DeleteBucketCors refuses, and keeps, a CORS configuration that does not decode](#radosgws-deletebucketcors-refuses-and-keeps-a-cors-configuration-that-does-not-decode) | none | none | ✓ |
 | [cls_rgw's bucket_list ignores its start key when it cannot read that key's instance entry](#cls_rgws-bucket_list-ignores-its-start-key-when-it-cannot-read-that-keys-instance-entry) | pending | pending | ✓ |
 | [Squid's radosgw serves a request with no Host as S3 when s3website outranks s3](#squids-radosgw-serves-a-request-with-no-host-as-s3-when-s3website-outranks-s3) | [#66748](https://tracker.ceph.com/issues/66748), [#66820](https://tracker.ceph.com/issues/66820) | [ceph/ceph#58339](https://github.com/ceph/ceph/pull/58339) |  |
+| [radosgw keeps the hostnames a realm reload drops until it restarts](#radosgw-keeps-the-hostnames-a-realm-reload-drops-until-it-restarts) | pending | pending | ✓ |
 | [radosgw sends a public access block after GetPublicAccessBlock's error document, past its Content-Length](#radosgw-sends-a-public-access-block-after-getpublicaccessblocks-error-document-past-its-content-length) | pending | pending | ✓ |
 | [radosgw's ?layout dereferences a null manifest](#radosgws-layout-dereferences-a-null-manifest) | pending | pending | ✓ |
 | [radosgw's ?layout hands a cloud tier's S3 secret to any holder of admin=read](#radosgws-layout-hands-a-cloud-tiers-s3-secret-to-any-holder-of-adminread) | pending | pending | ✓ |
@@ -17752,7 +17753,7 @@ Every new entry adds its row to this table, in document order.
   host and protocol: `website.Apply` declines, as `ErrUnsafeRedirect`, a
   host holding a byte at or below 0x20, or 0x7F, and a protocol other than
   `http` or `https`, which covers a configuration radosgw stored, and the
-  website endpoint, once served, answers that as an internal error;
+  website endpoint answers that as an internal error;
   `website.ParseXML` refuses such
   a `HostName` as InvalidArgument (`docs/exclusions.md`, "A website
   redirect is refused for a host holding a control byte or a protocol
@@ -19571,10 +19572,11 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** every Squid release, checked at v19.2.7; fixed from v20.0.0,
   checked at v20.2.4. The fix is in neither v19.2.7 nor origin/squid as
   fetched on 2026-10-20 (226f1401666), and it is on origin/tentacle.
-- **rgw-go:** applies Tentacle's rule on both releases (B14):
-  `ParseRequest` flags every request as a website one when s3website is
-  enabled and outranks s3, a request with no Host included
-  (`internal/s3/request.go:68-77`).
+- **rgw-go:** applies Tentacle's rule on both releases (`docs/exclusions.md`,
+  "On Squid, a request with no Host is a website request when s3website
+  outranks s3"): `ParseRequest` flags every request as a website one when
+  s3website is enabled and outranks s3, a request with no Host included
+  (`internal/s3/request.go:71-81`).
 - **Upstream:** [#66748](https://tracker.ceph.com/issues/66748), fixed by
   [ceph/ceph#58339](https://github.com/ceph/ceph/pull/58339) (5913f584cba).
   #66748 is Backporting to squid and reef: Squid's backport,
@@ -19582,6 +19584,39 @@ Every new entry adds its row to this table, in document order.
   Reef's, #66821, was Rejected (checked 2026-10-20).
 - **Found:** phase 2 unit B, Task BC-13's review, 2026-10-20; derived from
   the source, not reproduced.
+
+## radosgw keeps the hostnames a realm reload drops until it restarts
+
+- **Kind:** defect, S3-correctness; found by us. Unfixed at v19.2.7 and
+  v20.2.4. Derived from the source, not reproduced.
+- **Evidence:**
+  - A period commit notifies the realm's control object to reload the
+    gateway ([realm.cc:329-346](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/config/realm.cc#L329-L346), [realm.cc:329-346](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/config/realm.cc#L329-L346)), and the realm reloader schedules a reload
+    on the notification ([rgw_realm_reloader.cc:61-85](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_realm_reloader.cc#L61-L85), [rgw_realm_reloader.cc:61-85](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_realm_reloader.cc#L61-L85)).
+  - The reload builds a new driver and runs `rgw_rest_init` again with the
+    new period's zonegroup ([rgw_realm_reloader.cc:181](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_realm_reloader.cc#L181), [rgw_realm_reloader.cc:186](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_realm_reloader.cc#L186)).
+  - `rgw_rest_init` fills two static sets, `hostnames_set` and
+    `hostnames_s3website_set` ([rgw_rest.cc:182-183](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L182-L183), [rgw_rest.cc:182-183](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L182-L183)), by inserting
+    `rgw_dns_name`'s names and the zonegroup's hostnames, then
+    `rgw_dns_s3website_name` and the zonegroup's website hostnames
+    ([rgw_rest.cc:215-238](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L215-L238), [rgw_rest.cc:215-238](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L215-L238)). Nothing clears either set: past these lines, only
+    `RGWREST::preprocess`'s lookups read them ([rgw_rest.cc:2070-2145](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2070-L2145), [rgw_rest.cc:2082-2157](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2082-L2157)).
+- **Trigger:** a period commit that removes a hostname or a website
+  hostname from the gateway's zonegroup while radosgw runs.
+- **Impact:** the S3-correctness class, minor, not security-relevant. Until
+  it restarts, radosgw still finds a Host in a removed name. It takes the
+  Host's subdomain as the bucket, or serves the request as a website one for
+  a removed website name, and the name still counts toward the configured
+  names that let a Host name the bucket whole. A name the commit adds takes
+  effect at once.
+- **Releases:** v19.2.7 and v20.2.4. Not checked on main.
+- **rgw-go:** differs: it reads both sets of names once, at startup, and has
+  no realm reload, so a period commit's hostnames, added or removed, take
+  effect at its next restart (`s3Config`, `internal/cli/serve.go`;
+  `docs/exclusions.md`, "The hostnames are read at startup only").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 unit B, Task BC-13c's review, 2026-10-23, reading where
+  the hostname sets are filled. Derived from the source, not reproduced.
 
 ## radosgw sends a public access block after GetPublicAccessBlock's error document, past its Content-Length
 
@@ -24349,7 +24384,7 @@ Every new entry adds its row to this table, in document order.
   document's too (`GetObject.websiteObjectRedirect`,
   `internal/op/website_get.go`; `websiteGet.serveErrorDoc`,
   `internal/s3/website_serve.go`; `docs/exclusions.md`, "An object's
-  website redirect is answered once"). It serves no website endpoint yet.
+  website redirect is answered once").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 unit B, Task BC-14, 2026-10-22, porting the website
   GetObject's redirect. Derived from the source, not reproduced.
@@ -24397,8 +24432,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.7 and v20.2.4. Not checked on main.
 - **rgw-go:** not affected. `GetObject.isFile` stats the key the request
   names (`internal/op/website_get.go`; `docs/exclusions.md`, "A website
-  request's file test reads its key decoded once"). It serves no website
-  endpoint yet.
+  request's file test reads its key decoded once").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, Task BC-14, 2026-10-22, porting `web_dir`.
   Derived from the source, not reproduced.
@@ -24445,9 +24479,9 @@ Every new entry adds its row to this table, in document order.
   header lines the uploader wrote; an empty line ends the header section
   and makes the uploader's text the start of the body.
 - **Releases:** v19.2.7 and v20.2.4. Not checked on main.
-- **rgw-go:** not affected. It writes the header and, once its website
-  endpoint is served, the Location through net/http, which rewrites each
-  CR and LF in a header value to a space (`docs/exclusions.md`, "A stored
+- **rgw-go:** not affected. It writes the header and its website
+  endpoint's Location through net/http, which rewrites each CR and LF in a
+  header value to a space (`docs/exclusions.md`, "A stored
   header value's CR and LF go out as spaces"). It writes no such attr until
   it serves POST object, whose write refuses or folds the field's CR and LF
   (task BC-32).
@@ -24553,7 +24587,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: it answers InvalidPart whatever the policies name
   (`GetObject.websiteObjectRedirect`, `internal/op/website_get.go`;
   `docs/exclusions.md`, "A website GET of a part the object has not is
-  InvalidPart under any policy"). It serves no website endpoint yet.
+  InvalidPart under any policy").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, Task BC-14's review, 2026-10-22, tracing where
   the website GetObject's attrs come from. Derived from the source, not

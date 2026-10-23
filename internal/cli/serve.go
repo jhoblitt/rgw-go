@@ -360,15 +360,24 @@ func NewGateway(conf *cephconf.Options, store *driver.Store, instanceID uint64, 
 	env.Authz = authz.New(authzCfg)
 	env.Metrics = m
 	env.HostID = op.HostID(instanceID, store.Zone().Name, store.ZoneGroup().Name)
-	cfg, err := s3Config(conf, store, instanceID)
+	cfg, authCfg, err := gatewayConfigs(conf, store, instanceID)
 	if err != nil {
 		return nil, err
 	}
-	authCfg, err := auth.ConfigFrom(conf, cfg.DNSNames)
-	if err != nil {
-		return nil, fmt.Errorf("reading auth options: %w", err)
-	}
 	return newGateway(env, auth.New(authCfg, store, store), cfg), nil
+}
+
+// gatewayConfigs reads the S3 handler's options and the authenticator's
+// through conf. The authenticator reads a Host under the S3 handler's
+// hostnames, so that SigV2 signs the bucket a request is served from.
+func gatewayConfigs(conf *cephconf.Options, zi gatewayStore, instanceID uint64) (cfg s3.Config, authCfg auth.Config, err error) {
+	if cfg, err = s3Config(conf, zi, instanceID); err != nil {
+		return s3.Config{}, auth.Config{}, err
+	}
+	if authCfg, err = auth.ConfigFrom(conf, cfg.HostNames()); err != nil {
+		return s3.Config{}, auth.Config{}, fmt.Errorf("reading auth options: %w", err)
+	}
+	return cfg, authCfg, nil
 }
 
 // newGateway is the gateway over env that authenticates through a and
@@ -402,7 +411,7 @@ func (g *Gateway) AdminHandler(prefix string) *admin.Handler {
 		ServerHeader:  g.cfg.ServerHeader,
 		MaxConcurrent: g.cfg.MaxConcurrent,
 		InFlight:      g.cfg.InFlight,
-		DNSNames:      g.cfg.DNSNames,
+		HostNames:     g.cfg.HostNames(),
 	})
 }
 
@@ -445,17 +454,35 @@ func watchRADOS(reg *metrics.Registry, mode goceph.Mode, c radosclient.Cluster) 
 
 // s3Config reads the options the S3 handler takes: rgw_dns_name joined with
 // the zonegroup's hostnames as rgw_rest_init joins them
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L215-L223 at v19.2.6
-// and v20.2.4), the Server header end_header sends,
-// rgw_service_provider_name when it is set
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L215-L223 at v19.2.7
+// and v20.2.4); the website names, rgw_dns_s3website_name taken whole and
+// joined with the zonegroup's hostnames_s3website, an unset option giving
+// none, as rgw_rest_init erases an empty name
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L235-L238 at v19.2.7
+// and v20.2.4); s3website's place in rgw_enable_apis (cephconf.APIs); the
+// Server header end_header sends, rgw_service_provider_name when it is set
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L637-L642 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L642-L647 at v20.2.4),
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L642-L647 at v20.2.4);
 // and the request cap zi was opened with.
 func s3Config(conf *cephconf.Options, zi gatewayStore, instanceID uint64) (s3.Config, error) {
 	dns, err := conf.ListOn("rgw_dns_name", cephconf.DNSNameDelims)
 	if err != nil {
 		return s3.Config{}, fmt.Errorf("reading rgw_dns_name: %w", err)
 	}
+	websiteName, err := conf.String("rgw_dns_s3website_name")
+	if err != nil {
+		return s3.Config{}, fmt.Errorf("reading rgw_dns_s3website_name: %w", err)
+	}
+	apis, err := cephconf.EnabledAPIs(conf)
+	if err != nil {
+		return s3.Config{}, fmt.Errorf("reading rgw_enable_apis: %w", err)
+	}
+	zg := zi.ZoneGroup()
+	var websiteNames []string
+	if websiteName != "" {
+		websiteNames = append(websiteNames, websiteName)
+	}
+	websiteNames = append(websiteNames, zg.HostnamesS3Website...)
 	maxConcurrent := zi.MaxConcurrentRequests()
 	server, err := conf.String("rgw_service_provider_name")
 	if err != nil {
@@ -465,7 +492,10 @@ func s3Config(conf *cephconf.Options, zi gatewayStore, instanceID uint64) (s3.Co
 		server = "Ceph Object Gateway (" + zi.Release().String() + ")"
 	}
 	return s3.Config{
-		DNSNames:      append(dns, zi.ZoneGroup().Hostnames...),
+		DNSNames:      append(dns, zg.Hostnames...),
+		WebsiteNames:  websiteNames,
+		Website:       apis.Website,
+		WebsiteFirst:  apis.WebsiteFirst,
 		MaxConcurrent: int(maxConcurrent),
 		TransIDSuffix: op.TransIDSuffix(instanceID, zi.Zone().Name),
 		ServerHeader:  server,
@@ -594,11 +624,11 @@ func newRouter(s3h, adminH http.Handler, adminPath string, unserved http.Handler
 }
 
 func (rt router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if s3.MalformedPath(req, rt.cfg) {
+	if s3.MalformedPath(req, rt.cfg.HostNames()) {
 		badRequest(w)
 		return
 	}
-	uri := s3.DecodedURI(req, rt.cfg)
+	uri := s3.DecodedURI(req, rt.cfg.HostNames())
 	matched, toAdmin := "", false
 	if rt.admin != nil && under(uri, rt.adminPath) {
 		matched, toAdmin = rt.adminPath, true
@@ -675,7 +705,7 @@ func (h unservedHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Server", h.cfg.ServerHeader)
 	}
 	refusal := op.ErrMethodNotAllowed
-	if strings.IndexByte(s3.DecodedURI(req, h.cfg), 0) >= 0 {
+	if strings.IndexByte(s3.DecodedURI(req, h.cfg.HostNames()), 0) >= 0 {
 		refusal = op.ErrInvalidRequest
 	}
 	cw := &countingWriter{ResponseWriter: w, head: req.Method == http.MethodHead}

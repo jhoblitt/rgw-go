@@ -333,11 +333,12 @@ var _ = Describe("Signed OPTIONS requests through the s3 and admin handlers", fu
 		store.AddUser(user("t1$bob", nil))
 		store.AddUser(user("frank", func(u *meta.UserInfo) { u.AccountID = "RGW00000000000000001" }))
 		store.AddAccount(meta.AccountInfo{ID: "RGW00000000000000001", Tenant: "acct-tenant", Name: "acme"})
+		s3cfg := s3.Config{DNSNames: []string{"s3.example.com"}}
 		cfg := auth.DefaultConfig()
 		cfg.Now = fixedNow
-		cfg.DNSNames = []string{"s3.example.com"}
+		cfg.HostNames = s3cfg.HostNames()
 		env := &op.Env{Zone: store, Users: store, Accounts: store, Buckets: store, Objects: store, Multipart: store, Stats: store, Usage: store, Metadata: store, Authz: op.OwnerOnly{}, Metrics: op.NopMetrics{}, Now: fixedNow}
-		return s3.NewHandler(env, auth.New(cfg, store, store), s3.Config{DNSNames: cfg.DNSNames}), store
+		return s3.NewHandler(env, auth.New(cfg, store, store), s3cfg), store
 	}
 	serve := func(h http.Handler, req *http.Request) (int, string) {
 		rec := httptest.NewRecorder()

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
+	"github.com/jhoblitt/rgw-go/internal/vhost"
 )
 
 // Config is what the verifier reads from Ceph configuration and the
@@ -35,13 +36,15 @@ type Config struct {
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L765-L797 at v20.2.4,
 	// which also checks a present content-type and x-amz-content-sha256).
 	Insecure bool
-	// DNSNames is rgw_dns_name plus the zonegroup hostnames, the list
-	// s3.Config.DNSNames also gets: the SigV2 canonical resource starts with
-	// the bucket a virtual-hosted request names in its Host, as
-	// RGWREST::preprocess prepends it
-	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L2154-L2161 at v19.2.6,
-	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2171-L2178 at v20.2.4).
-	DNSNames []string
+	// HostNames are the hostnames the S3 handler reads a Host under,
+	// s3.Config.HostNames, the website ones included: the SigV2 canonical
+	// resource starts with the bucket a virtual-hosted request names in its
+	// Host, as RGWREST::preprocess prepends it to the request_uri the
+	// request is routed by
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2159-L2166 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2171-L2178 at v20.2.4),
+	// so a request is authenticated for the bucket it is served from.
+	HostNames vhost.Names
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 }
@@ -50,10 +53,10 @@ type Config struct {
 func DefaultConfig() Config { return Config{UseRados: true} }
 
 // ConfigFrom reads the three options through o; an option librados does not
-// know keeps its default. dnsNames is passed through.
-func ConfigFrom(o *cephconf.Options, dnsNames []string) (Config, error) {
+// know keeps its default. hostNames is passed through.
+func ConfigFrom(o *cephconf.Options, hostNames vhost.Names) (Config, error) {
 	cfg := DefaultConfig()
-	cfg.DNSNames = dnsNames
+	cfg.HostNames = hostNames
 	for _, opt := range []struct {
 		name string
 		dst  *bool

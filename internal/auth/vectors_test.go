@@ -15,6 +15,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/op"
+	"github.com/jhoblitt/rgw-go/internal/vhost"
 )
 
 // v4Vector is one testdata/v4 file: a request, how it is signed, and what
@@ -220,7 +221,7 @@ func runV2Vector(ctx SpecContext, path string) {
 		req.Header.Set("Authorization", "AWS "+v.Expect.AccessKey+":"+sig)
 	}
 	cfg := DefaultConfig()
-	cfg.DNSNames = v.DNSNames
+	cfg.HostNames = vhost.Names{S3: v.DNSNames}
 
 	d, err := authDataV2(newRequestView(req), &cfg, v.Now)
 	if v.Expect.Error != "" {
