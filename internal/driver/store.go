@@ -225,6 +225,7 @@ func (s *Store) Env() *op.Env {
 		Stats:       s,
 		Usage:       s,
 		Metadata:    s,
+		MFA:         s,
 		Lifecycle:   s,
 		Layout:      s,
 		Conf:        s.conf,

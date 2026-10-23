@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -30,6 +31,7 @@ const (
 	placement     = "default-placement"
 	dataPool      = "ceph-objectstore.rgw.buckets.data"
 	frontends     = "beast port=80 tcp_nodelay=1"
+	mfaUser       = "s3tests-main"
 )
 
 // Prefixes of the commands the world tells apart.
@@ -101,6 +103,23 @@ type world struct {
 	rgwGoPid   string
 	rgwGoFlags []string
 	nextPid    int
+
+	// mfaIDs are each user's record's mfa_ids, and devices each user's otp
+	// object's devices by serial. mfaFails fails the radosgw-admin mfa
+	// subcommand it names, createSeed makes mfa create store another seed,
+	// and createDropsID keeps mfa create from adding the serial to mfa_ids.
+	mfaIDs        map[string][]string
+	devices       map[string]map[string]*otpDevice
+	mfaFails      map[string]error
+	createSeed    string
+	createDropsID bool
+}
+
+// otpDevice is a device of an otp object: its config, and the replay
+// state cls_otp keeps beside it, which otp_set leaves as it is.
+type otpDevice struct {
+	seed, seedType string
+	lastSuccess    uint64
 }
 
 // newWorld is a cluster in the parity mode: neither worker runs, the classes
@@ -121,6 +140,9 @@ func newWorld() *world {
 		periodClasses:    []string{"COMP_LZ4", "FROZEN", "LUKEWARM", "STANDARD"},
 		zoneClasses:      map[string]string{"STANDARD": "", "COMP_LZ4": "lz4", "LUKEWARM": "", "FROZEN": ""},
 		nextPid:          700,
+		mfaIDs:           map[string][]string{mfaUser: nil},
+		devices:          map[string]map[string]*otpDevice{},
+		mfaFails:         map[string]error{},
 	}
 	w.change(radosgwEntity, "false", -2*time.Hour)
 	w.change(rgwGoEntity, "false", -2*time.Hour)
@@ -231,10 +253,15 @@ func (w *world) output(_ context.Context, c harness.Cmd) ([]byte, error) {
 		return w.ceph(args)
 	case hasPrefix(args, toolboxAdmin):
 		args = args[len(toolboxAdmin):]
-		Expect(args).To(HaveLen(2 + len(siteArgs)))
-		Expect(args[2:]).To(Equal(siteArgs))
-		w.events = append(w.events, "radosgw-admin "+strings.Join(args[:2], " "))
-		return w.admin(args[:2])
+		Expect(len(args)).To(BeNumerically(">", len(siteArgs)))
+		Expect(args[len(args)-len(siteArgs):]).To(Equal(siteArgs))
+		args = args[:len(args)-len(siteArgs)]
+		w.events = append(w.events, "radosgw-admin "+strings.Join(args, " "))
+		if args[0] == "mfa" || args[0] == "user" {
+			return w.mfaAdmin(args)
+		}
+		Expect(args).To(HaveLen(2))
+		return w.admin(args)
 	case hasPrefix(args, operator):
 		args = args[len(operator):]
 		Expect(args[len(args)-len(operatorArgs)-len(siteArgs):]).To(Equal(slices.Concat(siteArgs, operatorArgs)))
@@ -371,6 +398,62 @@ func (w *world) admin(args []string) ([]byte, error) {
 		return json.Marshal(map[string]any{"placement_pools": []any{
 			map[string]any{"key": placement, "val": map[string]any{"storage_classes": classes}},
 		}})
+	}
+	return nil, fmt.Errorf("the world has no answer to radosgw-admin %s", strings.Join(args, " "))
+}
+
+// mfaAdmin answers radosgw-admin's mfa list, remove and create and its user
+// info, for args after radosgw-admin and before the site's.
+func (w *world) mfaAdmin(args []string) ([]byte, error) {
+	sub := strings.Join(args[:2], " ")
+	opts := map[string]string{}
+	for i := 2; i+1 < len(args); i += 2 {
+		opts[args[i]] = args[i+1]
+	}
+	uid := opts["--uid"]
+	if err := w.mfaFails[args[1]]; err != nil {
+		return nil, err
+	}
+	switch sub {
+	case "mfa list":
+		entries := []map[string]any{}
+		for _, serial := range slices.Sorted(maps.Keys(w.devices[uid])) {
+			d := w.devices[uid][serial]
+			entries = append(entries, map[string]any{
+				"type": 2, "id": serial, "seed": d.seed, "seed_type": d.seedType,
+				"time_ofs": 0, "step_size": 30, "window": 2,
+			})
+		}
+		return json.Marshal(map[string]any{"entries": entries})
+	case "mfa remove":
+		delete(w.devices[uid], opts["--totp-serial"])
+		w.mfaIDs[uid] = slices.DeleteFunc(w.mfaIDs[uid], func(id string) bool { return id == opts["--totp-serial"] })
+		return nil, nil
+	case "mfa create":
+		Expect(opts).To(HaveKeyWithValue("--totp-seed-type", "hex"))
+		seed := opts["--totp-seed"]
+		if w.createSeed != "" {
+			seed = w.createSeed
+		}
+		if w.devices[uid] == nil {
+			w.devices[uid] = map[string]*otpDevice{}
+		}
+		serial := opts["--totp-serial"]
+		if d, ok := w.devices[uid][serial]; ok {
+			d.seed, d.seedType = seed, "hex"
+		} else {
+			w.devices[uid][serial] = &otpDevice{seed: seed, seedType: "hex"}
+		}
+		if !w.createDropsID && !slices.Contains(w.mfaIDs[uid], serial) {
+			w.mfaIDs[uid] = append(w.mfaIDs[uid], serial)
+		}
+		return nil, nil
+	case "user info":
+		ids, ok := w.mfaIDs[uid]
+		if !ok {
+			return nil, errors.New("could not fetch user info: no user info saved")
+		}
+		return json.Marshal(map[string]any{"user_id": uid, "mfa_ids": slices.Concat([]string{}, ids)})
 	}
 	return nil, fmt.Errorf("the world has no answer to radosgw-admin %s", strings.Join(args, " "))
 }

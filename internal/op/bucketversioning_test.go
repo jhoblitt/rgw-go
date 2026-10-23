@@ -217,6 +217,87 @@ var _ = Describe("bucket versioning ops", func() {
 			Entry("a verified flip with MFA delete on, which keeps it",
 				uint32(verFlagSuspended|verFlagMFA), op.VersioningEnabled, nil, true, uint32(verFlagEnabled|verFlagMFA)),
 		)
+		// AWS: "In order to enable MFA Delete, you must be the bucket owner."
+		DescribeTable("takes a verified x-amz-mfa only from the bucket's owner, so another requester's own device changes no MFA delete",
+			func(ctx SpecContext, from uint32, status op.VersioningStatus, mfaDelete *bool, refused bool) {
+				setFlags(ctx, from)
+				f.env.Authz = &opfakes.FakeAuthorizer{}
+				before := bucket(ctx)
+				r := f.req(http.MethodPut, "plain", "")
+				r.Identity = f.bob
+				r.MFAVerified = true
+				err := op.Run(ctx, put(status, mfaDelete), r)
+				if !refused {
+					Expect(err).NotTo(HaveOccurred())
+					return
+				}
+				Expect(err).To(MatchError(op.ErrMFARequired))
+				Expect(bucket(ctx).Version).To(Equal(before.Version), "nothing written")
+			},
+			Entry("MfaDelete Enabled on a bucket without it", uint32(verFlagEnabled), op.VersioningEnabled, new(true), true),
+			Entry("MfaDelete Disabled on a bucket with it", uint32(verFlagEnabled|verFlagMFA), op.VersioningEnabled, new(false), true),
+			Entry("Suspended on an enabled bucket with MFA delete", uint32(verFlagEnabled|verFlagMFA), op.VersioningSuspended, nil, true),
+			Entry("a change that needs no MFA, which the policy alone allows", uint32(verFlagEnabled), op.VersioningSuspended, nil, false),
+		)
+		It("takes no verified x-amz-mfa from a system user whose rgwx-uid names the owner, as the code verified the system user's own device", func(ctx SpecContext) {
+			setFlags(ctx, verFlagEnabled)
+			f.env.Authz = &opfakes.FakeAuthorizer{}
+			sys := f.bob
+			sys.System, sys.Owner = true, f.alice.Owner
+			r := f.req(http.MethodPut, "plain", "")
+			r.Identity = sys
+			r.MFAVerified = true
+			Expect(op.Run(ctx, put(op.VersioningEnabled, new(true)), r)).To(MatchError(op.ErrMFARequired))
+			Expect(bucket(ctx).Info.Flags).To(Equal(uint32(verFlagEnabled)), "nothing written")
+		})
+		// The S3 User Guide's "Configuring MFA delete": "only the bucket owner
+		// (root account) can enable MFA delete".
+		Describe("on a bucket an account owns", func() {
+			const acct, otherAcct = "RGW00000000000000001", "RGW00000000000000002"
+			accountUser := func(account, id string, t meta.IdentityType) op.Identity {
+				u := meta.UserInfo{UserID: meta.UserID{ID: id}, Type: t, AccountID: account, OpMask: op.OpTypeAll}
+				return op.Identity{User: &u, Owner: meta.AccountOwner(account), Account: &meta.AccountInfo{ID: account}, OpMask: op.OpTypeAll}
+			}
+			BeforeEach(func(ctx SpecContext) {
+				rec := bucket(ctx)
+				rec.Info.Owner = meta.AccountOwner(acct)
+				rec.Info.Flags = verFlagEnabled
+				Expect(f.store.PutBucketInfo(ctx, rec)).To(Succeed())
+				f.env.Authz = &opfakes.FakeAuthorizer{}
+			})
+			DescribeTable("takes a verified x-amz-mfa only from the account's root user",
+				func(ctx SpecContext, id func() op.Identity, served bool) {
+					before := bucket(ctx)
+					r := f.req(http.MethodPut, "plain", "")
+					r.Identity = id()
+					r.MFAVerified = true
+					err := op.Run(ctx, put(op.VersioningEnabled, new(true)), r)
+					if served {
+						Expect(err).NotTo(HaveOccurred())
+						Expect(bucket(ctx).Info.Flags).To(Equal(uint32(verFlagEnabled | verFlagMFA)))
+						return
+					}
+					Expect(err).To(MatchError(op.ErrMFARequired))
+					Expect(bucket(ctx).Version).To(Equal(before.Version), "nothing written")
+				},
+				Entry("the account's root user, served",
+					func() op.Identity { return accountUser(acct, "root", meta.IdentityRoot) }, true),
+				Entry("another of the account's users, 403",
+					func() op.Identity { return accountUser(acct, "member", meta.IdentityRGW) }, false),
+				Entry("another account's root user, 403",
+					func() op.Identity { return accountUser(otherAcct, "root2", meta.IdentityRoot) }, false),
+				Entry("a user outside any account, 403", func() op.Identity { return f.bob }, false),
+			)
+			It("takes no verified x-amz-mfa from a root user of no account on a bucket whose owner names none", func(ctx SpecContext) {
+				rec := bucket(ctx)
+				rec.Info.Owner = meta.Owner{}
+				Expect(f.store.PutBucketInfo(ctx, rec)).To(Succeed())
+				r := f.req(http.MethodPut, "plain", "")
+				r.Identity = accountUser("", "root", meta.IdentityRoot)
+				r.MFAVerified = true
+				Expect(op.Run(ctx, put(op.VersioningEnabled, new(true)), r)).To(MatchError(op.ErrMFARequired))
+			})
+		})
 		It("refuses an admin an MFA change it has not verified, as the check is execute's", func(ctx SpecContext) {
 			r := f.req(http.MethodPut, "plain", "")
 			r.Identity = f.bob

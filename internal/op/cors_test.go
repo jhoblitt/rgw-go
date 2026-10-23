@@ -845,7 +845,7 @@ var _ = Describe("bucket CORS ops", func() {
 	Describe("the tenant a forged preflight's bucket resolves under", func() {
 		// resolve is the handler's resolution of a bucket name, made before
 		// any op runs: a name that names no tenant takes the identity's
-		// (s3.PostAuthInit, internal/s3/request.go:188-205).
+		// (s3.PostAuthInit, internal/s3/request.go:221-233).
 		resolve := func(r *op.Request, name string) *op.Request {
 			if t, b, ok := strings.Cut(name, ":"); ok {
 				r.Tenant, r.Bucket = t, b

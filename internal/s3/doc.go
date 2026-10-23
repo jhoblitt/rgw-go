@@ -6,8 +6,8 @@
 // Dispatch selects the op that serves it by method, scope and subresource in
 // the precedence of radosgw's op_* methods at the cluster's release.
 // PostAuthInit, run once the request is authenticated as radosgw runs
-// postauth_init, gives it the identity's tenant and checks its tenant, bucket
-// and object names.
+// postauth_init, gives it the identity's tenant, checks its tenant, bucket
+// and object names, and checks its x-amz-mfa code.
 //
 // Handler, which NewHandler builds, serves every request in the order of
 // radosgw's process_request: the transaction id; the parse, with the

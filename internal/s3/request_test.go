@@ -297,12 +297,18 @@ func copySource(v string) map[string]string {
 	return map[string]string{"X-Amz-Copy-Source": v}
 }
 
+// postAuthInit runs PostAuthInit on p as an identity of tenant authTenant.
+func postAuthInit(ctx context.Context, p s3.Parsed, authTenant string) error {
+	p.Req.Identity.Tenant = authTenant
+	return s3.PostAuthInit(ctx, p)
+}
+
 var _ = Describe("PostAuthInit", func() {
 	DescribeTable("returns the errors radosgw's postauth_init returns, in its order",
 		func(ctx SpecContext, target string, hdr map[string]string, authTenant string, want *op.Error) {
 			p, err := parse(ctx, "GET", target, hdr, s3.Config{})
 			Expect(err).NotTo(HaveOccurred(), "ParseRequest leaves the names to PostAuthInit")
-			Expect(s3.PostAuthInit(p, authTenant)).To(MatchError(want))
+			Expect(postAuthInit(ctx, p, authTenant)).To(MatchError(want))
 		},
 		Entry("empty bucket after the tenant colon", "/t1:/k", nil, "", op.ErrInvalidBucketName),
 		Entry("a lone colon", "/:/k", nil, "", op.ErrInvalidBucketName),
@@ -324,7 +330,7 @@ var _ = Describe("PostAuthInit", func() {
 		func(ctx SpecContext, target, authTenant, tenant, bucket string) {
 			p, err := parse(ctx, "GET", target, nil, s3.Config{})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(s3.PostAuthInit(p, authTenant)).To(Succeed())
+			Expect(postAuthInit(ctx, p, authTenant)).To(Succeed())
 			Expect(p.Req.Tenant).To(Equal(tenant), "tenant")
 			Expect(p.Req.Bucket).To(Equal(bucket), "bucket")
 		},
@@ -337,7 +343,7 @@ var _ = Describe("PostAuthInit", func() {
 		func(ctx SpecContext, target string, hdr map[string]string) {
 			p, err := parse(ctx, "PUT", target, hdr, s3.Config{})
 			Expect(err).NotTo(HaveOccurred())
-			Expect(s3.PostAuthInit(p, "")).To(Succeed())
+			Expect(postAuthInit(ctx, p, "")).To(Succeed())
 		},
 		Entry("an object name of exactly 1024 bytes", "/plain/"+strings.Repeat("k", 1024), nil),
 		Entry("a short bucket name, left to the bucket lookup", "/ab/k", nil),

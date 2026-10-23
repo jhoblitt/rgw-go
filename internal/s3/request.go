@@ -1,7 +1,9 @@
 package s3
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -195,9 +197,9 @@ func withHostBucket(b, uri string) string {
 // MethodNotAllowed and verify_requester
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L325-L365 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L327-L367 at v20.2.4).
-// authTenant is the authenticated identity's op.Identity.Tenant;
-// PostAuthInit gives it to p.Req.Tenant unless the URL named a tenant. It
-// returns postauth_init's errors in that function's order
+// It gives p.Req.Tenant the authenticated identity's tenant,
+// p.Req.Identity.Tenant, unless the URL named a tenant. It returns
+// postauth_init's errors in that function's order
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4961-L5002 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5521-L5562 at v20.2.4):
 // InvalidBucketName for a bucket token with nothing after its first colon,
@@ -207,10 +209,18 @@ func withHostBucket(b, uri string) string {
 // RGWHandler_REST_S3::init parsed, whatever the method, whose tenant and
 // bucket it gives to p.Req.SrcTenant and p.Req.SrcBucket. radosgw makes none
 // of these checks earlier: init's own tenant and object checks read what
-// postauth_init has not yet set, so they pass. Its x-amz-mfa verification
-// fails no request.
-func PostAuthInit(p Parsed, authTenant string) error {
+// postauth_init has not yet set, so they pass.
+//
+// Once they pass it checks x-amz-mfa, as postauth_init does last, whatever
+// the op
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5026-L5031 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5556-L5561 at v20.2.4),
+// and sets p.Req.MFAVerified when the verifier in p.Req.Env verifies it
+// (verifyMFA). Nothing about MFA fails the request: an op that needs a
+// verified code refuses one without it.
+func PostAuthInit(ctx context.Context, p Parsed) error {
 	r := p.Req
+	authTenant := r.Identity.Tenant
 	if !p.ExplicitTenant {
 		// rgw_parse_url_bucket on the token ParseRequest left unsplit.
 		r.Tenant = authTenant
@@ -242,7 +252,72 @@ func PostAuthInit(p Parsed, authTenant string) error {
 			r.SrcTenant, r.SrcBucket = tenant, bucket
 		}
 	}
+	verifyMFA(ctx, r)
 	return nil
+}
+
+// verifyMFA sets r.MFAVerified when r's x-amz-mfa names one of the
+// requester's devices and its current code, as r.Env.MFA checks them. The
+// value splits as RadosUser::verify_mfa splits it, get_str_vec(mfa_str, " ",
+// params), at runs of spaces alone, so a tab is part of a field and no field
+// is empty
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L287-L296 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L304-L313 at v20.2.4;
+// https://github.com/ceph/ceph/blob/v19.2.7/src/include/str_list.h#L15-L24 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/include/str_list.h#L14-L23 at v20.2.4).
+// Only a value of exactly two fields, the serial and the code, reaches the
+// verifier, as verify_mfa answers any other EINVAL before it checks: a
+// field handed on as the code would count toward the device's checks.
+//
+// No code is checked for an identity granted on its key's id alone
+// (op.Identity.Unverified). Its sender has shown nothing of the key's
+// secret, yet each check counts against the key user's device, which takes
+// five in a step before it refuses every code, and uses up a good code;
+// radosgw checks it (docs/exclusions.md, "A preflight's x-amz-mfa is not
+// checked").
+//
+// Nothing holding the value is logged: its code verifies until a check
+// uses it or its window passes. A check that could not run leaves the
+// request unverified and is logged by the verifier's error, which names the
+// device and not the code, at warn, or at debug once the request's context
+// has ended.
+func verifyMFA(ctx context.Context, r *op.Request) {
+	v, ok := op.HeaderValue(r.Header, "X-Amz-Mfa")
+	if !ok || r.Identity.Unverified || r.Env == nil || r.Env.MFA == nil {
+		return
+	}
+	serial, pin, ok := mfaFields(v)
+	if !ok {
+		slog.DebugContext(ctx, "x-amz-mfa not checked: it is not a serial and a code")
+		return
+	}
+	verified, err := r.Env.MFA.VerifyMFA(ctx, r.Identity.User, serial, pin)
+	if err != nil {
+		// A client that goes away ends its check, and a warning then would be
+		// one any client could make at will.
+		level := slog.LevelWarn
+		if ctx.Err() != nil {
+			level = slog.LevelDebug
+		}
+		slog.Log(ctx, level, "x-amz-mfa check failed", slog.Any("error", err))
+		return
+	}
+	r.MFAVerified = verified
+}
+
+// mfaFields is the serial and the code get_str_vec(v, " ") splits v into,
+// and false when it does not split into exactly two fields.
+func mfaFields(v string) (serial, pin string, ok bool) {
+	var f [2]string
+	n := 0
+	for field := range strings.FieldsFuncSeq(v, func(c rune) bool { return c == ' ' }) {
+		if n == len(f) {
+			return "", "", false
+		}
+		f[n] = field
+		n++
+	}
+	return f[0], f[1], n == len(f)
 }
 
 // validObjectName is RGWHandler_REST::validate_object_name

@@ -441,6 +441,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's conditional versioned write checks its condition once and links unguarded](#radosgws-conditional-versioned-write-checks-its-condition-once-and-links-unguarded) | pending | pending | ✓ |
 | [radosgw checks a suspended bucket's write conditions against the OLH head](#radosgw-checks-a-suspended-buckets-write-conditions-against-the-olh-head) | pending | [ceph/ceph#71584](https://github.com/ceph/ceph/pull/71584), [ceph/ceph#72050](https://github.com/ceph/ceph/pull/72050) | |
 | [radosgw's versioned PutObject deletes its tails when its link fails](#radosgws-versioned-putobject-deletes-its-tails-when-its-link-fails) | pending | pending | ✓ |
+| [radosgw checks a signed CORS preflight's x-amz-mfa against its key's user's device](#radosgw-checks-a-signed-cors-preflights-x-amz-mfa-against-its-keys-users-device) | pending | pending | ✓ |
+| [radosgw's user removal leaves the user's MFA devices and their seeds in the otp pool](#radosgws-user-removal-leaves-the-users-mfa-devices-and-their-seeds-in-the-otp-pool) | pending | pending | ✓ |
+| [radosgw lets a requester's own MFA device satisfy another owner's MFA delete](#radosgw-lets-a-requesters-own-mfa-device-satisfy-another-owners-mfa-delete) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -3322,8 +3325,8 @@ Every new entry adds its row to this table, in document order.
     distances 0, 1 and 2 with `otp_pos` 0, -1 and -2, for indexes 37037036,
     37037038 and 37037040. It was refused at step 37037039, outside the
     window. The fresh code of step 37037037, checked after those replays,
-    was refused at index 37037037. Which liboath release the Ceph images
-    ship is unverified.
+    was refused at index 37037037. The images' liboath answers the absolute
+    distance, as 2.6.9 does; which release they ship is still unverified.
   - One code therefore passes `window + 1` checks, one per step: three at
     `otp_info_t`'s defaults, a step of 30 seconds and a window of 2
     ([cls_otp_types.h:40-41](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_types.h#L40-L41),
@@ -3336,7 +3339,15 @@ Every new entry adds its row to this table, in document order.
     steps after its own, against RFC 6238's one-time use (section 5.2).
   - Possibly security-relevant; sent to rgw-bug-reproduction. Found by phase
     2 task V13b, 2026-10-20, when fakerados's emulation of the class
-    accepted a reused code. Not reproduced on a running cluster.
+    accepted a reused code. Reproduced on running radosgw at v19.2.7 and
+    v20.2.4, on rooket clusters of each release's own image, on 2026-10-22
+    by phase 2 Task V13d's s3-test `test_versioning_mfa_delete_code_used_once`
+    (jhoblitt/ceph 20ae11c8503a; the v20.2.4 run used its first form,
+    4b8dea3dfb6d, which lacked only the `fails_on_rgw` marker), at
+    radosgw-admin's default step and window: the code that enabled MFA
+    delete was refused again in its own step and accepted again just after
+    the next step began. The second replay, at distance 2, and the refusal
+    of intervening fresh codes were not exercised there.
 - **One-time use, across entries:** cls_otp keeps one `last_success`
   counter per device, and it does not reliably enforce one-time use. Besides
   this replay, the registry records:
@@ -3392,8 +3403,9 @@ Every new entry adds its row to this table, in document order.
   `liboath/totp.c` returns the absolute position and carries its sign only in
   `otp_pos`. A userspace reproducer that calls liboath alone, run in a CentOS
   Stream 9 container and re-run independently, shows the defect and the fix
-  side by side; it is attached to #80949. Not reproduced on a running
-  cluster.
+  side by side; it is attached to #80949. Its replay reproduced on running
+  radosgw at v19.2.7 and v20.2.4 (Replay of one code, above); the refusal of
+  intervening codes is not reproduced on a running cluster.
 
 ## librbd leaks the update-watch context when registration fails
 
@@ -18514,9 +18526,10 @@ Every new entry adds its row to this table, in document order.
     code expires within its window, and default settings keep it out of
     every log output.
 - **Releases:** checked at v19.2.7 and v20.2.4.
-- **rgw-go:** not affected once its `x-amz-mfa` verification, which phase 2
-  Task V13d ports, never logs the header value, as the plan requires.
-  rgw-go does not read the header yet.
+- **rgw-go:** not affected. It logs nothing holding the header value, a
+  value that does not split in two included, and a check that could not
+  run by the verifier's error, which names the device and not the code
+  (`verifyMFA`, `internal/s3/request.go`).
 - **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
   searched.
 - **Found:** phase 2 Task V13a's review, 2026-10-19, reading `verify_mfa`
@@ -25524,3 +25537,291 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V7a, 2026-10-22, tracing what a failed link
   leaves; derived from the source, not reproduced.
+
+## radosgw checks a signed CORS preflight's x-amz-mfa against its key's user's device
+
+- **Kind:** defect, security-relevant (low) and found by us: a targeted
+  denial of service against a user's MFA by anyone who holds the user's
+  access key id and a device serial, but not the key's secret. The class's
+  five checks a step are its intended guard against guessing codes, which
+  anyone holding the key's secret can trip by sending wrong codes; the
+  defect is that the unsigned preflight reaches that guard without the
+  secret. It is one more
+  consequence at the sink "[radosgw grants a signed CORS preflight without
+  comparing its
+  signature](#radosgw-grants-a-signed-cors-preflight-without-comparing-its-signature)",
+  beside its rate-limit charge and its answers by key kind, and "[radosgw's
+  signed CORS preflight takes a system key's rgwx-uid
+  unverified](#radosgws-signed-cors-preflight-takes-a-system-keys-rgwx-uid-unverified)".
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `LocalEngine::authenticate` grants a request typed `RGW_OP_OPTIONS_CORS`
+    once its key resolves, without comparing its signature
+    ([rgw_rest_s3.cc:6395-6401](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6395-L6401),
+    [rgw_rest_s3.cc:6925-6931](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6925-L6931)),
+    and `Strategy::apply` gives the request the key's user record
+    ([rgw_auth.cc:519](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L519),
+    [rgw_auth.cc:534](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L534)).
+  - `process_request` then runs `postauth_init` for the preflight as for any
+    op
+    ([rgw_process.cc:365](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L365),
+    [rgw_process.cc:367](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L367)),
+    which hands the request's `x-amz-mfa` to `s->user->verify_mfa`
+    ([rgw_rest_s3.cc:5026-5029](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5026-L5029),
+    [rgw_rest_s3.cc:5556-5559](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5556-L5559)).
+    That checks a serial in the user's `mfa_ids` through cls_otp
+    ([rgw_sal_rados.cc:298-308](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L298-L308),
+    [rgw_sal_rados.cc:315-325](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L315-L325)),
+    whose client sends `otp_check` and then reads its result back with
+    `otp_get_result`
+    ([cls_otp_client.cc:60-83](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_client.cc#L60-L83),
+    [cls_otp_client.cc:60-85](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_client.cc#L60-L85);
+    the class's methods,
+    [cls_otp.cc:447-471](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L447-L471) and
+    [cls_otp.cc:483-507](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L483-L507),
+    [cls_otp.cc:447-471](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L447-L471) and
+    [cls_otp.cc:483-507](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L483-L507)).
+  - The class records each check in the device's `last_checks`, and once
+    five lie within the last `step_size` seconds it records no more
+    ([cls_otp.cc:98-127](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L98-L127),
+    [cls_otp.cc:98-127](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L98-L127)).
+    A check it does not record has no result to find, `OTP_CHECK_UNKNOWN`
+    ([cls_otp.cc:155-169](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L155-L169),
+    [cls_otp.cc:155-169](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L155-L169)),
+    which `check_mfa` answers EACCES
+    ([svc_cls.cc:46-63](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L46-L63),
+    [svc_cls.cc:46-63](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_cls.cc#L46-L63)).
+    A check that succeeds stores the code's index as `last_success`, and a
+    later check at or below it fails
+    ([cls_otp.cc:143-150](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L143-L150),
+    [cls_otp.cc:143-150](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L143-L150)).
+- **Impact:** five forged preflights a step, each naming one of the user's
+  devices with any code, keep that device's checks spent, and while they
+  last every code the user sends is refused: its MFA deletes and its
+  changes to an MFA delete bucket's versioning are 403 AccessDenied for as
+  long as the sender keeps on. The sender needs the key's id, which every
+  request signed with the key and every URL presigned with it carries in
+  the clear, and the device's serial, which a user names and radosgw does
+  not keep secret. The preflight's answer does not depend on the check,
+  so the sender learns no code from it. A forged request of another method
+  fails its signature check before `postauth_init`, so only the preflight
+  reaches the check.
+
+  A signed request's own `x-amz-mfa` is held to its signature: the holder
+  of a signed request or a presigned URL cannot add one. SigV4 refuses a
+  request, presigned or not, that carries an `x-amz-*` header outside its
+  SignedHeaders
+  ([rgw_auth_s3.cc:788-841](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L788-L841) and
+  [rgw_rest_s3.cc:5838-5839](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5838-L5839),
+  [rgw_auth_s3.cc:765-797](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L765-L797) and
+  [rgw_rest_s3.cc:6364-6365](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6364-L6365)),
+  and SigV2 signs every `x-amz-*` header in both its forms
+  ([rgw_common.cc:413-460](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L413-L460) and
+  [rgw_auth_s3.cc:246](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L246),
+  [rgw_common.cc:426-473](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L426-L473) and
+  [rgw_auth_s3.cc:248](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L248)).
+  Only `rgw_sigv4_insecure`, false by default and described as allowing
+  "potential privilege escalation with added `x-amz-` headers on Sigv4",
+  lets that holder add the header and spend the device's checks, as it
+  lets any `x-amz-*` header through; rgw-go does the same under it.
+- **Releases:** checked at v19.2.7 and v20.2.4; the grant without a
+  signature compare is v19.1.0 on (the sink's entry).
+- **rgw-go:** not affected. It checks no `x-amz-mfa` for an identity its
+  verifier granted on its key's id alone (`verifyMFA`,
+  `internal/s3/request.go`; `docs/exclusions.md`, "A preflight's x-amz-mfa
+  is not checked").
+- **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
+  searched. The fix belongs at the sink, where the preflight is granted
+  without its signature compared: giving it the key's tenant and nothing
+  else of the key's user leaves `verify_mfa` no device to check.
+- **Found:** phase 2 Task V13d, 2026-10-22, reading what `postauth_init`
+  does for a request its identity's grant did not verify. Derived from the
+  source, not reproduced.
+
+## radosgw's user removal leaves the user's MFA devices and their seeds in the otp pool
+
+- **Kind:** defect, security-relevant, conditional (rgw-bug-reproduction's
+  triage, 2026-10-22, at v20.2.4), found by us: secret material outlives
+  its account. A removed user's otp object, `user:<uid>`
+  in the zone's otp_pool, keeps every device's seed and replay state.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - Every user removal ends in `RGWSI_User_RADOS::remove_user_info`, which
+    removes the active keys' and swift names' indexes, the email index, the
+    user's bucket list or its account link, its group links and the uid
+    object, and nothing in the otp pool
+    ([svc_user_rados.cc:551-630](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_user_rados.cc#L551-L630),
+    [svc_user_rados.cc:526-604](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L526-L604)):
+    - `radosgw-admin user rm`
+      ([rgw_admin.cc:6657](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L6657),
+      [radosgw-admin.cc:6898](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L6898)),
+      through `RGWUser::execute_remove`
+      ([rgw_user.cc:1940-1995](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_user.cc#L1940-L1995),
+      [rgw_user.cc:1946-2001](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L1946-L2001)),
+      `RadosUser::remove_user`
+      ([rgw_sal_rados.cc:278-282](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L278-L282),
+      [rgw_sal_rados.cc:295-299](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L295-L299))
+      and `RGWUserCtl::remove_info`
+      ([rgw_user.cc:2977-2989](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_user.cc#L2977-L2989),
+      [rgw_user.cc:3032-3038](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L3032-L3038));
+    - the admin API's user removal, through `RGWUserAdminOp_User::remove`
+      ([rgw_rest_user.cc:478](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rest_user.cc#L478) and
+      [rgw_user.cc:2477-2493](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_user.cc#L2477-L2493),
+      [rgw_rest_user.cc:488](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L488) and
+      [rgw_user.cc:2483-2499](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L2483-L2499));
+    - IAM's DeleteUser of an account's user
+      ([rgw_rest_iam_user.cc:622](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_iam_user.cc#L622),
+      [rgw_rest_iam_user.cc:622](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_iam_user.cc#L622))
+      and an account removal that purges its users
+      ([rgw_account.cc:323](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_account.cc#L323),
+      [rgw_account.cc:323](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_account.cc#L323)),
+      each through `remove_user`;
+    - a removal of the user's metadata, `metadata rm user:<uid>`, through
+      the user metadata handler
+      ([rgw_user.cc:2772-2787](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_user.cc#L2772-L2787),
+      [rgw_user.cc:2853-2868](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L2853-L2868)).
+  - The otp object loses a device only to `radosgw-admin mfa remove`, the
+    one caller of `RGWSI_Cls::MFA::remove_mfa`
+    ([rgw_admin.cc:10876](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10876),
+    [radosgw-admin.cc:11468](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L11468)),
+    and goes whole only with the otp metadata section's removal,
+    `metadata rm otp:user:<uid>`
+    ([rgw_otp.cc:142-152](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_otp.cc#L142-L152),
+    [rgw_otp.cc:84-92](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L84-L92)).
+    No user removal calls either.
+  - A user created again with the uid starts with no `mfa_ids`, and
+    `verify_mfa` refuses a serial its record does not list before it checks
+    a device
+    ([rgw_sal_rados.cc:298-302](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L298-L302),
+    [rgw_sal_rados.cc:315-319](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L315-L319)).
+  - `mfa create` of a serial the object still holds keeps the device's
+    replay state. `otp_set_op` loads the stored instance through
+    `get_otp_instance`, replaces only its `.otp`, the device's config with
+    its seed, and writes the instance back, so its `last_checks` and
+    `last_success` survive
+    ([cls_otp.cc:301-348](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L301-L348),
+    [cls_otp.cc:301-348](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L301-L348)).
+  - A metadata put of a user record takes the `mfa_ids` the record lists
+    (`RGWUserInfo::decode_json`,
+    [rgw_common.cc:2893](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2893),
+    [rgw_common.cc:2949](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2949)).
+- **Impact:**
+  - The seeds of a removed user's devices stay in the otp pool for as long
+    as the cluster keeps the object, readable to whoever can read that pool
+    or the otp metadata section: secret material the removal leaves behind.
+  - A user created again with the uid cannot verify through the old
+    devices, as its record lists none. An old device verifies for it again
+    once its serial returns to the record without `mfa create`, as a
+    metadata put of a record from before the removal returns it; the old
+    owner's authenticator then verifies the new user's MFA requests.
+  - `mfa create` of an old serial gives the device the new seed but the
+    old replay state, which refuses nothing once the clock has passed the
+    old last success.
+  - Low: reading a seed takes access to the pool or the metadata API, and
+    reusing a device takes an administrator restoring an old record.
+- **Releases:** checked at v19.2.7 and v20.2.4.
+- **rgw-go:** matches radosgw. Its `RemoveUser` removes what
+  `remove_user_info` removes and leaves the otp object
+  (`internal/driver/user.go:831-873`), so a removal through either gateway
+  leaves the same state.
+- **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
+  searched.
+- **Found:** phase 2 Task V13d's review, 2026-10-22, reasoning about the
+  s3-tests harness's main user created again after a removal; every removal
+  path traced in the task's first fix round; verified at v20.2.4 by
+  rgw-bug-reproduction's triage the same day, which filed it as security:
+  conditional and linked it to its WP17-2. Derived from the source, not
+  reproduced.
+
+## radosgw lets a requester's own MFA device satisfy another owner's MFA delete
+
+- **Kind:** defect, security-relevant, conditional (rgw-bug-reproduction's
+  triage, 2026-10-22, at v20.2.4), found by us: MFA delete answers to
+  whichever user sends the request, not to the bucket's owner. Two limits
+  bound it:
+  - only an administrator gives a user a device, so the non-owner needs a
+    device an administrator issued;
+  - the case that matters, a non-owner turning the bucket's MFA delete off,
+    is conditional on a deployment that grants `s3:PutBucketVersioning` or
+    `s3:DeleteObjectVersion` to a non-owner holding a device.
+
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `postauth_init` checks the request's `x-amz-mfa` against the devices of
+    `s->user`, the requester
+    ([rgw_rest_s3.cc:5026-5029](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5026-L5029),
+    [rgw_rest_s3.cc:5556-5559](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5556-L5559);
+    [rgw_sal_rados.cc:298-308](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L298-L308),
+    [rgw_sal_rados.cc:315-325](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L315-L325)).
+  - PutBucketVersioning asks for `s3:PutBucketVersioning` alone, and its
+    MFA checks test `s->mfa_verified` alone, for a change of MFA delete and
+    for a versioning change of a bucket with it on
+    ([rgw_op.cc:2759-2770](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2759-L2770) and
+    [rgw_op.cc:2795-2817](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2795-L2817),
+    [rgw_op.cc:2991-3002](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2991-L3002) and
+    [rgw_op.cc:3027-3049](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3027-L3049)).
+  - DeleteObject of a version asks for `s3:DeleteObjectVersion` and then
+    tests `s->mfa_verified` alone
+    ([rgw_op.cc:5138-5166](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5138-L5166),
+    [rgw_op.cc:5528-5556](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5528-L5556)),
+    and DeleteObjects tests it alone too
+    ([rgw_op.cc:7067-7081](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L7067-L7081),
+    [rgw_op.cc:7969-7983](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7969-L7983)).
+    None compares the requester with the bucket's owner.
+  - Only an administrator creates a device. `RGWSI_Cls::MFA::create_mfa`'s
+    callers are radosgw-admin's `mfa create` and `mfa resync`
+    ([rgw_admin.cc:10840](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10840) and
+    [rgw_admin.cc:11023](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L11023),
+    [radosgw-admin.cc:11431](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L11431) and
+    [radosgw-admin.cc:11616](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L11616)).
+    The otp metadata section's put also writes devices, through `set_mfa`.
+    At v19.2.7 its `do_put` stores them through `RGWSI_OTP::store_all`
+    ([rgw_otp.cc:120-139](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_otp.cc#L120-L139)),
+    which reaches `set_mfa` in `RGWSI_MetaBackend_OTP::put_entry`
+    ([svc_meta_be_otp.cc:71](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_meta_be_otp.cc#L71)).
+    At v20.2.4 its `put`
+    ([rgw_otp.cc:70-82](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L70-L82))
+    calls `set_mfa` itself
+    ([rgw_otp.cc:76](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L76)).
+    That put runs for radosgw-admin's `metadata put`, for metadata sync, and
+    for the admin API's metadata put, which needs the `metadata` write cap
+    ([rgw_rest_metadata.h:61-63](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_metadata.h#L61-L63),
+    [rgw_rest_metadata.h:61-63](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_metadata.h#L61-L63)).
+    No S3 or IAM op writes a device.
+  - AWS's [PutBucketVersioning](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketVersioning.html)
+    (read 2026-10-15): "In order to enable MFA Delete, you must be the
+    bucket owner."
+- **Impact:** a user whom the bucket's ACL or policy grants
+  `s3:PutBucketVersioning` or `s3:DeleteObjectVersion`, and who has an MFA
+  device of its own, satisfies the bucket's MFA delete with that device:
+  - it can delete the bucket's versions, suspend its versioning or turn its
+    MFA delete off without the owner's device, which MFA delete exists to
+    require;
+  - it can turn MFA delete on for a bucket it does not own; the owner then
+    needs a device of its own for every version delete and for turning it
+    off again.
+
+  The case that matters is the first, a non-owner turning MFA delete off,
+  after which the bucket's version deletes need no second factor. It is
+  conditional on a deployment that grants `s3:PutBucketVersioning` or
+  `s3:DeleteObjectVersion` to a non-owner holding a device: the first
+  turns MFA delete off, the second deletes the versions it guards. That
+  device is one an administrator issued, as no S3 or IAM op creates one.
+- **Releases:** checked at v19.2.7 and v20.2.4.
+- **rgw-go:** follows AWS for PutBucketVersioning. The S3 User Guide's
+  "[Configuring MFA delete](https://docs.aws.amazon.com/AmazonS3/latest/userguide/MultiFactorAuthenticationDelete.html)"
+  (read 2026-10-22): "only the bucket owner (root account) can enable MFA
+  delete", and "the bucket owner must include two forms of authentication
+  in any request to delete a version or change the versioning state".
+  rgw-go counts a verified code only from the bucket's owner: the user that
+  owns it, or for a bucket an account owns, the account's root user alone
+  (`op.OwnerMFAVerified`, `internal/op/mfa.go`; `docs/exclusions.md`,
+  "Only the bucket owner's x-amz-mfa satisfies MFA delete"). Its
+  DeleteObject and DeleteObjects take no verdict and refuse every delete
+  MFA delete guards ("Deletes that need MFA are refused" there).
+- **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
+  searched.
+- **Found:** phase 2 Task V13d's automated security review, 2026-10-22;
+  traced at both tags in the task's first fix round; verified at v20.2.4 by
+  rgw-bug-reproduction's triage the same day, which filed it as security:
+  conditional. Derived from the source, not reproduced.

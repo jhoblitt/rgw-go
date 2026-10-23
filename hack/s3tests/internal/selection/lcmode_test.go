@@ -74,6 +74,29 @@ var _ = Describe("the s3tests command's cluster subcommands", func() {
 		Expect(c.Env).To(Equal([]string{"ROOKET_NAME=rgw-go-squid"}))
 	})
 
+	DescribeTable("refuses mfa's command line before it reaches the cluster, and exits 2",
+		func(ctx SpecContext, want string, args ...string) {
+			status, stdout, stderr := runWith(ctx, append([]string{"mfa"}, args...)...)
+			Expect(status).To(Equal(2))
+			Expect(stdout).To(BeEmpty())
+			Expect(stderr).To(ContainSubstring(want))
+			Expect(fake.OutputCallCount()).To(BeZero())
+		},
+		Entry("no release", `--release must be squid or tentacle, not ""`, "--uid", "s3tests-main"),
+		Entry("another release", `--release must be squid or tentacle, not "reef"`, "--release", "reef", "--uid", "s3tests-main"),
+		Entry("no user", "--uid names no user", "--release", "squid"),
+	)
+
+	It("gives the device on the release's cluster through the rooket it is given, printing nothing when it cannot", func(ctx SpecContext) {
+		status, stdout, stderr := runWith(ctx, "mfa", "--release", "tentacle", "--rooket", "/opt/rooket", "--uid", "s3tests-main")
+		Expect(status).To(Equal(2))
+		Expect(stdout).To(BeEmpty())
+		Expect(stderr).To(ContainSubstring("giving the user s3tests-main the MFA device s3tests-totp: "))
+		_, c := fake.OutputArgsForCall(0)
+		Expect(c.Name).To(Equal("/opt/rooket"))
+		Expect(c.Env).To(Equal([]string{"ROOKET_NAME=rgw-go-tentacle"}))
+	})
+
 	DescribeTable("refuses lc-mode's command line before it reaches the cluster, and exits 2",
 		func(ctx SpecContext, want string, args ...string) {
 			status, stdout, stderr := runWith(ctx, append([]string{"lc-mode"}, args...)...)
