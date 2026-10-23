@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"syscall"
 
-	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
+	"github.com/jhoblitt/rgw-go/hack/internal/harness"
 )
 
 // ExitStatus is the status the command exits with after a run under ctx

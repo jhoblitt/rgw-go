@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
+	"github.com/jhoblitt/rgw-go/hack/internal/harness"
 )
 
 // Environment is a run's env.json: the host, the cluster and the settings

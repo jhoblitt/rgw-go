@@ -133,8 +133,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
 	"github.com/jhoblitt/rgw-go/hack/bench/seam/internal/seam"
+	"github.com/jhoblitt/rgw-go/hack/internal/harness"
 )
 
 func main() {

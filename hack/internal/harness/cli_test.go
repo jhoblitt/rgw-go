@@ -7,7 +7,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/spf13/viper"
 
-	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
+	"github.com/jhoblitt/rgw-go/hack/internal/harness"
 )
 
 var _ = Describe("BindEnv", func() {

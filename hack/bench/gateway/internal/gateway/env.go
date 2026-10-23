@@ -13,7 +13,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
+	"github.com/jhoblitt/rgw-go/hack/internal/harness"
 )
 
 // ordered is a JSON object whose keys keep their order, as jq writes one.

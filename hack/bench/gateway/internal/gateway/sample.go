@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
+	"github.com/jhoblitt/rgw-go/hack/internal/harness"
 )
 
 // sampleHeader heads a new samples file; hack/bench/report's gateway reader

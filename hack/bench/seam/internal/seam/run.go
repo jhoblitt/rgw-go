@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
+	"github.com/jhoblitt/rgw-go/hack/internal/harness"
 )
 
 // Runner runs the sweep or the limiter re-run against a release's cluster.

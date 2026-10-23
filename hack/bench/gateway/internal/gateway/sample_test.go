@@ -17,7 +17,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/hack/bench/gateway/internal/gateway"
-	"github.com/jhoblitt/rgw-go/hack/bench/internal/harness"
+	"github.com/jhoblitt/rgw-go/hack/internal/harness"
 )
 
 // clock is a fake clock that moves step at each reading.

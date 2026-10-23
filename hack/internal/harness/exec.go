@@ -1,4 +1,4 @@
-// Package harness holds what the bench commands share: commands run on this
+// Package harness holds what the hack commands share: commands run on this
 // host under deadlines in process groups of their own, a rooket cluster's
 // toolbox, the signals that interrupt a run, and what a run reads of the host
 // and the repository.
