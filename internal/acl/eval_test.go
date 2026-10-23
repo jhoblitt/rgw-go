@@ -98,14 +98,19 @@ var _ = Describe("PermFor", func() {
 		Entry("Tentacle's PostBucketLogging", policy.S3PostBucketLogging, acl.PermWriteACP),
 		Entry("ceph main's PutAccountPublicAccessBlock", policy.S3PutAccountPublicAccessBlock, acl.PermInvalid),
 		Entry("ceph main's GetAccountPublicAccessBlock", policy.S3GetAccountPublicAccessBlock, acl.PermInvalid),
-		Entry("an s3 action the switch leaves out", policy.S3GetBucketOwnershipControls, acl.PermInvalid),
+		Entry("an s3 action the switch leaves out", policy.S3DescribeJob, acl.PermInvalid),
+		Entry("v21.1.2's GetBucketOwnershipControls, rgw_iam_policy.h:314-315 at v21.1.2", policy.S3GetBucketOwnershipControls, acl.PermReadACP),
+		Entry("v21.1.2's PutBucketOwnershipControls, rgw_iam_policy.h:338-339 at v21.1.2", policy.S3PutBucketOwnershipControls, acl.PermWriteACP),
 		Entry("the first action past the s3 block", policy.S3All+1, acl.PermInvalid),
 	)
-	It("maps every s3 action as op_to_perm does at v20.2.4", func() {
+	It("maps every s3 action as op_to_perm does at v20.2.4, with v21.1.2's two ownership controls rows", func() {
 		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L247-L334 at v20.2.4,
 		// row for row; v19.2.6's table
 		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.h#L237-L317)
-		// is the same less the seven actions only Tentacle knows.
+		// is the same less the seven actions only Tentacle knows, and
+		// v21.1.2's
+		// (https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_iam_policy.h#L256-L345 at v21.1.2)
+		// the same plus the ownership controls rows.
 		table := map[acl.Permission][]policy.Action{
 			acl.PermRead: {
 				policy.S3GetObject,
@@ -164,6 +169,7 @@ var _ = Describe("PermFor", func() {
 				policy.S3GetReplicationConfiguration,
 				policy.S3GetBucketObjectLockConfiguration,
 				policy.S3GetBucketPublicAccessBlock,
+				policy.S3GetBucketOwnershipControls,
 			},
 			acl.PermWriteACP: {
 				policy.S3DeleteBucketPolicy,
@@ -187,6 +193,7 @@ var _ = Describe("PermFor", func() {
 				policy.S3PutReplicationConfiguration,
 				policy.S3PutBucketObjectLockConfiguration,
 				policy.S3PutBucketPublicAccessBlock,
+				policy.S3PutBucketOwnershipControls,
 			},
 			acl.PermFullControl: {policy.S3All},
 		}

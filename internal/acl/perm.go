@@ -19,7 +19,11 @@ const (
 // which is v19.2.6's
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.h#L237-L317)
 // plus rows for the seven s3 actions only Tentacle knows; a Squid radosgw
-// never evaluates those actions, so the one table serves both releases.
+// never evaluates those actions, so the one table serves both releases. It
+// also has v21.1.2's rows for the two ownership controls actions
+// (https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_iam_policy.h#L314-L315,
+// https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_iam_policy.h#L338-L339 at v21.1.2),
+// whose ops rgw-go serves on both releases and neither floor evaluates.
 func PermFor(a policy.Action) Permission {
 	switch a {
 	case policy.S3GetObject,
@@ -77,7 +81,8 @@ func PermFor(a policy.Action) Permission {
 		policy.S3GetObjectVersionAcl,
 		policy.S3GetReplicationConfiguration,
 		policy.S3GetBucketObjectLockConfiguration,
-		policy.S3GetBucketPublicAccessBlock:
+		policy.S3GetBucketPublicAccessBlock,
+		policy.S3GetBucketOwnershipControls:
 		return PermReadACP
 
 	case policy.S3DeleteBucketPolicy,
@@ -100,7 +105,8 @@ func PermFor(a policy.Action) Permission {
 		policy.S3PutObjectVersionAcl,
 		policy.S3PutReplicationConfiguration,
 		policy.S3PutBucketObjectLockConfiguration,
-		policy.S3PutBucketPublicAccessBlock:
+		policy.S3PutBucketPublicAccessBlock,
+		policy.S3PutBucketOwnershipControls:
 		return PermWriteACP
 
 	case policy.S3All:
