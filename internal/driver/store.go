@@ -164,7 +164,7 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 		s.AddWorker("gc", newGCWorker(s).run)
 	}
 	if opts.lcThreads && opts.lcMaxWorker > 0 {
-		s.AddWorker("lifecycle", newLCWorkers(s, lcStalePass{s}).run)
+		s.AddWorker("lifecycle", newLCWorkers(s, newLCPass(s)).run)
 	}
 	s.openQuota(ctx)
 	s.openUsageLog(ctx)
