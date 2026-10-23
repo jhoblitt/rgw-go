@@ -58,6 +58,11 @@ func (s *Store) PurgeBypassGC(ctx context.Context, rec *op.BucketRecord) error {
 	p := &bypassPurge{s: s, rec: rec, sem: semaphore.NewWeighted(int64(max(s.w.opts.gcMaxConcurrentIO, 1)))}
 	// Every entry of the plain namespace, versions included, unordered
 	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L497-L509).
+	// Paging by the next marker skips nothing here, though the pass deletes:
+	// every entry whose head it removes stays in the index, marked gone under
+	// the removal's pending tag as delete_obj_aio leaves it, so a marker
+	// naming a version still resolves after that version, and one naming an
+	// unversioned object starts after its name either way (markerStart).
 	params := op.ListObjectsParams{ListVersions: true, AllowUnordered: true, MaxKeys: purgeListPage}
 	for {
 		res, err := s.ListObjects(ctx, rec, params)
@@ -160,22 +165,32 @@ func (p *bypassPurge) stop(err error) error {
 // object is one listed entry
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L510-L582):
 // its head read as get_obj_state reads it, without following an olh; a
-// missing head is skipped
+// missing head, a delete marker's among them, is skipped
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L522-L525);
 // with a manifest, every stripe but the head is released under the refcount
 // tag, then the head and its index entry removed; without one, nothing is
 // done here and the ordinary purge deletes the object.
+//
+// A version's head is its own, so it goes as radosgw's does: its instance
+// entry is left marked gone under the removal's pending tag, and the
+// ordinary purge's removal of the version by its instance unlinks it, its
+// replay finding no head to remove or queue. A key's OLH head, which holds
+// the null version's data and the key's OLH, is skipped, so the ordinary
+// purge removes the null version and queues its tails for the garbage
+// collector, where radosgw releases them and removes the OLH head object
+// whole (docs/exclusions.md, "The admin bucket removal with bypass-gc
+// leaves a versioned key's OLH head to the ordinary purge").
 func (p *bypassPurge) object(ctx context.Context, key meta.ObjKey) error {
-	st, err := p.s.readHead(ctx, p.rec, key)
+	st, err := p.s.readOLHHead(ctx, p.rec, key)
 	if err != nil {
 		return err
 	}
 	if !st.Exists {
 		slog.InfoContext(ctx, "bypass-gc purge cannot find the object's head; skipping it",
-			slog.String("bucket", p.rec.Info.Bucket.Name), slog.String("key", key.Name))
+			slog.String("bucket", p.rec.Info.Bucket.Name), slog.String("key", key.Name), slog.String("instance", key.Instance))
 		return nil
 	}
-	if st.Manifest == nil {
+	if isOLHHead(st) || st.Manifest == nil {
 		return nil
 	}
 	// The stripe that is the head object as the manifest's head placement
