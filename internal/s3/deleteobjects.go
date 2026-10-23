@@ -28,7 +28,9 @@ var errBadDeleteObject = errors.New("s3: an Object element radosgw refuses")
 //     net/http completes with Content-Length: 0 and Date, as radosgw's
 //     frontend completes such a response
 //     (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_client_io_filters.h#L221-L253 at v19.2.6
-//     and v20.2.4);
+//     and v20.2.4). It carries the CORS headers, which radosgw leaves out
+//     with the rest (docs/exclusions.md, "Every S3 response carries CORS
+//     headers once its bucket is loaded");
 //   - otherwise begin_response
 //     (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4257-L4271)
 //     sends the common headers, Content-Type: application/xml and 200
@@ -67,6 +69,7 @@ func deleteObjects(ctx context.Context, w http.ResponseWriter, r *op.Request) er
 			h := w.Header()
 			delete(h, "x-amz-request-id")
 			h.Del("Server")
+			setCORSHeaders(h, corsHeaders(r))
 			w.WriteHeader(op.AsError(err).Status)
 		},
 		Begin: func() error {
