@@ -431,6 +431,10 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [cls_otp verifies a code of any length from 6 to 8 digits against any device](#cls_otp-verifies-a-code-of-any-length-from-6-to-8-digits-against-any-device) | pending | pending | ✓ |
 | [radosgw-admin mfa resync stores an offset half a step from its fit at an odd window](#radosgw-admin-mfa-resync-stores-an-offset-half-a-step-from-its-fit-at-an-odd-window) | pending | pending | ✓ |
 | [radosgw's bucket listings leave elements S3 encodes unencoded under encoding-type=url](#radosgws-bucket-listings-leave-elements-s3-encodes-unencoded-under-encoding-typeurl) | pending | pending | ✓ |
+| [radosgw's lifecycle rollover guard does not keep a second pass from walking a shard](#radosgws-lifecycle-rollover-guard-does-not-keep-a-second-pass-from-walking-a-shard) | pending | pending | ✓ |
+| [radosgw's lifecycle post-state overwrites an entry changed during the bucket's pass](#radosgws-lifecycle-post-state-overwrites-an-entry-changed-during-the-buckets-pass) | pending | pending | ✓ |
+| [radosgw's lifecycle worker hangs shutdown in WorkPool::drain and claims a bucket after it is told to stop](#radosgws-lifecycle-worker-hangs-shutdown-in-workpooldrain-and-claims-a-bucket-after-it-is-told-to-stop) | pending | pending | ✓ |
+| [radosgw's bucket_lc_process indexes past a lifecycle entry key of fewer than three parts](#radosgws-bucket_lc_process-indexes-past-a-lifecycle-entry-key-of-fewer-than-three-parts) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -24921,4 +24925,175 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 Task V14b, 2026-10-22, checking the versions
   document's markers under `encoding-type=url` against AWS's API reference,
   and widened to the other listings by V14b's review; derived from the
+  source, not reproduced.
+
+## radosgw's lifecycle rollover guard does not keep a second pass from walking a shard
+
+- **Kind:** defect, cosmetic: the check meant to keep a second worker from
+  walking a shard again in the same cycle ("prevent multiple passes by
+  diff. rgws, in same cycle") stops no walk, so every pass on a shard
+  within a day of its rollover walks it again from its first entry. Not
+  security-relevant. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - A pass starts the shard over from its first entry only when the head's
+    marker is empty and `allow_shard_rollover` allows it: more than a day
+    after the rollover date, with none stored, or in debug mode
+    ([rgw_lc.cc:2134-2147](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2134-L2147), [rgw_lc.cc:2198-2211](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2198-L2211);
+    [rgw_lc.cc:2300-2323](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2300-L2323), [rgw_lc.cc:2365-2389](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2365-L2389)).
+  - Otherwise it reads the entry the head's marker names, and an ENOENT
+    moves the head past that key through `update_head` and goes round
+    again ([rgw_lc.cc:2324-2341](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2324-L2341), [rgw_lc.cc:2390-2408](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2390-L2408)).
+  - With the marker empty that key is "", which `lc_get_entry` answers
+    ENOENT for, since no omap key is empty (`read_omap_entry`,
+    [cls_rgw.cc:914-932](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L914-L932), [cls_rgw.cc:1044-1062](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1044-L1062)). `advance_head` then sets the
+    marker to the entry after "", the shard's first
+    ([rgw_lc.cc:2173-2201](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2173-L2201), [rgw_lc.cc:2237-2266](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2237-L2266)), and the next round goes on
+    from there to the shard's end, where `check_if_shard_done` stamps the
+    rollover date again ([rgw_lc.cc:2203-2224](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2203-L2224), [rgw_lc.cc:2268-2289](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2268-L2289)).
+- **Impact:** within a day of a shard's rollover, every worker's pass on
+  it, each gateway's lifecycle threads included, walks the shard to its
+  end. An entry that is failed or not yet processed is processed by each
+  such pass rather than once a day, and every entry skipped as complete
+  today or claimed costs a head write. An entry completed today is
+  skipped, so no completed bucket runs twice. No corruption.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** reproduces it. Its worker reads the head as radosgw's does,
+  guard included, so a shard shared with radosgw's workers is walked the
+  same way by both (`lcShard.run`, `internal/driver/lc_worker.go`, pinned by
+  the spec "starts the shard over from its first entry only with rollover
+  allowed" in `internal/driver/lc_worker_test.go`).
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 Task C9, 2026-10-22, reading `RGWLC::process` for the
+  worker. Derived from the source, not reproduced.
+
+## radosgw's lifecycle post-state overwrites an entry changed during the bucket's pass
+
+- **Kind:** defect, S3-correctness of lifecycle: a worker records its
+  bucket's result over whatever the bucket's entry holds once the bucket
+  is done, so a configuration put or delete, a bucket delete, or another
+  worker's claim that changed the entry during the pass is undone. Not
+  security-relevant. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - The claim sets the entry processing in the worker's memory and stores
+    it, and the shard is unlocked for the bucket
+    ([rgw_lc.cc:2395-2417](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2395-L2417), [rgw_lc.cc:2462-2484](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2462-L2484)).
+  - Once the bucket is done and the shard locked again, the post-state
+    stores that in-memory entry, failed or complete, or removes it after
+    -ENOENT, without reading what the shard holds
+    ([rgw_lc.cc:2423-2455](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2423-L2455), [rgw_lc.cc:2490-2522](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2490-L2522)).
+  - Meanwhile a configuration put resets the entry to uninitial
+    (`set_bucket_config`, [rgw_lc.cc:2659-2663](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2659-L2663), [rgw_lc.cc:2726-2730](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2726-L2730)), a
+    configuration or bucket delete removes it (`remove_bucket_config`,
+    [rgw_lc.cc:2686-2690](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2686-L2690), [rgw_lc.cc:2753-2757](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2753-L2757)), and once the claim's session
+    expires another worker claims it under its own start time
+    ([rgw_lc.cc:2349-2356](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2349-L2356), [rgw_lc.cc:2416-2423](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2416-L2423)).
+- **Impact:**
+  - A configuration put while its bucket is processed marks the new
+    rules done for the day, and they first run the day after, or one
+    debug interval later.
+  - A configuration delete while its bucket is processed leaves an entry
+    for a bucket without `user.rgw.lc`, which every pass keeps and loads
+    the bucket for ([rgw_lc.cc:1720-1727](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1720-L1727), [rgw_lc.cc:1776-1783](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1776-L1783)) until the
+    bucket's next configuration put or delete. A bucket delete leaves an
+    entry the next pass on the shard drops.
+  - A worker whose bucket outlasts two lifecycle days records its result
+    over the claim of the worker that took the bucket over, which then
+    records its own.
+  No object is touched by it.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** reads the claim back once the shard is locked again and
+  records nothing over a claim no longer its own (`lcWorker.claimHeld` and
+  `lcShard.process`, `internal/driver/lc_worker.go`; docs/exclusions.md,
+  "rgw-go's lifecycle worker departs from radosgw's shard protocol in
+  three places").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 Task C9, 2026-10-22, reading `RGWLC::process` for the
+  worker. Derived from the source, not reproduced.
+
+## radosgw's lifecycle worker hangs shutdown in WorkPool::drain and claims a bucket after it is told to stop
+
+- **Kind:** defect, S3-correctness of lifecycle: a gateway told to stop
+  while a lifecycle worker processes a bucket hangs its shutdown in the
+  bucket's work pool and records nothing for the bucket, and a worker
+  between buckets first claims one more. Not security-relevant: only the
+  operator's shutdown triggers it, and the exit alarm bounds it.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `stop_processor` sets `down_flag` and then joins each worker
+    ([rgw_lc.cc:2479-2487](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2479-L2487), [rgw_lc.cc:2546-2554](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2546-L2554)).
+  - Each work queue thread leaves its loop at `going_down()` once its
+    current item is done ([rgw_lc.cc:819-829](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L819-L829), [rgw_lc.cc:840-850](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L840-L850)), so the
+    actions the bucket pass enqueues after that are never applied.
+  - `drain()` sets `FLAG_EDRAIN_SYNC` and waits for it to clear
+    ([rgw_lc.cc:787-793](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L787-L793), [rgw_lc.cc:808-814](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L808-L814)), and `dequeue()`, the only code
+    that clears it, does so only while not going down
+    ([rgw_lc.cc:796-806](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L796-L806), [rgw_lc.cc:817-827](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L817-L827)). The work pool drains each
+    queue ([rgw_lc.cc:866-870](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L866-L870), [rgw_lc.cc:887-891](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L887-L891)). The bucket pass drains at
+    each rule's end ([rgw_lc.cc:1825](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1825), [rgw_lc.cc:1881](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1881)) and in the scope guard
+    that runs at every return after the bucket loads
+    ([rgw_lc.cc:1705-1710](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1705-L1710), [rgw_lc.cc:1761-1766](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1761-L1766)), and the multipart abort
+    returns at `going_down()` into that guard
+    ([rgw_lc.cc:980-982](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L980-L982), [rgw_lc.cc:1000-1002](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1000-L1002)). So once `down_flag` is set,
+    the pass's next drain never returns, and neither does the join.
+  - `handle_sigterm` arms `alarm(rgw_exit_timeout_secs)` as a "safety net
+    in case we get stuck doing an orderly shutdown"
+    ([rgw_signal.cc:77-93](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_signal.cc#L77-L93),
+    [rgw_signal.cc:77-93](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_signal.cc#L77-L93)), two minutes by
+    default ([rgw.yaml.in:1896-1904](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L1896-L1904),
+    [rgw.yaml.in:1978-1986](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L1978-L1986)).
+  - `RGWLC::process(worker, ...)` does not test `going_down()` between
+    shards ([rgw_lc.cc:2010-2020](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2010-L2020), [rgw_lc.cc:2067-2077](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2067-L2077)), and the shard pass is a
+    do-while that tests it only at the end of its body
+    ([rgw_lc.cc:2289-2460](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2289-L2460), [rgw_lc.cc:2354-2527](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2354-L2527)): a worker that finished a
+    bucket before the stop locks its next shard, claims that shard's head
+    entry if it is due, and its pass hangs in that bucket's drain.
+- **Impact:**
+  - The bucket processing at the shutdown, and possibly one more per
+    worker, stays processing, and every worker skips it until its session
+    expires two lifecycle days on.
+  - The actions its pass had not applied are never applied by that pass.
+  - The shutdown takes `rgw_exit_timeout_secs`, or the orchestrator's grace
+    period when that is shorter, as Kubernetes' 30 s is.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** not affected. Its worker tests its context between shards and
+  after each bucket it processes (`lcWorker.process` and `lcShard.run`,
+  `internal/driver/lc_worker.go`); its rounds that only skip entries do not,
+  but a claim written on an ended context fails at goceph's entry check, so
+  no bucket is claimed after the stop. A worker stopped during a bucket, or
+  between a claim and its first read back, records it failed on a context
+  of its own: the relock, the read back and the write bounded at 5 s, then
+  the unlock on a second 5 s, so the bucket is due again at the next pass
+  (`lcShard.recordStop`; docs/exclusions.md, "rgw-go's lifecycle worker
+  departs from radosgw's shard protocol in three places"). goceph's
+  callback and pipe completion modes stop waiting for each of those ops at
+  its bound; its sync mode waits for the OSD, and in every mode the RADOS
+  client's close still waits for an op left in flight
+  (docs/cgo-limitations.md, "Cancellation stops only the client").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 Task C9's review, 2026-10-22, reading radosgw's
+  shutdown for the worker's stop. Derived from the source, not
+  reproduced.
+
+## radosgw's bucket_lc_process indexes past a lifecycle entry key of fewer than three parts
+
+- **Kind:** defect, cosmetic: `bucket_lc_process` splits an entry's key on
+  ":" and reads its tenant, name and marker from the first three fields
+  without checking that there are three, which is undefined behaviour for
+  a key of fewer. radosgw writes every key with all three
+  (`get_bucket_lc_key`, [rgw_lc.cc:1990-1992](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1990-L1992), [rgw_lc.cc:2047-2049](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2047-L2049)), so only
+  a corrupt or foreign entry reaches it, and writing one takes write
+  access to the lc pool: not security-relevant. Unreproduced: derived
+  from the source.
+- **Evidence:** `boost::split` then `result[0]`, `result[1]` and
+  `result[2]` of the `std::vector`, unchecked
+  ([rgw_lc.cc:1687-1690](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1687-L1690), [rgw_lc.cc:1743-1746](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1743-L1746)).
+- **Impact:** a worker that claims such an entry reads past the vector:
+  at best a garbage bucket name, which fails to load and fails the entry
+  every day, at worst a crash of the gateway.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** treats such a key as naming no bucket and removes its entry
+  (`lcLoadBucket`, `internal/driver/lc_worker.go`; docs/exclusions.md, "A
+  bucket delete removes the lifecycle entry once the bucket is gone").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 Task C9's review, 2026-10-22. Derived from the
   source, not reproduced.
