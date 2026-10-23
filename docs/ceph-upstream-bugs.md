@@ -435,6 +435,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's lifecycle post-state overwrites an entry changed during the bucket's pass](#radosgws-lifecycle-post-state-overwrites-an-entry-changed-during-the-buckets-pass) | pending | pending | ✓ |
 | [radosgw's lifecycle worker hangs shutdown in WorkPool::drain and claims a bucket after it is told to stop](#radosgws-lifecycle-worker-hangs-shutdown-in-workpooldrain-and-claims-a-bucket-after-it-is-told-to-stop) | pending | pending | ✓ |
 | [radosgw's bucket_lc_process indexes past a lifecycle entry key of fewer than three parts](#radosgws-bucket_lc_process-indexes-past-a-lifecycle-entry-key-of-fewer-than-three-parts) | pending | pending | ✓ |
+| [radosgw's versioned delete of versionId=null checks the version marker, not the null version](#radosgws-versioned-delete-of-versionidnull-checks-the-version-marker-not-the-null-version) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -25101,4 +25102,67 @@ Every new entry adds its row to this table, in document order.
   bucket delete removes the lifecycle entry once the bucket is gone").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task C9's review, 2026-10-22. Derived from the
+  source, not reproduced.
+
+## radosgw's versioned delete of versionId=null checks the version marker, not the null version
+
+- **Kind:** defect, S3-correctness: a `versionId=null` delete on a versioned
+  key compares its conditions with the version marker's empty meta and
+  omits `x-amz-delete-marker` from the removal of a null delete marker. Not
+  security-relevant: the conditions guard the requester's own delete, which
+  they refuse rather than let through, and the missing header misreports a
+  removal the requester made. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - The versioned delete of a named version clears `null`, reads the
+    version's entry through `bi_get_instance`, compares If-Match, whole,
+    `x-amz-if-match-size` and `x-amz-if-match-last-modified-time` with
+    `dirent.meta`, and reports `dirent.is_delete_marker()`
+    ([rgw_rados.cc:5905-5944](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5905-L5944),
+    [rgw_rados.cc:6517-6556](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6517-L6556)),
+    which the response sends as `x-amz-delete-marker` only when it is true
+    ([rgw_rest_s3.cc:3496-3497](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3496-L3497),
+    [rgw_rest_s3.cc:3746-3747](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3746-L3747)).
+  - `bi_get_instance` is one `bi_get` of the key as named, of type
+    Instance
+    ([rgw_rados.cc:9443-9463](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9443-L9463) and
+    [rgw_rados.cc:9487-9502](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9487-L9502),
+    [rgw_rados.cc:10192-10212](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10192-L10212) and
+    [rgw_rados.cc:10236-10251](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10236-L10251)),
+    and the class reads an Instance key with an empty instance at the plain
+    key
+    ([cls_rgw.cc:2632-2638](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2632-L2638) and
+    [cls_rgw.cc:339-346](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L339-L346),
+    [cls_rgw.cc:2800-2806](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2800-L2806) and
+    [cls_rgw.cc:389-396](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L389-L396)).
+  - A name's first link writes the version marker at the plain key,
+    `FLAG_VER_MARKER` with empty meta, and moves a pre-versioning object's
+    entry to the null version's instance key
+    ([cls_rgw.cc:1568-1634](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1568-L1634),
+    [cls_rgw.cc:1695-1763](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1695-L1763)),
+    where the null delete marker's key, with its `\0d` suffix, sits beside
+    it
+    ([cls_rgw.cc:325-337](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L325-L337),
+    [cls_rgw.cc:375-387](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L375-L387)).
+    The class's own `read_key_entry` reads past the marker to them
+    ([cls_rgw.cc:946-978](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L946-L978),
+    [cls_rgw.cc:1076-1108](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1076-L1108)).
+- **Trigger:** DeleteObject, or a DeleteObjects `<Object>`, with
+  `versionId=null` on a key that has been linked under an OLH at least once.
+- **Impact:** a conditional delete of the null version answers 412 for any
+  If-Match naming an ETag, the null version's own included, any
+  `x-amz-if-match-size` but 0 and any `x-amz-if-match-last-modified-time`,
+  so a client cannot delete the null version on the conditions a listing
+  shows it with. The removal of a null delete marker answers without
+  `x-amz-delete-marker`, as the removal of a version that is no marker does.
+  On a key with no null version, an
+  unconditional delete inits a pending modification and answers the
+  unlink's 404 only after it.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** differs: it resolves `null` in `read_key_entry`'s order
+  (`getInstanceEntry`, `internal/driver/olh_index.go`; `removeVersion`,
+  `internal/driver/delete_versioned.go`; `docs/exclusions.md`, "A versioned
+  delete of versionId=null checks the null version itself").
+- **Upstream:** pending; prior art not searched.
+- **Found:** the phase 2 versioning plan's review, finding F4, as the plan's
+  defect 16; registered by phase 2 Task V8a, 2026-10-22. Derived from the
   source, not reproduced.
