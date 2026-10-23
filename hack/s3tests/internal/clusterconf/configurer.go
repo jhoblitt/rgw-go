@@ -15,8 +15,9 @@ import (
 // lcOption is the option an LC mode sets on each gateway's entity.
 const lcOption = "rgw_enable_lc_threads"
 
-// Configurer readies a release's rooket cluster for the lifecycle tests: the
-// storage classes they name, and the LC mode.
+// Configurer readies a release's rooket cluster for the lifecycle tests, the
+// storage classes they name and the LC mode, and for the MFA tests, their
+// user's TOTP device.
 type Configurer struct {
 	Cluster harness.Cluster
 	// Root is the repository's root: its Makefile runs rgw-go-up, and its

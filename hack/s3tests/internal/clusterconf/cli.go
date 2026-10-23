@@ -2,6 +2,7 @@ package clusterconf
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -13,7 +14,8 @@ import (
 	"github.com/jhoblitt/rgw-go/hack/internal/harness"
 )
 
-// Deps are what lc-mode and classes reach the host and the cluster through.
+// Deps are what lc-mode, classes and mfa reach the host and the cluster
+// through.
 type Deps struct {
 	Exec  harness.Execer
 	Proc  fs.FS
@@ -85,6 +87,37 @@ func NewLCModeCmd(v *viper.Viper, deps Deps) *cobra.Command {
 	clusterFlags(cmd, "the release whose cluster to set, squid or tentacle (S3TESTS_RELEASE)")
 	cmd.Flags().String("mode", "", "the LC mode: off, radosgw, rgw-go or both (S3TESTS_MODE)")
 	cmd.Flags().String("make", "make", "the make that runs make rgw-go-up (S3TESTS_MAKE)")
+	return cmd
+}
+
+// NewMFACmd returns the mfa command, which reads its flags through v and
+// reaches the release's cluster through deps.
+func NewMFACmd(v *viper.Viper, deps Deps) *cobra.Command {
+	cmd := &cobra.Command{
+		Use: "mfa --release squid|tentacle --uid UID [--rooket PATH]",
+		Short: "Give the user the TOTP device the s3-tests conf names, afresh, and print the conf's lines " +
+			"naming it",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			release, err := readRelease(v)
+			if err != nil {
+				return err
+			}
+			uid := v.GetString("uid")
+			if uid == "" {
+				return errors.New("--uid names no user")
+			}
+			if err := configurer(cmd, v, deps, release).EnsureMFA(cmd.Context(), uid); err != nil {
+				return fmt.Errorf("giving the user %s the MFA device %s: %w", uid, MFASerial, err)
+			}
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), MFAConf()); err != nil {
+				return fmt.Errorf("writing the output: %w", err)
+			}
+			return nil
+		},
+	}
+	clusterFlags(cmd, "the release whose cluster to give the device on, squid or tentacle (S3TESTS_RELEASE)")
+	cmd.Flags().String("uid", "", "the user to give the device (S3TESTS_UID)")
 	return cmd
 }
 

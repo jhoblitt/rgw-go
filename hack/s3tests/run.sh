@@ -219,6 +219,9 @@ ensure_account() {
 }
 
 ensure_user "${main_id}" "${main_key}" "${main_secret}"
+# The main user's TOTP device, given afresh on every run, and the conf lines
+# that name it for the MFA tests.
+mfa_conf=$("${s3tests}" mfa "${s3tests_flags[@]}" --release "${release}" --rooket "${rooket}" --uid "${main_id}")
 ensure_user "${alt_id}" "${alt_key}" "${alt_secret}"
 ensure_user "${tenant_id}" "${tenant_key}" "${tenant_secret}"
 ensure_user "${iam_id}" "${iam_key}" "${iam_secret}" --caps "user-policy=*;roles=*;oidc-provider=*"
@@ -249,6 +252,7 @@ api_name = ${api_name}
 access_key = ${main_key}
 secret_key = ${main_secret}
 storage_classes = ${storage_classes}
+${mfa_conf}
 
 [s3 alt]
 display_name = ${alt_id}

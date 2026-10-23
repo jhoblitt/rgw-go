@@ -1,6 +1,6 @@
 // Command s3tests decides which s3-tests the parity set runs, from the lists
 // beside it, for run.sh, which runs them, and readies a release's rooket
-// cluster for the lifecycle tests among them.
+// cluster for the lifecycle and MFA tests among them.
 //
 //	go run ./hack/s3tests expr [--lists DIR] [--set pr|gate] [--tests FILE]
 //	go run ./hack/s3tests select [--lists DIR] [--set pr|gate] [--tests FILE] [--unfiltered FILE]
@@ -9,6 +9,7 @@
 //	go run ./hack/s3tests lc-mode --release squid|tentacle --mode off|radosgw|rgw-go|both [--rooket PATH]
 //	    [--root DIR] [--make PATH]
 //	go run ./hack/s3tests classes [--release squid|tentacle [--rooket PATH] [--root DIR]]
+//	go run ./hack/s3tests mfa --release squid|tentacle --uid UID [--rooket PATH]
 //
 // The gate set is the tests pytest collects from test_s3.py and
 // test_headers.py less those carrying a marker excluded-markers.txt lists,
@@ -81,6 +82,13 @@
 // the radosgw to reload it; it prints the classes' place instead, and warns
 // when an rgw-go runs, which reads the zone only when it starts.
 //
+// mfa gives the user UID the TOTP device the s3-tests conf names for its
+// MFA tests, afresh: it removes a device of that serial the user has, so
+// that no earlier run's replay state carries over, creates it with the
+// conf's seed, and checks that the user's record lists it and that it holds
+// that seed. It then prints the conf's mfa_serial and mfa_seed lines, which
+// run.sh writes into [s3 main].
+//
 // Each flag can also come from the environment, as S3TESTS_LISTS,
 // S3TESTS_SET, S3TESTS_TESTS, S3TESTS_UNFILTERED, S3TESTS_GATE_ONLY_IDS,
 // S3TESTS_MODE, S3TESTS_LOG_LEVEL and so on, or from the config file
@@ -91,7 +99,7 @@
 // refuses the set or expr the TESTS file, and 2 for anything else: a refused
 // command line, a --set other than pr or gate among them, a list, a TESTS
 // file or a collection file it cannot read, a --gate-only-ids file it cannot
-// write, and a cluster lc-mode or classes could not ready.
+// write, and a cluster lc-mode, classes or mfa could not ready.
 //
 // Managed by go-conventions (references/layout.md owns the main shape).
 package main

@@ -59,7 +59,7 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer, deps clusterconf.Deps
 	v := viper.New()
 	cmd := &cobra.Command{
 		Use:           "s3tests",
-		Short:         "Decide which s3-tests the parity set runs, and ready the cluster for its lifecycle tests",
+		Short:         "Decide which s3-tests the parity set runs, and ready the cluster for its lifecycle and MFA tests",
 		Version:       version.String(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -78,7 +78,7 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer, deps clusterconf.Deps
 	pf.String("lists", defaultLists, "the directory of "+MarkersFile+", the deselect lists, the include lists and "+
 		GateOnlyFile+" (S3TESTS_LISTS)")
 	cmd.AddCommand(newExprCmd(v), newSelectCmd(v), newHashCmd(v), clusterconf.NewLCModeCmd(v, deps),
-		clusterconf.NewClassesCmd(v, deps))
+		clusterconf.NewClassesCmd(v, deps), clusterconf.NewMFACmd(v, deps))
 	return cmd
 }
 
