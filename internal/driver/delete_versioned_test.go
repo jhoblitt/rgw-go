@@ -848,6 +848,19 @@ var _ = Describe("DeleteObject on a versioned bucket", func() {
 			Entry("on tentacle", denc.Tentacle),
 		)
 
+		It("answers 412 and leaves no marker on an enabled bucket when a radosgw writer links between its init and its link, with an expected version alone", func(ctx SpecContext) {
+			put(ctx, "v1")
+			expect, err := s.ReadOLHHeadForTest(ctx, rec, version("v1"))
+			Expect(err).NotTo(HaveOccurred())
+			rgwLink(ctx, denc.Squid)
+			_, err = del(ctx, "", op.DeleteParams{Expect: expect})
+			conditionFailed(err)
+			settle(s)
+			Expect(markers()).To(BeEmpty())
+			Expect(listed()).To(Equal([]string{"rgw", "v1"}))
+			current("rgw")
+		})
+
 		It("on a suspended bucket is not checked after its link, so the null marker lands over a radosgw writer that linked in between", func(ctx SpecContext) {
 			put(ctx, "v1")
 			suspend()

@@ -190,8 +190,10 @@ type DeleteParams struct {
 	// removal of a named version, checked before its unlink, and, on a bucket
 	// whose versioning is suspended, of the null version a delete without a
 	// version replaces with the null delete marker, whose head is the key's
-	// OLH head; a delete without a version on an enabled bucket removes
-	// nothing and does not read it. A mismatch is ErrConcurrentModification,
+	// OLH head. A delete without a version on an enabled bucket removes
+	// nothing, and its delete marker links only over Expect as the version
+	// current, by its instance and user.rgw.idtag, held to the link as its
+	// conditions are. A mismatch is ErrConcurrentModification,
 	// with nothing written when it is found before the unlink or the marker's
 	// link; one found by the removal after them lists the version again,
 	// unless another writer removed it or a newer null write owns the null
