@@ -137,9 +137,11 @@ var _ = Describe("ListObjects with versions", func() {
 		// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L358-L390 at v19.2.7,
 		// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L408-L440 at v20.2.4).
 		DescribeTable("reaches the class's start key, ordered and unordered",
-			func(ctx SpecContext, instance string, want []string) {
+			func(ctx SpecContext, instance string, relist bool, want []string) {
 				for _, unordered := range []bool{false, true} {
-					res := list(ctx, s, op.ListObjectsParams{MaxKeys: 10, ListVersions: true, AllowUnordered: unordered, Marker: "k", MarkerInstance: instance})
+					res := list(ctx, s, op.ListObjectsParams{
+						MaxKeys: 10, ListVersions: true, AllowUnordered: unordered, Marker: "k", MarkerInstance: instance, RelistMarker: relist,
+					})
 					Expect(versionIDs(res.Entries)).To(Equal(want), "unordered %v", unordered)
 					Expect(res.Truncated).To(BeFalse())
 				}
@@ -147,10 +149,13 @@ var _ = Describe("ListObjects with versions", func() {
 			// radosgw starts after the plain key and lists them again
 			// (docs/exclusions.md, "A versions listing starts after every
 			// version of a key-marker given alone").
-			Entry("without an instance it starts after every version of the key, as S3 does", "", []string{"z@z1"}),
-			Entry("null starts after the null version", "null", []string{"k@v1", "z@z1"}),
-			Entry("an existing instance starts after that version", "v3", []string{"k@null", "k@v1", "z@z1"}),
-			Entry("a stale instance skips the rest of its key", "gone", []string{"z@z1"}),
+			Entry("without an instance it starts after every version of the key, as S3 does", "", false, []string{"z@z1"}),
+			Entry("without an instance but relisting it starts at the key's first version, as the class does", "", true,
+				[]string{"k@v3", "k@null", "k@v1", "z@z1"}),
+			Entry("null starts after the null version", "null", false, []string{"k@v1", "z@z1"}),
+			Entry("an existing instance starts after that version", "v3", false, []string{"k@null", "k@v1", "z@z1"}),
+			Entry("an existing instance starts after that version, relisting or not", "v3", true, []string{"k@null", "k@v1", "z@z1"}),
+			Entry("a stale instance skips the rest of its key", "gone", false, []string{"z@z1"}),
 		)
 
 		It("names the last entry visited, name and instance, as the next marker, null for the null version", func(ctx SpecContext) {

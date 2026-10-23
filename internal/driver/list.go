@@ -272,7 +272,8 @@ type listPos struct {
 //   - With no instance the listing starts past every version of the name,
 //     where the class starts after the name's plain key and lists them again
 //     (docs/exclusions.md, "A versions listing starts after every version
-//     of a key-marker given alone").
+//     of a key-marker given alone"), unless p.RelistMarker asks for the
+//     class's start.
 //   - With null it starts after the null version getInstanceEntry finds, in
 //     read_key_entry's order. The class looks for it at the null data key
 //     alone, which a null delete marker does not have, and starts past every
@@ -292,6 +293,9 @@ func (s *Store) markerStart(ctx context.Context, rec *op.BucketRecord, p op.List
 	}
 	switch marker.Instance {
 	case "":
+		if p.RelistMarker {
+			return listPos{after: marker, name: marker.Name}, nil
+		}
 		return past, nil
 	case meta.NullInstance:
 	default:
