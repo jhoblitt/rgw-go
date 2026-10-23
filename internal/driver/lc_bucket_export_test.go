@@ -18,6 +18,7 @@ type LCStep = lcStep
 const (
 	LCStepDecided = lcStepDecided
 	LCStepReread  = lcStepReread
+	LCStepUpload  = lcStepUpload
 )
 
 // LCHarness runs the bucket pass Open gives a Store's lifecycle workers in

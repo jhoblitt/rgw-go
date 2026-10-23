@@ -22,6 +22,8 @@ const (
 	// lcStepReread follows the re-read and its checks of the object, before
 	// the bucket's record is read again and the object removed.
 	lcStepReread
+	// lcStepUpload precedes the abort of an expired multipart upload.
+	lcStepUpload
 )
 
 func (p *lcPass) at(ctx context.Context, step lcStep, key meta.ObjKey) {
@@ -141,6 +143,49 @@ func (b *lcBucket) expireCurrent(ctx context.Context, rec *op.BucketRecord, prob
 	b.p.notifier.Notify(ctx, lifecycle.Notification{
 		Bucket: cur.Info.Bucket, Key: key, ETag: st.ETag, Size: st.Size, VersionID: e.Key.Instance,
 		Events: []lifecycle.Event{lifecycle.EventExpirationCurrent, lifecycle.EventExpirationDelete},
+	})
+}
+
+// abortUpload is handle_multipart_expiration's work on e, the listed meta
+// object of an upload of rec, under rule: an upload whose meta mtime is rule's
+// DaysAfterInitiation old, as obj_has_expired counts it, is aborted as
+// AbortMultipartUpload aborts one, through GetUpload and Abort, so under its
+// RGWCompleteMultipart lock, which radosgw's worker does not take
+// (docs/exclusions.md, "Lifecycle aborts an expired multipart upload under
+// its completion lock"). An upload already gone is NoSuchUpload, logged as
+// radosgw logs ERR_NO_SUCH_UPLOAD, and so is one whose parts back its
+// object, which Abort leaves (docs/exclusions.md, "AbortMultipartUpload
+// leaves a completed upload's parts alone"). Then the notification of
+// radosgw's ObjectExpirationAbortMPU.
+func (b *lcBucket) abortUpload(ctx context.Context, rec *op.BucketRecord, rule *lifecycle.Op, e op.ObjectEntry) {
+	s := b.p.s
+	if !lifecycle.Expired(e.Mtime, rule.MPExpiration, b.w.now(), s.opts.lcDebugInterval, b.w.loc) {
+		return
+	}
+	name, id, ok := meta.ParseMultipartMeta(e.Key.Name)
+	attrs := []any{slog.String("bucket", b.c.entry.Bucket), slog.String("meta", e.Key.Name)}
+	if !ok || name == "" || id == "" {
+		slog.DebugContext(ctx, "lifecycle skips a multipart meta object that names no upload", attrs...)
+		return
+	}
+	key := meta.ObjKey{Name: name}
+	b.p.at(ctx, lcStepUpload, key)
+	up, err := s.GetUpload(ctx, rec, key, id)
+	if err == nil {
+		err = s.Abort(ctx, up)
+	}
+	switch {
+	case errors.Is(err, op.ErrNoSuchUpload):
+		slog.InfoContext(ctx, "lifecycle found no multipart upload to abort", append(attrs, slog.Any("error", err))...)
+		return
+	case err != nil:
+		slog.WarnContext(ctx, "lifecycle could not abort an expired multipart upload", append(attrs, slog.Any("error", err))...)
+		return
+	}
+	slog.InfoContext(ctx, "lifecycle aborted an expired multipart upload", attrs...)
+	b.p.notifier.Notify(ctx, lifecycle.Notification{
+		Bucket: rec.Info.Bucket, Key: e.Key, ETag: e.ETag, Size: e.Size, VersionID: e.Key.Instance,
+		Events: []lifecycle.Event{lifecycle.EventExpirationAbortMPU},
 	})
 }
 

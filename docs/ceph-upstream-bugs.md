@@ -446,6 +446,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw lets a requester's own MFA device satisfy another owner's MFA delete](#radosgw-lets-a-requesters-own-mfa-device-satisfy-another-owners-mfa-delete) | pending | pending | ✓ |
 | [radosgw's lifecycle expiration guards its removal with the listed mtime's second alone](#radosgws-lifecycle-expiration-guards-its-removal-with-the-listed-mtimes-second-alone) | pending | pending | ✓ |
 | [radosgw's lifecycle pass acts on the bucket record it loaded at its start](#radosgws-lifecycle-pass-acts-on-the-bucket-record-it-loaded-at-its-start) | pending | pending | ✓ |
+| [radosgw's lifecycle aborts an expired multipart upload without its completion lock](#radosgws-lifecycle-aborts-an-expired-multipart-upload-without-its-completion-lock) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -25981,3 +25982,54 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task C10a's security review, 2026-10-22, reading both
   tags. Not reproduced on a running radosgw.
+
+## radosgw's lifecycle aborts an expired multipart upload without its completion lock
+
+- **Kind:** defect, data loss on a race, not security-relevant: the rule is
+  the bucket owner's and the completion a writer's of the same bucket. The
+  lifecycle worker aborts an upload whose DaysAfterInitiation has passed
+  without the `RGWCompleteMultipart` lock, so an abort that meets a
+  completion of that upload queues for the GC the parts the completed
+  object's head names. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `handle_multipart_expiration`'s work item calls the upload's abort
+    straight away
+    ([rgw_lc.cc:902-947](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L902-L947),
+    [rgw_lc.cc:923-967](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L923-L967)).
+  - `RadosMultipartUpload::abort` takes no lock of its own: it lists the
+    parts, queues them for the GC and then removes the meta object
+    ([rgw_sal_rados.cc:3155-3267](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3155-L3267),
+    [rgw_sal_rados.cc:3995-4107](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3995-L4107);
+    "[radosgw's AbortMultipartUpload queues the parts for the GC before it
+    removes the
+    upload](#radosgws-abortmultipartupload-queues-the-parts-for-the-gc-before-it-removes-the-upload)").
+  - AbortMultipartUpload takes the lock before it calls the abort
+    ([rgw_op.cc:6643-6655](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6643-L6655),
+    [rgw_op.cc:7560-7572](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7560-L7572)),
+    and CompleteMultipartUpload holds it "to prevent racing completions (or
+    retries) from deleting the parts"
+    ([rgw_op.cc:6431-6437](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6431-L6437),
+    [rgw_op.cc:7242-7248](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7242-L7248)),
+    so only the worker's abort escapes it. The bucket delete's
+    `abort_multiparts` calls the abort without it too (`docs/exclusions.md`,
+    "A bucket delete aborts its multipart uploads under their completion
+    lock"): the fix belongs in the one sink, the abort taking the lock
+    itself, rather than in each caller.
+- **Trigger:** a client completes an upload older than its rule's
+  DaysAfterInitiation while the worker's pass over the bucket reaches it.
+- **Impact:** the completed object's head names parts the GC removes after
+  `rgw_gc_obj_min_wait`, so a read of the object fails once they are gone,
+  though its completion answered 200. The completion's own removal of the
+  meta object, or the abort's, then answers the other NoSuchUpload.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** differs: its worker aborts as AbortMultipartUpload does,
+  under the lock (`lcBucket.abortUpload`,
+  `internal/driver/lc_actions.go`), so an upload whose completion holds the
+  lock is left for a later pass, which "leaves an upload whose completion
+  lock another gateway holds for a later pass"
+  (`internal/driver/lc_bucket_test.go`) pins (`docs/exclusions.md`,
+  "Lifecycle aborts an expired multipart upload under its completion
+  lock").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C10a, 2026-10-22, reading both tags. Not
+  reproduced on a running radosgw.

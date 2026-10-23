@@ -2,6 +2,7 @@ package driver_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -47,6 +48,16 @@ func lcAttr(rules ...lifecycle.Rule) []byte {
 // after their mtime.
 func expireRule(id, prefix string) lifecycle.Rule {
 	return lifecycle.Rule{ID: id, Status: "Enabled", Filter: lifecycle.Filter{Prefix: prefix}, Expiration: lifecycle.Expiration{Days: "1"}}
+}
+
+// lcNotified is the keys of the notifications n got, in order.
+func lcNotified(n *lifecyclefakes.FakeNotifier) []string {
+	var keys []string
+	for i := range n.NotifyCallCount() {
+		_, note := n.NotifyArgsForCall(i)
+		keys = append(keys, note.Key.Name)
+	}
+	return keys
 }
 
 var _ = Describe("the lifecycle bucket pass", func() {
@@ -334,42 +345,6 @@ var _ = Describe("the lifecycle bucket pass", func() {
 			Expect(h.RunForTest(ctx, key)).To(MatchError(ContainSubstring("refused since its claim: ever versioned")))
 			Expect(c.Reads(rookIndexPool, "", indexShardOID(rec, "k"))).To(BeZero(), "nothing listed")
 			Expect(stat(ctx, rec, "k").Exists).To(BeTrue())
-		})
-
-		DescribeTable("leaves a bucket with an abort of incomplete multipart uploads for radosgw's worker, which claims it",
-			func(ctx SpecContext, abort lifecycle.Rule) {
-				open(ctx, nil)
-				_, key := create(ctx, "uploads", 0, lcAttr(expireRule("expire", ""), abort))
-				logs := &syncBuffer{}
-				restore := driver.CaptureLog(logs)
-				pass(ctx)
-				restore()
-				Expect(lcEntries(c)).To(HaveKeyWithValue(key, rgwcls.LCEntry{Bucket: key}), "never claimed")
-				Expect(logs.String()).To(ContainSubstring(fmt.Sprintf(`"bucket":%q,"reason":"rule aborts multipart uploads","rule":"abort"`, key)))
-				s2, err := driver.Open(ctx, driver.LCClientForTest(c, "client.2"), conf(map[string]string{"rgw_lc_debug_interval": "10", "rgw_lc_max_objs": "1"}), driver.Options{})
-				Expect(err).NotTo(HaveOccurred())
-				DeferCleanup(s2.Close)
-				var claimed []string
-				s2.RadosgwShardPassForTest(ctx, clk.Now, 0, 0, func(k string) error {
-					claimed = append(claimed, k)
-					return nil
-				})
-				Expect(claimed).To(Equal([]string{key}))
-			},
-			Entry("an enabled rule with DaysAfterInitiation", lifecycle.Rule{ID: "abort", Status: "Enabled", MPExpiration: lifecycle.Expiration{Days: "1"}}),
-			Entry("one flagged ArchiveZone outside an archive zone, under which radosgw aborts all the same",
-				lifecycle.Rule{ID: "abort", Status: "Enabled", Filter: lifecycle.Filter{Flags: lifecycle.FlagArchiveZone}, MPExpiration: lifecycle.Expiration{Days: "1"}}),
-		)
-
-		It("claims a bucket whose abort rule is disabled, and applies its other rules", func(ctx SpecContext) {
-			open(ctx, nil)
-			rec, key := create(ctx, "uploads", 0, lcAttr(expireRule("expire", ""),
-				lifecycle.Rule{ID: "abort", Status: "Disabled", MPExpiration: lifecycle.Expiration{Days: "1"}}))
-			put(ctx, rec, "k", "v", nil)
-			clk.Advance(lcDay)
-			pass(ctx)
-			Expect(stat(ctx, rec, "k").Exists).To(BeFalse())
-			Expect(lcEntries(c)).To(HaveKeyWithValue(key, completed(key)))
 		})
 
 		It("completes the entry with rgwlc_skip_bucket_step, removing nothing", func(ctx SpecContext) {
@@ -952,5 +927,156 @@ var _ = Describe("the lifecycle bucket pass", func() {
 			Entry("a transition to a cloud tier flagged ArchiveZone outside an archive zone",
 				transitionTo(lifecycle.Rule{ID: "t", Status: "Enabled", Filter: lifecycle.Filter{Flags: lifecycle.FlagArchiveZone}}, "CLOUDY")),
 		)
+	})
+
+	Describe("the multipart abort", func() {
+		var rec *op.BucketRecord
+		abortRule := func(id, prefix string) lifecycle.Rule {
+			return lifecycle.Rule{ID: id, Status: "Enabled", Filter: lifecycle.Filter{Prefix: prefix}, MPExpiration: lifecycle.Expiration{Days: "1"}}
+		}
+		// uploadPart initiates an upload of name and puts its part 1, whose
+		// ETag it returns.
+		uploadPart := func(ctx context.Context, name string) (*op.Upload, string) {
+			GinkgoHelper()
+			up, err := s.CreateUpload(ctx, rec, meta.ObjKey{Name: name}, op.UploadParams{
+				Owner: initiator, OwnerName: "Alice", Placement: meta.PlacementRule{Name: "default-placement"}, Attrs: attrsWithACL(initiator),
+			})
+			Expect(err).NotTo(HaveOccurred())
+			part, err := s.PutPart(ctx, up, 1, strings.NewReader("part"), op.PutParams{Attrs: attrsWithACL(initiator), Size: 4})
+			Expect(err).NotTo(HaveOccurred())
+			return up, part.ETag
+		}
+		upload := func(ctx context.Context, name string) *op.Upload {
+			GinkgoHelper()
+			up, _ := uploadPart(ctx, name)
+			return up
+		}
+		uploaded := func(ctx context.Context, up *op.Upload) bool {
+			GinkgoHelper()
+			_, err := s.GetUpload(ctx, rec, up.Key, up.ID)
+			if errors.Is(err, op.ErrNoSuchUpload) {
+				return false
+			}
+			Expect(err).NotTo(HaveOccurred())
+			return true
+		}
+		partHead := func(up *op.Upload) string {
+			return rec.Info.Bucket.Marker + "__multipart_" + up.Key.Name + "." + up.ID + ".1"
+		}
+
+		It("aborts an upload initiated DaysAfterInitiation ago through GetUpload and Abort, freeing its parts, keeps a newer one and notifies the abort", func(ctx SpecContext) {
+			open(ctx, nil)
+			var key string
+			rec, key = create(ctx, "uploads", 0, lcAttr(abortRule("abort", "")))
+			old := upload(ctx, "old")
+			clk.Advance(lcDay)
+			young := upload(ctx, "young")
+			pass(ctx)
+			Expect(uploaded(ctx, old)).To(BeFalse())
+			Expect(uploaded(ctx, young)).To(BeTrue())
+			Expect(chainOIDs(allGCEntries(c))).To(ContainElement(partHead(old)), "AbortMultipartUpload's GC of the parts")
+			Expect(lcEntries(c)).To(HaveKeyWithValue(key, completed(key)))
+			Expect(notes.NotifyCallCount()).To(Equal(1))
+			_, note := notes.NotifyArgsForCall(0)
+			Expect(note.Key).To(Equal(meta.ObjKey{Name: "old." + old.ID + ".meta", NS: meta.NSMultipart}))
+			Expect(note.Events).To(Equal([]lifecycle.Event{lifecycle.EventExpirationAbortMPU}))
+		})
+
+		It("leaves the parts of an upload whose completion record names the object they back (tracker #80896)", func(ctx SpecContext) {
+			open(ctx, nil)
+			rec, _ = create(ctx, "uploads", 0, lcAttr(abortRule("abort", "")))
+			up, etag := uploadPart(ctx, "k")
+			mOID := metaOID(rec, "k", up.ID)
+			head := rec.Info.Bucket.Marker + "_k"
+			armed := false
+			c.BeforeWrite(extraPoolName, "", mOID, func(*fakerados.Object) {
+				if !armed && c.Object(testDataPool, "", head) != nil {
+					armed = true
+					c.FailNextWrite(extraPoolName, "", mOID, syscall.EIO)
+				}
+			})
+			_, err := s.Complete(ctx, up, []op.CompletePart{{Number: 1, ETag: `"` + etag + `"`}})
+			Expect(err).NotTo(HaveOccurred())
+			c.BeforeWrite(extraPoolName, "", mOID, nil)
+			Expect(c.Object(extraPoolName, "", mOID)).NotTo(BeNil(), "the completion's failed removal left the meta object")
+			clk.Advance(lcDay)
+			pass(ctx)
+			Expect(uploaded(ctx, up)).To(BeFalse(), "its meta object removed")
+			Expect(c.Object(testDataPool, "", partHead(up))).NotTo(BeNil(), "the completed object's data")
+			Expect(chainOIDs(allGCEntries(c))).NotTo(ContainElement(partHead(up)))
+			Expect(stat(ctx, rec, "k").Exists).To(BeTrue())
+		})
+
+		DescribeTable("aborts whatever the rule's filter, with or without an object action, on any bucket the predicate admits",
+			func(ctx SpecContext, flags uint32, filter lifecycle.Filter, expire bool) {
+				open(ctx, nil)
+				rule := abortRule("abort", "")
+				rule.Filter = filter
+				if expire {
+					rule.Expiration = lifecycle.Expiration{Days: "100"}
+				}
+				rec, _ = create(ctx, "uploads", flags, lcAttr(rule))
+				up := upload(ctx, "k")
+				clk.Advance(lcDay)
+				pass(ctx)
+				Expect(uploaded(ctx, up)).To(BeFalse())
+			},
+			Entry("a tag the upload has no object to carry", uint32(0), lifecycle.Filter{Tags: tags.Set{Tags: []tags.Tag{{Key: "x", Value: "y"}}}}, false),
+			Entry("a size no upload reaches", uint32(0), lifecycle.Filter{SizeGT: "1099511627776"}, false),
+			Entry("beside an Expiration not yet due", uint32(0), lifecycle.Filter{}, true),
+			Entry("on a bucket whose flags carry object lock without BUCKET_VERSIONED", uint32(meta.BucketObjLockEnabled), lifecycle.Filter{}, false),
+		)
+
+		DescribeTable("aborts nothing for a rule that is disabled or has no DaysAfterInitiation, or under another prefix",
+			func(ctx SpecContext, rule lifecycle.Rule) {
+				open(ctx, nil)
+				var key string
+				rec, key = create(ctx, "uploads", 0, lcAttr(rule))
+				up := upload(ctx, "k")
+				clk.Advance(lcDay)
+				pass(ctx)
+				Expect(uploaded(ctx, up)).To(BeTrue())
+				Expect(lcEntries(c)).To(HaveKeyWithValue(key, completed(key)))
+			},
+			Entry("disabled", lifecycle.Rule{ID: "off", Status: "Disabled", MPExpiration: lifecycle.Expiration{Days: "1"}}),
+			Entry("an Expiration alone", lifecycle.Rule{ID: "expire", Status: "Enabled", Expiration: lifecycle.Expiration{Days: "1"}}),
+			Entry("DaysAfterInitiation of 0", lifecycle.Rule{ID: "zero", Status: "Enabled", MPExpiration: lifecycle.Expiration{Days: "0"}}),
+			Entry("another prefix", lifecycle.Rule{ID: "other", Status: "Enabled", Filter: lifecycle.Filter{Prefix: "other/"}, MPExpiration: lifecycle.Expiration{Days: "1"}}),
+		)
+
+		It("logs an upload gone since its listing as NoSuchUpload and goes on", func(ctx SpecContext) {
+			open(ctx, nil)
+			var key string
+			rec, key = create(ctx, "uploads", 0, lcAttr(abortRule("abort", "")))
+			first, second := upload(ctx, "a"), upload(ctx, "b")
+			clk.Advance(lcDay)
+			h.SetHook(func(ctx context.Context, at driver.LCStep, k meta.ObjKey) {
+				defer GinkgoRecover()
+				if at == driver.LCStepUpload && k.Name == "a" {
+					Expect(s.Abort(ctx, first)).To(Succeed())
+				}
+			})
+			logs := &syncBuffer{}
+			DeferCleanup(driver.CaptureLog(logs))
+			pass(ctx)
+			Expect(logs.String()).To(ContainSubstring("lifecycle found no multipart upload to abort"))
+			Expect(uploaded(ctx, second)).To(BeFalse())
+			Expect(lcNotified(notes)).To(Equal([]string{"b." + second.ID + ".meta"}))
+			Expect(lcEntries(c)).To(HaveKeyWithValue(key, completed(key)))
+		})
+
+		It("leaves an upload whose completion lock another gateway holds for a later pass", func(ctx SpecContext) {
+			open(ctx, nil)
+			rec, _ = create(ctx, "uploads", 0, lcAttr(abortRule("abort", "")))
+			up := upload(ctx, "k")
+			holdLock(ctx, c, metaOID(rec, "k", up.ID))
+			clk.Advance(lcDay)
+			pass(ctx)
+			Expect(uploaded(ctx, up)).To(BeTrue(), "radosgw's worker takes no lock and frees its parts under the completion")
+			releaseLock(c, metaOID(rec, "k", up.ID))
+			clk.Advance(lcDay)
+			pass(ctx)
+			Expect(uploaded(ctx, up)).To(BeFalse())
+		})
 	})
 })

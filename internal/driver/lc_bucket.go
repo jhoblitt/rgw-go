@@ -80,16 +80,12 @@ func (p *lcPass) claimable(ctx context.Context, _ *lcWorker, key string) (bool, 
 // placement tiers to a cloud is never applied: its claim, or a head moved
 // past it, would hide it from radosgw's worker, which transitions it, for
 // the day (docs/exclusions.md, "An rgw-go-only zone never processes a bucket
-// whose rules transition to a cloud tier"). A bucket that was ever versioned,
-// one with a transition rule and one with an abort of incomplete multipart
-// uploads are left to radosgw's worker too, as the bucket pass applies none
-// of them (docs/exclusions.md, "rgw-go's lifecycle worker leaves versioned
-// buckets and transition rules to radosgw's"). The rules the zone runs
-// count, as is_valid_op and zone_check choose them (lifecycle.Op.Applies),
-// and for the abort every enabled rule with DaysAfterInitiation, as
-// handle_multipart_expiration chooses them
-// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L961-L963 at v19.2.7,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L981-L983 at v20.2.4).
+// whose rules transition to a cloud tier"). A bucket that was ever versioned
+// and one with a transition rule are left to radosgw's worker too, as the
+// bucket pass applies neither (docs/exclusions.md, "rgw-go's lifecycle
+// worker leaves versioned buckets and transition rules to radosgw's"). Only
+// the rules the zone runs count, as is_valid_op and zone_check choose them
+// (lifecycle.Op.Applies).
 func (p *lcPass) refusal(rec *op.BucketRecord, conf lifecycle.Configuration) (reason, rule string) {
 	archive := p.s.zone.Zone.TierType == lcTierArchive
 	ops := conf.PrefixMap()
@@ -112,11 +108,6 @@ func (p *lcPass) refusal(rec *op.BucketRecord, conf lifecycle.Configuration) (re
 	for i := range ops {
 		if o := &ops[i].Op; o.Applies(archive) && len(o.Transitions)+len(o.NoncurTransitions) > 0 {
 			return "rule transitions objects", o.ID
-		}
-	}
-	for i := range ops {
-		if o := &ops[i].Op; o.Enabled && o.MPExpiration > 0 {
-			return "rule aborts multipart uploads", o.ID
 		}
 	}
 	return "", ""
@@ -145,8 +136,9 @@ func (s *Store) lcCloudTier(rec *op.BucketRecord, class string) bool {
 // bucket without user.rgw.lc complete, and one whose configuration does not
 // decode failed. A bucket the predicate refuses now, versioned or given new
 // rules since its claim, fails, so either worker takes it again at its next
-// pass. Then each rule of the prefix map, in order (lcBucket.rule), each
-// page on the bucket's record as atPage reads it again.
+// pass. Then each rule of the prefix map, in order (lcBucket.rule), and the
+// abort of expired multipart uploads (lcBucket.multipart), each page on the
+// bucket's record as atPage reads it again.
 func (p *lcPass) run(ctx context.Context, w *lcWorker, c lcClaim, stopAt time.Time) error {
 	s := p.s
 	if s.opts.lcSkipBucketStep {
@@ -178,7 +170,7 @@ func (p *lcPass) run(ctx context.Context, w *lcWorker, c lcClaim, stopAt time.Ti
 			return err
 		}
 	}
-	return nil
+	return b.multipart(ctx, ops)
 }
 
 // lcBucket is the pass on one claimed bucket, whose user.rgw.lc was attr,
@@ -354,6 +346,40 @@ func (b *lcBucket) walk(ctx context.Context, p op.ListObjectsParams, failLater b
 		}
 		p.Marker = res.NextMarker
 	}
+}
+
+// multipart is handle_multipart_expiration
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L886-L1000 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L907-L1020 at v20.2.4):
+// under the prefix of each enabled rule that has DaysAfterInitiation, in
+// the prefix map's order, the bucket's multipart meta objects, unordered
+// and without versions, each page's uploads handed to the work pool
+// (abortUpload), which drains once every rule is walked. No other filter
+// applies, nor the zone's ArchiveZone check, as radosgw applies neither
+// here, and a failed page fails the bucket.
+func (b *lcBucket) multipart(ctx context.Context, ops []lifecycle.PrefixOp) error {
+	pool := lcWorkPool(b.p.s.opts.lcMaxWPWorker)
+	defer lcDrain(pool)
+	for i := range ops {
+		o := &ops[i].Op
+		if !o.Enabled || o.MPExpiration <= 0 {
+			continue
+		}
+		p := op.ListObjectsParams{Prefix: ops[i].Prefix, NS: meta.NSMultipart, NameFilter: meta.IsMultipartMeta, AllowUnordered: true}
+		stop, err := b.walk(ctx, p, true, func(rec *op.BucketRecord, res *op.ListObjectsResult) {
+			for j := range res.Entries {
+				e := res.Entries[j]
+				pool.Go(func() error {
+					b.abortUpload(ctx, rec, o, e)
+					return nil
+				})
+			}
+		})
+		if stop {
+			return err
+		}
+	}
+	return nil
 }
 
 // lcEntry is e as Decide reads a listed entry.
