@@ -8832,18 +8832,16 @@ does the following.
   rgw-go makes them the marker link's condition (`writeDeleteMarker`,
   `internal/driver/delete_versioned.go`), checked as every conditional
   versioned write's is (`prepareOLHAttempt` and `checkOLHLink`,
-  `internal/driver/olh_cond.go`): each attempt evaluates them on the version
-  current once it has followed the key's OLH ("A read that replays a pending
-  modification answers the version current after it", under Object read
-  differences), and guards its init on the `olh.info` it read and, while
-  its wait on them allows, on no other writer's modification pending. On an
-  enabled bucket the marker
-  commits only if the conditions held when it linked: after the link rgw-go
-  lists the key's versions, and when another version or marker took an epoch
-  between the one the attempt read and the marker's own, or the version the
-  conditions passed on, the current delete marker they saw, or the null
-  version whose data they passed on, is no longer listed, it unlinks the
-  marker and answers 412. A pass of any of the three conditions rests on
+  `internal/driver/olh_cond.go`), by the rules exclusion "A conditional
+  write to a versioned bucket commits only if its condition held when it
+  linked" states for the check at each attempt, the guard on the attempt's
+  init and its wait, and the check after the link. On an enabled bucket the
+  marker commits only if the conditions held when it linked: the check
+  after its link unlinks the marker and answers 412 when another version or
+  marker took an epoch between the one the attempt read and the marker's
+  own, or when the version the conditions passed on, the current delete
+  marker they saw, or the null version whose data they passed on, is no
+  longer listed. A pass of any of the three conditions rests on
   what it was checked against, so the current version, or the current
   delete marker and, for a pass on the null version's data in the key's
   head, the null version, must stay listed. On a suspended bucket the
@@ -8855,7 +8853,11 @@ does the following.
   which no unlink restores. So it is not checked after its link: its init's
   guard serializes it against rgw-go's conditional writers alone, and a
   radosgw writer, or an unconditional rgw-go one, that links between its
-  init and its link stays under the marker, as through radosgw.
+  init and its link stays under the marker, as through radosgw. For the
+  same reason no link of the null version is checked after it; what the
+  null version's data adds, its head write carrying its init before its
+  link, is in exclusion "A conditional write to a versioned bucket commits
+  only if its condition held when it linked".
 
   When no version is current, a delete marker being current or no link
   having reached the key's head, the conditions are checked against the
@@ -8874,6 +8876,265 @@ does the following.
   version's removal leaves the head with no ETag and no data, which
   If-Match: `*` alone does not compare. The S3 delete still answers 501 on
   a versioned bucket; the object store's delete does this.
+- **A conditional write to a versioned bucket commits only if its condition
+  held when it linked.** radosgw checks a versioned write's If-Match and
+  If-None-Match once, before its head write, and then links the version
+  under the key's OLH with nothing tying the link to that check: the init of
+  its pending modification is guarded on the OLH tag alone
+  ([rgw_rados.cc:3187-3205](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3187-L3205),
+  [rgw_rados.cc:3369-3375](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3369-L3375) and
+  [rgw_rados.cc:7799-7910](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7799-L7910) at v19.2.7,
+  [rgw_rados.cc:3284-3300](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3284-L3300),
+  [rgw_rados.cc:3490-3496](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3490-L3496) and
+  [rgw_rados.cc:8462-8573](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8462-L8573) at v20.2.4).
+  So two `If-None-Match: *` writes can both create the key, and an
+  If-Match write can link after the version it matched was replaced
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's conditional versioned write
+  checks its condition once and links
+  unguarded](ceph-upstream-bugs.md#radosgws-conditional-versioned-write-checks-its-condition-once-and-links-unguarded)").
+  rgw-go checks the condition at radosgw's point too, and a write refused
+  there writes nothing; its link then holds the condition
+  (`linkCond`, `internal/driver/put_versioned.go`; `prepareOLHAttempt`,
+  `waitOLHPending` and `checkOLHLink`, `internal/driver/olh_cond.go`).
+  - Each attempt of the link follows the key's OLH head as a read does,
+    replaying a pending modification and reading the head again when the
+    replay applied anything or another writer refused a pass of it, and
+    checks the condition on the version current on that head, a current
+    delete marker counting as no object. That is the version current after
+    the replay, where radosgw checks the one current before it and, when its
+    replay is refused, none (exclusion "A read that replays a pending
+    modification answers the version current after it"). A condition that
+    no longer holds answers 412 PreconditionFailed, or 404 NoSuchKey for an
+    If-Match with no current version, and removes the version the write
+    made through the unversioned delete on its instance key.
+  - The attempt's init is guarded on the head's `olh.info` as the attempt
+    read it, absent read as empty, and, while no pending attr remains that
+    the attempt does not wait on, on there being no pending attr
+    (`obj_check_attrs_prefix` of `user.rgw.olh.pending.`, failing if one
+    exists). That serializes rgw-go's conditional writers. An attempt that
+    meets another writer's pending attr runs the replay and backs off, with
+    jitter, each backoff one of radosgw's 100 attempts, up to 8 backoffs,
+    318 to 635 ms in all; past them its init no longer refuses a pending
+    attr, and the check after its link alone holds the condition. Pending
+    attrs older than `rgw_olh_pending_timeout_sec` are expired first, as
+    `follow_olh` expires them
+    ([rgw_rados.cc:8984-8996](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8984-L8996),
+    [rgw_rados.cc:9730-9742](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9730-L9742)),
+    and one already older than 317.5 ms, the backoffs' least, when the
+    attempt first reads it is not waited on. That age compares the clock of
+    the gateway that wrote the attr with rgw-go's, so a skew past 317 ms
+    takes a live writer's attr for stale and skips the wait, or a dead
+    writer's for live and spends the bound; a named version's condition
+    does not rest on the wait. A pending attr no writer will remove, such as
+    the one radosgw's link at an older epoch leaves, delays the key's
+    conditional writes by the bound until it is that old or expires.
+  - radosgw's writers and rgw-go's unconditional ones guard their init on
+    the OLH tag alone, so they can link between a conditional writer's init
+    and its link. After its link lands, and before its replay, the writer of
+    a named version lists the key's versions on its shard and voids the link
+    when another version or delete marker holds an epoch above the
+    `olh.ver` its attempt read and below its own, or when the version or
+    delete marker its condition rested on is no longer listed. A condition
+    rests on the current version for any comparison with it, If-None-Match
+    with an ETag included, and on a current delete marker whatever it
+    compares, since the marker's removal makes the version below it current
+    again without listing anything above the epoch the attempt read;
+    `If-None-Match: *` over no version rests on nothing. An unlink takes no
+    epoch: the unlink of the current version promotes the next one at that
+    version's own epoch
+    ([cls_rgw.cc:1388-1427](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1388-L1427) and
+    [cls_rgw.cc:1936-1967](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1936-L1967) at v19.2.7,
+    [cls_rgw.cc:1514-1554](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1514-L1554) and
+    [cls_rgw.cc:2083-2114](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2083-L2114) at v20.2.4),
+    so only the rule on the version the condition rested on sees one. A
+    void link is unlinked through the versioned unlink, whose replay removes
+    the version, promoting the other writer's when the void one was
+    current, and the write answers 412. When another writer removed the
+    writer's own version after its link, that version's epoch is unknown:
+    the write answers 412, with nothing to unlink, when the version its
+    condition rested on is gone or another version or marker holds any
+    epoch above the one it read but that version's, and success otherwise.
+    A listing that fails leaves the condition unknown, so the link is
+    unlinked too and the listing's error answered, a 5xx. An unlink whose
+    outcome is unknown answers its error, and one that fails leaves the
+    version linked and answers 500 InternalError.
+  - Unconditional writes keep radosgw's guards exactly.
+
+  The check after the link is conservative: a write whose condition held
+  when it linked answers 412 when the version its condition rested on is
+  deleted between its link and its check, or when `If-Match: *` rested on a
+  version another writer deleted though an older one survives, and two
+  racing conditional writers may both answer 412. A voided version can be
+  read and listed between its link and its unlink. The guarantee is not kept
+  when the writer stops between its link and its check, nor when its void
+  unlink is not sent: the key's next replay commits the link. After a
+  restarted log, a failed `clear_olh` head removal followed by radosgw's
+  replay (exclusion "apply_olh_log's olh.ver guard is EQ on the bytes read,
+  retried from a fresh read"), the head's `olh.ver` can exceed the OLH
+  entry's epoch, so another writer's link at a lower epoch escapes the epoch
+  rule.
+
+  The null version is covered only up to its head write. No link of the
+  null version is checked after it (exclusion "A conditional delete marker
+  is checked against the version current when it links"). The null
+  version's data is written over the key's OLH head before its link, so
+  that link carries no condition, the head then holding the write's own
+  data. Its condition is checked before the head write instead, as a
+  conditional link's attempt checks it, on the version current on the
+  followed head (exclusion "A suspended bucket's conditional write is
+  checked against the current version"), and the head write's own op, not
+  the link, inits the write's pending modification (`writeNullVersion`,
+  `internal/driver/put_versioned.go`). Ahead of every other step the op
+  carries a conditional link's init guards, on the head's OLH tag, on its
+  `olh.info` as the check read it and, while the wait allows it, on no
+  pending attr, and then radosgw's own guard on the write tag it read, none
+  for `If-None-Match: *`; after them come the head write, which keeps the
+  OLH attrs, and the new pending attr. The OSD runs an op's steps in order
+  and applies all of them or none, so the guards see the head as it was
+  before the op, and what lands is the init followed by the head write with
+  nothing between. The link is then made under the init's op tag, with no
+  init of its own. Every step is one radosgw sends on an OLH head; only the
+  init's place moves, from the link into the head write's op. A second
+  conditional write meets the first's pending attr from its head write to
+  its replay, so within the bound it waits, as a conditional link waits,
+  and checks its condition again on the version the first's link made
+  current: two conditional writes of the null version are serialized, the
+  second answering 412 when the first made its condition false, as radosgw
+  answers it. An op the init's guards refuse, another writer having applied
+  or recorded a modification since the check, writes nothing, and the write
+  checks its condition again from a fresh read of the head, answering 412
+  when it no longer holds. An op that finds the head gone writes nothing
+  too, and the fresh read takes the unversioned path: an If-Match answers
+  404 NoSuchKey, and `If-None-Match: *` writes the key as a plain object
+  with no link. radosgw answers that race from its lost-race table
+  instead, an If-Match ETag with 404 as rgw-go does. For an `if_match` of
+  `*` that table turns ENOENT into `ERR_PRECONDITION_FAILED`, 412
+  ([rgw_rados.cc:3425-3430](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3425-L3430),
+  [rgw_rados.cc:3546-3551](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3546-L3551)).
+  One the write tag's
+  guard refuses, another write or removal of the null version having
+  replaced the head, writes nothing and is answered as radosgw answers a
+  lost race. One whose outcome is unknown may have landed, its pending attr
+  then left to expire, and a completion that fails cancels the attr.
+
+  What the null write's guards leave unheld:
+  - The pending-attr guard holds within the bound alone, and only while no
+    pending attr remains that the write does not wait on, a stale one
+    included: a dead writer's, radosgw's at an older epoch, or a conditional
+    null write's whose head write timed out, each until it expires. Outside
+    that the head write is guarded on `olh.info` alone, which changes only
+    when a modification is applied, so a modification another writer
+    records and links after the check and applies only after the head write
+    is linked over. A second conditional write of the null version is such a
+    writer: past the bound, or beside a pending attr not waited on, two
+    conditional null writes can both answer 200, the null version holding
+    the data of the one whose head write came last, where radosgw at both
+    floors answers the second 412, its check reading the head the first
+    wrote. There the guarantee does not hold.
+  - From the head write, which carries the null write's init, to its link,
+    a writer that does not wait on the null write's pending attr, which is
+    radosgw's writers, rgw-go's unconditional ones and its conditional ones
+    past their bound, and that inits after the head write and links before
+    the null version's link, is linked over, the null version current after
+    it, whatever the condition says and whether or not that writer applies
+    its link in between; no guard on the link could undo a head write that
+    already replaced the null version's data.
+
+  radosgw has each of these windows, the second null write's aside, and a
+  wider one: it checks the condition on the OLH head as read, not on the
+  current version, and guards nothing between that check and its link but
+  the write tag, none for `If-None-Match: *`, so a writer that links a
+  version between its check and its link is linked over however it
+  interleaves
+  ([rgw_rados.cc:3185-3205](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3185-L3205) and
+  [rgw_rados.cc:3369-3375](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3369-L3375) at v19.2.7,
+  [rgw_rados.cc:3282-3300](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3282-L3300) and
+  [rgw_rados.cc:3490-3496](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3490-L3496) at v20.2.4).
+  A second conditional null write is the one interleaving the floors refuse
+  and rgw-go refuses only within its bound: their check reads the head the
+  first wrote, which exists for `If-None-Match: *` and holds the first's
+  ETag for an If-Match. Main and the tentacle branch after v20.2.4 follow the
+  OLH for that check, and let both through (`docs/ceph-upstream-bugs.md`,
+  "[radosgw's conditional versioned write checks its condition once and
+  links
+  unguarded](ceph-upstream-bugs.md#radosgws-conditional-versioned-write-checks-its-condition-once-and-links-unguarded)").
+
+  The state written is radosgw's. Squid needs nothing beyond this: v19.2.7
+  checks a versioned write's conditions against the current version as
+  v20.2.4 does, since ce98cebb815 (`docs/ceph-upstream-bugs.md`, "[radosgw
+  before v19.2.7 and v20.2.1 checked a versioned write's conditions against
+  the new
+  instance](ceph-upstream-bugs.md#radosgw-before-v1927-and-v2021-checked-a-versioned-writes-conditions-against-the-new-instance)").
+  The S3 ops refuse a versioned write until versioning is served.
+- **A suspended bucket's conditional write is checked against the current
+  version.** radosgw checks a write's If-Match and If-None-Match against the
+  version current on the key's OLH only when the key has an instance; a
+  write without one, as every write to a bucket whose versioning is
+  suspended is, is checked against the key's head as read without following
+  the OLH
+  ([rgw_rados.cc:3185-3197](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3185-L3197),
+  [rgw_rados.cc:3282-3294](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3282-L3294)).
+  Over a key that was ever versioned that head is the OLH head, which exists
+  whatever version is current and holds the null version's data or none:
+  radosgw answers `If-None-Match: *` 412 over a current delete marker,
+  passes `If-Match: *` there, and compares an ETag with the null version's,
+  or with none, whichever version is current (`docs/ceph-upstream-bugs.md`,
+  "[radosgw checks a suspended bucket's write conditions against the OLH
+  head](ceph-upstream-bugs.md#radosgw-checks-a-suspended-buckets-write-conditions-against-the-olh-head)").
+  rgw-go checks a write over an OLH head against the version current on it,
+  followed as a read follows it, a current delete marker counting as no
+  object, as it checks a write with an instance (`condState`,
+  `internal/driver/put_versioned.go`). A head without OLH attrs, a key never
+  versioned, is checked as it is on both gateways. The check comes before
+  the write's head write, which carries the init of its modification and is
+  guarded on what the check read, so two conditional writes of the null
+  version are serialized within the bound, the second checked on the
+  version the first made current; past the bound, or beside a pending attr
+  the write does not wait on, both can answer 200 where radosgw at both
+  floors answers the second 412, and nothing holds the condition from the
+  head write to the link (exclusion "A conditional write to a versioned
+  bucket commits only if its condition held when it linked"). s3-tests'
+  `test_put_object_suspended_if_match` expects the answers rgw-go's
+  PutObject gives. The S3 ops refuse a versioned write until versioning is
+  served.
+- **A versioned write whose link fails keeps its tails.** radosgw's PutObject
+  deletes the tails it wrote whenever its head's `write_meta` fails other
+  than by a timeout
+  ([rgw_putobj_processor.cc:393-401](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L393-L401) and
+  [rgw_putobj_processor.cc:184-229](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L184-L229) at v19.2.7,
+  [rgw_putobj_processor.cc:427-436](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L427-L436) and
+  [rgw_putobj_processor.cc:212-257](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L212-L257) at v20.2.4),
+  and a versioned write's `write_meta` returns `set_olh`'s failure after its
+  head is written and its index entry completed, whether or not the link
+  landed
+  ([rgw_rados.cc:3369-3375](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3369-L3375),
+  [rgw_rados.cc:3490-3496](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3490-L3496)):
+  the version's head, linked or not, then names deleted tails
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's versioned PutObject deletes its
+  tails when its link
+  fails](ceph-upstream-bugs.md#radosgws-versioned-putobject-deletes-its-tails-when-its-link-fails)").
+  rgw-go deletes a write's tails only when its head write itself failed.
+  Once the head is written its tails stay whatever the completion or the
+  link answers, and a removal of the version, after a completion or a link
+  refused or a link voided, sends them to the GC as the unversioned delete
+  does (`putStream`, `internal/driver/put.go`; exclusion "rgw-go removes the
+  instance a failed versioned write made"). The S3 ops refuse a versioned
+  write until versioning is served.
+- **A versioned write is counted in the quota cache before its link.**
+  radosgw adds a versioned PutObject's object and bytes to the bucket's
+  quota cache only once `set_olh` has succeeded, its `update_stats` coming
+  after the link
+  ([rgw_rados.cc:3390-3398](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3390-L3398),
+  [rgw_rados.cc:3511-3519](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3511-L3519)).
+  rgw-go adds them once the version's head is written, before its
+  completion and its link (`doWriteMeta`, `internal/driver/headwrite.go`),
+  since every removal of the version takes them back: the removal after a
+  completion or a link refused, and the unlink of a link its condition
+  voided (exclusion "rgw-go removes the instance a failed versioned write
+  made"). radosgw's order would have such a removal take back what was never
+  added. A version that stays after its completion or its link failed, the
+  outcome unknown, stays counted, as its index entry may land. The S3 ops
+  refuse a versioned write until versioning is served.
 - **zlib's compressor message states the window rgw-go deflates with.**
   radosgw's zlib compressor deflates with `compressor_zlib_winsize` and
   stores that value as each object's `compressor_message`
@@ -9295,8 +9556,10 @@ rgw-go does the following.
   Unversioned writes keep radosgw's unawaited completion. The cost is a
   round trip to the index shard per versioned write that radosgw does not
   wait for, though the OSD applies the two operations in turn either way.
-  Versioning is not served yet; the awaited completion lands with the
-  versioned PutObject.
+  The driver's versioned PutObject awaits it (`linkVersion`,
+  `internal/driver/put_versioned.go`); CopyObject and
+  CompleteMultipartUpload await it once they write versions. The S3 ops
+  refuse a versioned write until versioning is served.
 - **An index read of a versioned key that finds its shard gone reads the
   shard the bucket now names.** radosgw reads a name's pending OLH log from
   the shard its cached bucket instance names, and `bi_get` of the name's OLH
