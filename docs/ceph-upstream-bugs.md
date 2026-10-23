@@ -3279,7 +3279,12 @@ Every new entry adds its row to this table, in document order.
   for a device of step 0, which it does not verify, so no rgw-go request
   faults the OSD (`internal/driver/mfa.go`; spec "is not verified, the class
   not called, for a device of step 0, where a good code faults the OSD",
-  `internal/driver/mfa_test.go`).
+  `internal/driver/mfa_test.go`). Its otp metadata put refuses a device of
+  step 0, or of a step over 3600 seconds, with 400 InvalidArgument before
+  it writes, so no rgw-go write stores one (`op.DecodeOTPDocument`,
+  `internal/op/metadata_otp.go`; `docs/exclusions.md`, "The admin metadata
+  API serves four sections"). A device of step 0 radosgw stored still reads
+  back.
 - **Upstream:** [#80948](https://tracker.ceph.com/issues/80948). Its fix,
   [ceph/ceph#72250](https://github.com/ceph/ceph/pull/72250), a draft, adds a
   file-local `effective_step_size()` that uses liboath's default time step
@@ -3397,6 +3402,14 @@ Every new entry adds its row to this table, in document order.
     driver's spec "is not verified for a code used again in each later step
     of its window, which the class accepts" pins rgw-go's refusal
     (`internal/driver/mfa_test.go`).
+  - Its otp metadata put writes a device's `window`, `step_size` and
+    `time_ofs` as the document gives them, within its bounds of 1024 steps
+    and 3600 seconds and refusing a step of 0, and keeps the `last_success`
+    of each device the document keeps, as radosgw's put does
+    (`internal/driver/metadata_otp.go`; `docs/exclusions.md`, "The admin
+    metadata API serves four sections"). So the class stores the same index
+    for a device rgw-go wrote, and the replay stands as for one radosgw
+    wrote.
 - **Upstream:** [#80949](https://tracker.ceph.com/issues/80949), which we
   filed. Its fix, [ceph/ceph#72253](https://github.com/ceph/ceph/pull/72253),
   a draft, passes `&otp_pos` and sets the index to
@@ -14042,7 +14055,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it. A metadata put compares versions and
   mtimes as Squid's `check_versions` does, on both releases (`PutMetadata`,
   `internal/op/adminmetadata.go`; `docs/exclusions.md`, "The admin metadata
-  API serves three sections").
+  API serves four sections").
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
   (non-security).
 - **Found:** phase 1 unit N, Task 9, 2026-10-11, implementing the metadata
@@ -16572,10 +16585,15 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** fixed in v21.0.1 and later. Unfixed at both floors, v19.2.7
   and v20.2.4, and on the squid and tentacle branches as of their
   2026-10-12 heads.
-- **rgw-go:** writes no otp devices yet (`internal/cls/otp` sends what it is
-  given). Its otp metadata put must bound a seed's length, as its validation
-  keeps a document from faulting the OSD ("cls_otp divides by a stored
-  step_size that is never validated", above).
+- **rgw-go:** its otp metadata put refuses a device whose seed is longer
+  than 1024 bytes, counted as the bytes of the decoded JSON string, with
+  400 InvalidArgument once every device is checked and before it writes
+  (`MaxOTPSeedLen`, `op.DecodeOTPDocument`, `internal/op/metadata_otp.go`;
+  `docs/exclusions.md`, "The admin metadata API serves four sections"). So
+  no rgw-go write hands `otp_set` a seed longer than the 1024 bytes
+  upstream's fix keeps on the stack. Only writes are bounded: a longer seed
+  radosgw stored still reads back, and rgw-go's MFA check sends no
+  `otp_set`. `internal/cls/otp` itself still sends what it is given.
 - **Upstream:** fixed on main by
   [ceph/ceph#68014](https://github.com/ceph/ceph/pull/68014), "rgw: VLAs are
   no longer welcome", merged 2026-05-13. Its commit 5462945cbf7, "cls/otp:
@@ -18443,12 +18461,19 @@ Every new entry adds its row to this table, in document order.
     replay state.
 - **Releases:** checked at v19.2.7 and v20.2.4, where the class, the put,
   the sync and the OSD's handling are the same.
-- **rgw-go:** writes no otp devices yet. fakerados's otp class reads the
-  stored object as the OSD serves the class, and so reproduces this. That
-  is pinned by the spec "reads the header and devices as stored across
-  radosgw's reset put, so replay state survives and a dropped device's id
-  stays listed" in `internal/testutil/fakerados/cls_otp_test.go`. An otp
-  metadata put that composes radosgw's op would reproduce it on a cluster.
+- **rgw-go:** does not reproduce it. Its otp metadata put composes
+  radosgw's op and then writes the object's header itself, in the same op,
+  holding exactly the document's ids, `otp_header` v1 in the class's bytes
+  (`(*Store).putOTP`, `internal/driver/metadata_otp.go`; `otp.Header`,
+  `internal/cls/otp/types.go`; `docs/exclusions.md`, "An otp put's header
+  lists exactly the document's devices"). So a dropped device's id is not
+  listed, and a remaining device keeps its replay state, as in radosgw's
+  put. The driver's spec "keeps a remaining device's replay state, and
+  leaves the header exactly the document's ids"
+  (`internal/driver/metadata_otp_test.go`) pins it, and fakerados's spec
+  above still pins radosgw's own op. An object radosgw left listing a
+  dropped id still fails rgw-go's metadata get and removal, as `get_all`
+  fails on the OSD, and an rgw-go put of the entry mends it.
 - **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
   searched.
 - **Found:** phase 2 Task WP-17, 2026-10-19, while emulating `otp_set`'s
@@ -18511,7 +18536,11 @@ Every new entry adds its row to this table, in document order.
   local zone's otp object, as radosgw's check does
   (`internal/driver/mfa.go`), and its refusal of a code the device may have
   accepted before reads that zone's last success alone (`docs/exclusions.md`,
-  "An MFA code the device may have accepted before does not verify").
+  "An MFA code the device may have accepted before does not verify"). Its
+  otp metadata section's document carries only the devices, without their
+  replay state, as radosgw's does (`op.OTPDocument`,
+  `internal/op/metadata_otp.go`), and its put keeps the local replay state
+  of each device the document keeps.
 - **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
   searched.
 - **Found:** phase 2 Task WP-17's review, 2026-10-19, while tracing what the
@@ -25971,7 +26000,11 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** matches radosgw. Its `RemoveUser` removes what
   `remove_user_info` removes and leaves the otp object
   (`internal/driver/user.go:831-873`), so a removal through either gateway
-  leaves the same state.
+  leaves the same state. Its otp metadata section is both a read path for
+  the seeds left behind, `GET /admin/metadata/otp?key=user:<uid>` to a
+  caller with the `metadata` read cap, and rgw-go's only path that removes
+  them, `DELETE /admin/metadata/otp?key=user:<uid>`, radosgw-admin's
+  `metadata rm otp:user:<uid>` (`internal/driver/metadata_otp.go`).
 - **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
   searched.
 - **Found:** phase 2 Task V13d's review, 2026-10-22, reasoning about the
