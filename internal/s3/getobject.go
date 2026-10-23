@@ -31,7 +31,7 @@ import (
 
 // responseAttrParams is resp_attr_params
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L128-L141;
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L139-L152):
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L138-L146):
 // each response-* query parameter and the header it overrides.
 var responseAttrParams = [...]struct{ param, header string }{
 	{"response-content-type", "Content-Type"},
