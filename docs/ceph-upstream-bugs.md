@@ -462,6 +462,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's copy onto its own key in a suspended bucket shares the current version's tails without references](#radosgws-copy-onto-its-own-key-in-a-suspended-bucket-shares-the-current-versions-tails-without-references) | pending | pending | ✓ |
 | [radosgw's copy carries the source's pending OLH modifications to its destination](#radosgws-copy-carries-the-sources-pending-olh-modifications-to-its-destination) | pending | pending | ✓ |
 | [radosgw's copy of a null version leaves OLH attrs on the version it writes, and its delete keeps them](#radosgws-copy-of-a-null-version-leaves-olh-attrs-on-the-version-it-writes-and-its-delete-keeps-them) | pending | pending | ✓ |
+| [radosgw's PutObjectRetention reads no document for an admin its permission check refuses](#radosgws-putobjectretention-reads-no-document-for-an-admin-its-permission-check-refuses) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -27233,3 +27234,46 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task V7b review, 2026-10-23, reproduced on the
   emulator by the review's spec; radosgw's half derived from the source,
   not reproduced.
+
+## radosgw's PutObjectRetention reads no document for an admin its permission check refuses
+
+- **Kind:** defect, unfixed at v19.2.7 and v20.2.4; S3-correctness, not
+  security-relevant: it fails closed, refusing a request the override means
+  to serve, and writes nothing. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RGWPutObjRetention::verify_permission` returns -EACCES when
+    s3:PutObjectRetention is refused, before it calls `get_params`, which
+    reads `x-amz-bypass-governance-retention` and the body
+    ([rgw_op.cc:8340-8346](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8340-L8346),
+    [rgw_op.cc:9275-9281](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9275-L9281);
+    [rgw_rest_s3.cc:4521-4532](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4521-L4532),
+    [rgw_rest_s3.cc:5032-5043](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5032-L5043)).
+  - `rgw_process_authenticated` lets an admin through that -EACCES, and at
+    v19.2.7 a system request and any error
+    ([rgw_process.cc:228-236](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L228-L236),
+    [rgw_process.cc:228-239](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L228-L239)).
+    `execute` then parses `data`, never read and so empty, which expat
+    refuses: -ERR_MALFORMED_XML, after the lock check
+    ([rgw_op.cc:8360-8377](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8360-L8377),
+    [rgw_op.cc:9295-9312](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9295-L9312)).
+    PutObjectLegalHold, whose `get_params` runs in `execute`, has no such
+    gap
+    ([rgw_op.cc:8518-8520](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8518-L8520),
+    [rgw_op.cc:9466-9468](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9466-L9468)).
+- **Impact:** an admin, whom a policy or an ACL refuses s3:PutObjectRetention,
+  gets 400 MalformedXML for a well-formed retention on a bucket with object
+  lock, and no retention is written; on Squid so does a system request,
+  and, for an admin or a system request, so does a body `get_params`
+  refuses, such as one over `rgw_max_put_param_size`.
+- **Releases:** v19.2.7 and v20.2.4; main was not checked.
+- **rgw-go:** reproduces the refusal: `op.PutObjectRetention` reads neither
+  the body nor the bypass for a requester its first check refuses, so an
+  admin `op.Run` lets through reaches `Execute` with no document and
+  answers MalformedXML (`internal/op/objectretention_test.go`). A body
+  error stays an error for an admin on both releases (`docs/exclusions.md`,
+  "An admin is served past a failed permission check only on an access
+  denial").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task L3, 2026-10-23, transcribing
+  `RGWPutObjRetention::verify_permission`; derived from the source, not
+  reproduced.
