@@ -459,6 +459,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's versioned copy drops its tail references when its link fails](#radosgws-versioned-copy-drops-its-tail-references-when-its-link-fails) | pending | pending | ✓ |
 | [radosgw's CompleteMultipartUpload leaves its upload whole when its head lands and write_meta fails](#radosgws-completemultipartupload-leaves-its-upload-whole-when-its-head-lands-and-write_meta-fails) | pending | pending | ✓ |
 | [radosgw's copy onto its own key in a suspended bucket shares the current version's tails without references](#radosgws-copy-onto-its-own-key-in-a-suspended-bucket-shares-the-current-versions-tails-without-references) | pending | pending | ✓ |
+| [radosgw's copy carries the source's pending OLH modifications to its destination](#radosgws-copy-carries-the-sources-pending-olh-modifications-to-its-destination) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -27032,3 +27033,64 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task V7b, 2026-10-23, comparing rgw-go's self-copy
   test with copy_obj's; derived from the source, not reproduced.
+
+## radosgw's copy carries the source's pending OLH modifications to its destination
+
+- **Kind:** defect, S3-correctness: a CopyObject whose source is a key's OLH
+  head, its null version current while another writer's modification is
+  pending on it, writes that modification's pending attr onto its
+  destination's head, where no log entry ever matches it. Where the
+  destination's head is its key's OLH head, every read of the key then runs
+  an OLH update until the attr expires, and the OLH cannot be removed
+  meanwhile. Not security-relevant. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`.
+  - The source's attrs are its whole attrset, the `user.rgw.olh.pending.`
+    attrs among them
+    ([rgw_rados.cc:7118-7119](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7118-L7119) at v19.2.7,
+    [rgw_rados.cc:7781](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7781) at v20.2.4),
+    and `copy_obj` drops only `olh.idtag`, `olh.info` and `olh.ver`, and
+    only for a bucket whose versioning is not enabled
+    ([rgw_rados.cc:4809-4813](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4809-L4813) at v19.2.7,
+    [rgw_rados.cc:5022-5026](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5022-L5026) at v20.2.4).
+  - The head write sets every attr it is given
+    ([rgw_rados.cc:3265-3279](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3265-L3279) at v19.2.7,
+    [rgw_rados.cc:3362-3376](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3362-L3376) at v20.2.4),
+    after a reset that keeps the destination's own OLH attrs
+    ([rgw_rados.cc:5798-5803](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5798-L5803) at v19.2.7,
+    [rgw_rados.cc:6410-6415](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6410-L6415) at v20.2.4),
+    so on a suspended bucket's key with versions the null version's head,
+    its key's OLH head, holds the source's pending modification beside its
+    own attrs.
+  - `follow_olh` runs `update_olh` while any pending attr remains
+    ([rgw_rados.cc:8984-8997](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8984-L8997) at v19.2.7,
+    [rgw_rados.cc:9730-9743](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9730-L9743) at v20.2.4),
+    whose `apply_olh_log` removes a pending attr only with the log entry of
+    its op tag, and returns at once on an empty log
+    ([rgw_rados.cc:8505-8507](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8505-L8507)
+    and [rgw_rados.cc:8423-8425](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8423-L8425) at v19.2.7,
+    [rgw_rados.cc:9251-9253](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9251-L9253)
+    and [rgw_rados.cc:9169-9171](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9169-L9171) at v20.2.4),
+    and `check_pending_olh_entries` drops the attr only once it is older
+    than `rgw_olh_pending_timeout_sec`
+    ([rgw_rados.cc:8904-8934](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8904-L8934) at v19.2.7,
+    [rgw_rados.cc:9650-9680](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9650-L9680) at v20.2.4).
+    `clear_olh` refuses while one remains
+    ([rgw_rados.cc:8618](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8618) at v19.2.7,
+    [rgw_rados.cc:9364](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9364) at v20.2.4).
+- **Impact:** for up to `rgw_olh_pending_timeout_sec`, an hour by default,
+  from the source's modification, each GET and HEAD of the destination key
+  reads its index shard's OLH log once more, and a delete of its last
+  version leaves its OLH head and index entry behind. A conditional write
+  through rgw-go to that key waits on the attr up to its wait's bound
+  before it goes on without that guard (`docs/exclusions.md`, "A
+  conditional write to a versioned bucket commits only if its condition
+  held when it linked").
+- **Releases:** v19.2.7 and v20.2.4; main was not checked.
+- **rgw-go:** differs: a copy drops every OLH attr of its source, the
+  pending ones among them, wherever it goes (`copyAttrs`,
+  `internal/driver/copy.go`; `docs/exclusions.md`, "A copy carries none of
+  its source's OLH attrs"). Pinned in `internal/driver/copy_test.go`. A
+  copy radosgw makes still leaves one.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task V7b, 2026-10-23, reading which OLH attrs
+  `copy_obj` drops; derived from the source, not reproduced.
