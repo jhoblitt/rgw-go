@@ -1557,7 +1557,9 @@ review and verified against the tree.
   without an instance starts after its name whether or not its entry is
   still there. The purges' refusal of a versioned bucket ("A purging bucket
   removal refuses a bucket whose versioning was ever enabled") comes before
-  this listing.
+  this listing. The lifecycle pass, which keeps most of what it lists,
+  resumes after the newest version it kept instead ("A lifecycle pass hands
+  each version of a key out once").
 - **The admin bucket removal with bypass-gc leaves a versioned key's OLH
   head to the ordinary purge.** `DELETE /admin/bucket?bypass-gc=true`
   releases a version's tail stripes and removes its head as radosgw's
@@ -11254,13 +11256,12 @@ rgw-go decides what a lifecycle rule does to a listed object, and what
 does at the v19.2.7 and v20.2.4 tags (`lifecycle.Decide`,
 `lifecycle.ExpirationHeader` and `lifecycle.AbortHeader`,
 `internal/lifecycle/decide.go` and `headers.go`). rgw-go runs the
-worker's shard protocol, and its bucket pass applies the current and
-delete-marker expiration of any bucket and the abort of its expired
-multipart uploads (`internal/driver/lc_bucket.go` and `lc_actions.go`); it
-leaves a bucket with a transition rule, and a versioned one with a
-NoncurrentVersionExpiration rule, unclaimed for radosgw's workers
-("rgw-go's lifecycle worker leaves buckets with rules it does not apply to
-radosgw's", below). It does not yet send the headers
+worker's shard protocol, and its bucket pass applies the current,
+delete-marker and noncurrent expiration of any bucket and the abort of its
+expired multipart uploads (`internal/driver/lc_bucket.go` and
+`lc_actions.go`); it leaves a bucket with a transition rule unclaimed for
+radosgw's workers ("rgw-go's lifecycle worker leaves buckets with rules it
+does not apply to radosgw's", below). It does not yet send the headers
 ("No x-amz-expiration", under "Object read differences"). The decision
 entries describe what both will do.
 Where rgw-go differs, it does the following, as the design's compatibility
@@ -11312,7 +11313,32 @@ the correct S3 result, in RADOS state radosgw reads as its own.
   older version current again (`lcStates`). The lister's state then counts each
   version once, as one listing of the bucket would, and a version written
   since the walk passed its place, the null delete marker the pass itself
-  wrote among them, waits for the next pass.
+  wrote among them, waits for the next pass. radosgw's lister also lists
+  its next page without waiting for the work of the last
+  ([rgw_lc.cc:1812](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1812),
+  [rgw_lc.cc:1868](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1868)),
+  and once that work has removed the version a page ends on, the class
+  starts the next page past every version of its name, so the rest of the
+  key waits for another day (docs/ceph-upstream-bugs.md, "[radosgw's
+  lifecycle lister skips the rest of a key whose version ending a page it
+  removed](ceph-upstream-bugs.md#radosgws-lifecycle-lister-skips-the-rest-of-a-key-whose-version-ending-a-page-it-removed)").
+  rgw-go lists the next page once the page's work has drained: after the
+  newest version of the page's last key that the class still lists as it
+  was handed out, or after the one an earlier page resumed after, and only
+  when it lists neither at the key's first version
+  (`lcVersionPager.resumePoint`, `internal/driver/lc_bucket.go`). A key's
+  versions past a page are reached in the same pass, and those the pass
+  keeps are not listed again; each version it tries costs one or two index
+  reads. A purging removal keeps nothing it lists, so it starts each page
+  at its last key's remaining versions ("A purging removal resumes each page
+  of a versioned bucket at its last key's remaining versions"); the pass
+  keeps most of what it lists, and starting there would list the kept
+  versions again, a page for each thousand of them. One wait remains, in
+  the state radosgw's listing repair leaves: when the null version's copy
+  at the key's plain entry ends a page, the pass hands the copy out, since
+  the entry after it is on the next page, and the key's versions newer than
+  the null version, which that page lists after the copy, list at or before
+  its list key, so they are dropped and wait for the next pass.
 - **Lifecycle expiration on a versioning-suspended bucket writes the null
   delete marker.** radosgw's current expiration removes the current
   version outright unless versioning is enabled
@@ -11358,7 +11384,10 @@ the correct S3 result, in RADOS state radosgw reads as its own.
   rgw-go runs the same check, `objectlock.VerifyDelete` with no bypass,
   before every removal that deletes a version: a current object of a
   bucket never versioned and a null version the null marker replaces, as
-  well as a noncurrent version. One that fails keeps the object, and
+  well as a noncurrent version, and again on the version as read just
+  before its removal, on the bucket's record as read then
+  (`lcBucket.removeVersion`, `internal/driver/lc_actions.go`). One that
+  fails keeps the object, and
   another of the rule's actions may be taken instead, as when a noncurrent
   version fails it. Since the null marker also replaces a noncurrent null
   version, the worker reads the key's null version again before it writes
@@ -11555,9 +11584,8 @@ the correct S3 result, in RADOS state radosgw reads as its own.
     walk reaches only once its head does. A pass that leaves such an entry
     stamps no rollover date, since its head never reaches the shard's end,
     and in a zone without radosgw workers the entry is never processed.
-    Such an entry is a bucket whose rules transition to a cloud tier, one
-    with a transition rule, and one that was ever versioned with a
-    NoncurrentVersionExpiration rule (the next two entries).
+    Such an entry is a bucket whose rules transition to a cloud tier, and
+    one with a transition rule (the next two entries).
   - A claim is read back before its bucket is processed, before each
     listing page of the bucket's pass, and again once the shard is locked
     after it. A claim the shard no longer holds as the worker wrote it,
@@ -11632,13 +11660,12 @@ the correct S3 result, in RADOS state radosgw reads as its own.
 - **rgw-go's lifecycle worker leaves buckets with rules it does not apply to
   radosgw's.** rgw-go's bucket pass applies the current expiration, by a
   delete marker on a bucket whose versioning is enabled and the null delete
-  marker on a suspended one, the removal of expired delete markers, and the
-  abort of expired multipart uploads ("Lifecycle aborts an expired
-  multipart upload under its completion lock"). It claims a bucket only
-  when it applies each of the bucket's rules, so not one with a rule the
-  zone runs that transitions current or noncurrent versions, nor one whose
-  flags carry `BUCKET_VERSIONED`, its versioning enabled or suspended, with
-  a rule the zone runs that expires noncurrent versions. A
+  marker on a suspended one, the removal of expired delete markers and of
+  expired noncurrent versions, and the abort of expired multipart uploads
+  ("Lifecycle aborts an expired multipart upload under its completion
+  lock"). It claims a bucket only when it applies each of the bucket's
+  rules, so not one with a rule the zone runs that transitions current or
+  noncurrent versions. A
   claim marks a bucket done for the day, and radosgw's worker would then
   skip the rules rgw-go does not apply. Such a bucket's entry is left
   unclaimed, which is logged once a pass, and the shard's head stays at it,
@@ -11677,7 +11704,7 @@ the correct S3 result, in RADOS state radosgw reads as its own.
   and the object is decided afresh at the next pass.
 
   On a bucket that was ever versioned the worker acts on the version listed
-  in the same way (`lcBucket.markCurrent` and `lcBucket.removeMarker`,
+  in the same way (`lcBucket.markCurrent` and `lcBucket.removeVersion`,
   `internal/driver/lc_actions.go`):
   - The current expiration writes its delete marker only while the key's
     current version, read again through its OLH, is the instance listed, at
@@ -11730,6 +11757,23 @@ the correct S3 result, in RADOS state radosgw reads as its own.
     version's list entry overwrites or removes the key's version
     marker](ceph-upstream-bugs.md#radosgws-listing-repair-of-a-null-versions-list-entry-overwrites-or-removes-the-keys-version-marker)"),
     so such a marker would never match its listing and never expire.
+  - A noncurrent version is removed by its instance, `null` for an empty
+    one, only while it is still the version listed, the null version judged
+    by its index entry. The removal carries the listed ETag and mtime as
+    If-Match and `x-amz-if-match-last-modified-time`, which the delete
+    checks on the version's index entry, and the version as read again as
+    `Expect`, which the delete checks before its unlink and again in the
+    replay that removes the version's head. So a null version that a
+    suspended bucket's PUT rewrote since is kept, where radosgw's removal of
+    a named version takes no condition (docs/ceph-upstream-bugs.md,
+    "[radosgw's versioned delete of a named version ignores unmod_since,
+    which its lifecycle relies
+    on](ceph-upstream-bugs.md#radosgws-versioned-delete-of-a-named-version-ignores-unmod_since-which-its-lifecycle-relies-on)").
+    A removal the replay refuses lists the version again at its own epoch
+    ("A refused versioned removal re-links the version, unless a newer null
+    write owns the null key"), and the next pass decides it afresh. The
+    window that stays is radosgw's own: another reader's replay of the
+    unlink's log entry still removes the version.
 - **Lifecycle stops a bucket's pass when the bucket changes under it.**
   radosgw's `bucket_lc_process` loads the bucket once and acts on that
   record until its pass ends, up to a lifecycle day later

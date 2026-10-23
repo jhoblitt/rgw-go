@@ -2,6 +2,7 @@ package driver
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -81,12 +82,11 @@ func (p *lcPass) claimable(ctx context.Context, _ *lcWorker, key string) (bool, 
 // placement tiers to a cloud is never applied: its claim, or a head moved
 // past it, would hide it from radosgw's worker, which transitions it, for
 // the day (docs/exclusions.md, "An rgw-go-only zone never processes a bucket
-// whose rules transition to a cloud tier"). A bucket with a transition rule,
-// and one that was ever versioned with a rule that expires noncurrent
-// versions, are left to radosgw's worker too, as the bucket pass applies
-// neither (docs/exclusions.md, "rgw-go's lifecycle worker leaves buckets with
-// rules it does not apply to radosgw's"). Only the rules the zone runs
-// count, as is_valid_op and zone_check choose them (lifecycle.Op.Applies).
+// whose rules transition to a cloud tier"). A bucket with a transition rule
+// is left to radosgw's worker too, as the bucket pass applies none
+// (docs/exclusions.md, "rgw-go's lifecycle worker leaves buckets with rules
+// it does not apply to radosgw's"). Only the rules the zone runs count, as
+// is_valid_op and zone_check choose them (lifecycle.Op.Applies).
 func (p *lcPass) refusal(rec *op.BucketRecord, conf lifecycle.Configuration) (reason, rule string) {
 	archive := p.s.zone.Zone.TierType == lcTierArchive
 	ops := conf.PrefixMap()
@@ -104,13 +104,8 @@ func (p *lcPass) refusal(rec *op.BucketRecord, conf lifecycle.Configuration) (re
 		}
 	}
 	for i := range ops {
-		o := &ops[i].Op
-		switch {
-		case !o.Applies(archive):
-		case len(o.Transitions)+len(o.NoncurTransitions) > 0:
+		if o := &ops[i].Op; o.Applies(archive) && len(o.Transitions)+len(o.NoncurTransitions) > 0 {
 			return "rule transitions objects", o.ID
-		case rec.Info.Versioned() && o.NoncurExpiration > 0:
-			return "rule expires noncurrent versions", o.ID
 		}
 	}
 	return "", ""
@@ -293,7 +288,7 @@ func (b *lcBucket) rule(ctx context.Context, po *lifecycle.PrefixOp) (bool, erro
 	fresh := lcAll
 	next := lcByName
 	if b.versioned {
-		vp := &lcVersionPager{}
+		vp := &lcVersionPager{b: b, pool: pool}
 		fresh, next = vp.fresh, vp.next
 	}
 	stop, err := b.walk(ctx, p, false, func(rec *op.BucketRecord, res *op.ListObjectsResult) {
@@ -417,33 +412,43 @@ func lcByName(_ context.Context, _ *op.BucketRecord, p op.ListObjectsParams, res
 }
 
 // lcVersionPager pages a rule's versions listing, which the pass acts on as
-// it lists, so that each version under the prefix is handed out at most once
-// a pass, in the listing's order; the lister's state then counts each version
-// once, as one listing of the bucket would. The next page starts after the
-// listing's next marker, copied back unchanged
-// (op.ListObjectsResult.NextMarkerInstance), and fresh drops what it lists
-// again: a page that ends on the null version starts after the null entry
-// the key holds when the next page is listed, which is the name's first
-// version once the null delete marker has replaced that version.
+// it lists, so that each version under the prefix is handed out once a pass,
+// in the listing's order, and none is skipped; the lister's state then counts
+// each version once, as one listing of the bucket would. Each next page
+// starts once the work the last one handed out has drained (next): after the
+// newest version of the page's last name the class still lists as it was
+// handed out, and otherwise at that name's first version, and fresh drops
+// what the walk lists again.
 //
 // radosgw starts each page after the key of the last entry it listed, name
 // and instance
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L397-L412 at v19.2.7,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L397-L412 at v20.2.4),
-// and the null version's key has no instance, which the class takes as the
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L397-L412 at v20.2.4).
+// The null version's key has no instance, which the class takes as the
 // name's plain key (encode_list_index_key,
-// https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L358-L363 at v19.2.7,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L408-L413 at v20.2.4),
+// https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L358-L390 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L408-L440 at v20.2.4),
 // so it lists the name's newer versions again, acts on them twice and
 // counts them twice toward NewerNoncurrentVersions (docs/ceph-upstream-bugs.md,
 // "radosgw's lifecycle lister lists a key's versions again after a page that
-// ends on its null version").
+// ends on its null version"). And when its work removed the version it
+// names before the next page is listed, the class finds no entry for the
+// marker and starts past every version of its name, whose older versions
+// wait for another day (docs/ceph-upstream-bugs.md, "radosgw's lifecycle
+// lister skips the rest of a key whose version ending a page it removed").
 type lcVersionPager struct {
+	b    *lcBucket
+	pool *errgroup.Group
 	// last is the last entry handed out, once started, and lastKey its list
-	// key; n counts the entries the current page handed out.
+	// key. page holds the versions of last's name the current page handed
+	// out, in the listing's order, and anchor the version of that name an
+	// earlier page resumed after. n counts the entries the current page
+	// handed out.
 	last    op.ObjectEntry
 	started bool
 	lastKey string
+	page    []op.ObjectEntry
+	anchor  *op.ObjectEntry
 	n       int
 }
 
@@ -455,11 +460,12 @@ func lcListKey(e *op.ObjectEntry) string {
 
 // fresh is es, a page as listed, without the entries of the last name
 // handed out that list at or before the last of them: a page that starts
-// again at the name's first version lists them again, and so do versions
-// written since the walk passed them, the null delete marker the pass
-// writes over a null version among them, which the next pass decides. A
-// version lists under one key, which the walk passes once in key order, so
-// what fresh keeps of a name is that key, whatever the name's versions
+// again at the name's first version, or after one of its versions, lists
+// them again, and so do versions written since the walk passed them, the
+// null delete marker the pass writes over a null version among them, which
+// the next pass decides. A version lists under one key, which the walk
+// passes once in key order, so what fresh keeps of a name is that key, the
+// page's versions of it and one anchor, whatever the name's versions
 // number. It also passes over an entry that lists out of key order before
 // another of its name: radosgw's listing repair copies the null version's
 // entry to the name's plain key (docs/ceph-upstream-bugs.md, "radosgw's
@@ -470,7 +476,7 @@ func lcListKey(e *op.ObjectEntry) string {
 func (v *lcVersionPager) fresh(es []op.ObjectEntry) (kept []op.ObjectEntry, at []int) {
 	kept = make([]op.ObjectEntry, 0, len(es))
 	at = make([]int, 0, len(es))
-	v.n = 0
+	v.n, v.page = 0, v.page[:0]
 	for i := range es {
 		e := &es[i]
 		k := lcListKey(e)
@@ -478,7 +484,11 @@ func (v *lcVersionPager) fresh(es []op.ObjectEntry) (kept []op.ObjectEntry, at [
 		if same && k <= v.lastKey || lcAhead(es, i, k) {
 			continue
 		}
+		if !same {
+			v.page, v.anchor = v.page[:0], nil
+		}
 		v.last, v.lastKey, v.started = *e, k, true
+		v.page = append(v.page, *e)
 		v.n++
 		kept = append(kept, *e)
 		at = append(at, i)
@@ -492,13 +502,91 @@ func lcAhead(es []op.ObjectEntry, i int, k string) bool {
 	return i+1 < len(es) && es[i+1].Key.Name == es[i].Key.Name && lcListKey(&es[i+1]) < k
 }
 
-// next is where the page after res, listed with p, starts: after its next
-// marker. A page that hands nothing out and whose next marker is the one it
-// started from is no progress.
-func (v *lcVersionPager) next(_ context.Context, _ *op.BucketRecord, p op.ListObjectsParams, res *op.ListObjectsResult) (op.ListObjectsParams, bool) {
-	q := p
-	q.Marker, q.MarkerInstance = res.NextMarker, res.NextMarkerInstance
-	return q, v.n > 0 || q.Marker != p.Marker || q.MarkerInstance != p.MarkerInstance
+// next is where the page after res, listed with p, starts, once the work the
+// page handed out has drained, so that its actions have landed:
+//   - after the listing's own next marker, copied back unchanged, when the
+//     page handed nothing out, so that nothing it listed was acted on;
+//   - after a version of the page's last name the class still resolves to
+//     its list key (resumePoint);
+//   - otherwise, every such version removed or moved, at the first version
+//     of that name, whose versions handed out fresh then drops.
+//
+// Copying back a next marker that names a version the pass removed would
+// start past the rest of its name (op.ListObjectsResult.NextMarkerInstance).
+// Only a page that hands nothing out and lists from its own marker again is
+// no progress.
+func (v *lcVersionPager) next(ctx context.Context, rec *op.BucketRecord, p op.ListObjectsParams, res *op.ListObjectsResult) (op.ListObjectsParams, bool) {
+	lcDrain(v.pool)
+	q, progress := p, true
+	if v.n == 0 {
+		q.Marker, q.MarkerInstance, q.RelistMarker = res.NextMarker, res.NextMarkerInstance, false
+		progress = q.Marker != p.Marker || q.MarkerInstance != p.MarkerInstance || q.RelistMarker != p.RelistMarker
+	} else if at := v.resumePoint(ctx, rec); at != nil {
+		q.Marker, q.MarkerInstance, q.RelistMarker = at.Key.Name, cmp.Or(at.Key.Instance, meta.NullInstance), false
+	} else {
+		q.Marker, q.MarkerInstance, q.RelistMarker = v.last.Key.Name, "", true
+	}
+	v.b.p.at(ctx, lcStepPaged, v.last.Key)
+	return q, progress
+}
+
+// resumePoint is the version the next page starts after: the newest the
+// page handed out of its last name that the class still resolves to its list
+// key (resumesAfter), or, when the page's work removed or moved each, the
+// one an earlier page resumed after, while the class still does; nil when
+// neither is. Each it finds becomes the anchor. Resuming after an older
+// version than the page's last lists the versions after it again, which
+// fresh drops, but not the name's versions before it, which a start at the
+// name's first version would list again, a page of them for each thousand
+// the rule keeps. It reads again each version it tries, one or two index
+// reads each, so a page whose versions of that name its work all removed
+// reads each of them again.
+func (v *lcVersionPager) resumePoint(ctx context.Context, rec *op.BucketRecord) *op.ObjectEntry {
+	for i := len(v.page) - 1; i >= 0; i-- {
+		if v.b.resumesAfter(ctx, rec, &v.page[i]) {
+			e := v.page[i]
+			v.anchor = &e
+			return &e
+		}
+	}
+	if v.anchor != nil && v.b.resumesAfter(ctx, rec, v.anchor) {
+		return v.anchor
+	}
+	return nil
+}
+
+// resumesAfter reports whether a versions listing whose marker names e, by
+// its instance or as null for an empty one, starts right after e: whether
+// the instance entry that marker resolves to, as markerStart resolves it, is
+// e's, at its versioned_epoch, a delete marker exactly when e is one, and
+// still listed. An unlink takes a version's list entry at once and its
+// instance entry only when its removal's DEL completion lands. rgw-go's own
+// replay awaits that completion, but another gateway's replay of the
+// unlink, radosgw's among them, sends it unawaited, so the instance entry
+// can outlast the list entry, and once it is gone the class starts past
+// every version of the name. A plain entry is the one entry of its name. A
+// read that fails reports false, so the walk does not resume after e.
+func (b *lcBucket) resumesAfter(ctx context.Context, rec *op.BucketRecord, e *op.ObjectEntry) bool {
+	key := meta.ObjKey{Name: e.Key.Name, Instance: e.Key.Instance}
+	attrs := []any{slog.String("bucket", b.c.entry.Bucket), slog.String("key", e.Key.Name), slog.String("instance", e.Key.Instance)}
+	en, err := b.p.s.getInstanceEntry(ctx, rec, key)
+	switch {
+	case errors.Is(err, radosclient.ErrNotFound):
+		return false
+	case err != nil:
+		slog.WarnContext(ctx, "lifecycle could not read an entry its listing page handed out; it does not resume after it", append(attrs, slog.Any("error", err))...)
+		return false
+	case en.VersionedEpoch != e.VersionedEpoch || (en.Flags&rgw.FlagDeleteMarker != 0) != e.DeleteMarker:
+		return false
+	case en.Flags&rgw.FlagVer == 0:
+		return true
+	}
+	listed, err := b.p.s.listed(ctx, rec, key, en)
+	if err != nil {
+		slog.WarnContext(ctx, "lifecycle could not read an entry its listing page handed out; it does not resume after it", append(attrs, slog.Any("error", err))...)
+		return false
+	}
+	return listed
 }
 
 // multipart is handle_multipart_expiration

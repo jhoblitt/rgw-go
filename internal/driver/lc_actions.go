@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/lifecycle"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/objectlock"
@@ -29,6 +30,10 @@ const (
 	// lcStepListed precedes the decision of each entry a rule's walk hands
 	// out, named by its key as listed.
 	lcStepListed
+	// lcStepPaged follows the choice of a versions listing's next page, once
+	// the work the last page handed out has drained, before the next page is
+	// listed, named by the last entry handed out.
+	lcStepPaged
 )
 
 func (p *lcPass) at(ctx context.Context, step lcStep, key meta.ObjKey) {
@@ -64,8 +69,8 @@ func (b *lcBucket) entry(ctx context.Context, rec *op.BucketRecord, rule *lifecy
 		b.expireCurrent(ctx, rec, probe, d.Key, e)
 	case b.versioned && (d.Effect == lifecycle.EffectMarker || d.Effect == lifecycle.EffectNullMarker):
 		b.markCurrent(ctx, rec, probe, e, d.Effect == lifecycle.EffectNullMarker)
-	case b.versioned && d.Effect == lifecycle.EffectRemove && e.DeleteMarker && d.Action != lifecycle.ActionNoncurrentExpiration:
-		b.removeMarker(ctx, rec, d.Key, e)
+	case b.versioned && d.Effect == lifecycle.EffectRemove:
+		b.removeVersion(ctx, rec, probe, d, e)
 	default:
 		slog.WarnContext(ctx, "lifecycle takes no such action", slog.String("bucket", b.c.entry.Bucket),
 			slog.String("key", e.Key.Name), slog.String("instance", e.Key.Instance), slog.Bool("versioned", b.versioned),
@@ -166,13 +171,14 @@ func (b *lcBucket) recheck(ctx context.Context, attrs []any) *op.BucketRecord {
 	return nil
 }
 
-// The events of the expirations of delete markers, named as to_string names
-// them
+// The events of the expirations of delete markers and noncurrent versions,
+// named as to_string names them
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_notify_event_type.cc#L31-L56 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_notify_event_type.cc#L31-L56 at v20.2.4).
 const (
 	lcEventExpirationDeleteMarker        lifecycle.Event = "s3:ObjectLifecycle:Expiration:DeleteMarker"
 	lcEventExpirationDeleteMarkerCreated lifecycle.Event = "s3:LifecycleExpiration:DeleteMarkerCreated"
+	lcEventExpirationNoncurrent          lifecycle.Event = "s3:ObjectLifecycle:Expiration:NonCurrent"
 )
 
 // markCurrent is the current expiration of e, the current version of rec, a
@@ -320,18 +326,23 @@ func (b *lcBucket) listedAs(ctx context.Context, rec *op.BucketRecord, e *op.Obj
 	return en.Meta.Mtime.Equal(e.Mtime) && en.Meta.ETag == e.ETag && en.VersionedEpoch == e.VersionedEpoch, nil
 }
 
-// removeMarker removes key, the delete marker e lists of rec, a bucket that
-// was ever versioned, by its instance, null for an empty one, as
-// remove_expired_obj removes one for the current expiration of a marker no
-// entry of its name follows and for the delete-marker expiration
+// removeVersion removes d.Key, the version e lists of rec, a bucket that was
+// ever versioned, by its instance, null for an empty one, as
+// remove_expired_obj removes one: a delete marker no entry of its name
+// follows, by the current or the delete-marker expiration
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1172-L1186 and
 // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1287-L1307 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1192-L1206 and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1309-L1329 at v20.2.4),
-// once it is still the marker listed:
-//   - the marker is read again by its version, and one gone, or no longer a
-//     marker at e's versioned_epoch, which tells a marker from any other, is
-//     skipped. e's mtime is not compared: a listing reports a marker whose
+// and a noncurrent version by the noncurrent expiration
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1242-L1260 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1262-L1281 at v20.2.4),
+// once it is still the version listed:
+//   - the version is read again by its key; a delete marker, read so, must
+//     still be a marker at e's versioned_epoch, which tells one marker from
+//     another, and any other version still as listed (listedAs) and at the
+//     RADOS version probe read for Decide; one gone or changed is skipped. A
+//     marker's listed mtime is not compared: a listing reports a marker whose
 //     index entry carries a pending op with its OLH head's state
 //     (checkDiskState, internal/driver/list.go), and a null delete marker
 //     takes the pending op of the null entry it replaces, which the
@@ -340,29 +351,45 @@ func (b *lcBucket) listedAs(ctx context.Context, rec *op.BucketRecord, e *op.Obj
 //     "radosgw's listing repair of a null version's list entry overwrites or
 //     removes the key's version marker");
 //   - the bucket's record is read again (recheck);
-//   - the removal carries the marker's mtime as read again as
-//     IfMatchLastModified, which DeleteObject checks on the marker's index
-//     entry, e's mtime as UnmodifiedSince, as remove_expired_obj sends it,
-//     which the removal of a named version does not read
-//     (docs/ceph-upstream-bugs.md, "radosgw's versioned delete of a named
-//     version ignores unmod_since, which its lifecycle relies on"), and the
-//     marker as read again as Expect, which the unlink checks again, by its
-//     versioned_epoch and mtime. A failed condition or Expect, or a marker
-//     gone, is a skip.
+//   - on a bucket with object lock as that record has it, a retention or
+//     legal hold on a version that is no marker keeps it (lcLockCheck); a
+//     marker holds no lock;
+//   - the removal carries as IfMatchLastModified e's mtime, or a marker's as
+//     read again, and for a version that is no marker e's ETag as IfMatch,
+//     which DeleteObject checks on the version's index entry; e's mtime as
+//     UnmodifiedSince, as remove_expired_obj sends it, which the removal of a
+//     named version does not read (docs/ceph-upstream-bugs.md, "radosgw's
+//     versioned delete of a named version ignores unmod_since, which its
+//     lifecycle relies on"); and the version as read again as Expect, which
+//     the delete checks before its unlink and, for a version with a head, in
+//     the replay that removes the head, so a version written since is
+//     refused and listed again as it was, to be decided afresh at the next
+//     pass. A failed condition or Expect, or a version gone, is a skip.
 //
-// A marker holds no lock. Then the notification of radosgw's
-// ObjectExpirationDeleteMarker and LifecycleExpirationDeleteMarkerCreated.
-func (b *lcBucket) removeMarker(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, e op.ObjectEntry) {
+// Then the notification of the removal's events (removalEvents).
+func (b *lcBucket) removeVersion(ctx context.Context, rec *op.BucketRecord, probe *lcProbe, d lifecycle.Decision, e op.ObjectEntry) {
 	s := b.p.s
+	key := d.Key
 	attrs := []any{slog.String("bucket", b.c.entry.Bucket), slog.String("key", key.Name), slog.String("instance", key.Instance)}
 	b.p.at(ctx, lcStepDecided, key)
 	st, err := s.StatObject(ctx, rec, key)
 	if err != nil {
-		slog.WarnContext(ctx, "lifecycle could not read an expired delete marker again; it stays", append(attrs, slog.Any("error", err))...)
+		slog.WarnContext(ctx, "lifecycle could not read an expired version again; it stays", append(attrs, slog.Any("error", err))...)
 		return
 	}
-	if !st.DeleteMarker || st.VersionedEpoch != e.VersionedEpoch {
-		slog.DebugContext(ctx, "lifecycle skips a delete marker changed since its listing", attrs...)
+	same := st.DeleteMarker && st.VersionedEpoch == e.VersionedEpoch
+	if !e.DeleteMarker {
+		if same, err = b.listedAs(ctx, rec, &e, st); err != nil {
+			slog.WarnContext(ctx, "lifecycle could not read an expired version again; it stays", append(attrs, slog.Any("error", err))...)
+			return
+		}
+	}
+	if !same {
+		slog.DebugContext(ctx, "lifecycle skips a version changed since its listing", attrs...)
+		return
+	}
+	if epoch, read := probe.epoch(); !e.DeleteMarker && read && epoch != st.Epoch {
+		slog.DebugContext(ctx, "lifecycle skips a version written since its decision", attrs...)
 		return
 	}
 	b.p.at(ctx, lcStepReread, key)
@@ -370,20 +397,48 @@ func (b *lcBucket) removeMarker(ctx context.Context, rec *op.BucketRecord, key m
 	if cur == nil {
 		return
 	}
-	_, err = s.DeleteObject(ctx, cur, key, op.DeleteParams{UnmodifiedSince: e.Mtime, IfMatchLastModified: st.Mtime, Expect: st})
+	if !e.DeleteMarker && cur.Info.ObjLockEnabled() {
+		if lerr := lcLockCheck(ctx, st, b.w.now()); lerr != nil {
+			slog.DebugContext(ctx, "lifecycle keeps a locked version", append(attrs, slog.Any("error", lerr))...)
+			return
+		}
+	}
+	p := op.DeleteParams{UnmodifiedSince: e.Mtime, IfMatchLastModified: e.Mtime, Expect: st}
+	if e.DeleteMarker {
+		p.IfMatchLastModified = st.Mtime
+	} else {
+		p.IfMatch = e.ETag
+	}
+	_, err = s.DeleteObject(ctx, cur, key, p)
 	switch {
 	case errors.Is(err, op.ErrPreconditionFailed), errors.Is(err, op.ErrConcurrentModification), errors.Is(err, op.ErrNoSuchKey):
-		slog.DebugContext(ctx, "lifecycle skips a delete marker changed since its read", append(attrs, slog.Any("error", err))...)
+		slog.DebugContext(ctx, "lifecycle skips a version changed since its read", append(attrs, slog.Any("error", err))...)
 		return
 	case err != nil:
-		slog.WarnContext(ctx, "lifecycle could not remove an expired delete marker", append(attrs, slog.Any("error", err))...)
+		slog.WarnContext(ctx, "lifecycle could not remove an expired version", append(attrs, slog.Any("error", err))...)
 		return
 	}
-	slog.InfoContext(ctx, "lifecycle removed an expired delete marker", attrs...)
+	slog.InfoContext(ctx, "lifecycle removed an expired version", attrs...)
 	b.p.notifier.Notify(ctx, lifecycle.Notification{
-		Bucket: cur.Info.Bucket, Key: key, VersionID: e.Key.Instance,
-		Events: []lifecycle.Event{lcEventExpirationDeleteMarker, lcEventExpirationDeleteMarkerCreated},
+		Bucket: cur.Info.Bucket, Key: key, ETag: st.ETag, Size: st.Size, VersionID: e.Key.Instance,
+		Events: b.removalEvents(d.Action),
 	})
+}
+
+// removalEvents is the events radosgw publishes for a removal by action: a
+// delete marker's expiration's, and the noncurrent expiration's
+// ObjectExpirationNoncurrent, which v20.2.4 sends with
+// LifecycleExpirationDelete
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1244-L1245 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1264-L1266 at v20.2.4).
+func (b *lcBucket) removalEvents(a lifecycle.Action) []lifecycle.Event {
+	switch {
+	case a != lifecycle.ActionNoncurrentExpiration:
+		return []lifecycle.Event{lcEventExpirationDeleteMarker, lcEventExpirationDeleteMarkerCreated}
+	case b.p.s.release == denc.Squid:
+		return []lifecycle.Event{lcEventExpirationNoncurrent}
+	}
+	return []lifecycle.Event{lifecycle.EventExpirationDelete, lcEventExpirationNoncurrent}
 }
 
 // abortUpload is handle_multipart_expiration's work on e, the listed meta
