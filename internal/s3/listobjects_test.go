@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"time"
 
@@ -77,6 +78,23 @@ var _ = Describe("list_bucket and list_bucket_v2", func() {
 		Expect(body).To(ContainSubstring(`<Prefix>dir/</Prefix>`), "Prefix is a dump_string, never encoded, :1878")
 		Expect(body).To(ContainSubstring(`<Contents><Key>dir%2Fx</Key>`), "a key's slash is encoded, :1940")
 		Expect(body).NotTo(ContainSubstring("<NextMarker>"), "the listing ends")
+	})
+	It("url-encodes v1's Marker under encoding-type=url, as botocore decodes it, and leaves Prefix as sent", func() {
+		body := get("/plain?encoding-type=url&marker=" + url.QueryEscape("d/a b+") + "&prefix=" + url.QueryEscape("d/ b+")).Body.String()
+		Expect(body).To(ContainSubstring(`<Prefix>d/ b+</Prefix>`), "botocore never decodes v1's Prefix")
+		Expect(body).To(ContainSubstring(`<Marker>d%2Fa%20b%2B</Marker>`), "encoded with its slash, as NextMarker is, where radosgw's is dump_string, rgw_rest_s3.cc:1970 at v19.2.7")
+		body = get("/plain?marker=" + url.QueryEscape("d/a b+")).Body.String()
+		Expect(body).To(ContainSubstring(`<Marker>d/a b+</Marker>`), "as sent without encoding-type")
+	})
+	It("url-encodes v2's Prefix and StartAfter under encoding-type=url, as S3 does, and no token", func() {
+		target := "/plain?list-type=2&prefix=" + url.QueryEscape("d/ b+") + "&start-after=" + url.QueryEscape("d/a b+") + "&continuation-token=" + url.QueryEscape("t/ +")
+		body := get(target + "&encoding-type=url").Body.String()
+		Expect(body).To(ContainSubstring(`<Prefix>d/%20b%2B</Prefix>`), "keeping its slash, as the common prefixes do, where radosgw's is dump_string, rgw_rest_s3.cc:1886 at v19.2.7")
+		Expect(body).To(ContainSubstring(`<StartAfter>d%2Fa%20b%2B</StartAfter>`), "encoded with its slash, as a Key is, rgw_rest_s3.cc:2120 at v19.2.7")
+		Expect(body).To(ContainSubstring(`<ContinuationToken>t/ +</ContinuationToken>`))
+		body = get(target).Body.String()
+		Expect(body).To(ContainSubstring(`<Prefix>d/ b+</Prefix>`), "as sent without encoding-type")
+		Expect(body).To(ContainSubstring(`<StartAfter>d/a b+</StartAfter>`))
 	})
 	It("reads encoding-type and fetch-owner as C strings, up to a NUL", func() {
 		body := get("/plain?list-type=2&prefix=dir/&encoding-type=url%00x&fetch-owner=TRUE%00x").Body.String()

@@ -554,10 +554,12 @@ type multipartPrefixes struct {
 // document
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4186-L4227,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4734-L4775):
-// the markers, Prefix and Delimiter only when not empty, each as sent.
+// the markers, Prefix and Delimiter only when not empty. EncodingType, which
+// radosgw never writes, comes first, where its other listings put it.
 type listMultipartUploadsResult struct {
 	XMLName            xml.Name           `xml:"ListMultipartUploadsResult"`
 	Xmlns              string             `xml:"xmlns,attr"`
+	EncodingType       xmltext.Text       `xml:"EncodingType,omitempty"`
 	Tenant             xmltext.Text       `xml:"Tenant,omitempty"`
 	Bucket             xmltext.Text       `xml:"Bucket"`
 	Prefix             xmltext.Text       `xml:"Prefix,omitempty"`
@@ -585,8 +587,11 @@ type listMultipartUploadsResult struct {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4173-L4229,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4721-L4777);
 // under encoding-type=url each upload's key and each common prefix is url_encode'd
-// keeping the slash, and no other element is. Initiated is rgw_to_iso8601's
-// milliseconds on both releases.
+// keeping the slash. Prefix, KeyMarker, NextKeyMarker and Delimiter are too, as
+// S3 encodes them where radosgw writes them as sent, and EncodingType is written
+// (docs/exclusions.md, "ListObjects, ListObjectsV2 and ListMultipartUploads
+// URL-encode the elements S3 encodes"); the upload id markers never are.
+// Initiated is rgw_to_iso8601's milliseconds on both releases.
 func listMultipartUploads(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	q := r.Query
 	o := &op.ListMultipartUploads{Prefix: q.Get("prefix"), Delimiter: q.Get("delimiter")}
@@ -606,17 +611,20 @@ func listMultipartUploads(ctx context.Context, w http.ResponseWriter, r *op.Requ
 		return err
 	}
 	res := o.Result
-	doc := listMultipartUploadsResult{
-		Xmlns: xmlnsS3, Tenant: xmltext.Text(r.Tenant), Bucket: xmltext.Text(r.Bucket), Prefix: xmltext.Text(o.Prefix),
-		KeyMarker: xmltext.Text(o.KeyMarker), UploadIDMarker: xmltext.Text(o.UploadIDMarker),
-		NextKeyMarker: xmltext.Text(res.NextKeyMarker), NextUploadIDMarker: xmltext.Text(res.NextUploadIDMarker),
-		MaxUploads: o.MaxUploads, Delimiter: xmltext.Text(o.Delimiter), IsTruncated: res.Truncated,
-	}
 	urlsafe := func(s string) xmltext.Text {
 		if o.EncodingURL {
 			return xmltext.Text(urlEncodeKey(s))
 		}
 		return xmltext.Text(s)
+	}
+	doc := listMultipartUploadsResult{
+		Xmlns: xmlnsS3, Tenant: xmltext.Text(r.Tenant), Bucket: xmltext.Text(r.Bucket), Prefix: urlsafe(o.Prefix),
+		KeyMarker: urlsafe(o.KeyMarker), UploadIDMarker: xmltext.Text(o.UploadIDMarker),
+		NextKeyMarker: urlsafe(res.NextKeyMarker), NextUploadIDMarker: xmltext.Text(res.NextUploadIDMarker),
+		MaxUploads: o.MaxUploads, Delimiter: urlsafe(o.Delimiter), IsTruncated: res.Truncated,
+	}
+	if o.EncodingURL {
+		doc.EncodingType = "url"
 	}
 	for i := range res.Uploads {
 		up := &res.Uploads[i]
