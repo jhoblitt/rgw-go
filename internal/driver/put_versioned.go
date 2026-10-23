@@ -48,10 +48,12 @@ func (s *Store) finalizeHeadAttrs(rec *op.BucketRecord, mtime time.Time, create 
 // isOLHHead reports whether st is an OLH head, one carrying olh.ver, as
 // get_obj_state_impl sets is_olh
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6226-L6230 at v19.2.7,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6840-L6844 at v20.2.4).
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6840-L6844 at v20.2.4),
+// and the head of a key without an instance: a version's own head carrying
+// olh.ver holds attrs radosgw's copy of a null version left on it, of no OLH.
 func isOLHHead(st *op.ObjectState) bool {
 	_, ok := st.Attrs[meta.AttrOLHVer]
-	return ok && st.Exists
+	return ok && st.Exists && (st.Key.Instance == "" || st.Key.Instance == meta.NullInstance)
 }
 
 // versionedOp reports whether hw, over st, its head as the pass read it or

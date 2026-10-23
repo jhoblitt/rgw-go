@@ -371,6 +371,21 @@ var _ = Describe("a versioned PutObject", func() {
 			Expect(pending()).To(BeEmpty(), "a link that logs nothing leaves no pending attr")
 		})
 
+		It("rewrites a version's head without OLH attrs a radosgw copy of a null version left on it", func(ctx SpecContext) {
+			mustPut(ctx, "v1", "one")
+			for _, n := range []string{meta.AttrOLHIDTag, meta.AttrOLHInfo, meta.AttrOLHVer} {
+				versionHead("v1").Xattrs[n] = []byte("copied")
+			}
+			_, err := put(ctx, "v1", "two", op.PutParams{Tag: "tag-again"})
+			Expect(err).NotTo(HaveOccurred())
+			head := versionHead("v1")
+			Expect(head.Data).To(Equal([]byte("two")))
+			for name := range head.Xattrs {
+				Expect(name).NotTo(HavePrefix(meta.AttrOLHPrefix), "only a reset of the OLH head keeps its OLH attrs")
+			}
+			Expect(target().Target.Key).To(Equal(version("v1")))
+		})
+
 		It("links a write without an instance as the null version", func(ctx SpecContext) {
 			_, err := put(ctx, "", "null", op.PutParams{})
 			Expect(err).NotTo(HaveOccurred())

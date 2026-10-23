@@ -530,7 +530,7 @@ func (s *Store) removeUnindexedHead(ctx context.Context, rec *op.BucketRecord, k
 	}
 	w := radosclient.NewWriteOp()
 	w.CmpXattr(meta.AttrIDTag, radosclient.CmpEQ, tag)
-	rgw.ObjRemove(w, []string{meta.AttrOLHPrefix}, s.release)
+	rgw.ObjRemove(w, headKeptAttrs(key), s.release)
 	_, err = ref.pool.Write(ctx, ref.oid, w, radosclient.OpFlagFullTry)
 	switch {
 	case errors.Is(err, radosclient.ErrCanceled):

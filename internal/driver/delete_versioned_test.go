@@ -395,6 +395,21 @@ var _ = Describe("DeleteObject on a versioned bucket", func() {
 			current("v1")
 		})
 
+		It("removes a version's head whole though it carries OLH attrs, as radosgw's copy of a null version leaves them", func(ctx SpecContext) {
+			put(ctx, "v1")
+			put(ctx, "v2")
+			h := versionHead("v1")
+			for _, n := range []string{meta.AttrOLHIDTag, meta.AttrOLHInfo, meta.AttrOLHVer} {
+				h.Xattrs[n] = []byte("copied")
+			}
+			Expect(mustDel(ctx, "v1", op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "v1"}))
+			gone("v1")
+			st, err := s.StatObject(ctx, rec, version("v1"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Exists).To(BeFalse(), "a named read finds no version left behind")
+			current("v2")
+		})
+
 		It("removes the key's last version and the OLH with it", func(ctx SpecContext) {
 			put(ctx, "v1")
 			mustDel(ctx, "v1", op.DeleteParams{})

@@ -279,10 +279,8 @@ func (s *Store) doWriteMeta(ctx context.Context, hw *headWrite, x *indexOp, st, 
 		}
 		if hw.create {
 			if st.Exists {
-				// remove_rgw_head_obj keeps the olh attrs
-				// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5722-L5727).
 				w.Create(false)
-				rgw.ObjRemove(w, []string{meta.AttrOLHPrefix}, s.release)
+				rgw.ObjRemove(w, headKeptAttrs(hw.key), s.release)
 			} else {
 				w.Create(true)
 			}
