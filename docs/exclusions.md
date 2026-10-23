@@ -10694,6 +10694,35 @@ does the following.
   removes no `user.rgw.olh.` attr: they stay as the OLH protocol left them,
   and the attrs asked for land as radosgw's do. The state written is the
   one radosgw leaves when nothing lands in between.
+- **The removal of an OLH head's pending attrs keeps the head's mtime.**
+  radosgw's `olh_cancel_modification`, which removes a link's or an
+  unlink's pending attr once its index op failed, and
+  `remove_olh_pending_entries`, which removes those older than
+  `rgw_olh_pending_timeout_sec`, write the head with no mtime
+  ([rgw_rados.cc:7754-7797](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7754-L7797),
+  [rgw_rados.cc:8936-8967](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8936-L8967);
+  [rgw_rados.cc:8417-8460](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8417-L8460),
+  [rgw_rados.cc:9682-9713](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9682-L9713)),
+  so the OSD stamps the head with the gateway's clock, and the null version,
+  whose data the head holds, reports that time as its Last-Modified
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's removal of an OLH head's
+  pending attr moves the null version's
+  mtime](ceph-upstream-bugs.md#radosgws-removal-of-an-olh-heads-pending-attr-moves-the-null-versions-mtime)").
+  rgw-go's two writes send the zero mtime, for which the OSD keeps the
+  object's stored mtime
+  ([PrimaryLogPG.cc:8978-8984](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L8978-L8984),
+  [PrimaryLogPG.cc:9084-9090](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L9084-L9090)),
+  under radosgw's OLH tag guard alone, so the head keeps the mtime it holds
+  when the write lands, a null write's that landed after the read included
+  (`keepHeadMtime`, `internal/driver/olh_head.go`). rgw-go also removes a pending attr sooner
+  than radosgw does: a link or unlink whose replay finds nothing under its
+  own op tag, as the removal of a noncurrent delete marker's does, removes
+  its attr at once (`finishOLHModification`, `internal/driver/olh.go`),
+  where radosgw's replay of an empty log returns at once
+  ([rgw_rados.cc:8423-8425](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8423-L8425),
+  [rgw_rados.cc:9169-9171](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9169-L9171))
+  and leaves the attr for a later read to expire, moving the mtime then. A
+  null version's mtime that a radosgw gateway moved stays where it moved.
 
 ### Bucket index differences
 

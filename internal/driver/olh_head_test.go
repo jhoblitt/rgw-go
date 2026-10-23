@@ -104,6 +104,22 @@ var _ = Describe("the OLH head operations", func() {
 	tagGuard := func() radosclient.Step {
 		return &radosclient.CmpXattrStep{Name: meta.AttrOLHIDTag, Op: radosclient.CmpEQ, Value: []byte(olhTag)}
 	}
+	// nullWrite stages a null write landing on the head: a new write tag
+	// and a later mtime, the OLH tag kept.
+	nullWrite := func() time.Time {
+		later := mtime.Add(time.Hour)
+		head().Xattrs[meta.AttrIDTag] = []byte("nullnullnullnullnullnullnullnull")
+		head().Mtime = later
+		return later
+	}
+	// keepsMtime checks that w sent the zero mtime, which the OSD takes for
+	// keeping the object's own.
+	keepsMtime := func(w fakerados.RecordedWrite) {
+		GinkgoHelper()
+		got, ok := w.Mtime()
+		Expect(ok).To(BeTrue(), "the write sends an mtime")
+		Expect(got.IsZero()).To(BeTrue(), "the zero mtime, not %v", got)
+	}
 	const lowerAlnum = `^[0-9a-z]{32}$`
 
 	Describe("olhInitModification", func() {
@@ -323,13 +339,25 @@ var _ = Describe("the OLH head operations", func() {
 			opTag = strings.TrimPrefix(mine, meta.AttrOLHPendingPrefix)
 		})
 
-		It("removes its pending attr under the tag guard and keeps a head that has olh.info", func(ctx SpecContext) {
+		It("removes its pending attr under the tag guard, keeping the head's mtime, and keeps a head that has olh.info", func(ctx SpecContext) {
 			olhHead("5", info("v1", false), map[string][]byte{mine: pendingAt(now), other: pendingAt(now)})
 			s.OLHCancelModificationForTest(ctx, state(), opTag)
 			Expect(writes()).To(HaveLen(1))
 			Expect(writes()[0].Steps()).To(Equal([]radosclient.Step{tagGuard(), &radosclient.RmXattrStep{Name: mine}}))
+			keepsMtime(writes()[0])
+			Expect(head().Mtime).To(Equal(mtime), "the null version's Last-Modified, which the OSD would stamp with the write's time")
 			Expect(head().Xattrs).NotTo(HaveKey(mine))
 			Expect(head().Xattrs).To(HaveKey(other))
+		})
+
+		It("keeps the mtime of a null write landing between its read and the removal", func(ctx SpecContext) {
+			olhHead("5", info("", false), map[string][]byte{mine: pendingAt(now)})
+			st := state()
+			later := nullWrite()
+			s.OLHCancelModificationForTest(ctx, st, opTag)
+			Expect(writes()).To(HaveLen(1), "one removal, the null write keeping the OLH tag")
+			Expect(head().Mtime).To(Equal(later), "the null write's mtime, not the one the cancel read")
+			Expect(head().Xattrs).NotTo(HaveKey(mine))
 		})
 
 		It("then removes a head without olh.info once no pending attr remains", func(ctx SpecContext) {
@@ -414,7 +442,7 @@ var _ = Describe("the OLH head operations", func() {
 			Expect(expired).To(Equal([]string{old}))
 		})
 
-		It("removes them in batches of 1000 under the tag guard", func(ctx SpecContext) {
+		It("removes them in batches of 1000 under the tag guard, keeping the head's mtime", func(ctx SpecContext) {
 			olhHead("5", nil, nil)
 			var all []string
 			for i := range 2500 {
@@ -428,7 +456,20 @@ var _ = Describe("the OLH head operations", func() {
 				Expect(steps).To(HaveLen(n+1), "batch %d", i)
 				Expect(steps[0]).To(Equal(tagGuard()), "batch %d", i)
 				Expect(steps[1]).To(Equal(&radosclient.RmXattrStep{Name: all[1000*i]}), "batch %d", i)
+				keepsMtime(ws[i])
 			}
+			Expect(head().Mtime).To(Equal(mtime))
+		})
+
+		It("keeps the mtime of a null write landing between the read and the removal", func(ctx SpecContext) {
+			a := pending(at(2*time.Hour), "aaaaaaaaaaaaaaaa")
+			olhHead("5", info("", false), map[string][]byte{a: pendingAt(at(2 * time.Hour))})
+			st := state()
+			later := nullWrite()
+			Expect(s.RemoveOLHPendingEntriesForTest(ctx, st, []string{a})).To(Succeed())
+			Expect(writes()).To(HaveLen(1))
+			Expect(head().Mtime).To(Equal(later), "the null write's mtime, not the one the removal read")
+			Expect(head().Xattrs).NotTo(HaveKey(a))
 		})
 
 		DescribeTable("takes ENOENT and ECANCELED for success and stops",
@@ -500,7 +541,7 @@ var _ = Describe("the OLH head operations", func() {
 			Expect(err).To(MatchError(op.ErrUnknown))
 		})
 
-		It("expires old pending attrs under the tag guard and runs no update when none remains", func(ctx SpecContext) {
+		It("expires old pending attrs under the tag guard, keeping the head's mtime, and runs no update when none remains", func(ctx SpecContext) {
 			old := pending(now.Add(-2*time.Hour), "aaaaaaaaaaaaaaaa")
 			olhHead("3", info("v1", false), map[string][]byte{old: pendingAt(now.Add(-2 * time.Hour))})
 			target, _, err := s.FollowOLHForTest(ctx, state(), noUpdate)
@@ -508,6 +549,7 @@ var _ = Describe("the OLH head operations", func() {
 			Expect(target.Instance).To(Equal("v1"))
 			Expect(writes()).To(HaveLen(1))
 			Expect(writes()[0].Steps()).To(Equal([]radosclient.Step{tagGuard(), &radosclient.RmXattrStep{Name: old}}))
+			keepsMtime(writes()[0])
 			Expect(head().Xattrs).NotTo(HaveKey(old))
 		})
 

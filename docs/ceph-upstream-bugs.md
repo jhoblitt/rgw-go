@@ -466,6 +466,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw lets an object ACL's WRITE grant set, shorten and bypass an object's retention and legal hold](#radosgw-lets-an-object-acls-write-grant-set-shorten-and-bypass-an-objects-retention-and-legal-hold) | pending | pending | ✓ |
 | [radosgw's null version removal loses its index completion to the OLH clear while the bucket reshards](#radosgws-null-version-removal-loses-its-index-completion-to-the-olh-clear-while-the-bucket-reshards) | pending | pending | ✓ |
 | [radosgw's bucket purge writes a delete marker in place of a versioned bucket's null version](#radosgws-bucket-purge-writes-a-delete-marker-in-place-of-a-versioned-buckets-null-version) | pending | pending | ✓ |
+| [radosgw's removal of an OLH head's pending attr moves the null version's mtime](#radosgws-removal-of-an-olh-heads-pending-attr-moves-the-null-versions-mtime) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -27546,3 +27547,86 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task V8b, 2026-10-23, reading how radosgw's listing
   names a null version for its purge; derived from the source, not
   reproduced.
+
+## radosgw's removal of an OLH head's pending attr moves the null version's mtime
+
+- **Kind:** defect, S3-correctness, not security-relevant. A versioned key's
+  null version keeps its data in the key's OLH head, and two of radosgw's
+  writes to that head set no mtime, so the OSD stamps the head with the
+  write's time: the null version's mtime as its head reports it moves to the
+  time of another operation on the key, and parts from the mtime its index
+  entry lists. Unreproduced on a running radosgw: derived from the source and
+  seen on fakerados.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `olh_cancel_modification` removes a modification's pending attr with an
+    op that sets no mtime
+    ([rgw_rados.cc:7754-7797](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7754-L7797),
+    [rgw_rados.cc:8417-8460](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8417-L8460)),
+    and so does `remove_olh_pending_entries`, which removes expired ones
+    ([rgw_rados.cc:8936-8967](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8936-L8967),
+    [rgw_rados.cc:9682-9713](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9682-L9713)),
+    where the modification's init and the log's apply send the head's own
+    mtime with `mtime2`
+    ([rgw_rados.cc:7811-7812](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7811-L7812) and
+    [rgw_rados.cc:8442-8443](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8442-L8443),
+    [rgw_rados.cc:8474-8475](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8474-L8475) and
+    [rgw_rados.cc:9188-9189](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9188-L9189)).
+  - librados gives a write op without an mtime the client's clock
+    ([IoCtxImpl.cc:642-643](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/IoCtxImpl.cc#L642-L643),
+    [IoCtxImpl.cc:648-649](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/IoCtxImpl.cc#L648-L649)),
+    and the OSD writes the op's mtime into the object's
+    ([PrimaryLogPG.cc:8978-8981](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L8978-L8981),
+    [PrimaryLogPG.cc:9084-9087](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L9084-L9087)).
+  - The cancel follows a failed bucket index link or unlink, a lost race's
+    ECANCELED among them
+    ([rgw_rados.cc:8715-8717](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8715-L8717) and
+    [rgw_rados.cc:8823-8824](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8823-L8824),
+    [rgw_rados.cc:9461-9463](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9461-L9463) and
+    [rgw_rados.cc:9569-9570](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9569-L9570)),
+    and the removal of expired attrs follows `check_pending_olh_entries`,
+    which a follow of the key's OLH runs on an attr older than
+    `rgw_olh_pending_timeout_sec`
+    ([rgw_rados.cc:8904-8934](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8904-L8934),
+    [rgw_rados.cc:9650-9680](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9650-L9680)),
+    one hour by default
+    ([rgw.yaml.in:2389-2399](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L2389-L2399),
+    [rgw.yaml.in:2483-2493](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L2483-L2493)).
+  - A routine operation leaves such an attr to expire. The class logs
+    nothing for the unlink of a delete marker that is not current, whose
+    instance entry it removes itself
+    ([cls_rgw.cc:1970-1979](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1970-L1979),
+    [cls_rgw.cc:2117-2126](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2117-L2126)),
+    and the replay of an empty log returns at once
+    ([rgw_rados.cc:8423-8425](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8423-L8425),
+    [rgw_rados.cc:9169-9171](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9169-L9171)),
+    so the removal of a noncurrent delete marker by its version leaves its
+    pending attr on the head, for the first follow an hour later to remove.
+- **Trigger:** on a key whose OLH head holds the null version's data, a
+  link or unlink that fails after its init, a read or write that follows the
+  OLH past a pending attr whose writer died, or, an hour after it, the
+  removal of a noncurrent delete marker by its version, which any client
+  that may delete versions makes.
+- **Impact:** GET and HEAD of the null version answer a Last-Modified later
+  than its write, which a conditional request or a copy's source condition
+  then compares, while a listing shows the index entry's mtime. No data
+  changes.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** differs: its two writes send the zero mtime, for which the OSD
+  keeps the head's stored mtime, a null write's that landed after the read
+  included (`keepHeadMtime`, `internal/driver/olh_head.go`;
+  `docs/exclusions.md`, "The removal of an OLH head's pending attrs keeps
+  the head's mtime"), which "removes a noncurrent delete marker, keeping the
+  mtime of the null version whose data the OLH head holds"
+  (`internal/driver/delete_versioned_test.go`) and "keeps the mtime of a null
+  write landing between its read and the removal"
+  (`internal/driver/olh_head_test.go`) pin. It removes a pending
+  attr sooner than radosgw: a link or unlink whose replay finds nothing under
+  its own op tag, such as the removal of a noncurrent delete marker, removes
+  its attr at once (`finishOLHModification`, `internal/driver/olh.go`), where
+  radosgw leaves the attr to expire and its expiry moves the mtime. A null
+  version's mtime a radosgw gateway moved stays moved.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C10b, 2026-10-23, on fakerados: a lifecycle pass
+  that removed a key's noncurrent delete marker found the key's null
+  version's head at the pass's time; widened to the routine removal by its
+  review.
