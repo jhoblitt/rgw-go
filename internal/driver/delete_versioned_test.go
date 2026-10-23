@@ -448,6 +448,18 @@ var _ = Describe("DeleteObject on a versioned bucket", func() {
 			current("v1")
 		})
 
+		It("removes a noncurrent delete marker, keeping the mtime of the null version whose data the OLH head holds", func(ctx SpecContext) {
+			converted(ctx)
+			m := mustDel(ctx, "", op.DeleteParams{})
+			put(ctx, "v2")
+			before := olhHead().Mtime
+			clock.Add(int64(time.Hour))
+			mustDel(ctx, m.VersionID, op.DeleteParams{})
+			Expect(markers()).To(BeEmpty())
+			Expect(olhHead().Mtime).To(Equal(before), "the replay finds nothing under its op tag, and its cancel keeps the head's mtime, the null version's Last-Modified")
+			current("v2")
+		})
+
 		It("removes the null version", func(ctx SpecContext) {
 			converted(ctx)
 			put(ctx, "v2")

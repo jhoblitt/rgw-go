@@ -194,13 +194,14 @@ func olhTagged(head *op.ObjectState) bool {
 // olhCancelModification is olh_cancel_modification
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7754-L7797 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8417-L8460 at v20.2.4):
-// it removes opTag's pending attr under the OLH tag guard and then, when head
-// was read without olh.info, removes the head unless it has gained one or a
-// pending attr remains. It is best effort: a failure is logged, and the
-// pending attr expires.
+// it removes opTag's pending attr under the OLH tag guard, keeping the head's
+// mtime (keepHeadMtime), and then, when head was read without olh.info,
+// removes the head unless it has gained one or a pending attr remains. It is
+// best effort: a failure is logged, and the pending attr expires.
 func (s *Store) olhCancelModification(ctx context.Context, head *op.ObjectState, opTag string) {
 	w := radosclient.NewWriteOp()
 	guardOLHTag(w, head)
+	keepHeadMtime(w)
 	w.RmXattr(meta.AttrOLHPendingPrefix + opTag)
 	err := s.writeOLHHead(ctx, head, w)
 	if err == nil {
@@ -271,12 +272,14 @@ func (s *Store) olhPendingTimeout() time.Duration {
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8936-L8967 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9682-L9713 at v20.2.4):
 // it removes names from head in ops of up to olhPendingRemoveBatch, each
-// under the OLH tag guard. A batch that finds the head gone or its tag
-// changed ends the removal as success: another writer has moved the head on.
+// under the OLH tag guard and keeping the head's mtime (keepHeadMtime). A
+// batch that finds the head gone or its tag changed ends the removal as
+// success: another writer has moved the head on.
 func (s *Store) removeOLHPendingEntries(ctx context.Context, head *op.ObjectState, names []string) error {
 	for batch := range slices.Chunk(names, olhPendingRemoveBatch) {
 		w := radosclient.NewWriteOp()
 		guardOLHTag(w, head)
+		keepHeadMtime(w)
 		for _, name := range batch {
 			w.RmXattr(name)
 		}
@@ -290,6 +293,21 @@ func (s *Store) removeOLHPendingEntries(ctx context.Context, head *op.ObjectStat
 	}
 	return nil
 }
+
+// keepHeadMtime makes w, a removal of an OLH head's pending attrs, keep the
+// mtime the head holds when w lands. radosgw's olh_cancel_modification and
+// remove_olh_pending_entries send no mtime, so librados gives their ops the
+// client's clock
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/librados/IoCtxImpl.cc#L642-L643 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/librados/IoCtxImpl.cc#L648-L649 at v20.2.4),
+// which the OSD stores as the head's mtime, the Last-Modified of the null
+// version whose data the head holds (docs/ceph-upstream-bugs.md, "radosgw's
+// removal of an OLH head's pending attr moves the null version's mtime"). The
+// OSD leaves the stored mtime as it is for a zero op mtime
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L8978-L8984 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L9084-L9090 at v20.2.4),
+// so a null write landing after the head was read keeps its own.
+func keepHeadMtime(w *radosclient.WriteOp) { w.SetMtime(time.Time{}) }
 
 // expireOLHPending removes head's expired pending attrs and returns the
 // names still pending.
