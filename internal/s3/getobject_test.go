@@ -20,6 +20,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/compression"
+	"github.com/jhoblitt/rgw-go/internal/cors"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/memstore"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -448,6 +449,15 @@ var _ = Describe("get_obj", func() {
 		w.setAttrs(ctx, "small", map[string][]byte{meta.AttrPrefix + "server": []byte("stored")})
 		hd := send(extended("server"), "HEAD", "/plain/small", nil).Header()
 		Expect(hd.Values("Server")).To(Equal([]string{"stored", "Ceph Object Gateway (squid)"}))
+	})
+	It("sends a mapped Vary ahead of the CORS headers' own, as radosgw sends both", func(ctx SpecContext) {
+		rule := cors.Rule{MaxAge: cors.MaxAgeInvalid, Methods: cors.MethodGet, AllowedOrigins: []string{"https://app.example"}}
+		Expect(w.store.PutBucketAttrs(ctx, w.plain, map[string][]byte{op.AttrCORS: (&cors.Configuration{Rules: []cors.Rule{rule}}).Encode()}, nil)).To(Succeed())
+		w.setAttrs(ctx, "small", map[string][]byte{meta.AttrPrefix + "vary": []byte("Accept-Encoding")})
+		hd := send(extended("vary"), "GET", "/plain/small", map[string]string{"Origin": "https://app.example"}).Header()
+		Expect(hd.Values("Vary")).To(Equal([]string{"Accept-Encoding", "Origin"}),
+			"response_attrs at done:, then end_header's dump_access_control, rgw_rest_s3.cc:625-651 at v19.2.7")
+		Expect(exactHeader(hd, "Access-Control-Allow-Origin")).To(Equal("https://app.example"))
 	})
 	It("never lets a mapped attr set the response's framing", func(ctx SpecContext) {
 		w.setAttrs(ctx, "small", map[string][]byte{

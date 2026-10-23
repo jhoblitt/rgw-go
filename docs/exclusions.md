@@ -4000,8 +4000,10 @@ v20.2.4 tags, rgw-go does the following.
   (https://docs.aws.amazon.com/AmazonS3/latest/userguide/cors.html#cors-eval-criteria;
   the PutBucketCors reference as the AWS SDK for Go carries it,
   [api.go:8329-8342](https://github.com/aws/aws-sdk-go/blob/7112c0a0c2d01713a9db2d57f0e5722225baf5b5/service/s3/api.go#L8329-L8342)),
-  and so does radosgw's `match_rule` on main since cc1dcecee08 and on the
-  tentacle branch since 5f25f2bb0e2, which no release carries. Both floors
+  and so does radosgw's `match_rule` on main since cc1dcecee08, on the
+  tentacle branch since 5f25f2bb0e2 and on the squid branch since
+  50137a456e2, which no release carries, though for every request rather
+  than a preflight alone. Both floors
   take the first rule whose AllowedOrigin matches the Origin alone. They
   refuse a preflight 403 when that rule does not allow its method or a
   requested header, and send no CORS headers on another response when it
@@ -4116,6 +4118,130 @@ v20.2.4 tags, rgw-go does the following.
   (`op.GetBucketCORS`,
   `op.PutBucketCORS`, `op.DeleteBucketCORS` and `op.OptionsCORS`,
   `internal/op/cors.go`).
+- **Every S3 response carries CORS headers once its bucket is loaded.**
+  radosgw's `end_header` adds the headers of the bucket's CORS configuration
+  only when it is given the op
+  ([rgw_rest.cc:603-605](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L603-L605) at v19.2.7,
+  [rgw_rest.cc:608-610](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L608-L610) at v20.2.4),
+  and on both releases these answer without it:
+  - GetBucketCors, PutBucketCors, DeleteBucketCors,
+    PutBucketRequestPayment, GetBucketMetaSearch, PutObjectLockConfiguration,
+    PutObjectRetention, PutObjectLegalHold, PutPublicAccessBlock,
+    DeletePublicAccessBlock, PutBucketPolicy, DeleteBucketPolicy,
+    PutBucketNotification and DeleteBucketNotification, and DeleteObjects'
+    refusal before its first key, which radosgw answers with its status line
+    alone (docs/ceph-upstream-bugs.md, "[radosgw answers fifteen more S3
+    operations without CORS
+    headers](ceph-upstream-bugs.md#radosgw-answers-fifteen-more-s3-operations-without-cors-headers)");
+  - PutBucketEncryption and DeleteBucketEncryption
+    (docs/ceph-upstream-bugs.md, "[radosgw's PutBucketEncryption and
+    DeleteBucketEncryption answer without CORS
+    headers](ceph-upstream-bugs.md#radosgws-putbucketencryption-and-deletebucketencryption-answer-without-cors-headers)");
+  - ListBuckets and CreateBucket, for which no bucket's configuration is
+    loaded.
+
+  radosgw leaves them out only of what each one's `send_response` answers:
+  the success, and the refusals `execute` makes, PutBucketEncryption's 411,
+  416 and 400 MalformedXML among them. A refusal made once the bucket
+  has loaded and before `execute`, by the op mask, the permission check or
+  the rate limiter, goes through `abort_early`, which passes the op
+  ([rgw_rest.cc:746](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L746) at v19.2.7,
+  [rgw_rest.cc:746](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L746) at v20.2.4),
+  and carries them.
+
+  rgw-go adds them to every S3 response once the request's bucket record is
+  loaded, error documents and DeleteObjects' status line included
+  (`SetCommonHeaders`, `internal/s3/headers.go`): one rule for every route,
+  as Amazon S3 evaluates a bucket's CORS configuration for each request,
+  with no route table to keep per release. A request with no bucket record
+  gets none, as on radosgw: ListBuckets, CreateBucket, whose record holds
+  none of the bucket's attrs, and a refusal before the bucket loads, of the
+  authentication or of a bucket that does not exist. The headers are
+  derived as radosgw's `generate_cors_headers` derives them
+  ([rgw_op.cc:1541-1600](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1541-L1600) at v19.2.7,
+  [rgw_op.cc:1778-1837](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1778-L1837) at v20.2.4),
+  from the rule that "CORS rules are matched as Amazon S3 matches them"
+  (above) chooses for the request:
+  - the method is Access-Control-Request-Method when the request sends one,
+    and its own otherwise, on any request, as both floors and main take it.
+    Amazon S3's API reference matches a request other than a preflight by
+    its own method: "The request method (for example, GET, PUT, HEAD, and so
+    on) or the Access-Control-Request-Method header in case of a pre-flight
+    OPTIONS request must be one of the AllowedMethod elements"
+    (https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketCors.html).
+    rgw-go departs from that, and "CORS rules are matched as Amazon S3
+    matches them" does not cover this case. It keeps radosgw's reading: s3-tests'
+    `test_cors_origin_response` asserts it, answering a PUT that sends
+    Access-Control-Request-Method GET with GET's headers, and a browser never
+    sends that header on a request other than a preflight, as Fetch makes it
+    a forbidden request header
+    (https://fetch.spec.whatwg.org/#forbidden-request-header);
+  - Access-Control-Request-Headers chooses no rule on a request other than a
+    preflight, and the rule allows those of its names it covers, none when
+    they name more than 32 distinct headers (`cors.MaxRequestHeaders`), as a
+    preflight naming more matches no rule (above). radosgw allows every name
+    the rule covers, however many. The limit is the preflight's: it bounds
+    the CPU the names cost against the rule's one-`*` AllowedHeaders, and an
+    ordinary request, an anonymous one included, chooses both the bucket and
+    the names. Main's `generate_cors_headers` chooses the rule with them for
+    every request
+    ([rgw_op.cc:2003-2010](https://github.com/ceph/ceph/blob/cc1dcecee08/src/rgw/rgw_op.cc#L2003-L2010) at cc1dcecee08);
+  - Access-Control-Allow-Origin is `*` for a rule that allows every origin
+    when the request carries no Authorization header, a presigned request
+    among them, as radosgw sends it;
+  - the configuration is the one the request's bucket record holds as the
+    response is written, so once the S3 handler routes the CORS ops a
+    PutBucketCors will be answered from the configuration it stored and a
+    DeleteBucketCors from none;
+  - a configuration that does not decode adds none, and the response is the
+    op's. radosgw's `generate_cors_headers` stores its read's -EIO as the
+    op's result once the status is decided, which leaves the listings and
+    GetBucketEncryption a 200 with no document (docs/ceph-upstream-bugs.md,
+    "[radosgw sends no document to a request with an Origin when the
+    bucket's CORS configuration does not
+    decode](ceph-upstream-bugs.md#radosgw-sends-no-document-to-a-request-with-an-origin-when-the-buckets-cors-configuration-does-not-decode)");
+  - an attr `rgw_extended_http_attrs` maps to a CORS header's name, `Vary`
+    among them, goes out ahead of that header on a GetObject, as radosgw
+    sends both (`endHeaderNames`, `internal/s3/getobject.go`).
+
+  A preflight's response will carry only its own Access-Control headers
+  once the S3 handler routes the preflight, which it answers 501 until then
+  ("A CORS preflight is answered 501 until CORS lands", below): those of the
+  rule, Origin, method and requested headers its op found, the Origin as
+  sent, as radosgw's preflight sends them (`SetPreflightHeaders`,
+  `internal/s3/headers.go`; `RGWOptionsCORS_ObjStore_S3::send_response`,
+  [rgw_rest_s3.cc:3854-3875](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3854-L3875) at v19.2.7,
+  [rgw_rest_s3.cc:4305-4326](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4305-L4326) at v20.2.4).
+  `SetCommonHeaders` adds none to an OPTIONS response, and no
+  x-amz-request-charged ("A preflight's answer says nothing of its key's
+  user", below). radosgw's preflight sends none with the refusals its
+  `execute` makes, a 400 or a 403, and neither will rgw-go's. A preflight
+  refused once its bucket has loaded goes through `abort_early` on radosgw,
+  which sends it the headers `generate_cors_headers` derives for any op,
+  `*` or the Origin by the Authorization header:
+  - the bucket load's 301 PermanentRedirect for a bucket of another
+    zonegroup, 400 InvalidArgument for a storage class its placement lacks
+    and 500 for an ACL that does not decode;
+  - `init_processing`'s refusal when the user or account of the quota owner
+    the bucket's ACL names does not load
+    ([rgw_op.cc:1411-1434](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1411-L1434) at v19.2.7,
+    [rgw_op.cc:1648-1671](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1648-L1671) at v20.2.4);
+  - the op mask's and OPA's refusals
+    ([rgw_process.cc:201-219](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L201-L219) at v19.2.7,
+    [rgw_process.cc:201-219](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L201-L219) at v20.2.4),
+    and the rate limiter's
+    ([rgw_process.cc:247-250](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L247-L250) at v19.2.7,
+    [rgw_process.cc:250-253](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L250-L253) at v20.2.4).
+
+  rgw-go's preflight will make the bucket load's refusals alone, with none
+  of those headers. It asks for no op mask (`op.OptionsCORS.OpMask` is 0),
+  loads no quota owner and calls no OPA, and phase 2 has no rate limiter,
+  so a preflight the others refuse on radosgw will be answered from the
+  configuration ("A preflight's answer says nothing of its key's user",
+  below). A browser fails a preflight answered outside 200-299 whatever its
+  headers (https://fetch.spec.whatwg.org/#cors-preflight-fetch), and the
+  preflight's headers will come from its op's results alone, never from the
+  Authorization header.
 - **A POST form part ends only at a delimiter line.** radosgw's POST form
   reader takes `--` and the boundary anywhere for a part's end, with the
   CRLF before it when there is one
@@ -4513,8 +4639,10 @@ does the following.
     everyone, where radosgw refuses an anonymous preflight and every key
     but a system key and one without the modify bits;
   - the request a preflight precedes is still refused in each of these;
-  - a preflight's answer will carry no x-amz-request-charged, so it will say
-    nothing of who owns a requester-pays bucket;
+  - a preflight's answer will carry no x-amz-request-charged, which
+    `SetCommonHeaders` (`internal/s3/headers.go`) adds to no OPTIONS
+    response, anonymous or signed, so it will say nothing of who owns a
+    requester-pays bucket;
   - its usage is accounted as an anonymous request's (the next entry).
 
   The one thing of the key's user a preflight's answer will depend on is

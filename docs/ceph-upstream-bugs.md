@@ -319,6 +319,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw writes GetBucketEncryption's BucketKeyEnabled as True, which botocore reads as false](#radosgw-writes-getbucketencryptions-bucketkeyenabled-as-true-which-botocore-reads-as-false) | pending | pending | ✓ |
 | [radosgw stores an AES256 default with a bucket key that fails every write it applies to](#radosgw-stores-an-aes256-default-with-a-bucket-key-that-fails-every-write-it-applies-to) | pending | pending | ✓ |
 | [radosgw's PutBucketEncryption and DeleteBucketEncryption answer without CORS headers](#radosgws-putbucketencryption-and-deletebucketencryption-answer-without-cors-headers) | pending | pending | ✓ |
+| [radosgw answers fifteen more S3 operations without CORS headers](#radosgw-answers-fifteen-more-s3-operations-without-cors-headers) | pending | pending | ✓ |
+| [radosgw sends no document to a request with an Origin when the bucket's CORS configuration does not decode](#radosgw-sends-no-document-to-a-request-with-an-origin-when-the-buckets-cors-configuration-does-not-decode) | pending | pending | ✓ |
 | [radosgw's PutBucketWebsite answers InvalidArgument for a document that does not parse](#radosgws-putbucketwebsite-answers-invalidargument-for-a-document-that-does-not-parse) | pending | pending | ✓ |
 | [radosgw writes a website redirect's key, host and protocol raw into its Location](#radosgw-writes-a-website-redirects-key-host-and-protocol-raw-into-its-location) | pending | pending | ✓ |
 | [radosgw answers a CORS request with the first rule whose origin matches](#radosgw-answers-a-cors-request-with-the-first-rule-whose-origin-matches) | [#77575](https://tracker.ceph.com/issues/77575), [#77584](https://tracker.ceph.com/issues/77584), [#77586](https://tracker.ceph.com/issues/77586) | [ceph/ceph#69190](https://github.com/ceph/ceph/pull/69190), [ceph/ceph#69647](https://github.com/ceph/ceph/pull/69647), [ceph/ceph#69648](https://github.com/ceph/ceph/pull/69648) |  |
@@ -17313,13 +17315,170 @@ Every new entry adds its row to this table, in document order.
   but cannot read the answer: the browser reports a failure for a write
   that succeeded, and hides the error document of one that failed.
 - **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
-- **rgw-go:** decided with its CORS response headers, Task BC-7, which
-  sets them on every S3 response and lists the routes radosgw omits them
-  from. rgw-go sends no CORS headers on any response yet.
-- **Upstream:** pending; prior art not searched.
+- **rgw-go:** does not reproduce it. `SetCommonHeaders`
+  (`internal/s3/headers.go`) adds the CORS headers to every S3 response
+  once the request's bucket record is loaded, both ops' 200, 204 and error
+  documents included (`docs/exclusions.md`, "Every S3 response carries CORS
+  headers once its bucket is loaded").
+- **Upstream:** pending; prior art not searched. The same sink, a
+  `send_response` that ends the header without its op, leaves the headers
+  off fifteen more operations' answers ("[radosgw answers fifteen more S3
+  operations without CORS
+  headers](#radosgw-answers-fifteen-more-s3-operations-without-cors-headers)"),
+  so one fix there covers both entries.
 - **Found:** phase 2 unit B, Task BC-25, 2026-10-20, reading the two ops'
   `send_response`; its review traced the 403 through `abort_early`.
   Derived from the source, not reproduced.
+
+## radosgw answers fifteen more S3 operations without CORS headers
+
+- **Kind:** defect, S3-correctness: fifteen more operations send their
+  responses without the CORS headers the bucket's configuration gives the
+  request's origin and method, so a browser keeps a page on another origin
+  from reading them, though radosgw adds them to the bucket's other
+  responses, a GetBucketPolicy's or a PutBucketTagging's. One more input to
+  the sink of "[radosgw's PutBucketEncryption and DeleteBucketEncryption
+  answer without CORS
+  headers](#radosgws-putbucketencryption-and-deletebucketencryption-answer-without-cors-headers)":
+  a `send_response` that ends the header without its op. Not
+  security-relevant: a header is missing, and no request is allowed that
+  the configuration does not allow. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - These end the header with `end_header(s)` or `end_header(s, NULL)`:
+    GetBucketCors
+    ([rgw_rest_s3.cc:3758](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3758),
+    [rgw_rest_s3.cc:4209](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4209)),
+    PutBucketCors
+    ([rgw_rest_s3.cc:3839](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3839),
+    [rgw_rest_s3.cc:4290](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4290)),
+    DeleteBucketCors
+    ([rgw_rest_s3.cc:3851](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3851),
+    [rgw_rest_s3.cc:4302](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4302)),
+    PutBucketRequestPayment
+    ([rgw_rest_s3.cc:3996](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3996),
+    [rgw_rest_s3.cc:4447](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4447)),
+    GetBucketMetaSearch
+    ([rgw_rest_s3.cc:4461](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4461),
+    [rgw_rest_s3.cc:4972](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4972)),
+    PutObjectLockConfiguration
+    ([rgw_rest_s3.cc:4501](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4501),
+    [rgw_rest_s3.cc:5012](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5012)),
+    PutObjectRetention
+    ([rgw_rest_s3.cc:4540](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4540),
+    [rgw_rest_s3.cc:5051](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5051)),
+    PutObjectLegalHold
+    ([rgw_rest_s3.cc:4565](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4565),
+    [rgw_rest_s3.cc:5076](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5076)),
+    PutPublicAccessBlock
+    ([rgw_rest_s3.cc:4610](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4610),
+    [rgw_rest_s3.cc:5121](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5121)),
+    PutBucketPolicy
+    ([rgw_op.cc:8070](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8070),
+    [rgw_op.cc:8975](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L8975)),
+    DeleteBucketPolicy
+    ([rgw_op.cc:8192](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8192),
+    [rgw_op.cc:9118](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9118))
+    and DeletePublicAccessBlock
+    ([rgw_op.cc:8724](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8724),
+    [rgw_op.cc:9692](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9692)).
+  - PutBucketNotification and DeleteBucketNotification take
+    `RGWDefaultResponseOp::send_response`, which ends it the same way
+    ([rgw_op.cc:8052-8058](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8052-L8058),
+    [rgw_op.cc:8957-8963](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L8957-L8963)):
+    `RGWPSCreateNotifOp` and `RGWPSDeleteNotifOp` derive from it and do not
+    override it
+    ([rgw_rest_pubsub.cc:1132](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_pubsub.cc#L1132) and
+    [rgw_rest_pubsub.cc:1427](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_pubsub.cc#L1427),
+    [rgw_rest_pubsub.cc:1143](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_pubsub.cc#L1143) and
+    [rgw_rest_pubsub.cc:1439](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_pubsub.cc#L1439)).
+    Tentacle's PutBucketLogging and PostBucketLogging derive from it too but
+    override it with one that passes the op.
+  - DeleteObjects answers a refusal before its first key with `send_status`,
+    the status line alone, and never ends the header
+    ([rgw_rest_s3.cc:4277-4285](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4277-L4285),
+    [rgw_rest_s3.cc:4795-4803](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4795-L4803)).
+  - Only with an op does `end_header` call `dump_access_control`
+    ([rgw_rest.cc:603-605](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L603-L605),
+    [rgw_rest.cc:608-610](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L608-L610)).
+    As in the sibling entry, a refusal made before `execute` goes through
+    `abort_early`, which passes the op
+    ([rgw_rest.cc:746](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L746),
+    [rgw_rest.cc:746](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L746)),
+    so only the successes and the refusals `execute` makes lose them.
+  - ListBuckets and CreateBucket end the header without the op too
+    ([rgw_rest_s3.cc:1527](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1527) and
+    [rgw_rest_s3.cc:2559](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2559),
+    [rgw_rest_s3.cc:1630](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1630) and
+    [rgw_rest_s3.cc:2712](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2712)),
+    but they lose nothing: ListBuckets names no bucket, and CreateBucket's
+    `init_permissions` loads none
+    ([rgw_rest.cc:1888-1896](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1888-L1896),
+    [rgw_rest.cc:1887-1895](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1887-L1895)).
+- **Impact:** a page on another origin that the bucket's CORS
+  configuration allows cannot read the answers of these operations: the
+  browser reports a failure for a write that succeeded, and hides the
+  error document of one that failed, GetBucketCors's document included.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
+- **rgw-go:** does not reproduce it, for the operations it serves:
+  `SetCommonHeaders` (`internal/s3/headers.go`) adds the headers to every S3
+  response once the request's bucket record is loaded, and DeleteObjects'
+  status line carries them too (`internal/s3/deleteobjects.go`;
+  `docs/exclusions.md`, "Every S3 response carries CORS headers once its
+  bucket is loaded"). It serves no GetBucketCors, PutBucketCors,
+  DeleteBucketCors, notification, request-payment, retention, legal-hold or
+  metadata-search route yet, and answers them 501 before any bucket loads.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 unit B, Task BC-7, 2026-10-22, scanning every
+  `end_header` call at both tags for one without its op. Derived from the
+  source, not reproduced.
+
+## radosgw sends no document to a request with an Origin when the bucket's CORS configuration does not decode
+
+- **Kind:** defect, S3-correctness, low: on a bucket whose `user.rgw.cors`
+  does not decode, a request carrying an Origin header gets a 200 without
+  its document from ListObjects, ListObjectsV2 and GetBucketEncryption. A
+  sibling of "[radosgw's DeleteBucketCors refuses, and keeps, a CORS
+  configuration that does not
+  decode](#radosgws-deletebucketcors-refuses-and-keeps-a-cors-configuration-that-does-not-decode)",
+  through the same `read_bucket_cors`. Not security-relevant. Unreproduced:
+  derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `generate_cors_headers`, which `end_header` calls for every op it is
+    given and only for a request with an Origin, stores `read_bucket_cors`'s
+    -EIO as the op's result
+    ([rgw_op.cc:1551-1555](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1551-L1555),
+    [rgw_op.cc:1788-1792](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1788-L1792);
+    the -EIO,
+    [rgw_op.cc:1498-1504](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1498-L1504),
+    [rgw_op.cc:1735-1741](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1735-L1741)).
+  - `send_response` has decided the status with `dump_errno` before it
+    calls `end_header`, and the ones that test `op_ret` afterwards send no
+    document: ListObjects returns after `dump_start`
+    ([rgw_rest_s3.cc:1905-1918](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1905-L1918),
+    [rgw_rest_s3.cc:2008-2021](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2008-L2021)),
+    as ListObjectsV2 does
+    ([rgw_rest_s3.cc:2061-2074](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2061-L2074),
+    [rgw_rest_s3.cc:2164-2177](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2164-L2177)),
+    and GetBucketEncryption skips its configuration
+    ([rgw_rest_s3.cc:3886-3904](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3886-L3904),
+    [rgw_rest_s3.cc:4337-4355](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4337-L4355)).
+    Each answers 200 with the XML declaration alone. Other `send_response`s
+    that test `op_ret` after `end_header` are not traced here.
+- **Impact:** every cross-origin browser request to such a bucket carries
+  an Origin, so its listings come back empty and an SDK fails to parse
+  them; the owner's
+  DeleteBucketCors cannot clear the attr either (the sibling entry), only a
+  PutBucketCors can. Only a write outside radosgw or a damaged attr leaves
+  such a configuration.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
+- **rgw-go:** does not reproduce it: a configuration that does not decode
+  adds no CORS headers and leaves the op's response as it is
+  (`corsHeaders`, `internal/s3/headers.go`; `docs/exclusions.md`, "Every S3
+  response carries CORS headers once its bucket is loaded").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 unit B, Task BC-7, 2026-10-22, reading what
+  `generate_cors_headers` does with a read error. Derived from the source,
+  not reproduced.
 
 ## radosgw's PutBucketWebsite answers InvalidArgument for a document that does not parse
 
@@ -17529,7 +17688,7 @@ Every new entry adds its row to this table, in document order.
 ## radosgw answers a CORS request with the first rule whose origin matches
 
 - **Kind:** defect, S3-correctness, not found by us: upstream has fixed it
-  on main and on the tentacle branch. A CORS configuration that gives one
+  on main and on the tentacle and squid branches. A CORS configuration that gives one
   origin several rules answers that origin from the first of them alone. A
   preflight whose method or requested headers only a later rule allows is
   refused 403, and any other request that only a later rule allows gets no
@@ -17568,18 +17727,37 @@ Every new entry adds its row to this table, in document order.
     allows the origin, the method and the requested headers, and both the
     preflight and `generate_cors_headers` call it
     ([rgw_cors.cc:242-290](https://github.com/ceph/ceph/blob/cc1dcecee08/src/rgw/rgw_cors.cc#L242-L290)).
+  - The fix chooses by the requested headers on every request, not on a
+    preflight alone as Amazon S3 documents: `generate_cors_headers` hands
+    `match_rule` the request's Access-Control-Request-Headers, and
+    `RGWCORSRule::matches` refuses a rule that does not allow each of them,
+    on main
+    ([rgw_op.cc:2003-2010](https://github.com/ceph/ceph/blob/cc1dcecee08/src/rgw/rgw_op.cc#L2003-L2010) and
+    [rgw_cors.cc:266-276](https://github.com/ceph/ceph/blob/cc1dcecee08/src/rgw/rgw_cors.cc#L266-L276) at cc1dcecee08)
+    and in the tentacle backport
+    ([rgw_op.cc:1798-1806](https://github.com/ceph/ceph/blob/5f25f2bb0e2/src/rgw/rgw_op.cc#L1798-L1806) and
+    [rgw_cors.cc:211-221](https://github.com/ceph/ceph/blob/5f25f2bb0e2/src/rgw/rgw_cors.cc#L211-L221) at 5f25f2bb0e2).
+    The squid backport's merge, 50137a456e2, which the clone does not hold,
+    makes the same call in its `generate_cors_headers` (read through
+    GitHub's API, 2026-10-23). So on those branches a request other than a
+    preflight that names a header the first rule for its origin and method
+    does not allow gets a later rule's headers, or none. Browsers are not
+    affected: Fetch makes Access-Control-Request-Headers a forbidden request
+    header (https://fetch.spec.whatwg.org/#forbidden-request-header), so
+    only another client sends it on such a request. Not security-relevant.
 - **Impact:** the configuration's later rules for an origin are dead: a
   page the owner meant to allow is refused, unless each origin's methods
   and headers sit in its first rule. No request is allowed that the
   configuration does not allow.
 - **Releases:** v19.2.7 and v20.2.4 carry it. main carries the fix since
-  cc1dcecee08 and the tentacle branch since 5f25f2bb0e2; no tag does,
-  and the squid branch does not yet (the clone's `origin/squid` at
-  226f1401666, 2026-10-12, has no `match_rule`).
+  cc1dcecee08, the tentacle branch since 5f25f2bb0e2 and the squid branch
+  since 50137a456e2; no tag does.
 - **rgw-go:** differs: its rule selection, `cors.Configuration.Match`
-  (`internal/cors/match.go`), is main's `match_rule`
+  (`internal/cors/match.go`), is main's `match_rule`, but it passes the
+  requested headers for a preflight alone, as Amazon S3 documents
   (`docs/exclusions.md`, "CORS rules are matched as Amazon S3 matches
-  them").
+  them" and "Every S3 response carries CORS headers once its bucket is
+  loaded").
 - **Upstream:** tracked as [#77575](https://tracker.ceph.com/issues/77575),
   with the backport trackers [#77584](https://tracker.ceph.com/issues/77584)
   for tentacle and [#77586](https://tracker.ceph.com/issues/77586) for
@@ -17591,7 +17769,7 @@ Every new entry adds its row to this table, in document order.
     [ceph/ceph#69647](https://github.com/ceph/ceph/pull/69647), merged as
     20cd4f8aa07 on 2026-08-21, in no tag.
   - squid: [ceph/ceph#69648](https://github.com/ceph/ceph/pull/69648),
-    open.
+    merged as 50137a456e2 on 2026-10-20, in no tag.
   - reef: [ceph/ceph#69649](https://github.com/ceph/ceph/pull/69649),
     closed unmerged.
 - **Found:** phase 2 research, 2026-10-13, comparing `host_name_rule` with
@@ -19197,7 +19375,11 @@ Every new entry adds its row to this table, in document order.
 - **Impact:** a bucket whose CORS attr was damaged, or written in an
   encoding these releases cannot read, answers every CORS request 500, and
   its owner's DeleteBucketCors fails with 500 as well. The owner must know
-  to overwrite it with a PutBucketCors first.
+  to overwrite it with a PutBucketCors first. Until then the same read
+  error also empties the listings and GetBucketEncryption of every request
+  with an Origin ("[radosgw sends no document to a request with an Origin
+  when the bucket's CORS configuration does not
+  decode](#radosgw-sends-no-document-to-a-request-with-an-origin-when-the-buckets-cors-configuration-does-not-decode)").
 - **Releases:** checked at v19.2.7 and v20.2.4.
 - **rgw-go:** does not reproduce it. `op.DeleteBucketCORS` removes the attr
   whatever it holds, through the retried and re-authorized write the other
