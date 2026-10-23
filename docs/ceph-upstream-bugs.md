@@ -10720,35 +10720,61 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it for an upload rgw-go completes, and
   reproduces it in two mixed-fleet cases: a retry, by rgw-go, of an upload
   whose meta object a floor radosgw left behind and whose object was then
-  overwritten or deleted, since that meta object carries no record and the
-  head no longer names the upload; and a floor radosgw's retry or abort of
-  an upload rgw-go recorded, since a floor radosgw ignores the record. It
-  writes the completion record of
-  ceph/ceph#72103, as that PR stands at its second commit (2026-09-28), on
-  the meta object before the head write: `user.rgw.mp_completion_tag`, the
-  head's idtag with its NUL, and `user.rgw.mp_completion_instance`,
-  `null`, in the op that renews the lock, and removes them after a head
-  write that certainly failed. A completion that finds a record finishes
-  the earlier one, writing no head, only when the key's head carries the
-  recorded tag and the ETag the request's parts make, and answers 404
-  NoSuchUpload otherwise, so a retry after the object was overwritten or
-  deleted writes nothing over the parts queued for the GC (`replayRecorded`
-  in `internal/driver/mp_complete.go`; `docs/exclusions.md`, "A
-  CompleteMultipartUpload records itself on the meta object before its head
-  write"). As in the PR, a retry after a crash between the record and the
-  head write, or after a head write that timed out and never landed, is
-  refused, and the upload has to be aborted. A meta object a floor radosgw
-  left carries no record: rgw-go then reads the key's head and finishes a
-  head that names the upload's objects only when it is the object the
-  completion would write, refusing any other with 404 NoSuchUpload
-  ("CompleteMultipartUpload finishes an earlier completion of its upload
-  instead of writing it again"). The part history is queued only after the
-  head write. rgw-go's AbortMultipartUpload honors the record as the PR's
-  abort does: when the key's head carries the recorded tag it removes the
-  meta object alone and queues no part. Without a record it does not
-  reproduce the abort half either, where v19.2.7 and v20.2.4 queue the
-  object's parts: when the key's head names an object of the upload, it
-  answers 404 NoSuchUpload and changes nothing (`Store.Abort`,
+  overwritten or deleted, in a versioned bucket the version that names the
+  upload deleted, since that meta object carries no record and no version
+  of the key names the upload any longer; and a floor radosgw's retry or
+  abort of an upload rgw-go recorded, since a floor radosgw ignores the
+  record. It writes the
+  completion record of ceph/ceph#72103, as that PR stands at its second
+  commit, 2c1db8239cc (2026-09-28), on the meta object before the head
+  write: `user.rgw.mp_completion_tag`, the head's idtag with its NUL, and
+  `user.rgw.mp_completion_instance`, the instance of the version the
+  completion writes, `null` for the key's own head, in the op that renews
+  the lock. It removes them after a head write that certainly wrote
+  nothing, and keeps them once a head landed, whatever its completion or
+  its link answered ("[radosgw's CompleteMultipartUpload leaves its upload
+  whole when its head lands and write_meta
+  fails](#radosgws-completemultipartupload-leaves-its-upload-whole-when-its-head-lands-and-write_meta-fails)").
+  A completion that finds a record finishes the earlier one, writing no
+  head, only when the head the record names, read without following the
+  OLH, carries the recorded tag and the ETag the request's parts make, and
+  answers 404 NoSuchUpload otherwise, so a retry after the object was
+  overwritten or deleted writes nothing over the parts queued for the GC.
+  A recorded version is linked first when no link of it landed, its list
+  entry at its versioned epoch not the completion's, and a version that
+  cannot be linked, its head or its index entry gone or its link refused,
+  answers 500 InternalError with the meta object kept, where
+  the PR's replay answers the recorded instance without reading its link
+  (`driver/rados/rgw_sal_rados.cc:4632-4664` at 2c1db8239cc;
+  `replayRecorded` and `linkRecorded` in `internal/driver/mp_complete.go`;
+  `docs/exclusions.md`, "A CompleteMultipartUpload records itself on the
+  meta object before its head write"). As in the PR, a retry after a crash
+  between the record and the head write, or after a head write that timed
+  out and never landed, is refused, with 500 for a version, and the upload
+  has to be aborted. A meta object a floor radosgw left carries no record:
+  rgw-go then reads the
+  key's current version and, in a bucket whose versioning was ever enabled,
+  each noncurrent one written since 15 minutes before the upload's
+  initiation or its earliest part, and its null version, and finishes one
+  that names the upload's objects only when it is the object the
+  completion would write, the null version linked first when its list
+  entry is an earlier null version's, refusing any other
+  with 404 NoSuchUpload ("CompleteMultipartUpload finishes an earlier
+  completion of its upload instead of writing it again"). The part history
+  is queued only after the head write. rgw-go's AbortMultipartUpload honors
+  the record as the PR's abort does: when the head the record names carries
+  the recorded tag it removes the meta object alone and queues no part,
+  except for a version whose link never landed, which it removes before it
+  aborts the upload once no link of it can land, and answers 500 until
+  then, where the PR's abort leaves that version unlisted with the parts.
+  It removes that version's index entry before its head, in one op that
+  compares the entry with the value it read, so that no link of it lists
+  it without its head.
+  Without a record it does not reproduce the abort half either, where
+  v19.2.7 and v20.2.4 queue the object's parts: when a version of the
+  key, current or not, within the same bound, names an object of the
+  upload, it answers 404
+  NoSuchUpload and changes nothing (`Store.Abort`,
   `internal/driver/mp_abort.go`; `docs/exclusions.md`,
   "AbortMultipartUpload leaves a completed upload's parts alone"). The
   record's format is the PR's at its head; it is revisited when the PR
