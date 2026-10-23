@@ -126,7 +126,12 @@ func (s *Store) followHead(ctx context.Context, rec *op.BucketRecord, head *op.O
 // marker's list entry and leaves its instance entry
 // (docs/ceph-upstream-bugs.md, "cls_rgw's bucket_unlink_instance at an older
 // epoch leaves a delete marker's instance entry"). radosgw makes no such
-// lookup, answering 404 for a marker as for a missing version.
+// lookup, answering 404 for a marker as for a missing version. A listed
+// marker's state carries its index entry's mtime and versioned_epoch, which
+// tell it from any other marker, as a versioned delete's Expect compares them
+// (expectRemoval): every marker's entry carries the tag "delete-marker"
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1350-L1358 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1476-L1484 at v20.2.4).
 func (s *Store) namedVersion(ctx context.Context, st *op.ObjectState) (*op.ObjectState, error) {
 	rec := st.Bucket
 	if !rec.Info.Versioned() {
@@ -148,6 +153,9 @@ func (s *Store) namedVersion(ctx context.Context, st *op.ObjectState) (*op.Objec
 	}
 	if st.DeleteMarker, err = s.listed(ctx, rec, key, en); err != nil {
 		return nil, fmt.Errorf("looking up the list entry of %s: %w", versionName(rec, st.Key), err)
+	}
+	if st.DeleteMarker {
+		st.Mtime, st.VersionedEpoch = en.Meta.Mtime, en.VersionedEpoch
 	}
 	return st, nil
 }

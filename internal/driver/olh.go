@@ -9,6 +9,7 @@ import (
 	"maps"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
@@ -52,7 +53,8 @@ const (
 // OLH head in the op that wrote the version's head (writeNullVersion): the
 // first attempt links under its op tag, with no init of its own, when the
 // head it reads still holds that modification's pending attr; a link with a
-// Cond is refused, as that attempt checks nothing.
+// Cond is refused, as that attempt checks nothing. Relink, when set, links
+// a version already written and once listed (olhRelink).
 type olhLink struct {
 	DeleteMarker  bool
 	Meta          rgw.DirEntryMeta
@@ -63,6 +65,56 @@ type olhLink struct {
 	Cond          olhCondition
 	ExpectTag     []byte
 	Inited        *olhInited
+	Relink        *olhRelink
+}
+
+// olhRelink is a link that lists again a version a refused removal left
+// unlisted (delete_versioned.go): no failure removes the version, which the
+// link did not write. head, when not nil, is the OLH head as the caller read
+// it before it chose the link's epoch, which each attempt's read must still
+// match, its OLH tag, its olh.info, its olh.ver and no pending attr, or the
+// link answers errRelinkMoved with nothing written; the init is guarded on
+// olh.info, olh.ver and no pending attr, so that no writer's modification
+// lands between that read and the link. olh.ver catches a replay that left
+// olh.info as it was: the unlink of a noncurrent version, or a second null
+// delete marker, whose olh.info is the first's. With pendingOK, set once the
+// caller's wait on other writers' pending modifications has passed
+// (waitOLHPending), a pending attr no longer refuses the link, and the init
+// is guarded on olh.info and olh.ver alone, as a conditional writer's is past
+// its wait.
+type olhRelink struct {
+	head      *op.ObjectState
+	pendingOK bool
+}
+
+// errRelinkMoved ends a link whose olhRelink head another writer has moved.
+var errRelinkMoved = errors.New("the key's OLH head changed since the re-link chose its epoch")
+
+// moved reports whether head, an attempt's read of the OLH head, is no longer
+// r's.
+func (r *olhRelink) moved(head *op.ObjectState) bool {
+	switch {
+	case r.head == nil:
+		return false
+	case head.Exists != r.head.Exists:
+		return true
+	case !head.Exists:
+		return false
+	}
+	if !bytes.Equal(head.Attrs[meta.AttrOLHIDTag], r.head.Attrs[meta.AttrOLHIDTag]) ||
+		!bytes.Equal(head.Attrs[meta.AttrOLHInfo], r.head.Attrs[meta.AttrOLHInfo]) ||
+		!bytes.Equal(head.Attrs[meta.AttrOLHVer], r.head.Attrs[meta.AttrOLHVer]) {
+		return true
+	}
+	if r.pendingOK {
+		return false
+	}
+	for name := range head.Attrs {
+		if strings.HasPrefix(name, meta.AttrOLHPendingPrefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // olhInited is a modification a caller inited on an OLH head and hands
@@ -77,12 +129,53 @@ type olhInited struct {
 // olhUnlink is an unlink's request, unlink_obj_instance's arguments: the
 // epoch, as a link's, NullVersion for a request that named the null
 // version, SkipUpdate as a link's, and ExpectTag, when not nil, the write
-// tag the replay's removal of the version must find.
+// tag the replay's removal of the version must find. Marker is set for a
+// delete marker's unlink, whose ExpectTag no head carries
+// (markerRemovalTag): nothing compares it before the unlink, and the replay
+// guards on it as it is. MarkerCmp, when not nil, is the null delete
+// marker the unlink must find (olhMarkerCmp).
 type olhUnlink struct {
 	Epoch       uint64
 	NullVersion bool
 	SkipUpdate  bool
 	ExpectTag   []byte
+	Marker      bool
+	MarkerCmp   *olhMarkerCmp
+}
+
+// olhMarkerCmp is the null delete marker an unlink must find, as its caller
+// read it: bi, its instance entry's omap key and value as the read's bi_get
+// answered them, never encoded again, which the unlink's op compares
+// unchanged (bucketOLHIndex.unlinkInstance), and en, that entry decoded,
+// whose versioned_epoch and mtime are the marker's identity. A second null
+// marker rewrites that key and a null write's link removes it, so either,
+// landing after the read, refuses the unlink.
+type olhMarkerCmp struct {
+	bi rgw.BIEntry
+	en rgw.DirEntry
+}
+
+// errMarkerGone ends an unlink whose null delete marker is no longer the one
+// its caller read.
+var errMarkerGone = fmt.Errorf("%w: the null delete marker is not the one expected", op.ErrConcurrentModification)
+
+// recheck reads key's null delete marker again after an unlink its compare
+// refused: errMarkerGone when the entry is gone, no longer a marker, or
+// another marker by its versioned_epoch or mtime; otherwise the marker as
+// read now, whose bytes a demotion, a promotion or a reshard's copy may have
+// rewritten, for the next attempt to compare. The same bytes mean another
+// guard refused the unlink.
+func (c *olhMarkerCmp) recheck(ctx context.Context, s *Store, rec *op.BucketRecord, key meta.ObjKey) (*olhMarkerCmp, error) {
+	en, bi, err := s.getInstanceEntryBI(ctx, rec, key)
+	switch {
+	case errors.Is(err, radosclient.ErrNotFound):
+		return nil, errMarkerGone
+	case err != nil:
+		return nil, err
+	case en.Flags&rgw.FlagDeleteMarker == 0, en.VersionedEpoch != c.en.VersionedEpoch, !en.Meta.Mtime.Equal(c.en.Meta.Mtime):
+		return nil, errMarkerGone
+	}
+	return &olhMarkerCmp{bi: bi, en: en}, nil
 }
 
 // olhStopAfterLink, which only the integration build sets, reports whether
@@ -119,10 +212,11 @@ func (s *Store) stopsAfterLink() bool { return olhStopAfterLink != nil && olhSto
 //     any other runs a best-effort update unless p.SkipUpdate, and is
 //     returned.
 //   - The replay is finishOLHModification's, whose ECANCELED is success.
-//   - p.ExpectTag and p.Cond add their checks to each attempt before its
-//     init (prepareOLHAttempt), and a conditional link is checked after it
-//     lands, before the replay (checkOLHLink). Each backoff of a conditional
-//     link waiting for other writers is one of the olhAttempts.
+//   - p.ExpectTag, p.Cond and p.Relink add their checks to each attempt
+//     before its init (prepareOLHAttempt), and a conditional link is
+//     checked after it lands, before the replay (checkOLHLink). Each backoff
+//     of a conditional link waiting for other writers is one of the
+//     olhAttempts.
 //   - p.Inited stands for the first attempt's init while the head holds its
 //     pending attr (takeInitedTag); a later attempt inits its own. One the
 //     first attempt never took, setOLH ending before it, is canceled.
@@ -133,13 +227,14 @@ func (s *Store) stopsAfterLink() bool { return olhStopAfterLink != nil && olhSto
 // init, in its head read or in prepareOLHAttempt; once one landed it removes
 // nothing, whatever it then returns, so its caller never removes the
 // version. A conditional link the check voids is removed by that check's
-// unlink.
+// unlink. A link with p.Relink removes nothing on any path.
 func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p olhLink) error {
 	what := versionName(rec, key)
 	idx := s.newOLHIndex(rec, key)
 	f := olhLinkFields{deleteMarker: p.DeleteMarker, meta: p.Meta, epoch: p.Epoch, unmodSince: p.UnmodSince, highPrecision: p.HighPrecision}
+	written := !p.DeleteMarker && p.Relink == nil
 	unlinked := func(err error) error {
-		if !p.DeleteMarker {
+		if written {
 			s.removeFailedVersion(ctx, idx.x.rec, key, err)
 		}
 		return err
@@ -155,7 +250,7 @@ func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKe
 		if inited != nil {
 			s.olhCancelModification(context.WithoutCancel(ctx), inited.head, inited.opTag)
 		}
-		if !p.DeleteMarker {
+		if written {
 			s.removeUnlinkedVersion(context.WithoutCancel(ctx), idx.x.rec, key, err)
 		}
 		return err
@@ -248,11 +343,21 @@ func takeInitedTag(head *op.ObjectState, inited **olhInited) string {
 // keeps its pending attr, as setOLH's link does. The class's ENOENT, the
 // version not there, and init's, the head its read found gone, answer
 // NoSuchKey. The unlink makes no version, so a failed one removes none.
-// p.ExpectTag guards the replay's removal of the version alone, the init
+// p.ExpectTag guards the replay's removal of a named version alone, the init
 // comparing no write tag: its caller checks the version's head before the
-// unlink.
+// unlink. The null version's head is the OLH head, which init gives a fresh
+// write tag when it has no OLH tag, so for it each attempt compares the tag
+// on the head it read, a mismatch being ConcurrentModification with nothing
+// written, the init compares it again, and the replay's removal is guarded on
+// the tag the head carries after the init (olhReplayTag). A delete marker's
+// unlink (p.Marker) compares no head, and its replay guards on p.ExpectTag
+// as it is. With p.MarkerCmp the unlink's op compares the null delete
+// marker's instance entry with the bytes its caller read, and a refusal
+// reads the marker again (olhMarkerCmp.recheck): another marker, or none,
+// is ConcurrentModification with nothing unlinked; the same marker rewritten
+// is tried again, within the attempts, with the bytes read now.
 func (s *Store) unlinkObjInstance(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p olhUnlink) error {
-	_, err := s.unlinkVersion(ctx, rec, key, p)
+	_, _, err := s.unlinkVersion(ctx, rec, key, p)
 	return err
 }
 
@@ -273,32 +378,54 @@ const (
 
 // unlinkVersion is unlinkObjInstance, reporting as well what it did to the
 // version, which a caller that must know whether the version stays linked
-// reads.
-func (s *Store) unlinkVersion(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p olhUnlink) (unlinkOutcome, error) {
+// reads, and, once the unlink landed, the OLH tag the head carried after
+// the attempt's init, the one the unlink sent.
+func (s *Store) unlinkVersion(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p olhUnlink) (unlinkOutcome, []byte, error) {
 	what := versionName(rec, key)
 	idx := s.newOLHIndex(rec, key)
 	f := olhUnlinkFields{epoch: p.Epoch, nullVersion: p.NullVersion}
+	cmp := p.MarkerCmp
 	for range olhAttempts {
+		if cmp != nil {
+			f.cmp = &cmp.bi
+		}
 		head, err := s.readOLHHead(ctx, rec, olhHeadKey(key))
 		if err != nil {
-			return unlinkNotSent, fmt.Errorf("unlinking %s: %w", what, err)
+			return unlinkNotSent, nil, fmt.Errorf("unlinking %s: %w", what, err)
 		}
-		opTag, _, err := s.olhInitModification(ctx, head, nil, nil)
+		var initTag []byte
+		if key.Instance == "" && p.ExpectTag != nil && !p.Marker {
+			if !bytes.Equal(head.Attrs[meta.AttrIDTag], p.ExpectTag) {
+				return unlinkNotSent, nil, fmt.Errorf("%w: unlinking %s: the head's write tag is not the one expected", op.ErrConcurrentModification, what)
+			}
+			initTag = p.ExpectTag
+		}
+		tagged := olhTagged(head)
+		opTag, _, err := s.olhInitModification(ctx, head, nil, initTag)
 		switch {
 		case errors.Is(err, radosclient.ErrCanceled):
 			continue
 		case err != nil:
-			return unlinkNotSent, unlinkError(what, err)
+			return unlinkNotSent, nil, unlinkError(what, err)
 		}
 		err = idx.unlinkInstance(ctx, head, key, opTag, f)
 		if err == nil {
-			return unlinkLanded, s.finishOLHModification(ctx, idx, head, opTag, p.SkipUpdate, p.ExpectTag)
+			expect := p.ExpectTag
+			if key.Instance == "" && !p.Marker {
+				expect = olhReplayTag(p.ExpectTag, head, tagged)
+			}
+			return unlinkLanded, slices.Clone(head.Attrs[meta.AttrOLHIDTag]), s.finishOLHModification(ctx, idx, head, opTag, p.SkipUpdate, expect)
 		}
 		unknown := outcomeUnknown(err)
 		if !unknown {
 			s.olhCancelModification(ctx, head, opTag)
 		}
 		if errors.Is(err, radosclient.ErrCanceled) {
+			if cmp != nil {
+				if cmp, err = cmp.recheck(ctx, s, rec, key); err != nil {
+					return unlinkNotSent, nil, fmt.Errorf("unlinking %s: %w", what, err)
+				}
+			}
 			continue
 		}
 		if !p.SkipUpdate {
@@ -306,13 +433,13 @@ func (s *Store) unlinkVersion(ctx context.Context, rec *op.BucketRecord, key met
 		}
 		switch {
 		case unknown:
-			return unlinkUnknown, unlinkError(what, err)
+			return unlinkUnknown, nil, unlinkError(what, err)
 		case errors.Is(err, radosclient.ErrNotFound):
-			return unlinkGone, unlinkError(what, err)
+			return unlinkGone, nil, unlinkError(what, err)
 		}
-		return unlinkNotSent, unlinkError(what, err)
+		return unlinkNotSent, nil, unlinkError(what, err)
 	}
-	return unlinkNotSent, fmt.Errorf("%w: unlinking %s: every one of %d attempts lost to another writer", op.ErrUnknown, what, olhAttempts)
+	return unlinkNotSent, nil, fmt.Errorf("%w: unlinking %s: every one of %d attempts lost to another writer", op.ErrUnknown, what, olhAttempts)
 }
 
 // unlinkError is an unlink's failure, NoSuchKey for an ENOENT.

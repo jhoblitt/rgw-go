@@ -88,10 +88,14 @@ type olhIndex interface {
 // condition on: info is olh.info as that read saw it, empty when absent, and
 // noPending also refuses the init while another writer's pending attr
 // remains. radosgw's writers guard on the OLH tag alone, so this serializes
-// rgw-go's conditional writers only.
+// rgw-go's conditional writers only. With checkVer the init also requires
+// olh.ver to be ver, the bytes the same read saw, so that a replay applied
+// since, one that left olh.info as it was included, refuses it too.
 type olhCondGuard struct {
 	info      []byte
 	noPending bool
+	ver       []byte
+	checkVer  bool
 }
 
 // olhInitModification is olh_init_modification
@@ -133,6 +137,9 @@ func (s *Store) olhInitModification(ctx context.Context, head *op.ObjectState, c
 			w.CmpXattr(meta.AttrOLHInfo, radosclient.CmpEQ, cond.info)
 			if cond.noPending {
 				rgw.ObjCheckAttrsPrefix(w, meta.AttrOLHPendingPrefix, true, s.release)
+			}
+			if cond.checkVer {
+				w.CmpXattr(meta.AttrOLHVer, radosclient.CmpEQ, cond.ver)
 			}
 		}
 	}

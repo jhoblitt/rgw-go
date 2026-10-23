@@ -25,10 +25,17 @@ type ObjectState struct {
 	// or the version a request named.
 	DeleteMarker bool
 	Size         uint64
-	Mtime        time.Time
+	// Mtime is the head's mtime; for a delete marker read by its version,
+	// which has no head, the marker's index entry mtime.
+	Mtime time.Time
 	// Epoch is the version the head read returned.
 	Epoch uint64
-	Attrs map[string][]byte
+	// VersionedEpoch is set for a delete marker read by its version: its
+	// index entry's versioned_epoch, which with Mtime tells the marker from
+	// any other, every marker carrying the same index entry tag
+	// (DeleteParams.Expect).
+	VersionedEpoch uint64
+	Attrs          map[string][]byte
 	// Manifest is nil for an object held entirely in its head.
 	Manifest    *meta.Manifest
 	Compression *meta.CompressionInfo
@@ -171,8 +178,31 @@ type DeleteParams struct {
 	// replay of the key's pending log to the key's next update, as
 	// DeleteObjects does for all but the last delete of a key.
 	SkipOLHUpdate bool
-	// Expect, when not nil, is the state a versioned delete's removal must
-	// still find. No store implements it yet: each answers ErrNotImplemented.
+	// Expect, when not nil, is the version a versioned delete's removal must
+	// still find, as its caller read it. A version with a head must still
+	// carry the user.rgw.idtag Expect.Attrs holds, absent read as empty. A
+	// delete marker has no head, and every marker's index entry carries the
+	// same tag, so Expect must be a marker's state with the entry's
+	// VersionedEpoch and Mtime, as StatObject's state of a marker read by its
+	// version carries them; a marker's removal removes no data, and the null
+	// marker's is refused by a second delete or a null write landing at any
+	// time before its unlink. It guards the
+	// removal of a named version, checked before its unlink, and, on a bucket
+	// whose versioning is suspended, of the null version a delete without a
+	// version replaces with the null delete marker, whose head is the key's
+	// OLH head; a delete without a version on an enabled bucket removes
+	// nothing and does not read it. A mismatch is ErrConcurrentModification,
+	// with nothing written when it is found before the unlink or the marker's
+	// link; one found by the removal after them lists the version again,
+	// unless another writer removed it or a newer null write owns the null
+	// version. A named version goes current again at a fresh epoch when no
+	// listed version is newer, in rounds that wait out other writers' pending
+	// modifications; otherwise it goes non-current at its own epoch, behind
+	// the newer version listed, below every version of a key whose OLH was
+	// made again since, or, when every round lost its link to another writer,
+	// ahead of the current version, which then lists second. The delete runs
+	// its own replay whatever SkipOLHUpdate says. The unversioned delete and
+	// memstore answer ErrNotImplemented for it.
 	Expect *ObjectState
 }
 
