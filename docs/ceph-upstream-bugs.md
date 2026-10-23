@@ -17753,7 +17753,7 @@ Every new entry adds its row to this table, in document order.
   host and protocol: `website.Apply` declines, as `ErrUnsafeRedirect`, a
   host holding a byte at or below 0x20, or 0x7F, and a protocol other than
   `http` or `https`, which covers a configuration radosgw stored, and the
-  website endpoint, once served, answers that as an internal error;
+  website endpoint answers that as an internal error;
   `website.ParseXML` refuses such
   a `HostName` as InvalidArgument (`docs/exclusions.md`, "A website
   redirect is refused for a host holding a control byte or a protocol
@@ -19572,10 +19572,11 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** every Squid release, checked at v19.2.7; fixed from v20.0.0,
   checked at v20.2.4. The fix is in neither v19.2.7 nor origin/squid as
   fetched on 2026-10-20 (226f1401666), and it is on origin/tentacle.
-- **rgw-go:** applies Tentacle's rule on both releases (B14):
-  `ParseRequest` flags every request as a website one when s3website is
-  enabled and outranks s3, a request with no Host included
-  (`internal/s3/request.go:68-77`).
+- **rgw-go:** applies Tentacle's rule on both releases (`docs/exclusions.md`,
+  "On Squid, a request with no Host is a website request when s3website
+  outranks s3"): `ParseRequest` flags every request as a website one when
+  s3website is enabled and outranks s3, a request with no Host included
+  (`internal/s3/request.go:71-81`).
 - **Upstream:** [#66748](https://tracker.ceph.com/issues/66748), fixed by
   [ceph/ceph#58339](https://github.com/ceph/ceph/pull/58339) (5913f584cba).
   #66748 is Backporting to squid and reef: Squid's backport,
@@ -24383,7 +24384,7 @@ Every new entry adds its row to this table, in document order.
   document's too (`GetObject.websiteObjectRedirect`,
   `internal/op/website_get.go`; `websiteGet.serveErrorDoc`,
   `internal/s3/website_serve.go`; `docs/exclusions.md`, "An object's
-  website redirect is answered once"). It serves no website endpoint yet.
+  website redirect is answered once").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 unit B, Task BC-14, 2026-10-22, porting the website
   GetObject's redirect. Derived from the source, not reproduced.
@@ -24431,8 +24432,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.7 and v20.2.4. Not checked on main.
 - **rgw-go:** not affected. `GetObject.isFile` stats the key the request
   names (`internal/op/website_get.go`; `docs/exclusions.md`, "A website
-  request's file test reads its key decoded once"). It serves no website
-  endpoint yet.
+  request's file test reads its key decoded once").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, Task BC-14, 2026-10-22, porting `web_dir`.
   Derived from the source, not reproduced.
@@ -24479,9 +24479,9 @@ Every new entry adds its row to this table, in document order.
   header lines the uploader wrote; an empty line ends the header section
   and makes the uploader's text the start of the body.
 - **Releases:** v19.2.7 and v20.2.4. Not checked on main.
-- **rgw-go:** not affected. It writes the header and, once its website
-  endpoint is served, the Location through net/http, which rewrites each
-  CR and LF in a header value to a space (`docs/exclusions.md`, "A stored
+- **rgw-go:** not affected. It writes the header and its website
+  endpoint's Location through net/http, which rewrites each CR and LF in a
+  header value to a space (`docs/exclusions.md`, "A stored
   header value's CR and LF go out as spaces"). It writes no such attr until
   it serves POST object, whose write refuses or folds the field's CR and LF
   (task BC-32).
@@ -24587,7 +24587,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: it answers InvalidPart whatever the policies name
   (`GetObject.websiteObjectRedirect`, `internal/op/website_get.go`;
   `docs/exclusions.md`, "A website GET of a part the object has not is
-  InvalidPart under any policy"). It serves no website endpoint yet.
+  InvalidPart under any policy").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, Task BC-14's review, 2026-10-22, tracing where
   the website GetObject's attrs come from. Derived from the source, not
