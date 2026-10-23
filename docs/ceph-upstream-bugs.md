@@ -436,6 +436,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's lifecycle worker hangs shutdown in WorkPool::drain and claims a bucket after it is told to stop](#radosgws-lifecycle-worker-hangs-shutdown-in-workpooldrain-and-claims-a-bucket-after-it-is-told-to-stop) | pending | pending | ✓ |
 | [radosgw's bucket_lc_process indexes past a lifecycle entry key of fewer than three parts](#radosgws-bucket_lc_process-indexes-past-a-lifecycle-entry-key-of-fewer-than-three-parts) | pending | pending | ✓ |
 | [radosgw's versioned delete of versionId=null checks the version marker, not the null version](#radosgws-versioned-delete-of-versionidnull-checks-the-version-marker-not-the-null-version) | pending | pending | ✓ |
+| [radosgw's versioned delete of a named version ignores unmod_since, which its lifecycle relies on](#radosgws-versioned-delete-of-a-named-version-ignores-unmod_since-which-its-lifecycle-relies-on) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -25165,4 +25166,70 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** the phase 2 versioning plan's review, finding F4, as the plan's
   defect 16; registered by phase 2 Task V8a, 2026-10-22. Derived from the
+  source, not reproduced.
+
+## radosgw's versioned delete of a named version ignores unmod_since, which its lifecycle relies on
+
+- **Kind:** defect, data corruption: the lifecycle's expiration of a null
+  version, a suspended bucket's current object or a noncurrent null version,
+  can remove a null version a PUT wrote after the lifecycle listed the key.
+  Not security-relevant: no request chooses what the lifecycle removes.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - The versioned delete of a named version never reads
+    `params.unmod_since`
+    ([rgw_rados.cc:5905-5953](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5905-L5953),
+    [rgw_rados.cc:6517-6565](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6517-L6565)), which the delete
+    marker's path passes to `set_olh`
+    ([rgw_rados.cc:5899-5901](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5899-L5901),
+    [rgw_rados.cc:6511-6513](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6511-L6513)) and the unversioned
+    path to `cls_obj_check_mtime`
+    ([rgw_rados.cc:5995-6009](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5995-L6009),
+    [rgw_rados.cc:6609-6623](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6609-L6623)).
+  - The lifecycle's removal sets `unmod_since` to the listed entry's mtime,
+    its guard against a racing write, and names an empty instance `null`
+    when it removes rather than marks
+    ([rgw_lc.cc:617-621](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L617-L621) and
+    [rgw_lc.cc:643](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L643),
+    [rgw_lc.cc:624-628](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L624-L628) and
+    [rgw_lc.cc:662](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L662)).
+  - The current expiration of an object that is no delete marker removes
+    it unless versioning is enabled, so it does on a suspended bucket
+    ([rgw_lc.cc:1189](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1189),
+    [rgw_lc.cc:1209](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1209); `versioning_enabled`,
+    [rgw_common.h:1076](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L1076),
+    [rgw_common.h:1118](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1118)).
+  - The noncurrent expiration always removes
+    ([rgw_lc.cc:1244](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1244),
+    [rgw_lc.cc:1264](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1264)), so a noncurrent null version is
+    removed by the name `null` as well.
+  - The class's unlink resolves `null` to whichever null entry the key
+    holds when it runs, the null delete marker's first
+    ([cls_rgw.cc:1888](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1888),
+    [cls_rgw.cc:2035](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2035); `BIVerObjEntry::init`,
+    [cls_rgw.cc:1332](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1332),
+    [cls_rgw.cc:1458](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1458)).
+- **Trigger:** a PUT of the key between the lifecycle's listing of it and
+  its delete, under either of two rules: an Expiration rule on a bucket
+  whose versioning is suspended, or a NoncurrentVersionExpiration rule
+  expiring a noncurrent null version, which the PUT replaces when the
+  bucket's versioning is suspended by then.
+- **Impact:** the PUT's object, the key's new null version, is removed
+  though it is newer than the mtime the lifecycle's guard names, so a write
+  the client saw succeed is lost. A DeleteObject naming a version with
+  `x-amz-delete-if-unmodified-since`, which `RGWDeleteObj` passes on
+  ([rgw_op.cc:5282](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5282),
+  [rgw_op.cc:5671](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5671)), is not checked either; for any
+  version but `null` that is moot, since a version never changes after its
+  write.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** does not read the header on a named version's delete either
+  (`removeVersion`, `internal/driver/delete_versioned.go`), which S3 defines
+  for no delete. Its lifecycle performs no expiration yet: the worker runs
+  the shard protocol and deletes nothing (`internal/driver/lc_worker.go`).
+  Its removals are to be guarded by `DeleteParams.Expect`, the write tag
+  its listing read (V8c; `internal/op/object.go`), which every store
+  refuses today.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 Task V8a's review, 2026-10-22. Derived from the
   source, not reproduced.
