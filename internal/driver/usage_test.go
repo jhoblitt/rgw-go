@@ -385,16 +385,20 @@ var _ = Describe("the usage log", func() {
 		})
 
 		Describe("behind a flush whose write is stuck", func() {
-			var held *heldCluster
+			var (
+				held    *heldCluster
+				unblock func()
+			)
 			BeforeEach(func(ctx SpecContext) {
 				held = &heldCluster{
 					Cluster: c, pool: logPool, ns: usageNS,
 					entered: make(chan struct{}, 8), release: make(chan struct{}),
 				}
+				unblock = sync.OnceFunc(func() { close(held.release) })
 				s = openOver(ctx, held, nil)
 				s.SetUsageFinalFlushTimeoutForTest(50 * time.Millisecond)
 				// Registered after the store's Close, so it runs before it.
-				DeferCleanup(func() { close(held.release) })
+				DeferCleanup(unblock)
 			})
 
 			It("gives up the final flush at its timeout while a threshold flush holds the semaphore", func(ctx SpecContext) {
@@ -406,6 +410,14 @@ var _ = Describe("the usage log", func() {
 						s.Log(ctx, get(alice, fmt.Sprintf("b%d", i), t0))
 					}
 				}()
+				// A write resumed once the store has closed fails, and Log reports
+				// it through slog's default logger, which by then may be a later
+				// spec's capture.
+				DeferCleanup(func() {
+					unblock()
+					Eventually(logged).WithTimeout(time.Second).WithPolling(time.Millisecond).Should(BeClosed(),
+						"the threshold flush finishes before the store closes")
+				})
 				Eventually(held.entered).WithTimeout(time.Second).WithPolling(time.Millisecond).Should(Receive(), "the threshold flush is writing")
 				s.Log(ctx, get(alice, "late", t0))
 				cancel()
