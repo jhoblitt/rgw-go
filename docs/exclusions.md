@@ -1887,7 +1887,9 @@ review and verified against the tree.
       default.
     - Only writes are held to these rules: a device radosgw wrote with a
       longer seed, a wider window, a longer step, a step of 0 or any of the
-      others still reads back.
+      others still reads back. An MFA check of one with an empty key, such
+      a step or such a window sends nothing and does not verify ("A stored
+      MFA device outside the otp put's bounds does not verify").
 - **An otp put's header lists exactly the document's devices.** The `otp`
   section's put (`internal/driver/metadata_otp.go`) is radosgw's
   `RGWSI_Cls::MFA::set_mfa` with `reset_obj`, one write op of a remove
@@ -5513,17 +5515,45 @@ does the following.
   the read and the check, as each recorded check changes it, at most five
   times in a device's step_size seconds, cancels the check, and rgw-go
   reads the record and sends the check again, six times at most, after
-  which the verification fails with an error. rgw-go also sends no check for a
-  device stored with a step of 0, where a good code faults the OSD
-  (`docs/ceph-upstream-bugs.md`, "[cls_otp divides by a stored step_size
-  that is never
-  validated](ceph-upstream-bugs.md#cls_otp-divides-by-a-stored-step_size-that-is-never-validated)"),
-  and does not verify its code; radosgw sends it, and a wrong code there
-  records a failed check. The refusal sees only the zone's otp object: a
-  code rgw-go verified still verifies through radosgw on the same zone in
-  the later steps of its window, and once at each other zone
+  which the verification fails with an error. rgw-go sends no check at all
+  for a device outside the otp put's bounds ("A stored MFA device outside
+  the otp put's bounds does not verify", next). The refusal sees only the
+  zone's otp object: a code rgw-go verified still verifies through radosgw
+  on the same zone in the later steps of its window, and once at each other
+  zone
   ("[radosgw's otp replay state stays in the zone that recorded
   it](ceph-upstream-bugs.md#radosgws-otp-replay-state-stays-in-the-zone-that-recorded-it)").
+- **A stored MFA device outside the otp put's bounds does not verify.**
+  rgw-go's MFA check reads the device's record first, and for a device the
+  otp metadata put would refuse ("The admin metadata API serves four
+  sections") answers not verified, sending the class nothing
+  (`uncheckedOTPDevice`, `internal/driver/mfa.go`). radosgw checks every
+  stored device as the class finds it:
+  - an empty key, which the class parses from an empty seed, a hex seed led
+    by a NUL or a base32 seed of nothing but spaces, verifies codes anyone
+    can make from the clock alone
+    ("[radosgw's otp metadata put stores a device without a seed, whose
+    codes anyone can
+    make](ceph-upstream-bugs.md#radosgws-otp-metadata-put-stores-a-device-without-a-seed-whose-codes-anyone-can-make)");
+  - a step of 0 faults the OSD for a good code, and records a failed check
+    for a wrong one
+    ("[cls_otp divides by a stored step_size that is never
+    validated](ceph-upstream-bugs.md#cls_otp-divides-by-a-stored-step_size-that-is-never-validated)");
+  - a step over 3600 seconds verifies codes as any other step does, until
+    the step passes the clock's seconds, where the class keeps no attempt
+    limit and verifies no code
+    ("[cls_otp never verifies a device whose step is longer than the
+    clock's
+    seconds](ceph-upstream-bugs.md#cls_otp-never-verifies-a-device-whose-step-is-longer-than-the-clocks-seconds)");
+  - a window over 1024 steps costs the OSD a walk of 2·window+1 codes for
+    each wrong code
+    ("[cls_otp verifies any stored window, an OSD CPU cost per
+    check](ceph-upstream-bugs.md#cls_otp-verifies-any-stored-window-an-osd-cpu-cost-per-check)").
+
+  So a request whose MFA delete stands on such a device is refused through
+  rgw-go with radosgw's answer to a code that does not verify. A device
+  rgw-go's put wrote is never among them, and an otp put of the user's
+  devices within the bounds replaces one radosgw wrote.
 
 ### Authorization differences
 
