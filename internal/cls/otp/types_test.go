@@ -13,6 +13,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/cls/otp"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
+	"github.com/jhoblitt/rgw-go/internal/testutil/otptest"
 )
 
 func encode(v interface {
@@ -35,6 +36,8 @@ func decodeAll[T any](b []byte, dec func(*denc.Decoder) T) T {
 }
 
 var _ = Describe("otp_info_t", func() {
+	BeforeEach(otptest.RedactDevices)
+
 	DescribeTable("encodes and decodes the hand-built golden",
 		func(dev func() otp.OTPInfo, golden string) {
 			Expect(encode(dev())).To(Equal(unhex(golden)))
@@ -104,6 +107,8 @@ var _ = Describe("the enums", func() {
 })
 
 var _ = Describe("JSON", func() {
+	BeforeEach(otptest.RedactDevices)
+
 	It("dumps as otp_info_t::dump does, with no seed_bin", func() {
 		b, err := json.Marshal(devB())
 		Expect(err).NotTo(HaveOccurred())

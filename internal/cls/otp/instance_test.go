@@ -9,9 +9,12 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/cls/otp"
+	"github.com/jhoblitt/rgw-go/internal/testutil/otptest"
 )
 
 var _ = Describe("otp_instance", func() {
+	BeforeEach(otptest.RedactDevices)
+
 	// otp_instance (1,1), 63 bytes, as otp_set stores a fresh device: dev1
 	// with seed_bin "12345", no checks, last_success 0.
 	const dev1Hex = "01013f000000" +

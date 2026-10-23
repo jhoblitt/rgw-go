@@ -7,9 +7,12 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/cls/otp"
+	"github.com/jhoblitt/rgw-go/internal/testutil/otptest"
 )
 
 var _ = Describe("an MFA code's one-time use", func() {
+	BeforeEach(otptest.RedactDevices)
+
 	// c is the TOTP step of RFC 6238's vector at T = 1111111109, the
 	// check's step in every row.
 	const c = uint64(0x23523EC)

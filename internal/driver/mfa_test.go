@@ -18,6 +18,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/testutil/fakerados"
+	"github.com/jhoblitt/rgw-go/internal/testutil/otptest"
 )
 
 // rfcStep is the TOTP step of RFC 6238's vector at T = 1111111109, whose
@@ -61,6 +62,8 @@ func onlyExecIn(steps []radosclient.Step) []byte {
 }
 
 var _ = Describe("VerifyMFA", func() {
+	BeforeEach(otptest.RedactDevices)
+
 	const (
 		storeName = "ceph-objectstore"
 		otpOID    = "user:alice"

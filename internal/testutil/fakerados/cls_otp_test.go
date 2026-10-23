@@ -15,6 +15,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/testutil/fakerados"
+	"github.com/jhoblitt/rgw-go/internal/testutil/otptest"
 )
 
 const otpOID = "user:alice"
@@ -97,6 +98,8 @@ func encodeOTPRequest(v otpRequest) []byte {
 }
 
 var _ = Describe("OTPClassAt", func() {
+	BeforeEach(otptest.RedactDevices)
+
 	var (
 		c     *fakerados.Cluster
 		p     radosclient.Pool

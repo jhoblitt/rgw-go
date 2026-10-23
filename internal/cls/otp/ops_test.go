@@ -10,6 +10,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
+	"github.com/jhoblitt/rgw-go/internal/testutil/otptest"
 )
 
 // execStep asserts steps is a single exec of otp.method and returns it.
@@ -53,6 +54,8 @@ var _ = Describe("OTPObject", func() {
 })
 
 var _ = Describe("requests", func() {
+	BeforeEach(otptest.RedactDevices)
+
 	It("set sends cls_otp_set_otp_op with the devices as given", func() {
 		w := radosclient.NewWriteOp()
 		otp.Set(w, []otp.OTPInfo{devA()}, denc.Squid)
