@@ -534,6 +534,28 @@ var _ = Describe("a write op", func() {
 		Entry("the zero time", time.Time{}),
 		Entry("the Unix epoch, which librados sends as the same zero timespec", time.Unix(0, 0)),
 	)
+
+	// The OSD's delete and create leave object_info_t's mtime as it was
+	// (_delete_oid and maybe_create_new_object call new_object(), which
+	// clears only the digests,
+	// https://github.com/ceph/ceph/blob/v19.2.7/src/osd/osd_types.h#L6167-L6170 at v19.2.7),
+	// and a zero op mtime leaves it unchanged
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L8977-L8984 at v19.2.7).
+	It("keeps the stored mtime through a remove and a create in an op whose mtime reaches the OSD as zero", func(ctx SpecContext) {
+		set := time.Date(2026, 9, 29, 11, 0, 0, 0, time.UTC)
+		Expect(writeErr(ctx, p, "obj", func(op *radosclient.WriteOp) {
+			op.SetMtime(set)
+			op.WriteFull([]byte("old"))
+		})).To(Succeed())
+		Expect(writeErr(ctx, p, "obj", func(op *radosclient.WriteOp) {
+			op.SetMtime(time.Time{})
+			op.Remove()
+			op.Create(false)
+			op.SetXattr("x", []byte("v"))
+		})).To(Succeed())
+		Expect(stored("obj").Data).To(BeEmpty(), "the remove dropped the data")
+		Expect(stored("obj").Mtime).To(Equal(set))
+	})
 })
 
 var _ = Describe("a read op", func() {
