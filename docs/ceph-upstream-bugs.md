@@ -465,6 +465,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's PutObjectRetention reads no document for an admin its permission check refuses](#radosgws-putobjectretention-reads-no-document-for-an-admin-its-permission-check-refuses) | pending | pending | ✓ |
 | [radosgw lets an object ACL's WRITE grant set, shorten and bypass an object's retention and legal hold](#radosgw-lets-an-object-acls-write-grant-set-shorten-and-bypass-an-objects-retention-and-legal-hold) | pending | pending | ✓ |
 | [radosgw's null version removal loses its index completion to the OLH clear while the bucket reshards](#radosgws-null-version-removal-loses-its-index-completion-to-the-olh-clear-while-the-bucket-reshards) | pending | pending | ✓ |
+| [radosgw's bucket purge writes a delete marker in place of a versioned bucket's null version](#radosgws-bucket-purge-writes-a-delete-marker-in-place-of-a-versioned-buckets-null-version) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -27446,3 +27447,94 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task V8b's review, 2026-10-23, tracing rgw-go's lost
   null version completion to radosgw's completion path at both tags;
   derived from the source, not reproduced.
+
+## radosgw's bucket purge writes a delete marker in place of a versioned bucket's null version
+
+- **Kind:** defect, S3-correctness and a storage leak: on a bucket whose
+  versioning is or was enabled, a bucket removal with purge, and a user
+  removal with purge-data, delete the null version, and an object written
+  before versioning was enabled, through a delete of its key without an
+  instance. That delete writes a delete marker instead of removing the
+  version, and the bucket is then removed without an emptiness check, so
+  the version's RADOS objects outlive it. A regression on squid in
+  v19.2.3 and on main in v20.0.0, so v20.2.4 has it from its first
+  release: v19.2.2's and v18.2.8's `rgw_remove_object` name such an entry
+  `null`. Not security-relevant:
+  only an admin request reaches it, and what it leaves is out of reach of
+  S3. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RadosBucket::remove` lists the bucket unordered and with versions,
+    and removes each entry by the key the listing returns, through
+    `rgw_remove_object`
+    ([rgw_sal_rados.cc:362-364](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L362-L364),
+    [rgw_sal_rados.cc:379-381](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L379-L381);
+    [rgw_sal_rados.cc:385-392](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L385-L392),
+    [rgw_sal_rados.cc:402-409](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L402-L409)).
+    The admin API's and radosgw-admin's bucket removal without bypass-gc
+    reach it, and the user removal with purge-data
+    ([rgw_bucket.cc:1306](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L1306),
+    [rgw_bucket.cc:1468](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1468);
+    [rgw_user.cc:1977](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_user.cc#L1977),
+    [rgw_user.cc:1983](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L1983)).
+  - The unordered listing returns each index entry with the key the class
+    stored it under
+    ([rgw_rados.cc:2265-2271](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L2265-L2271) and
+    [rgw_rados.cc:2331](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L2331),
+    [rgw_rados.cc:2355-2361](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2355-L2361) and
+    [rgw_rados.cc:2421](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2421)),
+    whose instance is empty for the null version, as radosgw's lifecycle
+    says when it names such an entry `null` before acting on it
+    ([rgw_lc.cc:498-505](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L498-L505),
+    [rgw_lc.cc:506-513](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L506-L513)).
+    An object written before versioning was enabled has an empty instance
+    too.
+  - `rgw_remove_object` passes the key on unchanged
+    ([rgw_bucket.cc:148-161](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L148-L161),
+    [rgw_bucket.cc:149-162](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L149-L162)),
+    `RadosObject::delete_object` passes the bucket's versioning to the
+    delete
+    ([rgw_sal_rados.cc:2937-2941](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2937-L2941),
+    [rgw_sal_rados.cc:3775-3779](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3775-L3779)),
+    and the delete's versioned branch writes a delete marker for a key
+    without an instance: under a fresh instance on an enabled bucket, as
+    the null version on a suspended one
+    ([rgw_rados.cc:5850-5869](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5850-L5869),
+    [rgw_rados.cc:6462-6481](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6462-L6481)).
+  - v18.2.8's `rgw_remove_object` named an empty instance `null`
+    ([rgw_bucket.cc:156-158](https://github.com/ceph/ceph/blob/v18.2.8/src/rgw/driver/rados/rgw_bucket.cc#L156-L158)),
+    which takes the delete's branch that removes the version
+    ([rgw_rados.cc:5441-5450](https://github.com/ceph/ceph/blob/v18.2.8/src/rgw/driver/rados/rgw_rados.cc#L5441-L5450)
+    at v18.2.8), as v19.2.2's still does
+    ([rgw_bucket.cc:149-151](https://github.com/ceph/ceph/blob/v19.2.2/src/rgw/driver/rados/rgw_bucket.cc#L149-L151)).
+    main dropped those three lines in 485020f97b0, first released in
+    v20.0.0, a multisite change for null versions (tracker #67152, which
+    that change addresses, not this defect), and the squid branch in its
+    cherry-pick c860a396697, first released in v19.2.3.
+  - `remove` then calls `delete_bucket` with `!delete_children`, false, for
+    its emptiness check
+    ([rgw_sal_rados.cc:445](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L445),
+    [rgw_sal_rados.cc:462](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L462)),
+    which removes the bucket and its index shard objects without looking
+    at what they hold
+    ([rgw_rados.cc:5320-5325](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5320-L5325) and
+    [rgw_rados.cc:5368-5371](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5368-L5371),
+    [rgw_rados.cc:5945-5950](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5945-L5950) and
+    [rgw_rados.cc:6008-6009](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6008-L6009)).
+- **Impact:** on a bucket whose versioning is enabled, the null version
+  survives the purge noncurrent, its data in the key's head object and
+  its tail stripes, under a delete marker the purge wrote. On a suspended
+  bucket the null delete marker replaces the null version, whose data the
+  OLH replay removes, and the key's OLH head object stays with that marker
+  current. A null delete marker the purge lists is never removed: the
+  delete writes another marker over it. Once the bucket is removed, these
+  RADOS objects stay in the data pool, out of reach of S3. The admin
+  object removal, `DELETE /admin/bucket?object`, goes through the same
+  `rgw_remove_object`, so on a versioned bucket it writes a delete marker
+  where v18.2.8 removed the null version.
+- **Releases:** v19.2.7 and v20.2.4; main was not checked.
+- **rgw-go:** does not meet it today: its purges refuse a bucket that is or
+  was versioned (`refuseVersionedPurge`, `internal/op/adminpurge.go`).
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task V8b, 2026-10-23, reading how radosgw's listing
+  names a null version for its purge; derived from the source, not
+  reproduced.
