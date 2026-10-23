@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/denc"
+	"github.com/jhoblitt/rgw-go/internal/formatter"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 )
@@ -55,8 +57,8 @@ const (
 // Seed and SeedBin are the device's secret: whoever reads either can make
 // the user's MFA codes. SeedBin is the seed parsed, which otp_set computes
 // and stores itself, so whatever a request carries there is replaced.
-// MarshalJSON writes Seed, as radosgw's metadata get does, so treat that
-// JSON as a credential.
+// MarshalJSON and Dump write Seed, as radosgw's metadata get does, so treat
+// what they write as a credential.
 //
 // Format, String, GoString and LogValue leave both out, under every fmt verb
 // and wherever fmt reaches the device through its methods: a pointer, a
@@ -142,21 +144,37 @@ type otpInfoJSON struct {
 // the type as an int, the seed type as "hex", "base32" or, for any other
 // value, "unknown", and never SeedBin. It writes the seed.
 func (i OTPInfo) MarshalJSON() ([]byte, error) {
-	st := "unknown"
-	switch i.SeedType {
-	case SeedHex:
-		st = "hex"
-	case SeedBase32:
-		st = "base32"
-	}
 	b, err := json.Marshal(otpInfoJSON{
-		Type: int32(i.Type), ID: i.ID, Seed: i.Seed, SeedType: st,
+		Type: int32(i.Type), ID: i.ID, Seed: i.Seed, SeedType: i.seedTypeName(),
 		TimeOfs: i.TimeOfs, StepSize: i.StepSize, Window: i.Window,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("otp: dumping device: %w", err)
 	}
 	return b, nil
+}
+
+// Dump is otp_info_t::dump into the section the caller opened, the members
+// MarshalJSON writes in its order, each through the encode_json overload of
+// its C++ type. It writes the seed.
+func (i OTPInfo) Dump(f formatter.Formatter, _ denc.Release) {
+	f.DumpInt("type", int64(i.Type))
+	f.DumpString("id", i.ID)
+	f.DumpString("seed", i.Seed)
+	f.DumpString("seed_type", i.seedTypeName())
+	f.DumpInt("time_ofs", int64(i.TimeOfs))
+	f.DumpUnsigned("step_size", uint64(i.StepSize))
+	f.DumpUnsigned("window", uint64(i.Window))
+}
+
+func (i OTPInfo) seedTypeName() string {
+	switch i.SeedType {
+	case SeedHex:
+		return "hex"
+	case SeedBase32:
+		return "base32"
+	}
+	return "unknown"
 }
 
 // errMalformedJSON stands for every syntax error in a document handed to
@@ -344,6 +362,38 @@ func DecodeOTPCheck(d *denc.Decoder) OTPCheck {
 	c := OTPCheck{Token: d.String(), Timestamp: d.Time(), Result: CheckResult(d.U8())}
 	d.EndStruct(h)
 	return c
+}
+
+// HeaderKey is otp_header_key, the omap key the class keeps Header under
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L45-L46 at v19.2.7 and v20.2.4).
+const HeaderKey = "header"
+
+// Header is otp_header, the ids of the devices an object holds, a
+// std::set<std::string>
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L48-L64 at v19.2.7 and v20.2.4).
+// otp_get with get_all reads the record of every id it lists and fails the
+// call when one is missing
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L426-L440 at v19.2.7 and v20.2.4).
+type Header struct {
+	IDs []string
+}
+
+// Encode mirrors otp_header::encode, ENCODE_START(1, 1): the ids in the
+// set's order, each once. std::string's operator< compares bytes as unsigned
+// chars, as Go compares strings.
+func (h Header) Encode(e *denc.Encoder, _ denc.Release) {
+	f := e.BeginStruct(1, 1)
+	denc.EncodeSlice(e, slices.Compact(slices.Sorted(slices.Values(h.IDs))), (*denc.Encoder).String)
+	e.EndStruct(f)
+}
+
+// DecodeHeader mirrors otp_header::decode, DECODE_START(1), keeping the ids
+// in the order the bytes hold them.
+func DecodeHeader(d *denc.Decoder) Header {
+	f := d.BeginStruct(1)
+	h := Header{IDs: denc.DecodeSlice(d, (*denc.Decoder).String)}
+	d.EndStruct(f)
+	return h
 }
 
 // The requests and replies of otp_set, otp_get, otp_remove and
