@@ -121,6 +121,10 @@ type olhCondWait struct {
 //   - with p.ExpectTag, the head's user.rgw.idtag, absent read as empty, must
 //     be p.ExpectTag, or the write is ConcurrentModification with nothing
 //     written; the init then compares it again (olhInitModification);
+//   - with p.Relink, the head must still be the one its caller read
+//     (olhRelink), or the link is errRelinkMoved with nothing written; the
+//     init is then guarded on its olh.info, its olh.ver and, unless the
+//     re-link's wait has passed, no pending attr;
 //   - with p.Cond, the link must not be of the null version's data
 //     (olhCondition); head is followed first (followOLHHead) and ExpectTag
 //     compared on the head as followed; the condition holds on the version
@@ -157,7 +161,14 @@ func (s *Store) prepareOLHAttempt(ctx context.Context, idx *bucketOLHIndex, head
 	if p.ExpectTag != nil && !bytes.Equal(head.Attrs[meta.AttrIDTag], p.ExpectTag) {
 		return olhAttempt{}, fmt.Errorf("%w: the head's write tag is not the one expected", op.ErrConcurrentModification)
 	}
+	if p.Relink != nil && p.Relink.moved(head) {
+		return olhAttempt{}, errRelinkMoved
+	}
 	if p.Cond == nil {
+		if p.Relink != nil && p.Relink.head != nil && head.Exists {
+			g := &olhCondGuard{info: head.Attrs[meta.AttrOLHInfo], noPending: !p.Relink.pendingOK, ver: head.Attrs[meta.AttrOLHVer], checkVer: true}
+			return olhAttempt{guard: g}, nil
+		}
 		return olhAttempt{}, nil
 	}
 	e, err := s.evalOLHCond(ctx, idx, head, p.Cond, w)
@@ -266,13 +277,13 @@ func (s *Store) followOLHHead(ctx context.Context, idx *bucketOLHIndex, head *op
 	return nil
 }
 
-// olhReplayTag is the write tag the replay of a link made with expectTag
-// guards the removals the link logged on: expectTag, but for a head that
-// was not tagged before init (olhTagged), the user.rgw.idtag init then wrote
-// on it. Init's compare proved, in the op that replaced the tag, that the
-// head held expectTag, as a missing head's exclusive create proved that no
-// head did; the version such a link logs for removal, the null version, is
-// that head.
+// olhReplayTag is the write tag the replay of a link, or of the null
+// version's unlink, made with expectTag guards the removals it logged on:
+// expectTag, but for a head that was not tagged before init (olhTagged), the
+// user.rgw.idtag init then wrote on it. Init's compare proved, in the op that
+// replaced the tag, that the head held expectTag, as a missing head's
+// exclusive create proved that no head did; the version such a link or
+// unlink logs for removal, the null version, is that head.
 func olhReplayTag(expectTag []byte, head *op.ObjectState, tagged bool) []byte {
 	if expectTag == nil || tagged {
 		return expectTag
@@ -473,7 +484,7 @@ func (s *Store) checkOLHLink(ctx context.Context, idx *bucketOLHIndex, key meta.
 	case cause == nil:
 		cause = errVoid
 	}
-	out, err := s.unlinkVersion(ctx, idx.x.rec, key, olhUnlink{SkipUpdate: skip})
+	out, _, err := s.unlinkVersion(ctx, idx.x.rec, key, olhUnlink{SkipUpdate: skip})
 	switch out {
 	case unlinkLanded:
 		if err != nil {

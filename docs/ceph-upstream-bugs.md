@@ -25475,15 +25475,22 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.7 and v20.2.4.
 - **rgw-go:** does not read the header on a named version's delete either
   (`removeVersion`, `internal/driver/delete_versioned.go`), which S3 defines
-  for no delete. Its lifecycle expires the current objects of buckets
-  never versioned alone, through the unversioned delete, which checks
-  `unmod_since` and asserts the version the worker read
-  (`lcBucket.expireCurrent`, `internal/driver/lc_actions.go`), and leaves
-  versioned and suspended buckets unclaimed for radosgw's worker
+  for no delete. It guards the removal on `DeleteParams.Expect`
+  (`internal/op/object.go`) instead: the version's head must still carry
+  the write tag its caller read, and a delete marker its index entry's
+  tag, checked before the unlink; a head is checked again by the delete's
+  own replay, whose refusal lists the version again and answers
+  ConcurrentModification (`docs/exclusions.md`, "A refused
+  versioned removal re-links the version, unless a newer null write owns
+  the null key"); a replay by another reader alongside it still removes
+  the version, as radosgw's does. Its lifecycle expires the current
+  objects of buckets never versioned alone, through the unversioned
+  delete, which checks `unmod_since` and asserts the version the worker
+  read (`lcBucket.expireCurrent`, `internal/driver/lc_actions.go`), and
+  leaves versioned and suspended buckets unclaimed for radosgw's worker
   (`docs/exclusions.md`, "rgw-go's lifecycle worker leaves versioned
-  buckets and transition rules to radosgw's"). Its removals of versions are
-  to be guarded by `DeleteParams.Expect`, the write tag its listing read
-  (V8c; `internal/op/object.go`), which every store refuses today.
+  buckets and transition rules to radosgw's"); its removals of versions
+  are to pass the state its re-read returned as `Expect`.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task V8a's review, 2026-10-22. Derived from the
   source, not reproduced.

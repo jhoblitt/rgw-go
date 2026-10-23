@@ -60,10 +60,12 @@ type olhLinkFields struct {
 }
 
 // olhUnlinkFields are the fields of an unlink its caller chooses: the epoch,
-// as for a link, and nullVersion for a request that named the null version.
+// as for a link, nullVersion for a request that named the null version, and
+// cmp, when not nil, an index entry the unlink's op requires unchanged.
 type olhUnlinkFields struct {
 	epoch       uint64
 	nullVersion bool
+	cmp         *rgw.BIEntry
 }
 
 // headOLHTag is head's olh.idtag as the index calls send it: its bytes whole,
@@ -113,6 +115,13 @@ func (b *bucketOLHIndex) linkOLH(ctx context.Context, head *op.ObjectState, key 
 // NULL_VERSION for a request that named the null version
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8814-L8818 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9560-L9564 at v20.2.4).
+// With f.cmp the op compares that omap entry with the bytes given before the
+// class's call, in the same op as the reshard guard and the call, so a
+// changed entry answers ECANCELED with nothing unlinked: the OSD runs an
+// OMAP_CMP in a write op, a missing key reading as empty, and applies the op
+// whole or not at all
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L7802-L7874 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L7879-L7951 at v20.2.4).
 func (b *bucketOLHIndex) unlinkInstance(ctx context.Context, head *op.ObjectState, key meta.ObjKey, opTag string, f olhUnlinkFields) error {
 	if err := b.ofName(key); err != nil {
 		return err
@@ -125,7 +134,12 @@ func (b *bucketOLHIndex) unlinkInstance(ctx context.Context, head *op.ObjectStat
 		Key: versionKey(key), OpTag: opTag, OLHEpoch: f.epoch, LogOp: b.x.logOp(), BILogFlags: flags,
 		OLHTag: headOLHTag(head), ZonesTrace: b.x.zonesTrace(),
 	}
-	return b.x.guardedWrite(ctx, func(w *radosclient.WriteOp) { rgw.UnlinkInstance(w, u, b.x.s.release) })
+	return b.x.guardedWrite(ctx, func(w *radosclient.WriteOp) {
+		if f.cmp != nil {
+			w.OmapCmp(f.cmp.Idx, radosclient.CmpEQ, f.cmp.Data)
+		}
+		rgw.UnlinkInstance(w, u, b.x.s.release)
+	})
 }
 
 // readLog is bucket_index_read_olh_log
@@ -227,28 +241,38 @@ func (b *bucketOLHIndex) getOLH(ctx context.Context, head *op.ObjectState) (rgw.
 // version marker, and reads once through its caller's bucket info. An entry
 // that does not decode is bi_get_instance's -EIO, UnknownError.
 func (s *Store) getInstanceEntry(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey) (rgw.DirEntry, error) {
-	x := s.newOLHIndex(rec, key).x
-	k := versionKey(key)
-	var en rgw.DirEntry
-	err := x.readShard(ctx, func(sh indexShard) error {
-		var err error
-		en, err = x.readKeyEntry(ctx, sh, k)
-		return err
-	})
+	en, _, err := s.getInstanceEntryBI(ctx, rec, key)
 	return en, err
 }
 
-// readKeyEntry is getInstanceEntry's one to three reads of k on sh.
-func (x *indexOp) readKeyEntry(ctx context.Context, sh indexShard, k rgw.ObjKey) (rgw.DirEntry, error) {
-	en, err := x.dirEntry(ctx, sh, k, rgw.BIIndexInstance)
+// getInstanceEntryBI is getInstanceEntry, returning beside the decoded entry
+// the raw entry its last bi_get answered: the omap key and value as stored,
+// which a later op can compare unchanged (olhMarkerCmp).
+func (s *Store) getInstanceEntryBI(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey) (rgw.DirEntry, rgw.BIEntry, error) {
+	x := s.newOLHIndex(rec, key).x
+	k := versionKey(key)
+	var en rgw.DirEntry
+	var bi rgw.BIEntry
+	err := x.readShard(ctx, func(sh indexShard) error {
+		var err error
+		en, bi, err = x.readKeyEntry(ctx, sh, k)
+		return err
+	})
+	return en, bi, err
+}
+
+// readKeyEntry is getInstanceEntry's one to three reads of k on sh, with the
+// raw entry of the last.
+func (x *indexOp) readKeyEntry(ctx context.Context, sh indexShard, k rgw.ObjKey) (rgw.DirEntry, rgw.BIEntry, error) {
+	en, bi, err := x.dirEntryBI(ctx, sh, k, rgw.BIIndexInstance)
 	if err != nil || k.Instance != "" || en.Flags&rgw.FlagVerMarker == 0 {
-		return en, err
+		return en, bi, err
 	}
-	en, err = x.dirEntry(ctx, sh, rgw.ObjKey{Name: rgw.InstanceIndexKey(k, true)}, rgw.BIIndexPlain)
+	en, bi, err = x.dirEntryBI(ctx, sh, rgw.ObjKey{Name: rgw.InstanceIndexKey(k, true)}, rgw.BIIndexPlain)
 	if !errors.Is(err, radosclient.ErrNotFound) {
-		return en, err
+		return en, bi, err
 	}
-	return x.dirEntry(ctx, sh, rgw.ObjKey{Name: rgw.InstanceIndexKey(k, false)}, rgw.BIIndexPlain)
+	return x.dirEntryBI(ctx, sh, rgw.ObjKey{Name: rgw.InstanceIndexKey(k, false)}, rgw.BIIndexPlain)
 }
 
 // biGet runs bi_get of key's entry of type typ on sh as a read op of its own.
@@ -263,13 +287,23 @@ func (x *indexOp) biGet(ctx context.Context, sh indexShard, key rgw.ObjKey, typ 
 
 // dirEntry is the index entry bi_get of key and typ reads on sh, decoded.
 func (x *indexOp) dirEntry(ctx context.Context, sh indexShard, key rgw.ObjKey, typ rgw.BIIndexType) (rgw.DirEntry, error) {
+	en, _, err := x.dirEntryBI(ctx, sh, key, typ)
+	return en, err
+}
+
+// dirEntryBI is dirEntry with the raw entry bi_get answered.
+func (x *indexOp) dirEntryBI(ctx context.Context, sh indexShard, key rgw.ObjKey, typ rgw.BIIndexType) (rgw.DirEntry, rgw.BIEntry, error) {
 	res, err := x.biGet(ctx, sh, key, typ)
 	if err != nil {
-		return rgw.DirEntry{}, err
+		return rgw.DirEntry{}, rgw.BIEntry{}, err
+	}
+	bi, err := res.Result()
+	if err != nil {
+		return rgw.DirEntry{}, rgw.BIEntry{}, fmt.Errorf("%w: the index entry %q on index shard %s: %w", op.ErrUnknown, key.Name, sh.oid, err)
 	}
 	en, err := res.DirEntry()
 	if err != nil {
-		return rgw.DirEntry{}, fmt.Errorf("%w: the index entry %q on index shard %s: %w", op.ErrUnknown, key.Name, sh.oid, err)
+		return rgw.DirEntry{}, rgw.BIEntry{}, fmt.Errorf("%w: the index entry %q on index shard %s: %w", op.ErrUnknown, key.Name, sh.oid, err)
 	}
-	return en, nil
+	return en, bi, nil
 }

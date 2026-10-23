@@ -9271,6 +9271,212 @@ does the following.
   version's removal leaves the head with no ETag and no data, which
   If-Match: `*` alone does not compare. The S3 delete still answers 501 on
   a versioned bucket; the object store's delete does this.
+- **A null delete marker can be conditional on the null version it
+  replaces.** On a bucket whose versioning is suspended, a delete naming no
+  version links the null delete marker, whose link takes the null version's
+  list entry and logs the removal of its data, wherever that version sits
+  ([cls_rgw.cc:1712-1731](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1712-L1731),
+  [cls_rgw.cc:1806-1810](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1806-L1810);
+  [cls_rgw.cc:1853-1872](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1853-L1872),
+  [cls_rgw.cc:1947-1951](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1947-L1951)),
+  and the replay that follows removes whatever null data the key's OLH head
+  holds when it runs
+  ([rgw_rados.cc:8530-8541](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8530-L8541),
+  [rgw_rados.cc:9275-9287](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9275-L9287)),
+  a null PutObject's data included when that PUT links after the marker
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's null version removal takes the
+  data of a null PutObject that links after
+  it](ceph-upstream-bugs.md#radosgws-null-version-removal-takes-the-data-of-a-null-putobject-that-links-after-it)").
+  radosgw's delete takes no expected state. rgw-go's takes the null version
+  as its caller read it, `DeleteParams.Expect`, which the lifecycle and the
+  object-lock checks are to pass: the marker's link carries its
+  `user.rgw.idtag`, absent read as empty (`writeDeleteMarker`,
+  `internal/driver/delete_versioned.go`). Each attempt compares it on the
+  OLH head it reads and the attempt's init compares it again, so a null
+  write or an attr write that landed before the init answers 409
+  ConcurrentModification with no marker linked, and the delete's own
+  replay removes the null data only while the head carries it. A removal
+  that replay refuses is answered as the exclusion "A refused versioned
+  removal re-links the version, unless a newer null write owns the null
+  key" says. The delete runs its own replay even when told to skip it,
+  since the guard is in that replay. On a bucket whose versioning is
+  enabled the marker removes nothing and `Expect` is not read. The
+  windows that exclusion names stay. The S3 delete still answers 501 on a
+  versioned bucket; the object store's delete does this.
+- **A refused versioned removal re-links the version, unless a newer null
+  write owns the null key.** A versioned delete removes a version in two
+  steps: the class's unlink, or the null delete marker's link, takes its
+  list entry and logs its removal
+  ([cls_rgw.cc:1867-2018](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1867-L2018),
+  [cls_rgw.cc:2002-2159](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2002-L2159)),
+  and the replay removes its head and its instance entry. radosgw never
+  refuses that removal. rgw-go's delete with `DeleteParams.Expect` checks
+  the version before the unlink, answering 409 ConcurrentModification with
+  nothing written when it no longer matches, and its own replay, which it
+  runs even when told to skip it, removes the head only under the write tag
+  `Expect` read, and removes no data for a delete marker.
+  - A version with a head must still carry that `user.rgw.idtag`. For the
+    null version, whose head is the OLH head, the unlink's init compares the
+    tag too, as an init gives a head without an OLH tag a fresh one, and the
+    replay's removal is guarded on that fresh tag.
+  - A delete marker has no head, and every marker's index entry carries the
+    tag `delete-marker`
+    ([cls_rgw.cc:1350-1358](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1350-L1358),
+    [cls_rgw.cc:1476-1484](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1476-L1484)),
+    so `Expect` must be a marker with the entry's `versioned_epoch` and
+    mtime, which a marker's state read by its version carries. A second null
+    delete marker or a null write that replaced the null marker before the
+    delete read its entry answers 409 with nothing written. The class's
+    unlink of a marker compares no entry, so the null marker's unlink also
+    compares, in the same RADOS op as the class's call, the marker's
+    instance entry, `\x801000_<name>\0i\0d`
+    ([cls_rgw.cc:325-337](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L325-L337),
+    [cls_rgw.cc:375-387](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L375-L387)),
+    with the raw value the delete's read returned
+    ([PrimaryLogPG.cc:7802-7874](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L7802-L7874),
+    [PrimaryLogPG.cc:7879-7951](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L7879-L7951)).
+    A second null marker rewrites that entry and a null write's link removes
+    it, so either, landing after the read and before the unlink, refuses the
+    unlink with nothing unlinked; the delete reads the marker again and
+    answers 409. Two rewrites keep the marker and change its bytes: a
+    version linked over it clears its current flag
+    ([cls_rgw.cc:1429-1431](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1429-L1431),
+    [cls_rgw.cc:1556-1558](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1556-L1558)),
+    and the unlink of the version above it sets it again
+    ([cls_rgw.cc:1948](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1948),
+    [cls_rgw.cc:2095](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2095)).
+    After either, or a reshard's copy, the read again finds the same
+    `versioned_epoch` and mtime, and the unlink is tried again with the
+    bytes read now. A marker owns no data, so its unlink compares no head,
+    and its replay guards any removal on a write tag no head carries.
+
+  When the head is rewritten after the unlink or the marker's link, by a
+  retention, an ACL or a new null write, the replay refuses the removal,
+  and the version would stay readable by its id but absent from
+  ListObjectVersions and from the lifecycle's listings. rgw-go lists it
+  again and answers 409 ConcurrentModification (`refusedRemoval`,
+  `relistVersion` and `relistNull`, `internal/driver/delete_versioned.go`).
+  - Only a final refusal is acted on. One returned with a trim, an index
+    clear or a clear expiry that failed, or with the writer's entries kept
+    in the log of an OLH entry another writer re-tagged, leaves the removal
+    in the log, where a later replay removes the version, so rgw-go lists
+    nothing and answers that error.
+  - Nothing is listed when the version's instance entry or its head is
+    gone, another replay having removed it.
+  - A named version that no listed version is newer than is linked at
+    epoch 0, current again at a fresh epoch, the version the unlink
+    promoted demoted. It is linked in up to five rounds, each reading the
+    version, the OLH head and the listing afresh; before it reads the head, a
+    round removes the pending attrs past `rgw_olh_pending_timeout_sec`, as
+    radosgw's `check_pending_olh_entries` and rgw-go's follow do
+    ([rgw_rados.cc:8904-8934](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8904-L8934),
+    [rgw_rados.cc:9650-9680](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9650-L9680)).
+    A round's link is guarded
+    on the OLH head as that round read it: each attempt's read must still
+    carry its OLH tag, its `olh.info`, its `olh.ver` and no pending attr,
+    and the init compares `olh.info`, `olh.ver` and the pending attrs again,
+    so a modification applied since, one that left `olh.info` as it was
+    included, refuses it, and the next round reads again. While another
+    writer's modification is pending, a round first waits for it as
+    rgw-go's conditional writers do, 318 to 635 ms in all, with no wait on a
+    pending attr already older than 318 ms when first read (exclusion "A
+    conditional write to a versioned bucket commits only if its condition
+    held when it linked"). Past the wait, pending attrs no longer refuse the
+    link, which is then guarded on `olh.info` and `olh.ver` alone. So a
+    pending attr no writer will remove, such as the one radosgw's link at an
+    old epoch leaves, does not hold the version off: before
+    `rgw_olh_pending_timeout_sec` expires it the wait passes it, and after,
+    the round removes it.
+  - When a newer version is listed, or every round lost its link to another
+    writer, the version is linked at its own epoch, non-current, after its
+    instance record's flags are reset to `FLAG_VER` alone: the unlink left
+    the record as it was, flagged current when it was current, and the
+    class's link at an old epoch adds `FLAG_VER` and clears nothing
+    ([cls_rgw.cc:1410-1427](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1410-L1427),
+    [cls_rgw.cc:1537-1554](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1537-L1554)),
+    so it would list a second entry of the name flagged current. The reset
+    is a prepare and an awaited cancel carrying the record's own version: the
+    class's completion resets the flags whatever it completes, and its cancel
+    removes the placeholder the prepare makes when the record went since it
+    was read
+    ([cls_rgw.cc:851-856](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L851-L856) and
+    [cls_rgw.cc:1061-1126](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1061-L1126),
+    [cls_rgw.cc:983-988](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L983-L988) and
+    [cls_rgw.cc:1196-1260](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1196-L1260)).
+    With a newer version listed the version goes behind it. With none, when
+    each of the five rounds lost its link to another writer's modification
+    that lists nothing newer, such as unlinks of other versions, the version
+    lists non-current ahead of the version the unlink promoted, which stays
+    current, and ListObjectVersions marks the name's second entry IsLatest.
+    The class promotes only a version that lists after the current one
+    ([cls_rgw.cc:1437-1473](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1437-L1473),
+    [cls_rgw.cc:1564-1600](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1564-L1600)),
+    so it never promotes the version left ahead. The current version's next
+    unlink promotes the next older one, or, with none listed, clears the
+    key's OLH, its OLH entry and its plain entry
+    ([cls_rgw.cc:2126-2190](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2126-L2190),
+    [cls_rgw.cc:2279-2355](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2279-L2355)),
+    while the version stays listed with no version current, ahead of any
+    version a later write links on the OLH made again, whose epochs start
+    again at 2. Short of such a clear, the key's next link lists its version
+    above it and ends the misordering.
+  - When the key's OLH entry carries another tag than the one the unlink
+    sent, the entry cleared and made again since, whose epochs start again
+    at 2, the version is linked at epoch 1, below every version the new
+    entry holds.
+  - The null version's data has one record for every null write, so each
+    round reads it again and lists nothing when its `versioned_epoch` is no
+    longer the one the first round read, a newer null write owning the key,
+    when the OLH head no longer holds its data, or when it is listed. The
+    class's link of the null data takes the null delete marker's list and
+    instance entries whatever its epoch, and a link at an old epoch writes no
+    OLH entry
+    ([cls_rgw.cc:1712-1760](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1712-L1760),
+    [cls_rgw.cc:1853-1901](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1853-L1901)),
+    so while the null delete marker is current the null data is linked at
+    epoch 0. When the version the marker demoted is newer than the null
+    data, that version is linked at epoch 0 first, current again, and the
+    null data then goes below it. Otherwise the null data goes at its own
+    epoch, its record reset first, as a named version's fallback does.
+    Unlike that fallback, each of these links is guarded on the OLH head the
+    round read, as the named version's epoch-0 link is, after the same wait
+    on pending modifications; a round whose link that guard refuses gives
+    way to the next, up to five, after which the version stays unlisted.
+  - A refused removal of the null version that leaves the key no listed
+    version has the replay trim the log where it would clear the key's
+    OLH: the clear removes the OLH head object, which holds the data the
+    refusal kept, where radosgw's replay has removed that data first.
+
+  Exactly one entry of the name is then flagged current, but for two
+  windows of rgw-go's own, since radosgw never re-links, and one of
+  radosgw's:
+  - A writer that inits after a guarded link's init and links before it,
+    and, once a round's wait has passed or found only stale attrs, a writer
+    that links between the round's read and the re-link's link, before its
+    replay lands. Against the epoch-0 link the later link wins, by radosgw's
+    rule, and that writer's version ends below the restored one. Against
+    the null data's own-epoch link, a null write that links in between stays
+    current, but the link writes the null record back at the old epoch, and
+    with it that write's list entry, below the newer versions and still
+    flagged current: `BIVerObjEntry::write`, cited above, moves the record's
+    list entry and clears no flag.
+  - A replay running alongside the own one, which read the own entries
+    before the own tail dropped them, can land its removal at any time after
+    the check that the version is still there, before the re-link's link or
+    after it. The window lasts until that removal lands, and the list entry
+    the re-link wrote stays after it, for a version with no head: the
+    removal's index completion takes the instance entry alone
+    ([cls_rgw.cc:1127-1167](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1127-L1167),
+    [cls_rgw.cc:1261-1300](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1261-L1300)).
+  - radosgw's own: a replay by another reader, which does not know
+    `Expect`, removes what it reads, as radosgw's does. Until the writer's
+    own replay has landed with its trim or clear, a replay by another reader
+    running alongside the own one, and one after the own head op failed and
+    its retry never landed, removes the version guarded only on the write
+    tag it reads.
+
+  The S3 delete still answers 501 on a versioned bucket; the object store's
+  delete does this.
 - **A conditional write to a versioned bucket commits only if its condition
   held when it linked.** radosgw checks a versioned write's If-Match and
   If-None-Match once, before its head write, and then links the version

@@ -275,6 +275,20 @@ var _ = Describe("the OLH head operations", func() {
 				Expect(err).To(MatchError(radosclient.ErrCanceled), "the olh.info half still holds")
 			})
 
+			It("with olh.ver as well, is ECANCELED when a replay moved olh.ver and left olh.info as it was", func(ctx SpecContext) {
+				olhHead("5", info("v1", false), nil)
+				st := state()
+				g := &driver.OLHCondGuard{Info: info("v1", false), NoPending: true, Ver: []byte("5"), CheckVer: true}
+				head().Xattrs[meta.AttrOLHVer] = []byte("6")
+				_, _, err := s.OLHInitModificationForTest(ctx, st, g)
+				Expect(err).To(MatchError(radosclient.ErrCanceled))
+				Expect(writes()[0].Steps()[3]).To(Equal(&radosclient.CmpXattrStep{Name: meta.AttrOLHVer, Op: radosclient.CmpEQ, Value: []byte("5")}))
+
+				head().Xattrs[meta.AttrOLHVer] = []byte("5")
+				_, _, err = s.OLHInitModificationForTest(ctx, state(), g)
+				Expect(err).NotTo(HaveOccurred(), "the olh.ver it read")
+			})
+
 			It("guards a plain object on its absent olh.info", func(ctx SpecContext) {
 				seed(map[string][]byte{meta.AttrIDTag: []byte("_plain\x00")}, []byte("hello"))
 				st := state()

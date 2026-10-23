@@ -105,6 +105,8 @@ func (f *FakeOLHIndex) getOLH(_ context.Context, head *op.ObjectState) (rgw.OLHE
 type OLHCondGuard struct {
 	Info      []byte
 	NoPending bool
+	Ver       []byte
+	CheckVer  bool
 }
 
 // OLHInitModificationForTest is olhInitModification with no expected write
@@ -118,7 +120,7 @@ func (s *Store) OLHInitModificationForTest(ctx context.Context, head *op.ObjectS
 func (s *Store) OLHInitModificationExpectingForTest(ctx context.Context, head *op.ObjectState, cond *OLHCondGuard, expectTag []byte) (opTag string, ver []byte, err error) {
 	var g *olhCondGuard
 	if cond != nil {
-		g = &olhCondGuard{info: cond.Info, noPending: cond.NoPending}
+		g = &olhCondGuard{info: cond.Info, noPending: cond.NoPending, ver: cond.Ver, checkVer: cond.CheckVer}
 	}
 	return s.olhInitModification(ctx, head, g, expectTag)
 }

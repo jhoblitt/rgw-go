@@ -42,10 +42,10 @@ import (
 // of a head written since the caller read it at that version
 // (removeHeadFlagged).
 //
-// p.Expect is refused before anything is read, and so is p.AssertEpoch on
-// the versioned branch.
+// p.Expect is refused on that path before anything is read, and
+// p.AssertEpoch on the versioned branch.
 func (s *Store) DeleteObject(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) (*op.DeleteObjectResult, error) {
-	if p.Expect != nil {
+	if p.Expect != nil && !rec.Info.Versioned() {
 		return nil, fmt.Errorf("%w: a delete's expected state", op.ErrNotImplemented)
 	}
 	if rec.Info.Versioned() {

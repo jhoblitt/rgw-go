@@ -250,11 +250,16 @@ var _ = Describe("StatObject and PrefetchObject of a versioned key", func() {
 			Expect(c.Reads(rookIndexPool, "", shard)).To(BeZero(), "a version found pays no index read")
 		})
 
-		It("answers a delete marker's version id as not existing, with DeleteMarker set from its index entry", func(ctx SpecContext) {
+		It("answers a delete marker's version id as not existing, with DeleteMarker, its mtime and its versioned_epoch from its index entry", func(ctx SpecContext) {
 			put(ctx, "v1")
 			marker(ctx, "dm")
 			put(ctx, "v2")
-			Expect(stat(ctx, version("dm"))).To(Equal(&op.ObjectState{Bucket: rec, Key: version("dm"), DeleteMarker: true}))
+			en, ok := c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k", Instance: "dm"})
+			Expect(ok).To(BeTrue())
+			Expect([]any{en.Meta.Mtime.IsZero(), en.VersionedEpoch}).NotTo(Equal([]any{true, uint64(0)}))
+			Expect(stat(ctx, version("dm"))).To(Equal(&op.ObjectState{
+				Bucket: rec, Key: version("dm"), DeleteMarker: true, Mtime: en.Meta.Mtime, VersionedEpoch: en.VersionedEpoch,
+			}), "what tells one marker from another, every marker's entry carrying the tag delete-marker")
 		})
 
 		It("answers a missing version id as not existing, without DeleteMarker", func(ctx SpecContext) {
@@ -305,8 +310,11 @@ var _ = Describe("StatObject and PrefetchObject of a versioned key", func() {
 				tag := slices.Clone(olhHead().Xattrs[meta.AttrIDTag])
 				Expect(s.SetOLHForTest(ctx, rec, version(""), markerLink(tag))).To(Succeed())
 				settle(s)
-				Expect(stat(ctx, version(meta.NullInstance))).To(Equal(&op.ObjectState{Bucket: rec, Key: version(meta.NullInstance), DeleteMarker: true}),
-					"found behind the version marker, at the null delete marker's own key")
+				en, ok := c.Entry(rookIndexPool, "", shard, rgwcls.InstanceIndexKey(rgwcls.ObjKey{Name: "k"}, true))
+				Expect(ok).To(BeTrue(), "the null delete marker's instance entry")
+				Expect(stat(ctx, version(meta.NullInstance))).To(Equal(&op.ObjectState{
+					Bucket: rec, Key: version(meta.NullInstance), DeleteMarker: true, Mtime: en.Meta.Mtime, VersionedEpoch: en.VersionedEpoch,
+				}), "found behind the version marker, at the null delete marker's own key")
 				Expect(stat(ctx, version(""))).To(Equal(&op.ObjectState{Bucket: rec, Key: version(""), DeleteMarker: true}), "and current")
 			})
 		})
