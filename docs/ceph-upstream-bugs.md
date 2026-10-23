@@ -467,6 +467,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's null version removal loses its index completion to the OLH clear while the bucket reshards](#radosgws-null-version-removal-loses-its-index-completion-to-the-olh-clear-while-the-bucket-reshards) | pending | pending | ✓ |
 | [radosgw's bucket purge writes a delete marker in place of a versioned bucket's null version](#radosgws-bucket-purge-writes-a-delete-marker-in-place-of-a-versioned-buckets-null-version) | pending | pending | ✓ |
 | [radosgw's removal of an OLH head's pending attr moves the null version's mtime](#radosgws-removal-of-an-olh-heads-pending-attr-moves-the-null-versions-mtime) | pending | pending | ✓ |
+| [radosgw's lifecycle writes a delete marker over a version put after its listing](#radosgws-lifecycle-writes-a-delete-marker-over-a-version-put-after-its-listing) | pending | pending | ✓ |
+| [radosgw's lifecycle lister lists a key's versions again after a page that ends on its null version](#radosgws-lifecycle-lister-lists-a-keys-versions-again-after-a-page-that-ends-on-its-null-version) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -20829,8 +20831,11 @@ Every new entry adds its row to this table, in document order.
   marker over a non-null current version on a Suspended bucket, which
   keeps it as noncurrent" (`internal/lifecycle/decide_test.go`) pin
   (`docs/exclusions.md`, "Lifecycle expiration on a versioning-suspended
-  bucket writes the null delete marker"). The worker writes it
-  (`docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md`, task C10b).
+  bucket writes the null delete marker"). Its worker writes it with the
+  key's OLH head as read again as the delete's `Expect`
+  (`lcBucket.markCurrent`, `internal/driver/lc_actions.go`), which "writes
+  the null delete marker, which replaces the null version and keeps any
+  other as noncurrent" (`internal/driver/lc_bucket_test.go`) pins.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 planning; confirmed by task C2, 2026-10-20, reading
   both tags. Not reproduced on a running radosgw.
@@ -20914,7 +20919,13 @@ Every new entry adds its row to this table, in document order.
   `internal/driver/lc_actions.go`), which "keeps a retained object and a
   held one, which radosgw's current expiration removes" on a bucket whose
   flags carry object lock without BUCKET_VERSIONED
-  (`internal/driver/lc_bucket_test.go`) pins.
+  (`internal/driver/lc_bucket_test.go`) pins. On a suspended bucket it
+  reads the key's null version again before it writes the null delete
+  marker, which replaces that version even when another is current, and
+  keeps a retained or held one by writing no marker (`lcBucket.markCurrent`,
+  `internal/driver/lc_actions.go`), which "keeps a retained noncurrent null
+  version under a version current, writing no null delete marker, on a
+  bucket whose flags carry lock and suspension" pins.
   It does not reproduce the race either: its PutBucketVersioning checks
   object lock again on each try (`internal/op/bucketversioning.go:129-135`,
   `:148-151`).
@@ -22799,7 +22810,13 @@ Every new entry adds its row to this table, in document order.
   key's plain entry once its completion has landed, so the null delete
   marker of the DELETE after it takes no pending op from it"
   (`internal/driver/put_versioned_test.go`) pin. Another gateway's slow
-  completion still reaches it.
+  completion still reaches it, and rgw-go's lifecycle then matches the
+  marker by its versioned_epoch rather than the mtime the listing reports,
+  so the marker still expires (`lcBucket.removeMarker`,
+  `internal/driver/lc_actions.go`), which "removes a null delete marker that
+  took a slow completion's pending op from the null entry it replaced,
+  though its listing shows the OLH head's mtime"
+  (`internal/driver/lc_bucket_test.go`) pins.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V3a's review, which left whether the class updates
   or removes the marker untraced; traced at v19.2.7 and v20.2.4 by phase 2
@@ -25640,13 +25657,14 @@ Every new entry adds its row to this table, in document order.
   versioned removal re-links the version, unless a newer null write owns
   the null key"); a replay by another reader alongside it still removes
   the version, as radosgw's does. Its lifecycle expires the current
-  objects of buckets never versioned alone, through the unversioned
-  delete, which checks `unmod_since` and asserts the version the worker
-  read (`lcBucket.expireCurrent`, `internal/driver/lc_actions.go`), and
-  leaves versioned and suspended buckets unclaimed for radosgw's worker
-  (`docs/exclusions.md`, "rgw-go's lifecycle worker leaves versioned
-  buckets and transition rules to radosgw's"); its removals of versions
-  are to pass the state its re-read returned as `Expect`.
+  objects of buckets never versioned through the unversioned delete, which
+  checks `unmod_since` and asserts the version the worker read
+  (`lcBucket.expireCurrent`, `internal/driver/lc_actions.go`), removes a
+  delete marker only while it is the one listed, with the state its read
+  again returned as `Expect` (`lcBucket.removeMarker`), and leaves a
+  versioned bucket with a NoncurrentVersionExpiration rule unclaimed for
+  radosgw's worker (`docs/exclusions.md`, "rgw-go's lifecycle worker leaves
+  buckets with rules it does not apply to radosgw's").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task V8a's review, 2026-10-22. Derived from the
   source, not reproduced.
@@ -26346,13 +26364,15 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.7 and v20.2.4; main not checked.
 - **rgw-go:** differs: its pass reads the bucket's record again before each
   listing page and just before each removal, through the metadata cache,
-  and stops the bucket, failed, when the claim predicate now refuses it,
-  versioning enabled among the reasons, or its lifecycle configuration
-  changed, making no removal that found it so (`lcBucket.atPage` and
-  `lcBucket.current`, `internal/driver/lc_bucket.go`). The specs "stops at
-  the next page, leaving its objects" and "leaves the rest of a page
-  unremoved once the bucket's versioning is enabled between two of its
-  entries, and fails the entry" (`internal/driver/lc_bucket_test.go`) pin
+  and stops the bucket, failed, when its versioning was enabled or
+  suspended since the pass began, the claim predicate now refuses it or its
+  lifecycle configuration changed, making no removal or marker that found
+  it so (`lcBucket.atPage` and `lcBucket.current`,
+  `internal/driver/lc_bucket.go`). The specs "stops at the next page,
+  leaving its objects", "leaves the rest of a page unremoved once the
+  bucket's versioning is enabled between two of its entries, and fails the
+  entry" and "fails, writing no marker, once the bucket's versioning is
+  suspended during the pass" (`internal/driver/lc_bucket_test.go`) pin
   it. The window that remains is one removal's, from that last read to the
   removal's own op, and with the metadata cache on also the enable's cache
   notify. A lost notify stretches it until the cached record expires,
@@ -27675,9 +27695,144 @@ Every new entry adds its row to this table, in document order.
   its own op tag, such as the removal of a noncurrent delete marker, removes
   its attr at once (`finishOLHModification`, `internal/driver/olh.go`), where
   radosgw leaves the attr to expire and its expiry moves the mtime. A null
-  version's mtime a radosgw gateway moved stays moved.
+  version's mtime a radosgw gateway moved stays moved, so rgw-go's lifecycle
+  judges a null version it reads again by its index entry and sends no
+  `x-amz-if-match-last-modified-time` for one (`lcBucket.listedAs` and
+  `lcBucket.markCurrent`, `internal/driver/lc_actions.go`), which "writes a
+  delete marker over a null current version, though a radosgw gateway's
+  removal of a pending attr moved its head's mtime" and its suspended twin
+  (`internal/driver/lc_bucket_test.go`) pin.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task C10b, 2026-10-23, on fakerados: a lifecycle pass
   that removed a key's noncurrent delete marker found the key's null
   version's head at the pass's time; widened to the routine removal by its
   review.
+
+## radosgw's lifecycle writes a delete marker over a version put after its listing
+
+- **Kind:** defect, data corruption, not security-relevant: no request
+  chooses what the lifecycle marks. The current expiration on a bucket
+  whose versioning is enabled writes its delete marker over whatever
+  version is current when the delete runs, a version a client put after
+  the worker listed the key included. Unreproduced: derived from the
+  source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `remove_expired_obj` makes the marker with the listed instance cleared
+    and the listed entry's mtime as `unmod_since`, its only guard
+    ([rgw_lc.cc:617-621](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L617-L621) and
+    [rgw_lc.cc:636-647](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L636-L647),
+    [rgw_lc.cc:624-628](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L624-L628) and
+    [rgw_lc.cc:655-666](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L655-L666)).
+  - On a bucket whose versioning is enabled the delete gives the marker a
+    fresh instance and passes `unmod_since` to `set_olh`
+    ([rgw_rados.cc:5853-5863](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5853-L5863) and
+    [rgw_rados.cc:5899-5901](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5899-L5901),
+    [rgw_rados.cc:6465-6475](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6465-L6475) and
+    [rgw_rados.cc:6511-6513](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6511-L6513)).
+  - `bucket_link_olh` compares `unmod_since` only with an instance entry it
+    read, and a fresh instance has none
+    ([cls_rgw.cc:1668-1701](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1668-L1701),
+    [cls_rgw.cc:1809-1842](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1809-L1842)).
+  - The current expiration's check reads the listed entry alone, never the
+    key's current version
+    ([rgw_lc.cc:1120-1167](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1120-L1167),
+    [rgw_lc.cc:1140-1187](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1140-L1187)).
+- **Trigger:** a PutObject of an expired key on a bucket whose versioning
+  is enabled, between the worker's listing of the key and its delete, a
+  work item's window.
+- **Impact:** the new version, which the client saw succeed and which is
+  due nothing, goes noncurrent behind the marker: a GET of the key answers
+  404, and a NoncurrentVersionExpiration rule removes the version once its
+  NoncurrentDays have passed from the marker, though the object it holds
+  was never expired.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** differs: its worker reads the key's current version again
+  through its OLH and writes the marker only while it is the instance
+  listed, at the listed mtime and ETag. The marker carries that ETag as
+  If-Match, for a version that is not the null version that mtime as
+  `x-amz-if-match-last-modified-time`, and the version as read again as
+  `DeleteParams.Expect`, which the delete requires current, by its instance
+  and write tag, when the marker links (`lcBucket.markCurrent`,
+  `internal/driver/lc_actions.go`; `deleteMarkerCondition`,
+  `internal/driver/delete_versioned.go`; `docs/exclusions.md`, "Lifecycle
+  removes an object only as it was listed"). "writes no delete marker over
+  a version put after the listing, where radosgw's marker ignores
+  unmod_since" and "writes no delete marker over a null current version
+  written over after the read again, which the marker's Expect refuses"
+  (`internal/driver/lc_bucket_test.go`) pin it.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 planning (defect LL-11), recorded by task C10b,
+  2026-10-23, reading both tags. Not reproduced on a running radosgw.
+
+## radosgw's lifecycle lister lists a key's versions again after a page that ends on its null version
+
+- **Kind:** defect, data corruption, not security-relevant: no request
+  chooses where a page ends. A NoncurrentVersionExpiration rule with
+  NewerNoncurrentVersions can remove the newest noncurrent versions it is
+  to keep. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - The lifecycle lister lists a versioned bucket unordered with versions,
+    in pages of 1000, and starts each next page after the key of the last
+    entry it handed out, name and instance
+    ([rgw_lc.cc:363-368](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L363-L368) and
+    [rgw_lc.cc:379-412](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L379-L412),
+    [rgw_lc.cc:363-368](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L363-L368) and
+    [rgw_lc.cc:379-412](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L379-L412)),
+    which `RadosBucket::list` passes on and the unordered listing turns
+    into its start key
+    ([rgw_sal_rados.cc:887](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L887),
+    [rgw_sal_rados.cc:907](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L907);
+    [rgw_rados.cc:2221-2225](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L2221-L2225),
+    [rgw_rados.cc:2311-2315](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2311-L2315)).
+  - The null version's index entries carry no instance
+    ([rgw_rados.cc:5222-5225](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5222-L5225),
+    [rgw_rados.cc:5455-5458](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5455-L5458)),
+    and `encode_list_index_key` takes a start key without one as the
+    name's plain key
+    ([cls_rgw.cc:360-363](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L360-L363),
+    [cls_rgw.cc:410-413](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L410-L413)),
+    after which a listing with versions lists every list entry of the name
+    again
+    ([cls_rgw.cc:604-623](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L604-L623),
+    [cls_rgw.cc:654-673](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L654-L673)).
+    That start key is the sink of "[radosgw's versions listing repeats a
+    key's newer versions when a round ends on its null
+    version](#radosgws-versions-listing-repeats-a-keys-newer-versions-when-a-round-ends-on-its-null-version)"
+    too, there within one ListObjectVersions page, here across the
+    lifecycle's pages; a fix there that resumes after the null version's
+    list key fixes both.
+  - `num_noncurrent` counts on through every entry whose name is the one
+    before it
+    ([rgw_lc.cc:414-418](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L414-L418),
+    [rgw_lc.cc:414-418](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L414-L418)),
+    and the noncurrent expiration removes a version whose count exceeds
+    NewerNoncurrentVersions
+    ([rgw_lc.cc:1228](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1228) and
+    [rgw_lc.cc:1237-1239](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1237-L1239),
+    [rgw_lc.cc:1248](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1248) and
+    [rgw_lc.cc:1257-1259](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1257-L1259)).
+- **Trigger:** a key of a versioned bucket whose null version is the last
+  entry of a lifecycle listing page, its newer versions before it on that
+  page, under a rule the worker runs on the key.
+- **Impact:** the key's versions newer than its null version are handed to
+  the rules again, counted after the ones the page already counted. A
+  noncurrent version that NewerNoncurrentVersions keeps then counts past
+  it, and a NoncurrentVersionExpiration rule removes it once its
+  NoncurrentDays have passed. The current version is handed out again too,
+  and an Expiration rule that finds it current a second time writes a
+  second delete marker.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** differs: its listing resumes right after the null version's
+  list key while that version is there (`resumeAfter`,
+  `internal/driver/list.go`), and its pass drops each entry of the last key
+  it handed out that lists at or before the last of that key's versions it
+  handed out (`lcVersionPager`, `internal/driver/lc_bucket.go`;
+  `docs/exclusions.md`, "A lifecycle pass hands each version of a key
+  out once"). "hands each version of a key out once when the null delete
+  marker removes the null version that ends a page"
+  (`internal/driver/lc_bucket_test.go`) pins it: the pass's own null delete
+  marker replaces the null version before the next page is listed, and
+  that page starts at the key's first version.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C10b, 2026-10-23, paging the lifecycle's
+  versions listing. Derived from the source, not reproduced.
