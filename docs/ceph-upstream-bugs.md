@@ -458,6 +458,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [cls_otp never verifies a device whose step is longer than the clock's seconds](#cls_otp-never-verifies-a-device-whose-step-is-longer-than-the-clocks-seconds) | pending | pending | ✓ |
 | [radosgw's versioned copy drops its tail references when its link fails](#radosgws-versioned-copy-drops-its-tail-references-when-its-link-fails) | pending | pending | ✓ |
 | [radosgw's CompleteMultipartUpload leaves its upload whole when its head lands and write_meta fails](#radosgws-completemultipartupload-leaves-its-upload-whole-when-its-head-lands-and-write_meta-fails) | pending | pending | ✓ |
+| [radosgw's copy onto its own key in a suspended bucket shares the current version's tails without references](#radosgws-copy-onto-its-own-key-in-a-suspended-bucket-shares-the-current-versions-tails-without-references) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -26930,3 +26931,104 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V7b, 2026-10-23, tracing what a failed link
   leaves of an upload; derived from the source, not reproduced.
+
+## radosgw's copy onto its own key in a suspended bucket shares the current version's tails without references
+
+- **Kind:** defect, data corruption, security-relevant: on a bucket whose
+  versioning is suspended, a CopyObject of a key onto itself while a
+  version with an instance is current writes the null version over that
+  version's tails without a reference of its own and with the version's
+  tail tag, so a later overwrite or delete of the null version removes the
+  version's data. A principal allowed s3:PutObject and s3:GetObject on the
+  key reaches it, and so destroys the data of a version it may not delete,
+  a removal S3 grants only with s3:DeleteObjectVersion and, on a bucket
+  with MFA delete, a code. rgw-bug-reproduction logged it as
+  V7B-1-SUSPENDED-SELF-COPY-SHARES-VERSION-TAILS, security-relevant,
+  verified at v20.2.4. **The limits:** the source needs tails, since
+  `copy_data` forces a real copy when there is no tail, when the head is
+  over the max chunk, or, at v20.2.4, when a data processor such as
+  encryption or compression is involved; the current version must have an
+  instance on a suspended bucket; and an Object Lock bucket cannot be
+  suspended, so locked data is out of reach. Unreproduced by this session:
+  derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RGWCopyObj::execute` gives the destination an instance only when the
+    bucket's versioning is enabled
+    ([rgw_op.cc:5576-5580](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5576-L5580) at v19.2.7,
+    [rgw_op.cc:6139-6143](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6139-L6143) at v20.2.4),
+    so a suspended bucket's copy writes the null version at the key's own
+    head. The S3 handler refuses a copy of a key onto itself only when the
+    source names no instance and the metadata directive is not REPLACE
+    ([rgw_rest_s3.cc:3571-3594](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3571-L3594) at v19.2.7,
+    [rgw_rest_s3.cc:3821-3844](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3821-L3844) at v20.2.4).
+  - `RadosObject::copy_object` hands `copy_obj` the source and the
+    destination as the request named them
+    ([driver/rados/rgw_sal_rados.cc:2980-2988](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2980-L2988) at v19.2.7,
+    [driver/rados/rgw_sal_rados.cc:3819-3827](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3819-L3827) at v20.2.4);
+    the source's state load keeps the object as named
+    ([driver/rados/rgw_sal_rados.cc:2348-2366](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2348-L2366) at v19.2.7,
+    [driver/rados/rgw_sal_rados.cc:2935-2958](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2935-L2958) at v20.2.4).
+  - `copy_obj` follows the source's OLH for the state and the manifest it
+    copies
+    ([driver/rados/rgw_rados.cc:4831-4836](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4831-L4836) at v19.2.7,
+    [driver/rados/rgw_rados.cc:5055-5060](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5055-L5060) at v20.2.4),
+    but takes the copy for one onto itself when the named objects are equal
+    ([driver/rados/rgw_rados.cc:4922](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4922) at v19.2.7,
+    [driver/rados/rgw_rados.cc:5150](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5150) at v20.2.4),
+    as both are the key without an instance.
+  - Such a copy takes no reference, writes the followed version's manifest
+    with `keep_tail` and without `modify_tail`
+    ([driver/rados/rgw_rados.cc:4942-4989](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4942-L4989)
+    and [driver/rados/rgw_rados.cc:5012-5013](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5012-L5013) at v19.2.7,
+    [driver/rados/rgw_rados.cc:5170-5217](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5170-L5217)
+    and [driver/rados/rgw_rados.cc:5240-5241](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5240-L5241) at v20.2.4),
+    and keeps the version's tail tag, which `set_copy_attrs` carries for
+    COPY and for REPLACE alike
+    ([driver/rados/rgw_rados.cc:3705-3732](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3705-L3732) at v19.2.7,
+    [driver/rados/rgw_rados.cc:3858-3885](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3858-L3885) at v20.2.4).
+  - A later overwrite of the null version, or a delete that replaces it,
+    queues its tails, the version's, for the GC under that tail tag, and
+    the GC's implicit put removes them, the writer's implicit reference
+    being their only one (`src/cls/refcount/`,
+    [cls_refcount.cc:112-132](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/refcount/cls_refcount.cc#L112-L132) at v19.2.7,
+    [cls_refcount.cc:112-132](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/refcount/cls_refcount.cc#L112-L132) at v20.2.4).
+    A delete of the version queues the same tails while the null version
+    names them. The null version's own earlier tails, if it had any, are
+    not queued and leak.
+  - **The crux:** cls_refcount's put (`src/cls/refcount/`,
+    [cls_refcount.cc:88-139](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/refcount/cls_refcount.cc#L88-L139) at v19.2.7,
+    [cls_refcount.cc:88-139](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/refcount/cls_refcount.cc#L88-L139) at v20.2.4).
+    A fresh tail holds only the implicit wildcard ref, which `read_refcount`
+    supplies for a tail without a refcount attr
+    ([cls_refcount.cc:22-45](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/refcount/cls_refcount.cc#L22-L45) at v19.2.7,
+    [cls_refcount.cc:22-45](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/refcount/cls_refcount.cc#L22-L45) at v20.2.4),
+    so any tagged put with `implicit_ref` removes it.
+  - The limits: `copy_obj` copies the data, sharing no tail, when the
+    source has no manifest or no tail, sits in another placement or pool,
+    or has a head larger than the max chunk
+    ([driver/rados/rgw_rados.cc:4879-4898](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4879-L4898) at v19.2.7,
+    [driver/rados/rgw_rados.cc:5103-5122](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5103-L5122) at v20.2.4),
+    and at v20.2.4 also when the copy's data processor needs the data
+    ([driver/rados/rgw_rados.cc:5124-5126](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5124-L5126));
+    v19.2.7's `copy_obj` has no such test. `RGWSetBucketVersioning`
+    refuses any state but Enabled on an Object Lock bucket
+    ([rgw_op.cc:2788-2793](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2788-L2793) at v19.2.7,
+    [rgw_op.cc:3020-3025](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3020-L3025) at v20.2.4).
+  - "[radosgw's copy of an object onto itself can land its old manifest on
+    tails queued for the GC](#radosgws-copy-of-an-object-onto-itself-can-land-its-old-manifest-on-tails-queued-for-the-gc)"
+    is the same self-copy path's race with a PUT or a DELETE.
+- **Impact:** data loss: the version's data, and the null version's that
+  shares it, are gone once the GC runs after the null version is
+  overwritten or deleted or the version is deleted; their heads and
+  listings stay, and a read fails past the head chunk.
+- **Releases:** v19.2.7 and v20.2.4; main was not checked.
+- **rgw-go:** differs: a copy is onto itself only when the version the
+  source's OLH was followed to is the destination, so this copy takes a
+  reference under its tag on each of the version's tails, and writes its
+  own tail tag, before the null version names them (`shareTails`,
+  `internal/driver/copy.go`; `docs/exclusions.md`, "A copy onto its own
+  key in a suspended bucket references the current version's tails").
+  Pinned in `internal/driver/copy_versioned_test.go`.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task V7b, 2026-10-23, comparing rgw-go's self-copy
+  test with copy_obj's; derived from the source, not reproduced.
