@@ -442,6 +442,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw checks a suspended bucket's write conditions against the OLH head](#radosgw-checks-a-suspended-buckets-write-conditions-against-the-olh-head) | pending | [ceph/ceph#71584](https://github.com/ceph/ceph/pull/71584), [ceph/ceph#72050](https://github.com/ceph/ceph/pull/72050) | |
 | [radosgw's versioned PutObject deletes its tails when its link fails](#radosgws-versioned-putobject-deletes-its-tails-when-its-link-fails) | pending | pending | ✓ |
 | [radosgw checks a signed CORS preflight's x-amz-mfa against its key's user's device](#radosgw-checks-a-signed-cors-preflights-x-amz-mfa-against-its-keys-users-device) | pending | pending | ✓ |
+| [radosgw's user removal leaves the user's MFA devices and their seeds in the otp pool](#radosgws-user-removal-leaves-the-users-mfa-devices-and-their-seeds-in-the-otp-pool) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -25625,3 +25626,98 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 Task V13d, 2026-10-22, reading what `postauth_init`
   does for a request its identity's grant did not verify. Derived from the
   source, not reproduced.
+
+## radosgw's user removal leaves the user's MFA devices and their seeds in the otp pool
+
+- **Kind:** defect, security-relevant, conditional (rgw-bug-reproduction's
+  triage, 2026-10-22, at v20.2.4), found by us: secret material outlives
+  its account. A removed user's otp object, `user:<uid>`
+  in the zone's otp_pool, keeps every device's seed and replay state.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - Every user removal ends in `RGWSI_User_RADOS::remove_user_info`, which
+    removes the active keys' and swift names' indexes, the email index, the
+    user's bucket list or its account link, its group links and the uid
+    object, and nothing in the otp pool
+    ([svc_user_rados.cc:551-630](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_user_rados.cc#L551-L630),
+    [svc_user_rados.cc:526-604](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L526-L604)):
+    - `radosgw-admin user rm`
+      ([rgw_admin.cc:6657](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L6657),
+      [radosgw-admin.cc:6898](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L6898)),
+      through `RGWUser::execute_remove`
+      ([rgw_user.cc:1940-1995](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_user.cc#L1940-L1995),
+      [rgw_user.cc:1946-2001](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L1946-L2001)),
+      `RadosUser::remove_user`
+      ([rgw_sal_rados.cc:278-282](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L278-L282),
+      [rgw_sal_rados.cc:295-299](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L295-L299))
+      and `RGWUserCtl::remove_info`
+      ([rgw_user.cc:2977-2989](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_user.cc#L2977-L2989),
+      [rgw_user.cc:3032-3038](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L3032-L3038));
+    - the admin API's user removal, through `RGWUserAdminOp_User::remove`
+      ([rgw_rest_user.cc:478](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rest_user.cc#L478) and
+      [rgw_user.cc:2477-2493](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_user.cc#L2477-L2493),
+      [rgw_rest_user.cc:488](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L488) and
+      [rgw_user.cc:2483-2499](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L2483-L2499));
+    - IAM's DeleteUser of an account's user
+      ([rgw_rest_iam_user.cc:622](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_iam_user.cc#L622),
+      [rgw_rest_iam_user.cc:622](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_iam_user.cc#L622))
+      and an account removal that purges its users
+      ([rgw_account.cc:323](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_account.cc#L323),
+      [rgw_account.cc:323](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_account.cc#L323)),
+      each through `remove_user`;
+    - a removal of the user's metadata, `metadata rm user:<uid>`, through
+      the user metadata handler
+      ([rgw_user.cc:2772-2787](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_user.cc#L2772-L2787),
+      [rgw_user.cc:2853-2868](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L2853-L2868)).
+  - The otp object loses a device only to `radosgw-admin mfa remove`, the
+    one caller of `RGWSI_Cls::MFA::remove_mfa`
+    ([rgw_admin.cc:10876](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10876),
+    [radosgw-admin.cc:11468](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L11468)),
+    and goes whole only with the otp metadata section's removal,
+    `metadata rm otp:user:<uid>`
+    ([rgw_otp.cc:142-152](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_otp.cc#L142-L152),
+    [rgw_otp.cc:84-92](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L84-L92)).
+    No user removal calls either.
+  - A user created again with the uid starts with no `mfa_ids`, and
+    `verify_mfa` refuses a serial its record does not list before it checks
+    a device
+    ([rgw_sal_rados.cc:298-302](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L298-L302),
+    [rgw_sal_rados.cc:315-319](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L315-L319)).
+  - `mfa create` of a serial the object still holds keeps the device's
+    replay state. `otp_set_op` loads the stored instance through
+    `get_otp_instance`, replaces only its `.otp`, the device's config with
+    its seed, and writes the instance back, so its `last_checks` and
+    `last_success` survive
+    ([cls_otp.cc:301-348](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L301-L348),
+    [cls_otp.cc:301-348](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L301-L348)).
+  - A metadata put of a user record takes the `mfa_ids` the record lists
+    (`RGWUserInfo::decode_json`,
+    [rgw_common.cc:2893](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2893),
+    [rgw_common.cc:2949](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2949)).
+- **Impact:**
+  - The seeds of a removed user's devices stay in the otp pool for as long
+    as the cluster keeps the object, readable to whoever can read that pool
+    or the otp metadata section: secret material the removal leaves behind.
+  - A user created again with the uid cannot verify through the old
+    devices, as its record lists none. An old device verifies for it again
+    once its serial returns to the record without `mfa create`, as a
+    metadata put of a record from before the removal returns it; the old
+    owner's authenticator then verifies the new user's MFA requests.
+  - `mfa create` of an old serial gives the device the new seed but the
+    old replay state, which refuses nothing once the clock has passed the
+    old last success.
+  - Low: reading a seed takes access to the pool or the metadata API, and
+    reusing a device takes an administrator restoring an old record.
+- **Releases:** checked at v19.2.7 and v20.2.4.
+- **rgw-go:** matches radosgw. Its `RemoveUser` removes what
+  `remove_user_info` removes and leaves the otp object
+  (`internal/driver/user.go:831-873`), so a removal through either gateway
+  leaves the same state.
+- **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
+  searched.
+- **Found:** phase 2 Task V13d's review, 2026-10-22, reasoning about the
+  s3-tests harness's main user created again after a removal; every removal
+  path traced in the task's first fix round; verified at v20.2.4 by
+  rgw-bug-reproduction's triage the same day, which filed it as security:
+  conditional and linked it to its WP17-2. Derived from the source, not
+  reproduced.
