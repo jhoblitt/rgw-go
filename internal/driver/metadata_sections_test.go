@@ -65,11 +65,11 @@ var _ = Describe("the metadata section table", func() {
 				User: &u, Owner: meta.UserOwner(u.UserID), OpMask: op.OpTypeAll, Caps: u.Caps,
 			}})
 		}
-		It("lists today's three sections at the top level", func(ctx SpecContext) {
-			Expect(s.Sections()).To(ConsistOf("bucket", "bucket.instance", "user"))
+		It("lists the four sections it serves at the top level", func(ctx SpecContext) {
+			Expect(s.Sections()).To(ConsistOf("bucket", "bucket.instance", "otp", "user"))
 			o := &op.ListMetadata{}
 			Expect(run(ctx, o)).To(Succeed())
-			Expect(o.Keys).To(Equal([]string{"bucket", "bucket.instance", "user"}))
+			Expect(o.Keys).To(Equal([]string{"bucket", "bucket.instance", "otp", "user"}))
 		})
 		It("takes a put to every section it serves, as each has a put rule", func(ctx SpecContext) {
 			for _, section := range s.Sections() {
@@ -78,7 +78,7 @@ var _ = Describe("the metadata section table", func() {
 			}
 		})
 		// The sections radosgw serves and the driver does not
-		// (docs/exclusions.md, "The admin metadata API serves three
+		// (docs/exclusions.md, "The admin metadata API serves four
 		// sections"): a put rule for one would let its put past the gate.
 		It("refuses a put to a section of radosgw's it does not serve before reading the body, as none has a put rule", func(ctx SpecContext) {
 			unserved := slices.DeleteFunc([]string{"account", "group", "otp", "roles", "topic"}, func(section string) bool {

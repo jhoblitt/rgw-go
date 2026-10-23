@@ -1618,7 +1618,13 @@ review and verified against the tree.
     hash type other than Mod, an index type or reshard status the enums
     lack, and a website redirect or error status code outside u16's range,
     which radosgw wraps into its u16. An entry point from before version 8,
-    which embeds its bucket info, answers 400.
+    which embeds its bucket info, answers 400. The `otp` section's document
+    is read by the same rules (`op.DecodeOTPDocument`,
+    `internal/op/metadata_otp.go`): a device whose string member is given
+    null, an object or an array, devices given anything but an array, null
+    included, and a device that is no object answer 400 InvalidArgument,
+    where radosgw's `decode_json` takes an object's members as the list and
+    a device that is no object as one without members.
   - A user put whose document names another user than the key answers 400
     InvalidArgument; radosgw reads the key's user and writes the
     document's, keeping the key's indexes against the document's record.
@@ -1787,29 +1793,37 @@ review and verified against the tree.
   is not base64 does on both gateways, where radosgw reads before the
   marker's buffer
   ([radosgw's from_base64 reads before an all-'=' input](ceph-upstream-bugs.md#radosgws-from_base64-reads-before-an-all--input)).
-- **The admin metadata API serves three sections, and differs from
-  radosgw's in four more ways.** `GET`, `PUT` and `DELETE
+- **The admin metadata API serves four sections, and differs from
+  radosgw's in five more ways.** `GET`, `PUT` and `DELETE
   /admin/metadata` are radosgw's `RGWHandler_Metadata` ops
   (`rgw_rest_metadata.cc`, the same at v19.2.6 and v20.2.4) over the
   sections "The metadata sections write only what keeps a user or bucket
-  whole" describes, with these differences:
-  - Only the `user`, `bucket` and `bucket.instance` sections are served,
-    and the top-level listing, `GET /admin/metadata`, lists those three.
-    radosgw also serves and lists `account`, `group`, `otp`, `roles` and
+  whole" describes and the `otp` section ("An otp put's header lists
+  exactly the document's devices"), with these differences:
+  - Only the `user`, `bucket`, `bucket.instance` and `otp` sections are
+    served, and the top-level listing, `GET /admin/metadata`, lists those
+    four. radosgw also serves and lists `account`, `group`, `roles` and
     `topic`, for each of which rgw-go answers 404 NoSuchKey.
-  - A put's `update-type` decides whether it applies on Tentacle too:
-    `update-by-version` applies a document only over the same tag at a
-    lower version and `update-by-timestamp` only over an older mtime, as
-    Squid's `check_versions` decides, and a put they refuse answers 204
-    with `RGWX_UPDATE_STATUS: skipped`. Tentacle's radosgw checks the
-    argument and then applies every put
-    ([Tentacle's metadata put ignores update-type](ceph-upstream-bugs.md#tentacles-metadata-put-ignores-update-type)).
+  - A put's `update-type` decides whether it applies on Tentacle too, and
+    in the `otp` section on both releases: `update-by-version` applies a
+    document only over the same tag at a lower version and
+    `update-by-timestamp` only over an older mtime, as Squid's
+    `check_versions` decides, and a put they refuse answers 204 with
+    `RGWX_UPDATE_STATUS: skipped`. Tentacle's radosgw checks the argument
+    and then applies every put
+    ([Tentacle's metadata put ignores update-type](ceph-upstream-bugs.md#tentacles-metadata-put-ignores-update-type)),
+    and both releases' otp handlers apply every otp put, as neither reads
+    the entry before it writes
+    ([radosgw's otp metadata put ignores update-type](ceph-upstream-bugs.md#radosgws-otp-metadata-put-ignores-update-type)).
+    An otp put the check lets through writes unguarded, as radosgw's does,
+    so a write landing between the check's read and the put is overwritten.
   - A put's `RGWX_UPDATE_VERSION` names the version the put read, in every
-    section. radosgw's user section names that version too, but its
-    `bucket` and `bucket.instance` puts name the version their write left,
-    as the write updates the tracker the header is read from
-    (`RGWObjVersionTracker::apply_write`, `driver/rados/rgw_rados.cc:185-197`
-    at v19.2.6, `:220-232` at v20.2.4).
+    section but `otp`, whose put reads none and names `ver:0,tag:` on both
+    releases, as radosgw's does. radosgw's user section names the version
+    read too, but its `bucket` and `bucket.instance` puts name the version
+    their write left, as the write updates the tracker the header is read
+    from (`RGWObjVersionTracker::apply_write`,
+    `driver/rados/rgw_rados.cc:185-197` at v19.2.6, `:220-232` at v20.2.4).
   - A put's document is read up to 16 MiB, and a longer one answers 400
     InvalidArgument; radosgw reads a body of any length into memory
     (`RGWOp_Metadata_Put::get_data`, `rgw_rest_metadata.cc:176-219`). A
@@ -1821,6 +1835,78 @@ review and verified against the tree.
     radosgw takes a `ver` that is no object as the zero version, a tag
     given as an object as that object's text, and an mtime in any form
     `utime_t::parse_date` reads.
+  - An `otp` put answers 400 InvalidArgument, writing nothing, for a
+    document holding a device without an id, or whose seed the class would
+    parse into an empty key: an empty seed, a `hex` seed led by a NUL and a
+    `base32` seed of nothing but spaces. It does the same for a device of a
+    type other than TOTP, 2, of a seed type other than `hex` or `base32`,
+    of a `step_size` of 0 or over 3600 seconds, of a `window` over 1024
+    steps, or with a `seed` longer than 1024 bytes, counted as the bytes of
+    the decoded JSON string, every device checked before the write
+    (`op.DecodeOTPDocument`, `internal/op/metadata_otp.go`). radosgw writes
+    each. A key holding a NUL byte is refused as in every section. Any
+    `time_ofs` is written, as radosgw writes it: the class only subtracts
+    it from the clock before it divides, so no cost grows with it.
+    - `radosgw-admin mfa create` refuses a device whose id or seed is
+      empty, and a seed type other than `hex` or `base32`
+      ([rgw_admin.cc:10799-10817](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10799-L10817),
+      [radosgw-admin.cc:11390-11408](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L11390-L11408)),
+      and creates only TOTP devices, `otp_info_t`'s default
+      ([cls_otp_types.h:32](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_types.h#L32),
+      [cls_otp_types.h:32](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_types.h#L32)).
+      The class hands liboath the seed's `c_str()`, whose hex decode stops
+      at the first NUL and whose base32 decode drops every space, and both
+      answer an empty key, whose codes anyone can make, for the three seeds
+      above; `mfa create` takes the base32 one
+      ([radosgw's otp metadata put stores a device without a seed, whose codes anyone can make](ceph-upstream-bugs.md#radosgws-otp-metadata-put-stores-a-device-without-a-seed-whose-codes-anyone-can-make)).
+      The class also checks every device as TOTP, and parses a seed of any
+      type but base32 as hex.
+    - The class divides by a step of 0
+      ([cls_otp divides by a stored step_size that is never validated](ceph-upstream-bugs.md#cls_otp-divides-by-a-stored-step_size-that-is-never-validated))
+      and declares a stack array as long as each seed it parses
+      ([cls_otp's otp_set puts an array as long as the seed on the OSD's stack](ceph-upstream-bugs.md#cls_otps-otp_set-puts-an-array-as-long-as-the-seed-on-the-osds-stack)).
+      1024 bytes is 8 times the 128 hex digits of RFC 6238's longest key,
+      SHA-512's 64 bytes.
+    - Every check of a device runs liboath's walk over its window in the
+      class, up to two HOTP codes for each step of it, so a wrong code
+      costs the OSD 2·window+1 codes, over eight billion at the largest
+      window radosgw writes
+      ([cls_otp verifies any stored window, an OSD CPU cost per check](ceph-upstream-bugs.md#cls_otp-verifies-any-stored-window-an-osd-cpu-cost-per-check)).
+      1024 is 512 times `otp_info_t`'s default window of 2, which
+      `radosgw-admin mfa create` keeps unless given another
+      ([cls_otp_types.h:40-41](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_types.h#L40-L41),
+      [cls_otp_types.h:40-41](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_types.h#L40-L41)),
+      over eight hours each way at its 30 second step.
+    - The class keeps a device's checks for one step back from the OSD's
+      clock, in unsigned nanoseconds, so a step longer than the clock's
+      seconds wraps and trims every check, taking off the device's five
+      checks per step, and its lookup never finds a check of the device
+      again, so no code of it verifies
+      ([cls_otp never verifies a device whose step is longer than the clock's seconds](ceph-upstream-bugs.md#cls_otp-never-verifies-a-device-whose-step-is-longer-than-the-clocks-seconds)).
+      3600 seconds is 120 times RFC 6238's 30 second step, `otp_info_t`'s
+      default.
+    - Only writes are held to these rules: a device radosgw wrote with a
+      longer seed, a wider window, a longer step, a step of 0 or any of the
+      others still reads back.
+- **An otp put's header lists exactly the document's devices.** The `otp`
+  section's put (`internal/driver/metadata_otp.go`) is radosgw's
+  `RGWSI_Cls::MFA::set_mfa` with `reset_obj`, one write op of a remove
+  allowed to fail, a non-exclusive create, `prepare_mfa_write`'s version
+  and mtime, and `otp_set` with the document's devices
+  ([svc_cls.cc:65-87](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L65-L87),
+  [svc_cls.cc:188-216](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L188-L216),
+  the same at v20.2.4), then a raw omap write of the object's `header`,
+  `otp_header` v1 in the class's bytes, holding exactly the document's ids.
+  The OSD serves `otp_set`'s reads from the stored object, so radosgw's put
+  writes a header listing the stored ids beside the document's, and keeps
+  the id of each device the document drops, whose record the remove
+  dropped. Every later `get_all` of the object then fails, its metadata get
+  answers 404 NoSuchKey, and metadata sync removes the object on the peer
+  zones
+  ([radosgw's otp metadata put keeps a dropped device's id in the otp header](ceph-upstream-bugs.md#radosgws-otp-metadata-put-keeps-a-dropped-devices-id-in-the-otp-header)).
+  rgw-go's header keeps no such id, so its put of an object radosgw left
+  so mends it. On both gateways a device the document keeps keeps its
+  replay state, `last_checks` and `last_success`.
 - **The bucket instance document carries `obj_lock` on Tentacle too.** A
   `bucket.instance` metadata get of a bucket whose flags enable object lock
   writes the bucket's object lock configuration as `obj_lock`, after
