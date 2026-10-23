@@ -716,23 +716,6 @@ var _ = Describe("Complete", func() {
 		})
 	})
 
-	DescribeTable("answers 501 in a bucket whose writes take a versioned path, before touching the store",
-		func(ctx SpecContext, flags uint32) {
-			up, etags := uploadWithParts(ctx, 5<<20, 5<<20)
-			rec.Info.Flags |= flags
-			settle(s)
-			c.ResetCounters()
-			_, err := s.Complete(ctx, up, completeParts(etags))
-			Expect(err).To(MatchError(op.ErrNotImplemented))
-			Expect(c.Writes(extraPoolName, "", metaOID(rec, "k", up.ID))).To(BeZero(), "no lock taken")
-			Expect(c.Reads(extraPoolName, "", metaOID(rec, "k", up.ID))).To(BeZero())
-			Expect(c.Object(testDataPool, "", headOID)).To(BeNil(), "no plain head beside an olh")
-		},
-		Entry("versioning enabled, where radosgw writes a new instance (rgw_op.cc:6459-6466 at v19.2.6)", uint32(meta.BucketVersioned)),
-		Entry("versioning suspended, where radosgw writes the null version through the olh", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended)),
-		Entry("object lock, whose buckets are versioned", uint32(meta.BucketObjLockEnabled)),
-	)
-
 	It("answers success to a completion that loses its head write's race, and leaks its parts' current objects as radosgw does", func(ctx SpecContext) {
 		_, err := s.PutObject(ctx, rec, key, strings.NewReader("old"), op.PutParams{Attrs: attrsWithACL(alice), Size: 3, Tag: "t"})
 		Expect(err).NotTo(HaveOccurred())

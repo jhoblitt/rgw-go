@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"maps"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,20 +49,31 @@ var (
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4847-L4879).
 // src is the state the op read with PrefetchObject, as radosgw's object
 // context holds it from read_obj_policy, so the head's bytes come from its
-// Head without a second read.
+// Head without a second read: a named version, or the version current on
+// the source key's OLH, whose key it carries.
+//
+// The destination's head write is radosgw's with the epoch RGWCopyObj
+// passes, 0 for every S3 request
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5672 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6243 at v20.2.4),
+// which copy_obj sets on its write
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5010 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5238 at v20.2.4)
+// and copy_obj_data on its processor, so the copy is a versioned write
+// wherever a PUT would be one, at dstKey's instance (put_versioned.go).
 //
 // A copy that fails after taking references drops them again, as done_ret
 // does
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4990-L5031),
 // except where its head write timed out and may yet land on the shared
-// tails, and it also drops them when its head write loses a race, which
-// radosgw answers as success without dropping them (docs/exclusions.md,
+// tails, or landed, and it also drops them when its head write loses a race,
+// which radosgw answers as success without dropping them (docs/exclusions.md,
 // "Object write differences").
 func (s *Store) CopyObject(ctx context.Context, src *op.ObjectState, dst *op.BucketRecord, dstKey meta.ObjKey, p op.CopyParams) (*op.PutResult, error) {
 	if !src.Exists {
 		return nil, fmt.Errorf("copy source %s: %w", objName(src), op.ErrNoSuchKey)
 	}
-	attrs, err := s.copyAttrs(src, dst, p.Attrs, p.ReplaceAttrs)
+	attrs, err := s.copyAttrs(src, p.Attrs, p.ReplaceAttrs)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +123,7 @@ func (s *Store) CopyObject(ctx context.Context, src *op.ObjectState, dst *op.Buc
 	}
 	if copyData {
 		delete(attrs, meta.AttrTailTag)
-		return s.copyData(ctx, src, dst, dstKey, p.StorageClass, attrs, p.Mtime, false)
+		return s.copyData(ctx, src, dst, dstKey, p.StorageClass, attrs, p.Mtime, 0, false)
 	}
 	tag := p.Tag
 	if tag == "" {
@@ -129,11 +141,20 @@ func (s *Store) CopyObject(ctx context.Context, src *op.ObjectState, dst *op.Buc
 // and v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3858-L3885):
 // the source's attrs with the request's ACL, without delete_at, the
-// object-lock attrs other than the request's, the OLH attrs in a bucket
-// without versioning, the storage class and the replication attrs; then the
+// object-lock attrs other than the request's, the OLH attrs, the storage
+// class and the replication attrs; then the
 // source's attrs whole for COPY, or the request's with the source's etag and
 // tail tag where it has none for REPLACE; then without idtag, pg_ver and
 // source_zone, and with the source's compression info.
+//
+// The source's OLH attrs, which a null version's source carries as its key's
+// OLH head, describe that key's OLH, so every copy drops them, pending
+// modifications included; a destination OLH head keeps its own through the
+// head write's reset. copy_obj keeps all but the pending ones in a bucket
+// whose versioning is enabled, on a version's own head
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4809-L4813 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5022-L5026 at v20.2.4;
+// docs/exclusions.md, "A copy carries none of its source's OLH attrs").
 //
 // The storage class is dropped on both releases, as v20.2.4 drops it
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5028),
@@ -154,7 +175,7 @@ func (s *Store) CopyObject(ctx context.Context, src *op.ObjectState, dst *op.Buc
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5813-L5819),
 // which needs decryption rgw-go does not implement, and copying its
 // ciphertext under a head without its crypt attrs would make it unreadable.
-func (s *Store) copyAttrs(src *op.ObjectState, dst *op.BucketRecord, req map[string][]byte, replace bool) (map[string][]byte, error) {
+func (s *Store) copyAttrs(src *op.ObjectState, req map[string][]byte, replace bool) (map[string][]byte, error) {
 	if _, ok := src.Attrs[meta.AttrCryptMode]; ok {
 		return nil, fmt.Errorf("%w: copy source %s is encrypted", op.ErrNotImplemented, objName(src))
 	}
@@ -171,11 +192,7 @@ func (s *Store) copyAttrs(src *op.ObjectState, dst *op.BucketRecord, req map[str
 			srcAttrs[n] = v
 		}
 	}
-	if !dst.Info.VersioningEnabled() {
-		delete(srcAttrs, meta.AttrOLHIDTag)
-		delete(srcAttrs, meta.AttrOLHInfo)
-		delete(srcAttrs, meta.AttrOLHVer)
-	}
+	maps.DeleteFunc(srcAttrs, func(name string, _ []byte) bool { return strings.HasPrefix(name, meta.AttrOLHPrefix) })
 	delete(srcAttrs, meta.AttrStorageClass)
 	delete(srcAttrs, meta.AttrReplicationTrace)
 	delete(srcAttrs, meta.AttrReplicatedAt)
@@ -213,7 +230,15 @@ func (s *Store) shareTails(ctx context.Context, src *op.ObjectState, dst *op.Buc
 	// rgw_obj's ==: rgw_bucket's and rgw_obj_key's, which compares the name
 	// and instance only
 	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_obj_types.h#L256-L259 at v19.2.6
-	// and v20.2.4).
+	// and v20.2.4). src.Key is the version the source's OLH was followed to,
+	// where copy_obj compares the key as the request named it
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4922 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5150 at v20.2.4):
+	// a suspended bucket's copy of a key onto itself while a version with an
+	// instance is current writes the null version over that version's tails,
+	// which only references of its own keep (docs/ceph-upstream-bugs.md,
+	// "radosgw's copy onto its own key in a suspended bucket shares the
+	// current version's tails without references").
 	itself := sameBucketID(src.Bucket.Info.Bucket, dst.Info.Bucket) && src.Key.Name == dstKey.Name && src.Key.Instance == dstKey.Instance
 	m := cloneManifest(src.Manifest)
 	var refs []objRef
@@ -244,6 +269,7 @@ func (s *Store) shareTails(ctx context.Context, src *op.ObjectState, dst *op.Buc
 	hw := &headWrite{
 		rec: dst, key: dstKey, tag: tag, data: data, manifest: &m, attrs: attrs, mtime: mtime,
 		create: true, modifyTail: !itself, keepTail: itself, size: src.Size, accountedSize: accounted,
+		olhEpoch: new(uint64(0)),
 	}
 	if itself {
 		// The head keeps src's tails, which hold no reference of the copy's,
@@ -256,6 +282,13 @@ func (s *Store) shareTails(ctx context.Context, src *op.ObjectState, dst *op.Buc
 	}
 	res, err := s.writeMeta(ctx, hw, s.newIndexOp(dst, dstKey, tag))
 	switch {
+	case res.written:
+		// A versioned head that landed names these tails whatever its
+		// completion or its link answered, so their references stay; a
+		// removal of the version queues them under tag, which drops them.
+		// done_ret drops them after set_olh fails, which lets the tails go
+		// with their source (docs/ceph-upstream-bugs.md, "radosgw's
+		// versioned copy drops its tail references when its link fails").
 	case errors.Is(err, radosclient.ErrTimedOut):
 		// The head may yet land and name these tails, so their references
 		// stay, as writer.clear_written leaves a PUT's tails
@@ -454,7 +487,11 @@ func (s *Store) unrefTails(refs []objRef, tag string) {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5294-L5386 at v20.2.4):
 // the source's stored bytes, as Read::read hands them over, streamed through
 // AtomicObjectProcessor into a new object under storageClass with a random
-// tag and without conditions, attrs its head's. A compressed source's
+// tag and without conditions, attrs its head's, its head written at the OLH
+// epoch the processor is given
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5089-L5091 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5317-L5320 at v20.2.4).
+// A compressed source's
 // compression info, block map included, gives putStream the accounted size.
 // No checksum is computed, as copy_obj_data completes with none
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5381-L5385 at v20.2.4).
@@ -477,12 +514,12 @@ func (s *Store) unrefTails(refs []objRef, tag string) {
 // (docs/exclusions.md, "A copy that streams a compressed source copies its
 // stored bytes"); and a checksum record the copy cannot carry is dropped
 // (droppedChecksum).
-func (s *Store) copyData(ctx context.Context, src *op.ObjectState, dst *op.BucketRecord, dstKey meta.ObjKey, storageClass string, attrs map[string][]byte, mtime time.Time, raw bool) (*op.PutResult, error) {
+func (s *Store) copyData(ctx context.Context, src *op.ObjectState, dst *op.BucketRecord, dstKey meta.ObjKey, storageClass string, attrs map[string][]byte, mtime time.Time, epoch uint64, raw bool) (*op.PutResult, error) {
 	l, err := s.planPut(ctx, dst, dstKey, storageClass)
 	if err != nil {
 		return nil, err
 	}
-	w := streamWrite{tag: s.w.randTag(), attrs: attrs, size: int64(src.Size), mtime: mtime} //nolint:gosec // an object size is far below 2^63
+	w := streamWrite{tag: s.w.randTag(), attrs: attrs, size: int64(src.Size), mtime: mtime, olhEpoch: &epoch} //nolint:gosec // an object size is far below 2^63
 	if !raw {
 		if b, ok := attrs[meta.AttrCksum]; ok {
 			var drop bool

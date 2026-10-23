@@ -86,8 +86,7 @@ type headWrite struct {
 	// its version under the key's OLH at that epoch, 0 letting the class
 	// take the OLH entry's next (put_versioned.go). Nil links nothing and
 	// keeps the unversioned head write: radosgw gives no epoch to the
-	// multipart meta object or a part head, and the copy and the completion
-	// do not link through it.
+	// multipart meta object or a part head.
 	olhEpoch *uint64
 }
 
@@ -280,10 +279,8 @@ func (s *Store) doWriteMeta(ctx context.Context, hw *headWrite, x *indexOp, st, 
 		}
 		if hw.create {
 			if st.Exists {
-				// remove_rgw_head_obj keeps the olh attrs
-				// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5722-L5727).
 				w.Create(false)
-				rgw.ObjRemove(w, []string{meta.AttrOLHPrefix}, s.release)
+				rgw.ObjRemove(w, headKeptAttrs(hw.key), s.release)
 			} else {
 				w.Create(true)
 			}

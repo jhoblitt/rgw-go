@@ -126,30 +126,51 @@ func (s *Store) lockMeta(ctx context.Context, ref mpRef, cookie string) error {
 // The completion record, the attrs ceph/ceph#72103 (tracker #80896, in
 // review after v19.2.6 and v20.2.4) writes on the meta object before the
 // head write: the ID tag the completion's head carries, NUL included, and
-// the version instance of that head, "null" for the key's own head. A
-// later completion or abort that finds them checks whether that head still
-// carries the tag before it touches the parts (docs/exclusions.md, "A
-// CompleteMultipartUpload records itself on the meta object before its head
-// write").
+// the version instance of that head (recordedInstance), "null" for the key's
+// own head. A later completion or abort that finds them checks whether that
+// head still carries the tag before it touches the parts (docs/exclusions.md,
+// "A CompleteMultipartUpload records itself on the meta object before its
+// head write").
 const (
 	attrMPCompletionTag      = meta.AttrPrefix + "mp_completion_tag"
 	attrMPCompletionInstance = meta.AttrPrefix + "mp_completion_instance"
-	// nullInstance names the key's own head, read without following an olh.
-	nullInstance = "null"
 )
+
+// recordedInstance is the instance a completion of key records, as
+// ceph/ceph#72103 at 2c1db8239cc records it: key's own, which a completion
+// takes on a bucket whose versioning is enabled, and "null", the key's own
+// head, for a key without one.
+func recordedInstance(key meta.ObjKey) string {
+	if key.Instance == "" {
+		return meta.NullInstance
+	}
+	return key.Instance
+}
+
+// recordedHead is the head a completion record names, read without following
+// the key's OLH: the version of the recorded instance, the key's own head for
+// "null" and for a record without one, as 2c1db8239cc's recorded_head reads
+// it.
+func (s *Store) recordedHead(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, metaAttrs map[string][]byte) (*op.ObjectState, error) {
+	k := olhHeadKey(key)
+	if inst, ok := metaAttrs[attrMPCompletionInstance]; ok && string(inst) != meta.NullInstance {
+		k.Instance = string(inst)
+	}
+	return s.readOLHHead(ctx, rec, k)
+}
 
 // renewAndRecord renews the completion's hold under cookie for another
 // rgw_mp_lock_max_time, failing unless it still holds it, and in the same
-// op writes the completion record for a head written under tag:
+// op writes the completion record for a head written under tag at instance:
 // assert_exists, lock_exclusive with LOCK_FLAG_MUST_RENEW, as radosgw's
 // renewal sends it since tracker #75375's fix (ceph/ceph#67696, after
 // v19.2.6 and v20.2.4), and the record's two setxattrs.
-func (s *Store) renewAndRecord(ctx context.Context, ref mpRef, cookie, tag string) error {
+func (s *Store) renewAndRecord(ctx context.Context, ref mpRef, cookie, tag, instance string) error {
 	w := radosclient.NewWriteOp()
 	w.AssertExists()
 	lock.Lock(w, lock.LockOp{Name: completeLockName, Type: lock.TypeExclusive, Cookie: cookie, Duration: s.mp.lockMaxTime, Flags: lock.FlagMustRenew}, s.release)
 	w.SetXattr(attrMPCompletionTag, []byte(tag+"\x00"))
-	w.SetXattr(attrMPCompletionInstance, []byte(nullInstance))
+	w.SetXattr(attrMPCompletionInstance, []byte(instance))
 	_, err := ref.pool.Write(ctx, ref.oid, w, radosclient.OpFlagNone)
 	return err
 }
@@ -358,6 +379,164 @@ func manifestPrefixes(m *meta.Manifest) map[string]bool {
 		out[cmp.Or(r.OverridePrefix, m.Prefix)] = true
 	}
 	return out
+}
+
+// versionScanSkew is how long before its upload's initiation uploadVersion
+// still looks for a version that names the upload's parts: the request clock
+// skew S3 allows, 15 minutes, as a version that names them was written by a
+// completion of the upload, after its initiation, on a gateway whose clock
+// may run behind.
+const versionScanSkew = 15 * time.Minute
+
+// uploadVersion is the version of up's key that names an object written
+// under one of prefixes, an earlier completion's of up, or nil when none
+// does: the key's current version, its OLH followed, and, on a bucket whose
+// versioning was ever enabled, the listed versions with a multipart ETag,
+// each head read without following the OLH, in the listing's epoch order,
+// newest first, until the first entry older than up's initiation
+// (scanStart) less versionScanSkew, and then the null version on its
+// own (nullUploadVersion), whose list entry a null version written over an
+// earlier one and never linked leaves at the earlier one's epoch and with
+// its metadata. A version a later write made noncurrent still names its
+// parts, which an abort must not queue for the GC and a completion must not
+// write a second version over; one written before the bound is not found
+// (docs/exclusions.md, "CompleteMultipartUpload finishes an earlier
+// completion of its upload instead of writing it again").
+func (s *Store) uploadVersion(ctx context.Context, up *op.Upload, ref mpRef, parts []meta.UploadPartInfo) (*op.ObjectState, error) {
+	prefixes := uploadPrefixes(up.Key.Name, up.ID, parts)
+	rec, key := up.Bucket, up.Key
+	cur, err := s.currentVersion(ctx, rec, key)
+	if err != nil {
+		return nil, err
+	}
+	if cur.Exists && namesUploadObjects(cur.Manifest, prefixes) {
+		return cur, nil
+	}
+	if !rec.Info.Versioned() {
+		return nil, nil
+	}
+	initiated, err := s.scanStart(ctx, up, ref, parts)
+	if err != nil {
+		return nil, err
+	}
+	since := initiated.Add(-versionScanSkew)
+	var (
+		found    *op.ObjectState
+		readErr  error
+		nullRead = cur.Exists && isNullVersion(cur.Key)
+	)
+	lerr := s.newOLHIndex(rec, key).listVersions(ctx, func(en rgw.DirEntry) bool {
+		switch {
+		case en.Meta.Mtime.Before(since):
+			return false
+		case en.Flags&rgw.FlagDeleteMarker != 0 || !strings.Contains(en.Meta.ETag, "-") || cur.Exists && en.Key.Instance == cur.Key.Instance:
+			return true
+		}
+		nullRead = nullRead || en.Key.Instance == ""
+		st, rerr := s.readOLHHead(ctx, rec, meta.ObjKey{Name: key.Name, NS: key.NS, Instance: en.Key.Instance})
+		switch {
+		case rerr != nil:
+			readErr = rerr
+			return false
+		case st.Exists && namesUploadObjects(st.Manifest, prefixes):
+			found = st
+			return false
+		}
+		return true
+	})
+	if err := errors.Join(lerr, readErr); err != nil || found != nil || nullRead {
+		return found, err
+	}
+	return s.nullUploadVersion(ctx, rec, key, prefixes)
+}
+
+// isNullVersion reports whether key names its name's null version.
+func isNullVersion(key meta.ObjKey) bool {
+	return key.Instance == "" || key.Instance == meta.NullInstance
+}
+
+// nullUploadVersion is uploadVersion's own check of key's null version: one
+// lookup of its instance entry (getInstanceEntry) and, when that entry is a
+// version whose ETag is a multipart one, a read of its head, the key's OLH
+// head, without following the OLH. complete_op rewrites the null instance
+// entry a null version written over an earlier one names, while that
+// version's list entry stays at the earlier one's epoch with its metadata
+// until a link writes a new one (recordedLinkState), so the listing can
+// order it among older versions, or show it with another ETag.
+func (s *Store) nullUploadVersion(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, prefixes map[string]bool) (*op.ObjectState, error) {
+	null := meta.ObjKey{Name: key.Name, NS: key.NS}
+	en, err := s.getInstanceEntry(ctx, rec, null)
+	switch {
+	case errors.Is(err, radosclient.ErrNotFound):
+		return nil, nil
+	case err != nil:
+		return nil, op.FromRADOS(fmt.Errorf("reading the index entry of %s: %w", versionName(rec, null), err), op.ScopeObject)
+	case !en.Exists || en.Flags&rgw.FlagDeleteMarker != 0 || !strings.Contains(en.Meta.ETag, "-"):
+		return nil, nil
+	}
+	st, err := s.readOLHHead(ctx, rec, null)
+	if err != nil || !st.Exists || !namesUploadObjects(st.Manifest, prefixes) {
+		return nil, err
+	}
+	return st, nil
+}
+
+// scanStart is the time uploadVersion's scan starts from: the earlier of
+// up's initiation (uploadInitiated) and the earliest Modified among parts,
+// the upload's part infos in its meta object's omap, which no lock and no
+// listing repair rewrites. radosgw's check_disk_state writes the meta
+// object's RADOS mtime, which every lock moves, into a meta entry with a
+// pending op
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L10583 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L10638 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L11311 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L11366 at v20.2.4).
+// An upload without parts starts from its initiation alone; a part without a
+// Modified, or an initiation the index does not give, starts from the zero
+// time, which bounds nothing.
+func (s *Store) scanStart(ctx context.Context, up *op.Upload, ref mpRef, parts []meta.UploadPartInfo) (time.Time, error) {
+	start, err := s.uploadInitiated(ctx, up, ref)
+	if err != nil {
+		return time.Time{}, err
+	}
+	for i := range parts {
+		if parts[i].Modified.Before(start) {
+			start = parts[i].Modified
+		}
+	}
+	return start, nil
+}
+
+// uploadInitiated is when up was initiated: the mtime of its meta object's
+// index entry, written by CreateUpload, which ListMultipartUploads reports
+// as the upload's Initiated. The meta object's own mtime, which GetUpload
+// reports, moves with every part, lock and record written on it, and
+// radosgw's listing repair copies it into the entry (scanStart).
+// It is one bucket_list of the entry's shard, filtered to the entry's name.
+// An entry the listing does not find answers the zero time, which bounds
+// nothing: the scan is never narrowed on a guess.
+func (s *Store) uploadInitiated(ctx context.Context, up *op.Upload, ref mpRef) (time.Time, error) {
+	x := s.newIndexOp(up.Bucket, ref.key, "")
+	x.hashName = up.Key.Name
+	name := ref.key.IndexKeyName()
+	var (
+		en rgw.DirEntry
+		ok bool
+	)
+	err := x.readShard(ctx, func(sh indexShard) error {
+		ret, _, err := s.bucketList(ctx, sh.pool, sh.oid, rgw.ListOp{NumEntries: 1, FilterPrefix: name})
+		en, ok = ret.Dir.Entries[name]
+		return err
+	})
+	switch {
+	case err != nil:
+		return time.Time{}, fmt.Errorf("reading the index entry of upload %s: %w", up.ID, err)
+	case !ok:
+		slog.WarnContext(ctx, "the index entry of a multipart upload is missing; its key's versions are read without a bound",
+			slog.String("upload", up.ID), slog.String("key", up.Key.Name))
+		return time.Time{}, nil
+	}
+	return en.Meta.Mtime, nil
 }
 
 // namesUploadObjects reports that the manifest m names an object written

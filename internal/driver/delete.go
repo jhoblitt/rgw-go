@@ -100,6 +100,22 @@ func (s *Store) removeHead(ctx context.Context, rec *op.BucketRecord, key meta.O
 	return s.removeHeadFlagged(ctx, rec, key, hashName, st, w, counted, 0)
 }
 
+// headKeptAttrs is the attr prefixes a removal or a reset of key's head
+// keeps: remove_rgw_head_obj's user.rgw.olh., the key's OLH, for the head of
+// a key without an instance, which is its OLH head once the key is versioned
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5798-L5803 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6410-L6415 at v20.2.4),
+// and none for a version's own head, which no OLH lives on: obj_remove keeps
+// nothing then, where radosgw's keeps OLH attrs a copy of a null version left
+// on it and the head stays behind as an empty version (docs/exclusions.md,
+// "A version's head is removed whole").
+func headKeptAttrs(key meta.ObjKey) []string {
+	if key.Instance == "" || key.Instance == meta.NullInstance {
+		return []string{meta.AttrOLHPrefix}
+	}
+	return nil
+}
+
 // removeHeadFlagged is removeHead whose index prepare, completion and cancel
 // carry bilogFlags, the RGWBILogFlags delete_obj's caller gives it.
 func (s *Store) removeHeadFlagged(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, hashName string, st *op.ObjectState, w *radosclient.WriteOp, counted bool, bilogFlags uint16) error {
@@ -119,7 +135,7 @@ func (s *Store) removeHeadFlagged(ctx context.Context, rec *op.BucketRecord, key
 	if err = x.prepare(ctx, rgw.OpDel); err != nil {
 		return op.FromRADOS(err, op.ScopeObject)
 	}
-	rgw.ObjRemove(w, []string{meta.AttrOLHPrefix}, s.release) // remove_rgw_head_obj, https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5722-L5727
+	rgw.ObjRemove(w, headKeptAttrs(key), s.release)
 	epoch, err := ref.pool.Write(ctx, ref.oid, w, radosclient.OpFlagFullTry)
 	switch {
 	case errors.Is(err, radosclient.ErrTimedOut):

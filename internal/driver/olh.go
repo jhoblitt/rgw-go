@@ -54,7 +54,10 @@ const (
 // first attempt links under its op tag, with no init of its own, when the
 // head it reads still holds that modification's pending attr; a link with a
 // Cond is refused, as that attempt checks nothing. Relink, when set, links
-// a version already written and once listed (olhRelink).
+// a version already written and once listed (olhRelink). KeepVersion keeps
+// the version when no link of it lands, for a caller whose version names
+// data it must not lose, a completion's parts; a link the check after it
+// voids is still unlinked.
 type olhLink struct {
 	DeleteMarker  bool
 	Meta          rgw.DirEntryMeta
@@ -66,6 +69,7 @@ type olhLink struct {
 	ExpectTag     []byte
 	Inited        *olhInited
 	Relink        *olhRelink
+	KeepVersion   bool
 }
 
 // olhRelink is a link that lists again a version a refused removal left
@@ -223,18 +227,19 @@ func (s *Store) stopsAfterLink() bool { return olhStopAfterLink != nil && olhSto
 //
 // When setOLH gives up before a link of its own landed, on an answer that
 // proves none did, it removes the version itself, as removeFailedVersion
-// says, and so it does whatever the answer when an attempt ends before its
-// init, in its head read or in prepareOLHAttempt; once one landed it removes
-// nothing, whatever it then returns, so its caller never removes the
-// version. A conditional link the check voids is removed by that check's
-// unlink. A link with p.Relink removes nothing on any path.
+// says, unless p.KeepVersion, and so it does whatever the answer when an
+// attempt ends before its init, in its head read or in prepareOLHAttempt;
+// once one landed it removes nothing, whatever it then returns, so its
+// caller never removes the version. A conditional link the check voids is
+// removed by that check's unlink. A link with p.Relink removes nothing on
+// any path.
 func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p olhLink) error {
 	what := versionName(rec, key)
 	idx := s.newOLHIndex(rec, key)
 	f := olhLinkFields{deleteMarker: p.DeleteMarker, meta: p.Meta, epoch: p.Epoch, unmodSince: p.UnmodSince, highPrecision: p.HighPrecision}
-	written := !p.DeleteMarker && p.Relink == nil
+	removes := !p.DeleteMarker && p.Relink == nil && !p.KeepVersion
 	unlinked := func(err error) error {
-		if written {
+		if removes {
 			s.removeFailedVersion(ctx, idx.x.rec, key, err)
 		}
 		return err
@@ -250,7 +255,7 @@ func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKe
 		if inited != nil {
 			s.olhCancelModification(context.WithoutCancel(ctx), inited.head, inited.opTag)
 		}
-		if written {
+		if removes {
 			s.removeUnlinkedVersion(context.WithoutCancel(ctx), idx.x.rec, key, err)
 		}
 		return err
