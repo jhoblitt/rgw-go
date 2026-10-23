@@ -10785,9 +10785,28 @@ rgw-go does the following.
   leaves the pending entry for listing to reconcile. An error does not
   prove the completion did not land, since one that a context end or a
   timeout interrupted can land later, so the write never links after one.
-  Unversioned writes keep radosgw's unawaited completion. The cost is a
-  round trip to the index shard per versioned write that radosgw does not
-  wait for, though the OSD applies the two operations in turn either way.
+  An unversioned write of an object's plain or null entry on a bucket whose
+  flags carry `BUCKET_VERSIONED`, a suspended bucket's write of a key with
+  no OLH, and an attr write of such an entry, PutObjectTagging's,
+  PutObjectAcl's or PutObjectRetention's, await their completion too before
+  they answer (`completePlain`, `internal/driver/headwrite.go`, which
+  `SetObjectAttrs` also calls): the key's next delete links the null
+  delete marker, which takes the pending op of the null entry it replaces
+  ([cls_rgw.cc:1349-1357](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1349-L1357),
+  [cls_rgw.cc:1476-1484](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1476-L1484)),
+  and a completion landing after that link clears the op from the null
+  data key alone, leaving the marker pending for good
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's listing repair of a null
+  version's list entry overwrites or removes the key's version
+  marker](ceph-upstream-bugs.md#radosgws-listing-repair-of-a-null-versions-list-entry-overwrites-or-removes-the-keys-version-marker)").
+  Its failure is logged and left for listing to reconcile, as the unawaited
+  completion's is, and the wait outlives its request's end, as the
+  completion manager's send does. Every other unversioned write, a
+  namespaced one such as a multipart part's or a named version's attr write
+  included, keeps radosgw's unawaited completion. The cost is a round trip
+  to the index shard per versioned write, and per such write or attr write,
+  that radosgw does not wait for, though the OSD applies the two operations
+  in turn either way.
   The driver's versioned PutObject, CopyObject and CompleteMultipartUpload
   await it (`linkVersion`, `internal/driver/put_versioned.go`). The S3 ops
   refuse a versioned write until versioning is served.

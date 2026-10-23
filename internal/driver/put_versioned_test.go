@@ -759,6 +759,192 @@ var _ = Describe("a versioned PutObject", func() {
 			Expect(links()).To(BeZero())
 			Expect(completion(0).BILogFlags).To(BeZero())
 		})
+
+		It("answers a key's plain write once its completion has landed, so the null delete marker of the DELETE after it takes no pending op from it", func(ctx SpecContext) {
+			suspend()
+			arrived, release := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			releaseAll := func() { once.Do(func() { close(release) }) }
+			DeferCleanup(releaseAll)
+			ac.set(onFirst("bucket_complete_op", func(send sendFunc) (uint64, error) {
+				close(arrived)
+				<-release
+				return send()
+			}))
+			client := make(chan error, 1)
+			go func() {
+				if _, err := put(ctx, "", "plain", op.PutParams{}); err != nil {
+					client <- err
+					return
+				}
+				_, err := s.DeleteObject(ctx, rec, version(""), op.DeleteParams{})
+				client <- err
+			}()
+			Eventually(arrived).WithTimeout(5 * time.Second).Should(BeClosed())
+			select {
+			case <-time.After(200 * time.Millisecond):
+			case err := <-client:
+				client <- err
+			}
+			releaseAll()
+			Eventually(client).WithTimeout(5 * time.Second).Should(Receive(Succeed()))
+			settle(s)
+			dm, ok := c.Entry(rookIndexPool, "", shard, rgwcls.InstanceIndexKey(rgwcls.ObjKey{Name: "k"}, true))
+			Expect(ok).To(BeTrue(), "the null delete marker's instance entry")
+			Expect(dm.Flags & rgwcls.FlagDeleteMarker).NotTo(BeZero())
+			Expect(dm.PendingMap).To(BeEmpty(), "bucket_link_olh's marker keeps the pending op of the null entry it replaces, which the PUT's completion, landing on the null data key, never clears")
+			Expect(listed()).To(Equal([]string{""}), "the marker alone, its data replaced")
+		})
+
+		It("answers a namespaced write before its completion lands, as no OLH links a namespaced key", func(ctx SpecContext) {
+			suspend()
+			release := make(chan struct{})
+			var once sync.Once
+			releaseAll := func() { once.Do(func() { close(release) }) }
+			DeferCleanup(releaseAll)
+			ac.set(onFirst("bucket_complete_op", func(send sendFunc) (uint64, error) {
+				<-release
+				return send()
+			}))
+			k := meta.ObjKey{Name: "k.2~id.meta", NS: meta.NSMultipart}
+			hw := driver.HeadWriteForTest{Key: k, Data: []byte("m"), Attrs: attrs, Create: true, Size: 1}
+			done := make(chan error, 1)
+			go func() {
+				_, err := s.WriteMetaForTest(ctx, rec, hw, s.NewIndexOpForTest(rec, k, ""))
+				done <- err
+			}()
+			Eventually(done).WithTimeout(5*time.Second).Should(Receive(Succeed()), "answered while its completion is held")
+			Expect(s.PendingCompletionsForTest()).To(Equal(1), "the completion is queued")
+			releaseAll()
+		})
+
+		// note is an attr-only write's attrs, as PutObjectTagging's or
+		// PutObjectAcl's would be.
+		note := func() map[string][]byte { return map[string][]byte{meta.AttrMetaPrefix + "note": []byte("n\x00")} }
+		// writesNote reports whether w is the head write of note.
+		writesNote := func(w *radosclient.WriteOp) bool {
+			return slices.ContainsFunc(w.Steps(), func(st radosclient.Step) bool {
+				x, ok := st.(*radosclient.SetXattrStep)
+				return ok && x.Name == meta.AttrMetaPrefix+"note"
+			})
+		}
+		// markerPending deletes k on the suspended bucket, which links the
+		// null delete marker, and returns the pending ops the marker's
+		// instance entry carries.
+		markerPending := func(ctx context.Context) []rgwcls.PendingEntry {
+			GinkgoHelper()
+			_, err := s.DeleteObject(ctx, rec, version(""), op.DeleteParams{})
+			Expect(err).NotTo(HaveOccurred())
+			settle(s)
+			dm, ok := c.Entry(rookIndexPool, "", shard, rgwcls.InstanceIndexKey(rgwcls.ObjKey{Name: "k"}, true))
+			Expect(ok).To(BeTrue(), "the null delete marker's instance entry")
+			return dm.PendingMap
+		}
+		// plainHead is k's plain head on the suspended bucket, put and settled.
+		plainHead := func(ctx context.Context) *op.ObjectState {
+			GinkgoHelper()
+			suspend()
+			_, err := put(ctx, "", "plain", op.PutParams{})
+			Expect(err).NotTo(HaveOccurred())
+			settle(s)
+			st, err := s.StatObject(ctx, rec, version(""))
+			Expect(err).NotTo(HaveOccurred())
+			return st
+		}
+
+		It("answers an attr write on a key's plain entry once its completion has landed, so the null delete marker of the DELETE after it takes no pending op from it", func(ctx SpecContext) {
+			st := plainHead(ctx)
+			arrived, release := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			releaseAll := func() { once.Do(func() { close(release) }) }
+			DeferCleanup(releaseAll)
+			ac.set(onFirst("bucket_complete_op", func(send sendFunc) (uint64, error) {
+				close(arrived)
+				<-release
+				return send()
+			}))
+			client := make(chan error, 1)
+			go func() {
+				if err := s.SetObjectAttrs(ctx, st, note(), nil); err != nil {
+					client <- err
+					return
+				}
+				clock.Add(int64(10 * time.Second))
+				_, err := s.DeleteObject(ctx, rec, version(""), op.DeleteParams{})
+				client <- err
+			}()
+			Eventually(arrived).WithTimeout(5 * time.Second).Should(BeClosed())
+			select {
+			case <-time.After(200 * time.Millisecond):
+			case err := <-client:
+				client <- err
+			}
+			releaseAll()
+			Eventually(client).WithTimeout(5 * time.Second).Should(Receive(Succeed()))
+			settle(s)
+			dm, ok := c.Entry(rookIndexPool, "", shard, rgwcls.InstanceIndexKey(rgwcls.ObjKey{Name: "k"}, true))
+			Expect(ok).To(BeTrue(), "the null delete marker's instance entry")
+			Expect(dm.PendingMap).To(BeEmpty(), "the marker takes no pending op from the attr write")
+		})
+
+		It("lands a PutObject's completion on a key's plain entry though its request ends once its head write lands, as a PUT finishes past its client", func(ctx SpecContext) {
+			suspend()
+			pctx, cancel := context.WithCancel(ctx)
+			DeferCleanup(cancel)
+			ac.set(onFirstMatching(writesData, func(send sendFunc) (uint64, error) {
+				v, err := send()
+				cancel()
+				return v, err
+			}))
+			_, err := put(pctx, "", "plain", op.PutParams{})
+			ac.set(nil)
+			settle(s)
+			Expect(olhHead().Data).To(Equal([]byte("plain")), "the head write landed (%v)", err)
+			en, ok := c.Entry(rookIndexPool, "", shard, "k")
+			Expect(ok).To(BeTrue())
+			Expect(en.PendingMap).To(BeEmpty(), "the plain entry's pending op, which a completion dropped with the request would leave")
+			Expect(markerPending(ctx)).To(BeEmpty(), "a completion dropped with the request would leave its pending op to the marker")
+		})
+
+		It("lands a head write's completion on a key's plain entry though the context it is given ends once the head lands", func(ctx SpecContext) {
+			suspend()
+			hctx, cancel := context.WithCancel(ctx)
+			DeferCleanup(cancel)
+			ac.set(onFirstMatching(writesData, func(send sendFunc) (uint64, error) {
+				v, err := send()
+				cancel()
+				return v, err
+			}))
+			k := version("")
+			hw := driver.HeadWriteForTest{Key: k, Data: []byte("plain"), Attrs: attrs, Create: true, Size: 5}
+			_, err := s.WriteMetaForTest(hctx, rec, hw, s.NewIndexOpForTest(rec, k, "tag-plain"))
+			ac.set(nil)
+			settle(s)
+			Expect(olhHead().Data).To(Equal([]byte("plain")), "the head write landed (%v)", err)
+			en, ok := c.Entry(rookIndexPool, "", shard, "k")
+			Expect(ok).To(BeTrue())
+			Expect(en.PendingMap).To(BeEmpty(), "the plain entry's pending op, which a completion dropped with the context would leave")
+			Expect(markerPending(ctx)).To(BeEmpty())
+		})
+
+		It("lands an attr write's completion on a key's plain entry though its request ends once its head write lands", func(ctx SpecContext) {
+			st := plainHead(ctx)
+			actx, cancel := context.WithCancel(ctx)
+			DeferCleanup(cancel)
+			ac.set(onFirstMatching(writesNote, func(send sendFunc) (uint64, error) {
+				v, err := send()
+				cancel()
+				return v, err
+			}))
+			err := s.SetObjectAttrs(actx, st, note(), nil)
+			ac.set(nil)
+			settle(s)
+			Expect(olhHead().Xattrs).To(HaveKey(meta.AttrMetaPrefix+"note"), "the attr write landed (%v)", err)
+			en, ok := c.Entry(rookIndexPool, "", shard, "k")
+			Expect(ok).To(BeTrue())
+			Expect(en.PendingMap).To(BeEmpty(), "the plain entry's pending op, which a completion dropped with the request would leave")
+			Expect(markerPending(ctx)).To(BeEmpty())
+		})
 	})
 
 	Describe("racing another conditional write", func() {

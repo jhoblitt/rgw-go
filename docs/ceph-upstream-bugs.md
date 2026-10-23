@@ -22683,7 +22683,12 @@ Every new entry adds its row to this table, in document order.
 ## radosgw's listing repair of a null version's list entry overwrites or removes the key's version marker
 
 - **Kind:** defect, data corruption (the bucket index). Not
-  security-relevant. Unreproduced: derived from the source.
+  security-relevant: every trigger needs a suspended bucket, which a bucket
+  with object lock cannot be, so no locked version is reached; other users'
+  versions with an instance sit under their own keys, which the repair does
+  not touch; and the update's double count in the bucket's stats is phantom
+  usage, which a client allowed to put objects could make with real bytes
+  anyway, so it evades no limit. Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/`.
   - The repair is encoded under the wrong key. The null version's list
     entry carries the key without an instance
@@ -22734,6 +22739,36 @@ Every new entry adds its row to this table, in document order.
     the null version's list entry carries a pending op when a writer of the
     null version prepared it, and died before its own link, while another
     writer's link of the null version landed.
+  - A null delete marker carries one with no dead writer. The link of a
+    delete marker reads the entry it replaces into the marker's instance
+    entry: `bucket_link_olh` initializes the marker with `obj.init`
+    ([cls_rgw.cc:1669-1670](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1669-L1670),
+    [cls_rgw.cc:1810-1811](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1810-L1811)),
+    whose `read_key_entry` reads the plain key and, finding the version
+    marker there, the delete marker's key and then the null data key,
+    pending ops included, or, with no marker, the plain entry itself
+    ([cls_rgw.cc:946-978](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L946-L978),
+    [cls_rgw.cc:1076-1106](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1076-L1106)).
+    `init_as_delete_marker` resets only the key, the flags, the meta and the
+    tag
+    ([cls_rgw.cc:1349-1357](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1349-L1357),
+    [cls_rgw.cc:1476-1484](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1476-L1484)),
+    and `write_entries` writes the marker under the delete marker's key,
+    which it encodes from the flags
+    ([cls_rgw.cc:1388-1408](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1388-L1408),
+    [cls_rgw.cc:1514-1527](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1514-L1527)),
+    with the pending ops of the entry it replaced. The writer's completion
+    finds its entry through the plain key too, which now leads to the null
+    data key, and clears its op there alone
+    ([cls_rgw.cc:1047](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1047),
+    [cls_rgw.cc:1182](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1182)).
+    So a PutObject of the null version on a suspended bucket whose
+    completion has not reached the shard when a DeleteObject of the key
+    links the null delete marker leaves the marker's list entry pending for
+    good, and every listing that reaches it repairs from it. radosgw's own
+    gateway sends the completion before the delete's link, so the trigger
+    takes two gateways, one whose completion is slow, or a writer that died
+    between its head write and its completion.
 - **Impact:** each consequence follows from the collision, and the review
   of phase 2 task V9 verified each at v19.2.7 and v20.2.4. Without its
   marker the plain key no longer leads `read_key_entry` to the null
@@ -22744,18 +22779,34 @@ Every new entry adds its row to this table, in document order.
   null version twice in the bucket's stats, and when the name's last version
   goes, `bucket_clear_olh` leaves the plain entry, since it removes only a
   marker ([cls_rgw.cc:2178-2181](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2178-L2181), [cls_rgw.cc:2343-2346](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2343-L2346)).
+  The null delete marker's trigger needs no dead writer, only a PUT whose
+  completion has not landed and a delete after it, so the index corruption
+  is that much easier to reach; the marker itself is listed from the OLH
+  head's state for as long as it stays.
 - **Releases:** v19.2.7 and v20.2.4.
 - **rgw-go:** sends no repair for the null version's list entry
   (`checkDiskState`, `internal/driver/list.go`; `docs/exclusions.md`, "A
   listing sends no repair for the null version's list entry"); its own
   versioned writes leave no list entry pending, since each awaits its index
-  completion before its link.
+  completion before its link, and its write or attr write of an object's
+  plain or null entry on a bucket whose flags carry `BUCKET_VERSIONED`
+  awaits its completion before it answers, so the delete after it links no
+  marker over a pending op (`completePlain`, `internal/driver/headwrite.go`,
+  which `SetObjectAttrs` also calls; `docs/exclusions.md`, "A versioned
+  write awaits its index completion"), which "answers a key's plain write
+  once its completion has landed, so the null delete marker of the DELETE
+  after it takes no pending op from it" and "answers an attr write on a
+  key's plain entry once its completion has landed, so the null delete
+  marker of the DELETE after it takes no pending op from it"
+  (`internal/driver/put_versioned_test.go`) pin. Another gateway's slow
+  completion still reaches it.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V3a's review, which left whether the class updates
   or removes the marker untraced; traced at v19.2.7 and v20.2.4 by phase 2
   task V9, 2026-10-20, whose fix round took rgw-bug-reproduction's triage,
-  which confirmed the key collision. Derived from the source, not
-  reproduced.
+  which confirmed the key collision. The null delete marker's trigger was
+  found by phase 2 task C10b's review, 2026-10-23, and re-triaged by
+  rgw-bug-reproduction at v20.2.4. Derived from the source, not reproduced.
 
 ## radosgw's listing never repairs a version's list entry
 

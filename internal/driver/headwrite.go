@@ -379,7 +379,7 @@ func (s *Store) doWriteMeta(ctx context.Context, hw *headWrite, x *indexOp, st, 
 		ETag: etag, Owner: owner, OwnerDisplayName: display, ContentType: contentType, StorageClass: storageClass,
 	}
 	if !versioned {
-		x.complete(ver, m)
+		s.completePlain(ctx, hw.rec, hw.key, x, ver, m)
 	}
 	added := int64(1)
 	if origExists {
@@ -517,6 +517,32 @@ func fakeTag(st *op.ObjectState) string {
 	h.Write(st.Attrs[meta.AttrManifest])
 	h.Write(st.Attrs[meta.AttrETag])
 	return tag + hex.EncodeToString(h.Sum(nil)) + "\x00"
+}
+
+// completePlain sends the ADD completion of a write to key of rec that links
+// no version: a head write's, or an attr write's (SetObjectAttrs). The write
+// of an object's plain or null entry, its key in no namespace and its
+// instance empty or null, on a bucket whose flags carry BUCKET_VERSIONED,
+// awaits it (indexOp.completeSync), under a context its caller's end does not
+// cancel, as the completion manager's is not: the key's next delete there
+// links the null delete marker, which takes the pending op of the null entry
+// it replaces, and a completion landing after that link clears the op from
+// the null data key alone, leaving the marker pending for good
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1349-L1357 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1476-L1484 at v20.2.4;
+// docs/cgo-limitations.md, "Bucket index completions to one shard can land
+// out of order"). A failure is logged and left for listing to reconcile, as
+// the unawaited completion leaves it. Any other write sends it without
+// waiting, as radosgw does.
+func (s *Store) completePlain(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, x *indexOp, ver rgw.EntryVer, m rgw.DirEntryMeta) {
+	if !rec.Info.Versioned() || key.NS != "" || key.Instance != "" && key.Instance != meta.NullInstance {
+		x.complete(ver, m)
+		return
+	}
+	if err := x.completeSync(context.WithoutCancel(ctx), ver, m); err != nil {
+		slog.WarnContext(ctx, "bucket index completion failed; listing reconciles the entry",
+			slog.String("bucket", rec.Info.Bucket.Name), slog.String("key", key.Name), slog.Any("error", err))
+	}
 }
 
 // cancelWrite is done_cancel

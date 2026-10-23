@@ -336,9 +336,11 @@ benchmark was re-run.
   same entry. A failed UploadPart shows it: the part head's ADD completion
   can land after the prepare, or the completion, of the DEL that removes
   the head.
-- **Cost:** one round trip to the index shard on every versioned write, and
-  one on every version an OLH replay removes. A versioned write's link
-  reads the instance entry its ADD completion writes,
+- **Cost:** one round trip to the index shard on every versioned write, on
+  every version an OLH replay removes, and on every write or attr write of
+  an object's plain or null entry on a bucket whose flags carry
+  `BUCKET_VERSIONED`. A versioned
+  write's link reads the instance entry its ADD completion writes,
   and a link that reached the shard first would list the version without
   its size or ETag, so the write waits for its completion before it links
   (`indexOp.completeSync`, `internal/driver/indexop.go`; `docs/exclusions.md`,
@@ -357,8 +359,23 @@ benchmark was re-run.
   The replay waits for each removal's completion before its head op
   (`indexOp.completeDelSync`, `internal/driver/indexop.go`;
   `docs/exclusions.md`, "An OLH replay awaits the index completion of each
-  version it removes"), where radosgw sends it without waiting. No other
-  case found. cls_rgw refuses a completion whose
+  version it removes"), where radosgw sends it without waiting. A suspended
+  bucket's write of a key with no OLH links nothing, but the key's next
+  delete links the null delete marker, which takes the pending op of the
+  null entry it replaces
+  ([cls_rgw.cc:1349-1357](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1349-L1357),
+  [cls_rgw.cc:1476-1484](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1476-L1484)),
+  and the write's completion, landing after that link, clears the op from
+  the null data key alone: the marker stays pending for good, and listings
+  report it from the OLH head. An attr write of the entry, which prepares an
+  ADD on it too, leaves the same pending op. So such a write, any unversioned
+  write of an object's plain or null entry on a bucket whose flags carry
+  `BUCKET_VERSIONED`, and an attr write of such an entry wait for their
+  completion before they answer (`completePlain`,
+  `internal/driver/headwrite.go`, which `SetObjectAttrs` also calls). No
+  other ADD whose completion goes unawaited reaches an un-namespaced entry.
+  cls_rgw refuses a
+  completion whose
   tag is no longer pending with EINVAL (`cls/rgw/cls_rgw.cc:1065-1072` at
   v19.2.6, `:1200-1207` at v20.2.4), and turns one whose epoch is not past the
   entry's, in the same pool, into a cancel (`:1082-1086`, `:1217-1221`). So a

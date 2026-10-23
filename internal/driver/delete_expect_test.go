@@ -188,33 +188,26 @@ var _ = Describe("DeleteObject with an expected state", func() {
 	before := func(match func(*radosclient.WriteOp) bool, n int, fn func()) {
 		hooks.add(&writeHook{match: match, n: n, before: true, fn: fn})
 	}
-	// hold blocks the first later write op match takes until release, which
-	// the spec's cleanup also calls, so a failed spec leaves nothing blocked.
-	hold := func(match func(*radosclient.WriteOp) bool) (release func()) {
-		held := make(chan struct{})
-		before(match, 1, func() { <-held })
-		release = sync.OnceFunc(func() { close(held) })
-		DeferCleanup(release)
-		return release
-	}
 	// late holds back the first later write op match takes: the op answers
 	// success at once, as another gateway's write that has not yet reached
 	// the shard looks to rgw-go, and reaches it at land, which answers the
 	// write's own result. rgw-go awaits its own replay's removal completion,
 	// but radosgw's goes to the shard while its head op goes to the head
-	// object, and nothing orders the two.
+	// object, and nothing orders the two. land first waits for the write to
+	// arrive, which a completion rgw-go sends unawaited does from the
+	// completion manager's goroutine, some time after the call that sent it
+	// has returned.
 	late := func(match func(*radosclient.WriteOp) bool) (land func() error) {
-		var mu sync.Mutex
 		var send sendFunc
+		arrived := make(chan struct{})
 		hooks.add(&writeHook{match: match, n: 1, late: func(s sendFunc) {
-			mu.Lock()
-			defer mu.Unlock()
 			send = s
+			close(arrived)
 		}})
 		land = sync.OnceValue(func() error {
-			mu.Lock()
-			defer mu.Unlock()
-			if send == nil {
+			select {
+			case <-arrived:
+			case <-time.After(5 * time.Second):
 				return errors.New("the write held back never came")
 			}
 			_, err := send()
@@ -224,11 +217,12 @@ var _ = Describe("DeleteObject with an expected state", func() {
 		return land
 	}
 	// attrWriteLate is attrWrite whose index completion, which radosgw sends
-	// unawaited, is held until release: until then the version's instance
-	// record keeps the flags the unlink left on it.
+	// unawaited, lands only at release, as another gateway's attr write that
+	// has not reached the shard looks to rgw-go (late): until then the
+	// version's instance record keeps the flags the unlink left on it.
 	attrWriteLate := func(ctx context.Context, instance string) (release func()) {
 		GinkgoHelper()
-		release = hold(func(w *radosclient.WriteOp) bool {
+		land := late(func(w *radosclient.WriteOp) bool {
 			for _, st := range w.Steps() {
 				if x, ok := st.(*radosclient.ExecStep); ok && x.Method == "bucket_complete_op" {
 					c := rgwcls.DecodeCompleteOp(denc.NewDecoder(x.In))
@@ -239,7 +233,10 @@ var _ = Describe("DeleteObject with an expected state", func() {
 		})
 		policy := encode(acl.DefaultPolicy(meta.UserOwner(meta.UserID{ID: "carol"}), "Carol"))
 		Expect(s.SetObjectAttrs(ctx, head(ctx, instance), map[string][]byte{meta.AttrACL: policy}, nil)).To(Succeed())
-		return release
+		return func() {
+			GinkgoHelper()
+			Expect(land()).To(Succeed())
+		}
 	}
 
 	olhHead := func() *fakerados.Object { return c.Object(testDataPool, "", olhOID) }
