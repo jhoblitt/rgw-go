@@ -95,7 +95,7 @@ type Request struct {
 	// current code
 	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5026-L5029 at v19.2.7,
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5556-L5559 at v20.2.4).
-	// No handler sets it, so every change that needs it is refused.
+	// The S3 handler's PostAuthInit sets it through Env.MFA.
 	MFAVerified bool
 	// AuthRoute is AuthResult.Route, which says what of the query a read
 	// may take.

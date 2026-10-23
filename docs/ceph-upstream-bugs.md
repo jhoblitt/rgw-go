@@ -18517,9 +18517,10 @@ Every new entry adds its row to this table, in document order.
     code expires within its window, and default settings keep it out of
     every log output.
 - **Releases:** checked at v19.2.7 and v20.2.4.
-- **rgw-go:** not affected once its `x-amz-mfa` verification, which phase 2
-  Task V13d ports, never logs the header value, as the plan requires.
-  rgw-go does not read the header yet.
+- **rgw-go:** not affected. It logs nothing holding the header value, a
+  value that does not split in two included, and a check that could not
+  run by the verifier's error, which names the device and not the code
+  (`verifyMFA`, `internal/s3/request.go`).
 - **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
   searched.
 - **Found:** phase 2 Task V13a's review, 2026-10-19, reading `verify_mfa`

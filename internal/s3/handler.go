@@ -409,7 +409,7 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 	if route.Name == "put_obj" && r.Body != nil {
 		r.Body = &countingReader{r: r.Body, n: &r.BytesIn}
 	}
-	err = PostAuthInit(p, r.Identity.Tenant)
+	err = PostAuthInit(ctx, p)
 	st.named = true
 	if err != nil {
 		if !p.ExplicitTenant {

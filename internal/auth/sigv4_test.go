@@ -361,6 +361,28 @@ var _ = Describe("the signed-header rule", func() {
 		attackHeaderEntries(),
 	)
 
+	// Whoever holds a signed request or a presigned URL could otherwise add
+	// x-amz-mfa and spend a check of the requester's device with each send.
+	It("holds x-amz-mfa to the signature on both routes, and takes it unsigned only under rgw_sigv4_insecure", func(ctx SpecContext) {
+		const mfa = "SERIAL 123456"
+		for _, c := range onBothRoutes(ctx, http.MethodPut, map[string]string{"X-Amz-Mfa": mfa}) {
+			d, err := authDataV4(newRequestView(c.req), c.presigned, &cfg, signingTime)
+			Expect(err).NotTo(HaveOccurred(), "signed, presigned %t", c.presigned)
+			Expect(d.canonicalRequest).To(ContainSubstring("\nx-amz-mfa:"+mfa+"\n"), "signed, presigned %t", c.presigned)
+			Expect(d.verify(testSecret)).To(BeTrue(), "signed, presigned %t", c.presigned)
+		}
+		insecure := cfg
+		insecure.Insecure = true
+		for _, c := range onBothRoutes(ctx, http.MethodPut, nil) {
+			c.req.Header.Set("X-Amz-Mfa", mfa)
+			_, err := authDataV4(newRequestView(c.req), c.presigned, &cfg, signingTime)
+			Expect(err).To(MatchError(op.ErrAccessDenied), "added after signing, presigned %t", c.presigned)
+			d, err := authDataV4(newRequestView(c.req), c.presigned, &insecure, signingTime)
+			Expect(err).NotTo(HaveOccurred(), "added under rgw_sigv4_insecure, presigned %t", c.presigned)
+			Expect(d.verify(testSecret)).To(BeTrue(), "radosgw's insecure mode signs around it, presigned %t", c.presigned)
+		}
+	})
+
 	// radosgw files each under its x-amz- name beside the signed header,
 	// overriding or joining its value; rgw-go reads none of them.
 	DescribeTable("accepts an unsigned header under a prefix radosgw renames to x-amz-, beside the signed x-amz- one, on both routes",

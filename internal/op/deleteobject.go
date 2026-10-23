@@ -103,9 +103,11 @@ func (o *DeleteObject) Init(ctx context.Context, r *Request) error {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5528-L5556 at v20.2.4):
 // the bucket permission, then MFA for a delete of a version in a bucket with
 // MFA delete, which radosgw lets through only when the request's x-amz-mfa
-// verified. rgw-go verifies none, so it refuses every such delete, an admin's
-// included: radosgw returns the permission's refusal first, which its admin
-// override then passes without the MFA check (docs/exclusions.md).
+// verified. DeleteObject does not take the verdict the S3 handler's
+// PostAuthInit gives Request.MFAVerified, so it refuses every such delete,
+// an admin's included: radosgw returns the permission's refusal first,
+// which its admin override then passes without the MFA check
+// (docs/exclusions.md).
 // ERR_MFA_REQUIRED is no access denial op.Run overrides.
 func (o *DeleteObject) VerifyPermission(ctx context.Context, r *Request) error {
 	a := o.Action()

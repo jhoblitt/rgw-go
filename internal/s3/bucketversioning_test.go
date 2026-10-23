@@ -117,11 +117,28 @@ var _ = Describe("bucket versioning routes", func() {
 			before := w.bucket(ctx).Version
 			expectRefused(ctx, w.sendTampered("/plain?versioning", enable), before, http.StatusBadRequest, "XAmzContentSHA256Mismatch")
 		})
-		It("refuses an MFA delete change, which no x-amz-mfa verifies, with 403 AccessDenied", func(ctx SpecContext) {
+		It("refuses an MFA delete change with 403 AccessDenied where no verifier checks x-amz-mfa", func(ctx SpecContext) {
 			before := w.bucket(ctx).Version
 			body := strings.Replace(enable, "</Status>", "</Status><MfaDelete>Enabled</MfaDelete>", 1)
 			expectRefused(ctx, w.send(w.alice, http.MethodPut, "/plain?versioning", body, "x-amz-mfa", "serial 123456"),
 				before, http.StatusForbidden, "AccessDenied")
+		})
+		Context("with a verifier for alice's device", func() {
+			const mfaOn = `<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">` +
+				`<Status>Enabled</Status><MfaDelete>Enabled</MfaDelete></VersioningConfiguration>`
+			BeforeEach(func() {
+				w.alice.Info.MFAIDs = []string{mfaSerial}
+				w.env.MFA = deviceVerifier()
+			})
+			It("makes the MFA delete change a verified x-amz-mfa allows", func(ctx SpecContext) {
+				expectEmptyXML(w.send(w.alice, http.MethodPut, "/plain?versioning", mfaOn, "x-amz-mfa", "SERIAL 123456"), http.StatusOK)
+				Expect(w.bucket(ctx).Info.Flags).To(Equal(uint32(meta.BucketVersioned | meta.BucketMFAEnabled)))
+			})
+			It("refuses it with 403 AccessDenied for a code the device does not take, writing nothing", func(ctx SpecContext) {
+				before := w.bucket(ctx).Version
+				expectRefused(ctx, w.send(w.alice, http.MethodPut, "/plain?versioning", mfaOn, "x-amz-mfa", "SERIAL 654321"),
+					before, http.StatusForbidden, "AccessDenied")
+			})
 		})
 		It("refuses to suspend an object-lock bucket with 409 InvalidBucketState and radosgw's message", func(ctx SpecContext) {
 			setFlags(ctx, meta.BucketVersioned|meta.BucketObjLockEnabled)
