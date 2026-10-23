@@ -963,8 +963,6 @@ var _ = Describe("Evaluator", func() {
 						{"Swift read item, GetObjectAcl through the fallback", objectAs("anonr", "o", policy.S3GetObjectAcl, acl.PermReadACP)},
 						{"Swift read item, ListBucket", f.list(anon(), "anonr")},
 						{"Swift write item, PutObject", f.putObject(anon(), "anonw", "new")},
-						{"Swift write item, PutObjectTagging through the fallback", objectAs("anonw", "o", policy.S3PutObjectTagging, acl.PermWrite)},
-						{"Swift write item, DeleteObjectTagging through the fallback", objectAs("anonw", "o", policy.S3DeleteObjectTagging, acl.PermWrite)},
 						{"an anonymous canned write, GetObject", objectAs("anonobj", "canned", policy.S3GetObject, acl.PermRead)},
 						{"an anonymous canned write, GetObjectAcl", objectAs("anonobj", "canned", policy.S3GetObjectAcl, acl.PermReadACP)},
 						{"an anonymous canned write, PutObjectAcl", objectAs("anonobj", "canned", policy.S3PutObjectAcl, acl.PermWriteACP)},
@@ -977,6 +975,12 @@ var _ = Describe("Evaluator", func() {
 				It("serve the anonymous user without a block, as radosgw does", func() {
 					for _, c := range cases() {
 						Expect(c.err).To(Succeed(), c.name)
+					}
+				})
+				It("give the anonymous user no object WRITE through a Swift write item, where radosgw's fallback does", func() {
+					for _, a := range []policy.Action{policy.S3PutObjectTagging, policy.S3DeleteObjectTagging} {
+						Expect(objectAs("anonw", "o", a, acl.PermWrite)).To(MatchError(op.ErrAccessDenied),
+							"%s: docs/exclusions.md, \"An object ACL's WRITE grant authorizes nothing but its owner's own requests\"", a)
 					}
 				})
 

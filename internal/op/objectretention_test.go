@@ -73,6 +73,8 @@ var (
 	complianceTo3    = meta.ObjectRetention{Mode: "COMPLIANCE", RetainUntil: day(3)}
 	governanceTo1Doc = retentionDoc("GOVERNANCE", "2030-01-01T00:00:00Z")
 	legalHoldOnDoc   = legalHoldDoc("ON")
+	// bobWriteGrant is an object ACL's grant of WRITE to bob.
+	bobWriteGrant = acl.Grant{Type: acl.GranteeCanonUser, ID: "bob", Name: "Bob", Permission: acl.PermWrite}
 )
 
 // markerHeads is an object store whose StatObject reads the key named name,
@@ -726,6 +728,69 @@ var _ = Describe("object retention and legal hold ops", func() {
 			Expect(err).NotTo(HaveOccurred())
 			return got
 		}
+
+		Describe("an object ACL's WRITE grant", func() {
+			// grantWrite gives k alice's FULL_CONTROL and grants beside it.
+			grantWrite := func(ctx context.Context, grants ...acl.Grant) {
+				GinkgoHelper()
+				p := acl.DefaultPolicy(f.alice.Owner, "Alice")
+				for _, g := range grants {
+					p.ACL.AddGrant(g)
+				}
+				setAttr(ctx, lockCurrent, meta.AttrACL, encodedPolicy(p))
+			}
+			allUsers := func(perm acl.Permission) acl.Grant {
+				return acl.Grant{Type: acl.GranteeGroup, Group: acl.GroupAllUsers, Permission: perm}
+			}
+			// requests are the lock writes an object ACL's WRITE could reach.
+			requests := func(ctx context.Context, id op.Identity) map[string]error {
+				GinkgoHelper()
+				run := func(o op.Op, doc string) error {
+					r := req(http.MethodPut, lockCurrent, doc)
+					r.Identity = id
+					return op.Run(ctx, o, r)
+				}
+				return map[string]error{
+					"a shorter retention with the bypass": run(&op.PutObjectRetention{BypassHeader: true}, governanceTo1Doc),
+					"COMPLIANCE to 2554":                  run(&op.PutObjectRetention{BypassHeader: true}, retentionDoc("COMPLIANCE", "2554-01-01T00:00:00Z")),
+					"the legal hold OFF":                  run(&op.PutObjectLegalHold{}, legalHoldDoc("OFF")),
+				}
+			}
+			BeforeEach(func(ctx SpecContext) { setAttr(ctx, lockCurrent, meta.AttrObjectLegalHold, legalHoldBytes("ON")) })
+			expectUnchanged := func(ctx context.Context) {
+				GinkgoHelper()
+				Expect(stored(ctx)).To(Equal(governanceTo3))
+				Expect(stat(ctx, lockCurrent).Attrs).To(HaveKeyWithValue(meta.AttrObjectLegalHold, legalHoldBytes("ON")))
+			}
+
+			DescribeTable("refuses each lock write to a grantee who is not the object's owner, writing nothing",
+				func(ctx SpecContext, id func() op.Identity, grants ...acl.Grant) {
+					grantWrite(ctx, grants...)
+					for name, err := range requests(ctx, id()) {
+						Expect(err).To(MatchError(op.ErrAccessDenied), name)
+					}
+					expectUnchanged(ctx)
+				},
+				Entry("the anonymous user, through public-read-write's AllUsers WRITE", op.Anonymous,
+					allUsers(acl.PermRead), allUsers(acl.PermWrite)),
+				Entry("bob, through a named WRITE grant", func() op.Identity { return f.bob }, bobWriteGrant),
+				Entry("bob, through a named FULL_CONTROL grant", func() op.Identity { return f.bob },
+					acl.Grant{Type: acl.GranteeCanonUser, ID: "bob", Name: "Bob", Permission: acl.PermFullControl}),
+			)
+			It("refuses bob the bypass his WRITE grant would give, when a policy allows him the retention alone", func(ctx SpecContext) {
+				grantWrite(ctx, bobWriteGrant)
+				setPolicy(ctx, statement("Allow", bob, "s3:PutObjectRetention", "arn:aws:s3:::plain/k", ""))
+				expectError(op.Run(ctx, &op.PutObjectRetention{BypassHeader: true}, asBob(req(http.MethodPut, lockCurrent, governanceTo1Doc))),
+					op.ErrAccessDenied, msgShortens)
+				expectUnchanged(ctx)
+			})
+			It("serves the object's owner under the same ACL", func(ctx SpecContext) {
+				grantWrite(ctx, allUsers(acl.PermWrite), bobWriteGrant)
+				for name, err := range requests(ctx, f.alice) {
+					Expect(err).NotTo(HaveOccurred(), name)
+				}
+			})
+		})
 
 		It("lets bob shorten a GOVERNANCE retention with the header and both actions on the object", func(ctx SpecContext) {
 			setPolicy(ctx, statement("Allow", bob, "s3:PutObjectRetention", "arn:aws:s3:::plain/k", ""),
