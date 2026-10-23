@@ -1558,6 +1558,29 @@ review and verified against the tree.
   still there. The purges' refusal of a versioned bucket ("A purging bucket
   removal refuses a bucket whose versioning was ever enabled") comes before
   this listing.
+- **The admin bucket removal with bypass-gc leaves a versioned key's OLH
+  head to the ordinary purge.** `DELETE /admin/bucket?bypass-gc=true`
+  releases a version's tail stripes and removes its head as radosgw's
+  `remove_bypass_gc` does, both gateways leaving the version's index entry
+  marked gone under the removal's pending tag, and the ordinary purge that
+  follows then removes the version by its instance, as radosgw's does. A key's OLH
+  head object, which holds the key's OLH and the null version's data, is
+  skipped instead: the ordinary purge removes the null version through the
+  OLH and queues its tail stripes for the garbage collector. radosgw reads
+  that head without following the OLH, releases the null version's tail
+  stripes, and removes the head object whole, its OLH attributes with it,
+  before its ordinary purge, which writes a delete marker for the null
+  version rather than removing it (`docs/ceph-upstream-bugs.md`, "radosgw's
+  bucket purge writes a delete marker in place of a versioned bucket's null
+  version")
+  ([rgw_sal_rados.cc:513-582](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L513-L582),
+  [rgw_sal_rados.cc:534-603](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L534-L603);
+  [rgw_rados.cc:10906-10908](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L10906-L10908),
+  [rgw_rados.cc:11647-11649](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L11647-L11649)).
+  So the null version's tail stripes wait for the garbage collector, where
+  radosgw frees them at once. The purges' refusal of a versioned bucket
+  ("A purging bucket removal refuses a bucket whose versioning was ever
+  enabled") comes before this pass.
 - **The admin account routes and the RADOS account store differ from
   radosgw in eight ways.** On `/admin/account` (`rgw_rest_account.cc` and
   `rgw_account.cc` at v19.2.6 and v20.2.4) and in the RADOS driver's

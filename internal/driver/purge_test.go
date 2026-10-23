@@ -14,6 +14,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gbytes"
 
 	"github.com/jhoblitt/rgw-go/internal/cls/refcount"
 	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
@@ -463,6 +464,198 @@ var _ = Describe("PurgeBypassGC", func() {
 
 			Expect(s.PurgeBypassGC(ctx, rec)).To(Succeed())
 			Expect(readBack(ctx, other, "copy")).To(Equal(bodies["b/mp"]))
+		})
+	})
+
+	Describe("on a versioned bucket", func() {
+		putVersion := func(ctx context.Context, name, instance string, size int) {
+			GinkgoHelper()
+			body := bytes.Repeat([]byte(name[:1]), size)
+			_, err := s.PutObject(ctx, rec, meta.ObjKey{Name: name, Instance: instance}, bytes.NewReader(body),
+				op.PutParams{Attrs: attrsWithACL(initiator), Size: int64(size)})
+			Expect(err).NotTo(HaveOccurred(), "%s version %q", name, instance)
+			settle(s)
+		}
+		// setFlags sets flags on b, with a bucket quota of its own that lifts
+		// the period's limit of seven objects.
+		setFlags := func(ctx context.Context, flags uint32) {
+			GinkgoHelper()
+			cur, err := s.GetBucket(ctx, "", "b")
+			Expect(err).NotTo(HaveOccurred())
+			cur.Info.Flags |= flags
+			cur.Info.Quota = meta.Quota{MaxSize: -1, MaxObjects: -1, Enabled: true}
+			Expect(s.PutBucketInfo(ctx, cur)).To(Succeed())
+			rec, err = s.GetBucket(ctx, "", "b")
+			Expect(err).NotTo(HaveOccurred())
+		}
+		deleteKey := func(ctx context.Context, key meta.ObjKey) {
+			GinkgoHelper()
+			_, err := s.DeleteObject(ctx, rec, key, op.DeleteParams{})
+			Expect(err).NotTo(HaveOccurred(), "the delete of %s version %q", key.Name, key.Instance)
+			settle(s)
+		}
+		versionHeadOID := func(name, instance string) string {
+			return rec.Info.Bucket.Marker + "_" + meta.ObjKey{Name: name, Instance: instance}.OID()
+		}
+		// versionTails lists the stripes past the head of name's version.
+		versionTails := func(ctx context.Context, name, instance string) []string {
+			GinkgoHelper()
+			st, err := s.StatObject(ctx, rec, meta.ObjKey{Name: name, Instance: instance})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Manifest).NotTo(BeNil(), "%s version %q", name, instance)
+			stripes, err := st.Manifest.Stripes()
+			Expect(err).NotTo(HaveOccurred())
+			var oids []string
+			for _, sp := range stripes {
+				if oid := sp.OID(); oid != versionHeadOID(name, instance) {
+					oids = append(oids, oid)
+				}
+			}
+			Expect(oids).NotTo(BeEmpty(), "%s version %q has tails", name, instance)
+			return oids
+		}
+		// leftovers lists the omap keys of rec's index shards but an entry, plain
+		// or a version's instance entry, stored as not existing under a pending
+		// removal, which the bypass-gc pass's removal of a head leaves as
+		// delete_obj_aio leaves it and the bucket's removal takes with its
+		// shards: every list and OLH entry, and every entry that exists. A
+		// version whose head the pass removed keeps its instance entry so, as
+		// the replay of its unlink finds no head and sends no index op.
+		leftovers := func() []string {
+			keys := []string{}
+			for oid, o := range c.Objects(rookIndexPool, "") {
+				if base := ".dir." + rec.Info.Bucket.ID; oid != base && !strings.HasPrefix(oid, base+".") {
+					continue
+				}
+				for k := range o.Omap {
+					if en, ok := c.Entry(rookIndexPool, "", oid, k); ok && !strings.HasPrefix(k, "\x801001_") && !en.Exists && len(en.PendingMap) > 0 {
+						continue
+					}
+					keys = append(keys, k)
+				}
+			}
+			return keys
+		}
+		// emptyIndex checks that rec lists nothing, keeps no entry leftovers
+		// counts, and that logs, the spec's log, records no failed index
+		// completion.
+		emptyIndex := func(ctx context.Context, logs *gbytes.Buffer) {
+			GinkgoHelper()
+			settle(s)
+			res, err := s.ListObjects(ctx, rec, op.ListObjectsParams{ListVersions: true, MaxKeys: 1000})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.Entries).To(BeEmpty(), "the listing with versions")
+			Expect(leftovers()).To(BeEmpty(), "no list, instance or OLH entry, but those the bypass-gc pass leaves marked gone")
+			Expect(string(logs.Contents())).NotTo(ContainSubstring("completion failed"))
+		}
+		captureLogs := func() *gbytes.Buffer {
+			logs := gbytes.NewBuffer()
+			DeferCleanup(driver.CaptureLog(logs))
+			return logs
+		}
+
+		It("releases a version's tails directly and leaves its OLH, its markers and the null version to the ordinary purge, which empties the index", func(ctx SpecContext) {
+			logs := captureLogs()
+			putObject(ctx, rec, "pre", 9<<20)
+			preTails := tailOIDs(ctx, rec, "pre")
+			putObject(ctx, rec, "k", 9<<20)
+			nullTails := tailOIDs(ctx, rec, "k")
+			setFlags(ctx, meta.BucketVersioned)
+			putVersion(ctx, "k", "v1", 9<<20)
+			v1Tails := versionTails(ctx, "k", "v1")
+			putVersion(ctx, "k", "v2", 10)
+			deleteKey(ctx, meta.ObjKey{Name: "k"})
+			putVersion(ctx, "m", "m1", 10)
+			setFlags(ctx, meta.BucketVersionsSuspended)
+			deleteKey(ctx, meta.ObjKey{Name: "m"})
+			shard := indexShardOID(rec, "k")
+			c.ResetCounters()
+
+			Expect(s.PurgeBypassGC(ctx, rec)).To(Succeed(), "an OLH head is skipped, not refused")
+			settle(s)
+			for _, oid := range append(slices.Clone(v1Tails), preTails...) {
+				Expect(c.Object(testDataPool, "", oid)).To(BeNil(), "%s released directly", oid)
+			}
+			Expect(c.Object(testDataPool, "", headOID(rec, "pre"))).To(BeNil(), "the pre-versioning object's head")
+			Expect(c.Object(testDataPool, "", versionHeadOID("k", "v1"))).To(BeNil(), "v1's head")
+			en, ok := c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k", Instance: "v1"})
+			Expect(ok).To(BeTrue(), "v1's instance entry, which delete_obj_aio's completion leaves under the prepare's tag")
+			Expect([]any{en.Exists, len(en.PendingMap)}).To(Equal([]any{false, 1}))
+			Expect(c.Writes(testDataPool, "", headOID(rec, "k"))).To(BeZero(), "k's OLH head, holding the null version, untouched")
+			Expect(c.Writes(testDataPool, "", headOID(rec, "m"))).To(BeZero(), "m's OLH head, under its null delete marker, untouched")
+			for _, oid := range nullTails {
+				Expect(c.Object(testDataPool, "", oid)).NotTo(BeNil(), "%s, the null version's, left", oid)
+			}
+			Expect(gcOIDs()).To(BeEmpty())
+
+			Expect(op.PurgeObjects(ctx, s.Env(), rec)).To(Succeed())
+			emptyIndex(ctx, logs)
+			Expect(dataObjects(rec)).To(ConsistOf(nullTails), "every head gone, the null version's tails left for the GC")
+			Expect(gcOIDs()).To(ConsistOf(nullTails), "the null version's tails queued, v1's released before and so not queued")
+			Expect(s.DeleteBucket(ctx, rec)).To(Succeed(), "no BucketNotEmpty")
+		})
+
+		It("is followed by an ordinary purge that leaves no version behind when its pages end on a key's versions", func(ctx SpecContext) {
+			logs := captureLogs()
+			setFlags(ctx, meta.BucketVersioned)
+			for i := range 1003 {
+				putVersion(ctx, "k", fmt.Sprintf("v%04d", i), 1)
+			}
+			putVersion(ctx, "z", "z1", 1)
+
+			Expect(op.PurgeObjects(ctx, s.Env(), rec)).To(Succeed())
+			emptyIndex(ctx, logs)
+			Expect(dataObjects(rec)).To(BeEmpty())
+			Expect(s.DeleteBucket(ctx, rec)).To(Succeed())
+		})
+
+		// k's list entries name instance entries that are gone, so its
+		// versions list but each removal answers NoSuchKey; m's names sort
+		// after k's on k's shard, so the listing reaches them past k.
+		It("is followed by an ordinary purge that steps past a key holding more than a page of versions it cannot remove", func(ctx SpecContext) {
+			setFlags(ctx, meta.BucketVersioned)
+			shard := indexShardOID(rec, "k")
+			for i := range 1001 {
+				en := rgwcls.NewDirEntry()
+				en.Key = rgwcls.ObjKey{Name: "k", Instance: fmt.Sprintf("orphan%04d", i)}
+				en.Flags, en.VersionedEpoch, en.Exists = rgwcls.FlagVer, uint64(2+i), true
+				c.Object(rookIndexPool, "", shard).Omap[rgwcls.ListIndexKey(en.Key, en.VersionedEpoch)] = encode(en)
+			}
+			var later []string
+			for i := 0; len(later) < 3; i++ {
+				if name := fmt.Sprintf("m%d", i); indexShardOID(rec, name) == shard {
+					later = append(later, name)
+					putVersion(ctx, name, "v1", 1)
+				}
+			}
+
+			Expect(op.PurgeObjects(ctx, s.Env(), rec)).To(Succeed())
+			settle(s)
+			for _, name := range later {
+				Expect(c.Object(testDataPool, "", versionHeadOID(name, "v1"))).To(BeNil(), "%s's version, past k", name)
+			}
+			res, err := s.ListObjects(ctx, rec, op.ListObjectsParams{ListVersions: true, AllowUnordered: true, MaxKeys: 5000})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.Entries).To(HaveLen(1001))
+			Expect(res.Entries).To(HaveEach(HaveField("Key.Name", "k")), "only k's versions left")
+			Expect(s.DeleteBucket(ctx, rec)).To(MatchError(op.ErrBucketNotEmpty))
+		})
+
+		It("leaves the tails a version shares with a copy in another bucket to the copy", func(ctx SpecContext) {
+			other := createBucket(ctx, "other")
+			setFlags(ctx, meta.BucketVersioned)
+			putVersion(ctx, "k", "v1", 9<<20)
+			shared := versionTails(ctx, "k", "v1")
+			copyObject(ctx, rec, "k", other, "copy")
+			Expect(tailOIDs(ctx, other, "copy")).To(Equal(shared), "the copy shares v1's tails")
+
+			Expect(s.PurgeBypassGC(ctx, rec)).To(Succeed())
+			settle(s)
+			Expect(c.Object(testDataPool, "", versionHeadOID("k", "v1"))).To(BeNil(), "v1's head")
+			for _, oid := range shared {
+				Expect(c.Object(testDataPool, "", oid)).NotTo(BeNil(), "%s, which the copy still holds", oid)
+			}
+			Expect(readBack(ctx, other, "copy")).To(Equal(bytes.Repeat([]byte("k"), 9<<20)))
 		})
 	})
 
