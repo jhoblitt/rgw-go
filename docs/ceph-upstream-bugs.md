@@ -343,6 +343,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's DeleteBucketCors refuses, and keeps, a CORS configuration that does not decode](#radosgws-deletebucketcors-refuses-and-keeps-a-cors-configuration-that-does-not-decode) | none | none | ✓ |
 | [cls_rgw's bucket_list ignores its start key when it cannot read that key's instance entry](#cls_rgws-bucket_list-ignores-its-start-key-when-it-cannot-read-that-keys-instance-entry) | pending | pending | ✓ |
 | [Squid's radosgw serves a request with no Host as S3 when s3website outranks s3](#squids-radosgw-serves-a-request-with-no-host-as-s3-when-s3website-outranks-s3) | [#66748](https://tracker.ceph.com/issues/66748), [#66820](https://tracker.ceph.com/issues/66820) | [ceph/ceph#58339](https://github.com/ceph/ceph/pull/58339) |  |
+| [radosgw keeps the hostnames a realm reload drops until it restarts](#radosgw-keeps-the-hostnames-a-realm-reload-drops-until-it-restarts) | pending | pending | ✓ |
 | [radosgw sends a public access block after GetPublicAccessBlock's error document, past its Content-Length](#radosgw-sends-a-public-access-block-after-getpublicaccessblocks-error-document-past-its-content-length) | pending | pending | ✓ |
 | [radosgw's ?layout dereferences a null manifest](#radosgws-layout-dereferences-a-null-manifest) | pending | pending | ✓ |
 | [radosgw's ?layout hands a cloud tier's S3 secret to any holder of admin=read](#radosgws-layout-hands-a-cloud-tiers-s3-secret-to-any-holder-of-adminread) | pending | pending | ✓ |
@@ -19582,6 +19583,39 @@ Every new entry adds its row to this table, in document order.
   Reef's, #66821, was Rejected (checked 2026-10-20).
 - **Found:** phase 2 unit B, Task BC-13's review, 2026-10-20; derived from
   the source, not reproduced.
+
+## radosgw keeps the hostnames a realm reload drops until it restarts
+
+- **Kind:** defect, S3-correctness; found by us. Unfixed at v19.2.7 and
+  v20.2.4. Derived from the source, not reproduced.
+- **Evidence:**
+  - A period commit notifies the realm's control object to reload the
+    gateway ([realm.cc:329-346](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/config/realm.cc#L329-L346), [realm.cc:329-346](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/config/realm.cc#L329-L346)), and the realm reloader schedules a reload
+    on the notification ([rgw_realm_reloader.cc:61-85](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_realm_reloader.cc#L61-L85), [rgw_realm_reloader.cc:61-85](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_realm_reloader.cc#L61-L85)).
+  - The reload builds a new driver and runs `rgw_rest_init` again with the
+    new period's zonegroup ([rgw_realm_reloader.cc:181](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_realm_reloader.cc#L181), [rgw_realm_reloader.cc:186](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_realm_reloader.cc#L186)).
+  - `rgw_rest_init` fills two static sets, `hostnames_set` and
+    `hostnames_s3website_set` ([rgw_rest.cc:182-183](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L182-L183), [rgw_rest.cc:182-183](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L182-L183)), by inserting
+    `rgw_dns_name`'s names and the zonegroup's hostnames, then
+    `rgw_dns_s3website_name` and the zonegroup's website hostnames
+    ([rgw_rest.cc:215-238](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L215-L238), [rgw_rest.cc:215-238](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L215-L238)). Nothing clears either set: past these lines, only
+    `RGWREST::preprocess`'s lookups read them ([rgw_rest.cc:2070-2145](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2070-L2145), [rgw_rest.cc:2082-2157](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2082-L2157)).
+- **Trigger:** a period commit that removes a hostname or a website
+  hostname from the gateway's zonegroup while radosgw runs.
+- **Impact:** the S3-correctness class, minor, not security-relevant. Until
+  it restarts, radosgw still finds a Host in a removed name. It takes the
+  Host's subdomain as the bucket, or serves the request as a website one for
+  a removed website name, and the name still counts toward the configured
+  names that let a Host name the bucket whole. A name the commit adds takes
+  effect at once.
+- **Releases:** v19.2.7 and v20.2.4. Not checked on main.
+- **rgw-go:** differs: it reads both sets of names once, at startup, and has
+  no realm reload, so a period commit's hostnames, added or removed, take
+  effect at its next restart (`s3Config`, `internal/cli/serve.go`;
+  `docs/exclusions.md`, "The hostnames are read at startup only").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 unit B, Task BC-13c's review, 2026-10-23, reading where
+  the hostname sets are filled. Derived from the source, not reproduced.
 
 ## radosgw sends a public access block after GetPublicAccessBlock's error document, past its Content-Length
 
