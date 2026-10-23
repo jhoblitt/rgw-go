@@ -456,6 +456,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's otp metadata put stores a device without a seed, whose codes anyone can make](#radosgws-otp-metadata-put-stores-a-device-without-a-seed-whose-codes-anyone-can-make) | pending | pending | ✓ |
 | [radosgw's otp metadata put ignores update-type](#radosgws-otp-metadata-put-ignores-update-type) | pending | pending | ✓ |
 | [cls_otp never verifies a device whose step is longer than the clock's seconds](#cls_otp-never-verifies-a-device-whose-step-is-longer-than-the-clocks-seconds) | pending | pending | ✓ |
+| [radosgw's versioned copy drops its tail references when its link fails](#radosgws-versioned-copy-drops-its-tail-references-when-its-link-fails) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -26798,3 +26799,60 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task WP-19's fix round 1, 2026-10-23, checking at both
   tags its review's claim that the step's wrap removes the attempt limit.
   Derived from the source, not reproduced.
+
+## radosgw's versioned copy drops its tail references when its link fails
+
+- **Kind:** defect, data corruption: a CopyObject into a versioned bucket
+  that shares its source's tails, and whose `set_olh` fails with anything
+  but a timeout, drops the references it took on those tails, though the
+  version's head names them and its link may have landed, current. Not
+  security-relevant: it needs an index or OSD failure. Unreproduced:
+  derived from the source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`.
+  - `copy_obj` takes a refcount reference under the copy's tag on every
+    tail it shares
+    ([rgw_rados.cc:4942-4986](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4942-L4986) at v19.2.7,
+    [rgw_rados.cc:5170-5214](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5170-L5214) at v20.2.4),
+    then writes the head with the request's OLH epoch, 0 for every S3 copy,
+    and on any failure of `write_meta` jumps to `done_ret`
+    ([rgw_rados.cc:5010-5018](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5010-L5018) at v19.2.7,
+    [rgw_rados.cc:5238-5246](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5238-L5246) at v20.2.4),
+    which puts every reference whose get succeeded
+    ([rgw_rados.cc:5022-5061](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5022-L5061) at v19.2.7,
+    [rgw_rados.cc:5250-5289](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5250-L5289) at v20.2.4).
+  - `_do_write_meta` writes a versioned op's head and sends its index
+    completion, then returns `set_olh`'s failure
+    ([rgw_rados.cc:3332-3375](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3332-L3375) at v19.2.7,
+    [rgw_rados.cc:3453-3496](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3453-L3496) at v20.2.4),
+    which fails both when the link fails and when the replay after a link
+    that landed fails other than with ECANCELED
+    ([rgw_rados.cc:8715-8759](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8715-L8759) at v19.2.7,
+    [rgw_rados.cc:9461-9505](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9461-L9505) at v20.2.4).
+    Nothing removes the version.
+  - The tails then hold only their writer's implicit reference. Deleting or
+    overwriting the source queues them for the GC under the source's tail
+    tag, and the GC's implicit put removes them (`src/cls/refcount/`,
+    [cls_refcount.cc:112-132](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/refcount/cls_refcount.cc#L112-L132) at v19.2.7,
+    [cls_refcount.cc:112-132](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/refcount/cls_refcount.cc#L112-L132) at v20.2.4).
+  - The sink is `write_meta`'s failure after its head landed, which every
+    caller reads as a write that wrote nothing. "[radosgw's versioned
+    PutObject deletes its tails when its link
+    fails](#radosgws-versioned-putobject-deletes-its-tails-when-its-link-fails)"
+    is the same sink's input for a PUT and for the copy that streams its
+    source; "[radosgw's copy drops its tail references after a head write
+    that timed out](#radosgws-copy-drops-its-tail-references-after-a-head-write-that-timed-out)"
+    is `done_ret`'s other input, the timeout.
+- **Impact:** once the source goes, the copy's version reads only its head
+  chunk and fails past it, on a GET of the key when its link had landed and
+  through its version id otherwise. A copy whose bytes fit its head is not
+  affected.
+- **Releases:** v19.2.7 and v20.2.4; main was not checked.
+- **rgw-go:** differs: once a versioned copy's head is written its
+  references stay whatever its completion or its link answers, and a
+  removal of the version queues the tails under the copy's tag, which drops
+  them (`shareTails`, `internal/driver/copy.go`; `docs/exclusions.md`, "A
+  versioned write whose link fails keeps its tails"). Pinned in
+  `internal/driver/copy_versioned_test.go`.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task V7b, 2026-10-23, tracing what a failed link
+  leaves of a copy's references; derived from the source, not reproduced.
