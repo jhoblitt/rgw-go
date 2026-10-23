@@ -27537,7 +27537,11 @@ Every new entry adds its row to this table, in document order.
   that refusal, their listing loop names an entry listed without an
   instance `null` on such a bucket, so its delete removes the version
   (`PurgeObjects`, `internal/op/adminpurge.go`; pinned in
-  `internal/op/adminpurge_test.go`).
+  `internal/op/adminpurge_test.go`). Its admin object removal follows the
+  floors: the store's delete it makes, of the plain key, writes a delete
+  marker on a versioned bucket (`internal/driver/adminobject_test.go`),
+  though the route still refuses such a bucket (`versioningUnserved`,
+  `internal/op/adminbucket.go`).
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V8b, 2026-10-23, reading how radosgw's listing
   names a null version for its purge; derived from the source, not

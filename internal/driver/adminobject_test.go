@@ -9,6 +9,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -106,5 +107,63 @@ var _ = Describe("RemoveObjectAdmin over the RADOS store", func() {
 		Entry("on a bucket whose versioning is enabled", uint32(meta.BucketVersioned)),
 		Entry("on a bucket whose versioning is suspended, where the marker is the null version", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended)),
 		Entry("on an object-lock bucket, which radosgw creates versioned", uint32(meta.BucketVersioned|meta.BucketObjLockEnabled)),
+	)
+
+	// The store's half of the removal is the delete RemoveObjectAdmin makes:
+	// the plain key with no params, so the bucket's versioning decides, as
+	// RadosObject::delete_object passes it, with no marker owner, which it
+	// never sets
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2928-L2949 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3766-L3787 at v20.2.4).
+	DescribeTable("writes a delete marker with no owner through the store's delete the removal makes on a versioned bucket",
+		func(ctx SpecContext, flags uint32, suspended, held bool) {
+			cur, err := s.GetBucket(ctx, "", "b")
+			Expect(err).NotTo(HaveOccurred())
+			cur.Info.Flags |= flags
+			Expect(s.PutBucketInfo(ctx, cur)).To(Succeed())
+			cur, err = s.GetBucket(ctx, "", "b")
+			Expect(err).NotTo(HaveOccurred())
+			if held {
+				head := c.Object(testDataPool, "", headOID())
+				head.Xattrs[meta.AttrObjectRetention] = encode(meta.ObjectRetention{Mode: "COMPLIANCE", RetainUntil: time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)})
+				head.Xattrs[meta.AttrObjectLegalHold] = encode(meta.ObjectLegalHold{Status: "ON"})
+			}
+			before := dataObjects()
+
+			res, err := s.DeleteObject(ctx, cur, meta.ObjKey{Name: "k"}, op.DeleteParams{})
+			Expect(err).NotTo(HaveOccurred())
+			settle(s)
+			listed := c.ListEntries(rookIndexPool, "", indexShardOID(cur, "k"), "k")
+			Expect(listed).NotTo(BeEmpty())
+			marker := listed[0]
+			Expect(marker.Flags&(rgwcls.FlagDeleteMarker|rgwcls.FlagCurrent)).To(Equal(rgwcls.FlagDeleteMarker|rgwcls.FlagCurrent), "the current version")
+			Expect(marker.Meta).To(Equal(rgwcls.DirEntryMeta{Mtime: time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)}),
+				"no owner or display name, and the delete time")
+			head := c.Object(testDataPool, "", headOID())
+			Expect(head).NotTo(BeNil(), "k's OLH head")
+			if suspended {
+				Expect(res).To(Equal(&op.DeleteObjectResult{VersionID: meta.NullInstance, DeleteMarker: true}))
+				Expect(listed).To(HaveLen(1), "the null delete marker in the object's place")
+				Expect(head.Data).To(BeEmpty(), "the object's data, which the marker's replay removed")
+				Expect(allGCEntries(c)).To(HaveLen(1), "its tails queued for the GC")
+				return
+			}
+			Expect(res.DeleteMarker).To(BeTrue())
+			Expect(res.VersionID).NotTo(Or(BeEmpty(), Equal(meta.NullInstance)), "a fresh instance")
+			Expect(listed).To(HaveLen(2), "the marker over the object, now the noncurrent null version")
+			Expect([]string{marker.Key.Instance, listed[1].Key.Instance}).To(Equal([]string{res.VersionID, ""}))
+			Expect(dataObjects()).To(HaveLen(len(before)), "the object's head and tails kept")
+			Expect(head.Data).NotTo(BeEmpty(), "the null version's data in the OLH head")
+			if held {
+				Expect(head.Xattrs).To(SatisfyAll(HaveKey(meta.AttrObjectRetention), HaveKey(meta.AttrObjectLegalHold)),
+					"the null version keeps its retention and legal hold")
+			}
+			Expect(allGCEntries(c)).To(BeEmpty())
+		},
+		Entry("on a bucket whose versioning is enabled, under a fresh instance", uint32(meta.BucketVersioned), false, false),
+		Entry("on a bucket whose versioning is suspended, as the null version that replaces the object",
+			uint32(meta.BucketVersioned|meta.BucketVersionsSuspended), true, false),
+		Entry("on an object-lock bucket, over an object under compliance retention and a legal hold, neither of which the delete checks",
+			uint32(meta.BucketVersioned|meta.BucketObjLockEnabled), false, true),
 	)
 })
