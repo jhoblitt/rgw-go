@@ -166,16 +166,24 @@ func (s *Store) namedVersion(ctx context.Context, st *op.ObjectState) (*op.Objec
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L352-L365 at v20.2.4),
 // read through bi_get on the shard of key's name.
 func (s *Store) listed(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, en rgw.DirEntry) (bool, error) {
+	_, ok, err := s.listEntry(ctx, rec, key, en)
+	return ok, err
+}
+
+// listEntry is listed's read, answering the list entry itself.
+func (s *Store) listEntry(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, en rgw.DirEntry) (rgw.DirEntry, bool, error) {
 	x := s.newOLHIndex(rec, key).x
 	list := rgw.ObjKey{Name: rgw.ListIndexKey(en.Key, en.VersionedEpoch)}
+	var le rgw.DirEntry
 	err := x.readShard(ctx, func(sh indexShard) error {
-		_, err := x.dirEntry(ctx, sh, list, rgw.BIIndexPlain)
+		var err error
+		le, err = x.dirEntry(ctx, sh, list, rgw.BIIndexPlain)
 		return err
 	})
 	if errors.Is(err, radosclient.ErrNotFound) {
-		return false, nil
+		return rgw.DirEntry{}, false, nil
 	}
-	return err == nil, err
+	return le, err == nil, err
 }
 
 // unfollowedHeads is the HeadStater a listing checks a pending entry's head

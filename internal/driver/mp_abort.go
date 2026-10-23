@@ -158,7 +158,7 @@ func (s *Store) abortRound(ctx context.Context, up *op.Upload, ref mpRef, a *abo
 		d.deadline = s.abortMargin()
 	}
 	if tag, ok := ms.attrs[attrMPCompletionTag]; ok {
-		if inst, ok := ms.attrs[attrMPCompletionInstance]; ok && string(inst) != nullInstance {
+		if inst, ok := ms.attrs[attrMPCompletionInstance]; ok && string(inst) != meta.NullInstance {
 			return fmt.Errorf("%w: upload %s was completed into version %q of %s, which the abort does not read",
 				op.ErrNotImplemented, up.ID, inst, up.Key.Name)
 		}
