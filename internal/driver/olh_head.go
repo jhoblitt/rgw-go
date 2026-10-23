@@ -352,11 +352,21 @@ func (s *Store) followOLH(ctx context.Context, head *op.ObjectState, update func
 // to remove. Those versions are removed through idx before the head op, the
 // entries carrying opTag guarded on expectTag when it is not nil; one already
 // gone is passed over, and any other failure stops the replay before the head
-// op, as radosgw's does. After the head op, finishOLHLog clears the OLH
-// marked for removal, and otherwise trims the log to the last epoch. It
-// returns the last epoch whenever the head op landed, and 0 when the replay
-// wrote nothing; a tail that did not finish comes with the last epoch and an
-// olhTailError naming the step left.
+// op, as radosgw's does. A removal of the null version that a later LINK_OLH
+// of null data follows, in log or, with nullLinkLater, on a later page of the
+// replay (replayPass), is dropped: the null version's removal names its key,
+// not the data it replaced
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1806-L1810 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1970-L1971 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1947-L1951 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2117-L2118 at v20.2.4),
+// and that link's write has put its own data in the head the two share,
+// where radosgw's replay removes it (docs/exclusions.md, "A replay keeps the
+// null data a later null link names"). After the head op, finishOLHLog
+// clears the OLH marked for removal, and otherwise trims the log to the last
+// epoch. It returns the last epoch whenever the head op landed, and 0 when
+// the replay wrote nothing; a tail that did not finish comes with the last
+// epoch and an olhTailError naming the step left.
 //
 // A removal expectTag refuses (errRemovalRefused, olhIndex) does not stop the
 // replay: it is passed over, and once the head op and the clear or trim have
@@ -369,7 +379,7 @@ func (s *Store) followOLH(ctx context.Context, head *op.ObjectState, update func
 // head was read with, where radosgw compares olh.ver in the OSD's u64 mode,
 // which librados' C API cannot send (docs/cgo-limitations.md). An apply that
 // another writer has moved past answers ECANCELED and writes nothing.
-func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectState, log map[uint64][]rgw.OLHLogEntry, opTag string, expectTag []byte) (uint64, error) {
+func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectState, log map[uint64][]rgw.OLHLogEntry, opTag string, expectTag []byte, nullLinkLater bool) (uint64, error) {
 	if len(log) == 0 {
 		return 0, nil
 	}
@@ -405,6 +415,9 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 			case rgw.OLHOpRemoveInstance:
 				removals = append(removals, e)
 			case rgw.OLHOpLinkOLH:
+				if nullDataLink(e) {
+					removals = slices.DeleteFunc(removals, func(r rgw.OLHLogEntry) bool { return r.Key.Instance == "" })
+				}
 				if linkEpoch < epoch || cur.Instance == "" || cur.Instance > e.Key.Instance {
 					link, remove = true, false
 					cur, deleteMarker = e.Key, e.DeleteMarker
@@ -417,11 +430,15 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 			w.RmXattr(meta.AttrOLHPendingPrefix + e.OpTag)
 		}
 	}
+	if nullLinkLater {
+		removals = slices.DeleteFunc(removals, func(r rgw.OLHLogEntry) bool { return r.Key.Instance == "" })
+	}
 	if link {
 		target := meta.OLHInfo{Target: meta.Obj{Bucket: head.Bucket.Info.Bucket, Key: indexToObjKey(cur)}, Removed: deleteMarker}
 		w.SetXattr(meta.AttrOLHInfo, encodeAt(target, s.release))
 	}
 	var refused error
+	var keepHead bool
 	for _, e := range removals {
 		var guard []byte
 		if expectTag != nil && e.OpTag == opTag {
@@ -433,6 +450,7 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 		case err == nil, errors.Is(err, radosclient.ErrNotFound), errors.Is(err, op.ErrNoSuchKey):
 		case guard != nil && errors.Is(err, errRemovalRefused):
 			refused = errors.Join(refused, fmt.Errorf("replaying the olh log of %s: removing version %q: %w", what, key.Instance, err))
+			keepHead = keepHead || key.Instance == ""
 		default:
 			return 0, fmt.Errorf("replaying the olh log of %s: removing version %q: %w", what, key.Instance, err)
 		}
@@ -440,7 +458,8 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 	if err := s.writeOLHHead(ctx, head, w); err != nil {
 		return 0, err
 	}
-	if err := s.finishOLHLog(ctx, idx, head, olhLogTail{last: last, clear: remove, keep: refused != nil, opTag: opTag}); err != nil {
+	t := olhLogTail{last: last, clear: remove, keep: refused != nil, keepHead: keepHead, opTag: opTag}
+	if err := s.finishOLHLog(ctx, idx, head, t); err != nil {
 		return last, errors.Join(err, refused)
 	}
 	return last, refused
@@ -449,13 +468,15 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 // olhLogTail is the step that ends a replay once its head op has written
 // last to olh.ver: the clear of an OLH the replay left without a version,
 // or otherwise the log's trim to last. keep is set while a removal the
-// writer's expected write tag refused is pending, and opTag is the writer's
-// op tag, which its entries in the log carry.
+// writer's expected write tag refused is pending, keepHead when that removal
+// was the null version's, whose data is the OLH head's, and opTag is the
+// writer's op tag, which its entries in the log carry.
 type olhLogTail struct {
-	last  uint64
-	clear bool
-	keep  bool
-	opTag string
+	last     uint64
+	clear    bool
+	keep     bool
+	keepHead bool
+	opTag    string
 }
 
 // olhTailError is a replay whose head op landed but whose tail did not
@@ -484,9 +505,15 @@ func (e *olhTailError) Unwrap() error { return e.err }
 // which does not prove the writer's entries left: settleOLHRefusal decides
 // such a refused trim while t.keep is set. A clear or trim that fails
 // otherwise, the clear's expiry included, returns an olhTailError naming
-// the step left: the clear, or the trim.
+// the step left: the clear, or the trim. With t.keepHead the trim takes the
+// clear's place: the clear removes the OLH head object, which holds the null
+// version's data the refusal kept, where radosgw's replay has removed that
+// data before its clear.
 func (s *Store) finishOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectState, t olhLogTail) error {
 	what := head.Bucket.Info.Bucket.Name + "/" + head.Key.Name
+	if t.keepHead {
+		t.clear = false
+	}
 	if t.clear {
 		err := s.clearOLHHead(ctx, idx, head, t.last)
 		switch {

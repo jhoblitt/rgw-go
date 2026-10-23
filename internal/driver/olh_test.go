@@ -845,6 +845,39 @@ var _ = Describe("the versioned link and unlink", func() {
 			Expect(versionHead("v1")).NotTo(BeNil())
 		})
 
+		DescribeTable("pairs a removal of the null version with a null link on a later page",
+			func(ctx SpecContext, laterLink rgwcls.OLHLogEntry, kept bool) {
+				const tag = "pagespagespagespagespagespages00"
+				log := map[uint64][]rgwcls.OLHLogEntry{}
+				for epoch := uint64(2); epoch <= 1000; epoch++ {
+					log[epoch] = []rgwcls.OLHLogEntry{{Epoch: epoch, Op: rgwcls.OLHOpLinkOLH, OpTag: fmt.Sprintf("op%06d", epoch), Key: rgwcls.ObjKey{Name: "k", Instance: fmt.Sprintf("v%06d", epoch)}}}
+				}
+				log[1001] = []rgwcls.OLHLogEntry{{Epoch: 1001, Op: rgwcls.OLHOpRemoveInstance, OpTag: "op001001", Key: rgwcls.ObjKey{Name: "k"}}}
+				laterLink.Epoch, laterLink.OpTag = 1002, "op001002"
+				log[1002] = []rgwcls.OLHLogEntry{laterLink}
+				c.Object(rookIndexPool, "", shard).Omap[rgwcls.OLHDataKey("k")] = encode(rgwcls.OLHEntry{
+					Key: laterLink.Key, Epoch: 1002, PendingLog: log, Tag: tag, Exists: true, DeleteMarker: laterLink.DeleteMarker,
+				})
+				c.Put(testDataPool, "", olhHeadOID(version("")), []byte("null-data"))
+				olhHead().Xattrs[meta.AttrOLHIDTag] = []byte(tag)
+				olhHead().Xattrs[meta.AttrOLHVer] = []byte{}
+				olhHead().Xattrs[meta.AttrETag] = []byte("etag-null")
+
+				Expect(s.UpdateOLHForTest(ctx, rec, readHead(ctx))).To(Succeed())
+				Expect(olhVer()).To(Equal("1002"), "both pages applied")
+				Expect(olhEntry(shard).PendingLog).To(BeEmpty())
+				if kept {
+					Expect(olhHead().Data).To(Equal([]byte("null-data")), "the null data the second page's link names")
+					Expect(olhHead().Xattrs).To(HaveKey(meta.AttrETag))
+					return
+				}
+				Expect(olhHead().Data).To(BeEmpty(), "the null data the first page's removal names")
+			},
+			Entry("a null data link on the next page keeps the data", rgwcls.OLHLogEntry{Op: rgwcls.OLHOpLinkOLH, Key: rgwcls.ObjKey{Name: "k"}}, true),
+			Entry("a null delete marker's link on the next page does not", rgwcls.OLHLogEntry{Op: rgwcls.OLHOpLinkOLH, Key: rgwcls.ObjKey{Name: "k"}, DeleteMarker: true}, false),
+			Entry("a named link on the next page does not", rgwcls.OLHLogEntry{Op: rgwcls.OLHOpLinkOLH, Key: rgwcls.ObjKey{Name: "k", Instance: "v001002"}}, false),
+		)
+
 		It("runs a trim that failed once again, without a second head op", func(ctx SpecContext) {
 			put(ctx, "v1")
 			Expect(s.SetOLHForTest(ctx, rec, write(ctx, "v2"), driver.OLHLink{SkipUpdate: true})).To(Succeed())
@@ -1080,6 +1113,34 @@ var _ = Describe("the versioned link and unlink", func() {
 				Expect(listed(shard)).To(Equal([]string{"v2"}))
 				Expect(pending()).To(BeEmpty())
 				Expect(olhEntry(shard).PendingLog).To(BeEmpty())
+			})
+
+			It("trims the log rather than clear the OLH when the refused removal is of the null version, the key's last, whose data is the OLH head's", func(ctx SpecContext) {
+				Expect(unlink(ctx, "v2", driver.OLHUnlink{})).To(Succeed())
+				Expect(unlink(ctx, "v1", driver.OLHUnlink{})).To(Succeed())
+				write(ctx, "")
+				put(ctx, "v3")
+				Expect(unlink(ctx, "v3", driver.OLHUnlink{})).To(Succeed())
+				Expect(listed(shard)).To(Equal([]string{""}), "the null version, the key's last")
+				tag := readHead(ctx).Attrs[meta.AttrIDTag]
+				// The unlinks' completions land first, so the unlink below is
+				// the shard's next write.
+				settle(s)
+				c.AfterWrite(rookIndexPool, "", shard, func() {
+					c.AfterWrite(rookIndexPool, "", shard, nil)
+					olhHead().Xattrs[meta.AttrIDTag] = []byte("idtag-rewritten")
+				})
+				err := unlink(ctx, "", driver.OLHUnlink{NullVersion: true, ExpectTag: tag})
+				Expect(err).To(MatchError(driver.ErrRemovalRefused))
+				_, unfinished := driver.UnfinishedOLHTail(err)
+				Expect(unfinished).To(BeFalse(), "final")
+				settle(s)
+				Expect(olhHead()).NotTo(BeNil(), "the OLH head, which holds the null version's data")
+				Expect(olhHead().Data).To(Equal([]byte("data-")))
+				Expect(hasInstanceEntry(shard, "")).To(BeTrue())
+				Expect(listed(shard)).To(BeEmpty(), "the unlink took its list entry")
+				Expect(pending()).To(BeEmpty())
+				Expect(olhEntry(shard).PendingLog).To(BeEmpty(), "trimmed")
 			})
 
 			It("trims the log when another writer's init refuses the clear, and that writer's replay leaves the version", func(ctx SpecContext) {

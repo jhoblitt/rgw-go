@@ -146,17 +146,19 @@ func (s *Store) FollowOLHForTest(ctx context.Context, head *op.ObjectState, upda
 	return s.followOLH(ctx, head, update)
 }
 
-// ApplyOLHLogForTest is applyOLHLog over idx for the external specs.
+// ApplyOLHLogForTest is applyOLHLog over idx for the external specs, of a
+// page no later page of whose replay links null data.
 func (s *Store) ApplyOLHLogForTest(ctx context.Context, idx *FakeOLHIndex, head *op.ObjectState, log map[uint64][]rgw.OLHLogEntry, opTag string, expectTag []byte) (uint64, error) {
-	return s.applyOLHLog(ctx, idx, head, log, opTag, expectTag)
+	return s.applyOLHLog(ctx, idx, head, log, opTag, expectTag, false)
 }
 
 // OLHTail is olhLogTail with its fields exported for the specs.
 type OLHTail struct {
-	Last  uint64
-	Clear bool
-	Keep  bool
-	OpTag string
+	Last     uint64
+	Clear    bool
+	Keep     bool
+	KeepHead bool
+	OpTag    string
 }
 
 // UnfinishedOLHTail is the tail an unfinished replay's error names, and
@@ -166,7 +168,7 @@ func UnfinishedOLHTail(err error) (OLHTail, bool) {
 	if !errors.As(err, &te) {
 		return OLHTail{}, false
 	}
-	return OLHTail{Last: te.tail.last, Clear: te.tail.clear, Keep: te.tail.keep, OpTag: te.tail.opTag}, true
+	return OLHTail{Last: te.tail.last, Clear: te.tail.clear, Keep: te.tail.keep, KeepHead: te.tail.keepHead, OpTag: te.tail.opTag}, true
 }
 
 // ErrRefusalUnsettled is errRefusalUnsettled for the external specs.
@@ -174,7 +176,7 @@ var ErrRefusalUnsettled = errRefusalUnsettled
 
 // FinishOLHLogForTest is finishOLHLog over idx for the external specs.
 func (s *Store) FinishOLHLogForTest(ctx context.Context, idx *FakeOLHIndex, head *op.ObjectState, t OLHTail) error {
-	return s.finishOLHLog(ctx, idx, head, olhLogTail{last: t.Last, clear: t.Clear, keep: t.Keep, opTag: t.OpTag})
+	return s.finishOLHLog(ctx, idx, head, olhLogTail{last: t.Last, clear: t.Clear, keep: t.Keep, keepHead: t.KeepHead, opTag: t.OpTag})
 }
 
 // ClearOLHHeadForTest is clearOLHHead over idx for the external specs.

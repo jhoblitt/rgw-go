@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"slices"
 	"strconv"
 	"time"
 
@@ -466,7 +467,10 @@ func (s *Store) replayOLH(ctx context.Context, idx *bucketOLHIndex, head *op.Obj
 // hands every page the state it first read.
 // An apply whose head op landed is not applied again: a tail it left is run
 // again within the bound through finishOLHLog. canceled reports an apply that
-// ECANCELED refused before its head op landed.
+// ECANCELED refused before its head op landed. A page with more to follow
+// that ends with a removal of the null version no null link in it follows
+// has the pages after it read first (nullLinkAfter), so that its apply drops
+// that removal when a later page links null data.
 func (s *Store) replayPass(ctx context.Context, idx *bucketOLHIndex, cur *op.ObjectState, r *olhReplay, retries *int) (refused error, canceled bool, err error) {
 	r.readAll, r.own = false, false
 	var marker uint64
@@ -478,7 +482,13 @@ func (s *Store) replayPass(ctx context.Context, idx *bucketOLHIndex, cur *op.Obj
 		if r.opTag != "" && logHolds(ret.Log, r.opTag) {
 			r.own = true
 		}
-		last, err := s.applyOLHLog(ctx, idx, cur, ret.Log, r.opTag, r.expectTag)
+		later := false
+		if ret.IsTruncated && nullRemovalLeft(ret.Log) {
+			if later, err = s.nullLinkAfter(ctx, idx, cur, slices.Max(slices.Collect(maps.Keys(ret.Log)))); err != nil {
+				return refused, false, err
+			}
+		}
+		last, err := s.applyOLHLog(ctx, idx, cur, ret.Log, r.opTag, r.expectTag, later)
 		if last == 0 && err != nil {
 			return refused, errors.Is(err, radosclient.ErrCanceled), err
 		}
@@ -576,6 +586,54 @@ func logHolds(log map[uint64][]rgw.OLHLogEntry, opTag string) bool {
 		}
 	}
 	return false
+}
+
+// nullDataLink reports whether e is a LINK_OLH of the null version's data,
+// whose head write put that data in the OLH head (applyOLHLog).
+func nullDataLink(e rgw.OLHLogEntry) bool {
+	return e.Op == rgw.OLHOpLinkOLH && e.Key.Instance == "" && !e.DeleteMarker
+}
+
+// nullRemovalLeft reports whether a page of the pending log ends with a
+// removal of the null version that no later link of null data in it
+// follows, one a later page may follow.
+func nullRemovalLeft(log map[uint64][]rgw.OLHLogEntry) bool {
+	left := false
+	for _, epoch := range slices.Sorted(maps.Keys(log)) {
+		for _, e := range log[epoch] {
+			switch {
+			case e.Op == rgw.OLHOpRemoveInstance && e.Key.Instance == "":
+				left = true
+			case nullDataLink(e):
+				left = false
+			}
+		}
+	}
+	return left
+}
+
+// nullLinkAfter reports whether cur's pending log links null data at an
+// epoch above marker, reading the pages after it until one does or the log
+// ends, so that a replay pairs a removal of the null version with a null link
+// on any later page of it (applyOLHLog), not only on the removal's own.
+func (s *Store) nullLinkAfter(ctx context.Context, idx *bucketOLHIndex, cur *op.ObjectState, marker uint64) (bool, error) {
+	for {
+		ret, err := idx.readLog(ctx, cur, marker)
+		if err != nil {
+			return false, err
+		}
+		next := marker
+		for epoch, entries := range ret.Log {
+			if slices.ContainsFunc(entries, nullDataLink) {
+				return true, nil
+			}
+			next = max(next, epoch)
+		}
+		if !ret.IsTruncated || next <= marker {
+			return false, nil
+		}
+		marker = next
+	}
 }
 
 // copyOLHHead is a copy of head whose attrs the replay may change.
