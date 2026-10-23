@@ -451,6 +451,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's lifecycle aborts an expired multipart upload without its completion lock](#radosgws-lifecycle-aborts-an-expired-multipart-upload-without-its-completion-lock) | pending | pending | ✓ |
 | [v21's ownership controls ops let an ACL grant change a bucket's object ownership](#v21s-ownership-controls-ops-let-an-acl-grant-change-a-buckets-object-ownership) | pending | pending | ✓ |
 | [v21's CreateBucket stores an ACL other than private on a bucket it makes BucketOwnerEnforced](#v21s-createbucket-stores-an-acl-other-than-private-on-a-bucket-it-makes-bucketownerenforced) | pending | pending | ✓ |
+| [radosgw's null version removal takes the data of a null PutObject that links after it](#radosgws-null-version-removal-takes-the-data-of-a-null-putobject-that-links-after-it) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -26392,3 +26393,79 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task BC-28c, 2026-10-23, comparing v21.1.2's
   CreateBucket with its PutBucketOwnershipControls against Amazon S3's
   reference. Derived from the source, not reproduced.
+
+## radosgw's null version removal takes the data of a null PutObject that links after it
+
+- **Kind:** defect, data corruption: on a versioned bucket, a removal of
+  the null version that lands between a null PutObject's head write and
+  that PUT's link logs the removal by the null version's key, and the
+  replay that runs after the PUT's link removes the PUT's data, though the
+  PUT linked last and is listed current. Two requests log such a removal: a
+  DeleteObject naming no version on a bucket whose versioning is
+  suspended, whose null delete marker replaces the null version, and a
+  DeleteObject of `versionId=null`. Not security-relevant: both requests
+  need write access to the key, and nothing outside it is touched.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - A null PutObject writes the key's head, which is its OLH head, and
+    sends its index completion before it links
+    ([rgw_rados.cc:3332-3375](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3332-L3375),
+    [rgw_rados.cc:3453-3496](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3453-L3496)).
+  - The null delete marker's link reads the null version's data entry as
+    the other null entry, takes its list entry and, the entry being data,
+    logs `REMOVE_INSTANCE` for the key with an empty instance, not for the
+    data it read
+    ([cls_rgw.cc:1712-1731](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1712-L1731) and
+    [cls_rgw.cc:1806-1810](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1806-L1810),
+    [cls_rgw.cc:1853-1872](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1853-L1872) and
+    [cls_rgw.cc:1947-1951](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1947-L1951)).
+    The unlink of `versionId=null` takes the null data's list entry and
+    logs the same `REMOVE_INSTANCE` for the key it was given
+    ([cls_rgw.cc:1970-1971](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1970-L1971),
+    [cls_rgw.cc:2117-2118](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2117-L2118)).
+  - The PUT's link of the null data then takes a null marker's list and
+    instance entries, by the same null pair, and lists the data current at
+    the next epoch
+    ([cls_rgw.cc:1764-1766](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1764-L1766) and
+    [cls_rgw.cc:1824](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1824),
+    [cls_rgw.cc:1905-1907](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1905-L1907) and
+    [cls_rgw.cc:1965](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1965)).
+  - `apply_olh_log` removes every key a `REMOVE_INSTANCE` names before its
+    head op
+    ([rgw_rados.cc:8530-8541](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8530-L8541),
+    [rgw_rados.cc:9275-9287](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9275-L9287)),
+    through the unversioned delete, which removes the head unguarded,
+    whatever it then holds, keeping its OLH attrs alone
+    ([rgw_rados.cc:5978](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5978) and
+    [rgw_rados.cc:6076](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6076),
+    [rgw_rados.cc:6592](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6592) and
+    [rgw_rados.cc:6690](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6690);
+    `rgw_obj_remove`,
+    [cls_rgw.cc:2410-2482](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2410-L2482),
+    [cls_rgw.cc:2578-2650](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2578-L2650)),
+    and whose index DEL completion removes the null data's instance entry
+    and not its list entry
+    ([cls_rgw.cc:1127-1167](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1127-L1167),
+    [cls_rgw.cc:1261-1300](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1261-L1300)).
+    Its head op then writes the PUT's link, the last, to `olh.info`
+    ([rgw_rados.cc:8519-8527](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8519-L8527),
+    [rgw_rados.cc:9265-9273](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9265-L9273)).
+- **Trigger:** a null PutObject and one of the two deletes on one key, the
+  PUT's head write landing before the delete's link or unlink and the
+  PUT's link after it, and a replay reading the log after the PUT's link;
+  the PUT's own `update_olh` runs straight after its link. With the PUT's
+  link after that replay, the PUT loses its data and its instance entry
+  before it links, and its link then fails with ENOENT.
+- **Impact:** the PutObject answered 200, and the key lists its null
+  version as current, with the PUT's size and ETag, while that version's
+  instance entry is gone and its head holds only its OLH attrs: the write
+  is lost and the listing names data that does not exist. Linked after the
+  delete, the PUT should be the key's current version with its data.
+- **Releases:** v19.2.7 and v20.2.4; main was not checked.
+- **rgw-go:** reproduces it for both deletes: its replay removes the null
+  version's key guarded only on the write tag it reads
+  (`removeInstance`, `internal/driver/olh.go`).
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task V8c, 2026-10-23, checking a candidate the
+  versioning plan recorded, widened to `versionId=null` by the task's
+  review; derived from the source, not reproduced.
