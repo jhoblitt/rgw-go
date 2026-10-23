@@ -10012,8 +10012,9 @@ does at the v19.2.7 and v20.2.4 tags (`lifecycle.Decide`,
 `lifecycle.ExpirationHeader` and `lifecycle.AbortHeader`,
 `internal/lifecycle/decide.go` and `headers.go`). rgw-go runs the
 worker's shard protocol, and its bucket pass applies the current
-expiration of a bucket that was never versioned
-(`internal/driver/lc_bucket.go` and `lc_actions.go`); it leaves a
+expiration of a bucket that was never versioned and the abort of its
+expired multipart uploads (`internal/driver/lc_bucket.go` and
+`lc_actions.go`); it leaves a
 versioned bucket, and one with a transition rule, unclaimed for radosgw's
 workers ("rgw-go's lifecycle worker leaves versioned buckets and
 transition rules to radosgw's", below). It does not yet send the headers
@@ -10271,9 +10272,8 @@ the correct S3 result, in RADOS state radosgw reads as its own.
     stamps no rollover date, since its head never reaches the shard's end,
     and in a zone without radosgw workers the entry is never processed.
     Such an entry is a bucket whose rules transition to a cloud tier, a
-    bucket that was ever versioned, one with a transition rule and one
-    with a rule that aborts incomplete multipart uploads (the next two
-    entries).
+    bucket that was ever versioned and one with a transition rule (the
+    next two entries).
   - A claim is read back before its bucket is processed, before each
     listing page of the bucket's pass, and again once the shard is locked
     after it. A claim the shard no longer holds as the worker wrote it,
@@ -10347,15 +10347,12 @@ the correct S3 result, in RADOS state radosgw reads as its own.
   of that bucket's rules run.
 - **rgw-go's lifecycle worker leaves versioned buckets and transition rules
   to radosgw's.** rgw-go's bucket pass applies the current expiration of a
-  bucket that was never versioned. It claims a bucket only when it applies
+  bucket that was never versioned and the abort of its expired multipart
+  uploads ("Lifecycle aborts an expired multipart upload under its
+  completion lock"). It claims a bucket only when it applies
   each of the bucket's rules, so not one whose flags carry
   `BUCKET_VERSIONED`, its versioning enabled or suspended, nor one with a
-  rule the zone runs that transitions current or noncurrent versions, nor
-  one with an enabled rule that aborts incomplete multipart uploads after
-  DaysAfterInitiation, which radosgw's worker applies whatever the zone
-  makes of the rule's other actions
-  ([rgw_lc.cc:961-963](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L961-L963),
-  [rgw_lc.cc:981-983](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L981-L983)). A
+  rule the zone runs that transitions current or noncurrent versions. A
   claim marks a bucket done for the day, and radosgw's worker would then
   skip the rules rgw-go does not apply. Such a bucket's entry is left
   unclaimed, which is logged once a pass, and the shard's head stays at it,
@@ -10429,6 +10426,25 @@ the correct S3 result, in RADOS state radosgw reads as its own.
   before a removal goes through the metadata cache, so with
   `rgw_cache_enabled` off each removal costs a RADOS read of the bucket's
   entry point and one of its instance.
+- **Lifecycle aborts an expired multipart upload under its completion
+  lock.** radosgw's worker aborts an upload whose meta object is
+  DaysAfterInitiation old with the upload's abort alone
+  ([rgw_lc.cc:902-947](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L902-L947),
+  [rgw_lc.cc:923-967](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L923-L967)),
+  without the `RGWCompleteMultipart` lock AbortMultipartUpload takes first
+  ([rgw_op.cc:6643-6655](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6643-L6655),
+  [rgw_op.cc:7560-7572](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7560-L7572)),
+  so it can free the parts of a completion in progress. rgw-go aborts it as
+  AbortMultipartUpload does, its upload read and then its abort under the
+  lock (`lcBucket.abortUpload`, `internal/driver/lc_actions.go`), with that
+  abort's differences ("AbortMultipartUpload removes the upload before it
+  frees the parts" and "AbortMultipartUpload leaves a completed upload's
+  parts alone"): an upload whose lock another gateway holds is logged and
+  left for a later pass, and one whose parts back its key's object keeps
+  them. Neither applies the rule's tag or size filter or the ArchiveZone
+  check to an upload, and both run the abort for every enabled rule with
+  DaysAfterInitiation, on any bucket rgw-go claims ("rgw-go's lifecycle
+  worker leaves versioned buckets and transition rules to radosgw's").
 - **Lifecycle current expiration never acts on a stored Date past
   real_time.** radosgw's worker reads a stored Expiration Date past
   2554-07-21T23:34:33.709551615Z as the instant real_time wraps it to and
