@@ -97,7 +97,7 @@ func (s *Store) SetObjectAttrs(ctx context.Context, st *op.ObjectState, set map[
 		x.cancel()
 		return op.FromRADOS(err, op.ScopeObject)
 	}
-	x.complete(rgw.EntryVer{Pool: ref.pool.ID(), Epoch: epoch}, s.attrsEntry(st, set, mtime))
+	s.completePlain(ctx, rec, key, x, rgw.EntryVer{Pool: ref.pool.ID(), Epoch: epoch}, s.attrsEntry(st, set, mtime))
 	return nil
 }
 
