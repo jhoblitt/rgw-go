@@ -460,6 +460,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's CompleteMultipartUpload leaves its upload whole when its head lands and write_meta fails](#radosgws-completemultipartupload-leaves-its-upload-whole-when-its-head-lands-and-write_meta-fails) | pending | pending | ✓ |
 | [radosgw's copy onto its own key in a suspended bucket shares the current version's tails without references](#radosgws-copy-onto-its-own-key-in-a-suspended-bucket-shares-the-current-versions-tails-without-references) | pending | pending | ✓ |
 | [radosgw's copy carries the source's pending OLH modifications to its destination](#radosgws-copy-carries-the-sources-pending-olh-modifications-to-its-destination) | pending | pending | ✓ |
+| [radosgw's copy of a null version leaves OLH attrs on the version it writes, and its delete keeps them](#radosgws-copy-of-a-null-version-leaves-olh-attrs-on-the-version-it-writes-and-its-delete-keeps-them) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -27094,3 +27095,79 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V7b, 2026-10-23, reading which OLH attrs
   `copy_obj` drops; derived from the source, not reproduced.
+
+## radosgw's copy of a null version leaves OLH attrs on the version it writes, and its delete keeps them
+
+- **Kind:** defect, S3-correctness: in a bucket whose versioning is
+  enabled, a CopyObject whose source is a key's null version, whose head is
+  that key's OLH head, writes the OLH head's `olh.idtag`, `olh.info` and
+  `olh.ver` onto the head of the version it creates. A delete of that
+  version keeps them: its head object stays at the version's oid with
+  those attrs alone once its index entry is gone, a RADOS object the bucket
+  index no longer names, and by the code a read of the deleted version's id
+  finds it. Not data corruption: no data is lost, the version's tails go to
+  the GC as for any delete. Not security-relevant: the head left holds no
+  data and none of
+  the version's attrs but those three, its ACL included, so a read of it
+  takes the bucket owner's default policy and returns nothing the deleted
+  version held. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/`.
+  - The source's attrs are its head's whole attrset
+    ([rgw_rados.cc:7118-7119](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7118-L7119) at v19.2.7,
+    [rgw_rados.cc:7781](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7781) at v20.2.4),
+    the null version's head being the key's OLH head, and `copy_obj` drops
+    `olh.idtag`, `olh.info` and `olh.ver` only for a bucket whose versioning
+    is not enabled
+    ([rgw_rados.cc:4809-4813](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4809-L4813) at v19.2.7,
+    [rgw_rados.cc:5022-5026](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5022-L5026) at v20.2.4).
+    `RGWCopyObj` gives every copy into a bucket whose versioning is enabled
+    an instance
+    ([rgw_op.cc:5576-5580](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5576-L5580) at v19.2.7,
+    [rgw_op.cc:6139-6143](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6139-L6143) at v20.2.4),
+    and the head write sets every non-empty attr it is given
+    ([rgw_rados.cc:3265-3279](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3265-L3279) at v19.2.7,
+    [rgw_rados.cc:3362-3376](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3362-L3376) at v20.2.4).
+  - A delete of the version reaches `Delete::delete_obj`, on its own or
+    through `apply_olh_log`'s removal of the unlinked instance
+    ([rgw_rados.cc:8529-8541](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8529-L8541) at v19.2.7,
+    [rgw_rados.cc:9276-9287](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9276-L9287) at v20.2.4),
+    which removes the head with `remove_rgw_head_obj`
+    ([rgw_rados.cc:6076](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6076) at v19.2.7,
+    [rgw_rados.cc:6690](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6690) at v20.2.4),
+    an `obj_remove` that keeps the `user.rgw.olh.` attrs
+    ([rgw_rados.cc:5798-5803](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5798-L5803) at v19.2.7,
+    [rgw_rados.cc:6410-6415](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6410-L6415) at v20.2.4).
+    `rgw_obj_remove` removes the object and, when a kept attr remains,
+    creates it again with them
+    ([cls_rgw.cc:2410-2482](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2410-L2482) at v19.2.7,
+    [cls_rgw.cc:2578-2650](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2578-L2650) at v20.2.4).
+  - `get_obj_state_impl` follows an OLH only for a key without an instance
+    ([rgw_rados.cc:6269](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6269) at v19.2.7,
+    [rgw_rados.cc:6883](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6883) at v20.2.4),
+    and answers ENOENT for a head that holds OLH attrs alone only for the
+    null instance
+    ([rgw_rados.cc:6427-6433](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6427-L6433) at v19.2.7,
+    [rgw_rados.cc:7041-7047](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7041-L7047) at v20.2.4),
+    so a read of the deleted version's id finds an object. Without an ACL
+    attr it takes the bucket owner's default policy
+    ([rgw_op.cc:307-312](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L307-L312) at v19.2.7,
+    [rgw_op.cc:350-355](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L350-L355) at v20.2.4).
+- **Impact:** each deleted version that such a copy made leaves a RADOS
+  object in the data pool that no index entry names, so nothing that walks
+  the bucket index removes it. By the code, a GET or HEAD of the deleted
+  version's id by the bucket owner finds an object with no data where S3
+  answers 404 NoSuchVersion.
+- **Releases:** v19.2.7 and v20.2.4; main was not checked.
+- **rgw-go:** differs: a copy drops every OLH attr of its source wherever
+  it goes (`copyAttrs`, `internal/driver/copy.go`; `docs/exclusions.md`, "A
+  copy carries none of its source's OLH attrs"), and the removal of a
+  version's head, and the reset of one a write replaces, remove it whole,
+  keeping the OLH attrs only on a key's OLH head (`headKeptAttrs`,
+  `internal/driver/delete.go`; `docs/exclusions.md`, "A version's head is
+  removed whole"), so a version radosgw's copy made is removed whole too.
+  Pinned in `internal/driver/copy_versioned_test.go` and
+  `internal/driver/delete_versioned_test.go`.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task V7b review, 2026-10-23, reproduced on the
+  emulator by the review's spec; radosgw's half derived from the source,
+  not reproduced.
