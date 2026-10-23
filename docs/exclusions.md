@@ -5897,6 +5897,74 @@ rgw-go does the following.
   is_public calls public, such as a grant to everyone from 1.1.1.1/32 alone,
   which radosgw refuses ("A bucket policy is public as Amazon S3 judges it",
   above).
+- **rgw-go stores and enforces ownership controls a floor radosgw ignores.**
+  Neither floor has ownership controls: no op serves them
+  ("ownershipControls requests are served as v21 serves them", above), and
+  no check reads the setting. A floor's bucket writes carry
+  `user.rgw.ownership-controls` through as an attr they do not know, as
+  they lay their own attrs over the bucket's
+  ([rgw_sal_rados.cc:771-778](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L771-L778),
+  [rgw_sal_rados.cc:789-796](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L789-L796)),
+  but for a retry that writes back the attrs its request loaded. A floor's
+  PutBucketPolicy, PutPublicAccessBlock, PutBucketCors or
+  PutBucketVersioning that races an rgw-go ownership write can put back the
+  setting its request loaded, turning BucketOwnerEnforced back into
+  ObjectWriter while both requests are told they succeeded
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's PutBucketPolicy retry writes
+  back the bucket attrs its request started
+  with](ceph-upstream-bugs.md#radosgws-putbucketpolicy-retry-writes-back-the-bucket-attrs-its-request-started-with)").
+  rgw-go serves Get, Put and DeleteBucketOwnershipControls on both releases
+  as v21.1.2, the first release line to carry them, does
+  (`internal/op/ownership.go`):
+  - GetBucketOwnershipControls answers a bucket without the setting 404
+    OwnershipControlsNotFoundError, "The bucket ownership controls were not
+    found", and one whose setting does not decode 500
+    ([rgw_op.cc:10315-10334](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L10315-L10334));
+  - PutBucketOwnershipControls stores the setting alone, in v21.1.2's (1,1)
+    form, which a zone's radosgw reads once upgraded to v21. It refuses
+    BucketOwnerEnforced over a bucket ACL other than the default private
+    one of the owner the ACL names with 400
+    InvalidBucketAclWithObjectOwnership, "The bucket's ACL must be made
+    private before setting BucketOwnerEnforced.", and over one that does not
+    decode with 500
+    ([rgw_op.cc:10255-10305](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L10255-L10305));
+  - DeleteBucketOwnershipControls removes it, and succeeds on a bucket
+    without one
+    ([rgw_op.cc:10344-10358](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L10344-L10358)).
+
+  rgw-go differs from v21.1.2 in two ways. No ACL grant authorizes the
+  three. v21.1.2 falls back to the bucket's ACL with the READ_ACP and
+  WRITE_ACP its `op_to_perm` maps the two actions to
+  ([rgw_iam_policy.h:314-315](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_iam_policy.h#L314-L315),
+  [rgw_iam_policy.h:338-339](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_iam_policy.h#L338-L339)), so any
+  WRITE_ACP grantee of the bucket can turn BucketOwnerEnforced off, and
+  with it the ACLs back on (`docs/ceph-upstream-bugs.md`, "[v21's ownership
+  controls ops let an ACL grant change a bucket's object
+  ownership](ceph-upstream-bugs.md#v21s-ownership-controls-ops-let-an-acl-grant-change-a-buckets-object-ownership)").
+  Amazon S3 maps those two ACL permissions to s3:GetBucketAcl and
+  s3:PutBucketAcl alone
+  (https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html#acl-access-policy-permission-mapping).
+  rgw-go authorizes the three as it authorizes the public access block's
+  ops ("No ACL grant authorizes the public access block's ops", above): by
+  identity and bucket policy, and where no policy decides by the bucket's
+  owner alone, within its permission mask, every ACL grantee refused with
+  403 AccessDenied. And each retry of a write that lost a race is
+  authorized again and stops when the name names another bucket, as
+  rgw-go's other retried bucket writes do ("A retried bucket write stops
+  when the name names another bucket" and "A PutBucketAcl that loses a race
+  is retried, and every retried ACL, policy or tagging write is authorized
+  again", below); a retried BucketOwnerEnforced holds the ACL that retry
+  read to the default of the owner that ACL names, where v21.1.2 holds it
+  to the default of the owner its request loaded
+  ([rgw_op.cc:10272-10300](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L10272-L10300)). The two
+  defaults differ only when the bucket's ACL changed owner between the
+  request's load and the retry. The S3 handler does not route the three ops
+  yet, so each still answers 501 NotImplemented ("ownershipControls
+  requests are served as v21 serves them", above). Nor does this tree
+  enforce the setting in full: under BucketOwnerEnforced an object's ACL
+  still grants, and PutObject, CopyObject and CreateMultipartUpload still
+  take any canned ACL or grant header. Enforcement is complete only once
+  both are enforced, and the three ops stay unrouted until then.
 - **Deletes that need MFA are refused.** rgw-go checks `x-amz-mfa` where
   radosgw does, with the differences the preflight and reused-code
   exclusions record, but its DeleteObject and DeleteObjects do not take
@@ -6254,7 +6322,12 @@ differ, rgw-go does the following.
   after reading the bucket
   again by name (`retry_raced_bucket_write`, `rgw_op.h:183-196` at v19.2.6,
   `:197-210` at v20.2.4), and so does rgw-go's PutBucketAcl ("A PutBucketAcl
-  that loses a race is retried", below). The re-read drops the bucket's
+  that loses a race is retried", below). v21.1.2's
+  PutBucketOwnershipControls and DeleteBucketOwnershipControls, which
+  neither floor has, retry the same way, each through its own
+  `retry_raced_bucket_write`
+  ([rgw_op.cc:10277-10304](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L10277-L10304),
+  [rgw_op.cc:10353-10357](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L10353-L10357)). The re-read drops the bucket's
   instance id
   ([rgw_rados.cc:9212-9213](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9212-L9213),
   [rgw_rados.cc:9961-9962](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9961-L9962)),
@@ -6293,7 +6366,9 @@ differ, rgw-go does the following.
   and PutObjectLockConfiguration enables object lock on that bucket, when
   its versioning is enabled, and replaces its configuration
   ([rgw_op.cc:8289-8304](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8289-L8304),
-  [rgw_op.cc:9224-9239](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9224-L9239)).
+  [rgw_op.cc:9224-9239](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9224-L9239)),
+  and v21.1.2's ownership controls writes set or remove the ownership
+  setting of that bucket.
   When the bucket
   was deleted and a bucket of the same name created in between, radosgw
   writes into the new bucket, another owner's included
@@ -6302,7 +6377,8 @@ differ, rgw-go does the following.
   name](ceph-upstream-bugs.md#radosgws-retried-bucket-write-can-land-in-a-bucket-re-created-under-the-same-name)").
   rgw-go reads by name too, and when the name now names another instance it
   writes nothing and answers 409 ConcurrentModification, the answer both
-  give once the fifteen retries are spent.
+  give once the fifteen retries are spent. Its ownership controls writes
+  retry the same way, on both releases.
 - **A retried PutBucketPolicy keeps what the write it lost to changed.**
   radosgw's PutBucketPolicy merges the attrs its request loaded into every
   try, so a retry writes back the ACL, tags or public-access block another
@@ -6369,11 +6445,13 @@ differ, rgw-go does the following.
   DeleteBucketTagging, PutBucketWebsite, DeleteBucketWebsite,
   PutPublicAccessBlock, DeletePublicAccessBlock,
   PutBucketEncryption, DeleteBucketEncryption, PutBucketCors,
-  DeleteBucketCors and PutObjectLockConfiguration, is authorized again
+  DeleteBucketCors, PutObjectLockConfiguration, PutBucketOwnershipControls
+  and DeleteBucketOwnershipControls, is authorized again
   the same way before each retry,
   against the bucket that
-  retry read: its ACL, of which the block writes read the owner alone, its
-  policy and its public-access block, with the same admin rule. radosgw retries all but PutBucketAcl through
+  retry read: its ACL, of which the block and ownership controls writes read
+  the owner alone, its policy and its public-access block, with the same
+  admin rule. radosgw retries all but PutBucketAcl through
   `retry_raced_bucket_write` (`rgw_op.cc:1197`, `:1232`, `:8110` and `:8204`
   at v19.2.6, `:1434`, `:1469`, `:9036` and `:9151` at v20.2.4; the website
   writes at
@@ -6406,7 +6484,11 @@ differ, rgw-go does the following.
   [rgw_op.cc:6800-6819](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6800-L6819);
   the object-lock write at
   [rgw_op.cc:8289-8304](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8289-L8304),
-  [rgw_op.cc:9224-9239](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9224-L9239)),
+  [rgw_op.cc:9224-9239](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9224-L9239);
+  and the ownership controls writes, which neither floor has, at v21.1.2's
+  [rgw_op.cc:10277-10304](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L10277-L10304)
+  and
+  [rgw_op.cc:10353-10357](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L10353-L10357)),
   which reads the bucket again and authorizes nothing, so when the
   write a try lost to revoked the requester's permission, by an ACL that
   drops their grant or a policy that denies them, radosgw's retry writes for
