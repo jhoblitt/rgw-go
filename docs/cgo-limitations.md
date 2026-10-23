@@ -336,13 +336,29 @@ benchmark was re-run.
   same entry. A failed UploadPart shows it: the part head's ADD completion
   can land after the prepare, or the completion, of the DEL that removes
   the head.
-- **Cost:** one round trip to the index shard on every versioned write. A
-  versioned write's link reads the instance entry its ADD completion writes,
+- **Cost:** one round trip to the index shard on every versioned write, and
+  one on every version an OLH replay removes. A versioned write's link
+  reads the instance entry its ADD completion writes,
   and a link that reached the shard first would list the version without
   its size or ETag, so the write waits for its completion before it links
   (`indexOp.completeSync`, `internal/driver/indexop.go`; `docs/exclusions.md`,
   "A versioned write awaits its index completion"), where radosgw sends both
-  without waiting. Elsewhere none found. cls_rgw refuses a completion whose
+  without waiting. An OLH replay removes each version and then, on the same
+  shard, trims the log or clears the OLH. The clear removes the version
+  marker, the plain entry through which the class reads the null version's
+  instance entry
+  ([cls_rgw.cc:946-978](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L946-L978),
+  [cls_rgw.cc:1076-1108](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1076-L1108)),
+  so a DEL completion of the null version that reached the shard after it
+  would find no entry pending its tag and be refused with EINVAL, leaving
+  the instance entry stored as existing and counted in the shard header's
+  stats. Every `DELETE ?versionId=null` of an object written before
+  versioning was enabled, and not overwritten since, clears the OLH so.
+  The replay waits for each removal's completion before its head op
+  (`indexOp.completeDelSync`, `internal/driver/indexop.go`;
+  `docs/exclusions.md`, "An OLH replay awaits the index completion of each
+  version it removes"), where radosgw sends it without waiting. No other
+  case found. cls_rgw refuses a completion whose
   tag is no longer pending with EINVAL (`cls/rgw/cls_rgw.cc:1065-1072` at
   v19.2.6, `:1200-1207` at v20.2.4), and turns one whose epoch is not past the
   entry's, in the same pool, into a cancel (`:1082-1086`, `:1217-1221`). So a

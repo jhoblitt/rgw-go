@@ -2,6 +2,7 @@ package driver_test
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"sync"
@@ -24,12 +25,15 @@ import (
 
 // writeHook runs fn once, around the n-th write op match takes, counted
 // across every write the cluster sees, those fn itself sends included: after
-// the op lands, or before it when before is set.
+// the op lands, or before it when before is set. With late set it sends
+// nothing: the op answers success at once and late keeps its send, to land
+// it later.
 type writeHook struct {
 	match  func(*radosclient.WriteOp) bool
 	n      int
 	before bool
 	fn     func()
+	late   func(send sendFunc)
 	seen   int
 }
 
@@ -68,6 +72,9 @@ func (h *writeHooks) around(op *radosclient.WriteOp, send sendFunc) (uint64, err
 	switch {
 	case w == nil:
 		return send()
+	case w.late != nil:
+		w.late(send)
+		return 0, nil
 	case w.before:
 		w.fn()
 		return send()
@@ -189,6 +196,32 @@ var _ = Describe("DeleteObject with an expected state", func() {
 		release = sync.OnceFunc(func() { close(held) })
 		DeferCleanup(release)
 		return release
+	}
+	// late holds back the first later write op match takes: the op answers
+	// success at once, as another gateway's write that has not yet reached
+	// the shard looks to rgw-go, and reaches it at land, which answers the
+	// write's own result. rgw-go awaits its own replay's removal completion,
+	// but radosgw's goes to the shard while its head op goes to the head
+	// object, and nothing orders the two.
+	late := func(match func(*radosclient.WriteOp) bool) (land func() error) {
+		var mu sync.Mutex
+		var send sendFunc
+		hooks.add(&writeHook{match: match, n: 1, late: func(s sendFunc) {
+			mu.Lock()
+			defer mu.Unlock()
+			send = s
+		}})
+		land = sync.OnceValue(func() error {
+			mu.Lock()
+			defer mu.Unlock()
+			if send == nil {
+				return errors.New("the write held back never came")
+			}
+			_, err := send()
+			return err
+		})
+		DeferCleanup(land)
+		return land
 	}
 	// attrWriteLate is attrWrite whose index completion, which radosgw sends
 	// unawaited, is held until release: until then the version's instance
@@ -542,9 +575,9 @@ var _ = Describe("DeleteObject with an expected state", func() {
 				put(ctx, "v2")
 				expect := head(ctx, "v1")
 				at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v1") })
-				release := func() {}
+				land := func() error { return nil }
 				if !landed {
-					release = hold(completesDel)
+					land = late(completesDel)
 				}
 				// The own replay's head op is the first write to set olh.ver, the
 				// unlink's init on a head with an OLH tag setting none; another
@@ -560,7 +593,7 @@ var _ = Describe("DeleteObject with an expected state", func() {
 				_, err := del(ctx, "v1", op.DeleteParams{Expect: expect})
 				concurrent(err)
 				Expect(links()).To(BeZero(), "nothing re-linked")
-				release()
+				Expect(land()).To(Succeed())
 				settle(s)
 				Expect(versionHead("v1")).To(BeNil())
 				_, ok := instanceEntry("v1")
@@ -1004,9 +1037,9 @@ var _ = Describe("DeleteObject with an expected state", func() {
 				nullCurrent(ctx)
 				expect := head(ctx, "")
 				at(calls("bucket_link_olh"), 1, func() { attrWrite(ctx, "") })
-				release := func() {}
+				land := func() error { return nil }
 				if !landed {
-					release = hold(completesDel)
+					land = late(completesDel)
 				}
 				// The marker's replay's head op is the first write to set olh.ver.
 				before(func(w *radosclient.WriteOp) bool { return setsXattr(w, meta.AttrOLHVer) }, 1, func() {
@@ -1019,7 +1052,7 @@ var _ = Describe("DeleteObject with an expected state", func() {
 				_, err := del(ctx, "", op.DeleteParams{Expect: expect})
 				concurrent(err)
 				Expect(links()).To(Equal(1), "the marker's link alone")
-				release()
+				Expect(land()).To(Succeed())
 				settle(s)
 				Expect(olhHead().Data).To(BeEmpty(), "the null version's data, which the other replay removed")
 				_, ok := instanceEntry("")
@@ -1109,14 +1142,14 @@ var _ = Describe("DeleteObject with an expected state", func() {
 			put(ctx, "v2")
 			expect := head(ctx, "")
 			at(calls("bucket_link_olh"), 1, func() { attrWrite(ctx, "") })
-			var release func()
+			var land func() error
 			before(inits, 2, func() {
-				release = hold(completesDel)
+				land = late(completesDel)
 				Expect(del(ctx, "v2", op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "v2"}))
 			})
 			_, err := del(ctx, "", op.DeleteParams{Expect: expect})
 			concurrent(err)
-			release()
+			Expect(land()).To(Succeed())
 			settle(s)
 			Expect(versionHead("v2")).To(BeNil())
 			_, ok := instanceEntry("v2")
@@ -1130,14 +1163,14 @@ var _ = Describe("DeleteObject with an expected state", func() {
 			nullCurrent(ctx)
 			expect := head(ctx, "")
 			at(calls("bucket_link_olh"), 1, func() { attrWrite(ctx, "") })
-			var release func()
+			var land func() error
 			before(inits, 2, func() {
-				release = hold(completesDel)
+				land = late(completesDel)
 				Expect(del(ctx, "", op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "null", DeleteMarker: true}))
 			})
 			_, err := del(ctx, "", op.DeleteParams{Expect: expect})
 			concurrent(err)
-			release()
+			Expect(land()).To(Succeed())
 			settle(s)
 			Expect(olhHead().Data).To(BeEmpty(), "the second marker's replay removed the data")
 			_, ok := instanceEntry("")

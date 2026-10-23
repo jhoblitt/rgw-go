@@ -10700,6 +10700,44 @@ rgw-go does the following.
   The driver's versioned PutObject, CopyObject and CompleteMultipartUpload
   await it (`linkVersion`, `internal/driver/put_versioned.go`). The S3 ops
   refuse a versioned write until versioning is served.
+- **An OLH replay awaits the index completion of each version it
+  removes.** radosgw's `apply_olh_log` removes each version its log names
+  through the unversioned delete, whose `bucket_complete_op` it sends with
+  `aio_operate` and does not wait for, then writes the OLH head and trims
+  the log, or clears the OLH when no version is left
+  ([rgw_rados.cc:8530-8563](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8530-L8563),
+  [rgw_rados.cc:9714](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9714);
+  [rgw_rados.cc:9275-9309](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9275-L9309),
+  [rgw_rados.cc:10450](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10450)).
+  librados keeps the completion ahead of the trim or the clear, which go to
+  the same shard. The clear removes the version marker, the plain entry
+  through which the class reads the null version's instance entry
+  ([cls_rgw.cc:2165-2187](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2165-L2187),
+  [cls_rgw.cc:946-978](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L946-L978);
+  [cls_rgw.cc:2330-2352](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2330-L2352),
+  [cls_rgw.cc:1076-1108](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1076-L1108)),
+  so a completion of the null version's removal that reached the shard
+  after it would find no entry pending its tag and be refused with EINVAL
+  before it unaccounts the version
+  ([cls_rgw.cc:1047-1073](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1047-L1073),
+  [cls_rgw.cc:1182-1208](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1182-L1208)),
+  leaving the instance entry stored as existing and counted in the shard
+  header's stats. rgw-go's completions reach a shard in no set order
+  (`docs/cgo-limitations.md`, "Bucket index completions to one shard can
+  land out of order"), so its replay sends each removal's DEL completion on
+  the reshard-guarded path and waits for the class's answer before its head
+  op (`indexOp.completeDelSync`, `internal/driver/indexop.go`). A failure
+  is logged and the replay goes on, as radosgw's completion manager drops
+  one
+  ([rgw_rados.cc:1011-1017](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L1011-L1017),
+  [rgw_rados.cc:1052-1058](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1052-L1058)).
+  Every removal waits, not the null version's alone, so a removed version's
+  instance entry is gone when the delete that replayed it returns, as
+  radosgw's is by the time its next operation on the shard lands. The cost
+  is a round trip to the index shard per version a replay removes. radosgw
+  itself can still lose the race while the bucket reshards
+  (`docs/ceph-upstream-bugs.md`, "radosgw's null version removal loses its
+  index completion to the OLH clear while the bucket reshards").
 - **An index read of a versioned key that finds its shard gone reads the
   shard the bucket now names.** radosgw reads a name's pending OLH log from
   the shard its cached bucket instance names, and `bi_get` of the name's OLH

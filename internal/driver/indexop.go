@@ -225,6 +225,25 @@ func (x *indexOp) completeSync(ctx context.Context, ver rgw.EntryVer, m rgw.DirE
 	return x.guardedWrite(ctx, func(w *radosclient.WriteOp) { rgw.BucketCompleteOp(w, c, x.s.release) })
 }
 
+// completeDelSync is completeDel's request sent and awaited as completeSync
+// sends its own. An OLH replay's removal of a version awaits it before the
+// replay's head op and its trim or clear: the clear removes the plain entry
+// through which the class reads the null version's instance entry
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L946-L978 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1076-L1108 at v20.2.4),
+// and radosgw's unawaited completion lands first only because librados
+// keeps one client's ops to one object in order (docs/cgo-limitations.md,
+// "Bucket index completions to one shard can land out of order";
+// docs/exclusions.md, "An OLH replay awaits the index completion of each
+// version it removes").
+func (x *indexOp) completeDelSync(ctx context.Context, ver rgw.EntryVer, removedMtime time.Time) error {
+	if x.blind {
+		return nil
+	}
+	c := x.completion(rgw.OpDel, ver, rgw.DirEntryMeta{Category: rgw.CategoryNone, Mtime: removedMtime})
+	return x.guardedWrite(ctx, func(w *radosclient.WriteOp) { rgw.BucketCompleteOp(w, c, x.s.release) })
+}
+
 // readShard runs read, a read without the reshard guard as radosgw's index
 // reads are, on the current shard. A shard object a reshard removed answers
 // ENOENT as a missing entry does, so an ENOENT reads the bucket instance
