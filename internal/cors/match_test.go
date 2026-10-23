@@ -477,4 +477,12 @@ var _ = Describe("Headers.All", func() {
 			Expect(seen).To(Equal(n))
 		}
 	})
+	It("names in HeaderNames every header it can send, in its order", func() {
+		h := cors.Headers{AllowOrigin: "o", AllowMethods: "GET", AllowHeaders: "h", ExposeHeaders: "e", MaxAge: 1}
+		var names []string
+		for name := range h.All() {
+			names = append(names, name)
+		}
+		Expect(cors.HeaderNames()).To(Equal(names))
+	})
 })

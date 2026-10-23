@@ -17,6 +17,7 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/compression"
+	"github.com/jhoblitt/rgw-go/internal/cors"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
@@ -265,9 +266,10 @@ type getObjectSink struct {
 
 // endHeaderNames are the headers end_header sends after
 // send_response_data's own
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L589-L642 at v19.2.6),
-// which the handler has already set on the writer.
-var endHeaderNames = [...]string{"x-amz-request-id", "x-amz-request-charged", "Server"}
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L589-L655 at v19.2.7),
+// which the handler has already set on the writer: the CORS headers among
+// them, which an attr rgw_extended_http_attrs maps can share a name with.
+var endHeaderNames = append([]string{"x-amz-request-id", "x-amz-request-charged", "Server"}, cors.HeaderNames()...)
 
 // WriteHeader is the op's headers-only path: a HEAD or nothing to read. A
 // name an object's attr shares with end_header's headers carries the attr's

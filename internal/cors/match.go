@@ -314,6 +314,22 @@ func writeExposeHeader(b *strings.Builder, x string) {
 	}
 }
 
+// The names of the headers All yields.
+const (
+	headerAllowOrigin   = "Access-Control-Allow-Origin"
+	headerVary          = "Vary"
+	headerAllowMethods  = "Access-Control-Allow-Methods"
+	headerAllowHeaders  = "Access-Control-Allow-Headers"
+	headerExposeHeaders = "Access-Control-Expose-Headers"
+	headerMaxAge        = "Access-Control-Max-Age"
+)
+
+// HeaderNames are the names of every header All may yield, in its order,
+// for a caller that must tell them from headers of its own.
+func HeaderNames() []string {
+	return []string{headerAllowOrigin, headerVary, headerAllowMethods, headerAllowHeaders, headerExposeHeaders, headerMaxAge}
+}
+
 // All yields the headers as dump_access_control writes them, in its order:
 // nothing without an AllowOrigin; then Access-Control-Allow-Origin, Vary:
 // Origin unless AllowOrigin is *, and Access-Control-Allow-Methods,
@@ -324,23 +340,23 @@ func (h Headers) All() iter.Seq2[string, string] {
 		if h.AllowOrigin == "" {
 			return
 		}
-		if !yield("Access-Control-Allow-Origin", h.AllowOrigin) {
+		if !yield(headerAllowOrigin, h.AllowOrigin) {
 			return
 		}
-		if h.AllowOrigin != "*" && !yield("Vary", "Origin") {
+		if h.AllowOrigin != "*" && !yield(headerVary, "Origin") {
 			return
 		}
 		for _, f := range []struct{ name, v string }{
-			{"Access-Control-Allow-Methods", h.AllowMethods},
-			{"Access-Control-Allow-Headers", h.AllowHeaders},
-			{"Access-Control-Expose-Headers", h.ExposeHeaders},
+			{headerAllowMethods, h.AllowMethods},
+			{headerAllowHeaders, h.AllowHeaders},
+			{headerExposeHeaders, h.ExposeHeaders},
 		} {
 			if f.v != "" && !yield(f.name, f.v) {
 				return
 			}
 		}
 		if h.MaxAge != MaxAgeInvalid {
-			yield("Access-Control-Max-Age", strconv.FormatUint(uint64(h.MaxAge), 10))
+			yield(headerMaxAge, strconv.FormatUint(uint64(h.MaxAge), 10))
 		}
 	}
 }
