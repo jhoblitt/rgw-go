@@ -64,9 +64,10 @@ var errNullDataCond = fmt.Errorf("%w: a link of the null version's data was give
 // does not hold, ends the write.
 //
 // A write of the null version's data evaluates its condition before its
-// head write, not here: its head is the OLH head, so after that write the
-// head an attempt reads is the write's own data. setOLH refuses a condition
-// on such a link, before it writes anything (errNullDataCond).
+// head write, and inits its modification in the head write's op, not in its
+// link: its head is the OLH head, so after that write the head an attempt
+// reads is the write's own data (writeNullVersion). setOLH refuses a
+// condition on such a link, before it writes anything (errNullDataCond).
 type olhCondition func(ctx context.Context, cur *op.ObjectState) (olhPass, error)
 
 // olhPass is what a condition's pass rests on (olhCondition). Current is the
@@ -159,26 +160,54 @@ func (s *Store) prepareOLHAttempt(ctx context.Context, idx *bucketOLHIndex, head
 	if p.Cond == nil {
 		return olhAttempt{}, nil
 	}
-	cur, err := s.olhCurrent(ctx, idx.x.rec, head)
-	if err != nil {
-		return olhAttempt{}, err
+	e, err := s.evalOLHCond(ctx, idx, head, p.Cond, w)
+	if err != nil || e.wait {
+		return olhAttempt{wait: e.wait}, err
 	}
-	pass, err := p.Cond(ctx, cur)
-	if err != nil {
-		return olhAttempt{}, err
-	}
-	wait, refuse, err := s.waitOLHPending(ctx, idx, head, w)
-	if err != nil || wait {
-		return olhAttempt{wait: wait}, err
-	}
-	a := olhAttempt{guard: &olhCondGuard{info: head.Attrs[meta.AttrOLHInfo], noPending: refuse}}
+	a := olhAttempt{guard: e.guard}
 	if key.Instance != "" {
-		a.check = &olhLinkCheck{v0: olhVerEpoch(head), null: pass.Null}
-		if (pass.Current && cur.Exists) || cur.DeleteMarker {
-			a.check.matched = &cur.Key.Instance
+		a.check = &olhLinkCheck{v0: olhVerEpoch(head), null: e.pass.Null}
+		if (e.pass.Current && e.cur.Exists) || e.cur.DeleteMarker {
+			a.check.matched = &e.cur.Key.Instance
 		}
 	}
 	return a, nil
+}
+
+// olhCondEval is a conditional attempt's evaluation on the OLH head it
+// followed (evalOLHCond): cur, the state of the version current on it;
+// pass, what the condition's pass rests on (olhPass); guard, the guard the
+// attempt's init carries; and wait, set once the attempt has backed off,
+// after which the next attempt reads the head again and the rest is unset.
+type olhCondEval struct {
+	cur   *op.ObjectState
+	pass  olhPass
+	guard *olhCondGuard
+	wait  bool
+}
+
+// evalOLHCond is what both conditional writers' attempts do once they have
+// followed head, the OLH head of idx's name (followOLHHead): setOLH's
+// conditional link (prepareOLHAttempt) and the conditional write of the null
+// version's data (writeNullVersion). cond is evaluated on the version current
+// on head (olhCurrent), its error ending the write; the attempt waits while
+// other writers' modifications are pending (waitOLHPending); and its init is
+// then guarded on head's olh.info and, while the wait allows it, on no
+// pending attr.
+func (s *Store) evalOLHCond(ctx context.Context, idx *bucketOLHIndex, head *op.ObjectState, cond olhCondition, w *olhCondWait) (olhCondEval, error) {
+	cur, err := s.olhCurrent(ctx, idx.x.rec, head)
+	if err != nil {
+		return olhCondEval{}, err
+	}
+	pass, err := cond(ctx, cur)
+	if err != nil {
+		return olhCondEval{}, err
+	}
+	wait, refuse, err := s.waitOLHPending(ctx, idx, head, w)
+	if err != nil || wait {
+		return olhCondEval{wait: wait}, err
+	}
+	return olhCondEval{cur: cur, pass: pass, guard: &olhCondGuard{info: head.Attrs[meta.AttrOLHInfo], noPending: refuse}}, nil
 }
 
 // followOLHHead follows head, the OLH head of idx's name as an attempt read

@@ -486,6 +486,8 @@ type HeadWriteForTest struct {
 	CompleteMultipart    bool
 	Size, AccountedSize  uint64
 	Incompressible       bool
+	// OLHEpoch is the head write's olhEpoch.
+	OLHEpoch *uint64
 }
 
 // WriteMetaForTest is writeMeta of hw in rec's bucket through x; it returns
@@ -495,14 +497,16 @@ func (s *Store) WriteMetaForTest(ctx context.Context, rec *op.BucketRecord, hw H
 		rec: rec, key: hw.Key, tag: hw.Tag, ifMatch: hw.IfMatch, ifNoneMatch: hw.IfNoneMatch, data: hw.Data, attrs: hw.Attrs, create: hw.Create,
 		nonAtomic: hw.NonAtomic, pool: hw.Pool, oid: hw.OID, loc: hw.Loc, category: hw.Category,
 		completeMultipart: hw.CompleteMultipart, size: hw.Size, accountedSize: hw.AccountedSize, incompressible: hw.Incompressible,
+		olhEpoch: hw.OLHEpoch,
 	}, x)
 	return res.epoch, err
 }
 
 // GuardHeadForTest is guardHead of hw's key and conditions over st, the head
-// as read, adding the guard's steps to w.
+// as read and the state the conditions are checked on, adding the guard's
+// steps to w.
 func (s *Store) GuardHeadForTest(w *radosclient.WriteOp, hw HeadWriteForTest, st *op.ObjectState) error {
-	return s.guardHead(w, &headWrite{key: hw.Key, ifMatch: hw.IfMatch, ifNoneMatch: hw.IfNoneMatch}, st)
+	return s.guardHead(w, &headWrite{key: hw.Key, ifMatch: hw.IfMatch, ifNoneMatch: hw.IfNoneMatch}, st, st, nil)
 }
 
 // MetaRef is mpRef with its fields exported for the specs.
