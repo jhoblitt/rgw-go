@@ -1519,6 +1519,45 @@ review and verified against the tree.
   any other. The refusal follows the bucket load and comes before the
   object-name check, as radosgw's versioned path answers no ENOENT for a
   missing object.
+- **A purging removal resumes each page of a versioned bucket at its last
+  key's remaining versions.** `DELETE /admin/bucket` with `purge-objects`
+  or `bypass-gc`, and `DELETE /admin/user` with `purge-data`, list a bucket
+  whose flags hold `BUCKET_VERSIONED` with versions a page at a time,
+  remove each entry of the page, and list the next page from the first
+  version left of the key the page ended on, not after the page's last
+  entry. radosgw's `RadosBucket::remove` lists the next page from the
+  listing's next marker, the last entry of the page it has just removed
+  ([rgw_sal_rados.cc:374](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L374),
+  [rgw_sal_rados.cc:391](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L391);
+  [rgw_sal_rados.cc:898-901](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L898-L901),
+  [rgw_sal_rados.cc:918-921](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L918-L921)).
+  When that entry is a delete marker, or a version whose instance entry is
+  gone, the class finds no entry for the marker and starts past every
+  version of its name
+  ([cls_rgw.cc:375-381](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L375-L381),
+  [cls_rgw.cc:425-431](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L425-L431)),
+  so the key's versions further on that index shard are neither listed nor
+  removed (docs/ceph-upstream-bugs.md, "radosgw's bucket removal with purge
+  leaves a key's older versions behind when a page ends on one of its
+  versions"). rgw-go sends the key's name with no instance as the next
+  marker and asks the listing to start at that name's versions, as a
+  continuation token without a version token starts
+  (`ListObjectsParams.RelistMarker`, `internal/op/bucket.go`), so it lists
+  and removes them, and its bucket removal finds the bucket empty where
+  radosgw's leaves those versions behind it. Two pages in a row that
+  remove nothing and start at the same entry are a key holding more
+  versions the removal cannot remove than a page, and the next page starts
+  past every version of that key, as radosgw's next marker passes it, so
+  the keys after it are still removed. A page whose entries another
+  removal took first goes on, as radosgw's goes on past any page. The
+  listing ends at its end, and the bucket's removal then refuses what is
+  left, where radosgw's `delete_bucket` removes the bucket over it ("A
+  purging bucket removal checks the index is empty at the end"). A bucket
+  that was never versioned is paged as radosgw pages it, since a marker
+  without an instance starts after its name whether or not its entry is
+  still there. The purges' refusal of a versioned bucket ("A purging bucket
+  removal refuses a bucket whose versioning was ever enabled") comes before
+  this listing.
 - **The admin account routes and the RADOS account store differ from
   radosgw in eight ways.** On `/admin/account` (`rgw_rest_account.cc` and
   `rgw_account.cc` at v19.2.6 and v20.2.4) and in the RADOS driver's

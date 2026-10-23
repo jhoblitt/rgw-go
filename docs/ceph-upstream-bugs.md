@@ -27532,8 +27532,12 @@ Every new entry adds its row to this table, in document order.
   `rgw_remove_object`, so on a versioned bucket it writes a delete marker
   where v18.2.8 removed the null version.
 - **Releases:** v19.2.7 and v20.2.4; main was not checked.
-- **rgw-go:** does not meet it today: its purges refuse a bucket that is or
-  was versioned (`refuseVersionedPurge`, `internal/op/adminpurge.go`).
+- **rgw-go:** does not meet it: its purges refuse a bucket that is or was
+  versioned (`refuseVersionedPurge`, `internal/op/adminpurge.go`). Below
+  that refusal, their listing loop names an entry listed without an
+  instance `null` on such a bucket, so its delete removes the version
+  (`PurgeObjects`, `internal/op/adminpurge.go`; pinned in
+  `internal/op/adminpurge_test.go`).
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V8b, 2026-10-23, reading how radosgw's listing
   names a null version for its purge; derived from the source, not
