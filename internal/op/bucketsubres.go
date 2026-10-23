@@ -184,8 +184,13 @@ func (o *PutBucketACL) VerifyPermission(ctx context.Context, r *Request) error {
 // makes both checks again against the bucket as each try reads it, so a retry
 // never puts back an owner a concurrent change replaced; a retry that passes
 // them and finds the requested ACL in place writes nothing and succeeds
-// (docs/exclusions.md).
+// (docs/exclusions.md). A bucket whose ownership setting is
+// BucketOwnerEnforced refuses the write before Build reads the body, and so
+// does each try against the setting it read (aclsDisabled).
 func (o *PutBucketACL) Execute(ctx context.Context, r *Request) error {
+	if err := aclsDisabled(r.BucketRec); err != nil {
+		return err
+	}
 	existing, err := BucketACLFor(ctx, r.BucketRec)
 	if err != nil {
 		return err
@@ -197,6 +202,9 @@ func (o *PutBucketACL) Execute(ctx context.Context, r *Request) error {
 	set := map[string][]byte{meta.AttrACL: encodeAt(p, r.Env.Zone.Release())}
 	raced := false
 	return retryBucketWrite(ctx, r, o, func() error {
+		if err := aclsDisabled(r.BucketRec); err != nil {
+			return err
+		}
 		current, err := BucketACLFor(ctx, r.BucketRec)
 		if err != nil {
 			return err

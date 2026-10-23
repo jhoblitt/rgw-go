@@ -5932,7 +5932,22 @@ rgw-go does the following.
     without one
     ([rgw_op.cc:10344-10358](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L10344-L10358)).
 
-  rgw-go differs from v21.1.2 in two ways. No ACL grant authorizes the
+  Under BucketOwnerEnforced, rgw-go refuses PutBucketAcl and PutObjectAcl
+  with 400 AccessControlListNotSupported, "Cannot set ACLs when
+  ObjectOwnership is BucketOwnerEnforced.", before it reads the body, as
+  v21.1.2 does
+  ([rgw_op.cc:6866-6871](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L6866-L6871)), and so does each
+  retry of a lost race against the setting that retry read, where v21.1.2
+  retries neither write. A floor radosgw stores the ACL: its `RGWPutACLs`
+  has no such check
+  ([rgw_op.cc:5824-5930](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5824-L5930),
+  [rgw_op.cc:6467-6590](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6467-L6590)).
+  Amazon S3 refuses both: "Requests to set ACLs or update ACLs fail and
+  return the AccessControlListNotSupported error code"
+  ([api.go:8036-8041](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L8036-L8041),
+  [api.go:10562-10567](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L10562-L10567)).
+
+  Its three ops differ from v21.1.2's in two ways. No ACL grant authorizes the
   three. v21.1.2 falls back to the bucket's ACL with the READ_ACP and
   WRITE_ACP its `op_to_perm` maps the two actions to
   ([rgw_iam_policy.h:314-315](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_iam_policy.h#L314-L315),

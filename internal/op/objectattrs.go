@@ -77,8 +77,13 @@ func (o *PutObjectACL) VerifyPermission(ctx context.Context, r *Request) error {
 // replaced, nor writes for a requester a concurrent change refused. A retry
 // that passes them and finds the requested ACL in place writes nothing and
 // succeeds; once the retries are spent it answers ConcurrentModification
-// (docs/exclusions.md).
+// (docs/exclusions.md). An object in a bucket whose ownership setting is
+// BucketOwnerEnforced refuses the write first, before Build reads the body,
+// and so does each try against the bucket it read (aclsDisabled).
 func (o *PutObjectACL) Execute(ctx context.Context, r *Request) error {
+	if err := aclsDisabled(r.BucketRec); err != nil {
+		return err
+	}
 	if err := versioningUnserved(r.BucketRec, r.Object); err != nil {
 		return err
 	}
@@ -103,6 +108,9 @@ func (o *PutObjectACL) Execute(ctx context.Context, r *Request) error {
 	verify := func() error { return VerifyObjectPermission(ctx, r, a, acl.PermFor(a)) }
 	raced := false
 	return RetryRacedWriteReauthorized(ctx, r, reread, verify, func() error {
+		if err := aclsDisabled(r.BucketRec); err != nil {
+			return err
+		}
 		current, err := ObjectACLFor(ctx, r.ObjState, r.BucketRec)
 		if err != nil {
 			return err
