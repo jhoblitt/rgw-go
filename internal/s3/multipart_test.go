@@ -171,7 +171,7 @@ var _ = Describe("multipart handlers", func() {
 
 		rec = w.send(w.alice, http.MethodGet, "/plain?uploads&encoding-type=url&prefix=k", "")
 		expectChunkedXML(rec)
-		Expect(rec.Body.String()).To(Equal(xmlDecl + `<ListMultipartUploadsResult ` + xmlnsS3 + `><Bucket>plain</Bucket><Prefix>k</Prefix>` +
+		Expect(rec.Body.String()).To(Equal(xmlDecl + `<ListMultipartUploadsResult ` + xmlnsS3 + `><EncodingType>url</EncodingType><Bucket>plain</Bucket><Prefix>k</Prefix>` +
 			`<NextKeyMarker>k</NextKeyMarker><NextUploadIdMarker>` + id + `</NextUploadIdMarker><MaxUploads>1000</MaxUploads>` +
 			`<IsTruncated>false</IsTruncated><Upload><Key>k</Key><UploadId>` + id + `</UploadId>` +
 			`<Initiator><ID>alice</ID><DisplayName>Alice</DisplayName></Initiator><Owner><ID>alice</ID><DisplayName>Alice</DisplayName></Owner>` +
@@ -731,13 +731,22 @@ var _ = Describe("multipart handlers", func() {
 			Expect(body).To(ContainSubstring("<Bucket>plain</Bucket><NextKeyMarker>k</NextKeyMarker>"))
 		})
 
-		It("url-encodes keys and common prefixes without the slash under encoding-type=url, and no other element", func(ctx SpecContext) {
+		It("url-encodes keys, common prefixes, Prefix, the key markers and Delimiter without the slash under encoding-type=url, as S3 does", func(ctx SpecContext) {
 			id := w.initUpload(w.alice, "/plain/a%20b/c+d")
 			w.initUpload(w.alice, "/plain/x%20y/z")
 			body := w.send(w.alice, http.MethodGet, "/plain?uploads&encoding-type=url&prefix=a%20b/", "").Body.String()
-			Expect(body).To(ContainSubstring("<Prefix>a b/</Prefix>"), "dump_string, rgw_rest_s3.cc:4191")
-			Expect(body).To(ContainSubstring("<NextKeyMarker>a b/c+d</NextKeyMarker>"))
+			Expect(body).To(ContainSubstring(`<ListMultipartUploadsResult `+xmlnsS3+`><EncodingType>url</EncodingType><Bucket>plain</Bucket>`),
+				"S3 returns EncodingType, which radosgw never writes, rgw_rest_s3.cc:4216-4219 at v19.2.7")
+			Expect(body).To(ContainSubstring("<Prefix>a%20b/</Prefix>"), "radosgw's dump_string, rgw_rest_s3.cc:4220-4221 at v19.2.7")
+			Expect(body).To(ContainSubstring("<NextKeyMarker>a%20b/c%2Bd</NextKeyMarker>"))
 			Expect(body).To(ContainSubstring("<Upload><Key>a%20b/c%2Bd</Key><UploadId>" + id + "</UploadId>"))
+			body = w.send(w.alice, http.MethodGet, "/plain?uploads&encoding-type=url&key-marker=a%20b/c%2B&upload-id-marker=2~x&delimiter=%20/", "").Body.String()
+			Expect(body).To(ContainSubstring("<KeyMarker>a%20b/c%2B</KeyMarker><UploadIdMarker>2~x</UploadIdMarker>"), "the upload id markers as sent")
+			Expect(body).To(ContainSubstring("<Delimiter>%20/</Delimiter>"))
+			body = w.send(w.alice, http.MethodGet, "/plain?uploads&key-marker=a%20b/c%2B&delimiter=%20/", "").Body.String()
+			Expect(body).NotTo(ContainSubstring("<EncodingType>"))
+			Expect(body).To(ContainSubstring("<KeyMarker>a b/c+</KeyMarker>"))
+			Expect(body).To(ContainSubstring("<Delimiter> /</Delimiter>"), "as sent without encoding-type")
 			body = w.send(w.alice, http.MethodGet, "/plain?uploads&encoding-type=url&delimiter=/", "").Body.String()
 			Expect(body).To(HaveSuffix("<CommonPrefixes><Prefix>a%20b/</Prefix><Prefix>x%20y/</Prefix></CommonPrefixes></ListMultipartUploadsResult>"),
 				"one CommonPrefixes element holding every prefix, rgw_rest_s3.cc:4219-4225")

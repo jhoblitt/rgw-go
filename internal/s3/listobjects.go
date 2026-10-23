@@ -317,12 +317,17 @@ func quotedETag(etag string) xmltext.Text {
 
 // v1 is RGWListBucket_ObjStore_S3::send_response's document
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L1916-L1966).
+// Under encoding-type=url it also encodes Marker with its slash, as
+// NextMarker, which botocore decodes and radosgw writes as sent; Prefix,
+// which botocore never decodes, is written as sent (docs/exclusions.md,
+// "ListObjects, ListObjectsV2 and ListMultipartUploads URL-encode the
+// elements S3 encodes").
 func (l listing) v1() listBucketResult {
 	o, r := l.o, l.r
 	doc := listBucketResult{
 		Xmlns: xmlnsS3, Tenant: xmltext.Text(r.Tenant), Name: xmltext.Text(r.Bucket), Prefix: xmltext.Text(o.Prefix),
 		MaxKeys: o.Max, IsTruncated: l.truncated(), CommonPrefixes: l.prefixes(l.encode), Contents: l.contents(true),
-		Marker: xmltext.Text(o.Marker),
+		Marker: l.urlsafe(l.encode, o.Marker, true),
 	}
 	if l.encode {
 		doc.EncodingType = "url"
@@ -338,11 +343,15 @@ func (l listing) v1() listBucketResult {
 
 // v2 is RGWListBucket_ObjStore_S3v2::send_response's document
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2072-L2114).
-// The tokens and StartAfter are written as sent, never URL-encoded.
+// The tokens are written as sent, never URL-encoded. Under encoding-type=url
+// it also encodes Prefix, keeping its slash as the common prefixes do, and
+// StartAfter with its slash, as a Key, which S3 encodes and radosgw writes as
+// sent (docs/exclusions.md, "ListObjects, ListObjectsV2 and
+// ListMultipartUploads URL-encode the elements S3 encodes").
 func (l listing) v2() listBucketV2Result {
 	o, r := l.o, l.r
 	doc := listBucketV2Result{
-		Xmlns: xmlnsS3, Tenant: xmltext.Text(r.Tenant), Name: xmltext.Text(r.Bucket), Prefix: xmltext.Text(o.Prefix),
+		Xmlns: xmlnsS3, Tenant: xmltext.Text(r.Tenant), Name: xmltext.Text(r.Bucket), Prefix: l.urlsafe(l.encode, o.Prefix, false),
 		MaxKeys: o.Max, IsTruncated: l.truncated(), CommonPrefixes: l.prefixes(l.encode), Contents: l.contents(o.FetchOwner),
 		KeyCount: len(o.Result.Entries) + len(o.Result.CommonPrefixes),
 	}
@@ -359,7 +368,7 @@ func (l listing) v2() listBucketV2Result {
 		doc.NextContinuationToken = xmltext.Text(next)
 	}
 	if o.HasStartAfter {
-		doc.StartAfter = new(xmltext.Text(o.StartAfter))
+		doc.StartAfter = new(l.urlsafe(l.encode, o.StartAfter, true))
 	}
 	return doc
 }

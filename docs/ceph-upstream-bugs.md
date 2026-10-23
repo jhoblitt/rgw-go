@@ -430,7 +430,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [cls_rgw's bucket_unlink_instance promotes the next version at its own epoch, discarding the epoch it passes](#cls_rgws-bucket_unlink_instance-promotes-the-next-version-at-its-own-epoch-discarding-the-epoch-it-passes) | pending | pending | ✓ |
 | [cls_otp verifies a code of any length from 6 to 8 digits against any device](#cls_otp-verifies-a-code-of-any-length-from-6-to-8-digits-against-any-device) | pending | pending | ✓ |
 | [radosgw-admin mfa resync stores an offset half a step from its fit at an odd window](#radosgw-admin-mfa-resync-stores-an-offset-half-a-step-from-its-fit-at-an-odd-window) | pending | pending | ✓ |
-| [radosgw's ListObjectVersions leaves KeyMarker, Prefix and Delimiter unencoded under encoding-type=url](#radosgws-listobjectversions-leaves-keymarker-prefix-and-delimiter-unencoded-under-encoding-typeurl) | pending | pending | ✓ |
+| [radosgw's bucket listings leave elements S3 encodes unencoded under encoding-type=url](#radosgws-bucket-listings-leave-elements-s3-encodes-unencoded-under-encoding-typeurl) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -24845,12 +24845,15 @@ Every new entry adds its row to this table, in document order.
   `scan_totp` beside the class; the formula checked at both tags in V13c's
   second fix round.
 
-## radosgw's ListObjectVersions leaves KeyMarker, Prefix and Delimiter unencoded under encoding-type=url
+## radosgw's bucket listings leave elements S3 encodes unencoded under encoding-type=url
 
-- **Kind:** defect, S3-correctness, cosmetic. Under `encoding-type=url`
-  the versions document writes three elements S3 encodes as they were
-  sent. No stored data is damaged. Not security-relevant. Unreproduced:
-  derived from the source.
+- **Kind:** defect, S3-correctness. Under `encoding-type=url`
+  ListObjectVersions, ListObjectsV2 and ListMultipartUploads write
+  elements S3 encodes as they were sent, ListMultipartUploads its paging
+  marker among them, and ListMultipartUploads writes no `EncodingType`.
+  ListObjects writes `Marker` so too, on botocore's evidence alone. No
+  stored data is damaged. Not security-relevant. Unreproduced: derived
+  from the source.
 - **Evidence:** paths are under `src/`.
   - With `encoding-type=url`, the versions document encodes each `Key`,
     each common prefix and `NextKeyMarker` through `dump_urlsafe`, and
@@ -24870,15 +24873,52 @@ Every new entry adds its row to this table, in document order.
     `Prefix`, `Delimiter`, each version's and delete marker's `Key` and
     each common prefix with `unquote_plus` (`set_list_objects_encoding_type_url`
     and `decode_list_object_versions`, `botocore/handlers.py` in 1.43.90).
+  - ListObjectsV2 writes its `Prefix` with `dump_string`, in the response
+    it shares with ListObjects
+    ([rgw_rest_s3.cc:1886](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1886),
+    [rgw_rest_s3.cc:1989](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1989)),
+    and its `StartAfter` with `dump_string`
+    ([rgw_rest_s3.cc:2120](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2120),
+    [rgw_rest_s3.cc:2223](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2223)),
+    where AWS's API reference (API_ListObjectsV2.html, fetched 2026-10-22)
+    encodes "Delimiter, Prefix, Key, and StartAfter". botocore sets the
+    encoding on every ListObjectsV2 that names none and decodes `Delimiter`,
+    `Prefix`, `StartAfter`, each `Key` and each common prefix
+    (`decode_list_object_v2`).
+  - ListMultipartUploads opens `ListMultipartUploadsResult` with no
+    `EncodingType` and writes its `Prefix`, `KeyMarker`, `NextKeyMarker`
+    and `Delimiter` with `dump_string`
+    ([rgw_rest_s3.cc:4216-4232](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4216-L4232),
+    [rgw_rest_s3.cc:4734-4750](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4734-L4750)),
+    where AWS's API reference (API_ListMultipartUploads.html, fetched
+    2026-10-22) encodes "Delimiter, KeyMarker, Prefix, NextKeyMarker, Key"
+    and returns `EncodingType`. botocore sends no `encoding-type` there.
+  - ListObjects writes its `Marker` with `dump_string`
+    ([rgw_rest_s3.cc:1970](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1970),
+    [rgw_rest_s3.cc:2073](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2073)).
+    AWS's ListObjects reference (API_ListObjects.html) names no list of
+    encoded elements. botocore, which sets the encoding on every ListObjects
+    that names none, decodes `Delimiter`, `Marker`, `NextMarker`, each
+    `Key` and each common prefix, and not the top-level `Prefix`
+    (`decode_list_object`): this part rests on botocore's evidence alone.
 - **Impact:** boto3 and the AWS CLI read a ListObjectVersions `KeyMarker`,
-  `Prefix` or `Delimiter` that holds `+` back with a space for it, and one
-  that holds `%` and two hex digits decoded. Paging is unaffected: it goes
-  by `NextKeyMarker`, which radosgw encodes.
+  `Prefix` or `Delimiter`, a ListObjectsV2 `Prefix` or `StartAfter`, or a
+  ListObjects `Marker` that holds `+` back with a space for it, and one
+  that holds `%` and two hex digits decoded. Their paging is unaffected:
+  it goes by `NextKeyMarker`, `NextMarker` and the continuation token,
+  which radosgw encodes or S3 does not. A client that asks
+  ListMultipartUploads for the encoding and decodes as S3's reference says
+  decodes its raw `NextKeyMarker` too, and pages from the wrong key when the
+  key holds `+` or `%`.
 - **Releases:** v19.2.7 and v20.2.4.
-- **rgw-go:** encodes the three elements as S3 does (`listing.versions`,
-  `internal/s3/listobjects.go`; `docs/exclusions.md`, "ListObjectVersions
-  URL-encodes KeyMarker, Prefix and Delimiter").
+- **rgw-go:** encodes each element as S3 does and writes ListMultipartUploads'
+  `EncodingType` (`internal/s3/listobjects.go`, `internal/s3/multipart.go`;
+  `docs/exclusions.md`, "ListObjectVersions URL-encodes KeyMarker, Prefix
+  and Delimiter" and "ListObjects, ListObjectsV2 and ListMultipartUploads
+  URL-encode the elements S3 encodes"). ListObjects' `Prefix`, which
+  botocore never decodes, is written as sent, as radosgw writes it.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task V14b, 2026-10-22, checking the versions
-  document's markers under `encoding-type=url` against AWS's API reference;
-  derived from the source, not reproduced.
+  document's markers under `encoding-type=url` against AWS's API reference,
+  and widened to the other listings by V14b's review; derived from the
+  source, not reproduced.
