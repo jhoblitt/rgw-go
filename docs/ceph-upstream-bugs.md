@@ -430,6 +430,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [cls_rgw's bucket_unlink_instance promotes the next version at its own epoch, discarding the epoch it passes](#cls_rgws-bucket_unlink_instance-promotes-the-next-version-at-its-own-epoch-discarding-the-epoch-it-passes) | pending | pending | ✓ |
 | [cls_otp verifies a code of any length from 6 to 8 digits against any device](#cls_otp-verifies-a-code-of-any-length-from-6-to-8-digits-against-any-device) | pending | pending | ✓ |
 | [radosgw-admin mfa resync stores an offset half a step from its fit at an odd window](#radosgw-admin-mfa-resync-stores-an-offset-half-a-step-from-its-fit-at-an-odd-window) | pending | pending | ✓ |
+| [radosgw's ListObjectVersions leaves KeyMarker, Prefix and Delimiter unencoded under encoding-type=url](#radosgws-listobjectversions-leaves-keymarker-prefix-and-delimiter-unencoded-under-encoding-typeurl) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -22532,12 +22533,24 @@ Every new entry adds its row to this table, in document order.
   root, a key marker without its second marker taken as the plain key, makes
   [radosgw's ListMultipartUploads applies the prefix and the delimiter to
   the meta object's name](#radosgws-listmultipartuploads-applies-the-prefix-and-the-delimiter-to-the-meta-objects-name)
-  list a key marker's own uploads.
+  list a key marker's own uploads. The `list-type=2` form with `versions`
+  reads no version marker, only a `continuation-token` or `start-after`
+  ([rgw_rest_s3.cc:1771-1777](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1771-L1777),
+  [rgw_rest_s3.cc:1874-1880](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1874-L1880)),
+  so each of its pages after one that ended inside a key's versions starts
+  again at that key's first version, and a client paging it by its tokens
+  never gets past a key with `max-keys` versions or more.
 - **Releases:** v19.2.7 and v20.2.4.
-- **rgw-go:** starts after every version of the key, as AWS does
-  (`markerStart`, `internal/driver/list.go`; `docs/exclusions.md`, "A
-  versions listing starts after every version of a key-marker given
-  alone").
+- **rgw-go:** starts after every version of the key, where AWS does: in
+  AWS's API reference (API_ListObjectVersions.html, fetched 2026-10-22), the
+  sample `GET /?versions&key-marker=key2` lists only the versions of `key3`
+  and `sourcekey` (`markerStart`, `internal/driver/list.go`;
+  `docs/exclusions.md`, "A versions listing starts after every version of a
+  key-marker given alone"). It starts the `list-type=2` form's
+  `continuation-token` at its key's first version, as radosgw does
+  (`ListObjectsParams.RelistMarker`, `internal/op/bucket.go`), so that form
+  pages as radosgw's does, endlessly on a key with `max-keys` versions or
+  more.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V9's review, 2026-10-20; recorded by its fix
   round. Derived from the source, not reproduced.
@@ -24831,3 +24844,41 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 Task V13c's fix-round re-review, 2026-10-22, modelling
   `scan_totp` beside the class; the formula checked at both tags in V13c's
   second fix round.
+
+## radosgw's ListObjectVersions leaves KeyMarker, Prefix and Delimiter unencoded under encoding-type=url
+
+- **Kind:** defect, S3-correctness, cosmetic. Under `encoding-type=url`
+  the versions document writes three elements S3 encodes as they were
+  sent. No stored data is damaged. Not security-relevant. Unreproduced:
+  derived from the source.
+- **Evidence:** paths are under `src/`.
+  - With `encoding-type=url`, the versions document encodes each `Key`,
+    each common prefix and `NextKeyMarker` through `dump_urlsafe`, and
+    writes `Prefix`, `Delimiter` and `KeyMarker` with `dump_string`
+    ([rgw_rest_s3.cc:1787-1791](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1787-L1791) and
+    [rgw_rest_s3.cc:1815-1818](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1815-L1818);
+    [rgw_rest_s3.cc:1890-1894](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1890-L1894) and
+    [rgw_rest_s3.cc:1918-1921](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1918-L1921)).
+    radosgw's v1 listing encodes its `Delimiter`
+    ([rgw_rest_s3.cc:1888-1890](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1888-L1890),
+    [rgw_rest_s3.cc:1991-1993](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1991-L1993)).
+  - AWS's API reference for ListObjectVersions (API_ListObjectVersions.html,
+    fetched 2026-10-22) names the elements S3 returns encoded:
+    "KeyMarker, NextKeyMarker, Prefix, Key, and Delimiter".
+  - botocore sends `encoding-type=url` on every ListObjectVersions that
+    names none, and then URL-decodes `KeyMarker`, `NextKeyMarker`,
+    `Prefix`, `Delimiter`, each version's and delete marker's `Key` and
+    each common prefix with `unquote_plus` (`set_list_objects_encoding_type_url`
+    and `decode_list_object_versions`, `botocore/handlers.py` in 1.43.90).
+- **Impact:** boto3 and the AWS CLI read a ListObjectVersions `KeyMarker`,
+  `Prefix` or `Delimiter` that holds `+` back with a space for it, and one
+  that holds `%` and two hex digits decoded. Paging is unaffected: it goes
+  by `NextKeyMarker`, which radosgw encodes.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** encodes the three elements as S3 does (`listing.versions`,
+  `internal/s3/listobjects.go`; `docs/exclusions.md`, "ListObjectVersions
+  URL-encodes KeyMarker, Prefix and Delimiter").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 Task V14b, 2026-10-22, checking the versions
+  document's markers under `encoding-type=url` against AWS's API reference;
+  derived from the source, not reproduced.
