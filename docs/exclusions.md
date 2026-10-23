@@ -57,8 +57,20 @@ day with the rgw-rs session, which splits by layer:
   ([cls_rgw.cc:946-978](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L946-L978),
   [cls_rgw.cc:1076-1108](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1076-L1108);
   "A versioned delete of versionId=null checks the null version itself",
-  under Object write differences). `bi_put`, `bi_list` and the repair
-  paths stay out of scope.
+  under Object write differences). A CompleteMultipartUpload or an
+  AbortMultipartUpload that finds an earlier completion of a version by
+  its record, or a CompleteMultipartUpload that finds one into its key's
+  null version by that version's manifest, reads that version's entries the
+  same way, and its list entry at the instance entry's versioned epoch, to
+  learn whether its link landed, which radosgw's replay and abort of the
+  record do not read ("A CompleteMultipartUpload records itself on the
+  meta object before its head write", under Coexistence obligations). An
+  abort that then removes a version no link of which landed reads its
+  instance entry once more, after the removal's prepare, and again once it
+  canceled an op on it past the tag timeout, and compares the stored bytes
+  that `bi_get` answers in the op that removes the entry
+  ("AbortMultipartUpload leaves a completed upload's parts alone").
+  `bi_put`, `bi_list` and the repair paths stay out of scope.
 
 A Tentacle gateway-side feature is therefore available on a Squid cluster
 when its persistent form is a separate attribute, as S3 checksums are,
@@ -721,21 +733,65 @@ review and verified against the tree.
   head write.** rgw-go writes the completion record of
   [ceph/ceph#72103](https://github.com/ceph/ceph/pull/72103), the fix in
   review for tracker [#80896](https://tracker.ceph.com/issues/80896), in
-  that PR's format as of its head (2026-09-28), so that a radosgw carrying
-  the fix and rgw-go read each other's records:
+  that PR's format as of its head, 2c1db8239cc (2026-09-28), so that a
+  radosgw carrying the fix and rgw-go read each other's records:
   `user.rgw.mp_completion_tag`, the idtag the completion's head carries
-  with its trailing NUL, and `user.rgw.mp_completion_instance`, `null` for
-  the key's own head. Both go on the meta object in the op that renews the
-  completion lock, before the head write, and both are removed after a head
-  write that certainly failed; after one that timed out they stay. A
-  completion that finds a record finishes the earlier completion, writing
-  no head, only when the head the record names carries the recorded tag and
-  the ETag the request's parts make; otherwise it answers 404 NoSuchUpload
-  and writes nothing, because that head was never written or was replaced
-  or deleted and its parts queued for the GC. A retry after a crash between
-  the record and the head write, or after a head write that timed out and
-  never landed, is therefore refused, and the upload has to be aborted, as
-  in the PR. A floor radosgw coexists with the record without knowing it:
+  with its trailing NUL, and `user.rgw.mp_completion_instance`, the
+  instance of the version the completion writes, its key's on a bucket
+  whose versioning is enabled, and `null` for the key's own head. Both go
+  on the meta object in the op that renews the completion lock, before the
+  head write, and both are removed after a head write that certainly wrote
+  nothing. After one that timed out they stay, and so they do once a head
+  landed, whatever its completion or its link then answered, where the PR
+  removes them after any failure but a timeout: that head names the parts,
+  and a removal of its version queues them for the GC
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's CompleteMultipartUpload leaves
+  its upload whole when its head lands and write_meta
+  fails](ceph-upstream-bugs.md#radosgws-completemultipartupload-leaves-its-upload-whole-when-its-head-lands-and-write_meta-fails)").
+  A completion that finds a record finishes the earlier completion, writing
+  no head, only when the head the record names, the recorded version read
+  without following the key's OLH, carries the recorded tag and the ETag
+  the request's parts make, and answers with that version's id; otherwise
+  it answers 404 NoSuchUpload and writes nothing, because that head was
+  never written or was replaced or deleted and its parts queued for the GC.
+  A retry after a crash between the record and the head write, or after a
+  head write that timed out and never landed, is therefore refused, and the
+  upload has to be aborted, as in the PR. A record of a version, an
+  instance or the null version on its key's OLH head, is finished only once
+  that version is linked. rgw-go reads the version's index entry and, when
+  that entry is the completion's, the list entry at its versioned epoch: the
+  version is linked only when that list entry carries the completion's tag,
+  as only a link writes list entries and complete_op keeps the epoch of the
+  entry it rewrites, which for a null version written over an earlier one
+  is the earlier one's. When no link of it landed, after a link that timed
+  out or a gateway that stopped once the head was written, rgw-go completes
+  the entry such a gateway left pending and links the version before it
+  answers 200: an instance under the retry's If-Match and If-None-Match,
+  and the null version unconditionally, as the null write's own link is
+  (`linkCond`, `internal/driver/put_versioned.go`). When the link cannot be
+  established safely, because the version's head or its index entry is
+  gone, the entry is another write's, or the link is refused, rgw-go
+  answers 500 InternalError and keeps the meta object and the version, so a
+  later retry may link it; a condition that no longer holds answers 412.
+  An abort is the exit that leaves nothing behind: it removes such an
+  unlinked version, its instance entry and then its head, its parts going
+  to the GC with the upload's, once no link of it can still land and no
+  other op on its index entry is younger than the bucket index's tag
+  timeout, 120 seconds by default, and until then answers 500 too
+  ("AbortMultipartUpload leaves a completed upload's parts alone"). The
+  one exception is an unlinked null version, which keeps
+  its parts and its data under its key's OLH head, the abort removing the
+  meta object alone, as that exclusion states. The PR's replay answers 200
+  with the recorded instance
+  without reading its link (`driver/rados/rgw_sal_rados.cc:4632-4664` at
+  2c1db8239cc), so a version whose link never landed is answered as
+  written though its key's OLH does not name it. A
+  retry of a completion into a version that its link's refusal, or the
+  check after its link that voided a conditional completion with 412,
+  removed with its parts therefore answers 500, and the upload has to be
+  aborted: S3 lets an upload whose completion its condition refused be
+  completed again, and rgw-go does when the condition refused it before its
+  head write. A floor radosgw coexists with the record without knowing it:
   - it reads a meta object's `user.rgw.*` xattrs, the record's among them
     (`raw_obj_stat`'s `rgw_filter_attrset`, `driver/rados/rgw_rados.cc:8866`
     at v19.2.6, `:9810` at v20.2.4), and no code at either tag names them;
@@ -8760,11 +8816,60 @@ does the following.
   rgw-go's own completions leave a record on the meta object, which decides
   a retry ("A CompleteMultipartUpload records itself on the meta object
   before its head write"). For a meta object without one, as a floor
-  radosgw leaves it, rgw-go reads the key's head before writing:
+  radosgw leaves it, rgw-go reads the key's current version, its OLH
+  followed as a read follows it, and, in a bucket whose versioning was ever
+  enabled, each other version of the key whose ETag is a multipart one,
+  listed from the key's index shard newest first, before writing. The
+  listing stops at the first entry written more than 15 minutes, the
+  request clock skew S3 allows, before the earlier of two times: the mtime
+  of the meta object's index entry, which ListMultipartUploads reports as
+  the upload's Initiated, and the earliest Modified among the upload's part
+  records in the meta object's omap. The meta object's own mtime moves with
+  every part, lock and record written on it, and radosgw's listing repair,
+  `check_disk_state`, copies it into a meta entry that has a pending op
+  (`driver/rados/rgw_rados.cc:10583` and `:10638` at v19.2.7, `:11311` and
+  `:11366` at v20.2.4), as a meta removal that timed out leaves one; no
+  lock and no repair rewrites a part record. A version that names the
+  upload's parts was written by a completion of the upload, after its
+  initiation and its parts, so a version of a floor radosgw written more
+  than 15 minutes before that time is not found, which no correct clock
+  produces, and neither is one behind an entry that old, a version linked
+  after this upload's completion whose own write came more than 15 minutes
+  before the upload began. Nor is one whose parts were all uploaded again
+  after it was written once a listing repair moved the meta entry's mtime,
+  as the part records then carry the later uploads' times. The key's null
+  version is then read on its own, its instance entry and, when its ETag
+  is a multipart one, its head: a null version written over an earlier one
+  and never linked keeps that one's list entry, at its epoch and with its
+  metadata, which the listing orders and shows as the earlier version's.
+  When the meta object's index entry is missing, nothing bounds the
+  listing. The first version that names an object of the upload decides:
   - when it is the object this completion would write, with the same
     ETag, size and part objects, rgw-go writes no head, removes the meta
-    object with the parts' entries, and answers 200 with the ETag, without
-    checking the request's If-Match or If-None-Match again;
+    object with the parts' entries, and answers 200 with the ETag and that
+    version's id, without checking the request's If-Match or If-None-Match
+    again. A version with an instance is linked already, since the current
+    version's read finds only its key's OLH target and the listing only list
+    entries, and it is not linked again. The null version, however it was
+    found, is first linked when no link of it landed, as a replay links a
+    recorded one ("A CompleteMultipartUpload records itself on the meta
+    object before its head write"), and one that cannot be linked answers
+    500 InternalError with the upload kept. Its link is judged by its data,
+    not by its tag: an attr change rewrites the head's idtag and the
+    instance entry's tag but not the list entry's, at both gateways
+    ([rgw_rados.cc:6853-6860](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6853-L6860)
+    and
+    [rgw_rados.cc:6909](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6909)
+    at v19.2.7,
+    [rgw_rados.cc:7467-7474](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7467-L7474)
+    and
+    [rgw_rados.cc:7559](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7559)
+    at v20.2.4; `SetObjectAttrs`, `internal/driver/attrs.go`). rgw-go takes
+    the null version for unlinked only when the list entry at its instance
+    entry's versioned epoch differs from that entry in ETag or size, which
+    makes the list entry an earlier null version's. A null version written
+    over an earlier one with the same ETag and size and never linked
+    therefore reads as linked, and is answered 200 unlinked;
   - when it names the upload's parts but differs, rgw-go answers 404
     NoSuchUpload and changes nothing;
   - when rgw-go finishes the completion, in the first case or as a record
@@ -8786,7 +8891,11 @@ does the following.
   deleted before the retry no longer names the upload, and leaves no
   record; its tails, the parts, are then queued for the GC, and rgw-go,
   like radosgw, completes the upload over them unless the GC has already
-  removed a part head.
+  removed a part head. A completed version that a later write made
+  noncurrent still names the upload, and rgw-go finishes or refuses the
+  completion as above, where radosgw, which reads the current version
+  alone, completes the upload again into a second version naming the same
+  parts, and deleting either then loses the other's data.
 - **CompleteMultipartUpload renews its lock before the head write.** rgw-go
   takes the `RGWCompleteMultipart` lock as radosgw does, and just before
   the head write renews it, with `LOCK_FLAG_MUST_RENEW` and assert_exists in
@@ -8866,23 +8975,124 @@ does the following.
   completion whose meta object outlives its head write lets a retry or an
   abort delete the object's
   data](ceph-upstream-bugs.md#a-multipart-completion-whose-meta-object-outlives-its-head-write-lets-a-retry-or-an-abort-delete-the-objects-data)").
-  rgw-go reads the key's head in each round of the abort:
+  rgw-go reads, in each round of the abort:
   - when the meta object carries a completion record ("A
     CompleteMultipartUpload records itself on the meta object before its
-    head write") and the head carries the recorded tag, it removes the
-    meta object alone, behind its version and with its own size off the
-    quota cache, lists no part and queues nothing, and answers 204, as
+    head write"), the head the record names, the recorded version read
+    without following the key's OLH, current or not; when it carries the
+    recorded tag and is a completed object, an unversioned head, the null
+    version, or a version whose link landed as the replay reads it, rgw-go
+    removes the meta object alone, behind its version and with its own size
+    off the quota cache, lists no part and queues nothing, and answers 204,
+    as
     [ceph/ceph#72103](https://github.com/ceph/ceph/pull/72103)'s abort
-    does. The parts' index entries stay, as in the PR. A record naming a
-    version other than the key's own head answers 501 NotImplemented and
-    changes nothing, since the abort reads no version;
-  - otherwise, when the head names an object of the upload, as a floor
-    radosgw's completion leaves it, rgw-go answers 404 NoSuchUpload and
-    changes nothing, where v19.2.6 and v20.2.4 queue the object's parts.
-    The upload stays listed until the object is overwritten or deleted,
-    which queues its tails, the parts, after which an abort succeeds;
-  - a key whose head is a versioned object's olh answers 501
-    NotImplemented.
+    does at its head, 2c1db8239cc. The parts' index entries stay, as in the
+    PR. A version whose link never landed, which a retry answered 500 or
+    412, is removed first, its instance entry and then its head, its parts
+    to the GC, and the abort goes on as for an upload never completed,
+    where the PR's abort leaves that version unlisted with the upload's
+    parts. It is removed only once no link of it can land: the key's OLH
+    head carries no pending
+    modification younger than `rgw_olh_pending_timeout_sec`, an hour by
+    default, and the name's OLH log names no op on the version, both read
+    before the version's index entries are. A versioned write inits its
+    pending modification before it sends its link, and rgw-go's keeps it
+    after a link whose outcome is unknown until the link's log entry is
+    replayed or the modification expires, which `check_pending_olh_entries`
+    takes for its failure; a link that landed wrote the version's list
+    entry and its log entry in one class call. Until then the abort answers
+    500 InternalError and changes nothing. radosgw's `set_olh` cancels its
+    pending modification after any failed link, a timeout included
+    (`driver/rados/rgw_rados.cc:8715-8717` at v19.2.7, `:9461-9463` at
+    v20.2.4), so a radosgw link still in flight then is not seen by those
+    reads, and neither is a completion of the upload that stalled past its
+    lapsed lock and links its version later. The removal closes both. It
+    takes the version's index entry before its head, where radosgw's
+    `delete_obj` removes the head first, and guards the entry's removal:
+    - an index entry the completion prepared and never completed is first
+      completed from the head under the completion's tag, as a replay
+      completes it: complete_op's DEL keeps an entry while another op is
+      pending on it
+      ([cls_rgw.cc:1127-1167](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1127-L1167)
+      at v19.2.7,
+      [cls_rgw.cc:1261-1299](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1261-L1299)
+      at v20.2.4), the completion's own index completion landing late would
+      then make it exist again, and `bucket_link_olh` links any entry it
+      finds, failing only on a missing one
+      ([cls_rgw.cc:1668-1688](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1668-L1688),
+      [cls_rgw.cc:1809-1829](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1809-L1829));
+    - rgw-go sends the index prepare DEL of the version and then reads its
+      instance entry with `bi_get`, which answers its stored bytes. An op
+      pending on it, but the abort's own prepare, that is older than the tag
+      timeout is taken for dead and canceled with complete_op CANCEL under
+      its tag, and the entry read again: that is the rule
+      `dir_suggest_changes` applies before it changes an entry
+      ([cls_rgw.cc:2283-2299](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2283-L2299),
+      [cls_rgw.cc:2453-2469](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2453-L2469)),
+      and nothing else expires an op on an unlinked version, which no listing
+      reaches. The tag timeout is the class's: the index shard header's
+      `tag_timeout`, else `rgw_pending_bucket_index_op_expiration`, else 120
+      seconds, a zero going down the list
+      ([cls_rgw.cc:2215-2227](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2215-L2227),
+      [cls_rgw.cc:2385-2397](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2385-L2397)),
+      where rgw-go reads the option from its own configuration and the class
+      from the OSD's. The entry must then be the completion's, completed under
+      its tag, or none but the one the prepare made, with no op pending on it
+      but the prepare's and no versioned epoch, which every link sets
+      ([cls_rgw.cc:1410-1427](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1410-L1427),
+      [cls_rgw.cc:1537-1554](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1537-L1554));
+      otherwise the prepare is canceled and the abort answers 500
+      InternalError with nothing removed. An abort refused by another op
+      pending on the version, the prepare of an abort that stopped before
+      its removal among them, succeeds once that op is older than the tag
+      timeout. An op's time is the OSD's clock at its prepare, which the abort
+      compares with the gateway's own, so clock skew between the two moves
+      that bound, as skew between the OSD's clocks moves the class's own rule;
+      an op still in flight that the abort canceled then meets complete_op's
+      EINVAL for a tag no entry holds;
+    - in one op on the index shard it compares those bytes, OMAP_CMP, and
+      completes the DEL, which removes the entry. A link that rewrote the
+      entry since the read fails the whole op
+      ([PrimaryLogPG.cc:7802-7875](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L7802-L7875),
+      [PrimaryLogPG.cc:7879-7952](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L7879-L7952)),
+      and the abort answers 500 with nothing removed. A link sent after it
+      meets `bucket_link_olh`'s ENOENT, and the completion's index
+      completion complete_op's EINVAL for a tag no entry holds
+      ([cls_rgw.cc:1066-1073](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1066-L1073),
+      [cls_rgw.cc:1201-1208](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1201-L1208));
+    - only then is the head removed, guarded on the recorded tag, and its
+      tails queued. An abort that stops between the two removals leaves a
+      head no index entry names, which the next abort finds through the
+      record and removes the same way. A head whose tag another write
+      changed in between, as an attr change by version id does, is kept and
+      the abort answers 500; the next abort takes that head for replaced,
+      as any recorded head that no longer carries the tag, and queues the
+      parts, which only the unlisted head names.
+
+    So no link of the version, from either gateway and at any moment,
+    leaves it listed without its head: a radosgw link in flight or a
+    stalled completion costs a 500 at worst. The removal also runs only
+    while the abort's lock has its margin left, checked just before it,
+    and once an `assert_locked` of the abort's hold on the meta object
+    succeeds, sent just before it, so an abort whose lock lapsed or was
+    taken over by then removes nothing and answers 503 ServiceUnavailable.
+    The assertion and the removal are ops on two objects, so a takeover can
+    still come in the round trip between them; a link the new holder makes
+    then meets the compare or the missing entry above, and cannot leave the
+    index naming a version without its head. An unlinked null
+    version keeps its parts and the abort removes the meta object alone: its
+    head is the key's OLH head, which a failed null write also leaves;
+  - otherwise the key's versions, as a completion without a record reads
+    them ("CompleteMultipartUpload finishes an earlier completion of its
+    upload instead of writing it again"), the current one and, in a bucket
+    whose versioning was ever enabled, each noncurrent one written since
+    15 minutes before the upload's initiation or its earliest part, and its
+    null version: when one names an object of the upload, as a floor
+    radosgw's completion leaves it,
+    rgw-go answers 404 NoSuchUpload and changes nothing, where v19.2.6 and
+    v20.2.4 queue the object's parts. The upload stays listed until that
+    version is overwritten or deleted, which queues its tails, the parts,
+    after which an abort succeeds.
 - **A copy keeps its tail references when its head write timed out.** A
   copy that shares its source's tails takes a refcount reference on each
   under its tag before it writes its head, as radosgw's `copy_obj` does.
@@ -8932,6 +9142,80 @@ does the following.
   removed since answers 404 NoSuchKey, as a copy of a missing source does.
   Either way the newer object, or the deletion, stands, where radosgw
   answers 200.
+- **A copy onto its own key in a suspended bucket references the current
+  version's tails.** On a bucket whose versioning is suspended, a copy of a
+  key onto itself, which the S3 handler lets through with
+  `x-amz-metadata-directive: REPLACE`, writes the null version, and its
+  source is the version current on the key's OLH. radosgw takes such a copy
+  for one onto itself whatever that version is, comparing the key as the
+  request named it on both sides
+  ([rgw_rados.cc:4922](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4922),
+  [rgw_rados.cc:5150](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5150)),
+  so while a version with an instance is current the null version names
+  that version's tails with no reference of its own and with its tail tag,
+  and an overwrite or delete of the null version removes the version's data
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's copy onto its own key in a
+  suspended bucket shares the current version's tails without
+  references](ceph-upstream-bugs.md#radosgws-copy-onto-its-own-key-in-a-suspended-bucket-shares-the-current-versions-tails-without-references)").
+  rgw-go takes a copy for one onto itself only when the version the
+  source's OLH was followed to is its destination, the null version onto
+  itself among them; this copy takes a reference under its tag on each of
+  the version's tails and writes its own tail tag, as a copy of another key
+  does (`shareTails`, `internal/driver/copy.go`). The two gateways'
+  objects read alike; rgw-go's write adds the references and replaces the
+  overwritten null version's own tails through the GC, which radosgw's
+  `keep_tail` leaks. The S3 ops refuse a versioned write until versioning
+  is served.
+- **A copy carries none of its source's OLH attrs.** radosgw's copy carries
+  every attr of its source's head but `olh.idtag`, `olh.info` and
+  `olh.ver`, which it drops only for a bucket whose versioning is not
+  enabled
+  ([rgw_rados.cc:4809-4813](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4809-L4813),
+  [rgw_rados.cc:5022-5026](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5022-L5026)).
+  So a source whose OLH head has a modification in flight hands its
+  pending attr to the destination, where no log entry will ever remove it
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's copy carries the source's
+  pending OLH modifications to its
+  destination](ceph-upstream-bugs.md#radosgws-copy-carries-the-sources-pending-olh-modifications-to-its-destination)"),
+  and a copy of a key's null version, whose head is that key's OLH head,
+  into a bucket whose versioning is enabled writes the OLH head's three
+  attrs onto the head of the version it creates, which `RGWCopyObj` gives
+  every such copy
+  ([rgw_op.cc:5576-5580](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5576-L5580),
+  [rgw_op.cc:6139-6143](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6139-L6143)),
+  and which that version's delete then leaves behind
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's copy of a null version leaves
+  OLH attrs on the version it writes, and its delete keeps
+  them](ceph-upstream-bugs.md#radosgws-copy-of-a-null-version-leaves-olh-attrs-on-the-version-it-writes-and-its-delete-keeps-them)").
+  rgw-go drops every `user.rgw.olh.` attr of the source from every copy,
+  wherever it goes (`copyAttrs`, `internal/driver/copy.go`). The OLH attrs
+  a destination's head carries are its own key's, which its head write
+  keeps when it replaces that key's OLH head, and a version rgw-go copies
+  from a key's null version leaves nothing once it is deleted.
+- **A version's head is removed whole.** radosgw's removal of any head,
+  `remove_rgw_head_obj`, keeps the head's `user.rgw.olh.` attrs, which
+  `obj_remove` writes back onto an object it creates again
+  ([rgw_rados.cc:5798-5803](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5798-L5803),
+  [rgw_rados.cc:6410-6415](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6410-L6415);
+  [cls_rgw.cc:2410-2482](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2410-L2482),
+  [cls_rgw.cc:2578-2650](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2578-L2650)),
+  so a version whose head a radosgw copy left OLH attrs on stays, with them
+  alone, after its delete (`docs/ceph-upstream-bugs.md`, "[radosgw's copy
+  of a null version leaves OLH attrs on the version it writes, and its
+  delete keeps
+  them](ceph-upstream-bugs.md#radosgws-copy-of-a-null-version-leaves-olh-attrs-on-the-version-it-writes-and-its-delete-keeps-them)").
+  rgw-go keeps the OLH attrs only when it removes or resets the head of a
+  key without an instance, or of its null version, which is the key's OLH
+  head; a version's own head is removed whole, and so is the one a write to
+  the same version replaces, and a version's head is never taken for an
+  OLH head, whatever attrs it carries (`headKeptAttrs`,
+  `internal/driver/delete.go`; `isOLHHead`,
+  `internal/driver/put_versioned.go`). A version radosgw's copy made is
+  therefore removed whole when rgw-go deletes it. A version's head holds no
+  OLH that the attrs could serve: `get_obj_state_impl` follows an OLH only
+  for a key without an instance
+  ([rgw_rados.cc:6269](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6269),
+  [rgw_rados.cc:6883](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6883)).
 - **A copy is labeled with its destination's storage class on both
   releases.** rgw-go drops the source's `user.rgw.storage_class` from the
   attrs a copy carries over, on both releases, as Tentacle's radosgw does
@@ -9194,8 +9478,11 @@ does the following.
   that ended or a closed connection at the init or after it leaves the
   outcome unknown, and a version removed after a link that did land would
   be listed with no head, so then rgw-go removes nothing, as radosgw. It
-  removes no delete marker, which has no head, and
-  not the null version, whose head is the key's OLH head. A removal that
+  removes no delete marker, which has no head, not the null version, whose
+  head is the key's OLH head, and not the version a CompleteMultipartUpload
+  retry links for an earlier completion, whose head names the upload's
+  parts ("A CompleteMultipartUpload records itself on the meta object
+  before its head write"). A removal that
   fails, such as one a resharding shard still refuses past the reshard
   guard's waits, leaves the version as radosgw leaves it, logged. A failed
   versioned delete makes no version and removes none. Versioning is not
@@ -9835,8 +10122,24 @@ does the following.
   link answers, and a removal of the version, after a completion or a link
   refused or a link voided, sends them to the GC as the unversioned delete
   does (`putStream`, `internal/driver/put.go`; exclusion "rgw-go removes the
-  instance a failed versioned write made"). The S3 ops refuse a versioned
-  write until versioning is served.
+  instance a failed versioned write made"). The same holds for what the
+  other versioned writes leave:
+  - a CopyObject that shares its source's tails keeps the references it
+    took on them once its head is written, where `copy_obj`'s `done_ret`
+    drops them after `set_olh` fails, leaving a version whose tails go with
+    their source; the removal of the version queues them under the copy's
+    tag, which drops the references (`shareTails`,
+    `internal/driver/copy.go`; `docs/ceph-upstream-bugs.md`, "[radosgw's
+    versioned copy drops its tail references when its link
+    fails](ceph-upstream-bugs.md#radosgws-versioned-copy-drops-its-tail-references-when-its-link-fails)");
+  - a CompleteMultipartUpload keeps its completion record once its head is
+    written, so its upload is never completed again over the parts that
+    head names: a retry links the version the record names when no link of
+    it landed, keeping it whatever that link answers, and answers 500
+    InternalError for a version it cannot link ("A CompleteMultipartUpload
+    records itself on the meta object before its head write").
+
+  The S3 ops refuse a versioned write until versioning is served.
 - **A versioned write is counted in the quota cache before its link.**
   radosgw adds a versioned PutObject's object and bytes to the bucket's
   quota cache only once `set_olh` has succeeded, its `update_stats` coming
@@ -10273,9 +10576,8 @@ rgw-go does the following.
   Unversioned writes keep radosgw's unawaited completion. The cost is a
   round trip to the index shard per versioned write that radosgw does not
   wait for, though the OSD applies the two operations in turn either way.
-  The driver's versioned PutObject awaits it (`linkVersion`,
-  `internal/driver/put_versioned.go`); CopyObject and
-  CompleteMultipartUpload await it once they write versions. The S3 ops
+  The driver's versioned PutObject, CopyObject and CompleteMultipartUpload
+  await it (`linkVersion`, `internal/driver/put_versioned.go`). The S3 ops
   refuse a versioned write until versioning is served.
 - **An index read of a versioned key that finds its shard gone reads the
   shard the bucket now names.** radosgw reads a name's pending OLH log from
