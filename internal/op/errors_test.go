@@ -47,14 +47,28 @@ var _ = Describe("Error", func() {
 		Entry("BucketAlreadyExists is EEXIST, the table's key", op.ErrBucketAlreadyExists, "BucketAlreadyExists", 409, 17),
 		Entry("ConcurrentModification is ECANCELED", op.ErrConcurrentModification, "ConcurrentModification", 409, 125),
 		Entry("RestoreAlreadyInProgress is Tentacle's ERR_RESTORE_ALREADY_IN_PROGRESS", op.ErrRestoreAlreadyInProgress, "RestoreAlreadyInProgress", 409, 2500),
+		Entry("AccessControlListNotSupported is v21.1.2's ERR_ACLS_NOT_SUPPORTED, rgw_common.h:361 and rgw_common.cc:142",
+			op.ErrACLsNotSupported, "AccessControlListNotSupported", 400, 2227),
+		Entry("InvalidBucketAclWithObjectOwnership is v21.1.2's ERR_INVALID_BUCKET_ACL, rgw_common.h:362 and rgw_common.cc:143",
+			op.ErrInvalidBucketACL, "InvalidBucketAclWithObjectOwnership", 400, 2228),
+		Entry("OwnershipControlsNotFoundError is v21.1.2's ERR_NO_SUCH_OWNERSHIP_CONTROLS, rgw_common.h:363 and rgw_common.cc:144",
+			op.ErrNoSuchOwnershipControls, "OwnershipControlsNotFoundError", 404, 2229),
 		Entry("UnknownError is radosgw's fallback", op.ErrUnknown, "UnknownError", 500, 0),
 	)
-	It("has one sentinel per error row of radosgw's table, less the four it folds, plus Tentacle's row and the fallback", func() {
+	It("has one sentinel per error row of radosgw's table, less the four it folds, plus Tentacle's row, v21.1.2's three ownership rows and the fallback", func() {
 		// rgw_http_s3_errors at v19.2.6 has 86 error rows (its six success rows
 		// aside); EPERM, EBUSY, ERR_ZERO_IN_URL and EDQUOT fold into a sentinel
 		// with their code and status.
-		Expect(op.Errors()).To(HaveLen(86 - 4 + 2))
+		Expect(op.Errors()).To(HaveLen(86 - 4 + 2 + 3))
 	})
+	DescribeTable("names v21.1.2's ownership rows by their code in a log",
+		func(e *op.Error) {
+			Expect(op.ErrorCode(fmt.Errorf("wrapped: %w", e.WithMessage("m")))).To(Equal(e.Code))
+		},
+		Entry("AccessControlListNotSupported", op.ErrACLsNotSupported),
+		Entry("InvalidBucketAclWithObjectOwnership", op.ErrInvalidBucketACL),
+		Entry("OwnershipControlsNotFoundError", op.ErrNoSuchOwnershipControls),
+	)
 	It("shares a code and status only where radosgw's own table has duplicate rows, and never an errno", func() {
 		// rgw_http_s3_errors at v19.2.6
 		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L51-L144; v20.2.4

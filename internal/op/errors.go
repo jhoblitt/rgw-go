@@ -56,11 +56,15 @@ func (e *Error) WithMessage(msg string) *Error {
 // rgw_common.h. Four rows share a sentinel with the row of the same code and
 // status: EPERM (ErrAccessDenied), EBUSY (ErrServiceUnavailable),
 // ERR_ZERO_IN_URL (ErrInvalidRequest) and EDQUOT (ErrInsufficientCapacity).
-// Rows ceph main added later (ExpiredToken 2501,
-// AccessControlListNotSupported 2227, InvalidBucketAclWithObjectOwnership
-// 2228, BucketSuspended 2101, OwnershipControlsNotFoundError 2229) are
-// absent: no floor release can emit them. ErrUnknown is no row but
-// set_req_state_err's fallback for a ret the table lacks.
+// Of the rows ceph main added later, v21.1.2's three for ownership controls
+// are here, AccessControlListNotSupported 2227,
+// InvalidBucketAclWithObjectOwnership 2228 and OwnershipControlsNotFoundError
+// 2229
+// (https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_common.cc#L142-L144 at v21.1.2),
+// since rgw-go serves ownership controls on both releases; ExpiredToken 2501
+// and BucketSuspended 2101 are absent, as no floor release can emit them.
+// ErrUnknown is no row but set_req_state_err's fallback for a ret the table
+// lacks.
 var (
 	ErrPermanentRedirect            = &Error{Code: "PermanentRedirect", Status: 301, Errno: 2024}
 	ErrWebsiteRedirect              = &Error{Code: "WebsiteRedirect", Status: 301, Errno: 2038}
@@ -94,6 +98,8 @@ var (
 	ErrInvalidKeyType               = &Error{Code: "InvalidKeyType", Status: 400, Errno: 2035}
 	ErrInvalidCapability            = &Error{Code: "InvalidCapability", Status: 400, Errno: 2036}
 	ErrInvalidTenantName            = &Error{Code: "InvalidTenantName", Status: 400, Errno: 2037}
+	ErrACLsNotSupported             = &Error{Code: "AccessControlListNotSupported", Status: 400, Errno: 2227}
+	ErrInvalidBucketACL             = &Error{Code: "InvalidBucketAclWithObjectOwnership", Status: 400, Errno: 2228}
 	ErrAccessDenied                 = &Error{Code: "AccessDenied", Status: 403, Errno: 13}
 	ErrMFARequired                  = &Error{Code: "AccessDenied", Status: 403, Errno: 2044}
 	ErrAuthorization                = &Error{Code: "AuthorizationError", Status: 403, Errno: 2225}
@@ -120,6 +126,7 @@ var (
 	ErrNoSuchTagSet                 = &Error{Code: "NoSuchTagSet", Status: 404, Errno: 2402}
 	ErrNoSuchBucketEncryption       = &Error{Code: "ServerSideEncryptionConfigurationNotFoundError", Status: 404, Errno: 2048}
 	ErrNoSuchPublicAccessBlock      = &Error{Code: "NoSuchPublicAccessBlockConfiguration", Status: 404, Errno: 2049}
+	ErrNoSuchOwnershipControls      = &Error{Code: "OwnershipControlsNotFoundError", Status: 404, Errno: 2229}
 	ErrMethodNotAllowed             = &Error{Code: "MethodNotAllowed", Status: 405, Errno: 2003}
 	ErrRequestTimedOut              = &Error{Code: "RequestTimeout", Status: 408, Errno: 110}
 	ErrBucketAlreadyExists          = &Error{Code: "BucketAlreadyExists", Status: 409, Errno: 17}
@@ -183,13 +190,13 @@ var errorSet = []*Error{
 	ErrTooManyBuckets, ErrMalformedXML, ErrContentSHA256Mismatch, ErrMalformedPolicy, ErrInvalidTag,
 	ErrMalformedACL, ErrInvalidCORSRules, ErrInvalidWebsiteRoutingRules, ErrInvalidEncryptionAlgorithm,
 	ErrInvalidRetentionPeriod, ErrInvalidSecretKey, ErrInvalidKeyType, ErrInvalidCapability,
-	ErrInvalidTenantName,
+	ErrInvalidTenantName, ErrACLsNotSupported, ErrInvalidBucketACL,
 	ErrAccessDenied, ErrMFARequired, ErrAuthorization, ErrSignatureDoesNotMatch, ErrInvalidAccessKeyID,
 	ErrUserSuspended, ErrRequestTimeTooSkewed, ErrQuotaExceeded, ErrInvalidObjectState,
 	ErrNoSuchKey, ErrNoSuchBucket, ErrNoSuchWebsiteConfiguration, ErrNoSuchUpload, ErrNotFound,
 	ErrNoSuchLifecycleConfiguration, ErrNoSuchBucketPolicy, ErrNoSuchUser, ErrNoRoleFound, ErrNoCORSFound,
 	ErrNoSuchSubUser, ErrNoSuchEntity, ErrNoSuchCORSConfiguration, ErrNoSuchObjectLockConfig,
-	ErrNoSuchTagSet, ErrNoSuchBucketEncryption, ErrNoSuchPublicAccessBlock,
+	ErrNoSuchTagSet, ErrNoSuchBucketEncryption, ErrNoSuchPublicAccessBlock, ErrNoSuchOwnershipControls,
 	ErrMethodNotAllowed, ErrRequestTimedOut,
 	ErrBucketAlreadyExists, ErrUserAlreadyExists, ErrEmailExists, ErrKeyExists, ErrTagConflict,
 	ErrPositionNotEqualToLength, ErrObjectNotAppendable, ErrInvalidBucketState, ErrBucketNotEmpty,
