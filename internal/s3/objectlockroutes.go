@@ -11,5 +11,11 @@ func objectLockRoutes(*op.Env) []routeSet {
 			"get_bucket_object_lock": getObjectLockConfiguration,
 			"put_bucket_object_lock": putObjectLockConfiguration,
 		}},
+		{scope: op.ScopeObject, handlers: map[string]HandlerFunc{
+			"get_obj_retention":  getObjectRetention,
+			"put_obj_retention":  putObjectRetention,
+			"get_obj_legal_hold": getObjectLegalHold,
+			"put_obj_legal_hold": putObjectLegalHold,
+		}},
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/op/opfakes"
+	"github.com/jhoblitt/rgw-go/internal/s3"
 	"github.com/jhoblitt/rgw-go/internal/tags"
 )
 
@@ -158,6 +159,33 @@ var _ = Describe("put_obj_tags and delete_obj_tags", func() {
 		expectError(w.send(w.bob, http.MethodPut, "/plain/src?tagging", "<Tagging><TagSet>"), 403, "AccessDenied")
 		expectError(w.send(w.bob, http.MethodPut, "/plain/src?tagging", strings.Repeat("x", 2<<20)), 403, "AccessDenied")
 		Expect(w.stat(ctx, "src").Attrs).NotTo(HaveKey(tags.Attr))
+	})
+	It("refuses the anonymous user and bob the WRITE an object's public-read-write grants them, where radosgw serves it", func(ctx SpecContext) {
+		owner := meta.UserOwner(w.alice.Info.UserID)
+		p := acl.DefaultPolicy(owner, "Alice")
+		for _, g := range []acl.Grant{
+			{Type: acl.GranteeGroup, Group: acl.GroupAllUsers, Permission: acl.PermRead},
+			{Type: acl.GranteeGroup, Group: acl.GroupAllUsers, Permission: acl.PermWrite},
+			{Type: acl.GranteeCanonUser, ID: "bob", Name: "Bob", Permission: acl.PermWrite},
+		} {
+			p.ACL.AddGrant(g)
+		}
+		w.put(ctx, "rw", "data", map[string][]byte{meta.AttrACL: encodeACL(p)})
+		anonymous := s3.NewHandler(w.env, s3.AnonymousOnly{}, testConfig(s3.Config{}))
+		for _, method := range []string{http.MethodPut, http.MethodDelete} {
+			body := taggingDoc(1)
+			if method == http.MethodDelete {
+				body = ""
+			}
+			var b io.Reader
+			if body != "" {
+				b = strings.NewReader(body)
+			}
+			expectError(serveReq(anonymous, method, "/plain/rw?tagging", b), 403, "AccessDenied")
+			expectError(w.send(w.bob, method, "/plain/rw?tagging", body), 403, "AccessDenied")
+		}
+		Expect(w.stat(ctx, "rw").Attrs).NotTo(HaveKey(tags.Attr))
+		expectEmptyXML(w.send(w.alice, http.MethodPut, "/plain/rw?tagging", taggingDoc(1)), 200)
 	})
 	It("refuses a body whose payload hash does not match, changing nothing", func(ctx SpecContext) {
 		expectError(w.sendTampered(http.MethodPut, "/plain/src?tagging", taggingDoc(1)), 400, "XAmzContentSHA256Mismatch")

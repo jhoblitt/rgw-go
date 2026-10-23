@@ -752,7 +752,19 @@ func bucketOwner(id identity, c *check) (ok bool, rule string) {
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1598-L1599 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1655-L1656 at v20.2.4;
 // docs/exclusions.md).
+//
+// WRITE, which op_to_perm gives the object-scope writes of an object's
+// retention, legal hold, governance bypass, tags and restore, is granted to
+// the object's owner alone, and never to the anonymous user: in Amazon S3 an
+// object ACL's WRITE is "not applicable"
+// (https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html#acl-access-policy-permission-mapping),
+// where radosgw lets any grantee of it through, AllUsers' included
+// (docs/exclusions.md, "An object ACL's WRITE grant authorizes nothing but
+// its owner's own requests"). The owner still needs the ACL's grant.
 func (e *Evaluator) objectACL(r *op.Request, id identity, c *check) (ok bool, rule string) {
+	if c.perm&acl.PermWrite != 0 && (id.IsAnonymous() || !id.IsOwnerOf(c.object.Owner.ID)) {
+		return false, "object acl write, not the object's owner"
+	}
 	mask := id.PermMask()
 	if c.object.Verify(id, mask, c.perm, "", c.ignorePublicACLs()) {
 		return true, "object acl"

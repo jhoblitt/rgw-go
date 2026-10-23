@@ -462,6 +462,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's copy onto its own key in a suspended bucket shares the current version's tails without references](#radosgws-copy-onto-its-own-key-in-a-suspended-bucket-shares-the-current-versions-tails-without-references) | pending | pending | ✓ |
 | [radosgw's copy carries the source's pending OLH modifications to its destination](#radosgws-copy-carries-the-sources-pending-olh-modifications-to-its-destination) | pending | pending | ✓ |
 | [radosgw's copy of a null version leaves OLH attrs on the version it writes, and its delete keeps them](#radosgws-copy-of-a-null-version-leaves-olh-attrs-on-the-version-it-writes-and-its-delete-keeps-them) | pending | pending | ✓ |
+| [radosgw's PutObjectRetention reads no document for an admin its permission check refuses](#radosgws-putobjectretention-reads-no-document-for-an-admin-its-permission-check-refuses) | pending | pending | ✓ |
+| [radosgw lets an object ACL's WRITE grant set, shorten and bypass an object's retention and legal hold](#radosgw-lets-an-object-acls-write-grant-set-shorten-and-bypass-an-objects-retention-and-legal-hold) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -20148,9 +20150,11 @@ Every new entry adds its row to this table, in document order.
   failed" to any date before the lapsed one, though anyone allowed to delete
   it may. In S3 a lapsed retention is no retention.
 - **Releases:** v19.2.7, v20.2.4 and main 7ed73efc1be.
-- **rgw-go:** does not reproduce it. `objectlock.RetentionChange` takes a
-  retention whose retain-until second is not after now's for none
-  (`docs/exclusions.md`, "A lapsed retention binds no retention change").
+- **rgw-go:** does not reproduce it. Its PutObjectRetention
+  (`op.PutObjectRetention`) checks the change with
+  `objectlock.RetentionChange`, which takes a retention whose retain-until
+  second is not after now's for none (`docs/exclusions.md`, "A lapsed
+  retention binds no retention change").
 - **Upstream:** pending: sent to rgw-bug-reproduction (L1-2).
 - **Found:** phase 2 Task L1, 2026-10-20, transcribing
   `RGWPutObjRetention::execute`; derived from the source, not reproduced.
@@ -27231,3 +27235,138 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task V7b review, 2026-10-23, reproduced on the
   emulator by the review's spec; radosgw's half derived from the source,
   not reproduced.
+
+## radosgw's PutObjectRetention reads no document for an admin its permission check refuses
+
+- **Kind:** defect, unfixed at v19.2.7 and v20.2.4; S3-correctness, not
+  security-relevant: it fails closed, refusing a request the override means
+  to serve, and writes nothing. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RGWPutObjRetention::verify_permission` returns -EACCES when
+    s3:PutObjectRetention is refused, before it calls `get_params`, which
+    reads `x-amz-bypass-governance-retention` and the body
+    ([rgw_op.cc:8340-8346](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8340-L8346),
+    [rgw_op.cc:9275-9281](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9275-L9281);
+    [rgw_rest_s3.cc:4521-4532](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4521-L4532),
+    [rgw_rest_s3.cc:5032-5043](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5032-L5043)).
+  - `rgw_process_authenticated` lets an admin through that -EACCES, and at
+    v19.2.7 a system request and any error
+    ([rgw_process.cc:228-236](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L228-L236),
+    [rgw_process.cc:228-239](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L228-L239)).
+    `execute` then parses `data`, never read and so empty, which expat
+    refuses: -ERR_MALFORMED_XML, after the lock check
+    ([rgw_op.cc:8360-8377](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8360-L8377),
+    [rgw_op.cc:9295-9312](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9295-L9312)).
+    PutObjectLegalHold, whose `get_params` runs in `execute`, has no such
+    gap
+    ([rgw_op.cc:8518-8520](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8518-L8520),
+    [rgw_op.cc:9466-9468](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9466-L9468)).
+- **Impact:** an admin, whom a policy or an ACL refuses s3:PutObjectRetention,
+  gets 400 MalformedXML for a well-formed retention on a bucket with object
+  lock, and no retention is written; on Squid so does a system request,
+  and, for an admin or a system request, so does a body `get_params`
+  refuses, such as one over `rgw_max_put_param_size`.
+- **Releases:** v19.2.7 and v20.2.4; main was not checked.
+- **rgw-go:** reproduces the refusal: `op.PutObjectRetention` reads neither
+  the body nor the bypass for a requester its first check refuses, so an
+  admin `op.Run` lets through reaches `Execute` with no document and
+  answers MalformedXML (`internal/op/objectretention_test.go`). A body
+  error stays an error for an admin on both releases (`docs/exclusions.md`,
+  "An admin is served past a failed permission check only on an access
+  denial").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task L3, 2026-10-23, transcribing
+  `RGWPutObjRetention::verify_permission`; derived from the source, not
+  reproduced.
+
+## radosgw lets an object ACL's WRITE grant set, shorten and bypass an object's retention and legal hold
+
+- **Kind:** defect, possibly security-relevant: on a bucket with object
+  lock, any grantee of an object's WRITE, the anonymous user through the
+  canned `public-read-write` included, can bypass, shorten or harden the
+  object's retention and set or release its legal hold, where Amazon S3
+  lets no ACL grant reach those actions. Unfixed at v19.2.7 and v20.2.4.
+  Unreproduced on a running release: derived from the source, and
+  confirmed at v20.2.4 by rgw-bug-reproduction's triage of the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `op_to_perm` gives RGW_PERM_WRITE to s3:PutObjectRetention,
+    s3:PutObjectLegalHold and s3:BypassGovernanceRetention, and in the same
+    row to s3:PutObjectTagging and s3:DeleteObjectTagging, their version
+    forms, and s3:RestoreObject
+    ([rgw_iam_policy.h:260-268](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L260-L268),
+    [rgw_iam_policy.h:273-284](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L273-L284)).
+  - `RGWPutObjRetention::verify_permission` checks s3:PutObjectRetention on
+    the object and, when x-amz-bypass-governance-retention is set,
+    s3:BypassGovernanceRetention on it
+    ([rgw_op.cc:8334-8351](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8334-L8351),
+    [rgw_op.cc:9269-9286](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9269-L9286));
+    `RGWPutObjLegalHold::verify_permission` checks s3:PutObjectLegalHold
+    ([rgw_op.cc:8486-8496](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8486-L8496),
+    [rgw_op.cc:9434-9444](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9434-L9444)).
+  - Where no policy decides, `verify_object_permission_no_policy` grants on
+    the object's ACL with the flag `op_to_perm` gives, with no per-action
+    exception; only `ignore_public_acls` applies, and only to the public
+    grants
+    ([rgw_common.cc:1560-1579](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1560-L1579),
+    [rgw_common.cc:1614-1636](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1614-L1636)).
+  - The canned `public-read-write` grants AllUsers WRITE on an object as on
+    a bucket
+    ([rgw_acl_s3.cc:428-433](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_s3.cc#L428-L433),
+    [rgw_acl_s3.cc:428-433](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl_s3.cc#L428-L433)).
+  - Amazon S3 calls an object ACL's WRITE "not applicable" and maps no ACL
+    permission to these actions
+    (https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html#acl-access-policy-permission-mapping),
+    so a client that writes `public-read-write` on an object gives nothing
+    away on S3.
+- **Shared sink:** `op_to_perm`'s WRITE row for object-scope actions, read
+  by `verify_object_permission_no_policy`'s object-ACL leg, which also gives
+  PutObjectTagging and DeleteObjectTagging, in both forms, to an object's
+  WRITE grantee. `RGWDeleteObj`'s `bypass_perm` reads the same row through
+  `verify_bucket_permission`, and so through the bucket's ACL, whose WRITE a
+  `public-read-write` bucket gives everyone
+  ([rgw_op.cc:5155](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5155),
+  [rgw_op.cc:5545](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5545)).
+  "[radosgw lets an ACL grant change a bucket's public access
+  block](#radosgw-lets-an-acl-grant-change-a-buckets-public-access-block)"
+  and "[v21's ownership controls ops let an ACL grant change a bucket's
+  object
+  ownership](#v21s-ownership-controls-ops-let-an-acl-grant-change-a-buckets-object-ownership)"
+  are the same ACL fallback for a bucket's guardrail actions. One fix,
+  keeping ACL grants from the object-lock, tagging and guardrail actions,
+  covers all three.
+- **Impact:** a grantee of an object's WRITE, anonymous under
+  `public-read-write`, can send x-amz-bypass-governance-retention and
+  shorten a GOVERNANCE retention to the next second, after which a delete
+  the bucket allows removes the version; change any retention to COMPLIANCE
+  until 2554, after which only an admin purge removes the version; turn its
+  legal hold ON or OFF; and rewrite or remove its tags. The bucket's owner
+  holds such a grant on every object another user or account writes with
+  `bucket-owner-full-control`
+  ([rgw_acl_s3.cc:444-449](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_s3.cc#L444-L449),
+  [rgw_acl_s3.cc:444-449](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl_s3.cc#L444-L449)).
+  Three things stop it. A Deny of the action in a bucket or identity policy
+  does, as the policies decide before the ACL fallback is read
+  ([rgw_common.cc:1503-1515](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1503-L1515),
+  [rgw_common.cc:1549-1561](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1549-L1561)).
+  From the public access block, `block_public_acls` keeps a public canned ACL
+  from being stored on a new write and a public ACL from being set by
+  PutObjectAcl
+  ([rgw_op.cc:3903-3909](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3903-L3909),
+  [rgw_op.cc:5908-5913](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5908-L5913);
+  [rgw_op.cc:4112-4118](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4112-L4118),
+  [rgw_op.cc:6551-6556](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6551-L6556)),
+  and `ignore_public_acls` sets aside the AllUsers and AuthenticatedUsers
+  grants an object already holds. Neither setting touches a named
+  grantee's WRITE.
+- **Releases:** v19.2.7 and v20.2.4; main was not checked.
+- **rgw-go:** does not reproduce it. Its object-ACL fallback grants WRITE to
+  the object's owner alone, through the owner's own grant, and never to the
+  anonymous user (`internal/authz/evaluator.go`; `docs/exclusions.md`, "An
+  object ACL's WRITE grant authorizes nothing but its owner's own
+  requests"), pinned in `internal/authz/objectwrite_test.go`,
+  `internal/op/objectretention_test.go` and `internal/s3/objectattrs_test.go`.
+  Its deletes on a bucket with object lock answer 501 until the lock checks
+  are served.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task L3's review, 2026-10-23, at the object-lock ops'
+  authorization boundary; derived from the source, not reproduced.

@@ -6195,6 +6195,77 @@ rgw-go does the following.
   is_public calls public, such as a grant to everyone from 1.1.1.1/32 alone,
   which radosgw refuses ("A bucket policy is public as Amazon S3 judges it",
   above).
+- **An object ACL's WRITE grant authorizes nothing but its owner's own
+  requests.** `op_to_perm` gives RGW_PERM_WRITE to the object-scope writes
+  of an object's retention, legal hold and governance bypass, of its tags in
+  both forms, and of its restore
+  ([rgw_iam_policy.h:260-268](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L260-L268),
+  [rgw_iam_policy.h:273-284](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L273-L284)),
+  and PutObjectRetention, its bypass, PutObjectLegalHold, PutObjectTagging
+  and DeleteObjectTagging check those actions on the object
+  ([rgw_op.cc:8340](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8340),
+  [rgw_op.cc:8348](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8348),
+  [rgw_op.cc:8492](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8492),
+  [rgw_op.cc:1088](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1088),
+  [rgw_op.cc:1127](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1127);
+  [rgw_op.cc:9275](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9275),
+  [rgw_op.cc:9283](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9283),
+  [rgw_op.cc:9440](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9440),
+  [rgw_op.cc:1287](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1287),
+  [rgw_op.cc:1345](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1345)).
+  Where no policy decides, `verify_object_permission_no_policy` grants on
+  the object ACL's WRITE whoever holds it, with no exception for any action
+  ([rgw_common.cc:1572-1579](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1572-L1579),
+  [rgw_common.cc:1626-1636](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1626-L1636)),
+  and with `rgw_enforce_swift_acls` on the WRITE_OBJS of a Swift write list
+  in the bucket's ACL
+  ([rgw_common.cc:1587-1602](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1587-L1602),
+  [rgw_common.cc:1644-1662](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1644-L1662)).
+  The canned `public-read-write` grants AllUsers WRITE on an object as on a
+  bucket
+  ([rgw_acl_s3.cc:428-433](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_s3.cc#L428-L433),
+  [rgw_acl_s3.cc:428-433](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl_s3.cc#L428-L433)).
+  So in radosgw any grantee of an object's WRITE, the anonymous user through
+  `public-read-write` included, can shorten or bypass its GOVERNANCE
+  retention, lock it in COMPLIANCE until 2554, release its legal hold and
+  rewrite its tags. Only these stop it: a Deny of the action in a bucket or
+  identity policy, which the policy evaluation decides before the ACL
+  fallback is read
+  ([rgw_common.cc:1503-1515](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1503-L1515),
+  [rgw_common.cc:1549-1561](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1549-L1561));
+  BlockPublicAcls, which keeps a public canned ACL such as
+  `public-read-write` from being stored on a new write, and a public ACL
+  from being set by PutObjectAcl
+  ([rgw_op.cc:3903-3909](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3903-L3909),
+  [rgw_op.cc:5908-5913](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5908-L5913);
+  [rgw_op.cc:4112-4118](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4112-L4118),
+  [rgw_op.cc:6551-6556](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6551-L6556));
+  and IgnorePublicAcls, which sets aside the public grants an object
+  already holds, though not a named grantee's
+  (`docs/ceph-upstream-bugs.md`, "[radosgw lets an object ACL's WRITE grant
+  set, shorten and bypass an object's retention and legal
+  hold](ceph-upstream-bugs.md#radosgw-lets-an-object-acls-write-grant-set-shorten-and-bypass-an-objects-retention-and-legal-hold)").
+  Amazon S3 calls an object ACL's WRITE "not applicable", and maps no object
+  ACL permission to these actions
+  (https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html#acl-access-policy-permission-mapping).
+  rgw-go's object-ACL fallback grants WRITE to the object's owner alone, the
+  owner its ACL names, through the owner's own grant and within the key's
+  permission mask, and never to the anonymous user, an anonymous writer's
+  object included. Every other grantee of an object's WRITE or FULL_CONTROL,
+  a named user, AllUsers, AuthenticatedUsers, an email grantee, and the
+  grantees of a Swift write list, is refused with 403 AccessDenied (the
+  object-ACL leg of `authz.Evaluator`, `internal/authz/evaluator.go`). That
+  includes the bucket's owner on an object another user or account wrote
+  with `bucket-owner-full-control`, whose FULL_CONTROL grant to the bucket
+  owner
+  ([rgw_acl_s3.cc:444-449](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_s3.cc#L444-L449),
+  [rgw_acl_s3.cc:444-449](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl_s3.cc#L444-L449))
+  lets it tag the object and set its retention and legal hold in radosgw:
+  in rgw-go that owner needs a bucket or identity policy allowing the
+  action, as in Amazon S3, where no ACL reaches these actions. A policy
+  decides as before, and first; the READ, READ_ACP and WRITE_ACP an
+  object's grant gives are unchanged; and the bucket-scope WRITE that
+  PutObject and DeleteObject check is still the bucket ACL's, as in radosgw.
 - **rgw-go stores and enforces ownership controls a floor radosgw ignores.**
   Neither floor has ownership controls: no op serves them
   ("ownershipControls requests are served as v21 serves them", above), and
@@ -8513,9 +8584,13 @@ does the following.
   rgw-go's strict `objectlock.DecodeRetention` and
   `objectlock.DecodeLegalHold`, for the four, take such an attr for one that
   does not decode, so `objectlock.VerifyDelete` refuses the delete with the
-  error radosgw gives a short attr, -EIO; the lenient
+  error radosgw gives a short attr, -EIO, and PutObjectRetention
+  (`op.PutObjectRetention`) answers such an existing retention as radosgw
+  answers a short one, 500 UnknownError. The lenient
   `objectlock.DecodeRetentionLenient` and `objectlock.DecodeLegalHoldLenient`
-  read it as the two Get ops do. radosgw writes these attrs cleanly, and
+  read it as the two Get ops do, so GetObjectRetention and GetObjectLegalHold
+  (`op.GetObjectRetention`, `op.GetObjectLegalHold`) answer no 500 for it,
+  only for an attr too short to decode. radosgw writes these attrs cleanly, and
   copy_obj takes them from the request, not the source
   ([rgw_rados.cc:4800-4807](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4800-L4807),
   [rgw_rados.cc:5013-5020](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5013-L5020)),
@@ -8536,7 +8611,8 @@ does the following.
   (`docs/ceph-upstream-bugs.md`, "[radosgw's PutObjectRetention holds a
   lapsed retention's mode and
   date](ceph-upstream-bugs.md#radosgws-putobjectretention-holds-a-lapsed-retentions-mode-and-date)").
-  rgw-go's `objectlock.RetentionChange` takes an existing retention whose
+  rgw-go's PutObjectRetention (`op.PutObjectRetention`) checks the change
+  with `objectlock.RetentionChange`, which takes an existing retention whose
   retain-until second is not after now's for none, so the new retention is
   checked as on a version without one; one still in force is checked as
   radosgw checks it, in whole seconds. The retention then stored is the
@@ -8574,12 +8650,13 @@ does the following.
   At today's clock a double holds the fraction of a second to 2^-22 s, so
   a clock within about 119 ns of a whole second reads as that second:
   radosgw then lets a delete or an expiry through a retention ending at
-  that second, refuses a header date of that second, and refuses a body
-  date of the second before it. rgw-go compares the clock's whole seconds
-  exactly (`objectlock.VerifyDelete`, for a delete and for lifecycle;
-  `objectLockHeaders` in `internal/s3/putobject.go`, for the three headers;
-  `objectlock.RetentionChange`), so in that window it keeps the version
-  and takes the header date.
+  that second, refuses a header date of that second, and takes a body date
+  of that second at a clock just past it. rgw-go compares the clock's whole
+  seconds exactly (`objectlock.VerifyDelete`, for a delete and for
+  lifecycle; `objectLockHeaders` in `internal/s3/putobject.go`, for the
+  three headers; `objectlock.RetentionChange`; `op.PutObjectRetention`, for
+  its body's date), so in that window it keeps the version, takes the header
+  date, and refuses the body date.
 - **CopyObject refuses an object lock on a bucket without object lock.**
   radosgw's CopyObject stores the retention and legal hold its headers ask
   for on a bucket without object lock, where its PutObject refuses them
