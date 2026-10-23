@@ -1,14 +1,12 @@
 package gateway
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,16 +16,9 @@ import (
 	"time"
 
 	"go.yaml.in/yaml/v3"
-)
 
-// rgwDaemon is the service map's entry of the cluster's one radosgw: the
-// realm, zonegroup and zone it serves, its id and its frontends are in its
-// metadata.
-type rgwDaemon struct {
-	Metadata map[string]string `json:"metadata"`
-	// raw is the entry as the service map gives it, for messages.
-	raw string
-}
+	"github.com/jhoblitt/rgw-go/hack/internal/harness"
+)
 
 var (
 	podIPPattern   = regexp.MustCompile(`^[0-9.]+$`)
@@ -39,16 +30,14 @@ var (
 // the site radosgw-admin works in from then on, and finds the radosgw's
 // endpoint, config entity and pod.
 func (r *Runner) useSite(ctx context.Context, st *state) error {
-	rgw, err := r.rgwDaemon(ctx, st)
+	rgw, err := st.cl.OneRadosgw(ctx, harness.Poll{Now: r.Now, Sleep: r.Sleep, Wait: r.SiteWait, Every: r.SitePoll})
 	if err != nil {
 		return err
 	}
-	md := rgw.Metadata
-	if md["realm_name"] == "" || md["zonegroup_name"] == "" || md["zone_name"] == "" {
-		return fmt.Errorf("the radosgw reports no realm, zonegroup or zone: %s", rgw.raw)
+	if st.site.realm, st.site.zonegroup, st.site.zone, err = rgw.Site(); err != nil {
+		return err
 	}
-	st.site = site{realm: md["realm_name"], zonegroup: md["zonegroup_name"], zone: md["zone_name"]}
-	st.radosgwFrontends = md["frontend_config#0"]
+	st.radosgwFrontends = rgw.Frontends()
 
 	// The radosgw is host-networked, so its pod's IP is its node's.
 	out, err := st.cl.Kubectl(ctx, "-n", "rook-ceph", "get", "pods", "-l", "app=rook-ceph-rgw",
@@ -62,29 +51,13 @@ func (r *Runner) useSite(ctx context.Context, st *state) error {
 	}
 	port := portPattern.FindStringSubmatch(st.radosgwFrontends)
 	if port == nil {
-		return fmt.Errorf("no port in the radosgw's frontend config: %s", rgw.raw)
+		return fmt.Errorf("no port in the radosgw's frontend config: %s", rgw.Raw)
 	}
 	st.radosgwEndpoint = "http://" + ip + ":" + port[1]
 
-	// Rook runs the radosgw as client.rgw. and its deployment's name past
-	// rook-ceph-rgw, dashes mapped to dots (generateCephXUser in rook
-	// pkg/operator/ceph/object/config.go), and the service map's id is that
-	// name past client.rgw. config show answers only for a section a running
-	// daemon reads, with the frontends that daemon reports, so a wrong name
-	// stops here rather than checking options nothing reads.
-	id := md["id"]
-	if id == "" {
-		return fmt.Errorf("the radosgw reports no id: %s", rgw.raw)
+	if st.radosgwEntity, err = st.cl.RadosgwEntity(ctx, rgw); err != nil {
+		return err
 	}
-	entity := "client.rgw." + id
-	out, err = st.cl.Ceph(ctx, "config", "show", entity, "rgw_frontends")
-	if err != nil {
-		return fmt.Errorf("no running daemon reads the config section %s: %w", entity, err)
-	}
-	if frontends := strings.TrimRight(string(out), "\n"); frontends == "" || frontends != st.radosgwFrontends {
-		return fmt.Errorf("%s reports the frontends '%s', the radosgw '%s'", entity, frontends, st.radosgwFrontends)
-	}
-	st.radosgwEntity = entity
 
 	out, err = st.cl.Kubectl(ctx, "-n", "rook-ceph", "get", "pods", "-l", "app=rook-ceph-rgw",
 		"-o", "jsonpath={.items[*].metadata.name}")
@@ -97,73 +70,6 @@ func (r *Runner) useSite(ctx context.Context, st *state) error {
 	}
 	st.radosgwPod = pod
 	return nil
-}
-
-// rgwDaemon polls the service map until it lists exactly one radosgw, and
-// returns its entry. A radosgw registers under a new gid each time it starts
-// or reloads its realm, and the manager can list the old one beside it for
-// up to mgr_service_beacon_grace, 60 s, after a restart. After SiteWait it
-// fails, never restarting a radosgw itself.
-func (r *Runner) rgwDaemon(ctx context.Context, st *state) (rgwDaemon, error) {
-	deadline := r.Now().Add(r.SiteWait)
-	for {
-		out, err := st.cl.Ceph(ctx, "service", "dump", "-f", "json")
-		var entries []json.RawMessage
-		if err == nil {
-			entries, err = rgwEntries(out)
-		}
-		if err == nil && len(entries) == 1 {
-			var rgw rgwDaemon
-			if err = json.Unmarshal(entries[0], &rgw); err != nil {
-				return rgwDaemon{}, fmt.Errorf("decoding the radosgw's service map entry: %w", err)
-			}
-			rgw.raw = string(entries[0])
-			return rgw, nil
-		}
-		if !r.Now().Before(deadline) {
-			if err != nil {
-				return rgwDaemon{}, fmt.Errorf("the service map did not settle to one radosgw in %ds: "+
-					"ceph service dump failed, so the service map could not be read: %w", seconds(r.SiteWait), err)
-			}
-			listed, err := json.Marshal(entries)
-			if err != nil {
-				return rgwDaemon{}, fmt.Errorf("encoding the radosgw entries: %w", err)
-			}
-			return rgwDaemon{}, fmt.Errorf("the service map did not settle to one radosgw in %ds (radosgw entries: %s); "+
-				"the manager drops a stopped radosgw within about a minute, so none is running or more than one is",
-				seconds(r.SiteWait), listed)
-		}
-		if err := r.Sleep(ctx, r.SitePoll); err != nil {
-			return rgwDaemon{}, err
-		}
-	}
-}
-
-// rgwEntries are the service map's radosgw entries, compacted, in the order
-// of their gids; its summary is none.
-func rgwEntries(dump []byte) ([]json.RawMessage, error) {
-	var sm struct {
-		Services struct {
-			RGW struct {
-				Daemons map[string]json.RawMessage `json:"daemons"`
-			} `json:"rgw"`
-		} `json:"services"`
-	}
-	if err := json.Unmarshal(dump, &sm); err != nil {
-		return nil, fmt.Errorf("decoding ceph service dump: %w", err)
-	}
-	entries := []json.RawMessage{}
-	for _, gid := range slices.Sorted(maps.Keys(sm.Services.RGW.Daemons)) {
-		if gid == "summary" {
-			continue
-		}
-		var compact bytes.Buffer
-		if err := json.Compact(&compact, sm.Services.RGW.Daemons[gid]); err != nil {
-			return nil, fmt.Errorf("decoding the service map entry %s: %w", gid, err)
-		}
-		entries = append(entries, compact.Bytes())
-	}
-	return entries, nil
 }
 
 // drainGC runs every entry of the garbage collection queue, expired or not,
