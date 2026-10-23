@@ -464,6 +464,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's copy of a null version leaves OLH attrs on the version it writes, and its delete keeps them](#radosgws-copy-of-a-null-version-leaves-olh-attrs-on-the-version-it-writes-and-its-delete-keeps-them) | pending | pending | ✓ |
 | [radosgw's PutObjectRetention reads no document for an admin its permission check refuses](#radosgws-putobjectretention-reads-no-document-for-an-admin-its-permission-check-refuses) | pending | pending | ✓ |
 | [radosgw lets an object ACL's WRITE grant set, shorten and bypass an object's retention and legal hold](#radosgw-lets-an-object-acls-write-grant-set-shorten-and-bypass-an-objects-retention-and-legal-hold) | pending | pending | ✓ |
+| [radosgw's null version removal loses its index completion to the OLH clear while the bucket reshards](#radosgws-null-version-removal-loses-its-index-completion-to-the-olh-clear-while-the-bucket-reshards) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -27370,3 +27371,78 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task L3's review, 2026-10-23, at the object-lock ops'
   authorization boundary; derived from the source, not reproduced.
+
+## radosgw's null version removal loses its index completion to the OLH clear while the bucket reshards
+
+- **Kind:** defect, S3-correctness: a removal of a key's last version,
+  when that version is the null version, can leave the null version's
+  instance entry stored as existing and still counted in the shard
+  header's stats, so the bucket's stats and quota over-count it until a
+  bucket check. No data is exposed and no quota is bypassed. Not
+  security-relevant. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `apply_olh_log` removes each version its log names through the
+    unversioned delete, then writes the OLH head and, when no version is
+    left, clears the OLH
+    ([rgw_rados.cc:8530-8556](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8530-L8556),
+    [rgw_rados.cc:9275-9302](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9275-L9302)).
+  - The removal's `bucket_complete_op` goes with `aio_operate`, behind the
+    reshard guard, and is not awaited
+    ([rgw_rados.cc:9707-9715](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9707-L9715),
+    [rgw_rados.cc:10443-10451](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10443-L10451)).
+    librados keeps it ahead of the clear, which goes to the same shard, but
+    when the shard answers it busy resharding, `handle_completion` queues
+    it for the completion manager
+    ([rgw_rados.cc:1011-1020](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L1011-L1020),
+    [rgw_rados.cc:1052-1061](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1052-L1061)),
+    whose thread sends it again in its own `guard_reshard` and drops a
+    failure
+    ([rgw_rados.cc:905-929](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L905-L929),
+    [rgw_rados.cc:943-967](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L943-L967)).
+  - The replay's clear goes on meanwhile: `clear_olh` calls
+    `bucket_index_clear_olh`, which waits in a `guard_reshard` of its own
+    ([rgw_rados.cc:8628](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8628),
+    [rgw_rados.cc:8380-8388](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8380-L8388);
+    [rgw_rados.cc:9374](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9374),
+    [rgw_rados.cc:9126-9134](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9126-L9134)).
+    Each guard blocks until the reshard ends and then sends again
+    ([rgw_rados.cc:7922-7957](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7922-L7957),
+    [rgw_rados.cc:8585-8616](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8585-L8616)),
+    so nothing orders the queued completion and the clear.
+  - The class's guard refuses a write while the bucket reshards at
+    v19.2.7, and at v20.2.4 while the reshard is in progress, or in its
+    log-record phase past `rgw_reshardlog_threshold`
+    ([cls_rgw.cc:4597-4599](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L4597-L4599),
+    [cls_rgw.cc:906-921](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L906-L921)).
+  - The clear removes the OLH entry and the version marker
+    ([cls_rgw.cc:2159-2187](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2159-L2187),
+    [cls_rgw.cc:2324-2352](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2324-L2352)),
+    the plain entry through which a completion of the null version reads
+    its instance entry
+    ([cls_rgw.cc:946-978](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L946-L978),
+    [cls_rgw.cc:1076-1108](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1076-L1108)).
+    A completion that arrives after it finds no entry, so no pending tag,
+    and answers EINVAL before it unaccounts the version
+    ([cls_rgw.cc:1047-1073](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1047-L1073) and
+    [cls_rgw.cc:1129](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1129),
+    [cls_rgw.cc:1182-1208](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1182-L1208) and
+    [cls_rgw.cc:1263](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1263)).
+- **Trigger:** a removal of a key's null version as the key's last
+  version, such as `DELETE ?versionId=null` of an object written before
+  versioning was enabled and not overwritten since, whose completion the
+  shard refuses as resharding, with the replay's clear reaching the shard
+  first once the reshard ends.
+- **Impact:** the null version's instance entry stays, stored as existing
+  under the removal's pending tag, and the shard header keeps counting the
+  version, so the bucket's stats and its quota over-count by that version
+  until a bucket check repairs them. The version itself is gone from S3.
+- **Releases:** v19.2.7 and v20.2.4; main was not checked.
+- **rgw-go:** does not meet it: its replay sends each removal's completion
+  and waits for the class's answer before its head op and its trim or
+  clear (`indexOp.completeDelSync`, `internal/driver/indexop.go`;
+  `docs/exclusions.md`, "An OLH replay awaits the index completion of each
+  version it removes"). On a mixed fleet radosgw's replays still can.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task V8b's review, 2026-10-23, tracing rgw-go's lost
+  null version completion to radosgw's completion path at both tags;
+  derived from the source, not reproduced.

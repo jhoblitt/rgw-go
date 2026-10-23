@@ -11,6 +11,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gbytes"
 
 	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/denc"
@@ -221,6 +222,23 @@ var _ = Describe("DeleteObject on a versioned bucket", func() {
 			}
 		}
 		return out
+	}
+	// noIndex checks that k's shard keeps no entry of k, plain, list,
+	// instance or OLH, that its header counts nothing, and that logs, the
+	// spec's log, records no failed index completion.
+	noIndex := func(logs *gbytes.Buffer) {
+		GinkgoHelper()
+		settle(s)
+		Expect(slices.Sorted(maps.Keys(c.Object(rookIndexPool, "", shard).Omap))).To(BeEmpty(), "k's index entries")
+		for cat, st := range c.Header(rookIndexPool, "", shard).Stats {
+			Expect(st).To(BeZero(), "the shard header's stats of category %d", cat)
+		}
+		Expect(string(logs.Contents())).NotTo(ContainSubstring("completion failed"))
+	}
+	captureLogs := func() *gbytes.Buffer {
+		logs := gbytes.NewBuffer()
+		DeferCleanup(driver.CaptureLog(logs))
+		return logs
 	}
 
 	Describe("without a versionId", func() {
@@ -447,6 +465,7 @@ var _ = Describe("DeleteObject on a versioned bucket", func() {
 		})
 
 		It("removes the null version of a pre-versioning object no link has converted, and the key with it", func(ctx SpecContext) {
+			logs := captureLogs()
 			write(ctx, "")
 			Expect(mustDel(ctx, "null", op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "null"}))
 			Expect(olhHead()).To(BeNil(), "test_versioning_obj_plain_null_version_removal's 404")
@@ -456,6 +475,82 @@ var _ = Describe("DeleteObject on a versioned bucket", func() {
 			st, err := s.StatObject(ctx, rec, version(""))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(st.Exists).To(BeFalse())
+			noIndex(logs)
+		})
+
+		It("removes a converted key's null version that is its last version, and every entry of the key with it", func(ctx SpecContext) {
+			logs := captureLogs()
+			converted(ctx)
+			mustDel(ctx, "v1", op.DeleteParams{})
+			Expect(mustDel(ctx, "null", op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "null"}))
+			Expect(olhHead()).To(BeNil(), "the OLH head, which the replay clears with the key's last version")
+			noIndex(logs)
+		})
+
+		It("removes a suspended bucket's null version that is the key's only version, and every entry of the key with it", func(ctx SpecContext) {
+			logs := captureLogs()
+			suspend()
+			put(ctx, "")
+			Expect(listed()).To(Equal([]string{""}), "the null version, linked")
+			Expect(mustDel(ctx, "null", op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "null"}))
+			Expect(olhHead()).To(BeNil())
+			noIndex(logs)
+		})
+
+		// librados keeps one client's ops to one object in order, so
+		// radosgw's unawaited completion of the removal reaches the shard
+		// before the replay's clear, which takes the plain entry the
+		// completion reads the null version's instance entry through
+		// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L946-L978 at v19.2.7,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1076-L1108 at v20.2.4).
+		It("lands the null version's index completion on the shard before the replay's clear of the OLH", func(ctx SpecContext) {
+			write(ctx, "")
+			c.ResetCounters()
+			mustDel(ctx, "null", op.DeleteParams{})
+			delAt, clearAt := -1, -1
+			for i, w := range c.WritesTo(rookIndexPool, "", shard) {
+				for _, st := range w.Steps() {
+					x, ok := st.(*radosclient.ExecStep)
+					switch {
+					case !ok:
+					case x.Method == "bucket_clear_olh":
+						clearAt = i
+					case x.Method == "bucket_complete_op":
+						if co := rgwcls.DecodeCompleteOp(denc.NewDecoder(x.In)); co.Op == rgwcls.OpDel && co.Key == (rgwcls.ObjKey{Name: "k"}) {
+							delAt = i
+						}
+					}
+				}
+			}
+			Expect(clearAt).To(BeNumerically(">=", 0), "the replay clears the OLH")
+			Expect(delAt).To(SatisfyAll(BeNumerically(">=", 0), BeNumerically("<", clearAt)), "the null version's DEL completion, before the clear")
+		})
+
+		It("lands a removed version's index completion on the shard before the replay's trim of the log", func(ctx SpecContext) {
+			put(ctx, "v1")
+			put(ctx, "v2")
+			c.ResetCounters()
+			Expect(del(ctx, "v1", op.DeleteParams{})).Error().NotTo(HaveOccurred())
+			_, ok := instanceEntry("v1", false)
+			Expect(ok).To(BeFalse(), "v1's instance entry, gone once the delete returns")
+			settle(s)
+			delAt, trimAt := -1, -1
+			for i, w := range c.WritesTo(rookIndexPool, "", shard) {
+				for _, st := range w.Steps() {
+					x, ok := st.(*radosclient.ExecStep)
+					switch {
+					case !ok:
+					case x.Method == "bucket_trim_olh_log":
+						trimAt = i
+					case x.Method == "bucket_complete_op":
+						if co := rgwcls.DecodeCompleteOp(denc.NewDecoder(x.In)); co.Op == rgwcls.OpDel && co.Key == (rgwcls.ObjKey{Name: "k", Instance: "v1"}) {
+							delAt = i
+						}
+					}
+				}
+			}
+			Expect(trimAt).To(BeNumerically(">=", 0), "the replay trims the log")
+			Expect(delAt).To(SatisfyAll(BeNumerically(">=", 0), BeNumerically("<", trimAt)), "v1's DEL completion, before the trim")
 		})
 
 		It("answers NoSuchKey for a version the index does not have, writing nothing", func(ctx SpecContext) {

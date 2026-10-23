@@ -97,7 +97,15 @@ func (s *Store) DeleteObject(ctx context.Context, rec *op.BucketRecord, key meta
 // otherwise than by timing out cancels the prepare. st is the head as read.
 // The removal runs to its end whatever the client does.
 func (s *Store) removeHead(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, hashName string, st *op.ObjectState, w *radosclient.WriteOp, counted bool) error {
-	return s.removeHeadFlagged(ctx, rec, key, hashName, st, w, counted, 0)
+	return s.removeHeadFlagged(ctx, rec, key, hashName, st, w, counted, headRemoval{})
+}
+
+// headRemoval is how removeHeadFlagged changes the index: with bilogFlags,
+// the RGWBILogFlags delete_obj's caller gives it, and with the removal's
+// completion awaited when await is set, or else sent without waiting.
+type headRemoval struct {
+	bilogFlags uint16
+	await      bool
 }
 
 // headKeptAttrs is the attr prefixes a removal or a reset of key's head
@@ -116,9 +124,12 @@ func headKeptAttrs(key meta.ObjKey) []string {
 	return nil
 }
 
-// removeHeadFlagged is removeHead whose index prepare, completion and cancel
-// carry bilogFlags, the RGWBILogFlags delete_obj's caller gives it.
-func (s *Store) removeHeadFlagged(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, hashName string, st *op.ObjectState, w *radosclient.WriteOp, counted bool, bilogFlags uint16) error {
+// removeHeadFlagged is removeHead whose index change goes as how says. An
+// awaited completion that fails is logged and the removal goes on, as
+// radosgw's handle_completion drops a failed one
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L1011-L1017 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1052-L1058 at v20.2.4).
+func (s *Store) removeHeadFlagged(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, hashName string, st *op.ObjectState, w *radosclient.WriteOp, counted bool, how headRemoval) error {
 	ref, err := s.headRef(ctx, rec, key)
 	if err != nil {
 		return err
@@ -131,7 +142,7 @@ func (s *Store) removeHeadFlagged(ctx context.Context, rec *op.BucketRecord, key
 	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7087-L7093).
 	x := s.newIndexOp(rec, key, "")
 	x.hashName = hashName
-	x.bilogFlags = bilogFlags
+	x.bilogFlags = how.bilogFlags
 	if err = x.prepare(ctx, rgw.OpDel); err != nil {
 		return op.FromRADOS(err, op.ScopeObject)
 	}
@@ -144,7 +155,14 @@ func (s *Store) removeHeadFlagged(ctx context.Context, rec *op.BucketRecord, key
 		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5951-L5954).
 		return op.FromRADOS(err, op.ScopeObject)
 	case err == nil || errors.Is(err, radosclient.ErrNotFound):
-		x.completeDel(rgw.EntryVer{Pool: ref.pool.ID(), Epoch: epoch}, st.Mtime)
+		ver := rgw.EntryVer{Pool: ref.pool.ID(), Epoch: epoch}
+		if !how.await {
+			x.completeDel(ver, st.Mtime)
+		} else if cerr := x.completeDelSync(ctx, ver, st.Mtime); cerr != nil {
+			slog.WarnContext(ctx, "bucket index completion failed for a removed version; its index entry stays, counted in the bucket's stats, until an admin bucket check repairs them",
+				slog.String("bucket", rec.Info.Bucket.Name), slog.String("key", key.Name), slog.String("instance", key.Instance),
+				slog.Int("op", int(rgw.OpDel)), slog.Any("error", cerr))
+		}
 		if st.Manifest != nil {
 			s.completeAtomicModification(ctx, rec, key, st)
 		}
@@ -161,8 +179,8 @@ func (s *Store) removeHeadFlagged(ctx context.Context, rec *op.BucketRecord, key
 	// radosgw adjusts only once complete_del has also succeeded (r is
 	// overwritten by it,
 	// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5958-L5986);
-	// rgw-go's completion is not awaited, so the adjustment follows the
-	// removal itself.
+	// rgw-go's completion is not awaited on every path, so the adjustment
+	// follows the removal itself.
 	accounted := st.Size
 	if st.Compression != nil {
 		accounted = st.Compression.OrigSize

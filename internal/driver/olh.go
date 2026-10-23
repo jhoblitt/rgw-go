@@ -810,7 +810,9 @@ func versionName(rec *op.BucketRecord, key meta.ObjKey) string {
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7369 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8028 at v20.2.4;
 // indexOp.logOp), a zone rgw-go does not serve (docs/exclusions.md,
-// "Multisite"). A head already gone answers NoSuchKey. A
+// "Multisite"). The removal's index completion is awaited, so it lands
+// before the replay's head op and its trim or clear (completeDelSync). A
+// head already gone answers NoSuchKey. A
 // head whose write tag is not expectTag, as read or as the removal lands,
 // keeps the version, its pending index DEL canceled, and answers
 // errRemovalRefused.
@@ -840,7 +842,7 @@ func (b *bucketOLHIndex) removeInstance(ctx context.Context, key meta.ObjKey, ex
 	if key.Instance == "" {
 		flags |= rgw.BILogNullVersion
 	}
-	err = s.removeHeadFlagged(ctx, rec, key, "", st, w, true, flags)
+	err = s.removeHeadFlagged(ctx, rec, key, "", st, w, true, headRemoval{bilogFlags: flags, await: true})
 	if expectTag != nil && errors.Is(err, radosclient.ErrCanceled) {
 		return fmt.Errorf("the version's head changed as it was removed: %w", errRemovalRefused)
 	}
