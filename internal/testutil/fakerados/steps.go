@@ -895,7 +895,9 @@ func (x *execution) exec(s *radosclient.ExecStep) (func(), error) {
 // after it; the cluster's lock is held. An op that changed nothing leaves the
 // object and its version, as the OSD does an op with an empty transaction.
 // A zero mtime, or the Unix epoch, leaves the object's own: librados sends
-// both as the zero timespec, for which the OSD keeps the stored mtime.
+// both as the zero timespec, for which the OSD keeps the stored mtime, even
+// through a remove and a create in the op, which leave object_info_t's
+// mtime as it was (new_object() clears only the digests).
 func (p *Pool) commit(oid string, x *execution, mtime time.Time) uint64 {
 	s := p.store
 	var prior uint64
@@ -917,8 +919,11 @@ func (p *Pool) commit(oid string, x *execution, mtime time.Time) uint64 {
 		return ver
 	}
 	x.obj.Version = ver
-	if !mtime.IsZero() && !mtime.Equal(time.Unix(0, 0)) {
+	switch {
+	case !mtime.IsZero() && !mtime.Equal(time.Unix(0, 0)):
 		x.obj.Mtime = mtime
+	case x.stored != nil:
+		x.obj.Mtime = x.stored.Mtime
 	}
 	s.objects[oid] = x.obj
 	return ver
