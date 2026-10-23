@@ -9208,12 +9208,6 @@ listing, as radosgw's `RGWListBucket` and `RGWRados::Bucket::List` do at
 the v19.2.6 and v20.2.4 tags. Where the two differ, rgw-go does the
 following.
 
-- **The versions of a bucket whose versioning was ever enabled are not
-  listed.** `GET /<bucket>?versions` on a bucket that has never had
-  versioning enabled lists every object as its "null" version, as radosgw
-  does. On a bucket whose versioning is enabled or suspended rgw-go answers
-  501 NotImplemented until versioning is served (phase 2); radosgw lists
-  its versions and delete markers.
 - **A pending multipart upload's index entry is not reconciled by a
   listing.** A listing checks an index entry that has a pending operation,
   or that is not there, against the object's head and suggests the repair
@@ -9300,6 +9294,27 @@ following.
   Tentacle ([svc_bi_rados.cc:954-956](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bi_rados.cc#L954-L956))
   and from the shard's first key on Squid
   ([cls_rgw_client.cc:351-370](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_client.cc#L351-L370)).
+- **ListObjectVersions URL-encodes KeyMarker, Prefix and Delimiter.**
+  Under URL encoding radosgw's versions document writes `Prefix` and
+  `Delimiter` with `dump_string`, as sent
+  ([rgw_rest_s3.cc:1787-1791](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1787-L1791),
+  [rgw_rest_s3.cc:1890-1894](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1890-L1894)),
+  and `KeyMarker` with `dump_string` too, where `NextKeyMarker` goes
+  through `dump_urlsafe`
+  ([rgw_rest_s3.cc:1815-1818](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1815-L1818),
+  [rgw_rest_s3.cc:1918-1921](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1918-L1921);
+  `docs/ceph-upstream-bugs.md`, "radosgw's ListObjectVersions leaves
+  KeyMarker, Prefix and Delimiter unencoded under encoding-type=url"). S3
+  encodes all five, "KeyMarker, NextKeyMarker, Prefix, Key, and Delimiter"
+  (AWS's API reference, API_ListObjectVersions.html, fetched 2026-10-22),
+  and botocore, which sends `encoding-type=url` on every ListObjectVersions
+  that names none, decodes them. rgw-go encodes `KeyMarker` with its slash,
+  as `NextKeyMarker` is, and `Prefix` and `Delimiter` keeping theirs, as
+  radosgw's `dump_urlsafe` keeps a common prefix's
+  ([rgw_rest_s3.cc:1800](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1800),
+  [rgw_rest_s3.cc:1903](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1903)).
+  `VersionIdMarker` and `NextVersionIdMarker` are written as both gateways
+  write them, never encoded.
 - **A versions listing starts after every version of a key-marker given
   alone.** radosgw passes a `key-marker` without a `version-id-marker` to
   the class as a start key without an instance
@@ -9311,9 +9326,11 @@ following.
   before the name's list keys, so the page lists the key-marker's own
   versions (`docs/ceph-upstream-bugs.md`, "radosgw's ListObjectVersions
   lists the key-marker's versions again without a version-id-marker"). AWS
-  starts after the key, every version of it included (versitygw#2178; the
-  AWS API reference's `key-marker` example for ListObjectVersions). rgw-go
-  starts after the name, NUL and `w`, which sorts after every list key of
+  starts after every version of the key: in AWS's API reference
+  (API_ListObjectVersions.html, fetched 2026-10-22), the sample
+  `GET /?versions&key-marker=key2` lists only the versions of `key3` and
+  `sourcekey`. rgw-go starts where AWS does, after the name, NUL and `w`,
+  which sorts after every list key of
   the name and before the name and 0x01
   ([cls_rgw.cc:302-323](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L302-L323),
   [cls_rgw.cc:352-373](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L352-L373)),
@@ -9328,10 +9345,19 @@ following.
   as far as the source shows, only a browser POST's `key` can store in
   radosgw (`docs/ceph-upstream-bugs.md`,
   "radosgw's policy match cuts an object name at a NUL that its RADOS name
-  keeps"). Task V14b confirms AWS's answer from a captured response before
-  rgw-go claims parity here. radosgw names `null` as the next
-  `version-id-marker` for an entry without an instance, so a client that
-  pages by the returned markers never sends a `key-marker` alone.
+  keeps"). radosgw names `null` as the next `version-id-marker` for an
+  entry without an instance, so a client that pages by the returned markers
+  never sends a `key-marker` alone. The `list-type=2` form with `versions`
+  reads no version marker: its `continuation-token`, else its
+  `start-after`, is a key-marker alone
+  ([rgw_rest_s3.cc:1771-1777](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1771-L1777),
+  [rgw_rest_s3.cc:1874-1880](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1874-L1880)).
+  rgw-go starts a `continuation-token` at its key's first version, as
+  radosgw does, since the form's next token names the key a page ended
+  inside: a client paging that form by its tokens lists that key's versions
+  again, and never gets past a key with `max-keys` versions or more, on
+  either gateway. A `start-after` starts after every version of its key, as
+  S3 reads a key given alone, where radosgw lists that key's versions.
 - **A versions listing resumes after the null delete marker its
   version-id-marker names.** radosgw passes a `version-id-marker` of `null`
   to the class as the instance `null`
@@ -9369,8 +9395,13 @@ following.
   read of a versioned key that finds its shard gone reads the shard the
   bucket now names"). The listing's next marker names `null` for the null
   version and no instance for an unversioned object, and resumes after
-  either when copied back. rgw-go's S3 layer passes no `version-id-marker`
-  until ListObjectVersions is served.
+  either when copied back. ListObjectVersions passes `version-id-marker` to
+  the listing as sent, and writes both as a `NextVersionIdMarker` of `null`,
+  as radosgw does
+  ([rgw_rest_s3.cc:1817-1825](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1817-L1825),
+  [rgw_rest_s3.cc:1920-1928](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1920-L1928)),
+  so each page after an unversioned object, on a bucket never versioned
+  too, starts at `null` and pays those reads.
 - **A versions listing resumes after the null version it last visited.**
   radosgw resumes each round of a listing, and each further read of a shard
   in its unordered listing, after the key of the last entry visited

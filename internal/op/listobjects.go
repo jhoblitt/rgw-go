@@ -48,6 +48,13 @@ type ListObjects struct {
 	// Marker is v1's marker, the versions listing's key-marker, or v2's
 	// continuation-token, else its start-after.
 	Marker string
+	// MarkerInstance is the versions listing's version-id-marker as sent,
+	// null included, as ListObjectsParams.MarkerInstance takes it. The v2
+	// form reads none.
+	MarkerInstance string
+	// RelistMarker is ListObjectsParams.RelistMarker: the v2 form with
+	// versions sets it for a continuation-token.
+	RelistMarker bool
 	// MaxKeys is max-keys as sent, "" when absent.
 	MaxKeys      string
 	EncodingType string
@@ -110,9 +117,10 @@ func (o *ListObjects) VerifyPermission(ctx context.Context, r *Request) error {
 
 // Execute is RGWListBucket::execute: Tentacle refuses an indexless bucket,
 // "Indexless buckets cannot be listed"; an unordered listing with a
-// delimiter is InvalidArgument; then the store lists a page of Max entries.
-// The versions of a bucket whose versioning was ever enabled are not
-// listed (docs/exclusions.md): versioning is not implemented.
+// delimiter is InvalidArgument; then the store lists a page of Max entries
+// from the marker and its instance, which radosgw passes on as sent
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3099-L3110 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3340-L3351 at v20.2.4).
 func (o *ListObjects) Execute(ctx context.Context, r *Request) error {
 	rec := r.BucketRec
 	if rec == nil {
@@ -124,12 +132,9 @@ func (o *ListObjects) Execute(ctx context.Context, r *Request) error {
 	if o.AllowUnordered && o.Delimiter != "" {
 		return ErrInvalidArgument
 	}
-	if o.ListVersions && rec.Info.Flags&(meta.BucketVersioned|meta.BucketVersionsSuspended) != 0 {
-		return ErrNotImplemented
-	}
 	res, err := r.Env.Buckets.ListObjects(ctx, rec, ListObjectsParams{
-		Prefix: o.Prefix, Delimiter: o.Delimiter, Marker: o.Marker, MaxKeys: o.Max,
-		ListVersions: o.ListVersions, AllowUnordered: o.AllowUnordered,
+		Prefix: o.Prefix, Delimiter: o.Delimiter, Marker: o.Marker, MarkerInstance: o.MarkerInstance, RelistMarker: o.RelistMarker,
+		MaxKeys: o.Max, ListVersions: o.ListVersions, AllowUnordered: o.AllowUnordered,
 	})
 	if err != nil {
 		return err

@@ -56,7 +56,15 @@ type ListObjectsParams struct {
 	// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L358-L390 at v19.2.7,
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L408-L440 at v20.2.4).
 	MarkerInstance string
-	MaxKeys        int
+	// RelistMarker starts a versions listing whose Marker has no
+	// MarkerInstance at Marker's first version, as cls_rgw starts after the
+	// plain key of a start key without an instance, rather than past every
+	// version of Marker. radosgw's list-type=2 form with versions reads its
+	// continuation-token so and no version token
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1771-L1777 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1874-L1880 at v20.2.4).
+	RelistMarker bool
+	MaxKeys      int
 	// NS is the index namespace: "" for objects, "multipart" for uploads.
 	NS string
 	// ListVersions returns every version and delete marker.
@@ -112,7 +120,11 @@ type ListObjectsResult struct {
 	CommonPrefixes []string
 	Truncated      bool
 	// NextMarker is the marker for the next page when Truncated: the name,
-	// in ListObjectsParams.NS, of the last entry or common prefix counted.
+	// in ListObjectsParams.NS, of the last entry the listing visited before
+	// the page filled, a name rolled into a common prefix already counted
+	// included, or of the last common prefix counted, as radosgw records it
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L2011-L2014 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2101-L2104 at v20.2.4).
 	NextMarker string
 	// NextMarkerInstance is that entry's instance: "null" for the null
 	// version, as S3's NextVersionIdMarker names it
