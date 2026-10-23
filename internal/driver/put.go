@@ -35,10 +35,27 @@ import (
 // placement's storage class says, then the checks on what arrived (its
 // length, the quota on the bytes received, the Content-MD5, the checksum),
 // then the head write. A write that fails or loses a race deletes the tails
-// it wrote, unless the head write timed out and may yet land. A checksum
-// request of a type rgw-go does not compute is refused before anything is
-// read or written (newChecksumSink).
+// it wrote, unless the head write timed out and may yet land, or landed. A
+// checksum request of a type rgw-go does not compute is refused before
+// anything is read or written (newChecksumSink).
+//
+// The head write is a version's on a bucket whose versioning is enabled, the
+// key's instance the version's id, and the null version's over a key's OLH
+// head, linked under the key's OLH at the epoch the class assigns, as every
+// S3 PUT's olh_epoch is 0
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L1271 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2117-L2143 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1344 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2280-L2306 at v20.2.4;
+// put_versioned.go).
 func (s *Store) PutObject(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, body io.Reader, p op.PutParams) (*op.PutResult, error) {
+	return s.putObject(ctx, rec, key, body, p, 0)
+}
+
+// putObject is PutObject linking a versioned write at epoch: 0 lets the
+// class assign it, and one below the key's OLH entry's links the version
+// non-current.
+func (s *Store) putObject(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, body io.Reader, p op.PutParams, epoch uint64) (*op.PutResult, error) {
 	ck, err := newChecksumSink(p.Checksum, p.Size)
 	if err != nil {
 		return nil, fmt.Errorf("putting %s/%s: %w", rec.Info.Bucket.Name, key.Name, err)
@@ -54,6 +71,7 @@ func (s *Store) PutObject(ctx context.Context, rec *op.BucketRecord, key meta.Ob
 	return s.putStream(ctx, rec, key, body, l, streamWrite{
 		tag: tag, attrs: p.Attrs, size: p.Size, mtime: p.Mtime, ifMatch: p.IfMatch, ifNoneMatch: p.IfNoneMatch,
 		client: true, etag: p.ETag, contentMD5: p.ContentMD5, checksum: ck, compression: s.compressionType(l.tailRule),
+		olhEpoch: &epoch,
 	})
 }
 
@@ -86,6 +104,8 @@ type streamWrite struct {
 	// incompressible hints every data write INCOMPRESSIBLE though no stage
 	// compresses the body: a copy of bytes another compressor made.
 	incompressible bool
+	// olhEpoch is the head write's (headWrite).
+	olhEpoch *uint64
 }
 
 // putStream writes body as AtomicObjectProcessor does, after its prepare,
@@ -183,14 +203,19 @@ func (s *Store) putStream(ctx context.Context, rec *op.BucketRecord, key meta.Ob
 	hw := &headWrite{
 		rec: rec, key: key, tag: w.tag, data: data, manifest: &m, attrs: attrs, mtime: w.mtime,
 		ifMatch: w.ifMatch, ifNoneMatch: w.ifNoneMatch, create: true, modifyTail: true, size: size, accountedSize: accounted,
-		incompressible: incompressible,
+		incompressible: incompressible, olhEpoch: w.olhEpoch,
 	}
 	res, err := s.writeMeta(ctx, hw, s.newIndexOp(rec, key, w.tag))
 	if err != nil {
 		// A head write that timed out may yet land on these tails, so they
 		// stay, as writer.clear_written leaves them
 		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L395-L401).
-		if !errors.Is(err, radosclient.ErrTimedOut) {
+		// A versioned write's head write that landed names them whatever its
+		// completion or its link answered, so they stay too, where radosgw
+		// deletes them (docs/ceph-upstream-bugs.md, "radosgw's versioned
+		// PutObject deletes its tails when its link fails"); a removal of
+		// the version sends them to the GC.
+		if !res.written && !errors.Is(err, radosclient.ErrTimedOut) {
 			tw.discard()
 		}
 		return nil, err

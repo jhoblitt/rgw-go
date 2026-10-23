@@ -47,7 +47,11 @@ const (
 // when not nil, is the user.rgw.idtag the OLH head must hold, absent read as
 // empty, checked on the head each attempt reads and in its init, and the
 // write tag the replay's removal of a version the link logged for removal
-// must find.
+// must find. Inited, when set, is a modification the caller inited on the
+// OLH head in the op that wrote the version's head (writeNullVersion): the
+// first attempt links under its op tag, with no init of its own, when the
+// head it reads still holds that modification's pending attr; a link with a
+// Cond is refused, as that attempt checks nothing.
 type olhLink struct {
 	DeleteMarker  bool
 	Meta          rgw.DirEntryMeta
@@ -57,6 +61,16 @@ type olhLink struct {
 	SkipUpdate    bool
 	Cond          olhCondition
 	ExpectTag     []byte
+	Inited        *olhInited
+}
+
+// olhInited is a modification a caller inited on an OLH head and hands
+// setOLH to link under (olhLink.Inited): head is the OLH head as the op that
+// inited it left it, which a cancel of it is guarded on, and opTag the
+// modification's.
+type olhInited struct {
+	head  *op.ObjectState
+	opTag string
 }
 
 // olhUnlink is an unlink's request, unlink_obj_instance's arguments: the
@@ -108,6 +122,9 @@ func (s *Store) stopsAfterLink() bool { return olhStopAfterLink != nil && olhSto
 //     init (prepareOLHAttempt), and a conditional link is checked after it
 //     lands, before the replay (checkOLHLink). Each backoff of a conditional
 //     link waiting for other writers is one of the olhAttempts.
+//   - p.Inited stands for the first attempt's init while the head holds its
+//     pending attr (takeInitedTag); a later attempt inits its own. One the
+//     first attempt never took, setOLH ending before it, is canceled.
 //
 // When setOLH gives up before a link of its own landed, on an answer that
 // proves none did, it removes the version itself, as removeFailedVersion
@@ -126,16 +143,24 @@ func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKe
 		}
 		return err
 	}
+	inited := p.Inited
 	// beforeInit ends an attempt that sent no init. Every earlier attempt
 	// ended before its link or on the class's refusal of it, so no link of
 	// the write can land, even when the context that ended was the client's:
-	// the version is removed past it.
+	// the version is removed past it, and the caller's inited modification,
+	// when no attempt took it, is canceled past it.
 	beforeInit := func(err error) error {
 		err = fmt.Errorf("linking %s: %w", what, err)
+		if inited != nil {
+			s.olhCancelModification(context.WithoutCancel(ctx), inited.head, inited.opTag)
+		}
 		if !p.DeleteMarker {
 			s.removeUnlinkedVersion(context.WithoutCancel(ctx), idx.x.rec, key, err)
 		}
 		return err
+	}
+	if p.Inited != nil && p.Cond != nil {
+		return beforeInit(errInitedCond)
 	}
 	var wait olhCondWait
 	for range olhAttempts {
@@ -143,20 +168,25 @@ func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKe
 		if err != nil {
 			return beforeInit(err)
 		}
-		a, err := s.prepareOLHAttempt(ctx, idx, head, key, p, &wait)
-		switch {
-		case err != nil:
-			return beforeInit(err)
-		case a.wait:
-			continue
-		}
-		found, tagged := head.Exists, olhTagged(head)
-		opTag, _, err := s.olhInitModification(ctx, head, a.guard, p.ExpectTag)
-		switch {
-		case errors.Is(err, radosclient.ErrCanceled), found && errors.Is(err, radosclient.ErrNotFound):
-			continue
-		case err != nil:
-			return unlinked(fmt.Errorf("linking %s: %w", what, err))
+		var a olhAttempt
+		opTag, tagged := takeInitedTag(head, &inited), true
+		if opTag == "" {
+			a, err = s.prepareOLHAttempt(ctx, idx, head, key, p, &wait)
+			switch {
+			case err != nil:
+				return beforeInit(err)
+			case a.wait:
+				continue
+			}
+			found := head.Exists
+			tagged = olhTagged(head)
+			opTag, _, err = s.olhInitModification(ctx, head, a.guard, p.ExpectTag)
+			switch {
+			case errors.Is(err, radosclient.ErrCanceled), found && errors.Is(err, radosclient.ErrNotFound):
+				continue
+			case err != nil:
+				return unlinked(fmt.Errorf("linking %s: %w", what, err))
+			}
 		}
 		err = idx.linkOLH(ctx, head, key, opTag, f)
 		if err == nil {
@@ -182,6 +212,28 @@ func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKe
 		return unlinked(fmt.Errorf("linking %s: %w", what, err))
 	}
 	return unlinked(fmt.Errorf("%w: linking %s: every one of %d attempts lost to another writer", op.ErrUnknown, what, olhAttempts))
+}
+
+// errInitedCond refuses a link given both an inited modification and a
+// condition (olhLink.Inited).
+var errInitedCond = fmt.Errorf("%w: a link of an inited modification was given a condition, which its first attempt would not check", op.ErrInternalError)
+
+// takeInitedTag is the op tag of *inited, taken once: a modification
+// setOLH's caller inited on the OLH head, which an attempt links under in
+// place of its own init while head, as it read it, holds that modification's
+// pending attr, the init having given the head an OLH tag. Otherwise it is
+// "" and the attempt inits its own: a head without the attr has had it
+// expired, leaving nothing to cancel.
+func takeInitedTag(head *op.ObjectState, inited **olhInited) string {
+	in := *inited
+	*inited = nil
+	if in == nil {
+		return ""
+	}
+	if _, ok := head.Attrs[meta.AttrOLHPendingPrefix+in.opTag]; !ok {
+		return ""
+	}
+	return in.opTag
 }
 
 // unlinkObjInstance is unlink_obj_instance
