@@ -113,16 +113,21 @@ var _ = Describe("ListObjects", func() {
 		Expect(op.Run(ctx, o, request())).To(Succeed())
 		Expect(o.Result.Entries).To(HaveLen(5))
 	})
-	It("passes its marker, prefix, delimiter and versions to the store", func(ctx SpecContext) {
+	It("passes its marker and its instance, prefix, delimiter and versions to the store", func(ctx SpecContext) {
 		buckets := &opfakes.FakeBucketStore{}
 		rec, err := store.GetBucket(ctx, "", "plain")
 		Expect(err).NotTo(HaveOccurred())
 		buckets.GetBucketReturns(rec, nil)
 		env.Buckets = buckets
-		o := &op.ListObjects{Prefix: "p", Delimiter: "/", Marker: "m", MaxKeys: "7", ListVersions: true}
+		o := &op.ListObjects{Prefix: "p", Delimiter: "/", Marker: "m", MarkerInstance: "null", MaxKeys: "7", ListVersions: true}
 		Expect(op.Run(ctx, o, request())).To(Succeed())
 		_, _, p := buckets.ListObjectsArgsForCall(0)
-		Expect(p).To(Equal(op.ListObjectsParams{Prefix: "p", Delimiter: "/", Marker: "m", MaxKeys: 7, ListVersions: true}))
+		Expect(p).To(Equal(op.ListObjectsParams{Prefix: "p", Delimiter: "/", Marker: "m", MarkerInstance: "null", MaxKeys: 7, ListVersions: true}),
+			"the null version's version-id-marker reaches the store as null, as rgw_rest_s3.cc:1758-1759 at v19.2.7 passes it to the class")
+		o = &op.ListObjects{V2: true, Marker: "m", RelistMarker: true, ListVersions: true}
+		Expect(op.Run(ctx, o, request())).To(Succeed())
+		_, _, p = buckets.ListObjectsArgsForCall(1)
+		Expect(p).To(Equal(op.ListObjectsParams{Marker: "m", RelistMarker: true, MaxKeys: 1000, ListVersions: true}))
 	})
 	It("answers NoSuchBucket for a missing bucket before its parameters", func(ctx SpecContext) {
 		r := request()
@@ -150,12 +155,12 @@ var _ = Describe("ListObjects", func() {
 		Expect(op.Run(ctx, o, request())).To(Succeed())
 		Expect(o.Result.Entries).To(HaveLen(5))
 	})
-	DescribeTable("answers NotImplemented for the versions of a bucket whose versioning was ever enabled",
+	DescribeTable("lists the versions of a bucket whose versioning was ever enabled",
 		func(ctx SpecContext, flags uint32) {
 			setInfo(ctx, func(i *meta.BucketInfo) { i.Flags |= flags })
-			Expect(op.Run(ctx, &op.ListObjects{ListVersions: true}, request())).To(MatchError(op.ErrNotImplemented))
-			o := &op.ListObjects{}
-			Expect(op.Run(ctx, o, request())).To(Succeed(), "a plain listing is served")
+			o := &op.ListObjects{ListVersions: true}
+			Expect(op.Run(ctx, o, request())).To(Succeed())
+			Expect(o.Result.Entries).To(HaveLen(5))
 		},
 		Entry("enabled", uint32(meta.BucketVersioned)),
 		Entry("suspended", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended)),

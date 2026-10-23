@@ -7,9 +7,9 @@
 # they free in the radosgw ledgers with make s3tests-record-tests.
 # Format: a pytest node id, then "#" and the calls that need the feature.
 
-# bucket versioning: each enables it (PutBucketVersioning)
-s3tests/functional/test_s3.py::test_versioning_obj_create_read_remove # PutBucketVersioning, ListObjectVersions
-s3tests/functional/test_s3.py::test_versioning_obj_create_read_remove_head # PutBucketVersioning, ListObjectVersions
+# bucket versioning: each writes and deletes versions of a versioned bucket
+s3tests/functional/test_s3.py::test_versioning_obj_create_read_remove # PutObject and DeleteObject on a versioned bucket
+s3tests/functional/test_s3.py::test_versioning_obj_create_read_remove_head # PutObject and DeleteObject on a versioned bucket
 
 # object lock
 s3tests/functional/test_s3.py::test_object_lock_put_obj_lock # CreateBucket with object lock, PutObjectLockConfiguration

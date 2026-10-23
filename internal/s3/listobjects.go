@@ -186,7 +186,6 @@ func serveListBucket(ctx context.Context, w http.ResponseWriter, r *op.Request, 
 		EncodingType:   q.Get("encoding-type"),
 		AllowUnordered: argBool(q, "allow-unordered"),
 	}
-	versionIDMarker := ""
 	switch {
 	case v2:
 		o.FetchOwner = argBool(q, "fetch-owner")
@@ -195,10 +194,14 @@ func serveListBucket(ctx context.Context, w http.ResponseWriter, r *op.Request, 
 		o.Marker = o.StartAfter
 		if o.HasToken {
 			o.Marker = o.ContinuationToken
+			// The form issues no version token it reads back, so its next
+			// page starts at the token key's first version, as on radosgw,
+			// rather than past the versions of that key it has not listed.
+			o.RelistMarker = o.ListVersions
 		}
 	case o.ListVersions:
 		o.Marker = q.Get("key-marker")
-		versionIDMarker = q.Get("version-id-marker")
+		o.MarkerInstance = q.Get("version-id-marker")
 	default:
 		o.Marker = q.Get("marker")
 	}
@@ -214,7 +217,7 @@ func serveListBucket(ctx context.Context, w http.ResponseWriter, r *op.Request, 
 	case v2 && o.ListVersions:
 		doc = l.versionsV2()
 	case o.ListVersions:
-		doc = l.versions(versionIDMarker)
+		doc = l.versions()
 	case v2:
 		doc = l.v2()
 	default:
@@ -397,22 +400,28 @@ func (l listing) versionEntries(v2 bool) []listVersion {
 }
 
 // versions is RGWListBucket_ObjStore_S3::send_versioned_response's document
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L1799-L1869).
-// Its Delimiter, KeyMarker and VersionIdMarker are written as sent; the
-// next version marker of a key without an instance is "null".
-func (l listing) versions(versionIDMarker string) listVersionsResult {
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1807-L1877 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1910-L1980 at v20.2.4).
+// Under encoding-type=url it also encodes Prefix and Delimiter, keeping
+// their slashes as the common prefixes do, and KeyMarker with its slash, as
+// NextKeyMarker, which S3 encodes and radosgw writes as sent
+// (docs/exclusions.md, "ListObjectVersions URL-encodes KeyMarker, Prefix and
+// Delimiter"). VersionIdMarker is written as sent, and NextVersionIdMarker
+// is the next marker's instance, or "null" for an unversioned object or a
+// common prefix, which have none.
+func (l listing) versions() listVersionsResult {
 	o, r := l.o, l.r
 	doc := listVersionsResult{
-		Xmlns: xmlnsS3, Tenant: xmltext.Text(r.Tenant), Name: xmltext.Text(r.Bucket), Prefix: xmltext.Text(o.Prefix),
-		MaxKeys: o.Max, Delimiter: xmltext.Text(o.Delimiter), IsTruncated: l.truncated(), CommonPrefixes: l.prefixes(l.encode),
-		KeyMarker: xmltext.Text(o.Marker), VersionIDMarker: xmltext.Text(versionIDMarker), Versions: l.versionEntries(false),
+		Xmlns: xmlnsS3, Tenant: xmltext.Text(r.Tenant), Name: xmltext.Text(r.Bucket), Prefix: l.urlsafe(l.encode, o.Prefix, false),
+		MaxKeys: o.Max, Delimiter: l.urlsafe(l.encode, o.Delimiter, false), IsTruncated: l.truncated(), CommonPrefixes: l.prefixes(l.encode),
+		KeyMarker: l.urlsafe(l.encode, o.Marker, true), VersionIDMarker: xmltext.Text(o.MarkerInstance), Versions: l.versionEntries(false),
 	}
 	if l.encode {
 		doc.EncodingType = "url"
 	}
 	if next, ok := l.nextMarker(); ok {
 		doc.NextKeyMarker = new(l.urlsafe(l.encode, next, true))
-		doc.NextVersionIDMarker = new(xmltext.Text("null"))
+		doc.NextVersionIDMarker = new(xmltext.Text(cmp.Or(o.Result.NextMarkerInstance, meta.NullInstance)))
 	}
 	return doc
 }
@@ -421,7 +430,11 @@ func (l listing) versions(versionIDMarker string) listVersionsResult {
 // document
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L1970-L2051).
 // encode_key is set only after the first common prefixes are written,
-// so those are never URL-encoded.
+// so those are never URL-encoded. Its marker is the token alone, and its
+// next version token is the next marker's instance as the index entry
+// holds it, empty for the null version
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1982-L1987 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2085-L2090 at v20.2.4).
 func (l listing) versionsV2() listVersionsV2Result {
 	o, r := l.o, l.r
 	doc := listVersionsV2Result{
@@ -431,7 +444,7 @@ func (l listing) versionsV2() listVersionsV2Result {
 	}
 	if next, ok := l.nextMarker(); ok {
 		doc.NextKeyContinuationToken = new(xmltext.Text(next))
-		doc.NextVersionIDContinuationToken = new(xmltext.Text(""))
+		doc.NextVersionIDContinuationToken = new(xmltext.Text(storedInstance(o.Result.NextMarkerInstance)))
 	}
 	if l.encode {
 		doc.EncodingType = "url"
@@ -448,6 +461,15 @@ func (l listing) versionsV2() listVersionsV2Result {
 		doc.Tail = append(doc.Tail, t)
 	}
 	return doc
+}
+
+// storedInstance is a listing's next marker instance as the index entry
+// holds it: the null version's is empty.
+func storedInstance(instance string) string {
+	if instance == meta.NullInstance {
+		return ""
+	}
+	return instance
 }
 
 // arg is RGWHTTPArgs::get(name, &exists): the value and whether it was sent.
