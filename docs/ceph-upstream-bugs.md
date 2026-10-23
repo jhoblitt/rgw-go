@@ -452,6 +452,10 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [v21's ownership controls ops let an ACL grant change a bucket's object ownership](#v21s-ownership-controls-ops-let-an-acl-grant-change-a-buckets-object-ownership) | pending | pending | ✓ |
 | [v21's CreateBucket stores an ACL other than private on a bucket it makes BucketOwnerEnforced](#v21s-createbucket-stores-an-acl-other-than-private-on-a-bucket-it-makes-bucketownerenforced) | pending | pending | ✓ |
 | [radosgw's null version removal takes the data of a null PutObject that links after it](#radosgws-null-version-removal-takes-the-data-of-a-null-putobject-that-links-after-it) | pending | pending | ✓ |
+| [cls_otp verifies any stored window, an OSD CPU cost per check](#cls_otp-verifies-any-stored-window-an-osd-cpu-cost-per-check) | pending | pending | ✓ |
+| [radosgw's otp metadata put stores a device without a seed, whose codes anyone can make](#radosgws-otp-metadata-put-stores-a-device-without-a-seed-whose-codes-anyone-can-make) | pending | pending | ✓ |
+| [radosgw's otp metadata put ignores update-type](#radosgws-otp-metadata-put-ignores-update-type) | pending | pending | ✓ |
+| [cls_otp never verifies a device whose step is longer than the clock's seconds](#cls_otp-never-verifies-a-device-whose-step-is-longer-than-the-clocks-seconds) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -3275,7 +3279,12 @@ Every new entry adds its row to this table, in document order.
   for a device of step 0, which it does not verify, so no rgw-go request
   faults the OSD (`internal/driver/mfa.go`; spec "is not verified, the class
   not called, for a device of step 0, where a good code faults the OSD",
-  `internal/driver/mfa_test.go`).
+  `internal/driver/mfa_test.go`). Its otp metadata put refuses a device of
+  step 0, or of a step over 3600 seconds, with 400 InvalidArgument before
+  it writes, so no rgw-go write stores one (`op.DecodeOTPDocument`,
+  `internal/op/metadata_otp.go`; `docs/exclusions.md`, "The admin metadata
+  API serves four sections"). A device of step 0 radosgw stored still reads
+  back.
 - **Upstream:** [#80948](https://tracker.ceph.com/issues/80948). Its fix,
   [ceph/ceph#72250](https://github.com/ceph/ceph/pull/72250), a draft, adds a
   file-local `effective_step_size()` that uses liboath's default time step
@@ -3393,6 +3402,14 @@ Every new entry adds its row to this table, in document order.
     driver's spec "is not verified for a code used again in each later step
     of its window, which the class accepts" pins rgw-go's refusal
     (`internal/driver/mfa_test.go`).
+  - Its otp metadata put writes a device's `window`, `step_size` and
+    `time_ofs` as the document gives them, within its bounds of 1024 steps
+    and 3600 seconds and refusing a step of 0, and keeps the `last_success`
+    of each device the document keeps, as radosgw's put does
+    (`internal/driver/metadata_otp.go`; `docs/exclusions.md`, "The admin
+    metadata API serves four sections"). So the class stores the same index
+    for a device rgw-go wrote, and the replay stands as for one radosgw
+    wrote.
 - **Upstream:** [#80949](https://tracker.ceph.com/issues/80949), which we
   filed. Its fix, [ceph/ceph#72253](https://github.com/ceph/ceph/pull/72253),
   a draft, passes `&otp_pos` and sets the index to
@@ -14038,7 +14055,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it. A metadata put compares versions and
   mtimes as Squid's `check_versions` does, on both releases (`PutMetadata`,
   `internal/op/adminmetadata.go`; `docs/exclusions.md`, "The admin metadata
-  API serves three sections").
+  API serves four sections").
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
   (non-security).
 - **Found:** phase 1 unit N, Task 9, 2026-10-11, implementing the metadata
@@ -16568,10 +16585,15 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** fixed in v21.0.1 and later. Unfixed at both floors, v19.2.7
   and v20.2.4, and on the squid and tentacle branches as of their
   2026-10-12 heads.
-- **rgw-go:** writes no otp devices yet (`internal/cls/otp` sends what it is
-  given). Its otp metadata put must bound a seed's length, as its validation
-  keeps a document from faulting the OSD ("cls_otp divides by a stored
-  step_size that is never validated", above).
+- **rgw-go:** its otp metadata put refuses a device whose seed is longer
+  than 1024 bytes, counted as the bytes of the decoded JSON string, with
+  400 InvalidArgument once every device is checked and before it writes
+  (`MaxOTPSeedLen`, `op.DecodeOTPDocument`, `internal/op/metadata_otp.go`;
+  `docs/exclusions.md`, "The admin metadata API serves four sections"). So
+  no rgw-go write hands `otp_set` a seed longer than the 1024 bytes
+  upstream's fix keeps on the stack. Only writes are bounded: a longer seed
+  radosgw stored still reads back, and rgw-go's MFA check sends no
+  `otp_set`. `internal/cls/otp` itself still sends what it is given.
 - **Upstream:** fixed on main by
   [ceph/ceph#68014](https://github.com/ceph/ceph/pull/68014), "rgw: VLAs are
   no longer welcome", merged 2026-05-13. Its commit 5462945cbf7, "cls/otp:
@@ -18439,12 +18461,19 @@ Every new entry adds its row to this table, in document order.
     replay state.
 - **Releases:** checked at v19.2.7 and v20.2.4, where the class, the put,
   the sync and the OSD's handling are the same.
-- **rgw-go:** writes no otp devices yet. fakerados's otp class reads the
-  stored object as the OSD serves the class, and so reproduces this. That
-  is pinned by the spec "reads the header and devices as stored across
-  radosgw's reset put, so replay state survives and a dropped device's id
-  stays listed" in `internal/testutil/fakerados/cls_otp_test.go`. An otp
-  metadata put that composes radosgw's op would reproduce it on a cluster.
+- **rgw-go:** does not reproduce it. Its otp metadata put composes
+  radosgw's op and then writes the object's header itself, in the same op,
+  holding exactly the document's ids, `otp_header` v1 in the class's bytes
+  (`(*Store).putOTP`, `internal/driver/metadata_otp.go`; `otp.Header`,
+  `internal/cls/otp/types.go`; `docs/exclusions.md`, "An otp put's header
+  lists exactly the document's devices"). So a dropped device's id is not
+  listed, and a remaining device keeps its replay state, as in radosgw's
+  put. The driver's spec "keeps a remaining device's replay state, and
+  leaves the header exactly the document's ids"
+  (`internal/driver/metadata_otp_test.go`) pins it, and fakerados's spec
+  above still pins radosgw's own op. An object radosgw left listing a
+  dropped id still fails rgw-go's metadata get and removal, as `get_all`
+  fails on the OSD, and an rgw-go put of the entry mends it.
 - **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
   searched.
 - **Found:** phase 2 Task WP-17, 2026-10-19, while emulating `otp_set`'s
@@ -18507,7 +18536,11 @@ Every new entry adds its row to this table, in document order.
   local zone's otp object, as radosgw's check does
   (`internal/driver/mfa.go`), and its refusal of a code the device may have
   accepted before reads that zone's last success alone (`docs/exclusions.md`,
-  "An MFA code the device may have accepted before does not verify").
+  "An MFA code the device may have accepted before does not verify"). Its
+  otp metadata section's document carries only the devices, without their
+  replay state, as radosgw's does (`op.OTPDocument`,
+  `internal/op/metadata_otp.go`), and its put keeps the local replay state
+  of each device the document keeps.
 - **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
   searched.
 - **Found:** phase 2 Task WP-17's review, 2026-10-19, while tracing what the
@@ -25967,7 +26000,11 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** matches radosgw. Its `RemoveUser` removes what
   `remove_user_info` removes and leaves the otp object
   (`internal/driver/user.go:831-873`), so a removal through either gateway
-  leaves the same state.
+  leaves the same state. Its otp metadata section is both a read path for
+  the seeds left behind, `GET /admin/metadata/otp?key=user:<uid>` to a
+  caller with the `metadata` read cap, and rgw-go's only path that removes
+  them, `DELETE /admin/metadata/otp?key=user:<uid>`, radosgw-admin's
+  `metadata rm otp:user:<uid>` (`internal/driver/metadata_otp.go`).
 - **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
   searched.
 - **Found:** phase 2 Task V13d's review, 2026-10-22, reasoning about the
@@ -26483,3 +26520,271 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task V8c, 2026-10-23, checking a candidate the
   versioning plan recorded, widened to `versionId=null` by the task's
   review; derived from the source, not reproduced.
+
+## cls_otp verifies any stored window, an OSD CPU cost per check
+
+- **Kind:** defect, security (possible): denial of service on an OSD. Only
+  an administrator writes a device's window, but every later check of the
+  device by any client holding its user's keys runs a walk the window
+  sizes, inside the class on the OSD's op thread. Unreproduced: derived from
+  the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `otp_instance::verify` hands the stored window to `oath_totp_validate2`
+    ([cls_otp.cc:129-153](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L129-L153),
+    [cls_otp.cc:129-153](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L129-L153)),
+    and `otp_instance::check` runs it for up to `ATTEMPTS_PER_WINDOW`, five,
+    checks of the device in each `step_size` seconds
+    ([cls_otp.cc:98-127](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L98-L127),
+    [cls_otp.cc:98-127](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L98-L127)).
+  - liboath walks the window from the counter outward, the code of each
+    distance after the counter and, past distance 0, the one before it,
+    until one matches or the walk passes the window
+    ([totp.c:524-598](https://github.com/jas4711/oath-toolkit/blob/oath-toolkit-2.6.9/liboath/totp.c#L524-L598)
+    at oath-toolkit 2.6.9, which `oathTOTPValidate2` in
+    `internal/testutil/fakerados/cls_otp_check.go` transcribes). A wrong
+    code costs 2·window+1 HOTP codes, each an HMAC-SHA1 with its
+    truncation.
+  - Nothing bounds the window. `otp_info_t::decode_json` reads any
+    unsigned int
+    ([cls_otp_types.cc:52-71](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_types.cc#L52-L71),
+    [cls_otp_types.cc:52-71](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_types.cc#L52-L71)),
+    `otp_set` stores the device as given
+    ([cls_otp.cc:301-348](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L301-L348),
+    [cls_otp.cc:301-348](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L301-L348)),
+    and `radosgw-admin mfa create` sets any positive `totp_window`, which
+    it reads from `--totp-window` with `atoi`
+    ([rgw_admin.cc:10828-10830](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10828-L10830) and
+    [rgw_admin.cc:4068](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L4068),
+    [radosgw-admin.cc:11419-11421](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L11419-L11421) and
+    [radosgw-admin.cc:4292](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L4292)).
+    The writers are radosgw-admin, the otp metadata put through the admin
+    API's `metadata` write cap, and metadata sync.
+  - The step bounds the rate only while it is shorter than the OSD's clock
+    in seconds: `trim_expired` counts the step back from the clock in
+    unsigned nanoseconds, so a longer step wraps the start past the clock,
+    trims every check, and takes the five checks per step off the device
+    (the same lines; "[cls_otp never verifies a device whose step is longer than the clock's seconds](#cls_otp-never-verifies-a-device-whose-step-is-longer-than-the-clocks-seconds)").
+  - The OSD's op thread warns after `osd_op_thread_timeout`, 15 seconds,
+    and aborts after `osd_op_thread_suicide_timeout`, 150
+    ([osd.yaml.in:869-879](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/osd.yaml.in#L869-L879),
+    [osd.yaml.in:914-924](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/osd.yaml.in#L914-L924)).
+- **Impact:** a device whose window is W makes every check of a wrong code
+  cost its object's primary OSD 2W+1 HMAC-SHA1 codes on one op thread. At
+  the largest window, 4294967295, that is over eight billion codes, hours
+  at an estimated microsecond or so a code (not measured), far past the
+  suicide timeout. Any client with the user's keys starts it with any
+  wrong code in an MFA request, such as a versioned delete under MFA
+  delete, five times a step. That cap of five checks a step is what bounds
+  the cost, and a step longer than the clock's seconds removes it
+  ("[cls_otp never verifies a device whose step is longer than the clock's seconds](#cls_otp-never-verifies-a-device-whose-step-is-longer-than-the-clocks-seconds)"), so a device given both takes wrong codes at any rate. A
+  matching code ends the walk early. Not
+  traced: at which window the op thread first trips its timeouts, and
+  whether the OSD aborts or only reports itself unhealthy.
+- **Shared sink:** `otp_instance::verify`'s use of the stored device
+  unchecked, as "[cls_otp divides by a stored step_size that is never
+  validated](#cls_otp-divides-by-a-stored-step_size-that-is-never-validated)"
+  is for the step. One check of the stored device's step and window in
+  `verify`, or in `otp_set` beside it, covers both.
+- **Releases:** v19.2.7 and v20.2.4, where the class is the same.
+- **rgw-go:** its otp metadata put refuses a window over 1024 steps and a
+  step over 3600 seconds, with 400 InvalidArgument before it writes
+  (`MaxOTPWindow` and `MaxOTPStepSize`, `internal/op/metadata_otp.go`;
+  `docs/exclusions.md`, "The admin metadata API serves four sections"), so
+  no rgw-go write stores such a device; a wrong code then costs at most
+  2049 codes. A device radosgw wrote with a wider window still reads back,
+  and `(*Store).VerifyMFA` sends its checks as radosgw does
+  (`internal/driver/mfa.go`), so rgw-go meets the cost for it too.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task WP-19's automated security review, 2026-10-23;
+  checked at both tags in the task. Derived from the source, not
+  reproduced.
+
+## radosgw's otp metadata put stores a device without a seed, whose codes anyone can make
+
+- **Kind:** defect, security (possible), low: a device whose seed the
+  class decodes into no bytes, an empty seed, a hex seed led by a NUL or a
+  base32 seed of nothing but spaces, takes an empty key, whose codes anyone
+  can make from the clock alone. An administrator's otp metadata put writes
+  all three, and `radosgw-admin mfa create` the last. Unreproduced: derived
+  from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `radosgw-admin mfa create` refuses a device whose `totp_serial` or
+    `totp_seed` is empty
+    ([rgw_admin.cc:10799-10807](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10799-L10807),
+    [radosgw-admin.cc:11390-11398](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L11390-L11398)).
+    It tests only `totp_seed.empty()`
+    ([rgw_admin.cc:10804](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10804),
+    [radosgw-admin.cc:11395](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L11395))
+    and takes the seed type `base32`
+    ([rgw_admin.cc:10813](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10813),
+    [radosgw-admin.cc:11404](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L11404)),
+    so `--totp-seed-type base32` with a `--totp-seed` of spaces passes it.
+  - The otp metadata put takes its devices through `otp_info_t::decode_json`,
+    which reads the id and the seed as any string, a missing one empty
+    ([cls_otp_types.cc:52-71](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_types.cc#L52-L71),
+    [cls_otp_types.cc:52-71](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_types.cc#L52-L71);
+    `get_meta_obj`,
+    [rgw_otp.cc:83-92](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_otp.cc#L83-L92),
+    [rgw_otp.cc:41-52](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L41-L52)),
+    and sends them to `otp_set`
+    ([svc_cls.cc:188-216](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L188-L216),
+    [svc_cls.cc:188-216](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_cls.cc#L188-L216)).
+  - `parse_seed` hands the seed's `c_str()` to liboath, `oath_hex2bin` for
+    a hex seed and `oath_base32_decode` for a base32 one, and stores what it
+    makes
+    ([cls_otp.cc:268-299](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L268-L299),
+    [cls_otp.cc:268-299](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L268-L299)).
+  - `oath_hex2bin` reads the digits up to the string's first NUL, two to a
+    byte, so an empty seed, or one led by a NUL, makes a key of no bytes and
+    answers OATH_OK
+    ([coding.c:33-146](https://github.com/jas4711/oath-toolkit/blob/oath-toolkit-2.6.9/liboath/coding.c#L33-L146)
+    at oath-toolkit 2.6.9, which fakerados's `oathHex2Bin` transcribes; with
+    rgw-go's refusal taken out, the driver's spec "refuses with
+    InvalidArgument before any write" saw the emulated class store such a
+    device).
+  - `oath_base32_decode` drops every space, pads what is left and hands it
+    to gnulib's `base32_decode_alloc`
+    ([coding.c:208-265](https://github.com/jas4711/oath-toolkit/blob/oath-toolkit-2.6.9/liboath/coding.c#L208-L265)).
+    For nothing left, `base32_decode_alloc_ctx` allocates 5 bytes and
+    `base32_decode_ctx` decodes none and answers true, leaving a length of 0
+    ([base32.c:468-586](https://github.com/jas4711/oath-toolkit/blob/oath-toolkit-2.6.9/liboath/gl/base32.c#L468-L586)),
+    so the decode answers OATH_OK, not OATH_MALLOC_ERROR, with a key of no
+    bytes.
+  - Both decoders read the same at oath-toolkit 2.6.9 and 2.6.12
+    ([coding.c:104-146](https://github.com/jas4711/oath-toolkit/blob/oath-toolkit-2.6.12/liboath/coding.c#L104-L146),
+    [coding.c:208-265](https://github.com/jas4711/oath-toolkit/blob/oath-toolkit-2.6.12/liboath/coding.c#L208-L265),
+    [base32.c:443-562](https://github.com/jas4711/oath-toolkit/blob/oath-toolkit-2.6.12/liboath/gl/base32.c#L443-L562)
+    at 2.6.12). No Ceph image's liboath was checked.
+  - `verify` then checks the device's codes as HMAC-SHA1 under that empty
+    key
+    ([cls_otp.cc:129-153](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L129-L153),
+    [cls_otp.cc:129-153](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L129-L153)).
+- **Impact:** such a device verifies a code anyone can compute, so the
+  user's MFA delete stands on the user's keys alone. It takes an
+  administrator writing the document or running `mfa create` with a seed of
+  spaces, or metadata sync carrying the device from the zone where one did.
+  Low.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** its otp metadata put refuses a device without an id, or
+  whose seed is any of the three, with 400 InvalidArgument before it writes
+  (`op.EmptyOTPKey` and `op.DecodeOTPDocument`,
+  `internal/op/metadata_otp.go`; `docs/exclusions.md`, "The admin metadata
+  API serves four sections"). A device radosgw stored with an empty key
+  still reads back, and `(*Store).VerifyMFA` sends its checks as radosgw does
+  (`internal/driver/mfa.go`).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task WP-19, 2026-10-23, comparing the otp put's
+  checks with `mfa create`'s at both tags. Derived from the source, not
+  reproduced.
+
+## radosgw's otp metadata put ignores update-type
+
+- **Kind:** defect, not security-relevant: on both releases an otp put
+  applies whatever `update-type` says, and Squid answers it applied.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RGWOp_Metadata_Put::execute` reads `update-type` and passes the sync
+    type to `RGWMetadataManager::put`
+    ([rgw_rest_metadata.cc:250-264](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_metadata.cc#L250-L264),
+    [rgw_rest_metadata.cc:250-264](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_metadata.cc#L250-L264)).
+  - At v19.2.7 the generic handler's put calls the otp handler's `do_put`
+    ([rgw_metadata.cc:156-162](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_metadata.cc#L156-L162)),
+    which stores the devices and returns STATUS_APPLIED without reading
+    the sync type
+    ([rgw_otp.cc:120-140](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_otp.cc#L120-L140)).
+    The user handler's `do_put` runs `do_put_operate` instead
+    ([rgw_user.cc:2807-2815](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_user.cc#L2807-L2815)),
+    whose `put_pre` applies `check_versions`
+    ([rgw_metadata.cc:255-278](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_metadata.cc#L255-L278)).
+  - At v20.2.4 the otp handler's `put` takes the sync type and never reads
+    it
+    ([rgw_otp.cc:70-82](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L70-L82)),
+    as the other handlers do there.
+- **Impact:** a client that puts otp entries with `update-by-version` or
+  `update-by-timestamp`, to apply a document only over an older one,
+  overwrites a newer device list on either release, a device someone added
+  since among it. Callers holding `metadata=write` only.
+- **Shared cause:** "[Tentacle's metadata put ignores
+  update-type](#tentacles-metadata-put-ignores-update-type)" is the same
+  symptom in the other sections at v20.2.4, where `check_versions` went
+  away. The otp handler never had it at v19.2.7 either, so a fix restoring
+  it on Tentacle must also reach the otp handler, on both branches.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** does not reproduce it. A metadata put compares versions and
+  mtimes as Squid's `check_versions` does in every section, otp's included,
+  on both releases (`PutMetadata`, `internal/op/adminmetadata.go`;
+  `docs/exclusions.md`, "The admin metadata API serves four sections").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task WP-19, 2026-10-23, reading the otp handlers at
+  both tags.
+
+## cls_otp never verifies a device whose step is longer than the clock's seconds
+
+- **Kind:** defect, not security-relevant on its own: a device whose
+  `step_size` is longer than the OSD's clock in seconds, over 1.79 billion
+  in 2026, never verifies, and the class keeps no attempt limit for it. It
+  fails closed: the device locks its owner out. The attempt limit it drops
+  is what bounds the rate of "[cls_otp verifies any stored window, an OSD
+  CPU cost per check](#cls_otp-verifies-any-stored-window-an-osd-cpu-cost-per-check)".
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's; the class
+  is the same at both.
+  - `trim_expired` computes `now - std::chrono::seconds(otp.step_size)`
+    and drops each check older than that
+    ([cls_otp.cc:98-106](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L98-L106),
+    [cls_otp.cc:98-106](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L98-L106)).
+    `ceph::real_time` counts `uint64_t` nanoseconds
+    ([ceph_time.h:66-74](https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_time.h#L66-L74),
+    [ceph_time.h:63-71](https://github.com/ceph/ceph/blob/v20.2.4/src/common/ceph_time.h#L63-L71)),
+    and the subtraction's common duration is unsigned, so a step longer than
+    the clock's seconds wraps the start past every check's time, and the
+    trim drops them all. It is unsigned, not signed: the wrap is defined, and
+    lands past the clock rather than before the epoch.
+  - `check` trims, then declines a check only when five remain
+    (`ATTEMPTS_PER_WINDOW`), so every check runs
+    ([cls_otp.cc:108-127](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L108-L127),
+    [cls_otp.cc:108-127](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L108-L127)).
+  - `find`, which `otp_get_result` runs, trims the same way before it looks
+    for the check's token, so it answers `OTP_CHECK_UNKNOWN` for the check
+    just recorded
+    ([cls_otp.cc:155-169](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L155-L169),
+    [cls_otp.cc:155-169](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L155-L169)),
+    and `check_mfa` answers EACCES for any result but `OTP_CHECK_SUCCESS`
+    ([svc_cls.cc:46-63](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L46-L63),
+    [svc_cls.cc:46-63](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_cls.cc#L46-L63)).
+    A code `verify` takes still raises `last_success`.
+  - While the clock is short of the step, the TOTP counter stays 0 at a
+    `time_ofs` of 0, so the device's codes never change.
+  - Two writers store such a step.
+    - The otp metadata put takes any unsigned `step_size`, which
+      `otp_info_t::decode_json` reads
+      ([cls_otp_types.cc:52-71](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_types.cc#L52-L71),
+      [cls_otp_types.cc:52-71](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_types.cc#L52-L71)).
+    - `radosgw-admin mfa create` reads `--totp-seconds` with `atoi`
+      ([rgw_admin.cc:4065-4066](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L4065-L4066),
+      [radosgw-admin.cc:4289-4290](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L4289-L4290))
+      and sets any positive value
+      ([rgw_admin.cc:10824-10826](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10824-L10826),
+      [radosgw-admin.cc:11415-11417](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L11415-L11417)).
+      Its cap is INT_MAX, 2147483647, past the clock's seconds, so an
+      administrator makes such a device from the CLI, with
+      `--totp-seconds 2000000000` for one.
+- **Impact:** an administrator who gives a device such a step, by mistake
+  or for a code that never changes, gets a device no code verifies, so the
+  user's MFA delete refuses every request, and nothing says why. Every check
+  of the device runs, with no limit of five a step. No code an attacker
+  sends verifies, since no lookup finds its check. The wrap also drops
+  `check`'s `ATTEMPTS_PER_WINDOW` cap, so with a large stored window every
+  check of a wrong code runs the full `oath_totp_validate2` walk, at
+  whatever rate clients send them ("[cls_otp verifies any stored window, an OSD CPU cost per check](#cls_otp-verifies-any-stored-window-an-osd-cpu-cost-per-check)").
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** its otp metadata put refuses a step over 3600 seconds with 400
+  InvalidArgument before it writes (`MaxOTPStepSize`,
+  `internal/op/metadata_otp.go`; `docs/exclusions.md`, "The admin metadata
+  API serves four sections"), so no rgw-go write stores such a device.
+  fakerados's otp class wraps the trim as the class does
+  (`otpTrimExpired`, `internal/testutil/fakerados/cls_otp_check.go`).
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task WP-19's fix round 1, 2026-10-23, checking at both
+  tags its review's claim that the step's wrap removes the attempt limit.
+  Derived from the source, not reproduced.

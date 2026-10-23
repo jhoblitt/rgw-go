@@ -12,6 +12,7 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/cls/otp"
 	"github.com/jhoblitt/rgw-go/internal/denc"
+	"github.com/jhoblitt/rgw-go/internal/formatter"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/testutil/otptest"
 )
@@ -131,6 +132,31 @@ var _ = Describe("JSON", func() {
 		},
 		Entry("unknown", otp.SeedUnknown),
 		Entry("a value no enumerator names", otp.SeedType(7)),
+	)
+
+	DescribeTable("dumps through a formatter as MarshalJSON writes it, otp_info_t::dump's one form",
+		func(dev func() otp.OTPInfo) {
+			f := formatter.NewJSON(false)
+			f.OpenObjectSection("obj")
+			dev().Dump(f, denc.Squid)
+			f.CloseSection()
+			Expect(f.Err()).NotTo(HaveOccurred())
+			want, err := json.Marshal(dev())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(f.Bytes())).To(Equal(string(want)))
+		},
+		Entry("a hex device with a negative time_ofs", devA),
+		Entry("a base32 device with a seed_bin, which neither writes", devB),
+		Entry("a seed type no enumerator names, and a type beyond the enum", func() otp.OTPInfo {
+			d := devA()
+			d.Type, d.SeedType = 258, 7
+			return d
+		}),
+		Entry("the limits of unsigned", func() otp.OTPInfo {
+			d := devA()
+			d.StepSize, d.Window = 4294967295, 4294967295
+			return d
+		}),
 	)
 
 	It("dumps a type out of the enum's range as the int it holds", func() {

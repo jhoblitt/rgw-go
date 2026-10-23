@@ -53,6 +53,7 @@ var metadataSections = map[string]metadataSection{
 	sectionUser:           userSection{},
 	sectionBucket:         bucketSection{},
 	sectionBucketInstance: instanceSection{},
+	sectionOTP:            otpSection{},
 }
 
 // Sections implements op.MetadataStore: the name of each section

@@ -241,6 +241,7 @@ type putRule struct {
 var metadataPutRules = map[string]putRule{
 	"bucket":          {status: entryPointStatus},
 	"bucket.instance": {status: appliedStatus},
+	"otp":             {status: otpStatus, zeroVersion: true},
 	"user":            {status: appliedStatus},
 }
 
@@ -264,6 +265,25 @@ func entryPointStatus(applied bool, _ denc.Release) string {
 		return "skipped"
 	}
 	return ""
+}
+
+// otpStatus is the otp section's status. Squid's handler answers an applied
+// put STATUS_APPLIED
+// (RGWOTPMetadataHandler::do_put,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_otp.cc#L120-L140 at v19.2.7)
+// and Tentacle's the 0 the metadata log's complete_entry returns
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L70-L82 at v20.2.4).
+// Neither reads the entry before it writes, so neither skips a put; rgw-go
+// skips one by update-type as in its other sections, answering it
+// "skipped" on both releases.
+func otpStatus(applied bool, rel denc.Release) string {
+	switch {
+	case !applied:
+		return "skipped"
+	case rel >= denc.Tentacle:
+		return ""
+	}
+	return "applied"
 }
 
 // Name is set_metadata.

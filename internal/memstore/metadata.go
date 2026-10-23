@@ -15,11 +15,12 @@ import (
 )
 
 // The metadata sections, as the RADOS driver serves them: user, bucket and
-// bucket.instance over the store's users and buckets, with the driver's
-// keys, documents, versions and refusals. A bucket here is its entry point
-// and instance together, and an instance a put creates has no entry point
-// until a bucket put names it. The store's writes cannot stop halfway or
-// race, so it never holds a bucket an unfinished rename or removal marks.
+// bucket.instance over the store's users and buckets, and otp over entries
+// of its own, with the driver's keys, documents, versions and refusals. A
+// bucket here is its entry point and instance together, and an instance a
+// put creates has no entry point until a bucket put names it. The store's
+// writes cannot stop halfway or race, so it never holds a bucket an
+// unfinished rename or removal marks.
 
 // metadataKey is the bucket section's key of a bucket: its entry point's
 // oid, "tenant/name" or "name".
@@ -69,8 +70,9 @@ func instanceKey(id meta.BucketID) string {
 	return id.Name + ":" + id.ID
 }
 
-// Sections implements op.MetadataStore with the RADOS driver's sections.
-func (s *Store) Sections() []string { return []string{"bucket", "bucket.instance", "user"} }
+// Sections implements op.MetadataStore with the RADOS driver's four
+// sections.
+func (s *Store) Sections() []string { return []string{"bucket", "bucket.instance", "otp", "user"} }
 
 // Get implements op.MetadataStore with the RADOS driver's sections.
 func (s *Store) Get(ctx context.Context, section, key string) (op.MetadataEntry, error) {
@@ -84,6 +86,8 @@ func (s *Store) Get(ctx context.Context, section, key string) (op.MetadataEntry,
 		return s.getEntryPoint(key)
 	case "bucket.instance":
 		return s.getInstance(key)
+	case "otp":
+		return s.getOTP(key)
 	}
 	return op.MetadataEntry{}, fmt.Errorf("metadata section %q: %w", section, op.ErrNoSuchKey)
 }
@@ -163,6 +167,8 @@ func (s *Store) Put(ctx context.Context, section, key string, e op.MetadataEntry
 		return s.putEntryPoint(key, e, opts)
 	case "bucket.instance":
 		return s.putInstance(key, e, opts)
+	case "otp":
+		return s.putOTP(key, e)
 	}
 	return fmt.Errorf("metadata section %q: %w", section, op.ErrNoSuchKey)
 }
@@ -388,6 +394,8 @@ func (s *Store) Remove(ctx context.Context, section, key string) error {
 		return fmt.Errorf("bucket %s: its instance exists, so it is removed with the bucket: %w", key, op.ErrConcurrentModification)
 	case "bucket.instance":
 		return s.removeInstance(key)
+	case "otp":
+		return s.removeOTP(key)
 	}
 	return fmt.Errorf("metadata section %q: %w", section, op.ErrNoSuchKey)
 }
@@ -421,8 +429,9 @@ func (s *Store) removeInstance(key string) error {
 // metadata key, the name or "tenant/name"
 // (RGWSI_Bucket::get_entrypoint_meta_key,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/services/svc_bucket.cc#L9-L19 at both tags);
-// the bucket.instance section is the stored instances, "[tenant/]name:id".
-// Another section is ErrNoSuchKey.
+// the bucket.instance section is the stored instances, "[tenant/]name:id";
+// the otp section is its entries, each keyed by the object name the RADOS
+// driver's otp key is. Another section is ErrNoSuchKey.
 func (s *Store) List(_ context.Context, section, marker string, maxEntries int) (keys []string, next string, more bool, err error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -438,6 +447,8 @@ func (s *Store) List(_ context.Context, section, marker string, maxEntries int) 
 		for _, b := range s.instances {
 			all = append(all, instanceKey(b.rec.Info.Bucket))
 		}
+	case "otp":
+		all = slices.Collect(maps.Keys(s.otps))
 	default:
 		return nil, "", false, fmt.Errorf("metadata section %q: %w", section, op.ErrNoSuchKey)
 	}

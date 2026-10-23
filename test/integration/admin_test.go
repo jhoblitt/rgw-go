@@ -527,7 +527,7 @@ var _ = Describe("the admin gate", Ordered, ContinueOnFailure, Label("integratio
 			{what: "metadata get bucket instance", path: "/admin/metadata/bucket.instance?key=" + b1Instance},
 			{
 				what: "metadata sections", path: "/admin/metadata",
-				exclusion: "The admin metadata API serves three sections, and differs from radosgw's in four more ways",
+				exclusion: "The admin metadata API serves four sections, and differs from radosgw's in five more ways",
 				strip:     stripUnservedSections,
 			},
 			{what: "metadata list users", path: "/admin/metadata/user"},
@@ -763,7 +763,7 @@ var (
 	tempURLKeys = regexp.MustCompile(`"temp_url_keys":\[[^\]]*\],|(?s:<temp_url_keys>.*?</temp_url_keys>)`)
 	// radosgw lists the sections in name order, user last, so each one
 	// rgw-go does not serve is followed by a comma in JSON.
-	unservedSections = regexp.MustCompile(`"(?:account|group|otp|roles|topic)",|<key>(?:account|group|otp|roles|topic)</key>`)
+	unservedSections = regexp.MustCompile(`"(?:account|group|roles|topic)",|<key>(?:account|group|roles|topic)</key>`)
 )
 
 // stripTempURLKeys removes the temp_url_keys member or element, which

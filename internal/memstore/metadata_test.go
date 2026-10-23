@@ -67,9 +67,9 @@ var _ = Describe("metadata", func() {
 		Expect([]any{keys, more}).To(Equal([]any{[]string{"bob"}, false}))
 		_, err = store.Get(ctx, "user", "nobody")
 		Expect(err).To(MatchError(op.ErrNoSuchKey))
-		_, err = store.Get(ctx, "otp", "x")
+		_, err = store.Get(ctx, "roles", "x")
 		Expect(err).To(MatchError(op.ErrNoSuchKey))
-		_, _, _, err = store.List(ctx, "otp", "", 10)
+		_, _, _, err = store.List(ctx, "roles", "", 10)
 		Expect(err).To(MatchError(op.ErrNoSuchKey))
 	})
 

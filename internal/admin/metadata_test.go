@@ -135,7 +135,7 @@ var _ = Describe("admin metadata routes", func() {
 		Expect(body(res)).To(Equal(`["admin","leseb","nocaps"]`))
 		Expect(getIn(sctx, "/admin/metadata/bucket")).To(Equal(`["test"]`))
 		Expect(getIn(sctx, "/admin/metadata/bucket.instance")).To(Equal(`["` + inst + `"]`))
-		Expect(getIn(sctx, "/admin/metadata")).To(Equal(`["bucket","bucket.instance","user"]`), "the top level lists the sections")
+		Expect(getIn(sctx, "/admin/metadata")).To(Equal(`["bucket","bucket.instance","otp","user"]`), "the top level lists the sections")
 	}, SpecTimeout(listTimeout))
 	It("pages with max-entries, the marker base64-wrapped, and continues from it", func(sctx SpecContext) {
 		b := getIn(sctx, "/admin/metadata/user?max-entries=1")
@@ -227,7 +227,8 @@ var _ = Describe("admin metadata routes", func() {
 		Entry("an unknown section's listing", "/admin/metadata/kittens"),
 		Entry("an unknown section's entry", "/admin/metadata/kittens?key=x"),
 		Entry("a missing user", "/admin/metadata/user?key=nosuch"),
-		Entry("a section radosgw serves and rgw-go does not", "/admin/metadata/otp"),
+		Entry("a section radosgw serves and rgw-go does not", "/admin/metadata/roles"),
+		Entry("a missing otp object", "/admin/metadata/otp?key=user:nosuch"),
 	)
 	It("answers 500 UnknownError for a get that names no section, as the top-level handler's ENOTSUP", func() {
 		res := fx.get("/admin/metadata?key=", "admin")
