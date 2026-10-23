@@ -9303,9 +9303,8 @@ following.
   through `dump_urlsafe`
   ([rgw_rest_s3.cc:1815-1818](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1815-L1818),
   [rgw_rest_s3.cc:1918-1921](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1918-L1921);
-  `docs/ceph-upstream-bugs.md`, "radosgw's ListObjectVersions leaves
-  KeyMarker, Prefix and Delimiter unencoded under encoding-type=url"). S3
-  encodes all five, "KeyMarker, NextKeyMarker, Prefix, Key, and Delimiter"
+  `docs/ceph-upstream-bugs.md`, "radosgw's bucket listings leave elements
+  S3 encodes unencoded under encoding-type=url"). S3 encodes all five, "KeyMarker, NextKeyMarker, Prefix, Key, and Delimiter"
   (AWS's API reference, API_ListObjectVersions.html, fetched 2026-10-22),
   and botocore, which sends `encoding-type=url` on every ListObjectVersions
   that names none, decodes them. rgw-go encodes `KeyMarker` with its slash,
@@ -9315,6 +9314,42 @@ following.
   [rgw_rest_s3.cc:1903](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1903)).
   `VersionIdMarker` and `NextVersionIdMarker` are written as both gateways
   write them, never encoded.
+- **ListObjects, ListObjectsV2 and ListMultipartUploads URL-encode the
+  elements S3 encodes.** Under URL encoding radosgw writes the `Prefix` of
+  ListObjectsV2 with `dump_string`, in the response it shares with
+  ListObjects
+  ([rgw_rest_s3.cc:1886](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1886),
+  [rgw_rest_s3.cc:1989](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1989)),
+  and its `StartAfter` with `dump_string` too
+  ([rgw_rest_s3.cc:2120](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2120),
+  [rgw_rest_s3.cc:2223](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2223)),
+  where S3 encodes "Delimiter, Prefix, Key, and StartAfter" (AWS's API
+  reference, API_ListObjectsV2.html, fetched 2026-10-22). For
+  ListMultipartUploads it opens `ListMultipartUploadsResult` with no
+  `EncodingType` and writes its `Prefix`, `KeyMarker`, `NextKeyMarker` and
+  `Delimiter` with `dump_string`
+  ([rgw_rest_s3.cc:4216-4232](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4216-L4232),
+  [rgw_rest_s3.cc:4734-4750](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4734-L4750)),
+  where S3 encodes "Delimiter, KeyMarker, Prefix, NextKeyMarker, Key" and
+  returns `EncodingType` (API_ListMultipartUploads.html, fetched
+  2026-10-22). For ListObjects it writes `Marker` with `dump_string`
+  ([rgw_rest_s3.cc:1970](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1970),
+  [rgw_rest_s3.cc:2073](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2073)).
+  AWS's ListObjects reference names no list of encoded elements, so the
+  only evidence that S3 encodes `Marker` is botocore 1.43.90's decoder,
+  which, when it chose the encoding, decodes `Delimiter`, `Marker`,
+  `NextMarker` and each `Key` but not the top-level `Prefix`
+  (`decode_list_object`, `botocore/handlers.py`; `docs/ceph-upstream-bugs.md`,
+  "radosgw's bucket listings leave elements S3 encodes unencoded under
+  encoding-type=url"). rgw-go encodes each of these: ListObjectsV2's
+  `Prefix` and ListMultipartUploads' four keeping their slashes, as the
+  common prefixes are; `StartAfter` and ListObjects' `Marker` with theirs,
+  as a `Key` and `NextMarker` are. It writes ListMultipartUploads'
+  `EncodingType` first, where radosgw's other listings put it. ListObjects'
+  `Prefix`, the ListObjectsV2 tokens and the upload id markers are written
+  as sent. A ListMultipartUploads client that asks for the encoding and
+  sends `NextKeyMarker` back without decoding it pages from the wrong key on
+  rgw-go, as it would on S3, where radosgw's marker served it.
 - **A versions listing starts after every version of a key-marker given
   alone.** radosgw passes a `key-marker` without a `version-id-marker` to
   the class as a start key without an instance
