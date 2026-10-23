@@ -457,6 +457,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's otp metadata put ignores update-type](#radosgws-otp-metadata-put-ignores-update-type) | pending | pending | ✓ |
 | [cls_otp never verifies a device whose step is longer than the clock's seconds](#cls_otp-never-verifies-a-device-whose-step-is-longer-than-the-clocks-seconds) | pending | pending | ✓ |
 | [radosgw's versioned copy drops its tail references when its link fails](#radosgws-versioned-copy-drops-its-tail-references-when-its-link-fails) | pending | pending | ✓ |
+| [radosgw's CompleteMultipartUpload leaves its upload whole when its head lands and write_meta fails](#radosgws-completemultipartupload-leaves-its-upload-whole-when-its-head-lands-and-write_meta-fails) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -26856,3 +26857,76 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V7b, 2026-10-23, tracing what a failed link
   leaves of a copy's references; derived from the source, not reproduced.
+
+## radosgw's CompleteMultipartUpload leaves its upload whole when its head lands and write_meta fails
+
+- **Kind:** defect, data corruption: a CompleteMultipartUpload whose head
+  write lands and whose `write_meta` then fails, on its link or on its
+  index completion, leaves an upload that a retry completes again over the
+  same parts and an abort queues for the GC. Not security-relevant: it
+  needs an index or OSD failure. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RadosMultipartUpload::complete` writes the head through `write_meta`
+    with the request's OLH epoch, 0 for every S3 completion, and returns
+    its failure
+    ([driver/rados/rgw_sal_rados.cc:3627-3641](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3627-L3641) at v19.2.7,
+    [driver/rados/rgw_sal_rados.cc:4471-4487](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4471-L4487) at v20.2.4).
+  - `_do_write_meta` fails after its head write has landed in two places:
+    an index completion that fails, other than with a timeout or one of
+    the errors a lost race answers, goes to `done_cancel`, which returns it
+    ([driver/rados/rgw_rados.cc:3352-3359](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3352-L3359)
+    and [driver/rados/rgw_rados.cc:3401-3448](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3401-L3448) at v19.2.7,
+    [driver/rados/rgw_rados.cc:3473-3480](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3473-L3480)
+    and [driver/rados/rgw_rados.cc:3522-3569](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3522-L3569) at v20.2.4);
+    and a versioned op returns `set_olh`'s failure
+    ([driver/rados/rgw_rados.cc:3369-3375](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3369-L3375) at v19.2.7,
+    [driver/rados/rgw_rados.cc:3490-3496](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3490-L3496) at v20.2.4).
+    Neither removes the head, which names the parts.
+  - `RGWCompleteMultipart::execute` returns on that failure before it
+    removes the meta object
+    ([rgw_op.cc:6485-6492](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6485-L6492) at v19.2.7,
+    [rgw_op.cc:7366-7373](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7366-L7373) at v20.2.4),
+    so the meta object, its part records and the parts' index entries stay.
+  - A retry completes the upload again over the same parts. With
+    versioning enabled it writes a new instance
+    ([rgw_op.cc:6462-6469](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6462-L6469) at v19.2.7,
+    [rgw_op.cc:7284-7291](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7284-L7291) at v20.2.4),
+    a second version naming the first version's parts; otherwise its head
+    write replaces the first head and queues that head's tails, the same
+    parts, for the GC
+    ([driver/rados/rgw_rados.cc:3346-3349](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3346-L3349) at v19.2.7,
+    [driver/rados/rgw_rados.cc:3467-3470](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3467-L3470) at v20.2.4).
+    An abort queues every part the meta object lists
+    ([driver/rados/rgw_sal_rados.cc:3155-3267](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3155-L3267) at v19.2.7,
+    [driver/rados/rgw_sal_rados.cc:3995-4107](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3995-L4107) at v20.2.4).
+  - The fix in review for tracker #80896 does not cover it: at its head,
+    2c1db8239cc, `complete` clears its completion record whenever
+    `write_meta` fails other than with ETIMEDOUT, so its retry completes the
+    upload again too.
+  - The sink is the meta object outliving a head write that landed, which
+    "[A multipart completion whose meta object outlives its head write lets
+    a retry or an abort delete the object's
+    data](#a-multipart-completion-whose-meta-object-outlives-its-head-write-lets-a-retry-or-an-abort-delete-the-objects-data)"
+    names for a removal of the meta object that fails; this is the input
+    where `write_meta` fails, as in "[radosgw's versioned PutObject deletes
+    its tails when its link
+    fails](#radosgws-versioned-putobject-deletes-its-tails-when-its-link-fails)".
+- **Impact:** data loss. With versioning enabled two versions share the
+  parts, and deleting either queues them for the GC, which removes them
+  from the other; otherwise the retry's own head write queues them, and the
+  object it answers 200 for loses its data once the GC runs. An abort
+  queues the parts the first head names, current or not.
+- **Releases:** v19.2.7 and v20.2.4; main was not checked.
+- **rgw-go:** differs: an unversioned head write's index completion is not
+  awaited and fails no write (`docs/exclusions.md`, "A versioned write
+  awaits its index completion"), and a versioned completion whose head
+  landed keeps its completion record whatever its completion or its link
+  answers, so a retry reads the version the record names, finishing it
+  while it carries the recorded tag and refusing with 404 NoSuchUpload once
+  a removal took it (`completeLocked` and `replayRecorded`,
+  `internal/driver/mp_complete.go`; `docs/exclusions.md`, "A
+  CompleteMultipartUpload records itself on the meta object before its head
+  write"). Pinned in `internal/driver/mp_complete_versioned_test.go`.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task V7b, 2026-10-23, tracing what a failed link
+  leaves of an upload; derived from the source, not reproduced.
