@@ -75,7 +75,9 @@ func ParseRequest(req *http.Request, cfg Config, now time.Time) (Parsed, error) 
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2193-L2198);
 	// v19.2.7 flags only one with a Host
 	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2150-L2156),
-	// and rgw-go takes v20.2.4's rule on both releases.
+	// and rgw-go takes v20.2.4's rule on both releases (docs/exclusions.md,
+	// "On Squid, a request with no Host is a website request when s3website
+	// outranks s3").
 	website := target.Website || cfg.Website && cfg.WebsiteFirst
 	rawPath, rawQuery := vhost.RequestTarget(req)
 	uri := DecodedURI(req, cfg.HostNames())
