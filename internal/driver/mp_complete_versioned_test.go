@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -472,6 +473,14 @@ var _ = Describe("a versioned CompleteMultipartUpload", func() {
 			partsIntact(up, 1)
 		})
 
+		It("refuses an abort while a null version rewritten after its upload's initiation names its parts", func(ctx SpecContext) {
+			up, _ := leaveNullUnlinked(ctx)
+			Expect(s.Abort(ctx, up)).To(MatchError(op.ErrNoSuchUpload))
+			settle(s)
+			Expect(chainOIDs(allGCEntries(c))).NotTo(ContainElement(partHeadOID("k."+up.ID, 1)), "the null version keeps its parts")
+			Expect(readBack(ctx, meta.ObjKey{Name: "k", Instance: meta.NullInstance})).To(Equal(bytes.Repeat([]byte("a"), 5<<20)))
+		})
+
 		It("reads every version when its upload's index entry is missing, rather than narrow the scan on a guess", func(ctx SpecContext) {
 			up, etags := upload(ctx, reprefix, 5<<20)
 			up.WriteTag = "tx-first"
@@ -833,6 +842,457 @@ var _ = Describe("a versioned CompleteMultipartUpload", func() {
 			Expect(res.Version).To(Equal("c1"))
 			Expect(listed()).To(Equal([]string{"c1", "v2"}))
 			Expect(target()).To(Equal(version("c1")))
+		})
+
+		DescribeTable("an abort after a retry answered 500 removes the unlinked version, and its parts go to the GC",
+			func(ctx SpecContext, fail string) {
+				mustPut(ctx, "v1", "one")
+				up, etags := upload(ctx, reprefix, 5<<20)
+				up.WriteTag = "tx-first"
+				ac.set(onFirst(fail, failWith(syscall.ETIMEDOUT)))
+				_, err := complete(ctx, up, "c1", etags)
+				Expect(err).To(MatchError(op.ErrRequestTimedOut))
+				settle(s)
+				ac.set(onFirst("bucket_link_olh", failWith(syscall.EIO)))
+				up.WriteTag = "tx-retry"
+				_, err = complete(ctx, up, "c2", etags)
+				Expect(err).To(MatchError(op.ErrInternalError))
+				settle(s)
+				ac.set(nil)
+				clock.Add(int64(2 * time.Hour))
+				Expect(s.Abort(ctx, up)).To(Succeed(), "the first link's pending modification expired, so no link of c1 can land")
+				settle(s)
+				Expect(c.Object(extraPoolName, "", mOID(up))).To(BeNil(), "the upload is gone")
+				Expect(head("c1")).To(BeNil(), "the unlinked version's head is gone")
+				_, ok := c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k", Instance: "c1"})
+				Expect(ok).To(BeFalse(), "and its instance entry")
+				st, err := s.StatObject(ctx, rec, version("c1"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(st.Exists).To(BeFalse())
+				Expect(listed()).To(Equal([]string{"v1"}))
+				Expect(target()).To(Equal(version("v1")))
+				Expect(chainOIDs(allGCEntries(c))).To(ContainElement(partHeadOID("k."+up.ID, 1)), "the parts go to the GC")
+				_, ok = c.Entry(rookIndexPool, "", shard, partIndexKey("k."+up.ID, 1))
+				Expect(ok).To(BeFalse(), "the abort goes on to retire the parts' entries")
+			},
+			Entry("after a link that timed out", "bucket_link_olh"),
+			Entry("after a gateway stopped once the head was written", "bucket_complete_op"),
+		)
+
+		// pendingOLH is the pending modifications on k's OLH head.
+		pendingOLH := func() []string {
+			var out []string
+			for name := range c.Object(testDataPool, "", olhHeadOID(version(""))).Xattrs {
+				if strings.HasPrefix(name, meta.AttrOLHPendingPrefix) {
+					out = append(out, name)
+				}
+			}
+			return out
+		}
+		// unlinkedKept checks that c1, its index entry, the upload and its parts
+		// all stand, nothing queued.
+		unlinkedKept := func(up *op.Upload) {
+			GinkgoHelper()
+			Expect(head("c1")).NotTo(BeNil(), "the version's head")
+			_, ok := c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k", Instance: "c1"})
+			Expect(ok).To(BeTrue(), "the version's instance entry")
+			partsIntact(up, 1)
+			Expect(chainOIDs(allGCEntries(c))).NotTo(ContainElement(partHeadOID("k."+up.ID, 1)), "nothing queued")
+		}
+
+		It("answers 500 and removes nothing when an abort races a link of the version inited but not applied", func(ctx SpecContext) {
+			mustPut(ctx, "v1", "one")
+			up, etags := upload(ctx, reprefix, 5<<20)
+			up.WriteTag = "tx-first"
+			ac.set(onFirst("bucket_link_olh", failWith(syscall.ETIMEDOUT)))
+			_, err := complete(ctx, up, "c1", etags)
+			Expect(err).To(MatchError(op.ErrRequestTimedOut))
+			settle(s)
+			ac.set(nil)
+			Expect(pendingOLH()).To(HaveLen(1), "the init landed; the link may yet")
+			Expect(s.Abort(ctx, up)).To(MatchError(op.ErrInternalError))
+			settle(s)
+			unlinkedKept(up)
+
+			By("once that modification expires, no link of c1 can land, and the abort removes it")
+			clock.Add(int64(2 * time.Hour))
+			Expect(s.Abort(ctx, up)).To(Succeed())
+			settle(s)
+			Expect(head("c1")).To(BeNil())
+			Expect(chainOIDs(allGCEntries(c))).To(ContainElement(partHeadOID("k."+up.ID, 1)))
+		})
+
+		It("answers 500 and removes nothing while the OLH log names the version, its pending modification expired", func(ctx SpecContext) {
+			mustPut(ctx, "v1", "one")
+			up, etags := upload(ctx, reprefix, 5<<20)
+			up.WriteTag = "tx-first"
+			ac.set(onFirst("bucket_link_olh", failWith(syscall.ETIMEDOUT)))
+			_, err := complete(ctx, up, "c1", etags)
+			Expect(err).To(MatchError(op.ErrRequestTimedOut))
+			settle(s)
+			ac.set(nil)
+			clock.Add(int64(2 * time.Hour))
+			en, ok := c.OLHEntry(rookIndexPool, "", shard, "k")
+			Expect(ok).To(BeTrue())
+			if en.PendingLog == nil {
+				en.PendingLog = map[uint64][]rgwcls.OLHLogEntry{}
+			}
+			epoch := en.Epoch + 1
+			en.PendingLog[epoch] = append(en.PendingLog[epoch], rgwcls.OLHLogEntry{Epoch: epoch, Op: rgwcls.OLHOpLinkOLH, OpTag: "landed", Key: rgwcls.ObjKey{Name: "k", Instance: "c1"}})
+			c.Object(rookIndexPool, "", shard).Omap[rgwcls.OLHDataKey("k")] = encode(en)
+			Expect(s.Abort(ctx, up)).To(MatchError(op.ErrInternalError), "a link of c1 is in the log, not yet replayed")
+			settle(s)
+			unlinkedKept(up)
+		})
+
+		It("removes nothing when its lock term runs out before the record branch removes the version", func(ctx SpecContext) {
+			mustPut(ctx, "v1", "one")
+			up, etags := upload(ctx, reprefix, 5<<20)
+			up.WriteTag = "tx-first"
+			ac.set(onFirst("bucket_link_olh", failWith(syscall.ETIMEDOUT)))
+			_, err := complete(ctx, up, "c1", etags)
+			Expect(err).To(MatchError(op.ErrRequestTimedOut))
+			settle(s)
+			ac.set(nil)
+			clock.Add(int64(2 * time.Hour))
+			armed := false
+			c.AfterWrite(extraPoolName, "", mOID(up), func() {
+				if !armed {
+					armed = true
+					clock.Add(int64(11 * time.Minute))
+				}
+			})
+			Expect(s.Abort(ctx, up)).To(MatchError(op.ErrServiceUnavailable), "the lock the abort took has lapsed")
+			c.AfterWrite(extraPoolName, "", mOID(up), nil)
+			settle(s)
+			unlinkedKept(up)
+		})
+
+		It("removes nothing when its lock is taken over between its term check and the removal", func(ctx SpecContext) {
+			mustPut(ctx, "v1", "one")
+			up, etags := upload(ctx, reprefix, 5<<20)
+			up.WriteTag = "tx-first"
+			ac.set(onFirst("bucket_link_olh", failWith(syscall.ETIMEDOUT)))
+			_, err := complete(ctx, up, "c1", etags)
+			Expect(err).To(MatchError(op.ErrRequestTimedOut))
+			settle(s)
+			clock.Add(int64(2 * time.Hour))
+			oid := mOID(up)
+			ac.set(onFirstMatching(func(w *radosclient.WriteOp) bool {
+				return callsMethod(w.Steps(), "assert_locked") && !callsMethod(w.Steps(), "obj_remove")
+			}, func(send sendFunc) (uint64, error) {
+				releaseLock(c, oid)
+				holdLock(ctx, c, oid)
+				return send()
+			}))
+			Expect(s.Abort(ctx, up)).To(MatchError(op.ErrServiceUnavailable), "another gateway holds the lock now")
+			ac.set(nil)
+			settle(s)
+			unlinkedKept(up)
+		})
+
+		Describe("removing the unlinked version, its index entry before its head", func() {
+			// leaveUnlinked completes up into c1 over v1 with the link timing out,
+			// and lets that link's pending modification expire, so that the abort
+			// takes c1 for unlinked and removes it.
+			leaveUnlinked := func(ctx context.Context) (*op.Upload, []string) {
+				GinkgoHelper()
+				mustPut(ctx, "v1", "one")
+				up, etags := upload(ctx, reprefix, 5<<20)
+				up.WriteTag = "tx-first"
+				ac.set(onFirst("bucket_link_olh", failWith(syscall.ETIMEDOUT)))
+				_, err := complete(ctx, up, "c1", etags)
+				Expect(err).To(MatchError(op.ErrRequestTimedOut))
+				settle(s)
+				ac.set(nil)
+				clock.Add(int64(2 * time.Hour))
+				return up, etags
+			}
+			// linkC1 links c1, as the timed-out link landing late would.
+			linkC1 := func(ctx context.Context) {
+				GinkgoHelper()
+				Expect(s.SetOLHForTest(ctx, rec, version("c1"), driver.OLHLink{})).To(Succeed())
+			}
+			// preparesDelOfC1 matches the index prepare DEL of c1's instance key.
+			preparesDelOfC1 := func(w *radosclient.WriteOp) bool {
+				for _, st := range w.Steps() {
+					if x, ok := st.(*radosclient.ExecStep); ok && x.Method == "bucket_prepare_op" {
+						p := rgwcls.DecodePrepareOp(denc.NewDecoder(x.In))
+						return p.Op == rgwcls.OpDel && p.Key == rgwcls.ObjKey{Name: "k", Instance: "c1"}
+					}
+				}
+				return false
+			}
+			// comparesEntry matches a write op that compares an omap value.
+			comparesEntry := func(w *radosclient.WriteOp) bool {
+				return slices.ContainsFunc(w.Steps(), func(st radosclient.Step) bool {
+					_, ok := st.(*radosclient.OmapCmpStep)
+					return ok
+				})
+			}
+			// linkedKept checks that c1 is linked and current with its head, and
+			// the upload and its parts stand, nothing queued.
+			linkedKept := func(ctx context.Context, up *op.Upload) {
+				GinkgoHelper()
+				Expect(head("c1")).NotTo(BeNil(), "the version's head")
+				Expect(listed()).To(Equal([]string{"c1", "v1"}))
+				Expect(target()).To(Equal(version("c1")))
+				Expect(readBack(ctx, version(""))).To(Equal(bytes.Repeat([]byte("a"), 5<<20)), "a listed version with its data")
+				partsIntact(up, 1)
+				Expect(chainOIDs(allGCEntries(c))).NotTo(ContainElement(partHeadOID("k."+up.ID, 1)), "nothing queued")
+			}
+
+			It("answers 500 and removes nothing when a link lands between its prepare and its read of the entry", func(ctx SpecContext) {
+				up, _ := leaveUnlinked(ctx)
+				ac.set(onFirstMatching(preparesDelOfC1, func(send sendFunc) (uint64, error) {
+					v, err := send()
+					linkC1(ctx)
+					return v, err
+				}))
+				Expect(s.Abort(ctx, up)).To(MatchError(op.ErrInternalError), "the entry it read carries the link's versioned epoch")
+				ac.set(nil)
+				settle(s)
+				linkedKept(ctx, up)
+			})
+
+			It("answers 500 and removes nothing when a link lands between its read of the entry and the removal, which compares it", func(ctx SpecContext) {
+				up, _ := leaveUnlinked(ctx)
+				ac.set(onFirstMatching(comparesEntry, func(send sendFunc) (uint64, error) {
+					linkC1(ctx)
+					return send()
+				}))
+				Expect(s.Abort(ctx, up)).To(MatchError(op.ErrInternalError), "OMAP_CMP answers ECANCELED for the entry the link rewrote")
+				ac.set(nil)
+				settle(s)
+				linkedKept(ctx, up)
+			})
+
+			Describe("meeting another op pending on the version", func() {
+				// pendingTags is the tags of the ops pending on c1's instance entry.
+				pendingTags := func() []string {
+					GinkgoHelper()
+					en, ok := c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k", Instance: "c1"})
+					Expect(ok).To(BeTrue(), "c1's instance entry")
+					var out []string
+					for _, p := range en.PendingMap {
+						out = append(out, p.Tag)
+					}
+					return out
+				}
+				// cancelsUnder counts the complete_op CANCELs under tag sent to the
+				// shard.
+				cancelsUnder := func(tag string) int {
+					GinkgoHelper()
+					n := 0
+					for _, w := range c.WritesTo(rookIndexPool, "", shard) {
+						for _, st := range w.Steps() {
+							if x, ok := st.(*radosclient.ExecStep); ok && x.Method == "bucket_complete_op" {
+								d := denc.NewDecoder(x.In)
+								co := rgwcls.DecodeCompleteOp(d)
+								Expect(d.Err()).NotTo(HaveOccurred())
+								if co.Op == rgwcls.OpCancel && co.Tag == tag {
+									n++
+								}
+							}
+						}
+					}
+					return n
+				}
+				// removed checks that c1 and the upload are gone, the parts to the GC.
+				removed := func(up *op.Upload) {
+					GinkgoHelper()
+					Expect(head("c1")).To(BeNil(), "the version's head")
+					_, ok := c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k", Instance: "c1"})
+					Expect(ok).To(BeFalse(), "its instance entry")
+					Expect(c.Object(extraPoolName, "", mOID(up))).To(BeNil(), "the upload")
+					Expect(chainOIDs(allGCEntries(c))).To(ContainElement(partHeadOID("k."+up.ID, 1)), "the parts go to the GC")
+					Expect(listed()).To(Equal([]string{"v1"}))
+					Expect(target()).To(Equal(version("v1")))
+				}
+				// reopen opens s again with the options kv adds, as the outer
+				// BeforeEach opens it.
+				reopen := func(ctx context.Context, kv map[string]string) {
+					GinkgoHelper()
+					settle(s)
+					r := denc.Squid
+					var err error
+					s, err = driver.Open(ctx, ac, conf(kv), driver.Options{Release: &r})
+					Expect(err).NotTo(HaveOccurred())
+					driver.SetClock(s, now)
+					s.SetReshardWaitForTest(0)
+					driver.SetCondSleepForTest(s, func(context.Context, time.Duration) error { return nil })
+					s.SetRandForTest(fixedRand(putPrefix))
+				}
+				// setTagTimeout sets the tag timeout of k's index shard's header, as
+				// bucket_set_tag_timeout stores it.
+				setTagTimeout := func(seconds uint64) {
+					GinkgoHelper()
+					o := c.Object(rookIndexPool, "", shard)
+					d := denc.NewDecoder(o.OmapHdr)
+					h := rgwcls.DecodeDirHeader(d)
+					Expect(d.Err()).NotTo(HaveOccurred())
+					h.TagTimeout = seconds
+					o.OmapHdr = encode(h)
+				}
+
+				It("answers 500 and removes nothing while that op is younger than the tag timeout", func(ctx SpecContext) {
+					up, _ := leaveUnlinked(ctx)
+					Expect(s.NewIndexOpForTest(rec, version("c1"), "tx-other").Prepare(ctx, rgwcls.OpAdd)).To(Succeed())
+					clock.Add(int64(100 * time.Second))
+					Expect(s.Abort(ctx, up)).To(MatchError(op.ErrInternalError), "complete_op would keep an entry with another op pending")
+					settle(s)
+					unlinkedKept(up)
+					Expect(pendingTags()).To(ConsistOf("tx-other"), "a live op is not canceled")
+					Expect(cancelsUnder("tx-other")).To(BeZero())
+				})
+
+				It("cancels another writer's op older than the tag timeout, as dir_suggest_changes drops one, and removes the version", func(ctx SpecContext) {
+					up, _ := leaveUnlinked(ctx)
+					Expect(s.NewIndexOpForTest(rec, version("c1"), "tx-other").Prepare(ctx, rgwcls.OpAdd)).To(Succeed())
+					clock.Add(int64(130 * time.Second))
+					Expect(s.Abort(ctx, up)).To(Succeed())
+					settle(s)
+					Expect(cancelsUnder("tx-other")).To(Equal(1))
+					removed(up)
+				})
+
+				It("answers a later abort 500 while the prepare an interrupted abort left is younger than the tag timeout, and removes the version once it is older", func(ctx SpecContext) {
+					up, _ := leaveUnlinked(ctx)
+					By("an abort whose removal and its cancel are both lost, as a gateway that stops after its prepare leaves them")
+					ac.set(func(w *radosclient.WriteOp, send sendFunc) (uint64, error) {
+						if callsMethod(w.Steps(), "bucket_complete_op") {
+							return failWith(syscall.ETIMEDOUT)(send)
+						}
+						return send()
+					})
+					Expect(s.Abort(ctx, up)).To(MatchError(op.ErrRequestTimedOut))
+					settle(s)
+					ac.set(nil)
+					stuck := pendingTags()
+					Expect(stuck).To(HaveLen(1), "the interrupted abort's prepare")
+					partsIntact(up, 1)
+
+					By("a later abort within the tag timeout")
+					// Each abort's prepare takes a tag of its own, as random tags differ.
+					s.SetRandForTest(fixedRand("SECONDABORTSECONDABORTSECONDABORT"))
+					clock.Add(int64(100 * time.Second))
+					Expect(s.Abort(ctx, up)).To(MatchError(op.ErrInternalError))
+					settle(s)
+					unlinkedKept(up)
+					Expect(pendingTags()).To(Equal(stuck), "not canceled yet")
+
+					By("one past it")
+					s.SetRandForTest(fixedRand("THIRDABORTTHIRDABORTTHIRDABORTTHIRD"))
+					clock.Add(int64(30 * time.Second))
+					Expect(s.Abort(ctx, up)).To(Succeed())
+					settle(s)
+					Expect(cancelsUnder(stuck[0])).To(Equal(1))
+					removed(up)
+				})
+
+				DescribeTable("takes the tag timeout as dir_suggest_changes does: the header's, else rgw_pending_bucket_index_op_expiration, else 120 s",
+					func(ctx SpecContext, header uint64, kv map[string]string, age time.Duration, canceled bool) {
+						if kv != nil {
+							reopen(ctx, kv)
+						}
+						up, _ := leaveUnlinked(ctx)
+						setTagTimeout(header)
+						Expect(s.NewIndexOpForTest(rec, version("c1"), "tx-other").Prepare(ctx, rgwcls.OpAdd)).To(Succeed())
+						clock.Add(int64(age))
+						err := s.Abort(ctx, up)
+						settle(s)
+						if canceled {
+							Expect(err).NotTo(HaveOccurred())
+							removed(up)
+							return
+						}
+						Expect(err).To(MatchError(op.ErrInternalError))
+						unlinkedKept(up)
+						Expect(cancelsUnder("tx-other")).To(BeZero())
+					},
+					Entry("an op of 130 s within the header's 600 s", uint64(600), nil, 130*time.Second, false),
+					Entry("an op of 130 s within the option's 600 s, the header holding none",
+						uint64(0), map[string]string{"rgw_pending_bucket_index_op_expiration": "600"}, 130*time.Second, false),
+					Entry("an op of 90 s past the header's 60 s, which the option's 600 s does not override",
+						uint64(60), map[string]string{"rgw_pending_bucket_index_op_expiration": "600"}, 90*time.Second, true),
+					Entry("an op of 130 s past the default, the option at 0", uint64(0), map[string]string{"rgw_pending_bucket_index_op_expiration": "0"}, 130*time.Second, true),
+				)
+			})
+
+			It("leaves the version's head unindexed when it stops after the entry's removal, and the next abort removes it", func(ctx SpecContext) {
+				up, _ := leaveUnlinked(ctx)
+				c.FailNextWrite(testDataPool, "", instanceHeadOID(version("c1")), syscall.ETIMEDOUT)
+				Expect(s.Abort(ctx, up)).To(MatchError(op.ErrRequestTimedOut))
+				settle(s)
+				Expect(head("c1")).NotTo(BeNil(), "the head's removal did not land")
+				_, ok := c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k", Instance: "c1"})
+				Expect(ok).To(BeFalse(), "its instance entry went first")
+				partsIntact(up, 1)
+
+				By("the next abort, which finds it through the record")
+				Expect(s.Abort(ctx, up)).To(Succeed())
+				settle(s)
+				Expect(head("c1")).To(BeNil())
+				_, ok = c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k", Instance: "c1"})
+				Expect(ok).To(BeFalse(), "the entry its prepare made is gone too")
+				Expect(c.Object(extraPoolName, "", mOID(up))).To(BeNil(), "the upload is gone")
+				Expect(chainOIDs(allGCEntries(c))).To(ContainElement(partHeadOID("k."+up.ID, 1)), "the parts go to the GC")
+				Expect(listed()).To(Equal([]string{"v1"}))
+				Expect(target()).To(Equal(version("v1")))
+			})
+
+			It("completes an entry its completion left pending before the removal, so that completion's index op and link find nothing", func(ctx SpecContext) {
+				mustPut(ctx, "v1", "one")
+				up, etags := upload(ctx, reprefix, 5<<20)
+				up.WriteTag = "tx-first"
+				var stalled sendFunc
+				ac.set(onFirst("bucket_complete_op", func(send sendFunc) (uint64, error) {
+					stalled = send
+					return failWith(syscall.ETIMEDOUT)(send)
+				}))
+				_, err := complete(ctx, up, "c1", etags)
+				Expect(err).To(MatchError(op.ErrRequestTimedOut))
+				settle(s)
+				ac.set(nil)
+				en, ok := c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k", Instance: "c1"})
+				Expect(ok).To(BeTrue())
+				Expect([]any{en.Exists, len(en.PendingMap)}).To(Equal([]any{false, 1}), "the completion's prepare alone landed")
+				Expect(s.Abort(ctx, up)).To(Succeed())
+				settle(s)
+				Expect(head("c1")).To(BeNil())
+				_, ok = c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k", Instance: "c1"})
+				Expect(ok).To(BeFalse(), "no entry stays for the completion's pending op")
+
+				By("the stalled completion's index op lands")
+				_, err = stalled()
+				Expect(err).To(MatchError(radosclient.ErrInvalid), "complete_op's EINVAL for a tag no entry holds (cls_rgw.cc:1066-1073 at v19.2.7)")
+				_, ok = c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k", Instance: "c1"})
+				Expect(ok).To(BeFalse())
+
+				By("and so does a link of it")
+				Expect(s.SetOLHForTest(ctx, rec, version("c1"), driver.OLHLink{})).NotTo(Succeed(), "bucket_link_olh's ENOENT (cls_rgw.cc:1668-1688 at v19.2.7)")
+				settle(s)
+				Expect(listed()).To(Equal([]string{"v1"}))
+				Expect(target()).To(Equal(version("v1")))
+			})
+		})
+
+		It("leaves an unlinked null version its parts on an abort, its head being the key's OLH head", func(ctx SpecContext) {
+			mustPut(ctx, "v1", "one")
+			suspend()
+			up, etags := upload(ctx, reprefix, 5<<20)
+			up.WriteTag = "tx-first"
+			ac.set(onFirst("bucket_link_olh", failWith(syscall.ETIMEDOUT)))
+			_, err := complete(ctx, up, "", etags)
+			Expect(err).To(MatchError(op.ErrRequestTimedOut))
+			settle(s)
+			ac.set(nil)
+			Expect(s.Abort(ctx, up)).To(Succeed())
+			settle(s)
+			Expect(c.Object(extraPoolName, "", mOID(up))).To(BeNil(), "the meta object alone is removed")
+			Expect(allGCEntries(c)).To(BeEmpty(), "no part goes to the GC: the null version's head names them")
+			Expect(readBack(ctx, meta.ObjKey{Name: "k", Instance: meta.NullInstance})).To(Equal(bytes.Repeat([]byte("a"), 5<<20)))
+			Expect(target()).To(Equal(version("v1")))
 		})
 	})
 
