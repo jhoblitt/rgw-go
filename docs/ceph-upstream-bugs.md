@@ -443,6 +443,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's versioned PutObject deletes its tails when its link fails](#radosgws-versioned-putobject-deletes-its-tails-when-its-link-fails) | pending | pending | ✓ |
 | [radosgw checks a signed CORS preflight's x-amz-mfa against its key's user's device](#radosgw-checks-a-signed-cors-preflights-x-amz-mfa-against-its-keys-users-device) | pending | pending | ✓ |
 | [radosgw's user removal leaves the user's MFA devices and their seeds in the otp pool](#radosgws-user-removal-leaves-the-users-mfa-devices-and-their-seeds-in-the-otp-pool) | pending | pending | ✓ |
+| [radosgw lets a requester's own MFA device satisfy another owner's MFA delete](#radosgw-lets-a-requesters-own-mfa-device-satisfy-another-owners-mfa-delete) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -25721,3 +25722,96 @@ Every new entry adds its row to this table, in document order.
   rgw-bug-reproduction's triage the same day, which filed it as security:
   conditional and linked it to its WP17-2. Derived from the source, not
   reproduced.
+
+## radosgw lets a requester's own MFA device satisfy another owner's MFA delete
+
+- **Kind:** defect, security-relevant, conditional (rgw-bug-reproduction's
+  triage, 2026-10-22, at v20.2.4), found by us: MFA delete answers to
+  whichever user sends the request, not to the bucket's owner. Two limits
+  bound it:
+  - only an administrator gives a user a device, so the non-owner needs a
+    device an administrator issued;
+  - the case that matters, a non-owner turning the bucket's MFA delete off,
+    is conditional on a deployment that grants `s3:PutBucketVersioning` or
+    `s3:DeleteObjectVersion` to a non-owner holding a device.
+
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `postauth_init` checks the request's `x-amz-mfa` against the devices of
+    `s->user`, the requester
+    ([rgw_rest_s3.cc:5026-5029](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5026-L5029),
+    [rgw_rest_s3.cc:5556-5559](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5556-L5559);
+    [rgw_sal_rados.cc:298-308](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L298-L308),
+    [rgw_sal_rados.cc:315-325](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L315-L325)).
+  - PutBucketVersioning asks for `s3:PutBucketVersioning` alone, and its
+    MFA checks test `s->mfa_verified` alone, for a change of MFA delete and
+    for a versioning change of a bucket with it on
+    ([rgw_op.cc:2759-2770](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2759-L2770) and
+    [rgw_op.cc:2795-2817](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2795-L2817),
+    [rgw_op.cc:2991-3002](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2991-L3002) and
+    [rgw_op.cc:3027-3049](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3027-L3049)).
+  - DeleteObject of a version asks for `s3:DeleteObjectVersion` and then
+    tests `s->mfa_verified` alone
+    ([rgw_op.cc:5138-5166](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5138-L5166),
+    [rgw_op.cc:5528-5556](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5528-L5556)),
+    and DeleteObjects tests it alone too
+    ([rgw_op.cc:7067-7081](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L7067-L7081),
+    [rgw_op.cc:7969-7983](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7969-L7983)).
+    None compares the requester with the bucket's owner.
+  - Only an administrator creates a device. `RGWSI_Cls::MFA::create_mfa`'s
+    callers are radosgw-admin's `mfa create` and `mfa resync`
+    ([rgw_admin.cc:10840](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10840) and
+    [rgw_admin.cc:11023](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L11023),
+    [radosgw-admin.cc:11431](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L11431) and
+    [radosgw-admin.cc:11616](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L11616)).
+    The otp metadata section's put also writes devices, through `set_mfa`.
+    At v19.2.7 its `do_put` stores them through `RGWSI_OTP::store_all`
+    ([rgw_otp.cc:120-139](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_otp.cc#L120-L139)),
+    which reaches `set_mfa` in `RGWSI_MetaBackend_OTP::put_entry`
+    ([svc_meta_be_otp.cc:71](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_meta_be_otp.cc#L71)).
+    At v20.2.4 its `put`
+    ([rgw_otp.cc:70-82](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L70-L82))
+    calls `set_mfa` itself
+    ([rgw_otp.cc:76](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L76)).
+    That put runs for radosgw-admin's `metadata put`, for metadata sync, and
+    for the admin API's metadata put, which needs the `metadata` write cap
+    ([rgw_rest_metadata.h:61-63](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_metadata.h#L61-L63),
+    [rgw_rest_metadata.h:61-63](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_metadata.h#L61-L63)).
+    No S3 or IAM op writes a device.
+  - AWS's [PutBucketVersioning](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketVersioning.html)
+    (read 2026-10-15): "In order to enable MFA Delete, you must be the
+    bucket owner."
+- **Impact:** a user whom the bucket's ACL or policy grants
+  `s3:PutBucketVersioning` or `s3:DeleteObjectVersion`, and who has an MFA
+  device of its own, satisfies the bucket's MFA delete with that device:
+  - it can delete the bucket's versions, suspend its versioning or turn its
+    MFA delete off without the owner's device, which MFA delete exists to
+    require;
+  - it can turn MFA delete on for a bucket it does not own; the owner then
+    needs a device of its own for every version delete and for turning it
+    off again.
+
+  The case that matters is the first, a non-owner turning MFA delete off,
+  after which the bucket's version deletes need no second factor. It is
+  conditional on a deployment that grants `s3:PutBucketVersioning` or
+  `s3:DeleteObjectVersion` to a non-owner holding a device: the first
+  turns MFA delete off, the second deletes the versions it guards. That
+  device is one an administrator issued, as no S3 or IAM op creates one.
+- **Releases:** checked at v19.2.7 and v20.2.4.
+- **rgw-go:** follows AWS for PutBucketVersioning. The S3 User Guide's
+  "[Configuring MFA delete](https://docs.aws.amazon.com/AmazonS3/latest/userguide/MultiFactorAuthenticationDelete.html)"
+  (read 2026-10-22): "only the bucket owner (root account) can enable MFA
+  delete", and "the bucket owner must include two forms of authentication
+  in any request to delete a version or change the versioning state".
+  rgw-go counts a verified code only from the bucket's owner: the user that
+  owns it, or for a bucket an account owns, the account's root user alone
+  (`op.OwnerMFAVerified`, `internal/op/mfa.go`; `docs/exclusions.md`,
+  "Only the bucket owner's x-amz-mfa satisfies MFA delete"). Its
+  DeleteObject and DeleteObjects take no verdict and refuse every delete
+  MFA delete guards ("Deletes that need MFA are refused" there).
+- **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
+  searched.
+- **Found:** phase 2 Task V13d's automated security review, 2026-10-22;
+  traced at both tags in the task's first fix round; verified at v20.2.4 by
+  rgw-bug-reproduction's triage the same day, which filed it as security:
+  conditional. Derived from the source, not reproduced.
