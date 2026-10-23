@@ -57,6 +57,7 @@ type Store struct {
 	periods        map[string]meta.Period       // "id.epoch" -> period
 	periodConfigs  map[string]meta.PeriodConfig // object name -> config
 	defaultRealm   string                       // default.realm's id
+	otps           map[string]*otpEntry         // the otp section's entries, by key
 }
 
 type bucket struct {
@@ -159,6 +160,7 @@ func New(cfg Config) *Store {
 		periods:        map[string]meta.Period{},
 		periodConfigs:  map[string]meta.PeriodConfig{},
 		defaultRealm:   cfg.Realm.ID,
+		otps:           map[string]*otpEntry{},
 	}
 	if cfg.Realm.ID != "" {
 		s.realms[cfg.Realm.ID] = cfg.Realm

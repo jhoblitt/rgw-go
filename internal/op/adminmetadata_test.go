@@ -251,7 +251,7 @@ var _ = Describe("admin metadata ops", func() {
 		It("lists the sections at the top level, the marker naming the next one", func(sctx SpecContext) {
 			o := &op.ListMetadata{}
 			Expect(runIn(sctx, o)).To(Succeed())
-			Expect(o.Keys).To(Equal([]string{"bucket", "bucket.instance", "user"}))
+			Expect(o.Keys).To(Equal([]string{"bucket", "bucket.instance", "otp", "user"}))
 			Expect(o.Truncated).To(BeFalse())
 			o = &op.ListMetadata{Extended: true, MaxEntries: 1}
 			Expect(runIn(sctx, o)).To(Succeed())
@@ -261,7 +261,7 @@ var _ = Describe("admin metadata ops", func() {
 			o = &op.ListMetadata{Extended: true, MaxEntries: 1, Marker: base64.StdEncoding.EncodeToString([]byte("bucket.instance"))}
 			Expect(runIn(sctx, o)).To(Succeed())
 			Expect(o.Keys).To(Equal([]string{"bucket.instance"}), "lower_bound: the marker's own section comes first")
-			Expect(o.NextMarker).To(Equal("user"))
+			Expect(o.NextMarker).To(Equal("otp"))
 		}, SpecTimeout(listTimeout))
 	})
 

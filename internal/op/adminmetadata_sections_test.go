@@ -95,11 +95,11 @@ var _ = Describe("the admin metadata section tables", func() {
 			Expect(o.Truncated).To(BeTrue())
 			Expect(o.NextMarker).To(Equal("user"))
 		}, SpecTimeout(listTimeout))
-		It("lists the memstore's sections as today's three", func(sctx SpecContext) {
-			Expect(store.Sections()).To(ConsistOf("bucket", "bucket.instance", "user"))
+		It("lists the memstore's four sections", func(sctx SpecContext) {
+			Expect(store.Sections()).To(ConsistOf("bucket", "bucket.instance", "otp", "user"))
 			o := &op.ListMetadata{}
 			Expect(run(sctx, o)).To(Succeed())
-			Expect(o.Keys).To(Equal([]string{"bucket", "bucket.instance", "user"}))
+			Expect(o.Keys).To(Equal([]string{"bucket", "bucket.instance", "otp", "user"}))
 		}, SpecTimeout(listTimeout))
 	})
 
@@ -145,6 +145,24 @@ var _ = Describe("the admin metadata section tables", func() {
 		Entry("an entry point check_versions skips", "bucket", func() string { return "test" }, op.SyncByVersion, false, "skipped"),
 		Entry("an applied bucket instance", "bucket.instance", func() string { return inst }, op.SyncAlways, true, "applied"),
 		Entry("a bucket instance check_versions skips", "bucket.instance", func() string { return inst }, op.SyncByVersion, false, "skipped"),
+	)
+
+	DescribeTable("reports the otp section's status by release and the zero version, whatever the version stored",
+		func(rel denc.Release, sync op.SyncType, ver meta.ObjVersion, applied bool, status string) {
+			open(rel)
+			data := json.RawMessage(`{"devices":[{"type":2,"id":"phone","seed":"GEZDGNBV","seed_type":"base32","step_size":30,"window":2}]}`)
+			_, err := put("otp", "user:leseb", op.SyncAlways, envelope(meta.ObjVersion{Ver: 5, Tag: "t"}, data))
+			Expect(err).NotTo(HaveOccurred())
+			o, err := put("otp", "user:leseb", sync, envelope(ver, data))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(o.Applied).To(Equal(applied))
+			Expect(o.UpdateStatus()).To(Equal(status))
+			Expect(o.OnDisk).To(Equal(meta.ObjVersion{}), "RGWX_UPDATE_VERSION reports ver:0,tag:")
+		},
+		Entry("an applied put on Squid", denc.Squid, op.SyncAlways, meta.ObjVersion{Ver: 6, Tag: "t"}, true, "applied"),
+		Entry("an applied put on Tentacle, which answers 200", denc.Tentacle, op.SyncAlways, meta.ObjVersion{Ver: 6, Tag: "t"}, true, ""),
+		Entry("a put check_versions skips on Squid", denc.Squid, op.SyncByVersion, meta.ObjVersion{Ver: 4, Tag: "t"}, false, "skipped"),
+		Entry("a put check_versions skips on Tentacle", denc.Tentacle, op.SyncByVersion, meta.ObjVersion{Ver: 4, Tag: "t"}, false, "skipped"),
 	)
 
 	Describe("a section's put rule", func() {
