@@ -10011,14 +10011,14 @@ rgw-go decides what a lifecycle rule does to a listed object, and what
 does at the v19.2.7 and v20.2.4 tags (`lifecycle.Decide`,
 `lifecycle.ExpirationHeader` and `lifecycle.AbortHeader`,
 `internal/lifecycle/decide.go` and `headers.go`). rgw-go runs the
-worker's shard protocol, but its bucket pass does not yet apply a rule:
-it claims only an entry whose bucket no longer loads under the entry's
-marker, to remove it, and one whose bucket has no lifecycle configuration,
-which it completes as radosgw's pass does, and leaves every bucket with a
-configuration unclaimed for radosgw's workers ("rgw-go's lifecycle worker
-departs from radosgw's shard protocol in three places", below). It does
-not yet send the headers ("No x-amz-expiration", under "Object read
-differences"). The decision entries describe what both will do.
+worker's shard protocol, and its bucket pass applies the current
+expiration of a bucket that was never versioned
+(`internal/driver/lc_bucket.go` and `lc_actions.go`); it leaves a
+versioned bucket, and one with a transition rule, unclaimed for radosgw's
+workers ("rgw-go's lifecycle worker leaves versioned buckets and
+transition rules to radosgw's", below). It does not yet send the headers
+("No x-amz-expiration", under "Object read differences"). The decision
+entries describe what both will do.
 Where rgw-go differs, it does the following, as the design's compatibility
 rule asks (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:284-298`):
 the correct S3 result, in RADOS state radosgw reads as its own.
@@ -10270,14 +10270,17 @@ the correct S3 result, in RADOS state radosgw reads as its own.
     walk reaches only once its head does. A pass that leaves such an entry
     stamps no rollover date, since its head never reaches the shard's end,
     and in a zone without radosgw workers the entry is never processed.
-    Until rgw-go's bucket pass applies rules, every bucket with a
-    lifecycle configuration is such an entry.
-  - A claim is read back before its bucket is processed and again once
-    the shard is locked after it. A claim the shard no longer holds as the
-    worker wrote it, because another worker took over its expired session,
-    a lifecycle configuration put reset it, or a bucket delete removed it,
-    gets no post-state, and the worker's pass on that shard ends there
-    without writing the head. radosgw writes its post-state over whatever
+    Such an entry is a bucket whose rules transition to a cloud tier, a
+    bucket that was ever versioned, one with a transition rule and one
+    with a rule that aborts incomplete multipart uploads (the next two
+    entries).
+  - A claim is read back before its bucket is processed, before each
+    listing page of the bucket's pass, and again once the shard is locked
+    after it. A claim the shard no longer holds as the worker wrote it,
+    because another worker took over its expired session, a lifecycle
+    configuration put reset it, or a bucket delete removed it, gets no
+    post-state, and the worker's pass on that shard ends there without
+    writing the head. radosgw writes its post-state over whatever
     the entry then holds, which overwrites the other worker's claim,
     completes a reset entry for the day, or puts a removed entry back, and
     when the head it advanced before the bucket had reached the shard's
@@ -10285,6 +10288,16 @@ the correct S3 result, in RADOS state radosgw reads as its own.
     (docs/ceph-upstream-bugs.md, "[radosgw's lifecycle post-state
     overwrites an entry changed during the bucket's
     pass](ceph-upstream-bugs.md#radosgws-lifecycle-post-state-overwrites-an-entry-changed-during-the-buckets-pass)").
+    A claim lost during the bucket's pass ends that pass at its next page,
+    where radosgw goes on with the bucket to its end. The same check stops
+    the pass at `thread_stop_at`, a lifecycle day after it began, which
+    radosgw checks at each rule and every 100 entries
+    ([rgw_lc.cc:1770-1775](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1770-L1775)
+    and [rgw_lc.cc:1816-1822](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1816-L1822),
+    [rgw_lc.cc:1826-1831](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1826-L1831)
+    and [rgw_lc.cc:1872-1878](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1872-L1878)),
+    so rgw-go's pass can hand out up to about 900 entries more past its
+    stop than radosgw's (`lcBucket.atPage`, `internal/driver/lc_bucket.go`).
   - A worker that stops while it processes a bucket, as at a gateway's
     shutdown, or between a claim and its first read back, records the
     bucket failed. On a context of its own, bounded at 5 s, it takes the
@@ -10317,6 +10330,120 @@ the correct S3 result, in RADOS state radosgw reads as its own.
     entry processing, so every worker skips the bucket until its session
     expires two lifecycle days on. A radosgw worker between buckets first
     claims one more (docs/ceph-upstream-bugs.md, "[radosgw's lifecycle worker hangs shutdown in WorkPool::drain and claims a bucket after it is told to stop](ceph-upstream-bugs.md#radosgws-lifecycle-worker-hangs-shutdown-in-workpooldrain-and-claims-a-bucket-after-it-is-told-to-stop)").
+- **An rgw-go-only zone never processes a bucket whose rules transition to
+  a cloud tier.** radosgw's worker transitions an object to a storage
+  class that the bucket's placement target tiers to a cloud, a tier of
+  type `cloud-s3` at v19.2.7 and `cloud-s3` or `cloud-s3-glacier` at
+  v20.2.4
+  ([rgw_lc.cc:1479-1488](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1479-L1488),
+  [rgw_lc.cc:1525-1534](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1525-L1534);
+  [rgw_zone_types.h:659-662](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone_types.h#L659-L662)),
+  which rgw-go does not serve ("Cloud transition and restore"). rgw-go
+  never claims a bucket with a rule the zone runs that transitions, current
+  or noncurrent versions, to a tier of either type, on either release, and
+  leaves the shard's head at its entry, so radosgw's worker processes the
+  bucket whole, its other rules included (`lcPass.refusal`,
+  `internal/driver/lc_bucket.go`). In a zone of rgw-go gateways alone none
+  of that bucket's rules run.
+- **rgw-go's lifecycle worker leaves versioned buckets and transition rules
+  to radosgw's.** rgw-go's bucket pass applies the current expiration of a
+  bucket that was never versioned. It claims a bucket only when it applies
+  each of the bucket's rules, so not one whose flags carry
+  `BUCKET_VERSIONED`, its versioning enabled or suspended, nor one with a
+  rule the zone runs that transitions current or noncurrent versions, nor
+  one with an enabled rule that aborts incomplete multipart uploads after
+  DaysAfterInitiation, which radosgw's worker applies whatever the zone
+  makes of the rule's other actions
+  ([rgw_lc.cc:961-963](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L961-L963),
+  [rgw_lc.cc:981-983](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L981-L983)). A
+  claim marks a bucket done for the day, and radosgw's worker would then
+  skip the rules rgw-go does not apply. Such a bucket's entry is left
+  unclaimed, which is logged once a pass, and the shard's head stays at it,
+  so radosgw's worker reaches it ("rgw-go's lifecycle worker departs from
+  radosgw's shard protocol in three places"). A bucket that becomes one
+  between its claim and its pass is recorded failed, so either worker takes
+  it again at its next pass. In a zone of rgw-go gateways alone such a
+  bucket's rules never run, and every other bucket of its shard is
+  processed on every pass. radosgw's worker claims every bucket and applies
+  each of its rules
+  ([rgw_lc.cc:1679-1830](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1679-L1830),
+  [rgw_lc.cc:1735-1886](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1735-L1886)).
+- **Lifecycle removes an object only as it was listed.** radosgw's
+  `remove_expired_obj` guards a current expiration's removal with the
+  listed mtime alone, as `unmod_since`
+  ([rgw_lc.cc:643](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L643),
+  [rgw_lc.cc:662](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L662)),
+  which the unversioned delete compares in whole seconds
+  ([rgw_rados.cc:5995-6010](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5995-L6010),
+  [rgw_rados.cc:6609-6624](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6609-L6624)),
+  so it removes an object written again within that second, and one whose
+  attrs changed after its checks, a tag set that no longer matches the
+  rule's filter among them (docs/ceph-upstream-bugs.md, "[radosgw's
+  lifecycle expiration guards its removal with the listed mtime's second
+  alone](ceph-upstream-bugs.md#radosgws-lifecycle-expiration-guards-its-removal-with-the-listed-mtimes-second-alone)").
+  rgw-go reads the object again first and goes on only while it is the one
+  listed, at the listed mtime to the nanosecond and with the listed ETag,
+  and, when its decision read the object for a tag, size or lock check, at
+  the RADOS version that read returned. It checks object lock on what it
+  read again, and removes it with the listed mtime and ETag as conditions
+  and the RADOS version its read again returned asserted in the removal's
+  op (`lcBucket.expireCurrent`, `internal/driver/lc_actions.go`;
+  `DeleteParams.AssertEpoch`, `internal/op/object.go`). A write to the
+  head after a read the removal rests on, an attr write that keeps the
+  mtime and the ETag included, so leaves the object and its index entry,
+  and the object is decided afresh at the next pass.
+- **Lifecycle stops a bucket's pass when the bucket changes under it.**
+  radosgw's `bucket_lc_process` loads the bucket once and acts on that
+  record until its pass ends, up to a lifecycle day later
+  ([rgw_lc.cc:1697-1703](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1697-L1703),
+  [rgw_lc.cc:1753-1759](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1753-L1759)),
+  so a bucket whose versioning is enabled during the pass has its expired
+  objects removed outright, through the unversioned delete, where a delete
+  marker would keep each as a noncurrent version (docs/ceph-upstream-bugs.md,
+  "[radosgw's lifecycle pass acts on the bucket record it loaded at its
+  start](ceph-upstream-bugs.md#radosgws-lifecycle-pass-acts-on-the-bucket-record-it-loaded-at-its-start)").
+  rgw-go reads the bucket's record again before each listing page, and
+  again just before each removal, and acts with that record
+  (`lcBucket.atPage` and `lcBucket.current`, `internal/driver/lc_bucket.go`):
+  a bucket the claim predicate now refuses, its versioning enabled or its
+  rules transitioning, or whose lifecycle configuration is no longer the
+  one the pass began with, ends the pass, recorded failed, so either
+  worker takes it again at its next pass, and the removal that found it
+  so is not made; a bucket that no longer loads under the entry's marker
+  ends it and the entry is removed. The window that remains is one
+  removal's: from that last read to the removal's own op, which holds the
+  removal's head read and its index prepare, and with the metadata cache
+  on, also a change whose cache notify has not yet reached the gateway. A
+  notify that never arrives, which the writing gateway logs and goes on
+  from
+  ([svc_sys_obj_cache.cc:346-348](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_sys_obj_cache.cc#L346-L348),
+  [svc_sys_obj_cache.cc:346-348](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_sys_obj_cache.cc#L346-L348)),
+  leaves the cached record stale until its entry expires,
+  `rgw_cache_expiry_interval` after it was cached, 900 s by default
+  ([rgw.yaml.in:3330-3342](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L3330-L3342),
+  [rgw.yaml.in:3509-3521](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L3509-L3521)),
+  or until a control watch breaks, which flushes the cache; rgw-go's cache
+  takes that option with that default (`objectCache`,
+  `internal/driver/cache.go`). An object whose bucket's versioning is
+  enabled in the window is still removed outright, as on radosgw. The read
+  before a removal goes through the metadata cache, so with
+  `rgw_cache_enabled` off each removal costs a RADOS read of the bucket's
+  entry point and one of its instance.
+- **Lifecycle current expiration never acts on a stored Date past
+  real_time.** radosgw's worker reads a stored Expiration Date past
+  2554-07-21T23:34:33.709551615Z as the instant real_time wraps it to and
+  expires once that is past
+  ([rgw_lc.cc:1145-1154](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1145-L1154),
+  [rgw_lc.cc:1165-1174](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1165-L1174)),
+  so a rule whose Date is `2600-01-01T23:34:33.709551616Z`, which its
+  PutBucketLifecycleConfiguration stores, expires every object it matches
+  at once, as of 2015-06-14 (docs/ceph-upstream-bugs.md, "[radosgw's
+  lifecycle Date wraps past 2554 and expires at
+  once](ceph-upstream-bugs.md#radosgws-lifecycle-date-wraps-past-2554-and-expires-at-once)").
+  rgw-go's prefix map holds no date for it ("The lifecycle prefix map
+  reads a stored negative object size by its sign, and no Date past
+  real_time"), so the rule's Expiration acts on no object and its objects
+  are kept.
 - **A lifecycle entry stored in its pair form is rewritten.** A shard
   entry stored as the pair of bucket and status, as releases through
   v15.2.4 stored it, stops radosgw's worker on that shard, since

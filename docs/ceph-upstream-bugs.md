@@ -444,6 +444,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw checks a signed CORS preflight's x-amz-mfa against its key's user's device](#radosgw-checks-a-signed-cors-preflights-x-amz-mfa-against-its-keys-users-device) | pending | pending | ✓ |
 | [radosgw's user removal leaves the user's MFA devices and their seeds in the otp pool](#radosgws-user-removal-leaves-the-users-mfa-devices-and-their-seeds-in-the-otp-pool) | pending | pending | ✓ |
 | [radosgw lets a requester's own MFA device satisfy another owner's MFA delete](#radosgw-lets-a-requesters-own-mfa-device-satisfy-another-owners-mfa-delete) | pending | pending | ✓ |
+| [radosgw's lifecycle expiration guards its removal with the listed mtime's second alone](#radosgws-lifecycle-expiration-guards-its-removal-with-the-listed-mtimes-second-alone) | pending | pending | ✓ |
+| [radosgw's lifecycle pass acts on the bucket record it loaded at its start](#radosgws-lifecycle-pass-acts-on-the-bucket-record-it-loaded-at-its-start) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -20233,8 +20235,13 @@ Every new entry adds its row to this table, in document order.
   act at, which "holds no date for a stored date from_iso_8601 refuses or
   real_time cannot hold" (`internal/lifecycle/prefixmap_test.go`) pins
   (`docs/exclusions.md`, "The lifecycle prefix map reads a stored negative
-  object size by its sign, and no Date past real_time"). Tasks C8, C10a
-  and C11 record their worker's answer
+  object size by its sign, and no Date past real_time"). Its worker's
+  current expiration therefore keeps the objects of such a rule, which "keeps
+  a stored Expiration Date past real_time, which radosgw wraps to
+  2015-06-14 and expires at once" (`internal/driver/lc_bucket_test.go`)
+  pins (`docs/exclusions.md`, "Lifecycle current expiration never acts on a
+  stored Date past real_time"). Tasks C8 and C11 record the header's and
+  the transition's answers
   (`docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md`).
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task C1's review, 2026-10-20, which compiled
@@ -20584,6 +20591,12 @@ Every new entry adds its row to this table, in document order.
   a Suspended bucket" (`internal/lifecycle/decide_test.go`) pin
   (`docs/exclusions.md`, "Every permanent removal by lifecycle runs the
   object-lock check"), so a bucket in that state keeps its locked objects.
+  Its worker's current expiration checks the lock again on the object as
+  it reads it just before the removal (`lcBucket.expireCurrent`,
+  `internal/driver/lc_actions.go`), which "keeps a retained object and a
+  held one, which radosgw's current expiration removes" on a bucket whose
+  flags carry object lock without BUCKET_VERSIONED
+  (`internal/driver/lc_bucket_test.go`) pins.
   It does not reproduce the race either: its PutBucketVersioning checks
   object lock again on each try (`internal/op/bucketversioning.go:129-135`,
   `:148-151`).
@@ -20678,7 +20691,9 @@ Every new entry adds its row to this table, in document order.
   delete marker as size 0, unstat'ed: "reads an empty-instance noncurrent
   version's own size, by the null instance" and "reads a delete marker's
   size as 0, unread" (`internal/lifecycle/decide_test.go`) pin it; the
-  uncompressed size is `Probe`'s contract, which the worker implements
+  uncompressed size is `Probe`'s contract, which the worker's `lcProbe`
+  (`internal/driver/lc_actions.go`) meets with the head's
+  `Compression.OrigSize` for a compressed object
   (`docs/exclusions.md`, "The lifecycle size filter reads a version's own,
   uncompressed size").
 - **Upstream:** pending; prior art not searched.
@@ -25242,11 +25257,15 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.7 and v20.2.4.
 - **rgw-go:** does not read the header on a named version's delete either
   (`removeVersion`, `internal/driver/delete_versioned.go`), which S3 defines
-  for no delete. Its lifecycle performs no expiration yet: the worker runs
-  the shard protocol and deletes nothing (`internal/driver/lc_worker.go`).
-  Its removals are to be guarded by `DeleteParams.Expect`, the write tag
-  its listing read (V8c; `internal/op/object.go`), which every store
-  refuses today.
+  for no delete. Its lifecycle expires the current objects of buckets
+  never versioned alone, through the unversioned delete, which checks
+  `unmod_since` and asserts the version the worker read
+  (`lcBucket.expireCurrent`, `internal/driver/lc_actions.go`), and leaves
+  versioned and suspended buckets unclaimed for radosgw's worker
+  (`docs/exclusions.md`, "rgw-go's lifecycle worker leaves versioned
+  buckets and transition rules to radosgw's"). Its removals of versions are
+  to be guarded by `DeleteParams.Expect`, the write tag its listing read
+  (V8c; `internal/op/object.go`), which every store refuses today.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task V8a's review, 2026-10-22. Derived from the
   source, not reproduced.
@@ -25825,3 +25844,140 @@ Every new entry adds its row to this table, in document order.
   traced at both tags in the task's first fix round; verified at v20.2.4 by
   rgw-bug-reproduction's triage the same day, which filed it as security:
   conditional. Derived from the source, not reproduced.
+
+## radosgw's lifecycle expiration guards its removal with the listed mtime's second alone
+
+- **Kind:** defect, data loss on a race, not security-relevant: no request
+  chooses what the lifecycle removes. A current expiration on a bucket
+  that was never versioned removes an object a client wrote again within
+  the second of the mtime the worker listed, and one whose attrs changed
+  after the worker's checks, such as a tag set that takes it out of the
+  rule's filter. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `remove_expired_obj` sends the delete with the listed entry's mtime as
+    `unmod_since` and no other condition: no If-Match, no expected version
+    ([rgw_lc.cc:636-647](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L636-L647),
+    [rgw_lc.cc:655-666](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L655-L666)).
+  - `high_precision_time` defaults to false
+    ([rgw_sal.h:1147](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_sal.h#L1147),
+    [rgw_sal.h:1198](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_sal.h#L1198)),
+    and the lifecycle never sets it, so the unversioned delete drops the
+    nanoseconds of both times before it compares them, in its check and in
+    the `cls_obj_check_mtime` it adds to the removal's op
+    ([rgw_rados.cc:5995-6010](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5995-L6010),
+    [rgw_rados.cc:6609-6624](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6609-L6624)).
+    An object a PUT wrote within the listed mtime's second passes it.
+  - An attr write through `set_obj_attrs`, which PutObjectTagging,
+    PutObjectRetention and PutObjectLegalHold make, moves the mtime by one
+    nanosecond
+    ([rgw_sal_rados.cc:2379-2392](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2379-L2392),
+    [rgw_sal_rados.cc:2971-2984](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2971-L2984)),
+    so it passes too, while the rule's tag filter read the tags before
+    (`check_tags`,
+    [rgw_lc.cc:1052-1088](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1052-L1088),
+    [rgw_lc.cc:1072-1108](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1072-L1108)).
+  - Beside that mtime check, the removal's op holds the head's removal and
+    no other guard: no write tag, and a cls_version check only for a
+    caller that passes one, which the lifecycle does not
+    ([rgw_rados.cc:6076-6085](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6076-L6085),
+    [rgw_rados.cc:6690-6699](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6690-L6699)),
+    so nothing a write between the worker's listing and the removal
+    changes but the mtime's second trips it.
+- **Trigger:** the reachable one is an attr write of an expired object, a
+  PutObjectTagging that takes it out of the rule's tag filter among them,
+  between the worker's reads of that object and its delete, a work item's
+  window. A PUT within the listed mtime's second needs an object that was
+  itself written in that second and is already due, which a Days rule
+  never finds: only an Expiration Date already past, or a small
+  `rgw_lc_debug_interval`, makes that path reachable.
+- **Impact:** the object the client retagged to keep, or on the PUT path the
+  one it wrote, is removed, though it is not the object the rule was
+  applied to. The window is a work item's time from its tag read to its
+  delete, and for a rewrite also the listed mtime's second. A retention or legal hold written in the
+  window is not checked at all on such a bucket: radosgw's current
+  expiration checks no lock ("[radosgw's lifecycle current expiration
+  removes an object under object
+  lock](#radosgws-lifecycle-current-expiration-removes-an-object-under-object-lock)").
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** differs: its worker reads the object again before it removes
+  it, keeps one no longer at the listed mtime to the nanosecond, with
+  another ETag, or at another RADOS version than its decision read, checks
+  object lock on what it read, and removes it with the
+  listed mtime and ETag as conditions and the version that read returned
+  asserted in the removal's op (`lcBucket.expireCurrent`,
+  `internal/driver/lc_actions.go`; `DeleteParams.AssertEpoch`,
+  `internal/op/object.go`). "keeps an object written again after its
+  listing", "decides again an object written between the decision and its
+  read again, whatever the write keeps" and "fails the removal's version
+  assert on an attr write after the read again"
+  (`internal/driver/lc_bucket_test.go`) pin it
+  (`docs/exclusions.md`, "Lifecycle removes an object only as it was
+  listed").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C10a, 2026-10-22, reading both tags. Not
+  reproduced on a running radosgw.
+
+## radosgw's lifecycle pass acts on the bucket record it loaded at its start
+
+- **Kind:** defect, data loss, not security-relevant: the bucket owner
+  controls both the versioning and the lifecycle configuration. A bucket
+  whose versioning is enabled while its lifecycle pass runs has its expired
+  current objects removed outright, where on the bucket as it now stands
+  the expiration writes a delete marker and keeps the object as a
+  noncurrent version. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `bucket_lc_process` loads the bucket once
+    ([rgw_lc.cc:1697-1703](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1697-L1703),
+    [rgw_lc.cc:1753-1759](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1753-L1759))
+    and hands that bucket to every rule's `op_env` and to
+    `handle_multipart_expiration`
+    ([rgw_lc.cc:1808](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1808) and
+    [rgw_lc.cc:1828](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1828),
+    [rgw_lc.cc:1864](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1864) and
+    [rgw_lc.cc:1884](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1884));
+    nothing loads it again before the pass ends at `thread_stop_at`, a
+    lifecycle day after it began
+    ([rgw_lc.cc:2045-2051](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2045-L2051),
+    [rgw_lc.cc:2108-2114](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2108-L2114)).
+  - The current expiration removes unless that bucket's
+    `versioning_enabled()` holds
+    ([rgw_lc.cc:1189](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1189),
+    [rgw_lc.cc:1209](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1209)),
+    and `remove_expired_obj` sends that bucket info's `versioning_status`
+    ([rgw_lc.cc:638-639](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L638-L639),
+    [rgw_lc.cc:657-658](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L657-L658)),
+    which `delete_obj` reads to choose its branch
+    ([rgw_rados.cc:5850](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5850),
+    [rgw_rados.cc:6462](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6462)).
+    So after the enable the object, now the key's null version, is removed
+    by the unversioned path.
+- **Trigger:** PutBucketVersioning with Status Enabled on a bucket never
+  versioned while a lifecycle pass over it runs, with objects its
+  Expiration rule finds due later in that pass.
+- **Impact:** those objects are gone for good, where S3 keeps each behind a
+  delete marker as a noncurrent version that a NoncurrentVersionExpiration
+  rule, or the owner, can still decide on. Each later rule of the pass is
+  also listed without versions, as the stale record says.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** differs: its pass reads the bucket's record again before each
+  listing page and just before each removal, through the metadata cache,
+  and stops the bucket, failed, when the claim predicate now refuses it,
+  versioning enabled among the reasons, or its lifecycle configuration
+  changed, making no removal that found it so (`lcBucket.atPage` and
+  `lcBucket.current`, `internal/driver/lc_bucket.go`). The specs "stops at
+  the next page, leaving its objects" and "leaves the rest of a page
+  unremoved once the bucket's versioning is enabled between two of its
+  entries, and fails the entry" (`internal/driver/lc_bucket_test.go`) pin
+  it. The window that remains is one removal's, from that last read to the
+  removal's own op, and with the metadata cache on also the enable's cache
+  notify. A lost notify stretches it until the cached record expires,
+  `rgw_cache_expiry_interval` after it was cached, 900 s by default
+  ([rgw.yaml.in:3330-3342](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L3330-L3342),
+  [rgw.yaml.in:3509-3521](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L3509-L3521)),
+  an option rgw-go's cache takes with that default. An object removed in
+  the window after versioning is enabled is removed outright, as on
+  radosgw (`docs/exclusions.md`, "Lifecycle stops a bucket's pass when the
+  bucket changes under it").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C10a's security review, 2026-10-22, reading both
+  tags. Not reproduced on a running radosgw.

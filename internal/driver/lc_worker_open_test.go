@@ -50,7 +50,7 @@ var _ = Describe("the lifecycle worker of an opened Store", func() {
 		Entry("a negative rgw_lc_max_worker", map[string]string{"rgw_lc_max_worker": "-1"}, false),
 	)
 
-	Describe("before its bucket pass applies rules", func() {
+	Describe("on the stale entries and the empty configurations bucket_lc_process meets", func() {
 		params := func(name string) op.CreateBucketParams {
 			return op.CreateBucketParams{
 				Name: name, Owner: meta.UserOwner(meta.UserID{ID: "alice"}), Zonegroup: "zg-ceph-objectstore",
@@ -64,7 +64,7 @@ var _ = Describe("the lifecycle worker of an opened Store", func() {
 			GinkgoHelper()
 			rec, err := s.CreateBucket(ctx, params(name))
 			Expect(err).NotTo(HaveOccurred())
-			Expect(s.PutBucketAttrs(ctx, rec, map[string][]byte{op.AttrLC: {1}}, nil)).To(Succeed())
+			Expect(s.PutBucketAttrs(ctx, rec, map[string][]byte{op.AttrLC: lcAttr(expireRule("expire", ""))}, nil)).To(Succeed())
 			Expect(s.SetEntry(ctx, rec)).To(Succeed())
 			return rec, ":" + name + ":" + rec.Info.Bucket.Marker
 		}
@@ -77,7 +77,7 @@ var _ = Describe("the lifecycle worker of an opened Store", func() {
 			Expect(lcEntries(c)).To(HaveKey(key))
 		}
 
-		It("drops the entry of a bucket that no longer loads, and of one re-created under its name, and leaves a live bucket's for radosgw's worker", func(ctx SpecContext) {
+		It("drops the entry of a bucket that no longer loads, and of one re-created under its name, and completes a live bucket's", func(ctx SpecContext) {
 			s := open(ctx, nil)
 			gone, goneKey := withLC(ctx, s, "gone")
 			deleteLeavingEntry(ctx, s, gone, goneKey)
@@ -86,11 +86,12 @@ var _ = Describe("the lifecycle worker of an opened Store", func() {
 			_, liveKey := withLC(ctx, s, "plain")
 			Expect(liveKey).NotTo(Equal(oldKey), "the bucket re-created under the name has another marker")
 
-			s.LCPassForTest(ctx, time.Now(), time.UTC)
+			now := time.Now()
+			s.LCPassForTest(ctx, now, time.UTC)
 			entries := lcEntries(c)
 			Expect(entries).NotTo(HaveKey(goneKey), "a name that no longer loads")
 			Expect(entries).NotTo(HaveKey(oldKey), "a bucket that loads with another marker")
-			Expect(entries).To(HaveKeyWithValue(liveKey, rgwcls.LCEntry{Bucket: liveKey}), "unclaimed")
+			Expect(entries).To(HaveKeyWithValue(liveKey, rgwcls.LCEntry{Bucket: liveKey, StartTime: uint64(now.Unix()), Status: rgwcls.LCStatusComplete}))
 		})
 
 		It("drops an entry whose key does not split into a tenant, a name and a marker", func(ctx SpecContext) {

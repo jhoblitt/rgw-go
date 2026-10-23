@@ -293,7 +293,11 @@ func NewZoneGroupPlacementTier() ZoneGroupPlacementTier {
 	}
 }
 
-func (t ZoneGroupPlacementTier) isS3() bool {
+// IsTierTypeS3 is RGWZoneGroupPlacementTier::is_tier_type_s3
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone_types.h#L659-L662 at v20.2.4):
+// a tier of either cloud type. Where v20.2.4 calls it, v19.2.7 compares the
+// type with cloud-s3 alone.
+func (t ZoneGroupPlacementTier) IsTierTypeS3() bool {
 	return t.TierType == TierTypeCloudS3 || t.TierType == TierTypeCloudS3Glacier
 }
 
@@ -308,7 +312,7 @@ func (t ZoneGroupPlacementTier) MarshalJSON() ([]byte, error) {
 		S3        *ZoneGroupPlacementTierS3 `json:"s3,omitempty"`
 		S3Glacier *ZoneGroupTierS3Glacier   `json:"s3-glacier,omitempty"`
 	}{plain: plain(t)}
-	if t.isS3() {
+	if t.IsTierTypeS3() {
 		out.S3 = &t.S3
 	}
 	if t.isGlacier() {
@@ -337,7 +341,7 @@ func (t ZoneGroupPlacementTier) Encode(e *denc.Encoder, r denc.Release) {
 	e.String(t.TierType)
 	e.String(t.StorageClass)
 	e.Bool(t.RetainHeadObject)
-	if t.isS3() {
+	if t.IsTierTypeS3() {
 		t.S3.Encode(e, r)
 	}
 	e.Bool(t.AllowReadThrough)
@@ -373,7 +377,7 @@ func DecodeZoneGroupPlacementTier(d *denc.Decoder) ZoneGroupPlacementTier {
 			t.S3 = DecodeZoneGroupPlacementTierS3(d)
 		}
 	default:
-		if t.isS3() {
+		if t.IsTierTypeS3() {
 			t.S3 = DecodeZoneGroupPlacementTierS3(d)
 		}
 		t.AllowReadThrough = d.Bool()

@@ -162,7 +162,7 @@ func (t ZoneGroupPlacementTier) Dump(f formatter.Formatter, rel denc.Release) {
 		}
 		return
 	}
-	if t.isS3() {
+	if t.IsTierTypeS3() {
 		dumpSection(f, "s3", t.S3, rel)
 	}
 	f.DumpBool("allow_read_through", t.AllowReadThrough)
