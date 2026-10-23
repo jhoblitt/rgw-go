@@ -565,6 +565,10 @@ var _ = Describe("Evaluator", func() {
 			Entry("s3:PutBucketObjectLockConfiguration", policy.S3PutBucketObjectLockConfiguration),
 			Entry("s3:PutBucketVersioning", policy.S3PutBucketVersioning),
 			Entry("s3:PutBucketAcl, for an ACL other than private", policy.S3PutBucketAcl),
+			// "If your CreateBucket request includes the
+			// x-amz-object-ownership header, then the
+			// s3:PutBucketOwnershipControls permission is required."
+			Entry("s3:PutBucketOwnershipControls, for x-amz-object-ownership", policy.S3PutBucketOwnershipControls),
 		)
 	})
 

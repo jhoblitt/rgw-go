@@ -576,6 +576,228 @@ var _ = Describe("bucket ops", func() {
 				Expect(after).To(Equal(before), "the record unchanged")
 			})
 		})
+		Describe("x-amz-object-ownership", func() {
+			owning := func(own acl.Ownership) func(*op.CreateBucket) {
+				return func(o *op.CreateBucket) { o.ObjectOwnership = &own }
+			}
+			// publicRead is bob's ACL with a grant to AllUsers, as the headers
+			// x-amz-acl: public-read build it.
+			publicRead := func(o *op.CreateBucket) {
+				o.ACL.ACL.AddGrant(acl.Grant{Type: acl.GranteeGroup, Group: acl.GroupAllUsers, Permission: acl.PermRead})
+				o.NonPrivateACL = true
+			}
+			attrs := func(ctx context.Context) map[string][]byte {
+				GinkgoHelper()
+				rec, err := store.GetBucket(ctx, "", "plain")
+				Expect(err).NotTo(HaveOccurred())
+				return rec.Attrs
+			}
+			absent := func(ctx context.Context) {
+				GinkgoHelper()
+				_, err := store.GetBucket(ctx, "", "plain")
+				Expect(err).To(MatchError(op.ErrNoSuchBucket), "nothing created")
+			}
+
+			DescribeTable("stores the setting in the new bucket's attrs as v21.1.2 encodes it, beside its ACL",
+				func(ctx SpecContext, own acl.Ownership) {
+					_, _, err := create(ctx, bob, "plain", owning(own))
+					Expect(err).NotTo(HaveOccurred())
+					Expect(attrs(ctx)).To(HaveKeyWithValue(acl.AttrOwnershipControls, ownershipAttr(own)),
+						"rgw_op.cc:4233-4237 at v21.1.2")
+					Expect(attrs(ctx)).To(HaveKeyWithValue(meta.AttrACL, encodedPolicy(policyOf(bob))))
+				},
+				Entry("BucketOwnerEnforced", acl.BucketOwnerEnforced),
+				Entry("BucketOwnerPreferred", acl.BucketOwnerPreferred),
+				Entry("ObjectWriter", acl.ObjectWriter),
+			)
+			It("stores no setting for a request without the header, as no release has a default", func(ctx SpecContext) {
+				_, _, err := create(ctx, bob, "plain")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(attrs(ctx)).NotTo(HaveKey(acl.AttrOwnershipControls), "rgw_op.cc:4233-4237 at v21.1.2")
+			})
+			It("answers the owner's re-create with another setting as having existed, changing nothing", func(ctx SpecContext) {
+				_, _, err := create(ctx, bob, "plain", owning(acl.ObjectWriter))
+				Expect(err).NotTo(HaveOccurred())
+				before, err := store.GetBucket(ctx, "", "plain")
+				Expect(err).NotTo(HaveOccurred())
+				o, _, err := create(ctx, bob, "plain", owning(acl.BucketOwnerEnforced))
+				Expect(err).NotTo(HaveOccurred(), "the existing-bucket checks compare no setting, rgw_op.cc:4150-4214 at v21.1.2")
+				Expect(o.Existed).To(BeTrue())
+				after, err := store.GetBucket(ctx, "", "plain")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(after).To(Equal(before))
+			})
+
+			// Amazon S3's CreateBucket reference: "To set an ACL on a bucket as
+			// part of a CreateBucket request, you must explicitly set S3 Object
+			// Ownership for the bucket to a different value than the default,
+			// BucketOwnerEnforced."
+			Describe("BucketOwnerEnforced with an ACL other than the default private one", func() {
+				It("is refused with 400 InvalidBucketAclWithObjectOwnership, creating nothing, where v21.1.2 creates it", func(ctx SpecContext) {
+					_, _, err := create(ctx, bob, "plain", owning(acl.BucketOwnerEnforced), publicRead)
+					Expect(err).To(MatchError(op.ErrInvalidBucketACL))
+					Expect(op.AsError(err).Status).To(Equal(400))
+					Expect(messageOf(err)).To(Equal(privateMessage))
+					absent(ctx)
+				})
+				It("is the ACL PutBucketOwnershipControls compares, so a grant header to another user is refused too", func(ctx SpecContext) {
+					_, _, err := create(ctx, bob, "plain", owning(acl.BucketOwnerEnforced), func(o *op.CreateBucket) {
+						o.ACL.ACL.AddGrant(acl.Grant{Type: acl.GranteeCanonUser, ID: "alice", Name: "Alice", Permission: acl.PermRead})
+						o.NonPrivateACL = true
+					})
+					Expect(err).To(MatchError(op.ErrInvalidBucketACL))
+					absent(ctx)
+				})
+				// Amazon S3's canned ACL table says of bucket-owner-full-control
+				// and bucket-owner-read: "If you specify this canned ACL when
+				// creating a bucket, Amazon S3 ignores it."
+				DescribeTable("builds a bucket-owner canned ACL as the private one, which radosgw builds with a grant to an empty bucket owner",
+					func(ctx SpecContext, canned string) {
+						p, err := acl.Canned(acl.Owner{ID: "bob", DisplayName: "Bob"}, acl.Owner{}, canned)
+						Expect(err).NotTo(HaveOccurred())
+						_, _, err = create(ctx, bob, "plain", owning(acl.BucketOwnerEnforced), func(o *op.CreateBucket) {
+							o.ACL, o.CannedACL, o.NonPrivateACL = p, canned, true
+						})
+						Expect(err).NotTo(HaveOccurred())
+						Expect(attrs(ctx)).To(HaveKeyWithValue(meta.AttrACL, encodedPolicy(policyOf(bob))))
+						Expect(attrs(ctx)).To(HaveKeyWithValue(acl.AttrOwnershipControls, ownershipAttr(acl.BucketOwnerEnforced)))
+					},
+					Entry("bucket-owner-full-control", "bucket-owner-full-control"),
+					Entry("bucket-owner-read", "bucket-owner-read"),
+				)
+				It("keeps a bucket-owner canned ACL as built under another setting", func(ctx SpecContext) {
+					p, err := acl.Canned(acl.Owner{ID: "bob", DisplayName: "Bob"}, acl.Owner{}, "bucket-owner-full-control")
+					Expect(err).NotTo(HaveOccurred())
+					_, _, err = create(ctx, bob, "plain", owning(acl.BucketOwnerPreferred), func(o *op.CreateBucket) {
+						o.ACL, o.CannedACL, o.NonPrivateACL = p, "bucket-owner-full-control", true
+					})
+					Expect(err).NotTo(HaveOccurred())
+					Expect(attrs(ctx)).To(HaveKeyWithValue(meta.AttrACL, encodedPolicy(p)))
+				})
+				// A re-create compares the request's ACL as radosgw builds it,
+				// the bucket-owner canned ACLs with their grant to an empty
+				// bucket owner
+				// (https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L4194-L4210 at v21.1.2).
+				It("answers the owner's re-create of its private bucket with a bucket-owner canned ACL 409, as radosgw does", func(ctx SpecContext) {
+					_, _, err := create(ctx, bob, "plain")
+					Expect(err).NotTo(HaveOccurred())
+					before, err := store.GetBucket(ctx, "", "plain")
+					Expect(err).NotTo(HaveOccurred())
+					p, err := acl.Canned(acl.Owner{ID: "bob", DisplayName: "Bob"}, acl.Owner{}, "bucket-owner-full-control")
+					Expect(err).NotTo(HaveOccurred())
+					_, _, err = create(ctx, bob, "plain", owning(acl.BucketOwnerEnforced), func(o *op.CreateBucket) {
+						o.ACL, o.CannedACL, o.NonPrivateACL = p, "bucket-owner-full-control", true
+					})
+					Expect(err).To(MatchError(op.ErrBucketAlreadyExists), "rgw_op.cc:4194-4203 at v21.1.2")
+					Expect(messageOf(err)).To(Equal("Cannot modify existing access control policy"))
+					after, err := store.GetBucket(ctx, "", "plain")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(after).To(Equal(before), "the record unchanged")
+				})
+				It("answers the owner's re-create of a bucket holding radosgw's bucket-owner ACL as having existed, as radosgw does", func(ctx SpecContext) {
+					p, err := acl.Canned(acl.Owner{ID: "bob", DisplayName: "Bob"}, acl.Owner{}, "bucket-owner-full-control")
+					Expect(err).NotTo(HaveOccurred())
+					withCanned := func(o *op.CreateBucket) {
+						o.ACL, o.CannedACL, o.NonPrivateACL = p, "bucket-owner-full-control", true
+					}
+					_, _, err = create(ctx, bob, "plain", withCanned)
+					Expect(err).NotTo(HaveOccurred())
+					before, err := store.GetBucket(ctx, "", "plain")
+					Expect(err).NotTo(HaveOccurred())
+					o, _, err := create(ctx, bob, "plain", owning(acl.BucketOwnerEnforced), withCanned)
+					Expect(err).NotTo(HaveOccurred(), "-ERR_BUCKET_EXISTS, rgw_op.cc:4205-4210 at v21.1.2")
+					Expect(o.Existed).To(BeTrue())
+					after, err := store.GetBucket(ctx, "", "plain")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(after).To(Equal(before), "neither the ACL nor a setting written")
+				})
+				It("refuses the owner's re-create of its own bucket with that ACL, before finding that the bucket exists", func(ctx SpecContext) {
+					_, _, err := create(ctx, bob, "plain", publicRead)
+					Expect(err).NotTo(HaveOccurred())
+					before, err := store.GetBucket(ctx, "", "plain")
+					Expect(err).NotTo(HaveOccurred())
+					_, _, err = create(ctx, bob, "plain", owning(acl.BucketOwnerEnforced), publicRead)
+					Expect(err).To(MatchError(op.ErrInvalidBucketACL),
+						"v21.1.2 answers it 200, the stored ACL being the request's, rgw_op.cc:4194-4210 at v21.1.2")
+					after, err := store.GetBucket(ctx, "", "plain")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(after).To(Equal(before), "the record unchanged")
+				})
+				DescribeTable("is not refused for another setting or the default private ACL",
+					func(ctx SpecContext, edit ...func(*op.CreateBucket)) {
+						_, _, err := create(ctx, bob, "plain", edit...)
+						Expect(err).NotTo(HaveOccurred())
+						_, err = store.GetBucket(ctx, "", "plain")
+						Expect(err).NotTo(HaveOccurred())
+					},
+					Entry("BucketOwnerEnforced with x-amz-acl: private", owning(acl.BucketOwnerEnforced)),
+					Entry("BucketOwnerPreferred with public-read", owning(acl.BucketOwnerPreferred), publicRead),
+					Entry("ObjectWriter with public-read", owning(acl.ObjectWriter), publicRead),
+				)
+			})
+
+			// Amazon S3's CreateBucket reference, retrieved 2026-10-21: "If
+			// your CreateBucket request includes the x-amz-object-ownership
+			// header, then the s3:PutBucketOwnershipControls permission is
+			// required."
+			Describe("authorized for s3:PutBucketOwnershipControls beside s3:CreateBucket", func() {
+				BeforeEach(func() { env.Authz = authz.New(authz.DefaultConfig(denc.Squid)) })
+				createUnder := func(ctx context.Context, admin bool, edit func(*op.CreateBucket), stmts ...string) error {
+					o := &op.CreateBucket{ACL: policyOf(bob)}
+					if edit != nil {
+						edit(o)
+					}
+					r := request(bob, "plain")
+					r.Identity.Admin = admin
+					r.Identity.Attrs = map[string][]byte{"user.rgw.user-policy": userPolicyAttr(stmts...)}
+					return op.Run(ctx, o, r)
+				}
+				const denyOwnership = `{"Effect":"Deny","Action":"s3:PutBucketOwnershipControls","Resource":"arn:aws:s3:::plain"}`
+
+				DescribeTable("refuses the header, whatever its value, with 403 AccessDenied, creating nothing, when the policy denies it on the bucket",
+					func(ctx SpecContext, own acl.Ownership) {
+						Expect(createUnder(ctx, false, owning(own), denyOwnership)).To(MatchError(op.ErrAccessDenied),
+							"v21.1.2's check runs before get_params sets the value, rgw_op.cc:3754-3759 and :4067")
+						absent(ctx)
+					},
+					Entry("BucketOwnerEnforced", acl.BucketOwnerEnforced),
+					Entry("ObjectWriter, the setting a bucket without one acts under", acl.ObjectWriter),
+				)
+				It("creates the bucket when the policy allows it", func(ctx SpecContext) {
+					Expect(createUnder(ctx, false, owning(acl.BucketOwnerPreferred),
+						policyStatement("Allow", "s3:CreateBucket", "arn:aws:s3:::plain"),
+						policyStatement("Allow", "s3:PutBucketOwnershipControls", "arn:aws:s3:::plain"))).To(Succeed())
+					Expect(attrs(ctx)).To(HaveKeyWithValue(acl.AttrOwnershipControls, ownershipAttr(acl.BucketOwnerPreferred)))
+				})
+				It("evaluates it on the new bucket's ARN, so a Deny of another bucket does not refuse it", func(ctx SpecContext) {
+					Expect(createUnder(ctx, false, owning(acl.BucketOwnerPreferred),
+						policyStatement("Deny", "s3:PutBucketOwnershipControls", "arn:aws:s3:::other"))).To(Succeed())
+				})
+				It("asks for none without the header", func(ctx SpecContext) {
+					Expect(createUnder(ctx, false, nil, policyStatement("Deny", "s3:PutBucketOwnershipControls", "*"))).To(Succeed())
+				})
+				It("lets an admin through the denial, as Run lets one through the permission check", func(ctx SpecContext) {
+					Expect(createUnder(ctx, true, owning(acl.BucketOwnerEnforced), denyOwnership)).To(Succeed())
+					Expect(attrs(ctx)).To(HaveKeyWithValue(acl.AttrOwnershipControls, ownershipAttr(acl.BucketOwnerEnforced)))
+				})
+				It("refuses the owner's re-create of a bucket it already owns, before finding that the bucket exists", func(ctx SpecContext) {
+					Expect(createUnder(ctx, false, nil)).To(Succeed())
+					before, err := store.GetBucket(ctx, "", "plain")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(createUnder(ctx, false, owning(acl.ObjectWriter), denyOwnership)).To(MatchError(op.ErrAccessDenied))
+					after, err := store.GetBucket(ctx, "", "plain")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(after).To(Equal(before), "the record unchanged")
+				})
+				It("refuses a denied requester with 403 before it judges BucketOwnerEnforced over a public ACL", func(ctx SpecContext) {
+					Expect(createUnder(ctx, false, func(o *op.CreateBucket) {
+						owning(acl.BucketOwnerEnforced)(o)
+						publicRead(o)
+					}, policyStatement("Allow", "s3:PutBucketAcl", "*"), denyOwnership)).To(MatchError(op.ErrAccessDenied))
+					absent(ctx)
+				})
+			})
+		})
 		Describe("a requested bucket index", func() {
 			index := func(o *op.CreateBucket) { o.BucketIndex = true }
 			It("answers NotImplemented and creates nothing", func(ctx SpecContext) {

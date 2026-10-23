@@ -83,8 +83,9 @@ func localSource(ctx context.Context, r *Request, zg meta.ZoneGroup) bool {
 // for S3. Params, when set, is the protocol's get_params, which Execute runs
 // first, as radosgw's execute does: it checks the bucket name, builds ACL
 // from the request's ACL headers, reads the request's
-// CreateBucketConfiguration into LocationConstraint and Placement and the
-// object-lock header into ObjectLock. Execute then fills Existed and Result.
+// CreateBucketConfiguration into LocationConstraint and Placement, the
+// object-lock header into ObjectLock and x-amz-object-ownership into
+// ObjectOwnership. Execute then fills Existed and Result.
 type CreateBucket struct {
 	Params func(ctx context.Context, o *CreateBucket) error
 
@@ -106,6 +107,11 @@ type CreateBucket struct {
 	// NonPrivateACL reports that the request names an ACL other than
 	// private: an x-amz-acl other than private, or a grant header.
 	NonPrivateACL bool
+	// ObjectOwnership is x-amz-object-ownership's setting, nil for a request
+	// without the header.
+	ObjectOwnership *acl.Ownership
+	// CannedACL is x-amz-acl as sent, "" for a request without it.
+	CannedACL string
 
 	// Existed is set when the bucket already belonged to the ACL's owner,
 	// which S3 answers as created.
@@ -213,18 +219,30 @@ func checkOwnerMaxBuckets(ctx context.Context, r *Request) error {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2695-L2701 at v20.2.4).
 // As Amazon S3 requires and radosgw does not (verifyCreateActions), an ACL
 // other than private is authorized as s3:PutBucketAcl on the new bucket,
-// before the header is checked, and a bucket with object lock then as
+// before the header is checked, an ownership setting as
+// s3:PutBucketOwnershipControls, and a bucket with object lock then as
 // s3:PutBucketObjectLockConfiguration and s3:PutBucketVersioning.
+// Under BucketOwnerEnforced, an ACL other than the default private one is
+// enforcedOver's InvalidBucketAclWithObjectOwnership, as Amazon S3 takes no
+// ACL beside the setting, but for bucket-owner-full-control and
+// bucket-owner-read, which Amazon S3 ignores on a bucket it creates: a new
+// bucket gets the private ACL for either, and a re-create compares either as
+// radosgw builds it. v21.1.2 creates a bucket beside any ACL
+// (docs/exclusions.md, "CreateBucket with x-amz-object-ownership is
+// authorized as s3:PutBucketOwnershipControls too").
 // A requested index is NotImplemented, for a bucket that does not exist,
 // after every check radosgw makes before it creates one
 // (docs/exclusions.md). The location constraint picks the bucket's
 // zonegroup, the placement is selected, and a bucket of the name that exists
 // must match the request's zonegroup, placement and ACL. The bucket is then
-// created for the ACL's owner with the ACL as its user.rgw.acl, and with
-// object lock when the header is true. A bucket that existed and is the
-// owner's is Existed, whatever object lock it has; one that is another
-// owner's is BucketAlreadyExists, which radosgw answers as created when that
-// owner's create lands during this one (docs/exclusions.md).
+// created for the ACL's owner with the ACL as its user.rgw.acl, the
+// ownership setting, when the request names one, in v21.1.2's form
+// (https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L4233-L4237 at v21.1.2),
+// and with object lock when the header is true. A bucket that existed and is
+// the owner's is Existed, whatever object lock or ownership setting it has;
+// one that is another owner's is BucketAlreadyExists, which radosgw answers
+// as created when that owner's create lands during this one
+// (docs/exclusions.md).
 //
 // r.BucketRec carries the usage log's owner and payer, radosgw's
 // s->bucket_owner and s->bucket: none before the existing bucket is read,
@@ -241,6 +259,16 @@ func (o *CreateBucket) Execute(ctx context.Context, r *Request) error {
 	if o.NonPrivateACL {
 		if err := verifyCreateActions(ctx, r, policy.S3PutBucketAcl); err != nil {
 			return err
+		}
+	}
+	if o.ObjectOwnership != nil {
+		if err := verifyCreateActions(ctx, r, policy.S3PutBucketOwnershipControls); err != nil {
+			return err
+		}
+		if *o.ObjectOwnership == acl.BucketOwnerEnforced && !o.enforcedOverCanned() {
+			if err := enforcedOver(o.ACL); err != nil {
+				return err
+			}
 		}
 	}
 	lock := false
@@ -290,12 +318,18 @@ func (o *CreateBucket) Execute(ctx context.Context, r *Request) error {
 		return ErrNotImplemented
 	}
 	owner := meta.ParseOwner(o.ACL.Owner.ID)
-	e := denc.NewEncoder()
-	o.ACL.Encode(e, zi.Release())
+	p := o.ACL
+	if o.enforcedOverCanned() {
+		p = acl.DefaultPolicy(owner, o.ACL.Owner.DisplayName)
+	}
+	attrs := map[string][]byte{meta.AttrACL: encodeAt(p, zi.Release())}
+	if o.ObjectOwnership != nil {
+		attrs[acl.AttrOwnershipControls] = encodeAt(*o.ObjectOwnership, zi.Release())
+	}
 	r.BucketRec = &BucketRecord{Info: meta.BucketInfo{Owner: owner}}
 	rec, err := r.Env.Buckets.CreateBucket(ctx, CreateBucketParams{
 		Tenant: r.Tenant, Name: r.Bucket, Owner: owner, Zonegroup: bucketZG.ID, Placement: rule,
-		Attrs: map[string][]byte{meta.AttrACL: e.Bytes()}, ObjectLock: lock, Exclusive: true,
+		Attrs: attrs, ObjectLock: lock, Exclusive: true,
 	})
 	if rec != nil {
 		r.BucketRec.Info.RequesterPays = rec.Info.RequesterPays
@@ -311,6 +345,15 @@ func (o *CreateBucket) Execute(ctx context.Context, r *Request) error {
 	return nil
 }
 
+// enforcedOverCanned is whether the request names BucketOwnerEnforced beside
+// bucket-owner-full-control or bucket-owner-read, the canned ACLs Amazon S3
+// ignores on a bucket it creates
+// (https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html#canned-acl).
+func (o *CreateBucket) enforcedOverCanned() bool {
+	return o.ObjectOwnership != nil && *o.ObjectOwnership == acl.BucketOwnerEnforced &&
+		(o.CannedACL == "bucket-owner-full-control" || o.CannedACL == "bucket-owner-read")
+}
+
 // verifyCreateActions authorizes each of actions, which Amazon S3 requires
 // beside s3:CreateBucket for what the request asks of the new bucket, as the
 // requester's own policies decide s3:CreateBucket: no bucket policy exists
@@ -318,16 +361,23 @@ func (o *CreateBucket) Execute(ctx context.Context, r *Request) error {
 // specify an access control list (ACL) and set it to public-read,
 // public-read-write, authenticated-read, or if you explicitly specify any
 // other custom ACLs, both s3:CreateBucket and s3:PutBucketAcl permissions are
-// required", and "if you set x-amz-bucket-object-lock-enabled to true, the
+// required", "if you set x-amz-bucket-object-lock-enabled to true, the
 // s3:PutBucketObjectLockConfiguration and s3:PutBucketVersioning permissions
-// are required". radosgw's verify_permission checks s3:CreateBucket alone
+// are required", and "If your CreateBucket request includes the
+// x-amz-object-ownership header, then the s3:PutBucketOwnershipControls
+// permission is required". radosgw's verify_permission checks s3:CreateBucket
+// alone
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3215-L3244 at v19.2.7,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3443-L3472 at v20.2.4;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3443-L3472 at v20.2.4),
+// and v21.1.2's ownership check reads the header's value before get_params
+// sets it, so it never refuses
+// (https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L3754-L3759 at v21.1.2;
 // docs/exclusions.md, "CreateBucket with an ACL other than private is
-// authorized as s3:PutBucketAcl too" and "CreateBucket with object lock is
+// authorized as s3:PutBucketAcl too", "CreateBucket with object lock is
 // authorized as s3:PutBucketObjectLockConfiguration and s3:PutBucketVersioning
-// too"). An admin is let through a denial as Run lets one through the
-// permission check.
+// too" and "CreateBucket with x-amz-object-ownership is authorized as
+// s3:PutBucketOwnershipControls too"). An admin is let through a denial as Run
+// lets one through the permission check.
 func verifyCreateActions(ctx context.Context, r *Request, actions ...policy.Action) error {
 	for _, a := range actions {
 		err := VerifyUserPermission(ctx, r, a)
