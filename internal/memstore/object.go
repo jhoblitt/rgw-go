@@ -205,36 +205,41 @@ func cloneCksum(c *cksum.Cksum) *cksum.Cksum {
 	return &d
 }
 
-// DeleteObject implements op.ObjectStore. A bucket whose versioning is or
-// was enabled or that has object lock is refused, as the RADOS store
-// refuses it. The conditions are checked as Tentacle's Delete::delete_obj
-// checks them, on both releases
+// DeleteObject implements op.ObjectStore with radosgw's unversioned delete
+// alone: memstore keeps no versions, so a bucket whose flags hold
+// BUCKET_VERSIONED, the flag radosgw's delete takes its versioned branch on
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5850 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6462 at v20.2.4),
+// is refused, and so is an Expect. The conditions are checked as Tentacle's
+// Delete::delete_obj checks them, on both releases
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6609-L6671 at v20.2.4):
 // the mtime must not be after UnmodifiedSince, the size must equal
 // IfMatchSize, the mtime must equal IfMatchLastModified, both in whole
 // seconds, and If-Match "*" passes any object while an ETag must match
 // the object's.
-func (s *Store) DeleteObject(_ context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) error {
-	if f := rec.Info.Flags; f&(meta.BucketVersioned|meta.BucketVersionsSuspended|meta.BucketObjLockEnabled) != 0 {
-		return fmt.Errorf("%w: deleting from bucket %s, which is versioned or has object lock",
-			op.ErrNotImplemented, rec.Info.Bucket.Name)
+func (s *Store) DeleteObject(_ context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) (*op.DeleteObjectResult, error) {
+	switch {
+	case rec.Info.Versioned():
+		return nil, fmt.Errorf("%w: a versioned delete in bucket %s", op.ErrNotImplemented, rec.Info.Bucket.Name)
+	case p.Expect != nil:
+		return nil, fmt.Errorf("%w: a delete's expected state", op.ErrNotImplemented)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b, err := s.instance(rec)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	k := objKey(key)
 	o, ok := b.objects[k]
 	if !ok {
-		return fmt.Errorf("object %s: %w", key.Name, op.ErrNoSuchKey)
+		return nil, fmt.Errorf("object %s: %w", key.Name, op.ErrNoSuchKey)
 	}
 	if !deleteAllowed(&o.state, p) {
-		return fmt.Errorf("object %s: %w", key.Name, op.ErrPreconditionFailed)
+		return nil, fmt.Errorf("object %s: %w", key.Name, op.ErrPreconditionFailed)
 	}
 	delete(b.objects, k)
-	return nil
+	return &op.DeleteObjectResult{}, nil
 }
 
 // deleteAllowed reports whether st passes a delete's conditions.

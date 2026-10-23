@@ -98,7 +98,7 @@ var _ = Describe("buckets", func() {
 		rec := mustCreate(ctx, store, "", "b", owner("alice"))
 		mustPut(ctx, store, rec, "k", "v")
 		Expect(store.DeleteBucket(ctx, rec)).To(MatchError(op.ErrBucketNotEmpty), "with an object")
-		Expect(store.DeleteObject(ctx, rec, meta.ObjKey{Name: "k"}, op.DeleteParams{})).To(Succeed())
+		Expect(store.DeleteObject(ctx, rec, meta.ObjKey{Name: "k"}, op.DeleteParams{})).Error().To(Succeed())
 		Expect(store.DeleteBucket(ctx, rec)).To(Succeed(), "empty")
 		_, err := store.GetBucket(ctx, "", "b")
 		Expect(err).To(MatchError(op.ErrNoSuchBucket), "by name, deleted")

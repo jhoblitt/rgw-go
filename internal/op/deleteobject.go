@@ -136,7 +136,7 @@ func (o *DeleteObject) Execute(ctx context.Context, r *Request) error {
 	if r.Object.Name == "" {
 		return ErrInvalidArgument
 	}
-	err := r.Env.Objects.DeleteObject(ctx, r.BucketRec, r.Object, o.params)
+	_, err := r.Env.Objects.DeleteObject(ctx, r.BucketRec, r.Object, o.params)
 	if errors.Is(err, ErrNoSuchKey) || errors.Is(err, ErrConcurrentModification) {
 		return nil
 	}

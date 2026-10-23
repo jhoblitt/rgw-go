@@ -840,9 +840,9 @@ type failingDeletes struct {
 	failAfter, done int
 }
 
-func (f *failingDeletes) DeleteObject(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) error {
+func (f *failingDeletes) DeleteObject(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) (*op.DeleteObjectResult, error) {
 	if f.done >= f.failAfter {
-		return errFlaky
+		return nil, errFlaky
 	}
 	f.done++
 	return f.Store.DeleteObject(ctx, rec, key, p)

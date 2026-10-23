@@ -293,7 +293,7 @@ func (f *checksumFixture) createBucket(ctx context.Context, name string) *op.Buc
 			Expect(err).NotTo(HaveOccurred(), "listing %s to empty it", name)
 			for i := range res.Entries {
 				key := res.Entries[i].Key
-				Expect(f.env.Objects.DeleteObject(ctx, cur, key, op.DeleteParams{})).To(Succeed(), "deleting %s/%s", name, key.Name)
+				Expect(f.env.Objects.DeleteObject(ctx, cur, key, op.DeleteParams{})).Error().To(Succeed(), "deleting %s/%s", name, key.Name)
 			}
 			if !res.Truncated {
 				break

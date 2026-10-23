@@ -252,11 +252,14 @@ func blockPublicACLs(rec *BucketRecord) bool {
 // versioningUnserved answers 501 NotImplemented for a bucket whose versioning
 // is or was enabled or that has object lock, and for a request that names a
 // version of any of keys, which are objects of rec's that the request removes
-// or changes in place. Every write rgw-go serves takes radosgw's unversioned
-// path, which on such a bucket would overwrite or remove a version's head
-// beside the bucket's olh, under an index entry for the plain key, without
-// the retention and legal-hold checks radosgw makes for a versioned delete on
-// a lock bucket (verify_object_lock,
+// or changes in place. Every write rgw-go serves but the deletes takes
+// radosgw's unversioned path, which on such a bucket would overwrite a
+// version's head beside the bucket's olh, under an index entry for the
+// plain key. The store's delete takes radosgw's versioned path on a bucket
+// whose flags hold BUCKET_VERSIONED, but the delete ops do not yet answer
+// the version id or the delete marker it reports, and would skip the
+// retention and legal-hold checks radosgw makes for a versioned delete on a
+// lock bucket (verify_object_lock,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5185-L5221 and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6845-L6869 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5576-L5610 and
@@ -350,7 +353,7 @@ func neverVersioned(rec *BucketRecord) bool {
 	return rec.Info.Flags&(meta.BucketVersioned|meta.BucketVersionsSuspended|meta.BucketObjLockEnabled) == 0
 }
 
-// emptyCondition is how a condition header present with an empty value
+// EmptyCondition is how a condition header present with an empty value
 // crosses the store seam, where "" means absent: a NUL, which no header can
 // carry and which starts with no non-empty ETag, so the store's prefix compare fails it
 // as radosgw's compare of the empty string with the ETag fails
@@ -358,16 +361,17 @@ func neverVersioned(rec *BucketRecord) bool {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7296-L7301
 // and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7318-L7323 at v20.2.4).
-const emptyCondition = "\x00"
+// A store that compares an ETag whole reads it back as that empty string.
+const EmptyCondition = "\x00"
 
 // storeCondition is a condition header as the store seam takes it: "" when
-// absent, emptyCondition when present and empty, and otherwise its value.
+// absent, EmptyCondition when present and empty, and otherwise its value.
 func storeCondition(v *string) string {
 	switch {
 	case v == nil:
 		return ""
 	case *v == "":
-		return emptyCondition
+		return EmptyCondition
 	default:
 		return *v
 	}

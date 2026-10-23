@@ -111,7 +111,7 @@ func Run(newEnv func(ctx context.Context) (*op.Env, func())) {
 					Expect(err).NotTo(HaveOccurred(), "listing %s to empty it", name)
 					for i := range res.Entries {
 						key := res.Entries[i].Key
-						Expect(env.Objects.DeleteObject(ctx, cur, key, op.DeleteParams{})).To(Succeed(), "deleting %s/%s", name, key.Name)
+						Expect(env.Objects.DeleteObject(ctx, cur, key, op.DeleteParams{})).Error().To(Succeed(), "deleting %s/%s", name, key.Name)
 					}
 					if !res.Truncated {
 						break
@@ -513,11 +513,10 @@ func Run(newEnv func(ctx context.Context) (*op.Env, func())) {
 			Entry("an owner that does not decode names none", func(*op.UserRecord) []byte { return []byte{1, 2, 3} }, false),
 		)
 
-		It("refuses to delete an object of a bucket that is or was versioned or has object lock, and keeps it", func(ctx SpecContext) {
+		It("takes the unversioned delete on a bucket whose flags lack BUCKET_VERSIONED, whatever others they hold", func(ctx SpecContext) {
 			u := newUser(ctx, "owner")
-			name := prefix + "-versioned"
+			name := prefix + "-flags"
 			rec := newBucket(ctx, u, name, meta.Quota{})
-			put(ctx, rec, u, "k", "v")
 			key := meta.ObjKey{Name: "k"}
 			setFlags := func(ctx context.Context, flags uint32) *op.BucketRecord {
 				GinkgoHelper()
@@ -527,14 +526,16 @@ func Run(newEnv func(ctx context.Context) (*op.Env, func())) {
 				Expect(env.Buckets.PutBucketInfo(ctx, cur)).To(Succeed(), "flags %#x", flags)
 				return cur
 			}
-			// Runs before newBucket's cleanup, whose deletes the flags would refuse.
 			DeferCleanup(func(ctx context.Context) { setFlags(ctx, rec.Info.Flags) })
-			for _, flag := range []uint32{meta.BucketVersioned, meta.BucketVersionsSuspended, meta.BucketObjLockEnabled} {
+			// Flags radosgw never writes without BUCKET_VERSIONED; its delete
+			// reads that flag alone.
+			for _, flag := range []uint32{meta.BucketVersionsSuspended, meta.BucketObjLockEnabled} {
+				put(ctx, setFlags(ctx, rec.Info.Flags), u, "k", "v")
 				cur := setFlags(ctx, rec.Info.Flags|flag)
-				Expect(env.Objects.DeleteObject(ctx, cur, key, op.DeleteParams{})).To(MatchError(op.ErrNotImplemented), "flag %#x", flag)
+				Expect(env.Objects.DeleteObject(ctx, cur, key, op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{}), "flag %#x", flag)
 				st, err := env.Objects.StatObject(ctx, cur, key)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(st.Exists).To(BeTrue(), "k after the refusal under flag %#x", flag)
+				Expect(st.Exists).To(BeFalse(), "k after the delete under flag %#x", flag)
 			}
 		})
 

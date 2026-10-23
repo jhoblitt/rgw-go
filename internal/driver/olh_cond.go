@@ -57,18 +57,30 @@ var errNullDataCond = fmt.Errorf("%w: a link of the null version's data was give
 
 // olhCondition is a conditional link's condition, evaluated each attempt on
 // cur, the state of the version current on the OLH head as the attempt's
-// follow left it (followOLHHead, olhCurrent). matched reports that its pass
-// rests on that version being current, as any comparison with its ETag, size
-// or last-modified time does, If-None-Match with an ETag included, so the
-// check after the link requires it still listed; a current delete marker is
-// required listed whatever matched says (prepareOLHAttempt). Its error,
-// PreconditionFailed for a condition that does not hold, ends the write.
+// follow left it (followOLHHead, olhCurrent). Its pass names what the pass
+// rests on (olhPass), which the check after the link requires still listed;
+// a current delete marker is required listed whatever the pass names
+// (prepareOLHAttempt). Its error, PreconditionFailed for a condition that
+// does not hold, ends the write.
 //
 // A write of the null version's data evaluates its condition before its
 // head write, not here: its head is the OLH head, so after that write the
 // head an attempt reads is the write's own data. setOLH refuses a condition
 // on such a link, before it writes anything (errNullDataCond).
-type olhCondition func(ctx context.Context, cur *op.ObjectState) (matched bool, err error)
+type olhCondition func(ctx context.Context, cur *op.ObjectState) (olhPass, error)
+
+// olhPass is what a condition's pass rests on (olhCondition). Current is the
+// version current being so, as any comparison with its ETag, size or
+// last-modified time does, If-None-Match with an ETag included. Null is the
+// null version's data in the OLH head, which a condition checked on that
+// head compares where no version is current (deleteMarkerCondition): a
+// removal of the null version takes its data from the head and lists
+// nothing above the epoch the attempt read, so only the null version's own
+// list entry shows it.
+type olhPass struct {
+	Current bool
+	Null    bool
+}
 
 // olhAttempt is what an attempt of setOLH decides before its init, on the
 // OLH head it read and, with a condition, followed: the guard its init
@@ -82,12 +94,14 @@ type olhAttempt struct {
 }
 
 // olhLinkCheck is what a conditional link's check after the link compares:
-// v0, the epoch the attempt's head held (olhVerEpoch), and matched, the
+// v0, the epoch the attempt's head held (olhVerEpoch); matched, the
 // instance of the version or delete marker the condition's pass rested on
-// being current, nil when it rested on none.
+// being current, nil when it rested on none; and null, set when the pass
+// rested on the null version's data too (olhPass).
 type olhLinkCheck struct {
 	v0      uint64
 	matched *string
+	null    bool
 }
 
 // olhCondWait is a conditional link's wait on other writers' pending
@@ -120,7 +134,9 @@ type olhCondWait struct {
 //     marker too: the removal of a marker makes the version below it current
 //     again without listing anything above the epoch the attempt read
 //     (checkOLHLink), so a pass that took the marker for no version would
-//     otherwise commit over that version. A null link is not checked, so on
+//     otherwise commit over that version. A pass that rested on the null
+//     version's data in the OLH head requires the null version listed as
+//     well (olhPass). A null link is not checked, so on
 //     a null version, the null delete marker's link included, the condition
 //     holds only as far as the init's guard serializes rgw-go's conditional
 //     writers: its link replaces the previous null version's list entry,
@@ -147,7 +163,7 @@ func (s *Store) prepareOLHAttempt(ctx context.Context, idx *bucketOLHIndex, head
 	if err != nil {
 		return olhAttempt{}, err
 	}
-	matched, err := p.Cond(ctx, cur)
+	pass, err := p.Cond(ctx, cur)
 	if err != nil {
 		return olhAttempt{}, err
 	}
@@ -157,8 +173,8 @@ func (s *Store) prepareOLHAttempt(ctx context.Context, idx *bucketOLHIndex, head
 	}
 	a := olhAttempt{guard: &olhCondGuard{info: head.Attrs[meta.AttrOLHInfo], noPending: refuse}}
 	if key.Instance != "" {
-		a.check = &olhLinkCheck{v0: olhVerEpoch(head)}
-		if (matched && cur.Exists) || cur.DeleteMarker {
+		a.check = &olhLinkCheck{v0: olhVerEpoch(head), null: pass.Null}
+		if (pass.Current && cur.Exists) || cur.DeleteMarker {
 			a.check.matched = &cur.Key.Instance
 		}
 	}
@@ -384,7 +400,8 @@ func (s *Store) condBackoff(ctx context.Context, d time.Duration) error {
 // checkOLHLink is a conditional link's check of key, a version of idx's
 // name, after its link landed and before its replay. The link is void when
 // another version or marker holds an epoch above c.v0 and below the link's
-// own, or when the version c.matched names is no longer listed. An unlink
+// own, or when the version c.matched names, or with c.null the null
+// version, is no longer listed. An unlink
 // leaves nothing above c.v0: the unlink of the current version promotes the
 // next one at that version's own epoch, write() setting the unlink's epoch
 // on an entry it has not read, which write_entries then reads back over it
@@ -392,13 +409,15 @@ func (s *Store) condBackoff(ctx context.Context, d time.Duration) error {
 // https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1936-L1967 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1514-L1554 and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2083-L2114 at v20.2.4),
-// and that of the only version writes no list entry. So only c.matched shows
-// an unlink. The name's listing is read, not its pending log, which another
-// gateway may have applied and trimmed.
+// and that of the only version writes no list entry. So only the listing of
+// c.matched, and of the null version with c.null, shows an unlink. The
+// name's listing is read, not its pending log, which another gateway may
+// have applied and trimmed.
 //
 // When the link's own version is no longer listed, removed since by another
-// writer, its epoch is unknown: the link is void when the matched version is
-// not listed, or another version or marker holds any epoch above c.v0 but the
+// writer, its epoch is unknown: the link is void when the matched version,
+// or with c.null the null version, is not listed, or another version or
+// marker holds any epoch above c.v0 but the
 // matched one, which only a link of it again puts up there, making it current
 // again. A void link whose version is gone answers PreconditionFailed with
 // nothing to unlink. One that is not void answers success: the removal shows
@@ -442,7 +461,8 @@ func (s *Store) checkOLHLink(ctx context.Context, idx *bucketOLHIndex, key meta.
 }
 
 // linkVoid reports whether c voids the link of key, from the name's versions
-// on b's shard down to the first other one at or below c.v0, and whether
+// on b's shard down to the first other one at or below c.v0, and with c.null
+// on down to the null version's, wherever its epoch lists it, and whether
 // key's version is listed (checkOLHLink).
 func (b *bucketOLHIndex) linkVoid(ctx context.Context, key meta.ObjKey, c *olhLinkCheck) (void, listed bool, err error) {
 	type above struct {
@@ -452,6 +472,7 @@ func (b *bucketOLHIndex) linkVoid(ctx context.Context, key meta.ObjKey, c *olhLi
 	var (
 		own         uint64
 		matchedSeen bool
+		nullSeen    bool
 		others      []above
 	)
 	err = b.listVersions(ctx, func(en rgw.DirEntry) bool {
@@ -461,8 +482,9 @@ func (b *bucketOLHIndex) linkVoid(ctx context.Context, key meta.ObjKey, c *olhLi
 		}
 		matched := c.matched != nil && en.Key.Instance == *c.matched
 		matchedSeen = matchedSeen || matched
+		nullSeen = nullSeen || en.Key.Instance == ""
 		if en.VersionedEpoch <= c.v0 {
-			return false
+			return c.null && !nullSeen
 		}
 		others = append(others, above{epoch: en.VersionedEpoch, matched: matched})
 		return true
@@ -470,7 +492,7 @@ func (b *bucketOLHIndex) linkVoid(ctx context.Context, key meta.ObjKey, c *olhLi
 	switch {
 	case err != nil:
 		return false, false, err
-	case c.matched != nil && !matchedSeen:
+	case c.matched != nil && !matchedSeen, c.null && !nullSeen:
 		return true, listed, nil
 	}
 	void = slices.ContainsFunc(others, func(o above) bool {

@@ -13,45 +13,51 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
-// DeleteObject is the unversioned path of RGWRados::Object::Delete::delete_obj
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5845-L5986 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6584-L6735 at v20.2.4):
-// one head stat, the conditions, the index prepare DEL under a fresh tag,
-// the head's guarded obj_remove under full-try, then complete_del, not
-// awaited, the GC enqueue of the old tails, synchronous as send_split_chain
-// is
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L68-L118),
-// and the quota adjustment. The conditions are v20.2.4's on both releases, and
-// the guard is v19.2.6's on both (docs/exclusions.md, "Delete conditions are
-// Tentacle's, and a delete is guarded, on both releases"). A missing key is
-// ErrNoSuchKey; a lost race is ErrConcurrentModification, which the op answers
-// 204 as radosgw does
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5302-L5304).
+// DeleteObject is RGWRados::Object::Delete::delete_obj
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5833-L6127 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6445-L6741 at v20.2.4).
+// A bucket whose flags hold BUCKET_VERSIONED, its versioning enabled or
+// suspended, takes the versioned branch (deleteVersioned): radosgw tests that
+// flag alone
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5850 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6462 at v20.2.4).
 //
-// A bucket whose versioning is or was enabled or that has object lock is
-// answered NotImplemented before the store is touched, so that no caller
-// takes this path there: radosgw takes the versioned one, which writes a
-// delete marker for a key with no instance
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5774-L5812),
-// where this one would remove the object outright.
-func (s *Store) DeleteObject(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) error {
-	if f := rec.Info.Flags; f&(meta.BucketVersioned|meta.BucketVersionsSuspended|meta.BucketObjLockEnabled) != 0 {
-		return fmt.Errorf("%w: deleting from bucket %s, which is versioned or has object lock",
-			op.ErrNotImplemented, rec.Info.Bucket.Name)
+// Any other takes the unversioned path: one head stat, the conditions, the
+// index prepare DEL under a fresh tag, the head's guarded obj_remove under
+// full-try, then complete_del, not awaited, the GC enqueue of the old tails,
+// synchronous as send_split_chain is
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L68-L118),
+// and the quota adjustment. The conditions are v20.2.4's on both releases,
+// and the guard is v19.2.6's on both (docs/exclusions.md, "Delete conditions
+// are Tentacle's, and a delete is guarded, on both releases"). A missing key
+// is ErrNoSuchKey; a lost race is ErrConcurrentModification, which the op
+// answers 204 as radosgw does
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5302-L5304).
+// That path refuses the OLH head of a versioned key (readHead), which a
+// bucket holds only once its versioning was enabled; suspending versioning
+// keeps BUCKET_VERSIONED set.
+//
+// p.Expect is refused before anything is read.
+func (s *Store) DeleteObject(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) (*op.DeleteObjectResult, error) {
+	if p.Expect != nil {
+		return nil, fmt.Errorf("%w: a delete's expected state", op.ErrNotImplemented)
 	}
-	if key.Instance == "null" {
-		key.Instance = "" // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5768-L5770
+	if rec.Info.Versioned() {
+		return s.deleteVersioned(ctx, rec, key, p)
+	}
+	if key.Instance == meta.NullInstance {
+		key.Instance = "" // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5844-L5846
 	}
 	st, err := s.readHead(ctx, rec, key)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !st.Exists {
-		return fmt.Errorf("object %s: %w", key.Name, op.ErrNoSuchKey) // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5903-L5912
+		return nil, fmt.Errorf("object %s: %w", key.Name, op.ErrNoSuchKey) // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5983-L5992
 	}
 	w := radosclient.NewWriteOp()
 	if cerr := s.deleteConditions(w, st, p); cerr != nil {
-		return cerr
+		return nil, cerr
 	}
 	// prepare_atomic_modification(removal_op) appends only the guard
 	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6493-L6513,
@@ -61,7 +67,10 @@ func (s *Store) DeleteObject(ctx context.Context, rec *op.BucketRecord, key meta
 	if st.WriteTag != "" {
 		w.CmpXattr(meta.AttrIDTag, radosclient.CmpEQ, st.Attrs[meta.AttrIDTag])
 	}
-	return s.removeHead(ctx, rec, key, "", st, w, true)
+	if err := s.removeHead(ctx, rec, key, "", st, w, true); err != nil {
+		return nil, err
+	}
+	return &op.DeleteObjectResult{}, nil
 }
 
 // removeHead is what delete_obj's unversioned path does once its checks are
@@ -166,21 +175,32 @@ func (s *Store) deleteObjIndex(rec *op.BucketRecord, key meta.ObjKey, mtime time
 // request (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5283),
 // which serves multisite.
 func (s *Store) deleteConditions(w *radosclient.WriteOp, st *op.ObjectState, p op.DeleteParams) error {
-	mtime := st.Mtime.Truncate(time.Second)
 	if !p.UnmodifiedSince.IsZero() {
-		if mtime.After(p.UnmodifiedSince.Truncate(time.Second)) {
+		if st.Mtime.Truncate(time.Second).After(p.UnmodifiedSince.Truncate(time.Second)) {
 			return op.ErrPreconditionFailed
 		}
 		rgw.ObjCheckMtime(w, p.UnmodifiedSince, rgw.MtimeLE, false, s.release)
 	}
+	if err := s.checkDeletePreconditions(st, p); err != nil {
+		return err
+	}
+	if !p.IfMatchLastModified.IsZero() {
+		rgw.ObjCheckMtime(w, p.IfMatchLastModified, rgw.MtimeEQ, false, s.release)
+	}
+	return nil
+}
+
+// checkDeletePreconditions is check_preconditions as a delete calls it, on
+// st: x-amz-if-match-size, then x-amz-if-match-last-modified-time in whole
+// seconds, then If-Match
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6646-L6715 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7260-L7329 at v20.2.4).
+func (s *Store) checkDeletePreconditions(st *op.ObjectState, p op.DeleteParams) error {
 	if p.IfMatchSize != nil && *p.IfMatchSize != st.Size {
 		return op.ErrPreconditionFailed
 	}
-	if !p.IfMatchLastModified.IsZero() {
-		if !mtime.Equal(p.IfMatchLastModified.Truncate(time.Second)) {
-			return op.ErrPreconditionFailed
-		}
-		rgw.ObjCheckMtime(w, p.IfMatchLastModified, rgw.MtimeEQ, false, s.release)
+	if !p.IfMatchLastModified.IsZero() && !st.Mtime.Truncate(time.Second).Equal(p.IfMatchLastModified.Truncate(time.Second)) {
+		return op.ErrPreconditionFailed
 	}
 	return s.checkPreconditions(st, p.IfMatch, "")
 }

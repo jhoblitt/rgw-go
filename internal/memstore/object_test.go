@@ -216,17 +216,17 @@ var _ = Describe("objects", func() {
 	})
 	It("reports reading or deleting a missing object as NoSuchKey", func(ctx SpecContext) {
 		Expect(store.ReadObject(ctx, &op.ObjectState{Bucket: rec, Key: key}, op.ByteRange{Length: 1}, &bytes.Buffer{})).To(MatchError(op.ErrNoSuchKey), "read")
-		Expect(store.DeleteObject(ctx, rec, key, op.DeleteParams{})).To(MatchError(op.ErrNoSuchKey), "delete")
+		Expect(store.DeleteObject(ctx, rec, key, op.DeleteParams{})).Error().To(MatchError(op.ErrNoSuchKey), "delete")
 	})
 	It("deletes an object, checking If-Match as Tentacle's check_preconditions does", func(ctx SpecContext) {
 		res := mustPut(ctx, store, rec, "k", "v")
-		Expect(store.DeleteObject(ctx, rec, key, op.DeleteParams{IfMatch: md5Hex([]byte("other"))})).To(MatchError(op.ErrPreconditionFailed), "another ETag")
-		Expect(store.DeleteObject(ctx, rec, key, op.DeleteParams{IfMatch: `"` + res.ETag + `"`})).To(Succeed(), "its quoted ETag")
+		Expect(store.DeleteObject(ctx, rec, key, op.DeleteParams{IfMatch: md5Hex([]byte("other"))})).Error().To(MatchError(op.ErrPreconditionFailed), "another ETag")
+		Expect(store.DeleteObject(ctx, rec, key, op.DeleteParams{IfMatch: `"` + res.ETag + `"`})).Error().To(Succeed(), "its quoted ETag")
 		st, err := store.StatObject(ctx, rec, key)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(st.Exists).To(BeFalse(), "deleted")
 		mustPut(ctx, store, rec, "k", "v")
-		Expect(store.DeleteObject(ctx, rec, key, op.DeleteParams{IfMatch: "*"})).To(Succeed(), "any object")
+		Expect(store.DeleteObject(ctx, rec, key, op.DeleteParams{IfMatch: "*"})).Error().To(Succeed(), "any object")
 	})
 	It("refuses a delete whose time or size conditions fail, comparing times in whole seconds", func(ctx SpecContext) {
 		clk.t = start.Add(500 * time.Millisecond)
@@ -237,11 +237,21 @@ var _ = Describe("objects", func() {
 			{IfMatchSize: &wrong},
 			{IfMatchLastModified: start.Add(time.Second)},
 		} {
-			Expect(store.DeleteObject(ctx, rec, key, p)).To(MatchError(op.ErrPreconditionFailed), "%+v", p)
+			Expect(store.DeleteObject(ctx, rec, key, p)).Error().To(MatchError(op.ErrPreconditionFailed), "%+v", p)
 		}
 		Expect(store.DeleteObject(ctx, rec, key, op.DeleteParams{
 			UnmodifiedSince: start, IfMatchSize: &size, IfMatchLastModified: start.Add(900 * time.Millisecond),
-		})).To(Succeed(), "the mtime's fraction is dropped on both sides")
+		})).Error().To(Succeed(), "the mtime's fraction is dropped on both sides")
+	})
+	It("answers NotImplemented on a versioned bucket, keeping no versions, and for an expected state", func(ctx SpecContext) {
+		mustPut(ctx, store, rec, "k", "v")
+		versioned := *rec
+		versioned.Info.Flags |= meta.BucketVersioned
+		Expect(store.DeleteObject(ctx, &versioned, key, op.DeleteParams{})).Error().To(MatchError(op.ErrNotImplemented), "BUCKET_VERSIONED")
+		Expect(store.DeleteObject(ctx, rec, key, op.DeleteParams{Expect: &op.ObjectState{}})).Error().To(MatchError(op.ErrNotImplemented), "Expect")
+		st, err := store.StatObject(ctx, rec, key)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.Exists).To(BeTrue(), "k after both refusals")
 	})
 	It("takes the null instance for the plain object", func(ctx SpecContext) {
 		mustPut(ctx, store, rec, "k", "v")
@@ -304,7 +314,7 @@ var _ = Describe("objects", func() {
 			Expect(readCopy(ctx, store, dst).WriteTag).To(MatchRegexp(`^_[A-Za-z0-9_-]{31}$`))
 		})
 		It("reports a missing source as NoSuchKey", func(ctx SpecContext) {
-			Expect(store.DeleteObject(ctx, rec, key, op.DeleteParams{})).To(Succeed())
+			Expect(store.DeleteObject(ctx, rec, key, op.DeleteParams{})).Error().To(Succeed())
 			_, err := store.CopyObject(ctx, src, dst, meta.ObjKey{Name: "copy"}, op.CopyParams{})
 			Expect(err).To(MatchError(op.ErrNoSuchKey))
 		})

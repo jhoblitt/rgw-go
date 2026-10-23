@@ -28,7 +28,7 @@ type FakeObjectStore struct {
 		result1 *op.PutResult
 		result2 error
 	}
-	DeleteObjectStub        func(context.Context, *op.BucketRecord, meta.ObjKey, op.DeleteParams) error
+	DeleteObjectStub        func(context.Context, *op.BucketRecord, meta.ObjKey, op.DeleteParams) (*op.DeleteObjectResult, error)
 	deleteObjectMutex       sync.RWMutex
 	deleteObjectArgsForCall []struct {
 		arg1 context.Context
@@ -37,10 +37,12 @@ type FakeObjectStore struct {
 		arg4 op.DeleteParams
 	}
 	deleteObjectReturns struct {
-		result1 error
+		result1 *op.DeleteObjectResult
+		result2 error
 	}
 	deleteObjectReturnsOnCall map[int]struct {
-		result1 error
+		result1 *op.DeleteObjectResult
+		result2 error
 	}
 	PrefetchObjectStub        func(context.Context, *op.BucketRecord, meta.ObjKey) (*op.ObjectState, error)
 	prefetchObjectMutex       sync.RWMutex
@@ -189,7 +191,7 @@ func (fake *FakeObjectStore) CopyObjectReturnsOnCall(i int, result1 *op.PutResul
 	}{result1, result2}
 }
 
-func (fake *FakeObjectStore) DeleteObject(arg1 context.Context, arg2 *op.BucketRecord, arg3 meta.ObjKey, arg4 op.DeleteParams) error {
+func (fake *FakeObjectStore) DeleteObject(arg1 context.Context, arg2 *op.BucketRecord, arg3 meta.ObjKey, arg4 op.DeleteParams) (*op.DeleteObjectResult, error) {
 	fake.deleteObjectMutex.Lock()
 	ret, specificReturn := fake.deleteObjectReturnsOnCall[len(fake.deleteObjectArgsForCall)]
 	fake.deleteObjectArgsForCall = append(fake.deleteObjectArgsForCall, struct {
@@ -206,9 +208,9 @@ func (fake *FakeObjectStore) DeleteObject(arg1 context.Context, arg2 *op.BucketR
 		return stub(arg1, arg2, arg3, arg4)
 	}
 	if specificReturn {
-		return ret.result1
+		return ret.result1, ret.result2
 	}
-	return fakeReturns.result1
+	return fakeReturns.result1, fakeReturns.result2
 }
 
 func (fake *FakeObjectStore) DeleteObjectCallCount() int {
@@ -217,7 +219,7 @@ func (fake *FakeObjectStore) DeleteObjectCallCount() int {
 	return len(fake.deleteObjectArgsForCall)
 }
 
-func (fake *FakeObjectStore) DeleteObjectCalls(stub func(context.Context, *op.BucketRecord, meta.ObjKey, op.DeleteParams) error) {
+func (fake *FakeObjectStore) DeleteObjectCalls(stub func(context.Context, *op.BucketRecord, meta.ObjKey, op.DeleteParams) (*op.DeleteObjectResult, error)) {
 	fake.deleteObjectMutex.Lock()
 	defer fake.deleteObjectMutex.Unlock()
 	fake.DeleteObjectStub = stub
@@ -230,27 +232,30 @@ func (fake *FakeObjectStore) DeleteObjectArgsForCall(i int) (context.Context, *o
 	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4
 }
 
-func (fake *FakeObjectStore) DeleteObjectReturns(result1 error) {
+func (fake *FakeObjectStore) DeleteObjectReturns(result1 *op.DeleteObjectResult, result2 error) {
 	fake.deleteObjectMutex.Lock()
 	defer fake.deleteObjectMutex.Unlock()
 	fake.DeleteObjectStub = nil
 	fake.deleteObjectReturns = struct {
-		result1 error
-	}{result1}
+		result1 *op.DeleteObjectResult
+		result2 error
+	}{result1, result2}
 }
 
-func (fake *FakeObjectStore) DeleteObjectReturnsOnCall(i int, result1 error) {
+func (fake *FakeObjectStore) DeleteObjectReturnsOnCall(i int, result1 *op.DeleteObjectResult, result2 error) {
 	fake.deleteObjectMutex.Lock()
 	defer fake.deleteObjectMutex.Unlock()
 	fake.DeleteObjectStub = nil
 	if fake.deleteObjectReturnsOnCall == nil {
 		fake.deleteObjectReturnsOnCall = make(map[int]struct {
-			result1 error
+			result1 *op.DeleteObjectResult
+			result2 error
 		})
 	}
 	fake.deleteObjectReturnsOnCall[i] = struct {
-		result1 error
-	}{result1}
+		result1 *op.DeleteObjectResult
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *FakeObjectStore) PrefetchObject(arg1 context.Context, arg2 *op.BucketRecord, arg3 meta.ObjKey) (*op.ObjectState, error) {
