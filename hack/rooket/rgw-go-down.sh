@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Stops the rgw-go rgw-go-up.sh started against one release's cluster: TERM,
 # which drains its requests as radosgw's handler does, then up to 30 s for it
-# to exit. It removes the pid, endpoint and metrics files and keeps the log,
-# the keyring, the cephx entity and the config options, which the next
-# rgw-go-up.sh reuses.
+# to exit. It removes the pid, serve flags, endpoint and metrics files and
+# keeps the log, the keyring, the cephx entity and the config options, which
+# the next rgw-go-up.sh reuses.
 #
 # Usage: rgw-go-down.sh squid|tentacle
 set -euo pipefail
@@ -17,7 +17,7 @@ use_release "${1:-}"
 readonly pidfile=${out}/rgw-go.pid log=${out}/rgw-go.log
 
 forget() {
-	rm -f "${pidfile}" "${out}/rgw-go.endpoint" "${out}/rgw-go.metrics"
+	rm -f "${pidfile}" "${out}/rgw-go.endpoint" "${out}/rgw-go.metrics" "${out}/rgw-go.flags"
 }
 
 if [[ ! -f "${pidfile}" ]]; then

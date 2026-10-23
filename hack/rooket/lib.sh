@@ -13,9 +13,27 @@ readonly rooket=${ROOKET:-rooket}
 readonly usage_options=(rgw_enable_usage_log=true rgw_usage_log_tick_interval=1 rgw_usage_log_flush_threshold=1)
 # What both gateways run with when they are compared, as option=value: no
 # background worker beside the requests, no local read cache between the
-# gateway and RADOS, and the usage options.
+# gateway and RADOS, the usage options, and a lifecycle day of 10 s, the day
+# s3-tests' lifecycle tests wait on, which only a worker an LC mode runs uses
+# (README.md, "Lifecycle runs").
 readonly parity_options=(rgw_dynamic_resharding=false rgw_enable_gc_threads=false rgw_enable_lc_threads=false
-	rgw_run_sync_thread=false rgw_d3n_l1_local_datacache_enabled=false "${usage_options[@]}")
+	rgw_run_sync_thread=false rgw_d3n_l1_local_datacache_enabled=false "${usage_options[@]}" rgw_lc_debug_interval=10)
+
+# entity_options prints, one a line, the parity options rgw-go-up.sh sets on
+# the entity of the gateway $1, rgw-go or radosgw. rgw_enable_lc_threads is
+# the LC mode's (README.md, "Lifecycle runs"): rgw-go's is $2, true or false,
+# and radosgw's is left to the object store's rgwConfig, which make lc-mode
+# changes and Rook writes at each reconcile, so that a mode holds.
+entity_options() {
+	local kv
+	for kv in "${parity_options[@]}"; do
+		case "$1/${kv}" in
+		rgw-go/rgw_enable_lc_threads=*) echo "rgw_enable_lc_threads=$2" ;;
+		radosgw/rgw_enable_lc_threads=*) ;;
+		*) echo "${kv}" ;;
+		esac
+	done
+}
 
 die() {
 	echo "${script}: $*" >&2

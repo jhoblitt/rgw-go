@@ -181,6 +181,8 @@ port=${BASH_REMATCH[2]}
 # test_list_buckets_anonymous.
 curl -sS --max-time 10 -o /dev/null "${endpoint}/" || die "the host cannot reach the ${gateway} at ${endpoint}"
 api_name=$(admin zonegroup get | jq -r '.api_name // empty')
+# make populate adds these storage classes to the zone; s3-tests adds STANDARD.
+storage_classes=$("${s3tests}" classes "${s3tests_flags[@]}" --release "")
 
 # The fixture users' keys are fixed, so every run writes the same conf.
 readonly main_id=s3tests-main main_key=S3MAIN000000000000AK
@@ -246,6 +248,7 @@ email = ${main_id}@rgw-go.test
 api_name = ${api_name}
 access_key = ${main_key}
 secret_key = ${main_secret}
+storage_classes = ${storage_classes}
 
 [s3 alt]
 display_name = ${alt_id}

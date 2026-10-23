@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Fails when a release's chart values start the radosgw under other options
-# than lib.sh's parity_options, which rgw-go-up.sh sets for both gateways: the
-# rgwConfig of the values' object store must hold exactly those options, with
-# those values.
+# than lib.sh's parity_options, which rgw-go-up.sh sets for both gateways but
+# for radosgw's rgw_enable_lc_threads, which the LC mode holds in the object
+# store's rgwConfig: the rgwConfig of the values' object store must hold
+# exactly those options, with those values.
 #
 # Usage: parity-options-check.sh
 set -euo pipefail

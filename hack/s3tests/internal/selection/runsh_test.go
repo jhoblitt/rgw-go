@@ -19,7 +19,7 @@ const repoRoot = "../../../.."
 
 // moduleSources are what go build ./hack/s3tests reads, from the
 // repository's root.
-var moduleSources = []string{"go.mod", "go.sum", "hack/s3tests/main.go", "hack/s3tests/internal", "internal"}
+var moduleSources = []string{"go.mod", "go.sum", "hack/s3tests/main.go", "hack/s3tests/internal", "hack/internal", "internal"}
 
 // runShTree copies the repository's run.sh, the lib.sh it sources and its
 // PIN into a tree of their own laid out as the repository is, with run.sh's

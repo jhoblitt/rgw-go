@@ -23,7 +23,9 @@ cephObjectStores:
         # radosgw's deployment, Rook writes these to the radosgw's config
         # entity in place of the keys it generates, rgw_run_sync_thread=true
         # among them, so the radosgw starts under them and a reconcile cannot
-        # reset one.
+        # reset one. make lc-mode sets rgw_enable_lc_threads in the running
+        # object store's copy, the one way an LC mode holds (README.md,
+        # "Lifecycle runs").
         rgwConfig:
           rgw_dynamic_resharding: "false"
           rgw_enable_gc_threads: "false"
@@ -33,6 +35,7 @@ cephObjectStores:
           rgw_enable_usage_log: "true"
           rgw_usage_log_tick_interval: "1"
           rgw_usage_log_flush_threshold: "1"
+          rgw_lc_debug_interval: "10"
         # Rook passes the radosgw --rgw-frontends="beast port=80" and then
         # these flags, so this frontend is the one its argument parsing keeps
         # (rook pkg/operator/ceph/object/spec.go). It replaces Rook's whole

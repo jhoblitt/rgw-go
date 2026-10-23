@@ -208,7 +208,10 @@ type userKey struct {
 
 // parityCheck fails unless entity holds every parity option: show reads what
 // a running radosgw uses, get what the monitors give a client that registers
-// no daemon with the manager, as rgw-go does.
+// no daemon with the manager, as rgw-go does. Its message names what sets
+// the option: rgw-go-up.sh, but for radosgw's rgw_enable_lc_threads, which
+// the LC mode holds in the object store's rgwConfig and make lc-mode LC=off
+// restores.
 func (r *Runner) parityCheck(ctx context.Context, st *state, entity, mode string) error {
 	for _, o := range st.parity {
 		out, err := st.cl.Ceph(ctx, "config", mode, entity, o.name)
@@ -216,8 +219,11 @@ func (r *Runner) parityCheck(ctx context.Context, st *state, entity, mode string
 			return fmt.Errorf("ceph config %s %s %s failed: %w", mode, entity, o.name, err)
 		}
 		if have := strings.TrimRight(string(out), "\n"); have != o.value {
-			return fmt.Errorf("%s holds %s=%s, not the parity setting %s: run make rgw-go-up RELEASE=%s first",
-				entity, o.name, have, o.value, st.cfg.Release)
+			fix := "make rgw-go-up RELEASE=" + st.cfg.Release
+			if entity == st.radosgwEntity && o.name == "rgw_enable_lc_threads" {
+				fix = "make lc-mode LC=off RELEASE=" + st.cfg.Release
+			}
+			return fmt.Errorf("%s holds %s=%s, not the parity setting %s: run %s first", entity, o.name, have, o.value, fix)
 		}
 	}
 	return nil
@@ -226,7 +232,8 @@ func (r *Runner) parityCheck(ctx context.Context, st *state, entity, mode string
 // parityOptions are the options both gateways run with when they are
 // compared, in the order the release's chart values give them: the rgwConfig
 // of the values' object store, which make parity-options-check holds equal
-// to hack/rooket/lib.sh's parity_options, the one list rgw-go-up.sh sets.
+// to hack/rooket/lib.sh's parity_options, the list rgw-go-up.sh sets on both
+// entities but for radosgw's rgw_enable_lc_threads, which the LC mode holds.
 func parityOptions(repo, release string) ([]option, error) {
 	path := filepath.Join(repo, "hack", "rooket", release, "values", "rook-ceph-cluster.yaml")
 	data, err := os.ReadFile(path) //nolint:gosec // the path is the release's own chart values

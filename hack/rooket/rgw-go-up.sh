@@ -3,12 +3,12 @@
 # cluster, beside the cluster's radosgw and on the same site, with radosgw's
 # command-line options after rgw-go's own. It runs as its own cephx entity,
 # client.rgw.rgw-go, with radosgw's caps under Rook, and both gateways' config
-# entities get the parity options first. radosgw reads most of them only when
-# it starts, so its deployment restarts when one changed after the running
-# radosgw started. A running rgw-go is stopped first, so this also restarts
-# one. The arguments after the release go to rgw-go serve, after its default
-# --metrics-addr; the endpoint, pid, log and metrics address land in
-# hack/rooket/out/<release>/.
+# entities get the parity options first, but for the LC mode's option, below.
+# radosgw reads most of them only when it starts, so its deployment restarts
+# when one changed after the running radosgw started. A running rgw-go is
+# stopped first, so this also restarts one. The arguments after the release
+# go to rgw-go serve, after its default --metrics-addr; the endpoint, pid,
+# serve flags, log and metrics address land in hack/rooket/out/<release>/.
 #
 # Usage: rgw-go-up.sh squid|tentacle [rgw-go serve flags...]
 #
@@ -16,6 +16,9 @@
 #                        (beast endpoint=); 7481 for squid, 7482 for tentacle
 #   RGW_GO_METRICS_PORT  the port of its default --metrics-addr on 127.0.0.1;
 #                        9481 for squid, 9482 for tentacle
+#   RGW_GO_LC_THREADS    rgw-go's rgw_enable_lc_threads, true or false; false,
+#                        the parity options' value, unless make lc-mode runs
+#                        rgw-go's lifecycle worker
 #   GO_TAGS              the build tags (ceph_preview); CGO_* come from the environment
 set -euo pipefail
 
@@ -37,10 +40,13 @@ esac
 readonly port=${RGW_GO_PORT:-${default_port}} metrics_port=${RGW_GO_METRICS_PORT:-${default_metrics_port}}
 [[ "${port}" =~ ^[0-9]+$ && "${metrics_port}" =~ ^[0-9]+$ ]] ||
 	die "RGW_GO_PORT and RGW_GO_METRICS_PORT are port numbers, not '${port}' and '${metrics_port}'"
+readonly lc_threads=${RGW_GO_LC_THREADS:-false}
+[[ "${lc_threads}" == true || "${lc_threads}" == false ]] ||
+	die "RGW_GO_LC_THREADS is true or false, not '${lc_threads}'"
 readonly endpoint=http://127.0.0.1:${port}
 readonly rgw_go_entity=client.rgw.rgw-go
 readonly conf=${out}/ceph.conf keyring=${out}/ceph.client.rgw.rgw-go.keyring
-readonly log=${out}/rgw-go.log pidfile=${out}/rgw-go.pid
+readonly log=${out}/rgw-go.log pidfile=${out}/rgw-go.pid flagsfile=${out}/rgw-go.flags
 [[ -f "${conf}" ]] || die "no ${conf}: run make cluster-up RELEASE=${release} first"
 
 if [[ -f "${pidfile}" ]]; then
@@ -64,11 +70,12 @@ key=$(ceph_cmd auth get-or-create "${rgw_go_entity}" mon 'allow rw' osd 'allow r
 (umask 077 && printf '%s\n' "${key}" >"${keyring}")
 chmod 600 "${keyring}"
 
-# converge ENTITY sets every parity option ENTITY's config section does not
-# already hold.
+# converge ENTITY OPTION=VALUE... sets each option ENTITY's config section
+# does not already hold.
 converge() {
 	local who=$1 kv
-	for kv in "${parity_options[@]}"; do
+	shift
+	for kv in "$@"; do
 		[[ "$(ceph_cmd config get "${who}" "${kv%%=*}")" != "${kv#*=}" ]] || continue
 		ceph_cmd config set "${who}" "${kv%%=*}" "${kv#*=}"
 		[[ "$(ceph_cmd config get "${who}" "${kv%%=*}")" == "${kv#*=}" ]] ||
@@ -76,12 +83,14 @@ converge() {
 	done
 }
 
-converge "${rgw_go_entity}"
+mapfile -t rgw_go_options < <(entity_options rgw-go "${lc_threads}")
+mapfile -t radosgw_options < <(entity_options radosgw)
+converge "${rgw_go_entity}" "${rgw_go_options[@]}"
 # The chart values' rgwConfig has Rook write the same options for its radosgw
 # at each reconcile, in place of its own rgw_run_sync_thread=true (rook
 # pkg/operator/ceph/object/config.go), so this finds them set unless they were
 # changed by hand.
-converge "${radosgw_entity}"
+converge "${radosgw_entity}" "${radosgw_options[@]}"
 
 # The mons' config log entries and the service map's start_stamp are both
 # utime_t, which prints the daemon's local time with its %z offset
@@ -154,6 +163,9 @@ else
 fi
 
 rm -f "${out}/rgw-go.endpoint" "${out}/rgw-go.metrics"
+# make lc-mode restarts rgw-go with the serve flags it was started with,
+# which this records, one a line.
+if (($#)); then printf '%s\n' "$@" >"${flagsfile}"; else : >"${flagsfile}"; fi
 RGW_GO_LOG_FORMAT=json nohup "${repo}/bin/rgw-go" serve "--metrics-addr=127.0.0.1:${metrics_port}" "$@" -- \
 	--id rgw.rgw-go --keyring "${keyring}" -c "${conf}" \
 	--rgw-realm="${realm}" --rgw-zonegroup="${zonegroup}" --rgw-zone="${zone}" \

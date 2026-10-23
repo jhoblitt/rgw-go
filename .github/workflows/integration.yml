@@ -58,8 +58,10 @@ jobs:
         run: make gate "RELEASE=${RELEASE}"
 
       # Before radosgw's suite too: rgw-go-up sets the parity options on
-      # radosgw's entity as well, and radosgw's baseline was recorded under
-      # them (make admin-record).
+      # radosgw's entity as well, but for rgw_enable_lc_threads, which the
+      # suite's make lc-mode LC=off sets through the object store's
+      # rgwConfig, and radosgw's baseline was recorded under them (make
+      # admin-record).
       - name: Start rgw-go
         id: rgw-go
         if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
