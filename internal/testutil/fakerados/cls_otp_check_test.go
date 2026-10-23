@@ -14,6 +14,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/testutil/fakerados"
+	"github.com/jhoblitt/rgw-go/internal/testutil/otptest"
 )
 
 // rfcDevice holds RFC 6238 Appendix B's SHA-1 seed, the ASCII
@@ -51,6 +52,8 @@ func decodeStoredInstance(b []byte) storedInstance {
 func at(sec, nsec int64) time.Time { return time.Unix(sec, nsec).UTC() }
 
 var _ = Describe("OTPClassAt's check methods", func() {
+	BeforeEach(otptest.RedactDevices)
+
 	var (
 		c     *fakerados.Cluster
 		p     radosclient.Pool
