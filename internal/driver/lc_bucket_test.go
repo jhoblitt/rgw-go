@@ -67,6 +67,9 @@ var _ = Describe("the lifecycle bucket pass", func() {
 		s     *driver.Store
 		h     *driver.LCHarness
 		notes *lifecyclefakes.FakeNotifier
+		// ac, when a spec sets it before open, is the cluster s opens over,
+		// around c.
+		ac *aroundCluster
 	)
 	BeforeEach(func() {
 		c = newPutCluster()
@@ -75,6 +78,7 @@ var _ = Describe("the lifecycle bucket pass", func() {
 		})
 		clk = &specClock{t: time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)}
 		c.SetClock(clk.Now)
+		ac = nil
 	})
 	// open opens s over c with the specs' lifecycle day and one shard,
 	// overridden by kv, and a harness h whose notifier is notes.
@@ -82,8 +86,12 @@ var _ = Describe("the lifecycle bucket pass", func() {
 		GinkgoHelper()
 		opts := map[string]string{"rgw_lc_debug_interval": "10", "rgw_lc_max_objs": "1"}
 		maps.Copy(opts, kv)
+		var cl radosclient.Cluster = c
+		if ac != nil {
+			cl = ac
+		}
 		var err error
-		s, err = driver.Open(ctx, c, conf(opts), driver.Options{})
+		s, err = driver.Open(ctx, cl, conf(opts), driver.Options{})
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(s.Close)
 		driver.SetClock(s, clk.Now)
@@ -186,12 +194,108 @@ var _ = Describe("the lifecycle bucket pass", func() {
 		Expect([]any{after.Mtime, after.ETag}).To(Equal([]any{st.Mtime, st.ETag}))
 		Expect(after.Epoch).To(BeNumerically(">", st.Epoch))
 	}
+	// driftHead writes rec's head of name with no mtime, as radosgw's removal
+	// of an OLH head's pending attr does, so the OSD stamps it with the
+	// clock's time.
+	driftHead := func(ctx context.Context, rec *op.BucketRecord, name string) {
+		GinkgoHelper()
+		pool, err := c.Pool(ctx, testDataPool, "")
+		Expect(err).NotTo(HaveOccurred())
+		w := radosclient.NewWriteOp()
+		w.RmXattr(meta.AttrOLHPendingPrefix + "00000000000000000radosgwpending")
+		_, err = pool.Write(ctx, rec.Info.Bucket.Marker+"_"+name, w, radosclient.OpFlagNone)
+		Expect(err).NotTo(HaveOccurred())
+	}
 	// setFlags sets flags on the instance of the bucket name.
 	setFlags := func(ctx context.Context, name string, flags uint32) {
 		GinkgoHelper()
 		rec := reload(ctx, name)
 		rec.Info.Flags |= flags
 		Expect(s.PutBucketInfo(ctx, rec)).To(Succeed())
+	}
+	// clearFlags clears flags on the instance of the bucket name.
+	clearFlags := func(ctx context.Context, name string, flags uint32) {
+		GinkgoHelper()
+		rec := reload(ctx, name)
+		rec.Info.Flags &^= flags
+		Expect(s.PutBucketInfo(ctx, rec)).To(Succeed())
+	}
+	// written maps the ETag of each body putAs wrote to the body.
+	var written map[string]string
+	BeforeEach(func() { written = map[string]string{} })
+	// putAs is put of data under an ACL that owner owns, which the index
+	// entry names as the object's owner, as a new version under a fresh
+	// instance when rec's versioning is enabled, as S3's PutObject names it.
+	// It waits for the write's index completion, which a delete that converts
+	// the entry would otherwise race.
+	putAt := func(ctx context.Context, rec *op.BucketRecord, name, data string, owner meta.Owner, attrs map[string][]byte, mtime time.Time) {
+		GinkgoHelper()
+		a := map[string][]byte{meta.AttrACL: encode(acl.DefaultPolicy(owner, owner.String()))}
+		maps.Copy(a, attrs)
+		key := meta.ObjKey{Name: name}
+		if rec.Info.VersioningEnabled() {
+			key.Instance = meta.NewInstance()
+		}
+		_, err := s.PutObject(ctx, rec, key, strings.NewReader(data), op.PutParams{Attrs: a, Size: int64(len(data)), Mtime: mtime})
+		Expect(err).NotTo(HaveOccurred())
+		written[md5hex(data)] = data
+		settle(s)
+	}
+	putAs := func(ctx context.Context, rec *op.BucketRecord, name, data string, owner meta.Owner, attrs map[string][]byte) {
+		GinkgoHelper()
+		putAt(ctx, rec, name, data, owner, attrs, time.Time{})
+	}
+	putVersion := func(ctx context.Context, rec *op.BucketRecord, name, data string) {
+		GinkgoHelper()
+		putAs(ctx, rec, name, data, attrsOwner, nil)
+	}
+	// listVersions is name's versions in rec, newest first, as an ordered
+	// listing with versions gives them.
+	listVersions := func(ctx context.Context, rec *op.BucketRecord, name string) []op.ObjectEntry {
+		GinkgoHelper()
+		settle(s)
+		res, err := s.ListObjects(ctx, rec, op.ListObjectsParams{Prefix: name, MaxKeys: 2000, ListVersions: true})
+		Expect(err).NotTo(HaveOccurred())
+		return slices.DeleteFunc(res.Entries, func(e op.ObjectEntry) bool { return e.Key.Name != name })
+	}
+	// versions is listVersions as text: each version's body, or DM for a
+	// delete marker, then "@null" for the null version and "*" for the
+	// current one.
+	versions := func(ctx context.Context, rec *op.BucketRecord, name string) []string {
+		GinkgoHelper()
+		var out []string
+		for _, e := range listVersions(ctx, rec, name) {
+			v := written[e.ETag]
+			if e.DeleteMarker {
+				v = "DM"
+			}
+			if e.Key.Instance == "" {
+				v += "@null"
+			}
+			if e.IsLatest {
+				v += "*"
+			}
+			out = append(out, v)
+		}
+		return out
+	}
+	// versionOf is the listed version of name that holds data, or the delete
+	// marker for "DM".
+	versionOf := func(ctx context.Context, rec *op.BucketRecord, name, data string) op.ObjectEntry {
+		GinkgoHelper()
+		for _, e := range listVersions(ctx, rec, name) {
+			if e.DeleteMarker && data == "DM" || !e.DeleteMarker && e.ETag == md5hex(data) {
+				return e
+			}
+		}
+		Fail(fmt.Sprintf("no version of %q holds %q", name, data))
+		return op.ObjectEntry{}
+	}
+	del := func(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey) *op.DeleteObjectResult {
+		GinkgoHelper()
+		res, err := s.DeleteObject(ctx, rec, key, op.DeleteParams{MarkerOwner: attrsOwner})
+		Expect(err).NotTo(HaveOccurred())
+		return res
 	}
 
 	Describe("on a bucket never versioned", func() {
@@ -337,12 +441,14 @@ var _ = Describe("the lifecycle bucket pass", func() {
 
 		It("fails a bucket refused since its claim, before it lists anything", func(ctx SpecContext) {
 			open(ctx, nil)
-			rec, key := create(ctx, "plain", meta.BucketVersioned, lcAttr(expireRule("expire", "")))
+			rule := expireRule("transition", "")
+			rule.Transitions = map[string]lifecycle.Transition{"COLD": {Days: "30", StorageClass: "COLD"}}
+			rec, key := create(ctx, "plain", 0, lcAttr(rule))
 			put(ctx, rec, "k", "v", nil)
 			clk.Advance(lcDay)
 			settle(s)
 			c.ResetCounters()
-			Expect(h.RunForTest(ctx, key)).To(MatchError(ContainSubstring("refused since its claim: ever versioned")))
+			Expect(h.RunForTest(ctx, key)).To(MatchError(ContainSubstring(`refused since its claim: rule transitions objects "transition"`)))
 			Expect(c.Reads(rookIndexPool, "", indexShardOID(rec, "k"))).To(BeZero(), "nothing listed")
 			Expect(stat(ctx, rec, "k").Exists).To(BeTrue())
 		})
@@ -793,11 +899,480 @@ var _ = Describe("the lifecycle bucket pass", func() {
 		})
 	})
 
+	Describe("on a bucket whose versioning is enabled", func() {
+		var (
+			rec *op.BucketRecord
+			key string
+		)
+		BeforeEach(func(ctx SpecContext) {
+			open(ctx, map[string]string{"rgw_lc_max_wp_worker": "1"})
+			rec, key = create(ctx, "versioned", meta.BucketVersioned, lcAttr(expireRule("expire", "")))
+			Expect(rec.Info.VersioningEnabled()).To(BeTrue())
+		})
+
+		It("writes a delete marker over an expired current version, owned by the version's owner, keeps the version noncurrent and notifies", func(ctx SpecContext) {
+			bob := meta.UserOwner(meta.UserID{ID: "bob"})
+			putAs(ctx, rec, "k", "v1", bob, nil)
+			v1 := versionOf(ctx, rec, "k", "v1")
+			clk.Advance(lcDay)
+			putVersion(ctx, rec, "young", "y1")
+			pass(ctx)
+			Expect(versions(ctx, rec, "k")).To(Equal([]string{"DM*", "v1"}))
+			Expect(versionOf(ctx, rec, "k", "DM").Owner).To(Equal(bob), "remove_expired_obj's obj_owner, the entry's owner")
+			Expect(versions(ctx, rec, "young")).To(Equal([]string{"y1*"}))
+			Expect(lcEntries(c)).To(HaveKeyWithValue(key, completed(key)))
+			Expect(notes.NotifyCallCount()).To(Equal(1))
+			_, note := notes.NotifyArgsForCall(0)
+			Expect(note).To(Equal(lifecycle.Notification{
+				Bucket: rec.Info.Bucket, Key: meta.ObjKey{Name: "k"}, ETag: md5hex("v1"), Size: 2, VersionID: v1.Key.Instance,
+				Events: []lifecycle.Event{lifecycle.EventExpirationCurrent, lifecycle.EventExpirationDelete},
+			}))
+		})
+
+		It("writes a delete marker over an object put before versioning was enabled, which stays as the noncurrent null version", func(ctx SpecContext) {
+			plain, _ := create(ctx, "plain", 0, lcAttr(expireRule("expire", "")))
+			putVersion(ctx, plain, "k", "old")
+			setFlags(ctx, "plain", meta.BucketVersioned)
+			clk.Advance(lcDay)
+			pass(ctx)
+			Expect(versions(ctx, reload(ctx, "plain"), "k")).To(Equal([]string{"DM*", "old@null"}))
+		})
+
+		It("writes a delete marker over a null current version, though a radosgw gateway's removal of a pending attr moved its head's mtime", func(ctx SpecContext) {
+			putVersion(ctx, rec, "k", "v1")
+			setFlags(ctx, "versioned", meta.BucketVersionsSuspended)
+			putVersion(ctx, reload(ctx, "versioned"), "k", "null")
+			clearFlags(ctx, "versioned", meta.BucketVersionsSuspended)
+			rec = reload(ctx, "versioned")
+			clk.Advance(time.Second)
+			driftHead(ctx, rec, "k")
+			Expect(versions(ctx, rec, "k")).To(Equal([]string{"null@null*", "v1"}))
+			Expect(stat(ctx, rec, "k").Mtime).NotTo(BeTemporally("==", versionOf(ctx, rec, "k", "null").Mtime),
+				"the head's mtime, which the removal moved")
+			clk.Advance(lcDay)
+			pass(ctx)
+			Expect(versions(ctx, rec, "k")).To(Equal([]string{"DM*", "null@null", "v1"}))
+		})
+
+		It("writes one delete marker per expired key over two passes", func(ctx SpecContext) {
+			putVersion(ctx, rec, "a", "a1")
+			putVersion(ctx, rec, "b", "b1")
+			clk.Advance(lcDay)
+			pass(ctx)
+			clk.Advance(lcDay)
+			pass(ctx)
+			Expect(versions(ctx, rec, "a")).To(Equal([]string{"DM*", "a1"}), "a current delete marker an older version follows is kept")
+			Expect(versions(ctx, rec, "b")).To(Equal([]string{"DM*", "b1"}))
+			Expect(notes.NotifyCallCount()).To(Equal(2))
+		})
+
+		DescribeTable("writes no delete marker over a version put after the listing, where radosgw's marker ignores unmod_since",
+			func(ctx SpecContext, at driver.LCStep, data string, sameMtime bool) {
+				v1At := clk.Now()
+				putVersion(ctx, rec, "k", "v1")
+				clk.Advance(lcDay)
+				var mtime time.Time
+				if sameMtime {
+					mtime = v1At
+				}
+				var once sync.Once
+				h.SetHook(func(ctx context.Context, step driver.LCStep, k meta.ObjKey) {
+					defer GinkgoRecover()
+					if step == at {
+						once.Do(func() { putAt(ctx, rec, k.Name, data, attrsOwner, nil, mtime) })
+					}
+				})
+				pass(ctx)
+				Expect(versions(ctx, rec, "k")).To(Equal([]string{data + "*", "v1"}))
+				Expect(notes.NotifyCallCount()).To(BeZero())
+			},
+			Entry("before the read again", driver.LCStepDecided, "v2", false),
+			Entry("before the read again, with the same body and mtime, which the read again tells by its instance", driver.LCStepDecided, "v1", true),
+			Entry("after the read again, at the same mtime, which the marker's If-Match refuses", driver.LCStepReread, "v2", true),
+			Entry("after the read again, with the same body, which the marker's If-Match-Last-Modified refuses", driver.LCStepReread, "v1", false),
+		)
+
+		DescribeTable("writes no delete marker over a null current version written over after the read again, which the marker's Expect refuses",
+			func(ctx SpecContext, write func(ctx context.Context, rec *op.BucketRecord), want []string) {
+				plain, _ := create(ctx, "plain", 0, lcAttr(expireRule("expire", "")))
+				putVersion(ctx, plain, "k", "old")
+				setFlags(ctx, "plain", meta.BucketVersioned)
+				plain = reload(ctx, "plain")
+				clk.Advance(lcDay)
+				var once sync.Once
+				h.SetHook(func(ctx context.Context, step driver.LCStep, _ meta.ObjKey) {
+					defer GinkgoRecover()
+					if step == driver.LCStepReread {
+						once.Do(func() { write(ctx, plain) })
+					}
+				})
+				pass(ctx)
+				Expect(versions(ctx, plain, "k")).To(Equal(want))
+				Expect(notes.NotifyCallCount()).To(BeZero())
+			},
+			Entry("a PutObject of the same body, a version under a fresh instance, which If-Match passes", func(ctx context.Context, rec *op.BucketRecord) {
+				putVersion(ctx, rec, "k", "old")
+			}, []string{"old*", "old@null"}),
+			Entry("an attr-only write, which If-Match passes too", func(ctx context.Context, rec *op.BucketRecord) {
+				Expect(s.SetObjectAttrs(ctx, stat(ctx, rec, "k"), map[string][]byte{meta.AttrMetaPrefix + "note": []byte("n\x00")}, nil)).To(Succeed())
+				settle(s)
+			}, []string{"old@null*"}),
+		)
+
+		DescribeTable("removes a delete marker no version follows",
+			func(ctx SpecContext, rule lifecycle.Rule) {
+				rec, _ = create(ctx, "markers", meta.BucketVersioned, lcAttr(rule))
+				putVersion(ctx, rec, "k", "v1")
+				v1 := versionOf(ctx, rec, "k", "v1")
+				m := del(ctx, rec, meta.ObjKey{Name: "k"})
+				del(ctx, rec, v1.Key)
+				Expect(versions(ctx, rec, "k")).To(Equal([]string{"DM*"}))
+				clk.Advance(lcDay)
+				pass(ctx)
+				Expect(versions(ctx, rec, "k")).To(BeEmpty())
+				Expect(notes.NotifyCallCount()).To(Equal(1))
+				_, note := notes.NotifyArgsForCall(0)
+				Expect(note).To(Equal(lifecycle.Notification{
+					Bucket: rec.Info.Bucket, Key: meta.ObjKey{Name: "k", Instance: m.VersionID}, VersionID: m.VersionID,
+					Events: []lifecycle.Event{"s3:ObjectLifecycle:Expiration:DeleteMarker", "s3:LifecycleExpiration:DeleteMarkerCreated"},
+				}))
+			},
+			Entry("by the current expiration", expireRule("expire", "")),
+			Entry("by ExpiredObjectDeleteMarker", lifecycle.Rule{ID: "markers", Status: "Enabled", DMExpiration: true}),
+		)
+
+		It("keeps a current delete marker an older version follows, by ExpiredObjectDeleteMarker", func(ctx SpecContext) {
+			rec, _ = create(ctx, "markers", meta.BucketVersioned, lcAttr(lifecycle.Rule{ID: "markers", Status: "Enabled", DMExpiration: true}))
+			putVersion(ctx, rec, "k", "v1")
+			del(ctx, rec, meta.ObjKey{Name: "k"})
+			clk.Advance(lcDay)
+			pass(ctx)
+			Expect(versions(ctx, rec, "k")).To(Equal([]string{"DM*", "v1"}))
+		})
+
+		It("keeps the delete marker a DELETE writes during the pass over the object that ended a page, which the next page lists ahead of the object", func(ctx SpecContext) {
+			rec, key = create(ctx, "converted", 0, lcAttr(lifecycle.Rule{ID: "markers", Status: "Enabled", DMExpiration: true}))
+			for i := range 1001 {
+				putVersion(ctx, rec, fmt.Sprintf("k%04d", i), "old")
+			}
+			setFlags(ctx, "converted", meta.BucketVersioned)
+			rec = reload(ctx, "converted")
+			// The walk's first page, as it lists it: the object it ends on is
+			// still plain, written before versioning was enabled.
+			first, err := s.ListObjects(ctx, rec, op.ListObjectsParams{AllowUnordered: true, ListVersions: true, MaxKeys: 1000})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(first.Truncated).To(BeTrue())
+			end := first.Entries[len(first.Entries)-1].Key.Name
+			clk.Advance(lcDay)
+			var once sync.Once
+			h.SetHook(func(ctx context.Context, step driver.LCStep, k meta.ObjKey) {
+				defer GinkgoRecover()
+				if step == driver.LCStepListed && k.Name == end {
+					once.Do(func() { del(ctx, rec, meta.ObjKey{Name: end}) })
+				}
+			})
+			pass(ctx)
+			Expect(versions(ctx, rec, end)).To(Equal([]string{"DM*", "old@null"}),
+				"the marker, whose next entry is the object's own null version, stays, and the object stays deleted")
+			Expect(notes.NotifyCallCount()).To(BeZero())
+			Expect(lcEntries(c)).To(HaveKeyWithValue(key, completed(key)))
+		})
+
+		It("fails, writing no marker, once the bucket's versioning is suspended during the pass", func(ctx SpecContext) {
+			putVersion(ctx, rec, "k", "v1")
+			clk.Advance(lcDay)
+			var once sync.Once
+			h.SetHook(func(ctx context.Context, step driver.LCStep, _ meta.ObjKey) {
+				defer GinkgoRecover()
+				if step == driver.LCStepReread {
+					once.Do(func() { setFlags(ctx, "versioned", meta.BucketVersionsSuspended) })
+				}
+			})
+			logs := &syncBuffer{}
+			DeferCleanup(driver.CaptureLog(logs))
+			pass(ctx)
+			Expect(versions(ctx, rec, "k")).To(Equal([]string{"v1*"}), "neither a marker nor the null marker, which the decision did not guard")
+			Expect(logs.String()).To(ContainSubstring("the versioning of " + key + " is no longer the pass's"))
+			Expect(lcEntries(c)).To(HaveKeyWithValue(key, failed(key)))
+		})
+
+		It("hands the null version out once though radosgw's listing repair copied its entry to the name's plain key", func(ctx SpecContext) {
+			setFlags(ctx, "versioned", meta.BucketVersionsSuspended)
+			putVersion(ctx, reload(ctx, "versioned"), "k", "null")
+			clearFlags(ctx, "versioned", meta.BucketVersionsSuspended)
+			rec = reload(ctx, "versioned")
+			putVersion(ctx, rec, "k", "v1")
+			shard := indexShardOID(rec, "k")
+			null, ok := c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k"})
+			Expect(ok).To(BeTrue(), "the null version's instance entry")
+			c.Object(rookIndexPool, "", shard).Omap["k"] = encode(null)
+			listed := versionIDs(listVersions(ctx, rec, "k"))
+			clk.Advance(lcDay)
+			var mu sync.Mutex
+			var handed []string
+			h.SetHook(func(_ context.Context, step driver.LCStep, k meta.ObjKey) {
+				if step == driver.LCStepListed {
+					mu.Lock()
+					defer mu.Unlock()
+					handed = append(handed, k.Name+"@"+orNull(k.Instance))
+				}
+			})
+			v1 := "k@" + versionOf(ctx, rec, "k", "v1").Key.Instance
+			Expect(listed).To(Equal([]string{"k@null", v1, "k@null"}), "the copy at the plain key lists first, at the null version's versioned_epoch")
+			pass(ctx)
+			Expect(handed).To(Equal([]string{v1, "k@null"}), "each version once, at its own place: the copy, out of key order, passed over")
+		})
+
+		It("hands each version of a key out once when the null delete marker removes the null version that ends a page", func(ctx SpecContext) {
+			rec, key = create(ctx, "many", meta.BucketVersioned, lcAttr(expireRule("expire", "k")))
+			putVersion(ctx, rec, "k", "o1")
+			putVersion(ctx, rec, "k", "o2")
+			setFlags(ctx, "many", meta.BucketVersionsSuspended)
+			putVersion(ctx, reload(ctx, "many"), "k", "null")
+			clearFlags(ctx, "many", meta.BucketVersionsSuspended)
+			rec = reload(ctx, "many")
+			for i := range 999 {
+				putVersion(ctx, rec, "k", fmt.Sprintf("n%03d", i))
+			}
+			setFlags(ctx, "many", meta.BucketVersionsSuspended)
+			rec = reload(ctx, "many")
+			listed := versionIDs(listVersions(ctx, rec, "k"))
+			Expect(listed).To(HaveLen(1002))
+			Expect(listed[999]).To(Equal("k@null"), "the null version ends the first page")
+			clk.Advance(lcDay)
+			var mu sync.Mutex
+			var handed []string
+			h.SetHook(func(_ context.Context, step driver.LCStep, k meta.ObjKey) {
+				if step == driver.LCStepListed {
+					mu.Lock()
+					defer mu.Unlock()
+					handed = append(handed, k.Name+"@"+orNull(k.Instance))
+				}
+			})
+			pass(ctx)
+			Expect(handed).To(Equal(listed), "every version once, in the listing's order")
+			Expect(versions(ctx, rec, "k")[:2]).To(Equal([]string{"DM@null*", "n998"}))
+			Expect(versions(ctx, rec, "k")).NotTo(ContainElement("null@null"), "the null version, replaced")
+			Expect(lcEntries(c)).To(HaveKeyWithValue(key, completed(key)))
+		})
+	})
+
+	Describe("on a bucket whose versioning is suspended", func() {
+		BeforeEach(func(ctx SpecContext) {
+			open(ctx, map[string]string{"rgw_lc_max_wp_worker": "1"})
+		})
+		// suspended is the bucket name with versioning enabled for its
+		// versions' bodies, then suspended for nulls, where "" is none.
+		suspended := func(ctx context.Context, name string, flags uint32, bodies ...string) *op.BucketRecord {
+			GinkgoHelper()
+			rec, _ := create(ctx, name, meta.BucketVersioned|flags, lcAttr(expireRule("expire", "")))
+			for _, b := range bodies {
+				putVersion(ctx, rec, "k", b)
+			}
+			setFlags(ctx, name, meta.BucketVersionsSuspended)
+			return reload(ctx, name)
+		}
+
+		DescribeTable("writes the null delete marker, which replaces the null version and keeps any other as noncurrent",
+			func(ctx SpecContext, bodies []string, null bool, want []string) {
+				rec := suspended(ctx, "suspended", 0, bodies...)
+				if null {
+					putVersion(ctx, rec, "k", "null")
+				}
+				clk.Advance(lcDay)
+				pass(ctx)
+				Expect(versions(ctx, rec, "k")).To(Equal(want))
+				Expect(notes.NotifyCallCount()).To(Equal(1))
+				_, note := notes.NotifyArgsForCall(0)
+				Expect(note.Events).To(Equal([]lifecycle.Event{lifecycle.EventExpirationCurrent, lifecycle.EventExpirationDelete}))
+			},
+			Entry("the null version current, put before any version", nil, true, []string{"DM@null*"}),
+			Entry("the null version current over a noncurrent version", []string{"v1"}, true, []string{"DM@null*", "v1"}),
+			Entry("a version current, no null version", []string{"v1"}, false, []string{"DM@null*", "v1"}),
+		)
+
+		It("replaces a noncurrent null version too, as the null delete marker does wherever the null version sits", func(ctx SpecContext) {
+			rec, _ := create(ctx, "suspended", 0, lcAttr(expireRule("expire", "")))
+			putVersion(ctx, rec, "k", "old")
+			setFlags(ctx, "suspended", meta.BucketVersioned)
+			putVersion(ctx, reload(ctx, "suspended"), "k", "v1")
+			setFlags(ctx, "suspended", meta.BucketVersionsSuspended)
+			rec = reload(ctx, "suspended")
+			Expect(versions(ctx, rec, "k")).To(Equal([]string{"v1*", "old@null"}))
+			clk.Advance(lcDay)
+			pass(ctx)
+			Expect(versions(ctx, rec, "k")).To(Equal([]string{"DM@null*", "v1"}))
+		})
+
+		It("writes the null delete marker over a null current version, though a radosgw gateway's removal of a pending attr moved its head's mtime", func(ctx SpecContext) {
+			rec := suspended(ctx, "suspended", 0, "v1")
+			putVersion(ctx, rec, "k", "null")
+			clk.Advance(time.Second)
+			driftHead(ctx, rec, "k")
+			Expect(versions(ctx, rec, "k")).To(Equal([]string{"null@null*", "v1"}))
+			Expect(stat(ctx, rec, "k").Mtime).NotTo(BeTemporally("==", versionOf(ctx, rec, "k", "null").Mtime),
+				"the head's mtime, which the removal moved")
+			clk.Advance(lcDay)
+			pass(ctx)
+			Expect(versions(ctx, rec, "k")).To(Equal([]string{"DM@null*", "v1"}))
+		})
+
+		It("removes a null delete marker that took a slow completion's pending op from the null entry it replaced, though its listing shows the OLH head's mtime", func(ctx SpecContext) {
+			ac = &aroundCluster{Cluster: c}
+			DeferCleanup(func() { ac.set(nil) })
+			open(ctx, map[string]string{"rgw_lc_max_wp_worker": "1"})
+			rec, _ := create(ctx, "markers", meta.BucketVersioned|meta.BucketVersionsSuspended,
+				lcAttr(lifecycle.Rule{ID: "markers", Status: "Enabled", DMExpiration: true}))
+			arrived, held := make(chan struct{}), make(chan struct{})
+			release := sync.OnceFunc(func() { close(held) })
+			DeferCleanup(release)
+			ac.set(onFirst("bucket_complete_op", func(send sendFunc) (uint64, error) {
+				close(arrived)
+				<-held
+				return send()
+			}))
+			put := make(chan struct{})
+			go func() {
+				defer GinkgoRecover()
+				defer close(put)
+				putVersion(ctx, rec, "k", "null")
+			}()
+			Eventually(arrived).WithTimeout(5 * time.Second).Should(BeClosed())
+			clk.Advance(10 * time.Second)
+			m := del(ctx, rec, meta.ObjKey{Name: "k"})
+			release()
+			Eventually(put).WithTimeout(5 * time.Second).Should(BeClosed())
+			ac.set(nil)
+			listed := versionOf(ctx, rec, "k", "DM")
+			st, err := s.StatObject(ctx, rec, meta.ObjKey{Name: "k", Instance: m.VersionID})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.VersionedEpoch).To(Equal(listed.VersionedEpoch))
+			Expect(st.Mtime).NotTo(BeTemporally("==", listed.Mtime),
+				"the marker keeps the PUT's pending op, so the listing reports it with the OLH head's state")
+			clk.Advance(lcDay)
+			pass(ctx)
+			Expect(versions(ctx, rec, "k")).To(BeEmpty())
+			Expect(notes.NotifyCallCount()).To(Equal(1))
+		})
+
+		It("keeps a retained null version, writing no null delete marker", func(ctx SpecContext) {
+			rec := suspended(ctx, "locked", meta.BucketObjLockEnabled)
+			putAs(ctx, rec, "k", "null", attrsOwner, retention(clk.Now().Add(time.Hour)))
+			clk.Advance(lcDay)
+			pass(ctx)
+			Expect(versions(ctx, rec, "k")).To(Equal([]string{"null@null*"}))
+			Expect(notes.NotifyCallCount()).To(BeZero())
+		})
+
+		It("keeps a retained noncurrent null version under a version current, writing no null delete marker, on a bucket whose flags carry lock and suspension", func(ctx SpecContext) {
+			rec, key := create(ctx, "locked", meta.BucketObjLockEnabled, lcAttr(expireRule("expire", "")))
+			putAs(ctx, rec, "k", "old", attrsOwner, retention(clk.Now().Add(time.Hour)))
+			setFlags(ctx, "locked", meta.BucketVersioned)
+			putVersion(ctx, reload(ctx, "locked"), "k", "v1")
+			setFlags(ctx, "locked", meta.BucketVersionsSuspended)
+			rec = reload(ctx, "locked")
+			Expect(versions(ctx, rec, "k")).To(Equal([]string{"v1*", "old@null"}))
+			clk.Advance(lcDay)
+			logs := &syncBuffer{}
+			DeferCleanup(driver.CaptureDebugLog(logs))
+			pass(ctx)
+			Expect(versions(ctx, rec, "k")).To(Equal([]string{"v1*", "old@null"}))
+			Expect(logs.String()).To(ContainSubstring("lifecycle keeps a locked null version and writes no null delete marker"))
+			Expect(notes.NotifyCallCount()).To(BeZero())
+			Expect(lcEntries(c)).To(HaveKeyWithValue(key, completed(key)))
+		})
+
+		DescribeTable("keeps a null version written after the listing",
+			func(ctx SpecContext, at driver.LCStep, write func(ctx context.Context, rec *op.BucketRecord), want []string) {
+				rec := suspended(ctx, "suspended", 0, "v1")
+				putVersion(ctx, rec, "k", "null")
+				clk.Advance(lcDay)
+				var once sync.Once
+				h.SetHook(func(ctx context.Context, step driver.LCStep, _ meta.ObjKey) {
+					defer GinkgoRecover()
+					if step == at {
+						once.Do(func() { write(ctx, rec) })
+					}
+				})
+				pass(ctx)
+				Expect(versions(ctx, rec, "k")).To(Equal(want))
+				Expect(notes.NotifyCallCount()).To(BeZero())
+			},
+			Entry("a null PutObject before the read again", driver.LCStepDecided,
+				func(ctx context.Context, rec *op.BucketRecord) { putVersion(ctx, rec, "k", "rewritten") }, []string{"rewritten@null*", "v1"}),
+			Entry("a null PutObject of the same body before the read again, which the null version's index entry tells", driver.LCStepDecided,
+				func(ctx context.Context, rec *op.BucketRecord) { putVersion(ctx, rec, "k", "null") }, []string{"null@null*", "v1"}),
+			Entry("a null PutObject after the read again", driver.LCStepReread,
+				func(ctx context.Context, rec *op.BucketRecord) { putVersion(ctx, rec, "k", "rewritten") }, []string{"rewritten@null*", "v1"}),
+			Entry("an attr-only write after the read again, which the marker's Expect refuses", driver.LCStepReread,
+				func(ctx context.Context, rec *op.BucketRecord) {
+					Expect(s.SetObjectAttrs(ctx, stat(ctx, rec, "k"), map[string][]byte{meta.AttrMetaPrefix + "note": []byte("n\x00")}, nil)).To(Succeed())
+				}, []string{"null@null*", "v1"}),
+		)
+
+		It("keeps a null version whose retention lands after its listing", func(ctx SpecContext) {
+			rec := suspended(ctx, "locked", meta.BucketObjLockEnabled, "v1")
+			putVersion(ctx, rec, "k", "null")
+			clk.Advance(lcDay)
+			var once sync.Once
+			h.SetHook(func(ctx context.Context, step driver.LCStep, _ meta.ObjKey) {
+				defer GinkgoRecover()
+				if step == driver.LCStepDecided {
+					once.Do(func() {
+						Expect(s.SetObjectAttrs(ctx, stat(ctx, rec, "k"), retention(clk.Now().Add(time.Hour)), nil)).To(Succeed())
+					})
+				}
+			})
+			pass(ctx)
+			Expect(versions(ctx, rec, "k")).To(Equal([]string{"null@null*", "v1"}))
+		})
+
+		DescribeTable("keeps the null delete marker a second delete replaced since its listing, and removes it at the next pass",
+			func(ctx SpecContext, at driver.LCStep, sameMtime bool) {
+				rec := suspended(ctx, "suspended", 0)
+				putVersion(ctx, rec, "k", "null")
+				del(ctx, rec, meta.ObjKey{Name: "k"})
+				first := versionOf(ctx, rec, "k", "DM")
+				clk.Advance(lcDay)
+				p := op.DeleteParams{}
+				if sameMtime {
+					p.Mtime = first.Mtime
+				}
+				var once sync.Once
+				h.SetHook(func(ctx context.Context, step driver.LCStep, _ meta.ObjKey) {
+					defer GinkgoRecover()
+					if step == at {
+						once.Do(func() {
+							_, err := s.DeleteObject(ctx, rec, meta.ObjKey{Name: "k"}, p)
+							Expect(err).NotTo(HaveOccurred())
+							settle(s)
+						})
+					}
+				})
+				pass(ctx)
+				Expect(versions(ctx, rec, "k")).To(Equal([]string{"DM@null*"}))
+				Expect(versionOf(ctx, rec, "k", "DM").VersionedEpoch).To(BeNumerically(">", first.VersionedEpoch), "the second delete's marker")
+				Expect(notes.NotifyCallCount()).To(BeZero())
+				h.SetHook(nil)
+				clk.Advance(lcDay)
+				pass(ctx)
+				Expect(versions(ctx, rec, "k")).To(BeEmpty())
+			},
+			Entry("before the read again", driver.LCStepDecided, false),
+			Entry("before the read again, at the first's mtime, which the read again tells by the versioned_epoch", driver.LCStepDecided, true),
+			Entry("after the read again", driver.LCStepReread, false),
+			Entry("after the read again, at the first's mtime, which only the removal's Expect tells by the versioned_epoch", driver.LCStepReread, true),
+		)
+	})
+
 	Describe("the claim predicate", func() {
 		var (
-			first, last                           *op.BucketRecord
-			firstKey, lastKey                     string
-			versionedKey, transitionKey, cloudKey string
+			// claimable is the buckets rgw-go claims, and claimed their
+			// entries' keys; refused is the others' keys, in the shard's
+			// order, and reasons why each is refused.
+			claimable        []*op.BucketRecord
+			claimed, refused []string
+			reasons          map[string]string
 		)
 		BeforeEach(func(ctx SpecContext) {
 			tier := func(zg *meta.ZoneGroup) {
@@ -816,55 +1391,74 @@ var _ = Describe("the lifecycle bucket pass", func() {
 			transition.Transitions = map[string]lifecycle.Transition{"COLD": {Days: "30", StorageClass: "COLD"}}
 			cloud := expireRule("cloud", "")
 			cloud.Transitions = map[string]lifecycle.Transition{"CLOUDY": {Days: "30", StorageClass: "CLOUDY"}}
-			first, firstKey = create(ctx, "a-plain", 0, lcAttr(expireRule("expire", "")))
-			_, versionedKey = create(ctx, "b-versioned", meta.BucketVersioned, lcAttr(expireRule("expire", "")))
-			_, transitionKey = create(ctx, "c-transition", 0, lcAttr(transition))
-			_, cloudKey = create(ctx, "d-cloud", 0, lcAttr(cloud))
-			last, lastKey = create(ctx, "e-plain", 0, lcAttr(expireRule("expire", "")))
+			noncurrent := expireRule("noncurrent", "")
+			noncurrent.NoncurExpiration = lifecycle.Expiration{Days: "1"}
+			claimable, claimed, refused, reasons = nil, nil, nil, map[string]string{}
+			for _, b := range []struct {
+				name   string
+				flags  uint32
+				rule   lifecycle.Rule
+				reason string
+			}{
+				{name: "a-plain", rule: expireRule("expire", "")},
+				{name: "b-versioned", flags: meta.BucketVersioned, rule: expireRule("expire", "")},
+				{name: "c-suspended", flags: meta.BucketVersioned | meta.BucketVersionsSuspended, rule: expireRule("expire", "")},
+				{name: "d-noncurrent", flags: meta.BucketVersioned, rule: noncurrent, reason: "rule expires noncurrent versions"},
+				{name: "e-transition", rule: transition, reason: "rule transitions objects"},
+				{name: "f-cloud", rule: cloud, reason: "rule transitions to a cloud tier"},
+				{name: "g-plain", rule: expireRule("expire", "")},
+			} {
+				rec, key := create(ctx, b.name, b.flags, lcAttr(b.rule))
+				if b.reason == "" {
+					claimable, claimed = append(claimable, rec), append(claimed, key)
+					continue
+				}
+				refused, reasons[key] = append(refused, key), b.reason
+			}
 		})
 		// day puts an object in each bucket rgw-go may claim and passes a
-		// lifecycle day later. It expects those objects removed, those
-		// buckets complete, the others' entries never claimed and each of
-		// them logged once, and returns the pass's log.
+		// lifecycle day later. It expects those objects expired, removed or
+		// behind a delete marker, those buckets complete, the others'
+		// entries never claimed and each of them logged once, and returns the
+		// pass's log.
 		day := func(ctx context.Context) string {
 			GinkgoHelper()
-			put(ctx, first, "k", "v", nil)
-			put(ctx, last, "k", "v", nil)
+			for _, rec := range claimable {
+				putVersion(ctx, rec, "k", "v")
+			}
 			clk.Advance(lcDay)
 			logs := &syncBuffer{}
 			restore := driver.CaptureLog(logs)
 			pass(ctx)
 			restore()
 			entries := lcEntries(c)
-			for _, key := range []string{firstKey, lastKey} {
+			for _, key := range claimed {
 				Expect(entries).To(HaveKeyWithValue(key, completed(key)))
 			}
-			for _, key := range []string{versionedKey, transitionKey, cloudKey} {
+			for _, key := range refused {
 				Expect(entries).To(HaveKeyWithValue(key, rgwcls.LCEntry{Bucket: key}), "never claimed")
 			}
-			Expect(stat(ctx, first, "k").Exists).To(BeFalse())
-			Expect(stat(ctx, last, "k").Exists).To(BeFalse())
-			Expect(strings.Count(logs.String(), "lifecycle leaves a bucket for radosgw's worker")).To(Equal(3), "logged once a pass each:\n%s", logs.String())
+			for _, rec := range claimable {
+				Expect(stat(ctx, rec, "k").Exists).To(BeFalse(), rec.Info.Bucket.Name)
+			}
+			Expect(strings.Count(logs.String(), "lifecycle leaves a bucket for radosgw's worker")).To(Equal(len(refused)), "logged once a pass each:\n%s", logs.String())
 			return logs.String()
 		}
 
-		It("leaves a versioned bucket, a transition rule's and a cloud tier's to radosgw's worker, which claims them where rgw-go left the head", func(ctx SpecContext) {
+		It("claims a bucket ever versioned and leaves a noncurrent rule's, a transition rule's and a cloud tier's to radosgw's worker, which claims them where rgw-go left the head", func(ctx SpecContext) {
 			logged := day(ctx)
-			for key, reason := range map[string]string{
-				versionedKey: "ever versioned", transitionKey: "rule transitions objects", cloudKey: "rule transitions to a cloud tier",
-			} {
+			for key, reason := range reasons {
 				Expect(logged).To(ContainSubstring(fmt.Sprintf(`"bucket":%q,"reason":%q`, key, reason)))
 			}
 			s2, err := driver.Open(ctx, driver.LCClientForTest(c, "client.2"), conf(map[string]string{"rgw_lc_debug_interval": "10", "rgw_lc_max_objs": "1"}), driver.Options{})
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(s2.Close)
-			var claimed []string
+			var byRadosgw []string
 			s2.RadosgwShardPassForTest(ctx, clk.Now, 0, 0, func(key string) error {
-				claimed = append(claimed, key)
+				byRadosgw = append(byRadosgw, key)
 				return nil
 			})
-			refused := []string{versionedKey, transitionKey, cloudKey}
-			Expect(claimed).To(Equal(refused), "radosgw's walk from the head rgw-go left at the first of them, the others done today")
+			Expect(byRadosgw).To(Equal(refused), "radosgw's walk from the head rgw-go left at the first of them, the others done today")
 			for _, key := range refused {
 				Expect(lcEntries(c)).To(HaveKeyWithValue(key, completed(key)))
 			}
@@ -1078,5 +1672,26 @@ var _ = Describe("the lifecycle bucket pass", func() {
 			pass(ctx)
 			Expect(uploaded(ctx, up)).To(BeFalse())
 		})
+	})
+})
+
+var _ = Describe("the lifecycle pager's lister states", func() {
+	entry := func(name, instance string, epoch uint64, marker, latest bool) op.ObjectEntry {
+		return op.ObjectEntry{Key: meta.ObjKey{Name: name, Instance: instance}, VersionedEpoch: epoch, DeleteMarker: marker, IsLatest: latest}
+	}
+
+	It("gives an entry the next entry of the page as listed, a dropped one included, so a current delete marker an older version follows has a next of its name", func() {
+		marker := entry("k", "dm", 3, true, true)
+		page := []op.ObjectEntry{marker, entry("k", "", 1, false, false), entry("z", "", 0, false, true)}
+		states := driver.LCStatesForTest(page, []op.ObjectEntry{marker, page[2]}, []int{0, 2}, false)
+		Expect(states[0].HasNext).To(BeTrue())
+		Expect(states[0].Next).To(Equal("k"), "the null version fresh dropped")
+		Expect(states[1].HasNext).To(BeFalse(), "the last entry of a page no other follows")
+	})
+
+	It("counts toward Earlier the kept entries alone, which the walk hands out once each", func() {
+		page := []op.ObjectEntry{entry("k", "v3", 3, false, true), entry("k", "v2", 2, false, false), entry("k", "v1", 1, false, false)}
+		states := driver.LCStatesForTest(page, page[2:], []int{2}, false)
+		Expect(states[0].Earlier).To(BeZero(), "v3 and v2, handed out on an earlier page, counted there")
 	})
 })

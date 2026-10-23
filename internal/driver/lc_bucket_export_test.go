@@ -7,6 +7,7 @@ import (
 	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/lifecycle"
 	"github.com/jhoblitt/rgw-go/internal/meta"
+	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/testutil/fakerados"
 )
@@ -19,6 +20,7 @@ const (
 	LCStepDecided = lcStepDecided
 	LCStepReread  = lcStepReread
 	LCStepUpload  = lcStepUpload
+	LCStepListed  = lcStepListed
 )
 
 // LCHarness runs the bucket pass Open gives a Store's lifecycle workers in
@@ -80,3 +82,11 @@ func LCClientForTest(c *fakerados.Cluster, name string) radosclient.Cluster {
 // EnableCacheForTest turns the metadata cache of s on, as its control
 // watches registering would once s runs.
 func EnableCacheForTest(s *Store) { s.sysobj.cache.setEnabled(true) }
+
+// LCStatesForTest is lcStates of a rule's first page for the external specs:
+// the states of kept, page's entries at at, over a new Lister.
+func LCStatesForTest(page, kept []op.ObjectEntry, at []int, truncated bool) []lifecycle.State {
+	var l lifecycle.Lister
+	_, states := lcStates(&l, page, kept, at, truncated)
+	return states
+}

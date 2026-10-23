@@ -926,6 +926,75 @@ var _ = Describe("DeleteObject with an expected state", func() {
 		})
 	})
 
+	Describe("the delete marker of an enabled bucket", func() {
+		It("links while the expected version is current under its write tag", func(ctx SpecContext) {
+			put(ctx, "v1")
+			res, err := del(ctx, "", op.DeleteParams{Expect: head(ctx, "v1")})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.DeleteMarker).To(BeTrue())
+			Expect(currents()).To(Equal([]string{res.VersionID}))
+		})
+
+		It("links over the null version current while the OLH head, which holds its data, carries the expected write tag", func(ctx SpecContext) {
+			suspend()
+			nullPut(ctx, "tag-old", "old")
+			rec.Info.Flags &^= meta.BucketVersionsSuspended
+			res, err := del(ctx, "", op.DeleteParams{Expect: head(ctx, "")})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(currents()).To(Equal([]string{res.VersionID}))
+			Expect(olhHead().Data).To(Equal([]byte("old")), "a marker on an enabled bucket keeps the null version")
+		})
+
+		DescribeTable("refuses, linking no marker, when the version current is not the one expected",
+			func(ctx SpecContext, null bool, stage func(context.Context) *op.ObjectState) {
+				if null {
+					suspend()
+					nullPut(ctx, "tag-old", "old")
+					rec.Info.Flags &^= meta.BucketVersionsSuspended
+				} else {
+					put(ctx, "v1")
+				}
+				expect := stage(ctx)
+				was := listed()
+				_, err := del(ctx, "", op.DeleteParams{Expect: expect})
+				Expect(err).To(MatchError(op.ErrConcurrentModification))
+				settle(s)
+				Expect(listed()).To(Equal(was), "no marker")
+			},
+			Entry("another write tag", false, func(context.Context) *op.ObjectState {
+				return &op.ObjectState{Key: version("v1"), Exists: true, Attrs: map[string][]byte{meta.AttrIDTag: []byte("idtag-other")}}
+			}),
+			Entry("an attr-only write since", false, func(ctx context.Context) *op.ObjectState {
+				e := head(ctx, "v1")
+				attrWrite(ctx, "v1")
+				return e
+			}),
+			Entry("another instance under the current version's write tag", false, func(ctx context.Context) *op.ObjectState {
+				e := head(ctx, "v1")
+				e.Key = version("v0")
+				return e
+			}),
+			Entry("a version put since", false, func(ctx context.Context) *op.ObjectState {
+				e := head(ctx, "v1")
+				put(ctx, "v2")
+				return e
+			}),
+			Entry("the OLH head while another version is current", false, func(ctx context.Context) *op.ObjectState {
+				return head(ctx, "")
+			}),
+			Entry("the null version current, given an attr-only write since", true, func(ctx context.Context) *op.ObjectState {
+				e := head(ctx, "")
+				attrWrite(ctx, "")
+				return e
+			}),
+			Entry("the null version current, given a version put since", true, func(ctx context.Context) *op.ObjectState {
+				e := head(ctx, "")
+				put(ctx, "v2")
+				return e
+			}),
+		)
+	})
+
 	Describe("the null delete marker of a suspended bucket", func() {
 		// nullCurrent is a suspended bucket whose current version is the null
 		// version under tag "tag-old", over v1.
@@ -943,14 +1012,6 @@ var _ = Describe("DeleteObject with an expected state", func() {
 			Expect(olhHead().Data).To(BeEmpty(), "the null version's data, removed")
 			Expect(currents()).To(Equal([]string{""}))
 			Expect(olhInfo().Removed).To(BeTrue())
-		})
-
-		It("is not read on an enabled bucket, whose delete marker removes nothing", func(ctx SpecContext) {
-			put(ctx, "v1")
-			res, err := del(ctx, "", op.DeleteParams{Expect: &op.ObjectState{Attrs: map[string][]byte{meta.AttrIDTag: []byte("idtag-other")}}})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(res.DeleteMarker).To(BeTrue())
-			Expect(currents()).To(Equal([]string{res.VersionID}))
 		})
 
 		DescribeTable("a null write between the expectation and the null marker refuses the marker",

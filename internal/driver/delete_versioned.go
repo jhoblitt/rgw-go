@@ -78,14 +78,18 @@ func (s *Store) deleteVersioned(ctx context.Context, rec *op.BucketRecord, key m
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1947-L1951 at v20.2.4).
 // The replay runs whatever p.SkipOLHUpdate says, as the guard is in it. A
 // removal it refuses is answered as refusedRemoval says. On an enabled
-// bucket the marker removes nothing, so p.Expect is not read.
+// bucket the marker removes nothing, and p.Expect is the version its caller
+// read as current, which the marker's condition requires current when the
+// marker links (deleteMarkerCondition).
 func (s *Store) writeDeleteMarker(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) (*op.DeleteObjectResult, error) {
 	marker := key
 	res := &op.DeleteObjectResult{VersionID: meta.NullInstance, DeleteMarker: true}
 	suspended := rec.Info.Flags&meta.BucketVersionsSuspended != 0
+	var current *op.ObjectState
 	if !suspended {
 		marker.Instance = meta.NewInstance()
 		res.VersionID = marker.Instance
+		current = p.Expect
 	}
 	mtime := p.Mtime
 	if mtime.IsZero() {
@@ -96,7 +100,7 @@ func (s *Store) writeDeleteMarker(ctx context.Context, rec *op.BucketRecord, key
 		Meta:         rgw.DirEntryMeta{Owner: p.MarkerOwner.String(), OwnerDisplayName: p.MarkerOwnerDisplayName, Mtime: mtime},
 		UnmodSince:   p.UnmodifiedSince,
 		SkipUpdate:   p.SkipOLHUpdate,
-		Cond:         s.deleteMarkerCondition(p),
+		Cond:         s.deleteMarkerCondition(p, current),
 	}
 	if suspended && p.Expect != nil {
 		link.ExpectTag, link.SkipUpdate = expectTag(p.Expect), false
@@ -109,6 +113,15 @@ func (s *Store) writeDeleteMarker(ctx context.Context, rec *op.BucketRecord, key
 		return nil, s.refusedRemoval(ctx, rec, key, err, s.relistNull)
 	}
 	return nil, err
+}
+
+// nullAsEmpty is instance with null, the null version's name in a request,
+// read as the empty instance the null version's state carries.
+func nullAsEmpty(instance string) string {
+	if instance == meta.NullInstance {
+		return ""
+	}
+	return instance
 }
 
 // expectTag is the write tag DeleteParams.Expect guards a removal on, the
@@ -148,20 +161,30 @@ func (s *Store) refusedRemoval(ctx context.Context, rec *op.BucketRecord, key me
 }
 
 // deleteMarkerCondition is a delete marker's condition, or nil when p sets
-// none: check_preconditions on the version current. Where follow_olh finds
-// none, a delete marker current or a head without olh.info, it is checked on
-// the key's head read again without following it, as radosgw falls back to
-// the head it read first; a current version whose head is gone is checked as
-// missing, as radosgw checks the state the follow resolved. Each of the three
-// compares the attributes of what it is checked on, so a pass rests on it:
-// on the head, on the null version's data there (headNullData).
-func (s *Store) deleteMarkerCondition(p op.DeleteParams) olhCondition {
-	if p.IfMatch == "" && p.IfMatchSize == nil && p.IfMatchLastModified.IsZero() {
+// none and current is nil: check_preconditions on the version current. Where
+// follow_olh finds none, a delete marker current or a head without olh.info,
+// it is checked on the key's head read again without following it, as
+// radosgw falls back to the head it read first; a current version whose head
+// is gone is checked as missing, as radosgw checks the state the follow
+// resolved. Each of the three compares the attributes of what it is checked
+// on, so a pass rests on it: on the head, on the null version's data there
+// (headNullData). current, when not nil, is the version the caller read as
+// current, which must be the one current, by its instance, the null one for
+// an empty or null instance, and its user.rgw.idtag (expectTag): another
+// version, a delete marker, none, or an attr write since is
+// ConcurrentModification. Its pass rests on that version being current,
+// which the link's check holds to the link (checkOLHLink).
+func (s *Store) deleteMarkerCondition(p op.DeleteParams, current *op.ObjectState) olhCondition {
+	if p.IfMatch == "" && p.IfMatchSize == nil && p.IfMatchLastModified.IsZero() && current == nil {
 		return nil
 	}
 	return func(ctx context.Context, cur *op.ObjectState) (olhPass, error) {
 		st := cur
 		onHead := cur.DeleteMarker || (!cur.Exists && cur.Key.Instance == "")
+		if current != nil && (onHead || !cur.Exists || nullAsEmpty(cur.Key.Instance) != nullAsEmpty(current.Key.Instance) ||
+			!bytes.Equal(expectTag(cur), expectTag(current))) {
+			return olhPass{}, fmt.Errorf("%w: the version current is not the one expected", op.ErrConcurrentModification)
+		}
 		if onHead {
 			head, err := s.readOLHHead(ctx, cur.Bucket, olhHeadKey(cur.Key))
 			if err != nil {
