@@ -438,6 +438,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's versioned delete of versionId=null checks the version marker, not the null version](#radosgws-versioned-delete-of-versionidnull-checks-the-version-marker-not-the-null-version) | pending | pending | ✓ |
 | [radosgw's versioned delete of a named version ignores unmod_since, which its lifecycle relies on](#radosgws-versioned-delete-of-a-named-version-ignores-unmod_since-which-its-lifecycle-relies-on) | pending | pending | ✓ |
 | [radosgw before v19.2.7 and v20.2.1 checked a versioned write's conditions against the new instance](#radosgw-before-v1927-and-v2021-checked-a-versioned-writes-conditions-against-the-new-instance) | pending | [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348), [ceph/ceph#65949](https://github.com/ceph/ceph/pull/65949), [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932) | |
+| [radosgw's conditional versioned write checks its condition once and links unguarded](#radosgws-conditional-versioned-write-checks-its-condition-once-and-links-unguarded) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -25289,3 +25290,109 @@ Every new entry adds its row to this table, in document order.
 - **Found:** the phase 2 versioning research, defect 3, 2026-10-13;
   recorded by phase 2 task V7a, 2026-10-22, from the source at v19.2.6,
   v19.2.7 and v20.2.4.
+
+## radosgw's conditional versioned write checks its condition once and links unguarded
+
+- **Kind:** defect, S3-correctness, a race between writers of one key of a
+  bucket whose versioning is enabled: two `If-None-Match: *` PutObjects can
+  both succeed, and an If-Match PutObject can become current after the
+  version it matched was replaced. On main, the tentacle branch after
+  v20.2.4 and the umbrella branch, a bucket whose versioning is suspended
+  has it too. Not
+  security-relevant (rgw-bug-reproduction's triage, 2026-10-22): a write
+  condition is a compare-and-swap guarantee to its writer, not an access
+  boundary, and every version written is kept. Unreproduced: derived from
+  the source.
+- **Evidence:** paths are under `src/rgw/driver/rados/`.
+  - The head write reads the version current on the key's OLH through
+    `get_current_version_state`
+    ([rgw_rados.cc:3189](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3189) at v19.2.7,
+    [rgw_rados.cc:3286](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3286) at v20.2.4)
+    and checks the conditions against it in `check_preconditions`
+    ([rgw_rados.cc:3197](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3197) at v19.2.7,
+    [rgw_rados.cc:3294](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3294) at v20.2.4).
+  - Its guard compares a head's write tag only for a key without an
+    instance: `set_attr_id_tag` requires `obj.key.instance.empty()`
+    ([rgw_rados.cc:3202](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3202) at v19.2.7,
+    [rgw_rados.cc:3299](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3299) at v20.2.4).
+    A version's head is a new object at its instance's oid, so the tag
+    compare and the exclusive create guard only that new object, never the
+    version current on the OLH.
+  - The head write
+    ([rgw_rados.cc:3332](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3332) at v19.2.7,
+    [rgw_rados.cc:3453](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3453) at v20.2.4)
+    and its index completion are followed by `set_olh` with no condition
+    ([rgw_rados.cc:3369-3371](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3369-L3371) at v19.2.7,
+    [rgw_rados.cc:3490-3492](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3490-L3492) at v20.2.4),
+    whose init guards the OLH head on its OLH tag alone, a tag no link
+    changes
+    ([rgw_rados.cc:7825-7840](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7825-L7840) at v19.2.7,
+    [rgw_rados.cc:8488-8503](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8488-L8503) at v20.2.4),
+    and whose link the class takes at the OLH entry's next epoch whatever
+    was linked since
+    ([cls_rgw.cc:1741-1766](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1741-L1766) at v19.2.7,
+    [cls_rgw.cc:1882-1907](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1882-L1907) at v20.2.4).
+  - So two `If-None-Match: *` writers that both check before either links
+    both write and both link, the second current; and an If-Match writer
+    that checks before another writer links its version links over it.
+  - On main, cfe5d0f29a7, merged by
+    [ceph/ceph#71584](https://github.com/ceph/ceph/pull/71584) (6483a25aed8),
+    and on the tentacle branch its cherry-pick d527075bfe4, merged by
+    [ceph/ceph#72050](https://github.com/ceph/ceph/pull/72050) (16947d28b39)
+    after v20.2.4, follow the OLH for the conditions of a write over an OLH
+    head too, so a suspended bucket's write, which has no instance, is
+    checked against the current version
+    ([rgw_rados.cc:3455-3459](https://github.com/ceph/ceph/blob/6483a25aed8fae310512af1dc1cb621842091ca5/src/rgw/driver/rados/rgw_rados.cc#L3455-L3459) on main,
+    [rgw_rados.cc:3285-3289](https://github.com/ceph/ceph/blob/d527075bfe414015100a572cb932d5b9b7936ca8/src/rgw/driver/rados/rgw_rados.cc#L3285-L3289) on the tentacle branch).
+    The guard is unchanged
+    ([rgw_rados.cc:3470](https://github.com/ceph/ceph/blob/6483a25aed8fae310512af1dc1cb621842091ca5/src/rgw/driver/rados/rgw_rados.cc#L3470),
+    [rgw_rados.cc:3300](https://github.com/ceph/ceph/blob/d527075bfe414015100a572cb932d5b9b7936ca8/src/rgw/driver/rados/rgw_rados.cc#L3300)),
+    and over an existing OLH head `prepare_atomic_modification` resets the
+    head with `create(false)`
+    ([rgw_rados.cc:7920-7927](https://github.com/ceph/ceph/blob/6483a25aed8fae310512af1dc1cb621842091ca5/src/rgw/driver/rados/rgw_rados.cc#L7920-L7927),
+    [rgw_rados.cc:7359-7366](https://github.com/ceph/ceph/blob/d527075bfe414015100a572cb932d5b9b7936ca8/src/rgw/driver/rados/rgw_rados.cc#L7359-L7366)),
+    so an `If-None-Match: *` null write there carries no guard at all, and
+    an If-Match one compares only the write tag, which another null write's
+    head write changes and its link does not. Two `If-None-Match: *` null
+    writes that both check before either links both succeed, and so do two
+    If-Match ones when the second checks between the first's head write and
+    its link. The umbrella branch's cherry-pick 19bf5e5f63f, merged by
+    [ceph/ceph#72048](https://github.com/ceph/ceph/pull/72048), makes the
+    same change.
+- **Impact:** a client that relies on `If-None-Match: *` to create a key
+  once, or on If-Match to change the version it read, on a bucket whose
+  versioning is enabled, and on main, the tentacle branch and the umbrella
+  branch on one whose versioning is suspended, can have its write accepted though another
+  writer created or changed the key first. Every version written is kept,
+  though on a suspended bucket the null version holds only the last head
+  write's data.
+- **Releases:** v19.2.7 and v20.2.4, for a bucket whose versioning is
+  enabled. For one whose versioning is suspended, main and the tentacle
+  branch after v20.2.4, which no Squid or Tentacle tag carries yet, and the
+  umbrella branch, whose v21.1.2 carries 19bf5e5f63f; v19.2.7 and v20.2.4
+  check that write against the OLH head instead ("[radosgw checks a
+  suspended bucket's write conditions against the OLH
+  head](#radosgw-checks-a-suspended-buckets-write-conditions-against-the-olh-head)"),
+  which refuses the second of two such writes.
+- **rgw-go:** not reproduced on a bucket whose versioning is enabled. A
+  conditional versioned write checks its condition again at each attempt
+  of its link, guards its init on the `olh.info` it read and, within a
+  bound, on no other writer's pending modification, and after its link
+  lists the key's versions and unlinks its own version, answering 412, when
+  another version or marker took an epoch in between or the version its
+  condition rested on is gone (`prepareOLHAttempt` and `checkOLHLink`,
+  `internal/driver/olh_cond.go`; `linkCond`,
+  `internal/driver/put_versioned.go`). On a suspended bucket a conditional
+  null write inits its modification in its head write's op and links under
+  it, so two such writes are serialized within the bound; past it, or
+  beside a pending attr it does not wait on, both can succeed
+  (`writeNullVersion`, `internal/driver/put_versioned.go`). Both are in
+  `docs/exclusions.md`, "A conditional write to a versioned bucket commits
+  only if its condition held when it linked". Pinned in
+  `internal/driver/put_versioned_test.go` and
+  `internal/driver/olh_cond_test.go`, against a radosgw-shaped writer too.
+- **Upstream:** pending; prior art not searched.
+- **Found:** the phase 2 versioning research, defect 4, 2026-10-13;
+  recorded by phase 2 task V7a, 2026-10-22, from the source at v19.2.7 and
+  v20.2.4, and extended to main and the tentacle branch by V7a's review;
+  rgw-bug-reproduction verified the extension at the source.
