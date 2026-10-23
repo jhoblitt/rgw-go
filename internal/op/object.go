@@ -123,11 +123,17 @@ type PutResult struct {
 
 // DeleteParams shapes a delete.
 type DeleteParams struct {
-	// IfMatch is If-Match: "*" or an ETag the object's must begin with,
-	// unquoted first (check_preconditions,
-	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7287-L7306 at v20.2.4);
-	// empty means unset, and a header or ETag element present with an empty
-	// value arrives as a single NUL, which matches no ETag (storeCondition).
+	// IfMatch is If-Match: "*" or an ETag, unquoted first; empty means
+	// unset, and a header or ETag element present with an empty value
+	// arrives as EmptyCondition (storeCondition). An unversioned delete and
+	// a delete marker's condition pass an object whose ETag the value begins
+	// with, so EmptyCondition matches no ETag there (check_preconditions,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7287-L7306 at v20.2.4).
+	// The delete of a named version compares its entry's ETag whole, reading
+	// EmptyCondition as the empty string, which an entry without an ETag, a
+	// delete marker's, matches
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5913-L5920 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6525-L6532 at v20.2.4).
 	IfMatch string
 	// Mtime is the delete time; zero means now.
 	Mtime time.Time
@@ -146,6 +152,29 @@ type DeleteParams struct {
 	// (check_preconditions,
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7271-L7284 at v20.2.4).
 	IfMatchLastModified time.Time
+	// MarkerOwner and MarkerOwnerDisplayName are params.obj_owner, the owner
+	// a delete marker's index entry names: the requester for an S3 delete,
+	// the entry's owner for lifecycle
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5871-L5874 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6483-L6486 at v20.2.4).
+	MarkerOwner            meta.Owner
+	MarkerOwnerDisplayName string
+	// SkipOLHUpdate is skip_olh_obj_update: a versioned delete leaves the
+	// replay of the key's pending log to the key's next update, as
+	// DeleteObjects does for all but the last delete of a key.
+	SkipOLHUpdate bool
+	// Expect, when not nil, is the state a versioned delete's removal must
+	// still find. No store implements it yet: each answers ErrNotImplemented.
+	Expect *ObjectState
+}
+
+// DeleteObjectResult is Delete::delete_obj's result: the version a versioned
+// delete removed or the delete marker it wrote, "null" for the null version,
+// and whether that version is a delete marker. An unversioned delete reports
+// neither.
+type DeleteObjectResult struct {
+	VersionID    string
+	DeleteMarker bool
 }
 
 // CopyParams shapes a copy.
@@ -193,13 +222,15 @@ type ObjectStore interface {
 	ReadObject(ctx context.Context, st *ObjectState, rng ByteRange, sink io.Writer) error
 	PutObject(ctx context.Context, rec *BucketRecord, key meta.ObjKey, body io.Reader, p PutParams) (*PutResult, error)
 	// DeleteObject removes the object; a missing object is ErrNoSuchKey, which
-	// the S3 op turns into 204 as radosgw does. It takes radosgw's
-	// unversioned delete only: a bucket whose versioning is or was enabled or
-	// that has object lock is ErrNotImplemented before anything is read or
-	// removed, where radosgw's versioned delete would write a delete marker
-	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5774-L5812 at v19.2.6,
-	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6462-L6517 at v20.2.4).
-	DeleteObject(ctx context.Context, rec *BucketRecord, key meta.ObjKey, p DeleteParams) error
+	// the S3 op turns into 204 as radosgw does. On a bucket whose versioning
+	// is enabled or suspended, a key without an instance gets a delete marker,
+	// and one with an instance, "null" included, loses that version and never
+	// gets a marker
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5833-L5968 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6445-L6582 at v20.2.4).
+	// A store that keeps no versions answers such a bucket ErrNotImplemented.
+	// The result is nil with an error.
+	DeleteObject(ctx context.Context, rec *BucketRecord, key meta.ObjKey, p DeleteParams) (*DeleteObjectResult, error)
 	// CopyObject writes src's data to dstKey in dst with src's ETag.
 	CopyObject(ctx context.Context, src *ObjectState, dst *BucketRecord, dstKey meta.ObjKey, p CopyParams) (*PutResult, error)
 	// SetObjectAttrs sets and removes head xattrs.

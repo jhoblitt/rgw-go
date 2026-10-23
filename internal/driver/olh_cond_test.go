@@ -86,26 +86,26 @@ func (p *holdPool) Write(ctx context.Context, oid string, op *radosclient.WriteO
 }
 
 // condFunc is a link's condition as the specs write it.
-type condFunc = func(context.Context, *op.ObjectState) (bool, error)
+type condFunc = func(context.Context, *op.ObjectState) (driver.OLHPass, error)
 
 // ifMatch is If-Match on etag: it holds on a current version with that ETag,
 // and rests on that version.
 func ifMatch(etag string) condFunc {
-	return func(_ context.Context, cur *op.ObjectState) (bool, error) {
+	return func(_ context.Context, cur *op.ObjectState) (driver.OLHPass, error) {
 		if !cur.Exists || cur.ETag != etag {
-			return false, op.ErrPreconditionFailed
+			return driver.OLHPass{}, op.ErrPreconditionFailed
 		}
-		return true, nil
+		return driver.OLHPass{Current: true}, nil
 	}
 }
 
 // ifNoneMatchAny is If-None-Match: *, which holds when no version is current
 // and rests on none.
-func ifNoneMatchAny(_ context.Context, cur *op.ObjectState) (bool, error) {
+func ifNoneMatchAny(_ context.Context, cur *op.ObjectState) (driver.OLHPass, error) {
 	if cur.Exists {
-		return false, op.ErrPreconditionFailed
+		return driver.OLHPass{}, op.ErrPreconditionFailed
 	}
-	return false, nil
+	return driver.OLHPass{}, nil
 }
 
 var _ = Describe("a conditional link", func() {
@@ -265,9 +265,9 @@ var _ = Describe("a conditional link", func() {
 		v := write(ctx, "")
 		c.ResetCounters()
 		called := false
-		cond := func(context.Context, *op.ObjectState) (bool, error) {
+		cond := func(context.Context, *op.ObjectState) (driver.OLHPass, error) {
 			called = true
-			return false, nil
+			return driver.OLHPass{}, nil
 		}
 		err := s.SetOLHForTest(ctx, rec, v, driver.OLHLink{Cond: cond})
 		Expect(err).To(MatchError(op.ErrInternalError))
@@ -283,7 +283,7 @@ var _ = Describe("a conditional link", func() {
 		Expect(s.SetOLHForTest(ctx, rec, version("dm"), marker)).To(Succeed())
 		c.ResetCounters()
 		var seen []op.ObjectState
-		cond := func(ctx context.Context, cur *op.ObjectState) (bool, error) {
+		cond := func(ctx context.Context, cur *op.ObjectState) (driver.OLHPass, error) {
 			seen = append(seen, *cur)
 			return ifNoneMatchAny(ctx, cur)
 		}
@@ -624,7 +624,7 @@ var _ = Describe("a conditional link", func() {
 			// seenBy is the condition cond, recording each version it is
 			// evaluated on into seen.
 			seenBy := func(seen *[]string, cond condFunc) condFunc {
-				return func(ctx context.Context, cur *op.ObjectState) (bool, error) {
+				return func(ctx context.Context, cur *op.ObjectState) (driver.OLHPass, error) {
 					*seen = append(*seen, cur.Key.Instance)
 					return cond(ctx, cur)
 				}
@@ -716,9 +716,9 @@ var _ = Describe("a conditional link", func() {
 
 		It("evaluates the condition again after an init the olh.info guard canceled", func(ctx SpecContext) {
 			var seen []string
-			cond := func(_ context.Context, cur *op.ObjectState) (bool, error) {
+			cond := func(_ context.Context, cur *op.ObjectState) (driver.OLHPass, error) {
 				seen = append(seen, cur.Key.Instance)
-				return true, nil
+				return driver.OLHPass{Current: true}, nil
 			}
 			c.BeforeWrite(testDataPool, "", olhOID, func(*fakerados.Object) {
 				c.BeforeWrite(testDataPool, "", olhOID, nil)

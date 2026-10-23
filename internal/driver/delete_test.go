@@ -80,7 +80,7 @@ var _ = Describe("DeleteObject", func() {
 	It("deletes with radosgw's stat, prepare, guarded remove, complete_del and GC enqueue", func(ctx SpecContext) {
 		setup(ctx, denc.Squid)
 		epoch := c.Object(testDataPool, "", headOID).Version
-		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{})).To(Succeed())
+		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{})).Error().To(Succeed())
 		Expect(c.Reads(testDataPool, "", headOID)).To(Equal(1), "one get_obj_state")
 		Expect(c.Object(testDataPool, "", headOID)).To(BeNil())
 		w := c.LastWrite(testDataPool, "", headOID)
@@ -117,7 +117,7 @@ var _ = Describe("DeleteObject", func() {
 	DescribeTable("takes a key naming the null version for the plain key, removing its head and its plain index entry",
 		func(ctx SpecContext, rel denc.Release) {
 			setup(ctx, rel)
-			Expect(s.DeleteObject(ctx, rec, meta.ObjKey{Name: "k", Instance: "null"}, op.DeleteParams{})).To(Succeed())
+			Expect(s.DeleteObject(ctx, rec, meta.ObjKey{Name: "k", Instance: "null"}, op.DeleteParams{})).Error().To(Succeed())
 			Expect(c.Object(testDataPool, "", headOID)).To(BeNil())
 			writes := indexWrites()
 			Expect(writes).To(HaveLen(2), "the prepare and complete_del")
@@ -134,7 +134,7 @@ var _ = Describe("DeleteObject", func() {
 	It("adjusts the quota cache by one object and the accounted size", func(ctx SpecContext) {
 		setup(ctx, denc.Squid)
 		Expect(driver.CachedBucketStatsForTest(s, rec)).To(Equal(op.Stats{Size: 6 << 20, SizeRounded: 6 << 20, NumObjects: 1}), "the PUT")
-		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{})).To(Succeed())
+		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{})).Error().To(Succeed())
 		Expect(driver.CachedBucketStatsForTest(s, rec)).To(Equal(op.Stats{}), "update_stats(-1, 0, accounted_size), rgw_rados.cc:5984")
 	})
 
@@ -143,7 +143,7 @@ var _ = Describe("DeleteObject", func() {
 		ci := meta.NewCompressionInfo()
 		ci.Type, ci.OrigSize = "zlib", 2<<20
 		c.Object(testDataPool, "", headOID).Xattrs[meta.AttrCompression] = encode(ci)
-		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{})).To(Succeed())
+		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{})).Error().To(Succeed())
 		Expect(driver.CachedBucketStatsForTest(s, rec)).To(Equal(op.Stats{Size: 4 << 20, SizeRounded: 4 << 20}),
 			"accounted_size is the compression's orig_size, not the stored size")
 	})
@@ -152,7 +152,7 @@ var _ = Describe("DeleteObject", func() {
 		s = openPutStore(ctx, c, denc.Squid, nil, mtime)
 		_, err := s.PutObject(ctx, rec, key, bytes.NewReader([]byte("small")), op.PutParams{Size: 5, Tag: "tx-put"})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{})).To(Succeed())
+		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{})).Error().To(Succeed())
 		Expect(c.Object(testDataPool, "", headOID)).To(BeNil())
 		Expect(gcEntries()).To(BeEmpty())
 	})
@@ -160,7 +160,7 @@ var _ = Describe("DeleteObject", func() {
 	It("answers NoSuchKey for a missing head without touching the index", func(ctx SpecContext) {
 		setup(ctx, denc.Squid)
 		missing := meta.ObjKey{Name: "missing"}
-		Expect(s.DeleteObject(ctx, rec, missing, op.DeleteParams{})).To(MatchError(op.ErrNoSuchKey))
+		Expect(s.DeleteObject(ctx, rec, missing, op.DeleteParams{})).Error().To(MatchError(op.ErrNoSuchKey))
 		Expect(c.Reads(testDataPool, "", putBucketID+"_missing")).To(Equal(1))
 		Expect(c.Writes(rookIndexPool, "", indexShardOID(rec, "missing"))).To(BeZero(), "rgw_rados.cc:5903-5912: ENOENT before the prepare")
 	})
@@ -172,7 +172,7 @@ var _ = Describe("DeleteObject", func() {
 		// A pending op past the 120 s tag timeout, which the class drops.
 		stale.PendingMap = []rgwcls.PendingEntry{{Tag: "t", Info: rgwcls.PendingInfo{State: rgwcls.PendingModify, Timestamp: mtime.Add(-time.Hour), Op: uint8(rgwcls.OpDel)}}}
 		seedIndexEntry(c, rookIndexPool, staleShard, stale)
-		Expect(s.DeleteObject(ctx, rec, meta.ObjKey{Name: "stale"}, op.DeleteParams{})).To(MatchError(op.ErrNoSuchKey))
+		Expect(s.DeleteObject(ctx, rec, meta.ObjKey{Name: "stale"}, op.DeleteParams{})).Error().To(MatchError(op.ErrNoSuchKey))
 		Expect(c.Writes(rookIndexPool, "", staleShard)).To(BeZero())
 		res, err := s.ListObjects(ctx, rec, op.ListObjectsParams{MaxKeys: 10})
 		Expect(err).NotTo(HaveOccurred())
@@ -186,7 +186,7 @@ var _ = Describe("DeleteObject", func() {
 	It("completes the delete when the head vanished between the stat and the remove", func(ctx SpecContext) {
 		setup(ctx, denc.Squid)
 		c.BeforeWrite(testDataPool, "", headOID, func(*fakerados.Object) { c.Remove(testDataPool, "", headOID) })
-		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{})).To(Succeed(), "ENOENT from the remove is success, rgw_rados.cc:5955-5967")
+		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{})).Error().To(Succeed(), "ENOENT from the remove is success, rgw_rados.cc:5955-5967")
 		writes := indexWrites()
 		Expect(writes).To(HaveLen(2))
 		comp := execIn(writes[1], 2, "bucket_complete_op", rgwcls.DecodeCompleteOp)
@@ -199,7 +199,7 @@ var _ = Describe("DeleteObject", func() {
 	It("cancels with radosgw's -1:0 and reports the race when the tag changed underneath", func(ctx SpecContext) {
 		setup(ctx, denc.Squid)
 		c.BeforeWrite(testDataPool, "", headOID, func(o *fakerados.Object) { o.Xattrs["user.rgw.idtag"] = []byte("tx-racer\x00") })
-		err := s.DeleteObject(ctx, rec, key, op.DeleteParams{})
+		_, err := s.DeleteObject(ctx, rec, key, op.DeleteParams{})
 		Expect(err).To(MatchError(op.ErrConcurrentModification), "ECANCELED; the op answers 204 (rgw_op.cc:5302-5304)")
 		writes := indexWrites()
 		Expect(writes).To(HaveLen(2), "the prepare and the cancel")
@@ -218,7 +218,7 @@ var _ = Describe("DeleteObject", func() {
 			o.Xattrs["user.rgw.idtag"] = []byte("tx-racer\x00")
 			o.Data = []byte("replacement")
 		})
-		err := s.DeleteObject(ctx, rec, key, op.DeleteParams{IfMatch: `"` + md5hex(body) + `"`})
+		_, err := s.DeleteObject(ctx, rec, key, op.DeleteParams{IfMatch: `"` + md5hex(body) + `"`})
 		Expect(err).To(MatchError(op.ErrConcurrentModification), "v20.2.4 sends no guard and would remove the replacement (docs/exclusions.md)")
 		Expect(c.Object(testDataPool, "", headOID).Data).To(Equal([]byte("replacement")))
 		writes := indexWrites()
@@ -234,7 +234,7 @@ var _ = Describe("DeleteObject", func() {
 		delete(head.Xattrs, meta.AttrTailTag)
 		sum := md5.Sum(append(slices.Clone(head.Xattrs[meta.AttrManifest]), head.Xattrs[meta.AttrETag]...))
 		fake := tail + "_" + hex.EncodeToString(sum[:]) + "\x00"
-		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{})).To(Succeed())
+		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{})).Error().To(Succeed())
 		w := c.LastWrite(testDataPool, "", headOID)
 		Expect(w.Steps()).To(HaveLen(1), "no cmpxattr: need_guard is false for a fake tag, rgw_rados.cc:6493-6495")
 		execIn(w, 0, "obj_remove", rgwcls.DecodeObjRemoveOp)
@@ -247,7 +247,7 @@ var _ = Describe("DeleteObject", func() {
 	It("leaves the pending entry alone when the remove times out", func(ctx SpecContext) {
 		setup(ctx, denc.Squid)
 		c.FailNextWrite(testDataPool, "", headOID, syscall.ETIMEDOUT)
-		err := s.DeleteObject(ctx, rec, key, op.DeleteParams{})
+		_, err := s.DeleteObject(ctx, rec, key, op.DeleteParams{})
 		Expect(err).To(MatchError(op.ErrRequestTimedOut))
 		Consistently(func() int { return c.Writes(rookIndexPool, "", shard) }).WithTimeout(50*time.Millisecond).Should(Equal(1),
 			"the prepare only: neither complete_del nor cancel, rgw_rados.cc:5951-5954")
@@ -260,11 +260,11 @@ var _ = Describe("DeleteObject", func() {
 
 	It("refuses a delete of an object modified after x-amz-delete-if-unmodified-since, and checks it in the op otherwise", func(ctx SpecContext) {
 		setup(ctx, denc.Squid)
-		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{UnmodifiedSince: mtime.Add(-time.Second)})).To(MatchError(op.ErrPreconditionFailed))
+		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{UnmodifiedSince: mtime.Add(-time.Second)})).Error().To(MatchError(op.ErrPreconditionFailed))
 		Expect(c.Writes(rookIndexPool, "", shard)).To(BeZero(), "refused before the prepare")
 		Expect(c.Writes(testDataPool, "", headOID)).To(BeZero())
 		since := mtime.Truncate(time.Second)
-		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{UnmodifiedSince: since})).To(Succeed(), "the same second")
+		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{UnmodifiedSince: since})).Error().To(Succeed(), "the same second")
 		w := c.LastWrite(testDataPool, "", headOID)
 		Expect(execIn(w, 0, "obj_check_mtime", rgwcls.DecodeCheckMtimeOp)).To(Equal(rgwcls.CheckMtimeOp{Mtime: since, Type: rgwcls.MtimeLE}),
 			"appended before prepare_atomic_modification's guard, rgw_rados.cc:5874 and :5914; S3 requests compare in whole seconds")
@@ -275,7 +275,7 @@ var _ = Describe("DeleteObject", func() {
 	It("cancels when the object changed after the stat under x-amz-delete-if-unmodified-since", func(ctx SpecContext) {
 		setup(ctx, denc.Squid)
 		c.BeforeWrite(testDataPool, "", headOID, func(o *fakerados.Object) { o.Mtime = mtime.Add(time.Hour) })
-		err := s.DeleteObject(ctx, rec, key, op.DeleteParams{UnmodifiedSince: mtime})
+		_, err := s.DeleteObject(ctx, rec, key, op.DeleteParams{UnmodifiedSince: mtime})
 		Expect(err).To(MatchError(op.ErrConcurrentModification), "obj_check_mtime's ECANCELED")
 		Expect(c.Object(testDataPool, "", headOID)).NotTo(BeNil())
 		Expect(execIn(indexWrites()[1], 2, "bucket_complete_op", rgwcls.DecodeCompleteOp).Op).To(Equal(rgwcls.OpCancel))
@@ -284,7 +284,7 @@ var _ = Describe("DeleteObject", func() {
 	DescribeTable("refuses a delete whose conditions fail before touching the index",
 		func(ctx SpecContext, rel denc.Release, p func() op.DeleteParams) {
 			setup(ctx, rel)
-			Expect(s.DeleteObject(ctx, rec, key, p())).To(MatchError(op.ErrPreconditionFailed))
+			Expect(s.DeleteObject(ctx, rec, key, p())).Error().To(MatchError(op.ErrPreconditionFailed))
 			Expect(c.Writes(rookIndexPool, "", shard)).To(BeZero())
 			Expect(c.Object(testDataPool, "", headOID)).NotTo(BeNil())
 		},
@@ -311,7 +311,7 @@ var _ = Describe("DeleteObject", func() {
 				IfMatch: `"` + md5hex(body) + `"`, IfMatchSize: &size, IfMatchLastModified: mtime.Add(500 * time.Millisecond),
 				UnmodifiedSince: mtime.Add(time.Hour),
 			}
-			Expect(s.DeleteObject(ctx, rec, key, p)).To(Succeed())
+			Expect(s.DeleteObject(ctx, rec, key, p)).Error().To(Succeed())
 			w := c.LastWrite(testDataPool, "", headOID)
 			Expect(w.Steps()).To(HaveLen(4))
 			Expect(execIn(w, 0, "obj_check_mtime", rgwcls.DecodeCheckMtimeOp)).To(Equal(rgwcls.CheckMtimeOp{Mtime: p.UnmodifiedSince, Type: rgwcls.MtimeLE}))
@@ -328,31 +328,33 @@ var _ = Describe("DeleteObject", func() {
 
 	It("passes If-Match: * for an existing object", func(ctx SpecContext) {
 		setup(ctx, denc.Tentacle)
-		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{IfMatch: "*"})).To(Succeed())
+		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{IfMatch: "*"})).Error().To(Succeed())
 		Expect(c.Object(testDataPool, "", headOID)).To(BeNil())
 	})
 
-	DescribeTable("refuses a bucket whose versioning is or was enabled or that has object lock before it reads the head",
+	DescribeTable("takes the unversioned path on a bucket whose flags hold others but not BUCKET_VERSIONED, which radosgw never writes",
 		func(ctx SpecContext, flags uint32) {
 			setup(ctx, denc.Squid)
 			rec.Info.Flags |= flags
-			Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{})).To(MatchError(op.ErrNotImplemented),
-				"only the unversioned path is served, where radosgw writes a delete marker on a versioned bucket (rgw_rados.cc:5774-5812)")
-			Expect(c.Reads(testDataPool, "", headOID)).To(BeZero(), "no get_obj_state")
-			Expect(c.Writes(testDataPool, "", headOID)).To(BeZero())
-			Expect(c.Object(testDataPool, "", headOID)).NotTo(BeNil(), "the head")
-			Expect(c.Object(testDataPool, "", tail)).NotTo(BeNil(), "the tail")
-			Expect(indexWrites()).To(BeEmpty())
-			en, ok := c.Entry(rookIndexPool, "", shard, "k")
-			Expect(ok).To(BeTrue(), "the index entry")
-			Expect(en.Exists).To(BeTrue())
-			Expect(gcEntries()).To(BeEmpty())
-			Expect(driver.CachedBucketStatsForTest(s, rec).NumObjects).To(BeEquivalentTo(1))
+			Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{}),
+				"delete_obj reads BUCKET_VERSIONED alone, rgw_rados.cc:5850 at v19.2.7")
+			settle(s)
+			Expect(c.Object(testDataPool, "", headOID)).To(BeNil())
+			_, ok := c.Entry(rookIndexPool, "", shard, "k")
+			Expect(ok).To(BeFalse(), "the plain entry, removed")
+			Expect(gcEntries()).To(HaveLen(1), "the tail queued")
 		},
-		Entry("BUCKET_VERSIONED", uint32(meta.BucketVersioned)),
-		Entry("BUCKET_VERSIONS_SUSPENDED without BUCKET_VERSIONED, which radosgw never writes", uint32(meta.BucketVersionsSuspended)),
-		Entry("BUCKET_OBJ_LOCK_ENABLED without BUCKET_VERSIONED, which radosgw never writes", uint32(meta.BucketObjLockEnabled)),
+		Entry("BUCKET_VERSIONS_SUSPENDED", uint32(meta.BucketVersionsSuspended)),
+		Entry("BUCKET_OBJ_LOCK_ENABLED", uint32(meta.BucketObjLockEnabled)),
 	)
+
+	It("refuses an expected state before it reads the head", func(ctx SpecContext) {
+		setup(ctx, denc.Squid)
+		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{Expect: &op.ObjectState{}})).Error().To(MatchError(op.ErrNotImplemented))
+		Expect(c.Reads(testDataPool, "", headOID)).To(BeZero())
+		Expect(c.Object(testDataPool, "", headOID)).NotTo(BeNil())
+		Expect(indexWrites()).To(BeEmpty())
+	})
 })
 
 var _ = Describe("checkDiskState's multipart-part sweep", func() {

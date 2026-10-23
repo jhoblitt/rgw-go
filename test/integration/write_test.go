@@ -286,7 +286,7 @@ var _ = Describe("the write path against radosgw-admin and the coexisting radosg
 			st := stat(ctx, rec, "obj")
 			objTails := tails(st)
 			tag := string(rawXattrs(ctx, headOID(st))[meta.AttrTailTag])
-			Expect(store.DeleteObject(ctx, rec, meta.ObjKey{Name: "obj"}, op.DeleteParams{})).To(Succeed())
+			Expect(store.DeleteObject(ctx, rec, meta.ObjKey{Name: "obj"}, op.DeleteParams{})).Error().To(Succeed())
 
 			Expect(bucketList(ctx, name)).NotTo(HaveKey("obj"), "bucket list")
 			Expect(gcChain(gcList(ctx), tag)).To(Equal(objTails), "the gc entry under the tail tag")
@@ -438,7 +438,7 @@ var _ = Describe("the write path against radosgw-admin and the coexisting radosg
 			_, got := getRadosgw(ctx, name, "dst")
 			Expect(got).To(Equal(body), "the copy read back through radosgw")
 
-			Expect(store.DeleteObject(ctx, rec, meta.ObjKey{Name: "src"}, op.DeleteParams{})).To(Succeed())
+			Expect(store.DeleteObject(ctx, rec, meta.ObjKey{Name: "src"}, op.DeleteParams{})).Error().To(Succeed())
 			gcProcess(ctx)
 			for _, t := range srcTails {
 				Expect(refs(t)).To(Equal(map[string]bool{dstTag: true}), "%s's reference left once the source is collected", t)
@@ -446,7 +446,7 @@ var _ = Describe("the write path against radosgw-admin and the coexisting radosg
 			_, got = getRadosgw(ctx, name, "dst")
 			Expect(got).To(Equal(body), "the copy read back once the source is gone")
 
-			Expect(store.DeleteObject(ctx, rec, meta.ObjKey{Name: "dst"}, op.DeleteParams{})).To(Succeed())
+			Expect(store.DeleteObject(ctx, rec, meta.ObjKey{Name: "dst"}, op.DeleteParams{})).Error().To(Succeed())
 			gcProcess(ctx)
 			Expect(dataOIDs(ctx, rec)).To(BeEmpty(), "the shared tails once both are collected")
 		})

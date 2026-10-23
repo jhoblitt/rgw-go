@@ -35,7 +35,7 @@ func PurgeBucket(ctx context.Context, env *Env, rec *BucketRecord) error {
 			return err
 		}
 		for i := range res.Entries {
-			if delErr := env.Objects.DeleteObject(ctx, rec, res.Entries[i].Key, DeleteParams{}); delErr != nil && !errors.Is(delErr, ErrNoSuchKey) {
+			if _, delErr := env.Objects.DeleteObject(ctx, rec, res.Entries[i].Key, DeleteParams{}); delErr != nil && !errors.Is(delErr, ErrNoSuchKey) {
 				return delErr
 			}
 		}
@@ -100,14 +100,13 @@ func refuseForeignPurge(env *Env, rec *BucketRecord) error {
 }
 
 // refuseVersionedPurge answers NotImplemented for a bucket whose versioning
-// was ever enabled, before a purge deletes anything: its listing returns
-// object instances and their olh heads, which no delete here removes as
-// radosgw's versioned delete does, so a purge would release some versions
-// and then fail on an olh head (docs/exclusions.md). It refuses a bucket
-// with object lock and without versioning too, a state radosgw never
-// writes, whose objects the store's delete refuses, so that the bypass-gc
-// purge, whose data pass does not delete through the store's delete,
-// refuses it as the plain purge does.
+// was ever enabled, before a purge deletes anything: its listing names the
+// null version with no instance, which the store's delete on such a bucket
+// answers with a delete marker, not the version's removal, so a purge
+// would write markers and never empty the bucket (docs/exclusions.md). It refuses a bucket with object lock and without
+// versioning too, a state radosgw never writes and purges as an
+// unversioned bucket, which neverVersioned takes for a versioned one, and
+// the bypass-gc purge refuses both as the plain purge does.
 func refuseVersionedPurge(rec *BucketRecord) error {
 	if !neverVersioned(rec) {
 		return fmt.Errorf("%w: purging bucket %s, which is or was versioned or has object lock", ErrNotImplemented, rec.Info.Bucket.Name)

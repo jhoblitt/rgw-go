@@ -215,7 +215,7 @@ var _ = Describe("DeleteObject", func() {
 	DescribeTable("maps the store's outcome as RGWDeleteObj::execute does",
 		func(ctx SpecContext, storeErr, want error) {
 			stub := &opfakes.FakeObjectStore{}
-			stub.DeleteObjectReturns(storeErr)
+			stub.DeleteObjectReturns(nil, storeErr)
 			f.env.Objects = stub
 			err := op.Run(ctx, &op.DeleteObject{}, f.req(http.MethodDelete, "plain", "small"))
 			if want == nil {

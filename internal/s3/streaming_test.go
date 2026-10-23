@@ -27,12 +27,12 @@ type blockingDeletes struct {
 	release <-chan struct{}
 }
 
-func (b blockingDeletes) DeleteObject(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) error {
+func (b blockingDeletes) DeleteObject(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) (*op.DeleteObjectResult, error) {
 	if key.Name == b.key {
 		select {
 		case <-b.release:
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, ctx.Err()
 		}
 	}
 	return b.ObjectStore.DeleteObject(ctx, rec, key, p)

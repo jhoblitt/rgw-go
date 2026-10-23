@@ -636,7 +636,7 @@ var _ = Describe("Complete", func() {
 				Expect(err).NotTo(HaveOccurred())
 			}),
 			Entry("by a delete", func(ctx context.Context) {
-				Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{})).To(Succeed())
+				Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{})).Error().To(Succeed())
 			}),
 			Entry("by another upload of the same bytes, whose head has the same ETag and another tag", func(ctx context.Context) {
 				s.SetRandForTest(fixedRand(secondPrefix))

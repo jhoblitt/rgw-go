@@ -260,7 +260,7 @@ func (o *DeleteObjects) deleteOne(ctx context.Context, r *Request, e DeleteObjec
 		return res
 	}
 	p := DeleteParams{IfMatch: storeCondition(e.IfMatch), IfMatchSize: e.IfMatchSize, IfMatchLastModified: e.IfMatchLastModified}
-	if err := r.Env.Objects.DeleteObject(ctx, r.BucketRec, e.Key, p); !errors.Is(err, ErrNoSuchKey) {
+	if _, err := r.Env.Objects.DeleteObject(ctx, r.BucketRec, e.Key, p); !errors.Is(err, ErrNoSuchKey) {
 		res.Err = err
 	}
 	return res

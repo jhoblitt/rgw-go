@@ -435,7 +435,7 @@ var _ = Describe("StatObject and PrefetchObject of a versioned key", func() {
 			put(ctx, "v1")
 			plain := testBucket(putBucketID, 11)
 			c.ResetCounters()
-			err := s.DeleteObject(ctx, plain, version(""), op.DeleteParams{})
+			_, err := s.DeleteObject(ctx, plain, version(""), op.DeleteParams{})
 			Expect(err).To(MatchError(op.ErrNotImplemented), "an unversioned delete never removes a versioned key's OLH head")
 			Expect(c.Writes(testDataPool, "", olhHeadOID(version("")))).To(BeZero())
 			Expect(c.Writes(rookIndexPool, "", shard)).To(BeZero())

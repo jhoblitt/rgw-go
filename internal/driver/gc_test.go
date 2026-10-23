@@ -187,7 +187,7 @@ var _ = Describe("gc worker", func() {
 		_, err := s.PutObject(ctx, rec, key, bytes.NewReader(body), op.PutParams{Attrs: attrs, Size: int64(len(body)), Tag: "tx-put"})
 		Expect(err).NotTo(HaveOccurred())
 		settle(s)
-		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{})).To(Succeed())
+		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{})).Error().To(Succeed())
 		settle(s)
 		shard := fmt.Sprintf("gc.%d", driver.GCShardForTest(s, tag))
 		Expect(c.GCEntries(gcPoolName, gcNS, shard)).To(HaveLen(1))

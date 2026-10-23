@@ -444,9 +444,9 @@ var _ = Describe("the versioned link and unlink", func() {
 		It("evaluates its condition on the version current on the head the attempt read and guards the init on that head's olh.info", func(ctx SpecContext) {
 			put(ctx, "v1")
 			var seen []string
-			cond := func(_ context.Context, cur *op.ObjectState) (bool, error) {
+			cond := func(_ context.Context, cur *op.ObjectState) (driver.OLHPass, error) {
 				seen = append(seen, cur.Key.Instance)
-				return false, nil
+				return driver.OLHPass{}, nil
 			}
 			info := slices.Clone(olhHead().Xattrs[meta.AttrOLHInfo])
 			c.ResetCounters()
@@ -461,8 +461,8 @@ var _ = Describe("the versioned link and unlink", func() {
 			put(ctx, "v1")
 			v := write(ctx, "v2")
 			c.ResetCounters()
-			cond := func(context.Context, *op.ObjectState) (bool, error) {
-				return false, op.ErrPreconditionFailed
+			cond := func(context.Context, *op.ObjectState) (driver.OLHPass, error) {
+				return driver.OLHPass{}, op.ErrPreconditionFailed
 			}
 			err := s.SetOLHForTest(ctx, rec, v, driver.OLHLink{Cond: cond})
 			Expect(err).To(MatchError(op.ErrPreconditionFailed))

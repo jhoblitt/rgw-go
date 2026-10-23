@@ -158,7 +158,7 @@ var _ = Describe("DeleteObjects", func() {
 		f.conf["rgw_multi_obj_del_max_aio"] = "3"
 		stub := &opfakes.FakeObjectStore{}
 		var inFlight, maxInFlight atomic.Int32
-		stub.DeleteObjectStub = func(context.Context, *op.BucketRecord, meta.ObjKey, op.DeleteParams) error {
+		stub.DeleteObjectStub = func(context.Context, *op.BucketRecord, meta.ObjKey, op.DeleteParams) (*op.DeleteObjectResult, error) {
 			n := inFlight.Add(1)
 			for {
 				cur := maxInFlight.Load()
@@ -168,7 +168,7 @@ var _ = Describe("DeleteObjects", func() {
 			}
 			time.Sleep(5 * time.Millisecond) // holds the delete open so the overlap is seen
 			inFlight.Add(-1)
-			return nil
+			return &op.DeleteObjectResult{}, nil
 		}
 		f.env.Objects = stub
 		Expect(op.Run(ctx, m.op(entriesOf("k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7"), nil), f.multiReq("x"))).To(Succeed())
@@ -390,14 +390,14 @@ var _ = Describe("DeleteObjects", func() {
 	)
 	It("reports a lost race and any other failure as that key's error", func(ctx SpecContext) {
 		stub := &opfakes.FakeObjectStore{}
-		stub.DeleteObjectStub = func(_ context.Context, _ *op.BucketRecord, key meta.ObjKey, _ op.DeleteParams) error {
+		stub.DeleteObjectStub = func(_ context.Context, _ *op.BucketRecord, key meta.ObjKey, _ op.DeleteParams) (*op.DeleteObjectResult, error) {
 			switch key.Name {
 			case "race":
-				return op.ErrConcurrentModification
+				return nil, op.ErrConcurrentModification
 			case "gone":
-				return fmt.Errorf("object gone: %w", op.ErrNoSuchKey)
+				return nil, fmt.Errorf("object gone: %w", op.ErrNoSuchKey)
 			}
-			return errors.New("boom")
+			return nil, errors.New("boom")
 		}
 		f.env.Objects = stub
 		Expect(op.Run(ctx, m.op(entriesOf("race", "gone", "boom"), nil), f.multiReq("x"))).To(Succeed())

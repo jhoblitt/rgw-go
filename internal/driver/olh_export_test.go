@@ -11,6 +11,9 @@ import (
 // OLHLink is olhLink for the external specs.
 type OLHLink = olhLink
 
+// OLHPass is olhPass for the external specs.
+type OLHPass = olhPass
+
 // OLHUnlink is olhUnlink for the external specs.
 type OLHUnlink = olhUnlink
 

@@ -908,9 +908,10 @@ func (o *RemoveObjectAdmin) VerifyPermission(_ context.Context, r *Request) erro
 // so on a versioned bucket it writes a delete marker, whether or not the
 // object exists
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5774-L5812 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6462-L6517 at v20.2.4),
-// where the store's unversioned delete would remove the object outright
-// (docs/exclusions.md). On any other bucket, a name no object can carry,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6462-L6517 at v20.2.4).
+// The refusal is the route's: the store's delete writes a marker on a
+// bucket whose flags hold BUCKET_VERSIONED too (docs/exclusions.md). On any
+// other bucket, a name no object can carry,
 // empty, longer than 1024 bytes or not UTF-8, is answered NoSuchKey without
 // reaching the store, the answer radosgw's head read gives it, where
 // radosgw would hand a name of over about 2000 bytes to RADOS, which
@@ -926,5 +927,8 @@ func (o *RemoveObjectAdmin) Execute(ctx context.Context, r *Request) error {
 	if !validAdminObjectName(o.Object) {
 		return ErrNoSuchKey
 	}
-	return r.Env.Objects.DeleteObject(ctx, rec, meta.ObjKey{Name: o.Object}, DeleteParams{})
+	if _, err := r.Env.Objects.DeleteObject(ctx, rec, meta.ObjKey{Name: o.Object}, DeleteParams{}); err != nil {
+		return err
+	}
+	return nil
 }

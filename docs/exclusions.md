@@ -41,8 +41,24 @@ day with the rgw-rs session, which splits by layer:
 - Object-class replies: decoded from the Squid version up to the newest
   main writes. Stored index, OLH, GC, usage and lifecycle records are
   written and re-encoded by the OSD's class at that OSD's version, so a
-  reply never carries an older stored encoding. The one exception, the
-  `bi_*` entries that return raw stored bytes, is out of scope.
+  reply never carries an older stored encoding. The one exception is the
+  `bi_*` methods, which return an entry's stored bytes. Of them rgw-go
+  calls `bi_get` alone, and decodes what it reads with the decoders that
+  take every version the class has written. It reads a name's OLH entry,
+  as radosgw's `repair_olh` does
+  ([rgw_rados.cc:8280](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8280),
+  [rgw_rados.cc:9026](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9026)),
+  and one version's entries, as radosgw's versioned delete reads one
+  ([rgw_rados.cc:9443-9463](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9443-L9463),
+  [rgw_rados.cc:10192-10212](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10192-L10212)):
+  one read for a named instance, and up to three for `null`, in the
+  class's `read_key_entry` order, the plain key, then the null delete
+  marker's key, then the null data key
+  ([cls_rgw.cc:946-978](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L946-L978),
+  [cls_rgw.cc:1076-1108](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1076-L1108);
+  "A versioned delete of versionId=null checks the null version itself",
+  under Object write differences). `bi_put`, `bi_list` and the repair
+  paths stay out of scope.
 
 A Tentacle gateway-side feature is therefore available on a Squid cluster
 when its persistent form is a separate attribute, as S3 checksums are,
@@ -1419,7 +1435,9 @@ review and verified against the tree.
   v20.2.4) as in rgw-go, so such a bucket can still arrive. radosgw would
   purge it as an unversioned one, as `versioning_status` reads only the
   versioning flags (`rgw_common.h:1075` at v19.2.6, `:1117` at v20.2.4);
-  rgw-go's object delete refuses it, taking it for a versioned bucket.
+  rgw-go's purges refuse it before their first delete, taking it for a
+  versioned bucket, though the object delete itself takes radosgw's
+  unversioned path there.
 - **The admin object removal refuses a bucket whose versioning was ever
   enabled.** `DELETE /admin/bucket?object` answers 501 NotImplemented for
   a bucket whose versioning is enabled or suspended, or that has object
@@ -1439,12 +1457,12 @@ review and verified against the tree.
   v19.2.6, `:1853-1866` and `:1950` at v20.2.4), and `apply_olh_log`
   removes it (`driver/rados/rgw_rados.cc:8283-8284` and `:8334-8345` at
   v19.2.6, `:9225-9226` and `:9276-9287` at v20.2.4), as S3 has it for a
-  suspended bucket. rgw-go's delete takes the unversioned path, which
-  would remove the object's head, its tails and its index entry outright,
-  with no marker and no olh, on either. The refusal
-  follows the bucket load and comes before the object-name check, as
-  radosgw's versioned path answers no ENOENT for a missing object. The
-  RADOS store's object delete makes the same refusal whoever calls it.
+  suspended bucket. The refusal is the route's own: the RADOS store's
+  object delete takes radosgw's versioned path, writing a delete marker, on
+  a bucket whose flags hold `BUCKET_VERSIONED`, and the unversioned path on
+  any other. The refusal follows the bucket load and comes before the
+  object-name check, as radosgw's versioned path answers no ENOENT for a
+  missing object.
 - **The admin account routes and the RADOS account store differ from
   radosgw in eight ways.** On `/admin/account` (`rgw_rest_account.cc` and
   `rgw_account.cc` at v19.2.6 and v20.2.4) and in the RADOS driver's
@@ -7565,21 +7583,24 @@ does the following.
   A client of a Squid zone sees the object's own Last-Modified after the
   tags are removed, where v19.2.6 reports 1970-01-01.
 - **Writes to a versioned or object-lock bucket answer 501 until
-  versioning is served.** Every write rgw-go serves, PutObject, CopyObject,
-  DeleteObject, DeleteObjects, PutObjectAcl, PutObjectTagging,
+  versioning is served.** Every write rgw-go serves but the deletes,
+  PutObject, CopyObject, PutObjectAcl, PutObjectTagging,
   DeleteObjectTagging and CompleteMultipartUpload, takes radosgw's
   unversioned path, where radosgw's CompleteMultipartUpload writes a new
   version, or the null one through the OLH (`rgw_op.cc:6459-6466` at
   v19.2.6, `:7284-7291` at v20.2.4). On a bucket whose
   versioning is enabled or suspended, or that has object lock, that path
-  would write or remove a version's head beside the bucket's OLH under an
-  index entry for the plain key, and for a versioned delete it skips the
-  retention and legal-hold checks radosgw makes (`verify_object_lock`,
-  `rgw_op.cc:5185-5221` and `:6845-6869` at v19.2.6, `:5576-5610` and
-  `:7782-7806` at v20.2.4). rgw-go answers such a write, and any write
-  naming a version, a copy's source included, CopyObject's and
-  UploadPartCopy's, with 501 NotImplemented
-  before it touches the store; DeleteObjects answers it through its status
+  would write a version's head beside the bucket's OLH under an index
+  entry for the plain key. DeleteObject and DeleteObjects would reach a
+  store whose delete takes radosgw's versioned path on a bucket whose flags
+  hold `BUCKET_VERSIONED`, but the ops do not yet answer the version id or
+  the delete marker it reports, and they would skip the retention and
+  legal-hold checks radosgw makes for a versioned delete
+  (`verify_object_lock`, `rgw_op.cc:5185-5221` and `:6845-6869` at v19.2.6,
+  `:5576-5610` and `:7782-7806` at v20.2.4). rgw-go answers such a write,
+  and any write naming a version, a copy's source included, CopyObject's
+  and UploadPartCopy's, with 501 NotImplemented before it touches the
+  store; DeleteObjects answers it through its status
   line before its first key. radosgw serves them. The bucket listing makes
   the same refusal for a versioned bucket ("The versions of a bucket whose
   versioning was ever enabled are not listed").
@@ -8758,6 +8779,101 @@ does the following.
   until then each read of the key runs a replay that finds nothing to
   apply, and the attr refuses the clear of the key's OLH, as any writer's
   pending attr does. The versioned writes are not served yet.
+- **A versioned delete of versionId=null checks the null version itself.**
+  A delete naming a version of a versioned key reads that version's index
+  entry, checks If-Match, `x-amz-if-match-size` and
+  `x-amz-if-match-last-modified-time` against the entry's meta, and reports
+  the entry's delete-marker flag
+  ([rgw_rados.cc:5905-5953](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5905-L5953),
+  [rgw_rados.cc:6517-6565](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6517-L6565)).
+  radosgw reads it with one `bi_get` of the key as named, `null` cleared
+  (`bi_get_instance`,
+  [rgw_rados.cc:9443-9463](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9443-L9463),
+  [rgw_rados.cc:10192-10212](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10192-L10212)),
+  which for an empty instance reads the plain key, as
+  `encode_obj_index_key` keys it
+  ([cls_rgw.cc:339-346](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L339-L346),
+  [cls_rgw.cc:389-396](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L389-L396)).
+  From a key's first link its plain key holds the class's version marker, an
+  entry with empty meta that is no delete marker, and the null version's
+  entries, its data and its delete marker, sit at keys of their own
+  ([cls_rgw.cc:1568-1634](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1568-L1634),
+  [cls_rgw.cc:1695-1763](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1695-L1763)).
+  So radosgw compares a `versionId=null` delete's conditions with the
+  marker's empty meta, answering 412 for any If-Match naming an ETag, any
+  `x-amz-if-match-size` but 0 and any `x-amz-if-match-last-modified-time`,
+  and omits `x-amz-delete-marker`, which it sends only when true
+  ([rgw_rest_s3.cc:3496-3497](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3496-L3497),
+  [rgw_rest_s3.cc:3746-3747](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3746-L3747)),
+  from the removal of a null delete marker
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's versioned delete of
+  versionId=null checks the version marker, not the null
+  version](ceph-upstream-bugs.md#radosgws-versioned-delete-of-versionidnull-checks-the-version-marker-not-the-null-version)").
+  rgw-go resolves `null` in the class's `read_key_entry` order, the plain
+  key, then the null delete marker's key, then the null data key
+  (`getInstanceEntry`, `internal/driver/olh_index.go`), and checks the
+  conditions and reports the flag of the null version's own entry. The cost
+  is up to two more index reads per `versionId=null` delete. On a key with no
+  null version rgw-go answers NoSuchKey from those reads, writing nothing,
+  where radosgw inits a pending modification on the key's OLH head and
+  cancels it before it answers the unlink's ENOENT, or answers 412 under a
+  condition. The
+  S3 delete still answers 501 on a versioned bucket ("Writes to a versioned
+  or object-lock bucket answer 501 until versioning is served"); the
+  object store's delete does this.
+- **A conditional delete marker is checked against the version current when
+  it links.** A delete naming no version on a versioned bucket writes a
+  delete marker. radosgw checks its If-Match, `x-amz-if-match-size` and
+  `x-amz-if-match-last-modified-time` once, against the version current
+  through the key's OLH, and then links the marker over whatever another
+  writer linked since
+  ([rgw_rados.cc:5882-5901](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5882-L5901),
+  [rgw_rados.cc:6494-6513](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6494-L6513)).
+  rgw-go makes them the marker link's condition (`writeDeleteMarker`,
+  `internal/driver/delete_versioned.go`), checked as every conditional
+  versioned write's is (`prepareOLHAttempt` and `checkOLHLink`,
+  `internal/driver/olh_cond.go`): each attempt evaluates them on the version
+  current once it has followed the key's OLH ("A read that replays a pending
+  modification answers the version current after it", under Object read
+  differences), and guards its init on the `olh.info` it read and, while
+  its wait on them allows, on no other writer's modification pending. On an
+  enabled bucket the marker
+  commits only if the conditions held when it linked: after the link rgw-go
+  lists the key's versions, and when another version or marker took an epoch
+  between the one the attempt read and the marker's own, or the version the
+  conditions passed on, the current delete marker they saw, or the null
+  version whose data they passed on, is no longer listed, it unlinks the
+  marker and answers 412. A pass of any of the three conditions rests on
+  what it was checked against, so the current version, or the current
+  delete marker and, for a pass on the null version's data in the key's
+  head, the null version, must stay listed. On a suspended bucket the
+  marker is the null
+  version, whose link replaces the null version's list entry and logs the
+  removal of its data
+  ([cls_rgw.cc:1712-1731](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1712-L1731),
+  [cls_rgw.cc:1853-1872](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1853-L1872)),
+  which no unlink restores. So it is not checked after its link: its init's
+  guard serializes it against rgw-go's conditional writers alone, and a
+  radosgw writer, or an unconditional rgw-go one, that links between its
+  init and its link stays under the marker, as through radosgw.
+
+  When no version is current, a delete marker being current or no link
+  having reached the key's head, the conditions are checked against the
+  key's head without following it, the OLH head object, as radosgw's are
+  ([rgw_rados.cc:5882-5891](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5882-L5891),
+  [rgw_rados.cc:6494-6503](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6494-L6503)):
+  If-Match: `*` passes and writes another marker, and an If-Match naming an
+  ETag answers 412 unless the head holds a noncurrent null version's data
+  under that ETag, which s3-tests' `test_delete_object_current_if_match`
+  expects. radosgw checks the head as it read it before its follow, and
+  falls back to it when that follow's replay is refused, where rgw-go reads
+  the head again after the replay. A pass on the head's ETag, size or
+  last-modified time while the head holds the null version's data rests on
+  that version, so on an enabled bucket the check after the link requires
+  it listed too, reading the key's listing down to its entry; the null
+  version's removal leaves the head with no ETag and no data, which
+  If-Match: `*` alone does not compare. The S3 delete still answers 501 on
+  a versioned bucket; the object store's delete does this.
 - **zlib's compressor message states the window rgw-go deflates with.**
   radosgw's zlib compressor deflates with `compressor_zlib_winsize` and
   stores that value as each object's `compressor_message`
@@ -9947,11 +10063,14 @@ both, the surfaces match: rgw-rs has added the lock, 2pc queue and OTP
 classes to its roadmap, so persistent notifications and MFA are in scope
 on both sides. The bucket-index log and the reshard queue are out on both
 sides through the multisite and dynamic-resharding entries. The `bi_*`
-index-entry methods back resharding and the instance and OLH index
-readers used by index repair, not the S3 versioning path, which uses the
-dedicated OLH methods; they are out on both sides unless an index-repair
-path in scope turns out to need them. Feature level: both decode class
-replies up to what main writes. For driver-level types both gateways
+index-entry methods back resharding and index repair, and the S3
+versioning path needs one of them, `bi_get`: radosgw's versioned delete
+reads one version's index entry with it, and `repair_olh` a name's OLH
+entry. rgw-go reads those, and one version's entries for its own lookups,
+up to three reads for `null` in the class's `read_key_entry` order;
+`bi_put`, `bi_list` and the repair paths are out on both sides. Feature
+level: both decode class replies up to what main writes. For driver-level
+types both gateways
 follow the same rule, decode every version and encode at the cluster
 release's version, adopted for rgw-rs on 2026-09-25, so on Tentacle as on
 Squid they write identical bytes. Both detect the release from the OSD

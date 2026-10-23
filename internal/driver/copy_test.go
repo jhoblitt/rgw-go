@@ -221,7 +221,7 @@ var _ = Describe("CopyObject", func() {
 	})
 
 	It("fails a copy onto itself whose head was deleted since it was read, and leaves it deleted", func(ctx SpecContext) {
-		Expect(s.DeleteObject(ctx, rec, srcKey, op.DeleteParams{})).To(Succeed())
+		Expect(s.DeleteObject(ctx, rec, srcKey, op.DeleteParams{})).Error().To(Succeed())
 		settle(s)
 		_, err := s.CopyObject(ctx, srcSt, rec, srcKey, op.CopyParams{Attrs: reqAttrs(meta.AttrMetaPrefix+"c", "3"), ReplaceAttrs: true, Tag: "tx-self"})
 		Expect(err).To(MatchError(op.ErrNoSuchKey))
