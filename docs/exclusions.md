@@ -4000,8 +4000,10 @@ v20.2.4 tags, rgw-go does the following.
   (https://docs.aws.amazon.com/AmazonS3/latest/userguide/cors.html#cors-eval-criteria;
   the PutBucketCors reference as the AWS SDK for Go carries it,
   [api.go:8329-8342](https://github.com/aws/aws-sdk-go/blob/7112c0a0c2d01713a9db2d57f0e5722225baf5b5/service/s3/api.go#L8329-L8342)),
-  and so does radosgw's `match_rule` on main since cc1dcecee08 and on the
-  tentacle branch since 5f25f2bb0e2, which no release carries. Both floors
+  and so does radosgw's `match_rule` on main since cc1dcecee08, on the
+  tentacle branch since 5f25f2bb0e2 and on the squid branch since
+  50137a456e2, which no release carries, though for every request rather
+  than a preflight alone. Both floors
   take the first rule whose AllowedOrigin matches the Origin alone. They
   refuse a preflight 403 when that rule does not allow its method or a
   requested header, and send no CORS headers on another response when it

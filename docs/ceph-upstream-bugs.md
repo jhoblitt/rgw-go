@@ -17688,7 +17688,7 @@ Every new entry adds its row to this table, in document order.
 ## radosgw answers a CORS request with the first rule whose origin matches
 
 - **Kind:** defect, S3-correctness, not found by us: upstream has fixed it
-  on main and on the tentacle branch. A CORS configuration that gives one
+  on main and on the tentacle and squid branches. A CORS configuration that gives one
   origin several rules answers that origin from the first of them alone. A
   preflight whose method or requested headers only a later rule allows is
   refused 403, and any other request that only a later rule allows gets no
@@ -17727,18 +17727,37 @@ Every new entry adds its row to this table, in document order.
     allows the origin, the method and the requested headers, and both the
     preflight and `generate_cors_headers` call it
     ([rgw_cors.cc:242-290](https://github.com/ceph/ceph/blob/cc1dcecee08/src/rgw/rgw_cors.cc#L242-L290)).
+  - The fix chooses by the requested headers on every request, not on a
+    preflight alone as Amazon S3 documents: `generate_cors_headers` hands
+    `match_rule` the request's Access-Control-Request-Headers, and
+    `RGWCORSRule::matches` refuses a rule that does not allow each of them,
+    on main
+    ([rgw_op.cc:2003-2010](https://github.com/ceph/ceph/blob/cc1dcecee08/src/rgw/rgw_op.cc#L2003-L2010) and
+    [rgw_cors.cc:266-276](https://github.com/ceph/ceph/blob/cc1dcecee08/src/rgw/rgw_cors.cc#L266-L276) at cc1dcecee08)
+    and in the tentacle backport
+    ([rgw_op.cc:1798-1806](https://github.com/ceph/ceph/blob/5f25f2bb0e2/src/rgw/rgw_op.cc#L1798-L1806) and
+    [rgw_cors.cc:211-221](https://github.com/ceph/ceph/blob/5f25f2bb0e2/src/rgw/rgw_cors.cc#L211-L221) at 5f25f2bb0e2).
+    The squid backport's merge, 50137a456e2, which the clone does not hold,
+    makes the same call in its `generate_cors_headers` (read through
+    GitHub's API, 2026-10-23). So on those branches a request other than a
+    preflight that names a header the first rule for its origin and method
+    does not allow gets a later rule's headers, or none. Browsers are not
+    affected: Fetch makes Access-Control-Request-Headers a forbidden request
+    header (https://fetch.spec.whatwg.org/#forbidden-request-header), so
+    only another client sends it on such a request. Not security-relevant.
 - **Impact:** the configuration's later rules for an origin are dead: a
   page the owner meant to allow is refused, unless each origin's methods
   and headers sit in its first rule. No request is allowed that the
   configuration does not allow.
 - **Releases:** v19.2.7 and v20.2.4 carry it. main carries the fix since
-  cc1dcecee08 and the tentacle branch since 5f25f2bb0e2; no tag does,
-  and the squid branch does not yet (the clone's `origin/squid` at
-  226f1401666, 2026-10-12, has no `match_rule`).
+  cc1dcecee08, the tentacle branch since 5f25f2bb0e2 and the squid branch
+  since 50137a456e2; no tag does.
 - **rgw-go:** differs: its rule selection, `cors.Configuration.Match`
-  (`internal/cors/match.go`), is main's `match_rule`
+  (`internal/cors/match.go`), is main's `match_rule`, but it passes the
+  requested headers for a preflight alone, as Amazon S3 documents
   (`docs/exclusions.md`, "CORS rules are matched as Amazon S3 matches
-  them").
+  them" and "Every S3 response carries CORS headers once its bucket is
+  loaded").
 - **Upstream:** tracked as [#77575](https://tracker.ceph.com/issues/77575),
   with the backport trackers [#77584](https://tracker.ceph.com/issues/77584)
   for tentacle and [#77586](https://tracker.ceph.com/issues/77586) for
@@ -17750,7 +17769,7 @@ Every new entry adds its row to this table, in document order.
     [ceph/ceph#69647](https://github.com/ceph/ceph/pull/69647), merged as
     20cd4f8aa07 on 2026-08-21, in no tag.
   - squid: [ceph/ceph#69648](https://github.com/ceph/ceph/pull/69648),
-    open.
+    merged as 50137a456e2 on 2026-10-20, in no tag.
   - reef: [ceph/ceph#69649](https://github.com/ceph/ceph/pull/69649),
     closed unmerged.
 - **Found:** phase 2 research, 2026-10-13, comparing `host_name_rule` with
