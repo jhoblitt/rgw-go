@@ -107,8 +107,10 @@ var (
 // other gateway, run as Run's control-watch worker, the retries of bucket
 // index completions a reshard refused as its index-completions worker, with
 // rgw_enable_gc_threads the garbage collector as its gc worker, with
-// rgw_enable_quota_threads the stats syncs as its quota workers, and with
-// rgw_enable_usage_log the usage log's flushes as its usage-flush worker.
+// rgw_enable_lc_threads and a positive rgw_lc_max_worker the lifecycle
+// workers as its lifecycle worker, with rgw_enable_quota_threads the stats
+// syncs as its quota workers, and with rgw_enable_usage_log the usage log's
+// flushes as its usage-flush worker.
 func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Options, o Options) (*Store, error) {
 	release, err := detectRelease(ctx, cluster, o.Release)
 	if err != nil {
@@ -160,6 +162,9 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 	s.AddWorker("index-completions", s.w.completions.run)
 	if wopts.gcThreads {
 		s.AddWorker("gc", newGCWorker(s).run)
+	}
+	if opts.lcThreads && opts.lcMaxWorker > 0 {
+		s.AddWorker("lifecycle", newLCWorkers(s, lcStalePass{s}).run)
 	}
 	s.openQuota(ctx)
 	s.openUsageLog(ctx)

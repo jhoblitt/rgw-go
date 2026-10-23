@@ -195,8 +195,10 @@ required for copy handles them.
 
 ### Cloud transition and restore
 
-What: lifecycle transitions to a cloud tier, RestoreObject, and
-`/admin/restore`.
+What: lifecycle transitions to a cloud tier, RestoreObject,
+`/admin/restore`, and the expiry of restored copies that v20.2.4's
+lifecycle worker runs after each pass
+([rgw_lc.cc:2079-2083](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2079-L2083)).
 
 Why: needs a remote cloud endpoint. Storage-class transitions inside the
 cluster are not excluded.
@@ -1279,10 +1281,9 @@ review and verified against the tree.
     one under the old, logging a failure of either; a failure to file it
     leaves the bucket out of the index, as radosgw's rename does. An old
     entry left behind names a name that no longer loads the bucket, which
-    radosgw's lifecycle pass drops, as for a delete ("A bucket delete
-    removes the lifecycle entry once the bucket is gone"), and rgw-go's own
-    worker once it does what `bucket_lc_process` does; until then, in a
-    zone where no radosgw lifecycle thread runs, nothing drops it. A
+    the next lifecycle pass on its shard drops, radosgw's or rgw-go's, as
+    for a delete ("A bucket delete removes the lifecycle entry once the
+    bucket is gone"). A
     DeleteBucketLifecycle on the new name that lands between the rename's
     last instance write and its filing of the entry leaves an entry for a
     bucket without `user.rgw.lc`. radosgw's pass keeps such an entry and
@@ -3549,7 +3550,25 @@ does the following.
   ([rgw_lc.cc:237-248](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L237-L248),
   [rgw_lc.cc:237-248](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L237-L248)),
   an option its own description says not to change while the lifecycle
-  index holds entries.
+  index holds entries. It holds as well for the lifecycle worker's options,
+  which radosgw reads at each use: `rgw_lifecycle_work_time` at each
+  start and each schedule ([rgw_lc.cc:2516](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2516) and [rgw_lc.cc:2556](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2556),
+  [rgw_lc.cc:2583](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2583) and [rgw_lc.cc:2623](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2623)); `rgw_lc_debug_interval` at
+  each start and each schedule too ([rgw_lc.cc:2529](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2529) and [rgw_lc.cc:2545-2546](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2545-L2546),
+  [rgw_lc.cc:2596](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2596) and [rgw_lc.cc:2612-2613](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2612-L2613)), at each bucket's `thread_stop_at`
+  ([rgw_lc.cc:2047-2048](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2047-L2048), [rgw_lc.cc:2110-2111](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2110-L2111)), and at each session, rollover
+  and day check of a pass
+  ([rgw_lc.cc:2031-2032](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2031-L2032), [rgw_lc.cc:2143](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2143) and [rgw_lc.cc:2156-2157](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2156-L2157),
+  [rgw_lc.cc:2094-2095](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2094-L2095), [rgw_lc.cc:2207](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2207) and [rgw_lc.cc:2220-2221](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2220-L2221));
+  `rgwlc_auto_session_clear` at each session check ([rgw_lc.cc:2027](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2027),
+  [rgw_lc.cc:2090](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2090)); `rgw_lc_lock_max_time` at each pass
+  ([rgw_lc.cc:1999](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1999), [rgw_lc.cc:2056](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2056)); `rgwlc_skip_bucket_step` at each
+  bucket ([rgw_lc.cc:1693](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1693), [rgw_lc.cc:1749](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1749)); and `rgw_lc_thread_delay`
+  at each page of a bucket's listing ([rgw_lc.cc:367](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L367) and [rgw_lc.cc:893](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L893),
+  [rgw_lc.cc:367](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L367) and [rgw_lc.cc:914](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L914)). radosgw reads `rgw_lc_max_worker`
+  and `rgw_lc_max_wp_worker` once, as it starts its workers
+  ([rgw_lc.cc:2469](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2469) and [rgw_lc.cc:877](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L877), [rgw_lc.cc:2536](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2536) and
+  [rgw_lc.cc:898](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L898)), and so does rgw-go.
 - **Shard counts, the bucket-index AIO limit and the copy concurrency that
   are not positive.** A
   zero or negative `rgw_usage_max_shards`, `rgw_usage_max_user_shards`,
@@ -6028,9 +6047,12 @@ differ, rgw-go does the following.
   [rgw_lc.cc:2430-2440](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2430-L2440),
   [rgw_lc.cc:1753-1774](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1753-L1774),
   [rgw_lc.cc:2497-2506](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2497-L2506)).
-  rgw-go's own lifecycle worker drops it too once it does what
-  `bucket_lc_process` does. Until then, in a zone where no radosgw
-  lifecycle thread runs, nothing drops it.
+  rgw-go's lifecycle worker drops it in both cases too (`lcLoadBucket`,
+  `internal/driver/lc_worker.go`), so a zone of rgw-go gateways alone
+  drops it as long as one of them runs its lifecycle threads. It drops an
+  entry whose key does not split into a tenant, a name and a marker as
+  well, which radosgw's `bucket_lc_process` indexes past
+  (docs/ceph-upstream-bugs.md, "[radosgw's bucket_lc_process indexes past a lifecycle entry key of fewer than three parts](ceph-upstream-bugs.md#radosgws-bucket_lc_process-indexes-past-a-lifecycle-entry-key-of-fewer-than-three-parts)").
 - **A retried bucket write stops when the name names another bucket.**
   PutBucketPolicy, DeleteBucketPolicy, PutBucketTagging,
   DeleteBucketTagging, PutBucketWebsite, DeleteBucketWebsite,
@@ -9564,9 +9586,15 @@ rgw-go decides what a lifecycle rule does to a listed object, and what
 `x-amz-expiration` and `x-amz-abort-date` name, as radosgw's `rgw_lc.cc`
 does at the v19.2.7 and v20.2.4 tags (`lifecycle.Decide`,
 `lifecycle.ExpirationHeader` and `lifecycle.AbortHeader`,
-`internal/lifecycle/decide.go` and `headers.go`). rgw-go does not yet run
-the worker or send the headers ("No x-amz-expiration", under "Object read
-differences"), so these entries describe the decisions both will take.
+`internal/lifecycle/decide.go` and `headers.go`). rgw-go runs the
+worker's shard protocol, but its bucket pass does not yet apply a rule:
+it claims only an entry whose bucket no longer loads under the entry's
+marker, to remove it, and one whose bucket has no lifecycle configuration,
+which it completes as radosgw's pass does, and leaves every bucket with a
+configuration unclaimed for radosgw's workers ("rgw-go's lifecycle worker
+departs from radosgw's shard protocol in three places", below). It does
+not yet send the headers ("No x-amz-expiration", under "Object read
+differences"). The decision entries describe what both will do.
 Where rgw-go differs, it does the following, as the design's compatibility
 rule asks (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:284-298`):
 the correct S3 result, in RADOS state radosgw reads as its own.
@@ -9797,6 +9825,109 @@ the correct S3 result, in RADOS state radosgw reads as its own.
   lifecycle shard lock it did not
   take](ceph-upstream-bugs.md#radosgws-guard_lc_modify-unlocks-a-lifecycle-shard-lock-it-did-not-take)").
   rgw-go unlocks only a lock it took, and fails with the lock's error.
+- **rgw-go's lifecycle worker departs from radosgw's shard protocol in
+  three places.** It takes the shard's `lc_process` lock under worker
+  ix's cookie, `lc_thrd: <ix>`, with radosgw's five tries, and keeps the head, the
+  claim, the post-state, the skips, the session expiry and the rollover
+  as `RGWLC::process` does ([rgw_lc.cc:2252-2465](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2252-L2465),
+  [rgw_lc.cc:2317-2532](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2317-L2532); `internal/driver/lc_worker.go`), so radosgw's
+  workers and rgw-go's can share a zone. That includes the rollover
+  check's gap, which lets every pass within a day of a shard's rollover
+  walk it again (docs/ceph-upstream-bugs.md, "[radosgw's lifecycle
+  rollover guard does not keep a second pass from walking a
+  shard](ceph-upstream-bugs.md#radosgws-lifecycle-rollover-guard-does-not-keep-a-second-pass-from-walking-a-shard)").
+  It departs:
+  - An entry its bucket pass may not claim keeps the shard's head. rgw-go
+    neither claims it nor moves the head past it, and walks on with a
+    marker of its own, from that entry to the shard's end and then from
+    the shard's first entry back to it, claiming each due entry its bucket
+    pass may claim and writing no head. Leaving the head there lets radosgw's worker reach the
+    entry, and the walk reaches the entries before it, which radosgw's
+    walk reaches only once its head does. A pass that leaves such an entry
+    stamps no rollover date, since its head never reaches the shard's end,
+    and in a zone without radosgw workers the entry is never processed.
+    Until rgw-go's bucket pass applies rules, every bucket with a
+    lifecycle configuration is such an entry.
+  - A claim is read back before its bucket is processed and again once
+    the shard is locked after it. A claim the shard no longer holds as the
+    worker wrote it, because another worker took over its expired session,
+    a lifecycle configuration put reset it, or a bucket delete removed it,
+    gets no post-state, and the worker's pass on that shard ends there
+    without writing the head. radosgw writes its post-state over whatever
+    the entry then holds, which overwrites the other worker's claim,
+    completes a reset entry for the day, or puts a removed entry back, and
+    when the head it advanced before the bucket had reached the shard's
+    end, writes that head back with a rollover date
+    (docs/ceph-upstream-bugs.md, "[radosgw's lifecycle post-state
+    overwrites an entry changed during the bucket's
+    pass](ceph-upstream-bugs.md#radosgws-lifecycle-post-state-overwrites-an-entry-changed-during-the-buckets-pass)").
+  - A worker that stops while it processes a bucket, as at a gateway's
+    shutdown, or between a claim and its first read back, records the
+    bucket failed. On a context of its own, bounded at 5 s, it takes the
+    shard's lock again with the backoff, reads its claim back, and writes
+    `failed` under the claim's start time, so the bucket is due again at
+    the next pass that reaches it; it then releases the lock on a second
+    bound of 5 s, so a slow cluster that used up the first still gets the
+    unlock (`lcShard.recordStop`, `internal/driver/lc_worker.go`). A pass
+    that returned on its own records its result on the same kind of
+    context, so a stop that lands during its post-state does not cut it
+    short. The worker sends the lock and the unlock as write ops, which
+    goceph's default callback completion mode and its pipe mode stop
+    waiting for at a bound, so in those modes both bounds hold whatever the
+    cluster does. goceph's sync mode, `--rados-completions=sync`, waits for
+    the OSD, as go-ceph's lock calls do, and in every mode the RADOS
+    client's close still waits for an op left in flight, so a lock or
+    unlock on an unavailable PG still holds the gateway's exit
+    (docs/cgo-limitations.md, "Cancellation stops only the client"). Once
+    the worker's context has ended, its unlock between buckets and before a
+    bucket's pass is bounded at 5 s too. A step that fails, or a bound
+    running out, records nothing and leaves the entry processing, as a
+    gateway that dies leaves it, and a lock or unlock left in flight leaves
+    the shard locked until `rgw_lc_lock_max_time`, 90 s by default, lapses
+    it, while radosgw's `guard_lc_modify` gives up on a locked shard after
+    50 s and fails the lifecycle configuration put or delete
+    ([rgw_lc.cc:2584-2634](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2584-L2634), [rgw_lc.cc:2651-2701](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2651-L2701)). radosgw records nothing:
+    once it is told to stop, its work queues stop, the bucket pass's next
+    drain of its work pool never returns, and the process is killed after
+    `rgw_exit_timeout_secs` or the orchestrator's grace period with the
+    entry processing, so every worker skips the bucket until its session
+    expires two lifecycle days on. A radosgw worker between buckets first
+    claims one more (docs/ceph-upstream-bugs.md, "[radosgw's lifecycle worker hangs shutdown in WorkPool::drain and claims a bucket after it is told to stop](ceph-upstream-bugs.md#radosgws-lifecycle-worker-hangs-shutdown-in-workpooldrain-and-claims-a-bucket-after-it-is-told-to-stop)").
+- **A lifecycle entry stored in its pair form is rewritten.** A shard
+  entry stored as the pair of bucket and status, as releases through
+  v15.2.4 stored it, stops radosgw's worker on that shard, since
+  `lc_get_entry` and `lc_get_next_entry` answer EIO for it
+  (docs/ceph-upstream-bugs.md, "[cls_rgw's lc_get_entry and
+  lc_get_next_entry refuse an lc entry stored in its old pair form, which
+  stalls the
+  shard](ceph-upstream-bugs.md#cls_rgws-lc_get_entry-and-lc_get_next_entry-refuse-an-lc-entry-stored-in-its-old-pair-form-which-stalls-the-shard)").
+  On that EIO rgw-go's worker reads the key's value from the shard's
+  omap, the head's key or the first key after the marker, as
+  `lc_list_entries` reads a value, an entry else the pair; it rewrites it
+  under the shard's lock as the entry {bucket, 0, status}, the form
+  radosgw stores from v15.2.5 and its worker reads, and goes on
+  (`lcShard.headEntry` and `lcShard.nextEntry`,
+  `internal/driver/lc_worker.go`). A value that is neither form, or a pair
+  naming another key, is left as it is and ends the pass on that shard
+  with the head where it was, as radosgw's stall leaves it.
+- **Lifecycle days and the work window are read in the gateway's local
+  time zone.** radosgw reads whether a bucket ran today, an object's age
+  and `rgw_lifecycle_work_time` in the process's local time, through glibc's
+  `localtime_r` and `mktime` ([rgw_lc.cc:2149-2171](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2149-L2171) and
+  [rgw_lc.cc:2510-2570](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2510-L2570), [rgw_lc.cc:2213-2235](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2213-L2235) and
+  [rgw_lc.cc:2577-2637](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2577-L2637);
+  [utime.h:218-227](https://github.com/ceph/ceph/blob/v19.2.7/src/include/utime.h#L218-L227),
+  [utime.h:218-227](https://github.com/ceph/ceph/blob/v20.2.4/src/include/utime.h#L218-L227)),
+  and rgw-go reads them in Go's `time.Local`, which takes the zone from
+  the same places: `TZ` naming a zone file, `/etc/localtime` when `TZ` is
+  unset, and UTC when it is empty (`time/zoneinfo_unix.go:28-80` at
+  go1.27.3). A `TZ` that holds a POSIX rule rather than a zone's name,
+  such as `XYZ-3`, is that rule to
+  glibc and UTC to rgw-go, so such a deployment names a zone file instead.
+  Each gateway processes a bucket once per its own local day, so the
+  gateways of a zone must share a time zone, or a bucket is processed
+  once per day of each: duplicate passes, not corruption. Rook sets no `TZ`
+  on its gateways (rook v1.20.7 names none under `pkg/`).
 
 ## Pending
 
