@@ -165,7 +165,7 @@ var _ = Describe("ParseRequest", func() {
 	DescribeTable("routes on the request target as req_info splits it",
 		func(target, host, uri, bucket, object, rawQuery string, query url.Values) {
 			req := readRequest(target, host)
-			Expect(s3.DecodedURI(req, virtualHosted())).To(Equal(uri), "decoded URI")
+			Expect(s3.DecodedURI(req, virtualHosted().HostNames())).To(Equal(uri), "decoded URI")
 			p, err := s3.ParseRequest(req, virtualHosted(), time.Unix(1, 0))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(p.Req.Bucket).To(Equal(bucket), "bucket")
@@ -204,7 +204,7 @@ var _ = Describe("ParseRequest", func() {
 	)
 	DescribeTable("finds a malformed percent-escape net/http leaves unchecked in the URI it decodes",
 		func(target, host string, want bool) {
-			Expect(s3.MalformedPath(readRequest(target, host), virtualHosted())).To(Equal(want))
+			Expect(s3.MalformedPath(readRequest(target, host), virtualHosted().HostNames())).To(Equal(want))
 		},
 		Entry("a bad hex digit in a query-held path", "http://s3.example.com?x=/b/%zz", "x", true),
 		Entry("a bad hex digit in a virtual-hosted query-held path", "http://b.s3.example.com?x/%zz?", "x", true),

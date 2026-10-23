@@ -364,7 +364,7 @@ func NewGateway(conf *cephconf.Options, store *driver.Store, instanceID uint64, 
 	if err != nil {
 		return nil, err
 	}
-	authCfg, err := auth.ConfigFrom(conf, cfg.DNSNames)
+	authCfg, err := auth.ConfigFrom(conf, cfg.HostNames())
 	if err != nil {
 		return nil, fmt.Errorf("reading auth options: %w", err)
 	}
@@ -402,7 +402,7 @@ func (g *Gateway) AdminHandler(prefix string) *admin.Handler {
 		ServerHeader:  g.cfg.ServerHeader,
 		MaxConcurrent: g.cfg.MaxConcurrent,
 		InFlight:      g.cfg.InFlight,
-		DNSNames:      g.cfg.DNSNames,
+		HostNames:     g.cfg.HostNames(),
 	})
 }
 
@@ -594,11 +594,11 @@ func newRouter(s3h, adminH http.Handler, adminPath string, unserved http.Handler
 }
 
 func (rt router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if s3.MalformedPath(req, rt.cfg) {
+	if s3.MalformedPath(req, rt.cfg.HostNames()) {
 		badRequest(w)
 		return
 	}
-	uri := s3.DecodedURI(req, rt.cfg)
+	uri := s3.DecodedURI(req, rt.cfg.HostNames())
 	matched, toAdmin := "", false
 	if rt.admin != nil && under(uri, rt.adminPath) {
 		matched, toAdmin = rt.adminPath, true
@@ -675,7 +675,7 @@ func (h unservedHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Server", h.cfg.ServerHeader)
 	}
 	refusal := op.ErrMethodNotAllowed
-	if strings.IndexByte(s3.DecodedURI(req, h.cfg), 0) >= 0 {
+	if strings.IndexByte(s3.DecodedURI(req, h.cfg.HostNames()), 0) >= 0 {
 		refusal = op.ErrInvalidRequest
 	}
 	cw := &countingWriter{ResponseWriter: w, head: req.Method == http.MethodHead}

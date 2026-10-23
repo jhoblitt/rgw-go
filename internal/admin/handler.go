@@ -32,10 +32,11 @@ type Config struct {
 	// radosgw's frontend throttles S3 and admin requests through one
 	// scheduler; nil gives the handler a count of its own.
 	InFlight *atomic.Int64
-	// DNSNames are the hostnames a Host names a bucket under, as s3.Config's:
-	// the handler parses the path with that bucket in front, as radosgw's
-	// manager lookup does.
-	DNSNames []string
+	// HostNames are the hostnames a Host names a bucket under,
+	// s3.Config.HostNames, the website ones included: the handler parses the
+	// path with that bucket in front, as radosgw's manager lookup does, so it
+	// reads the path the router sent to it.
+	HostNames vhost.Names
 }
 
 // HandlerFunc serves one route: it runs the op and renders the response. It
@@ -225,7 +226,7 @@ type served struct {
 // The admin handlers' postauth_init, RGWHandler_Auth_S3's, does nothing
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.h#L646 at v19.2.6).
 func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Request, r *op.Request, st *served) {
-	uri := s3.DecodedURI(req, s3.Config{DNSNames: h.cfg.DNSNames})
+	uri := s3.DecodedURI(req, h.cfg.HostNames)
 	if strings.IndexByte(uri, 0) >= 0 {
 		WriteError(ctx, w, r, st.q, op.ErrInvalidRequest)
 		return

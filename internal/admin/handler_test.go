@@ -29,6 +29,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/op/opfakes"
 	"github.com/jhoblitt/rgw-go/internal/s3"
+	"github.com/jhoblitt/rgw-go/internal/vhost"
 )
 
 const (
@@ -587,7 +588,7 @@ var _ = Describe("admin handler", func() {
 		}).To(PanicWith(ContainSubstring("sync_bucket")))
 	})
 	It("parses the decoded URI, a Host-named bucket in front, as radosgw's manager lookup does", func() {
-		fx = newFixture(admin.Config{DNSNames: []string{"s3.example.com"}})
+		fx = newFixture(admin.Config{HostNames: vhost.Names{S3: []string{"s3.example.com"}}})
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, fx.server.URL+"/info", nil)
 		Expect(err).NotTo(HaveOccurred())
 		req.Host = "admin.s3.example.com"
@@ -596,6 +597,29 @@ var _ = Describe("admin handler", func() {
 		Expect(res.StatusCode).To(Equal(200))
 		Expect(body(res)).To(ContainSubstring(fsid))
 	})
+	// Under the S3 name example.com alone, admin.web.example.com names the
+	// bucket admin.web; under the website API the website name
+	// web.example.com reads it first as the bucket admin, as the router
+	// reads it before it sends the request here.
+	DescribeTable("parses a website Host's path as the router reads it",
+		func(websiteAPI bool, want int) {
+			fx = newFixture(admin.Config{HostNames: vhost.Names{
+				S3: []string{"example.com"}, Website: []string{"web.example.com"}, WebsiteAPI: websiteAPI,
+			}})
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, fx.server.URL+"/info", nil)
+			Expect(err).NotTo(HaveOccurred())
+			req.Host = "admin.web.example.com"
+			req.Header.Set("X-Test-User", "admin")
+			res := do(req)
+			b := body(res)
+			Expect(res.StatusCode).To(Equal(want), b)
+			if want == http.StatusOK {
+				Expect(b).To(ContainSubstring(fsid))
+			}
+		},
+		Entry("under the website API, /admin/info", true, http.StatusOK),
+		Entry("without it, /admin.web/info, which is under no admin resource", false, http.StatusMethodNotAllowed),
+	)
 	It("serves under a nested rgw_admin_entry", func() {
 		fx = newFixture(admin.Config{Prefix: "a/b"})
 		Expect(fx.get("/a/b/info", "admin").StatusCode).To(Equal(200))

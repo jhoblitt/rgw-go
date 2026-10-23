@@ -52,8 +52,10 @@ var _ = Describe("vhost", func() {
 		Entry("no host", "", []string{"s3.example.com"}, ""),
 	)
 
-	DescribeTable("Bucket is rgw_find_host_in_domains with the CNAME fallback",
-		func(host string, names []string, want string) { Expect(Bucket(host, names)).To(Equal(want)) },
+	DescribeTable("Resolve's bucket under S3 names is rgw_find_host_in_domains with the CNAME fallback",
+		func(host string, names []string, want string) {
+			Expect(Resolve(host, Names{S3: names}).Bucket).To(Equal(want))
+		},
 		Entry("subdomain", "bkt.s3.example.com", []string{"s3.example.com"}, "bkt"),
 		Entry("a case-insensitive suffix, the bucket in the Host's case", "BKT.S3.Example.COM", []string{"s3.example.com"}, "BKT"),
 		Entry("only ASCII letters fold", "bkt.s3.éxample.com", []string{"s3.Éxample.com"}, "bkt.s3.éxample.com"),

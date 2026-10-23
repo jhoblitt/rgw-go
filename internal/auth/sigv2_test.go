@@ -14,6 +14,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/op"
+	"github.com/jhoblitt/rgw-go/internal/vhost"
 )
 
 // v2Sign is a client's SigV2 signature: base64 of HMAC-SHA1 over the string
@@ -152,7 +153,7 @@ var _ = Describe("SigV2", func() {
 	DescribeTable("canonicalStringV2 reads the request date as rgw_create_s3_canonical_header does",
 		func(ctx SpecContext, hdr map[string][]string, want time.Time) {
 			rv := newRequestView(rawRequest(ctx, http.MethodGet, "/b/k", hdr))
-			_, got, err := canonicalStringV2(rv, false, nil)
+			_, got, err := canonicalStringV2(rv, false, vhost.Names{})
 			if want.IsZero() {
 				Expect(err).To(HaveOccurred())
 				return
@@ -208,10 +209,43 @@ var _ = Describe("SigV2", func() {
 		func(ctx SpecContext, method, target, host, want string) {
 			req := httptest.NewRequestWithContext(ctx, method, target, nil)
 			req.Host = host
-			Expect(canonicalResourceV2(newRequestView(req), []string{"s3.example.com"})).To(Equal(want))
+			Expect(canonicalResourceV2(newRequestView(req), vhost.Names{S3: []string{"s3.example.com"}})).To(Equal(want))
 		},
 		Entry("a port does not hide the bucket", http.MethodGet, "/k", "bkt.s3.example.com:8080", "/bkt/k"),
 		Entry("a slash goes in front of a target without one", http.MethodOptions, "*", "bkt.s3.example.com", "/bkt/*"),
+	)
+
+	// The S3 name example.com and the website name web.example.com both hold
+	// b.web.example.com. Under the website API the router serves it from the
+	// bucket b, as preprocess does, so that is the bucket a signature must
+	// name: one over /b.web, the bucket the S3 name alone would read, is a
+	// signature for another bucket.
+	DescribeTable("verifies a signature over the bucket a website Host is served from, and only that one",
+		func(ctx SpecContext, presigned bool) {
+			cfg.HostNames = vhost.Names{S3: []string{"example.com"}, Website: []string{"web.example.com"}, WebsiteAPI: true}
+			for _, c := range []struct {
+				resource string
+				verifies bool
+			}{{"/b/k", true}, {"/b.web/k", false}} {
+				var req *http.Request
+				if presigned {
+					sig := v2Sign(testSecret, "GET\n\n\n"+v2Expires+"\n"+c.resource)
+					req = httptest.NewRequestWithContext(ctx, http.MethodGet, "http://b.web.example.com/k?AWSAccessKeyId="+testAccessKey+
+						"&Expires="+v2Expires+"&Signature="+url.QueryEscape(sig), nil)
+				} else {
+					req = httptest.NewRequestWithContext(ctx, http.MethodGet, "http://b.web.example.com/k", nil)
+					req.Header.Set("Date", v2TestDate)
+					req.Header.Set("Authorization", "AWS "+testAccessKey+":"+v2Sign(testSecret, "GET\n\n\n"+v2TestDate+"\n"+c.resource))
+				}
+				d, err := authDataV2(newRequestView(req), &cfg, signingTime)
+				Expect(err).NotTo(HaveOccurred(), "signed over %s", c.resource)
+				ok, err := d.verify(testSecret)
+				Expect(err).NotTo(HaveOccurred(), "signed over %s", c.resource)
+				Expect(ok).To(Equal(c.verifies), "signed over %s, string to sign %q", c.resource, d.stringToSign)
+			}
+		},
+		Entry("header-signed", false),
+		Entry("presigned", true),
 	)
 })
 
@@ -240,7 +274,7 @@ func v2OnBothRoutes(ctx context.Context, hdr map[string][]string, resend func(ht
 		if !presigned {
 			req.Header.Set("Date", v2TestDate)
 		}
-		sts, _, err := canonicalStringV2(newRequestView(req), presigned, nil)
+		sts, _, err := canonicalStringV2(newRequestView(req), presigned, vhost.Names{})
 		Expect(err).NotTo(HaveOccurred())
 		sig := v2Sign(testSecret, sts)
 		if presigned {
@@ -314,7 +348,7 @@ var _ = Describe("SigV2 under the meta prefixes", func() {
 				amz, other := "X-Amz-"+d[0], prefix+d[0]
 				add := func(h http.Header) { h.Set(other, "unsigned") }
 				for _, c := range v2OnBothRoutes(ctx, map[string][]string{amz: {d[1]}}, add) {
-					sts, _, err := canonicalStringV2(newRequestView(c.req), c.presigned, nil)
+					sts, _, err := canonicalStringV2(newRequestView(c.req), c.presigned, vhost.Names{})
 					Expect(err).NotTo(HaveOccurred())
 					Expect(sts).To(Equal(c.sts), "%s adds no line, presigned %t", other, c.presigned)
 					Expect(verifiesV2(c, &cfg)).To(BeTrue(), "%s unsigned, presigned %t", other, c.presigned)

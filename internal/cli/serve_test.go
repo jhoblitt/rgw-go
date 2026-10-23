@@ -17,6 +17,7 @@ import (
 	. "github.com/onsi/gomega"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/jhoblitt/rgw-go/internal/admin"
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/cli"
 	"github.com/jhoblitt/rgw-go/internal/denc"
@@ -295,6 +296,19 @@ var _ = Describe("the router with the admin API", func() {
 		Expect(serve(h, "admin.s3.example.com", "/info")).To(Equal(adminStatus))
 	})
 
+	// The website name web.example.com, under the website API, reads
+	// admin.web.example.com as the bucket admin, which the S3 name
+	// example.com alone would read as admin.web.
+	DescribeTable("reads a website Host's bucket in front of the path it routes by",
+		func(host, path string, want int) {
+			cfg.DNSNames, cfg.WebsiteNames, cfg.Website = []string{"example.com"}, []string{"web.example.com"}, true
+			h := cli.NewAdminRouter(s3h, adminH, "/admin", env, cfg, nil)
+			Expect(serve(h, host, path)).To(Equal(want))
+		},
+		Entry("a website Host naming the bucket admin, with the path /info, to the admin API", "admin.web.example.com", "/info", adminStatus),
+		Entry("a website Host naming another bucket, with the key admin/x, to S3", "b.web.example.com", "/admin/x", http.StatusTeapot),
+	)
+
 	It("serves a nested rgw_admin_entry and answers 405 at its parent, which has no handler", func() {
 		conf := cephconf.NewOptions(cephconf.MapGetter{
 			"rgw_enable_apis": "s3, admin", "rgw_swift_url_prefix": "swift",
@@ -370,6 +384,34 @@ var _ = Describe("the router with the admin API", func() {
 		Entry("a bad hex digit, which would empty the URI", "my%zz.s3.example.com", "/k"),
 		Entry("a percent sign ending the bucket, which would cut the URI", "my%.s3.example.com", "/"),
 	)
+})
+
+// The router finds the admin API on the path a Host's bucket is put in front
+// of, and the admin handler parses that path again; both must read the Host
+// under the same names, the website ones included, or the admin API refuses
+// the request the router sent it.
+var _ = Describe("the gateway's admin API behind the router", func() {
+	It("parses a website Host's path as the router read it", func() {
+		zone := new(opfakes.FakeZoneInfo)
+		zone.ReleaseReturns(denc.Squid)
+		env := &op.Env{HostID: "4107-zone-a-zonegroup", Metrics: op.NopMetrics{}, Zone: zone}
+		cfg := s3.Config{DNSNames: []string{"example.com"}, WebsiteNames: []string{"web.example.com"}, Website: true}
+		gw := cli.NewGatewayForTest(env, s3.AnonymousOnly{}, cfg)
+		adminH := gw.AdminHandler("admin")
+		var served []string
+		adminH.Register("get_info", func(_ context.Context, w http.ResponseWriter, r *op.Request, _ admin.Request) error {
+			served = append(served, r.Path)
+			admin.WriteEmpty(w, r, http.StatusOK)
+			return nil
+		})
+		h := cli.NewAdminRouter(gw.S3Handler(), adminH, "/admin", env, cfg, nil)
+		req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1/", nil)
+		req.Host, req.RequestURI = "admin.web.example.com", "/info"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		Expect(rec.Code).To(Equal(http.StatusOK), rec.Body.String())
+		Expect(served).To(Equal([]string{"/info"}), "get_info served")
+	})
 })
 
 var _ = Describe("S3Config", func() {

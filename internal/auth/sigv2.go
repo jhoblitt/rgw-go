@@ -70,7 +70,7 @@ func authDataV2(rv *requestView, cfg *Config, now time.Time) (*authData, error) 
 			return nil, fmt.Errorf("%w: empty security token", op.ErrAccessDenied)
 		}
 	}
-	sts, headerTime, err := canonicalStringV2(rv, d.presigned, cfg.DNSNames)
+	sts, headerTime, err := canonicalStringV2(rv, d.presigned, cfg.HostNames)
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +104,7 @@ func authDataV2(rv *requestView, cfg *Config, now time.Time) (*authData, error) 
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L256 at v19.2.7);
 // rgw-go takes Tentacle's rule on both releases (docs/exclusions.md). The
 // method's refusal is EINVAL, every other EPERM.
-func canonicalStringV2(rv *requestView, presigned bool, dnsNames []string) (sts string, headerTime time.Time, err error) {
+func canonicalStringV2(rv *requestView, presigned bool, hostNames vhost.Names) (sts string, headerTime time.Time, err error) {
 	md5, _ := rv.header("content-md5")
 	if !isBase64Charset(md5) {
 		return "", time.Time{}, fmt.Errorf("%w: content-md5 is not base64", op.ErrAccessDenied)
@@ -140,7 +140,7 @@ func canonicalStringV2(rv *requestView, presigned bool, dnsNames []string) (sts 
 	}
 	writeCanonAmz(&b, amzHeadersV2(rv))
 	writeCanonAmz(&b, qs)
-	b.WriteString(canonicalResourceV2(rv, dnsNames))
+	b.WriteString(canonicalResourceV2(rv, hostNames))
 	return b.String(), headerTime, nil
 }
 
@@ -359,16 +359,17 @@ func addAmzMeta(m map[string]string, k, v string) {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_s3.cc#L91-L124 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L92-L125 at v20.2.4)
 // over req_info.request_uri as RGWREST::preprocess leaves it: the path as
-// sent, after '/' and the bucket the Host names, the one the S3 handler
-// routes by, with a '/' between them when the path lacks one
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L2154-L2161 at v19.2.6,
+// sent, after '/' and the bucket the Host names under hostNames, the one the
+// S3 handler and the router read, with a '/' between them when the path
+// lacks one
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2159-L2166 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2171-L2178 at v20.2.4).
 // Each sub-resource of signedSubresourcesV2 the request carries follows in
 // that order, after '?' for the first and '&' for the rest, with '=' and
 // its decoded value unless that is empty.
-func canonicalResourceV2(rv *requestView, dnsNames []string) string {
+func canonicalResourceV2(rv *requestView, hostNames vhost.Names) string {
 	var b strings.Builder
-	if bucket := vhost.Bucket(vhost.Hostname(rv.req.Host), dnsNames); bucket != "" {
+	if bucket := vhost.Resolve(vhost.Hostname(rv.req.Host), hostNames).Bucket; bucket != "" {
 		b.WriteByte('/')
 		b.WriteString(bucket)
 		if !strings.HasPrefix(rv.rawPath, "/") {
