@@ -20148,9 +20148,11 @@ Every new entry adds its row to this table, in document order.
   failed" to any date before the lapsed one, though anyone allowed to delete
   it may. In S3 a lapsed retention is no retention.
 - **Releases:** v19.2.7, v20.2.4 and main 7ed73efc1be.
-- **rgw-go:** does not reproduce it. `objectlock.RetentionChange` takes a
-  retention whose retain-until second is not after now's for none
-  (`docs/exclusions.md`, "A lapsed retention binds no retention change").
+- **rgw-go:** does not reproduce it. Its PutObjectRetention
+  (`op.PutObjectRetention`) checks the change with
+  `objectlock.RetentionChange`, which takes a retention whose retain-until
+  second is not after now's for none (`docs/exclusions.md`, "A lapsed
+  retention binds no retention change").
 - **Upstream:** pending: sent to rgw-bug-reproduction (L1-2).
 - **Found:** phase 2 Task L1, 2026-10-20, transcribing
   `RGWPutObjRetention::execute`; derived from the source, not reproduced.

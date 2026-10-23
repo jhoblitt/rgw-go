@@ -8513,9 +8513,13 @@ does the following.
   rgw-go's strict `objectlock.DecodeRetention` and
   `objectlock.DecodeLegalHold`, for the four, take such an attr for one that
   does not decode, so `objectlock.VerifyDelete` refuses the delete with the
-  error radosgw gives a short attr, -EIO; the lenient
+  error radosgw gives a short attr, -EIO, and PutObjectRetention
+  (`op.PutObjectRetention`) answers such an existing retention as radosgw
+  answers a short one, 500 UnknownError. The lenient
   `objectlock.DecodeRetentionLenient` and `objectlock.DecodeLegalHoldLenient`
-  read it as the two Get ops do. radosgw writes these attrs cleanly, and
+  read it as the two Get ops do, so GetObjectRetention and GetObjectLegalHold
+  (`op.GetObjectRetention`, `op.GetObjectLegalHold`) answer no 500 for it,
+  only for an attr too short to decode. radosgw writes these attrs cleanly, and
   copy_obj takes them from the request, not the source
   ([rgw_rados.cc:4800-4807](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4800-L4807),
   [rgw_rados.cc:5013-5020](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5013-L5020)),
@@ -8536,7 +8540,8 @@ does the following.
   (`docs/ceph-upstream-bugs.md`, "[radosgw's PutObjectRetention holds a
   lapsed retention's mode and
   date](ceph-upstream-bugs.md#radosgws-putobjectretention-holds-a-lapsed-retentions-mode-and-date)").
-  rgw-go's `objectlock.RetentionChange` takes an existing retention whose
+  rgw-go's PutObjectRetention (`op.PutObjectRetention`) checks the change
+  with `objectlock.RetentionChange`, which takes an existing retention whose
   retain-until second is not after now's for none, so the new retention is
   checked as on a version without one; one still in force is checked as
   radosgw checks it, in whole seconds. The retention then stored is the
@@ -8574,12 +8579,13 @@ does the following.
   At today's clock a double holds the fraction of a second to 2^-22 s, so
   a clock within about 119 ns of a whole second reads as that second:
   radosgw then lets a delete or an expiry through a retention ending at
-  that second, refuses a header date of that second, and refuses a body
-  date of the second before it. rgw-go compares the clock's whole seconds
-  exactly (`objectlock.VerifyDelete`, for a delete and for lifecycle;
-  `objectLockHeaders` in `internal/s3/putobject.go`, for the three headers;
-  `objectlock.RetentionChange`), so in that window it keeps the version
-  and takes the header date.
+  that second, refuses a header date of that second, and takes a body date
+  of that second at a clock just past it. rgw-go compares the clock's whole
+  seconds exactly (`objectlock.VerifyDelete`, for a delete and for
+  lifecycle; `objectLockHeaders` in `internal/s3/putobject.go`, for the
+  three headers; `objectlock.RetentionChange`; `op.PutObjectRetention`, for
+  its body's date), so in that window it keeps the version, takes the header
+  date, and refuses the body date.
 - **CopyObject refuses an object lock on a bucket without object lock.**
   radosgw's CopyObject stores the retention and legal hold its headers ask
   for on a bucket without object lock, where its PutObject refuses them
