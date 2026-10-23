@@ -441,6 +441,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's conditional versioned write checks its condition once and links unguarded](#radosgws-conditional-versioned-write-checks-its-condition-once-and-links-unguarded) | pending | pending | ✓ |
 | [radosgw checks a suspended bucket's write conditions against the OLH head](#radosgw-checks-a-suspended-buckets-write-conditions-against-the-olh-head) | pending | [ceph/ceph#71584](https://github.com/ceph/ceph/pull/71584), [ceph/ceph#72050](https://github.com/ceph/ceph/pull/72050) | |
 | [radosgw's versioned PutObject deletes its tails when its link fails](#radosgws-versioned-putobject-deletes-its-tails-when-its-link-fails) | pending | pending | ✓ |
+| [radosgw checks a signed CORS preflight's x-amz-mfa against its key's user's device](#radosgw-checks-a-signed-cors-preflights-x-amz-mfa-against-its-keys-users-device) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -25524,3 +25525,103 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V7a, 2026-10-22, tracing what a failed link
   leaves; derived from the source, not reproduced.
+
+## radosgw checks a signed CORS preflight's x-amz-mfa against its key's user's device
+
+- **Kind:** defect, security-relevant (low) and found by us: a targeted
+  denial of service against a user's MFA by anyone who holds the user's
+  access key id and a device serial, but not the key's secret. The class's
+  five checks a step are its intended guard against guessing codes, which
+  anyone holding the key's secret can trip by sending wrong codes; the
+  defect is that the unsigned preflight reaches that guard without the
+  secret. It is one more
+  consequence at the sink "[radosgw grants a signed CORS preflight without
+  comparing its
+  signature](#radosgw-grants-a-signed-cors-preflight-without-comparing-its-signature)",
+  beside its rate-limit charge and its answers by key kind, and "[radosgw's
+  signed CORS preflight takes a system key's rgwx-uid
+  unverified](#radosgws-signed-cors-preflight-takes-a-system-keys-rgwx-uid-unverified)".
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `LocalEngine::authenticate` grants a request typed `RGW_OP_OPTIONS_CORS`
+    once its key resolves, without comparing its signature
+    ([rgw_rest_s3.cc:6395-6401](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6395-L6401),
+    [rgw_rest_s3.cc:6925-6931](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6925-L6931)),
+    and `Strategy::apply` gives the request the key's user record
+    ([rgw_auth.cc:519](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L519),
+    [rgw_auth.cc:534](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L534)).
+  - `process_request` then runs `postauth_init` for the preflight as for any
+    op
+    ([rgw_process.cc:365](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L365),
+    [rgw_process.cc:367](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L367)),
+    which hands the request's `x-amz-mfa` to `s->user->verify_mfa`
+    ([rgw_rest_s3.cc:5026-5029](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5026-L5029),
+    [rgw_rest_s3.cc:5556-5559](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5556-L5559)).
+    That checks a serial in the user's `mfa_ids` through cls_otp
+    ([rgw_sal_rados.cc:298-308](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L298-L308),
+    [rgw_sal_rados.cc:315-325](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L315-L325)),
+    whose client sends `otp_check` and then reads its result back with
+    `otp_get_result`
+    ([cls_otp_client.cc:60-83](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_client.cc#L60-L83),
+    [cls_otp_client.cc:60-85](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp_client.cc#L60-L85);
+    the class's methods,
+    [cls_otp.cc:447-471](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L447-L471) and
+    [cls_otp.cc:483-507](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L483-L507),
+    [cls_otp.cc:447-471](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L447-L471) and
+    [cls_otp.cc:483-507](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L483-L507)).
+  - The class records each check in the device's `last_checks`, and once
+    five lie within the last `step_size` seconds it records no more
+    ([cls_otp.cc:98-127](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L98-L127),
+    [cls_otp.cc:98-127](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L98-L127)).
+    A check it does not record has no result to find, `OTP_CHECK_UNKNOWN`
+    ([cls_otp.cc:155-169](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L155-L169),
+    [cls_otp.cc:155-169](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L155-L169)),
+    which `check_mfa` answers EACCES
+    ([svc_cls.cc:46-63](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_cls.cc#L46-L63),
+    [svc_cls.cc:46-63](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_cls.cc#L46-L63)).
+    A check that succeeds stores the code's index as `last_success`, and a
+    later check at or below it fails
+    ([cls_otp.cc:143-150](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L143-L150),
+    [cls_otp.cc:143-150](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/otp/cls_otp.cc#L143-L150)).
+- **Impact:** five forged preflights a step, each naming one of the user's
+  devices with any code, keep that device's checks spent, and while they
+  last every code the user sends is refused: its MFA deletes and its
+  changes to an MFA delete bucket's versioning are 403 AccessDenied for as
+  long as the sender keeps on. The sender needs the key's id, which every
+  request signed with the key and every URL presigned with it carries in
+  the clear, and the device's serial, which a user names and radosgw does
+  not keep secret. The preflight's answer does not depend on the check,
+  so the sender learns no code from it. A forged request of another method
+  fails its signature check before `postauth_init`, so only the preflight
+  reaches the check.
+
+  A signed request's own `x-amz-mfa` is held to its signature: the holder
+  of a signed request or a presigned URL cannot add one. SigV4 refuses a
+  request, presigned or not, that carries an `x-amz-*` header outside its
+  SignedHeaders
+  ([rgw_auth_s3.cc:788-841](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L788-L841) and
+  [rgw_rest_s3.cc:5838-5839](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5838-L5839),
+  [rgw_auth_s3.cc:765-797](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L765-L797) and
+  [rgw_rest_s3.cc:6364-6365](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6364-L6365)),
+  and SigV2 signs every `x-amz-*` header in both its forms
+  ([rgw_common.cc:413-460](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L413-L460) and
+  [rgw_auth_s3.cc:246](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L246),
+  [rgw_common.cc:426-473](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L426-L473) and
+  [rgw_auth_s3.cc:248](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L248)).
+  Only `rgw_sigv4_insecure`, false by default and described as allowing
+  "potential privilege escalation with added `x-amz-` headers on Sigv4",
+  lets that holder add the header and spend the device's checks, as it
+  lets any `x-amz-*` header through; rgw-go does the same under it.
+- **Releases:** checked at v19.2.7 and v20.2.4; the grant without a
+  signature compare is v19.1.0 on (the sink's entry).
+- **rgw-go:** not affected. It checks no `x-amz-mfa` for an identity its
+  verifier granted on its key's id alone (`verifyMFA`,
+  `internal/s3/request.go`; `docs/exclusions.md`, "A preflight's x-amz-mfa
+  is not checked").
+- **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
+  searched. The fix belongs at the sink, where the preflight is granted
+  without its signature compared: giving it the key's tenant and nothing
+  else of the key's user leaves `verify_mfa` no device to check.
+- **Found:** phase 2 Task V13d, 2026-10-22, reading what `postauth_init`
+  does for a request its identity's grant did not verify. Derived from the
+  source, not reproduced.
