@@ -3325,8 +3325,8 @@ Every new entry adds its row to this table, in document order.
     distances 0, 1 and 2 with `otp_pos` 0, -1 and -2, for indexes 37037036,
     37037038 and 37037040. It was refused at step 37037039, outside the
     window. The fresh code of step 37037037, checked after those replays,
-    was refused at index 37037037. Which liboath release the Ceph images
-    ship is unverified.
+    was refused at index 37037037. The images' liboath answers the absolute
+    distance, as 2.6.9 does; which release they ship is still unverified.
   - One code therefore passes `window + 1` checks, one per step: three at
     `otp_info_t`'s defaults, a step of 30 seconds and a window of 2
     ([cls_otp_types.h:40-41](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp_types.h#L40-L41),
@@ -3339,7 +3339,15 @@ Every new entry adds its row to this table, in document order.
     steps after its own, against RFC 6238's one-time use (section 5.2).
   - Possibly security-relevant; sent to rgw-bug-reproduction. Found by phase
     2 task V13b, 2026-10-20, when fakerados's emulation of the class
-    accepted a reused code. Not reproduced on a running cluster.
+    accepted a reused code. Reproduced on running radosgw at v19.2.7 and
+    v20.2.4, on rooket clusters of each release's own image, on 2026-10-22
+    by phase 2 Task V13d's s3-test `test_versioning_mfa_delete_code_used_once`
+    (jhoblitt/ceph 20ae11c8503a; the v20.2.4 run used its first form,
+    4b8dea3dfb6d, which lacked only the `fails_on_rgw` marker), at
+    radosgw-admin's default step and window: the code that enabled MFA
+    delete was refused again in its own step and accepted again just after
+    the next step began. The second replay, at distance 2, and the refusal
+    of intervening fresh codes were not exercised there.
 - **One-time use, across entries:** cls_otp keeps one `last_success`
   counter per device, and it does not reliably enforce one-time use. Besides
   this replay, the registry records:
@@ -3395,8 +3403,9 @@ Every new entry adds its row to this table, in document order.
   `liboath/totp.c` returns the absolute position and carries its sign only in
   `otp_pos`. A userspace reproducer that calls liboath alone, run in a CentOS
   Stream 9 container and re-run independently, shows the defect and the fix
-  side by side; it is attached to #80949. Not reproduced on a running
-  cluster.
+  side by side; it is attached to #80949. Its replay reproduced on running
+  radosgw at v19.2.7 and v20.2.4 (Replay of one code, above); the refusal of
+  intervening codes is not reproduced on a running cluster.
 
 ## librbd leaks the update-watch context when registration fails
 
