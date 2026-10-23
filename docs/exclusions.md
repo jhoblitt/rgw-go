@@ -8991,6 +8991,14 @@ does the following.
   log after a refused `clear_olh`
   ([rgw_rados.cc:8550-8556](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8550-L8556),
   [rgw_rados.cc:9296-9302](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9296-L9302)).
+  When the refused removal is the null version's, rgw-go trims the log
+  where the replay would clear the key's OLH: `clear_olh` removes the OLH
+  head object
+  ([rgw_rados.cc:8583-8634](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8583-L8634),
+  [rgw_rados.cc:9329-9380](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9329-L9380)),
+  which holds the null version's data the refusal kept, where radosgw's
+  replay has removed that data before its clear. The key's OLH entry then
+  stays pending removal with no version listed.
   Only a refusal reported without an error is final. One reported with a
   failed trim, index clear or clear expiry leaves the entry in the log, and
   the writer retries the trim or the clear before it acts on the refusal.

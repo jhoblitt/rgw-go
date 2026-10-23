@@ -1082,6 +1082,34 @@ var _ = Describe("the versioned link and unlink", func() {
 				Expect(olhEntry(shard).PendingLog).To(BeEmpty())
 			})
 
+			It("trims the log rather than clear the OLH when the refused removal is of the null version, the key's last, whose data is the OLH head's", func(ctx SpecContext) {
+				Expect(unlink(ctx, "v2", driver.OLHUnlink{})).To(Succeed())
+				Expect(unlink(ctx, "v1", driver.OLHUnlink{})).To(Succeed())
+				write(ctx, "")
+				put(ctx, "v3")
+				Expect(unlink(ctx, "v3", driver.OLHUnlink{})).To(Succeed())
+				Expect(listed(shard)).To(Equal([]string{""}), "the null version, the key's last")
+				tag := readHead(ctx).Attrs[meta.AttrIDTag]
+				// The unlinks' completions land first, so the unlink below is
+				// the shard's next write.
+				settle(s)
+				c.AfterWrite(rookIndexPool, "", shard, func() {
+					c.AfterWrite(rookIndexPool, "", shard, nil)
+					olhHead().Xattrs[meta.AttrIDTag] = []byte("idtag-rewritten")
+				})
+				err := unlink(ctx, "", driver.OLHUnlink{NullVersion: true, ExpectTag: tag})
+				Expect(err).To(MatchError(driver.ErrRemovalRefused))
+				_, unfinished := driver.UnfinishedOLHTail(err)
+				Expect(unfinished).To(BeFalse(), "final")
+				settle(s)
+				Expect(olhHead()).NotTo(BeNil(), "the OLH head, which holds the null version's data")
+				Expect(olhHead().Data).To(Equal([]byte("data-")))
+				Expect(hasInstanceEntry(shard, "")).To(BeTrue())
+				Expect(listed(shard)).To(BeEmpty(), "the unlink took its list entry")
+				Expect(pending()).To(BeEmpty())
+				Expect(olhEntry(shard).PendingLog).To(BeEmpty(), "trimmed")
+			})
+
 			It("trims the log when another writer's init refuses the clear, and that writer's replay leaves the version", func(ctx SpecContext) {
 				Expect(unlink(ctx, "v2", driver.OLHUnlink{})).To(Succeed())
 				rw := newRGWWriter(c, s, rec, denc.Squid, "rgw")

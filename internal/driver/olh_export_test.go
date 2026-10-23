@@ -56,7 +56,7 @@ func (s *Store) RemoveFailedVersionForTest(ctx context.Context, rec *op.BucketRe
 // NewOLHTailErrorForTest is an olhTailError naming t and wrapping err, for
 // the external specs.
 func NewOLHTailErrorForTest(t OLHTail, err error) error {
-	return &olhTailError{tail: olhLogTail{last: t.Last, clear: t.Clear, keep: t.Keep, opTag: t.OpTag}, err: err}
+	return &olhTailError{tail: olhLogTail{last: t.Last, clear: t.Clear, keep: t.Keep, keepHead: t.KeepHead, opTag: t.OpTag}, err: err}
 }
 
 // SplitOLHTailForTest is splitOLHTail for the external specs: the tail err
@@ -66,7 +66,7 @@ func SplitOLHTailForTest(err error) (OLHTail, bool, error) {
 	if tail == nil {
 		return OLHTail{}, false, rest
 	}
-	return OLHTail{Last: tail.tail.last, Clear: tail.tail.clear, Keep: tail.tail.keep, OpTag: tail.tail.opTag}, true, rest
+	return OLHTail{Last: tail.tail.last, Clear: tail.tail.clear, Keep: tail.tail.keep, KeepHead: tail.tail.keepHead, OpTag: tail.tail.opTag}, true, rest
 }
 
 // OLHAttempts, OLHReplayRetries, OLHCondBackoffs and OLHCondListPage are
