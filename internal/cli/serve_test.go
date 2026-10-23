@@ -423,23 +423,70 @@ var _ = Describe("S3Config", func() {
 	BeforeEach(func() {
 		opts = cephconf.MapGetter{
 			"rgw_dns_name":                "s3.example.com, s3.internal",
+			"rgw_dns_s3website_name":      "web.example.com",
+			"rgw_enable_apis":             "s3, s3website, swift, swift_auth, admin, sts, iam, notifications",
 			"rgw_max_concurrent_requests": "1024",
 			"rgw_service_provider_name":   "",
 		}
 		zi = new(opfakes.FakeZoneInfo)
 		zi.ReleaseReturns(denc.Squid)
 		zi.ZoneReturns(meta.Zone{Name: "zone-a"})
-		zi.ZoneGroupReturns(meta.ZoneGroup{Name: "zonegroup", Hostnames: []string{"zg.example.com"}})
+		zi.ZoneGroupReturns(meta.ZoneGroup{
+			Name: "zonegroup", Hostnames: []string{"zg.example.com"}, HostnamesS3Website: []string{"zgweb.example.com"},
+		})
 	})
 
-	It("reads the options the S3 handler takes, rgw_dns_name joined with the zonegroup's hostnames", func() {
+	It("reads the options the S3 handler takes, each hostname option joined with the zonegroup's, as rgw_rest_init joins them", func() {
 		Expect(cli.S3Config(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)).To(Equal(s3.Config{
 			DNSNames:      []string{"s3.example.com", "s3.internal", "zg.example.com"},
+			WebsiteNames:  []string{"web.example.com", "zgweb.example.com"},
+			Website:       true,
 			MaxConcurrent: 1024,
 			TransIDSuffix: "-4107-zone-a",
 			ServerHeader:  "Ceph Object Gateway (squid)",
 		}))
 	})
+
+	// rgw_rest_init erases an empty name from each set.
+	It("takes no website name from an unset rgw_dns_s3website_name", func() {
+		opts["rgw_dns_s3website_name"] = ""
+		cfg, err := cli.S3Config(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.WebsiteNames).To(Equal([]string{"zgweb.example.com"}))
+	})
+
+	DescribeTable("takes the website API and its rank from rgw_enable_apis",
+		func(apis string, website, first bool) {
+			opts["rgw_enable_apis"] = apis
+			cfg, err := cli.S3Config(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)
+			Expect(err).NotTo(HaveOccurred())
+			Expect([]bool{cfg.Website, cfg.WebsiteFirst}).To(Equal([]bool{website, first}), "Website, WebsiteFirst")
+		},
+		Entry("s3 before s3website", "s3, s3website", true, false),
+		Entry("s3website before s3", "s3website, s3", true, true),
+		Entry("s3 alone", "s3, admin", false, false),
+	)
+
+	// rgw_rest_init inserts the option's value into the website set as it
+	// is, so bkt.web.b.com is in no website name, and the Host-as-bucket
+	// fallback takes the whole Host as an S3 request's bucket.
+	DescribeTable("reads rgw_dns_s3website_name whole, as rgw_rest_init does",
+		func(ctx SpecContext, websiteName string) {
+			opts["rgw_dns_s3website_name"] = websiteName
+			cfg, err := cli.S3Config(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.WebsiteNames).To(Equal([]string{websiteName, "zgweb.example.com"}))
+			req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/k", nil)
+			req.Host = "bkt.web.b.com"
+			p, err := s3.ParseRequest(req, cfg, time.Unix(1, 0))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(p.Req.Bucket).To(Equal("bkt.web.b.com"), "bucket")
+			Expect(p.Req.Website).To(BeFalse(), "website")
+		},
+		Entry("names joined with a comma", "web.a.com,web.b.com"),
+		Entry("names joined with a comma and a space", "web.a.com, web.b.com"),
+		Entry("names joined with a space", "web.a.com web.b.com"),
+	)
 
 	It("caps the requests it admits at the cap the store keeps the body budget for, not at a second read of the option", func() {
 		opts["rgw_max_concurrent_requests"] = "2"
@@ -480,11 +527,23 @@ var _ = Describe("S3Config", func() {
 		Entry("names joined with a tab", "s3.a.com\ts3.b.com"),
 	)
 
-	It("names an option it cannot read", func() {
-		delete(opts, "rgw_service_provider_name")
-		_, err := cli.S3Config(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)
-		Expect(err).To(MatchError(cephconf.ErrUnknownOption))
-		Expect(err).To(MatchError(HavePrefix("reading rgw_service_provider_name: ")))
+	DescribeTable("names an option it cannot read",
+		func(option string) {
+			delete(opts, option)
+			_, err := cli.S3Config(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)
+			Expect(err).To(MatchError(cephconf.ErrUnknownOption))
+			Expect(err).To(MatchError(HavePrefix("reading " + option + ": ")))
+		},
+		Entry("rgw_service_provider_name", "rgw_service_provider_name"),
+		Entry("rgw_dns_s3website_name", "rgw_dns_s3website_name"),
+		Entry("rgw_enable_apis", "rgw_enable_apis"),
+	)
+
+	It("gives the authenticator the hostnames the S3 handler reads a Host under, the website ones included", func() {
+		cfg, authCfg, err := cli.GatewayConfigs(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.WebsiteNames).NotTo(BeEmpty())
+		Expect(authCfg.HostNames).To(Equal(cfg.HostNames()))
 	})
 })
 

@@ -14,6 +14,7 @@ var (
 	UnservedAPIs    = unservedAPIs
 	ResourcePaths   = resourcePaths
 	S3Config        = s3Config
+	GatewayConfigs  = gatewayConfigs
 	ServeMetrics    = serveMetrics
 	ServeAndRun     = serveAndRun
 	WatchRADOS      = watchRADOS
