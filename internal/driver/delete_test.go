@@ -355,6 +355,65 @@ var _ = Describe("DeleteObject", func() {
 		Expect(c.Object(testDataPool, "", headOID)).NotTo(BeNil())
 		Expect(indexWrites()).To(BeEmpty())
 	})
+
+	Describe("with AssertEpoch", func() {
+		It("asserts the head's version first on the removal's op, ahead of its conditions and guard", func(ctx SpecContext) {
+			setup(ctx, denc.Squid)
+			st, err := s.StatObject(ctx, rec, key)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{UnmodifiedSince: mtime, AssertEpoch: st.Epoch})).Error().To(Succeed())
+			w := c.LastWrite(testDataPool, "", headOID)
+			Expect(w.Steps()).To(HaveLen(4))
+			Expect(w.Steps()[0]).To(Equal(&radosclient.AssertVersionStep{Version: st.Epoch}), "the OSD checks it in the op that removes the head")
+			execIn(w, 1, "obj_check_mtime", rgwcls.DecodeCheckMtimeOp)
+			Expect(w.Steps()[2]).To(BeAssignableToTypeOf(&radosclient.CmpXattrStep{}))
+			execIn(w, 3, "obj_remove", rgwcls.DecodeObjRemoveOp)
+			Expect(c.Object(testDataPool, "", headOID)).To(BeNil())
+		})
+
+		DescribeTable("fails the removal with ConcurrentModification when the head is not at that version, canceling the prepare and keeping the object, its entry and its count",
+			func(ctx SpecContext, attrWrite bool, ahead uint64) {
+				setup(ctx, denc.Squid)
+				st, err := s.StatObject(ctx, rec, key)
+				Expect(err).NotTo(HaveOccurred())
+				if attrWrite {
+					Expect(s.SetObjectAttrs(ctx, st, map[string][]byte{meta.AttrObjectLegalHold: []byte("on")}, nil)).To(Succeed())
+					settle(s)
+					c.ResetCounters()
+				}
+				_, err = s.DeleteObject(ctx, rec, key, op.DeleteParams{AssertEpoch: st.Epoch + ahead})
+				Expect(err).To(MatchError(op.ErrConcurrentModification))
+				Expect(err).NotTo(MatchError(op.ErrInvalidRange), "not FromRADOS's answer for ERANGE")
+				writes := indexWrites()
+				Expect(writes).To(HaveLen(2), "the prepare and the cancel")
+				Expect(execIn(writes[1], 2, "bucket_complete_op", rgwcls.DecodeCompleteOp).Op).To(Equal(rgwcls.OpCancel))
+				Expect(c.Object(testDataPool, "", headOID)).NotTo(BeNil())
+				_, ok := c.Entry(rookIndexPool, "", shard, "k")
+				Expect(ok).To(BeTrue(), "the index entry stays")
+				Expect(c.Header(rookIndexPool, "", shard).Stats[rgwcls.CategoryMain].NumEntries).To(BeEquivalentTo(1))
+				Expect(driver.CachedBucketStatsForTest(s, rec).NumObjects).To(BeEquivalentTo(1), "the quota cache is left alone")
+				Expect(gcEntries()).To(BeEmpty())
+			},
+			Entry("after an attr write since the read, ERANGE", true, uint64(0)),
+			Entry("at a version ahead of the head's, EOVERFLOW", false, uint64(1)),
+		)
+
+		It("sends an S3 delete's op unchanged when zero", func(ctx SpecContext) {
+			setup(ctx, denc.Squid)
+			Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{UnmodifiedSince: mtime})).Error().To(Succeed())
+			steps := c.LastWrite(testDataPool, "", headOID).Steps()
+			Expect(steps).To(HaveLen(3), "obj_check_mtime, the guard and obj_remove")
+			Expect(steps).NotTo(ContainElement(BeAssignableToTypeOf(&radosclient.AssertVersionStep{})))
+		})
+
+		It("is refused on a versioned bucket before anything is read", func(ctx SpecContext) {
+			setup(ctx, denc.Squid)
+			rec.Info.Flags |= meta.BucketVersioned
+			Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{AssertEpoch: 1})).Error().To(MatchError(op.ErrNotImplemented))
+			Expect(c.Reads(testDataPool, "", headOID)).To(BeZero())
+			Expect(c.Object(testDataPool, "", headOID)).NotTo(BeNil())
+		})
+	})
 })
 
 var _ = Describe("checkDiskState's multipart-part sweep", func() {

@@ -216,7 +216,8 @@ func cloneCksum(c *cksum.Cksum) *cksum.Cksum {
 // the mtime must not be after UnmodifiedSince, the size must equal
 // IfMatchSize, the mtime must equal IfMatchLastModified, both in whole
 // seconds, and If-Match "*" passes any object while an ETag must match
-// the object's.
+// the object's. Then an AssertEpoch must be the object's epoch, which every
+// write advances, as the RADOS store's removal asserts the head's version.
 func (s *Store) DeleteObject(_ context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) (*op.DeleteObjectResult, error) {
 	switch {
 	case rec.Info.Versioned():
@@ -237,6 +238,9 @@ func (s *Store) DeleteObject(_ context.Context, rec *op.BucketRecord, key meta.O
 	}
 	if !deleteAllowed(&o.state, p) {
 		return nil, fmt.Errorf("object %s: %w", key.Name, op.ErrPreconditionFailed)
+	}
+	if p.AssertEpoch != 0 && p.AssertEpoch != o.state.Epoch {
+		return nil, fmt.Errorf("object %s at epoch %d, not %d: %w", key.Name, o.state.Epoch, p.AssertEpoch, op.ErrConcurrentModification)
 	}
 	delete(b.objects, k)
 	return &op.DeleteObjectResult{}, nil
@@ -294,7 +298,8 @@ func (s *Store) CopyObject(_ context.Context, src *op.ObjectState, dst *op.Bucke
 	return putResult(o, nil), nil
 }
 
-// SetObjectAttrs implements op.ObjectStore: set, then rm.
+// SetObjectAttrs implements op.ObjectStore: set, then rm, under a fresh
+// epoch, as the attr write advances the head's RADOS version.
 func (s *Store) SetObjectAttrs(_ context.Context, st *op.ObjectState, set map[string][]byte, rm []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -304,6 +309,7 @@ func (s *Store) SetObjectAttrs(_ context.Context, st *op.ObjectState, set map[st
 	}
 	o.state.Attrs = applyAttrs(o.state.Attrs, set, rm)
 	o.state.ContentType = contentType(o.state.Attrs)
+	o.state.Epoch = s.nextEpoch()
 	return nil
 }
 

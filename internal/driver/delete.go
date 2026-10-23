@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"syscall"
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
@@ -35,14 +37,21 @@ import (
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5302-L5304).
 // That path refuses the OLH head of a versioned key (readHead), which a
 // bucket holds only once its versioning was enabled; suspending versioning
-// keeps BUCKET_VERSIONED set.
+// keeps BUCKET_VERSIONED set. A nonzero p.AssertEpoch goes first on its
+// removal's op, librados's assert_version, so the OSD refuses the removal
+// of a head written since the caller read it at that version
+// (removeHeadFlagged).
 //
-// p.Expect is refused before anything is read.
+// p.Expect is refused before anything is read, and so is p.AssertEpoch on
+// the versioned branch.
 func (s *Store) DeleteObject(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) (*op.DeleteObjectResult, error) {
 	if p.Expect != nil {
 		return nil, fmt.Errorf("%w: a delete's expected state", op.ErrNotImplemented)
 	}
 	if rec.Info.Versioned() {
+		if p.AssertEpoch != 0 {
+			return nil, fmt.Errorf("%w: a versioned delete's asserted version", op.ErrNotImplemented)
+		}
 		return s.deleteVersioned(ctx, rec, key, p)
 	}
 	if key.Instance == meta.NullInstance {
@@ -56,6 +65,9 @@ func (s *Store) DeleteObject(ctx context.Context, rec *op.BucketRecord, key meta
 		return nil, fmt.Errorf("object %s: %w", key.Name, op.ErrNoSuchKey) // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5983-L5992
 	}
 	w := radosclient.NewWriteOp()
+	if p.AssertEpoch != 0 {
+		w.AssertVersion(p.AssertEpoch)
+	}
 	if cerr := s.deleteConditions(w, st, p); cerr != nil {
 		return nil, cerr
 	}
@@ -122,6 +134,9 @@ func (s *Store) removeHeadFlagged(ctx context.Context, rec *op.BucketRecord, key
 		}
 	default:
 		x.cancel() // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5968-L5972
+		if e := errno(err); versionAsserted(w) && (e == syscall.ERANGE || e == syscall.EOVERFLOW) {
+			return fmt.Errorf("%w: the head of %s is not at the version asserted: %w", op.ErrConcurrentModification, key.Name, err)
+		}
 		return op.FromRADOS(err, op.ScopeObject)
 	}
 	if !counted {
@@ -140,6 +155,18 @@ func (s *Store) removeHeadFlagged(ctx context.Context, rec *op.BucketRecord, key
 		slog.WarnContext(ctx, "quota cache adjustment failed", slog.String("bucket", rec.Info.Bucket.Name), slog.Any("error", err))
 	}
 	return nil
+}
+
+// versionAsserted reports whether w asserts the head's version, whose
+// mismatch the OSD answers ERANGE for a head written since and EOVERFLOW for
+// one at a lower version, an absent head's 0 included
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L6460-L6473 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L6529-L6542 at v20.2.4).
+func versionAsserted(w *radosclient.WriteOp) bool {
+	return slices.ContainsFunc(w.Steps(), func(st radosclient.Step) bool {
+		_, ok := st.(*radosclient.AssertVersionStep)
+		return ok
+	})
 }
 
 // deleteObjIndex is RGWRados::delete_obj_index

@@ -253,6 +253,23 @@ var _ = Describe("objects", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(st.Exists).To(BeTrue(), "k after both refusals")
 	})
+	It("deletes an object at the epoch asserted, and refuses one written since, by an attr write too, with ConcurrentModification", func(ctx SpecContext) {
+		mustPut(ctx, store, rec, "k", "v")
+		st, err := store.StatObject(ctx, rec, key)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(store.SetObjectAttrs(ctx, st, map[string][]byte{"a": []byte("1")}, nil)).To(Succeed())
+		Expect(store.DeleteObject(ctx, rec, key, op.DeleteParams{AssertEpoch: st.Epoch})).Error().To(MatchError(op.ErrConcurrentModification))
+		cur, err := store.StatObject(ctx, rec, key)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cur.Exists).To(BeTrue(), "k after the refusal")
+		Expect(cur.Epoch).To(BeNumerically(">", st.Epoch), "the attr write advanced the epoch, as every RADOS write advances the version")
+		Expect(store.DeleteObject(ctx, rec, key, op.DeleteParams{AssertEpoch: cur.Epoch})).Error().To(Succeed())
+	})
+	It("checks a delete's conditions before its asserted epoch", func(ctx SpecContext) {
+		mustPut(ctx, store, rec, "k", "v")
+		Expect(store.DeleteObject(ctx, rec, key, op.DeleteParams{IfMatch: md5Hex([]byte("other")), AssertEpoch: 1 << 40})).Error().
+			To(MatchError(op.ErrPreconditionFailed), "the RADOS store checks them on the head it read before it sends the op")
+	})
 	It("takes the null instance for the plain object", func(ctx SpecContext) {
 		mustPut(ctx, store, rec, "k", "v")
 		st, err := store.StatObject(ctx, rec, meta.ObjKey{Name: "k", Instance: "null"})

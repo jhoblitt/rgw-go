@@ -152,6 +152,14 @@ type DeleteParams struct {
 	// (check_preconditions,
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7271-L7284 at v20.2.4).
 	IfMatchLastModified time.Time
+	// AssertEpoch, when not zero, is the RADOS version the head must still be
+	// at, ObjectState.Epoch as a read returned it: the unversioned removal
+	// asserts it on its write op, librados's assert_version, ahead of the
+	// conditions, so a write to the head since that read, an attr write
+	// included, fails the removal with ErrConcurrentModification and leaves
+	// the object and its index entry. A versioned delete answers
+	// ErrNotImplemented for it.
+	AssertEpoch uint64
 	// MarkerOwner and MarkerOwnerDisplayName are params.obj_owner, the owner
 	// a delete marker's index entry names: the requester for an S3 delete,
 	// the entry's owner for lifecycle
