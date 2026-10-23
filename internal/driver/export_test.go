@@ -744,5 +744,5 @@ func HoldClaimForTest(s *Store, ctx context.Context, b meta.BucketID, owner meta
 // dstKey of dst under storageClass with attrs as its head's, raw or as
 // CopyObject streams it.
 func (s *Store) CopyDataForTest(ctx context.Context, src *op.ObjectState, dst *op.BucketRecord, dstKey meta.ObjKey, storageClass string, attrs map[string][]byte, raw bool) (*op.PutResult, error) {
-	return s.copyData(ctx, src, dst, dstKey, storageClass, attrs, time.Time{}, raw)
+	return s.copyData(ctx, src, dst, dstKey, storageClass, attrs, time.Time{}, 0, raw)
 }

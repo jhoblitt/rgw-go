@@ -86,8 +86,7 @@ type headWrite struct {
 	// its version under the key's OLH at that epoch, 0 letting the class
 	// take the OLH entry's next (put_versioned.go). Nil links nothing and
 	// keeps the unversioned head write: radosgw gives no epoch to the
-	// multipart meta object or a part head, and the copy and the completion
-	// do not link through it.
+	// multipart meta object or a part head.
 	olhEpoch *uint64
 }
 

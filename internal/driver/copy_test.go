@@ -596,30 +596,31 @@ var _ = Describe("CopyObject", func() {
 		Expect(head.Xattrs).To(HaveKeyWithValue(meta.AttrSourceZone, []byte{0x39, 0x30, 0, 0}), "this zone's, not the source's")
 	})
 
-	DescribeTable("keeps the source's OLH attrs only where the destination's versioning is enabled",
-		func(ctx SpecContext, flags uint32, kept bool) {
+	DescribeTable("drops every OLH attr of its source, pending ones included, wherever the copy goes",
+		func(ctx SpecContext, flags uint32, instance string) {
 			st := *srcSt
 			st.Attrs = maps.Clone(srcSt.Attrs)
 			olh := []string{meta.AttrOLHIDTag, meta.AttrOLHInfo, meta.AttrOLHVer}
 			for _, n := range olh {
 				st.Attrs[n] = []byte("src")
 			}
+			pendingAttr := meta.AttrOLHPendingPrefix + "src-op"
+			st.Attrs[pendingAttr] = []byte("src")
 			dst := *rec
 			dst.Info.Flags |= flags
-			_, err := s.CopyObject(ctx, &st, &dst, dstKey, op.CopyParams{Attrs: reqAttrs(), Tag: "tx-copy"})
+			key := meta.ObjKey{Name: "dst", Instance: instance}
+			_, err := s.CopyObject(ctx, &st, &dst, key, op.CopyParams{Attrs: reqAttrs(), Tag: "tx-copy"})
 			Expect(err).NotTo(HaveOccurred())
-			head := c.Object(testDataPool, "", dstOID)
+			head := c.Object(testDataPool, "", putBucketID+"_"+key.OID())
 			for _, n := range olh {
-				if kept {
-					Expect(head.Xattrs).To(HaveKeyWithValue(n, []byte("src")))
-				} else {
-					Expect(head.Xattrs).NotTo(HaveKey(n))
-				}
+				Expect(head.Xattrs).NotTo(HaveKeyWithValue(n, []byte("src")), n)
 			}
+			Expect(head.Xattrs).NotTo(HaveKey(pendingAttr), "the source's modification in flight")
 		},
-		Entry("an unversioned bucket", uint32(0), false),
-		Entry("a bucket whose versioning is suspended", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended), false),
-		Entry("a bucket whose versioning is enabled", uint32(meta.BucketVersioned), true),
+		Entry("an unversioned bucket", uint32(0), ""),
+		Entry("a bucket whose versioning is suspended", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended), ""),
+		Entry("a version's own head in a bucket whose versioning is enabled, where copy_obj keeps them", uint32(meta.BucketVersioned), "c1"),
+		Entry("the null version in a bucket whose versioning is enabled, whose head is its key's OLH head", uint32(meta.BucketVersioned), ""),
 	)
 
 	It("streams a source written without a manifest", func(ctx SpecContext) {
