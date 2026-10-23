@@ -128,7 +128,7 @@ func (o *PutBucketVersioning) Execute(ctx context.Context, r *Request) error {
 	}
 	return retryBucketWrite(ctx, r, o, func() error {
 		info := &r.BucketRec.Info
-		if err := o.allowed(*info, r.MFAVerified); err != nil {
+		if err := o.allowed(*info, OwnerMFAVerified(r)); err != nil {
 			return err
 		}
 		info.Flags = o.flags(info.Flags)
@@ -144,7 +144,8 @@ func (o *PutBucketVersioning) Execute(ctx context.Context, r *Request) error {
 // bucket's own, or, with MFA delete on, a status that flips
 // BUCKET_VERSIONS_SUSPENDED, is ERR_MFA_REQUIRED, 403 AccessDenied. radosgw
 // tests that flag alone, so with MFA delete on, Suspended on a bucket never
-// versioned flips it and Enabled does not.
+// versioned flips it and Enabled does not. Execute counts a code verified
+// only for the bucket's owner (OwnerMFAVerified).
 func (o *PutBucketVersioning) allowed(info meta.BucketInfo, verified bool) error {
 	if info.ObjLockEnabled() && o.Status != VersioningEnabled {
 		return ErrInvalidBucketState.WithMessage("bucket versioning cannot be disabled on buckets with object lock enabled")

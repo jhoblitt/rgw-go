@@ -5793,6 +5793,30 @@ rgw-go does the following.
   so on a zone of either release it refuses a request naming a version
   that radosgw serves, and serves one naming none that radosgw refuses
   without MFA.
+- **Only the bucket owner's x-amz-mfa satisfies MFA delete.** radosgw
+  checks a request's `x-amz-mfa` against the requester's own devices, and
+  PutBucketVersioning's change of MFA delete, or of the versioning of a
+  bucket with it on, takes that verdict from any requester the bucket's
+  permissions let act
+  ([rgw_op.cc:2795-2817](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2795-L2817),
+  [rgw_op.cc:3027-3049](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3027-L3049);
+  `docs/ceph-upstream-bugs.md`, "[radosgw lets a requester's own MFA device
+  satisfy another owner's MFA
+  delete](ceph-upstream-bugs.md#radosgw-lets-a-requesters-own-mfa-device-satisfy-another-owners-mfa-delete)").
+  The S3 User Guide's "[Configuring MFA
+  delete](https://docs.aws.amazon.com/AmazonS3/latest/userguide/MultiFactorAuthenticationDelete.html)"
+  (read 2026-10-22): "only the bucket owner (root account) can enable MFA
+  delete", and "the bucket owner must include two forms of authentication
+  in any request to delete a version or change the versioning state".
+  rgw-go counts a verified code there, on both releases, only from the
+  bucket's owner (`op.OwnerMFAVerified`): for a bucket a user owns, that
+  user, and for a bucket an account owns, the account's root user alone.
+  The user record whose device verified the code decides, so a system
+  request whose `rgwx-uid` names the owner does not count the system
+  user's code. Any other requester's change, an account's other users'
+  included, is 403 AccessDenied, as an unverified one is, where radosgw
+  serves it. The deletes take no verdict ("Deletes that need MFA are
+  refused", above).
 - **Tags that cannot be read refuse the request.** When a bucket policy or
   an identity policy names an `s3:ExistingObjectTag` or `s3:ResourceTag`
   key, radosgw reads the object's or bucket's tags into the policy
