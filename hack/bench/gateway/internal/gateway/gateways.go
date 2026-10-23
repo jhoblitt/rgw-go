@@ -23,7 +23,7 @@ var pidPattern = regexp.MustCompile(`^\d+$`)
 // checks the radosgw's entity holds the parity options, and names the
 // radosgw's pod as what the sampler reads.
 func (r *Runner) useRadosgw(ctx context.Context, st *state) error {
-	if r.rgwGoRuns(st.cfg) {
+	if harness.RgwGoPID(r.Proc, filepath.Join(st.cfg.clusterOut(), "rgw-go.pid")) != "" {
 		return fmt.Errorf("an rgw-go runs against rgw-go-%s: stop it with make rgw-go-down RELEASE=%s, so that the radosgw run has the host to itself",
 			st.cfg.Release, st.cfg.Release)
 	}
@@ -34,22 +34,6 @@ func (r *Runner) useRadosgw(ctx context.Context, st *state) error {
 	st.endpoint = st.radosgwEndpoint
 	st.target = "pod:" + st.radosgwPod
 	return nil
-}
-
-// rgwGoRuns reports whether the rgw-go rgw-go-up.sh started still runs: a
-// pid outlives its process and can be reused, so only one whose process is
-// named rgw-go counts.
-func (r *Runner) rgwGoRuns(cfg Config) bool {
-	data, err := os.ReadFile(filepath.Join(cfg.clusterOut(), "rgw-go.pid"))
-	if err != nil {
-		return false
-	}
-	pid := strings.TrimSpace(string(data))
-	if !pidPattern.MatchString(pid) {
-		return false
-	}
-	comm, err := fs.ReadFile(r.Proc, pid+"/comm")
-	return err == nil && strings.TrimRight(string(comm), "\n") == "rgw-go"
 }
 
 // startRgwGo restarts rgw-go through rgw-go-up.sh with GODEBUG=gctrace=1 and

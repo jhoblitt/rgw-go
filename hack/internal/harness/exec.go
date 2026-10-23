@@ -1,7 +1,7 @@
 // Package harness holds what the hack commands share: commands run on this
 // host under deadlines in process groups of their own, a rooket cluster's
-// toolbox, the signals that interrupt a run, and what a run reads of the host
-// and the repository.
+// toolbox and its one radosgw, the rgw-go running against it, the signals
+// that interrupt a run, and what a run reads of the host and the repository.
 package harness
 
 //go:generate go tool counterfeiter -generate
