@@ -19650,10 +19650,15 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** the class is radosgw's own, so rgw-go's lc client
   (`internal/cls/rgw/ops_lc.go`) gets the same EIO, a `*radosclient.Error`
   with Errno EIO, from `LCGetEntry` and `LCGetNextEntry`, and reads the pair
-  only in an `LCListEntries` reply, as radosgw does. rgw-go's lifecycle pass
-  is planned not to stall: on that EIO it reads the entry as
-  `lc_list_entries` does, rewrites it with `lc_set_entry` in the entry form
-  under the shard lock, and goes on.
+  only in an `LCListEntries` reply, as radosgw does. rgw-go's lifecycle
+  worker does not stall: on that EIO it reads the key's value from the
+  shard's omap as `lc_list_entries` reads a value, an entry else the pair,
+  rewrites it with `lc_set_entry` as the entry {bucket, 0, status} under
+  the shard lock, and goes on, leaving a pair that names another key as it
+  is (`lcShard.headEntry` and `lcShard.nextEntry`,
+  `internal/driver/lc_worker.go`; docs/exclusions.md, "A lifecycle entry
+  stored in its pair form is rewritten"), so radosgw's worker reads the
+  shard afterwards.
 - **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
   searched.
 - **Found:** phase 2 Task C3, 2026-10-20, reading the lc class methods for

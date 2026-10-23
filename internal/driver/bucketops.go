@@ -518,9 +518,9 @@ func (s *Store) DeleteBucket(ctx context.Context, rec *op.BucketRecord) error {
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1697-L1718 at v19.2.7
 // and https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2430-L2440,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1753-L1774 at v20.2.4
-// and https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2497-L2506).
-// rgw-go runs no lifecycle pass of its own yet, so in a zone with no
-// radosgw lifecycle thread nothing drops it.
+// and https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2497-L2506),
+// and rgw-go's lifecycle worker drops it too (lcLoadBucket and
+// lcShard.postState, internal/driver/lc_worker.go).
 //
 // radosgw removes the entry before delete_bucket, which can still fail and
 // leave the bucket with its configuration and without its entry
