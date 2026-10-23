@@ -3279,7 +3279,7 @@ Every new entry adds its row to this table, in document order.
   for a device of step 0, which it does not verify, so no rgw-go request
   faults the OSD (`internal/driver/mfa.go`; spec "is not verified, the class
   not called, for a device of step 0, where a good code faults the OSD",
-  `internal/driver/mfa_test.go`). Its otp metadata put refuses a device of
+  `internal/driver/mfa_test.go`; `docs/exclusions.md`, "A stored MFA device outside the otp put's bounds does not verify"). Its otp metadata put refuses a device of
   step 0, or of a step over 3600 seconds, with 400 InvalidArgument before
   it writes, so no rgw-go write stores one (`op.DecodeOTPDocument`,
   `internal/op/metadata_otp.go`; `docs/exclusions.md`, "The admin metadata
@@ -26591,9 +26591,11 @@ Every new entry adds its row to this table, in document order.
   (`MaxOTPWindow` and `MaxOTPStepSize`, `internal/op/metadata_otp.go`;
   `docs/exclusions.md`, "The admin metadata API serves four sections"), so
   no rgw-go write stores such a device; a wrong code then costs at most
-  2049 codes. A device radosgw wrote with a wider window still reads back,
-  and `(*Store).VerifyMFA` sends its checks as radosgw does
-  (`internal/driver/mfa.go`), so rgw-go meets the cost for it too.
+  2049 codes. A device radosgw wrote with a wider window, or a longer
+  step, still reads back, and `(*Store).VerifyMFA` answers it not verified
+  without calling the class, so no rgw-go check walks a window over 1024
+  steps (`uncheckedOTPDevice`, `internal/driver/mfa.go`;
+  `docs/exclusions.md`, "A stored MFA device outside the otp put's bounds does not verify").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task WP-19's automated security review, 2026-10-23;
   checked at both tags in the task. Derived from the source, not
@@ -26670,8 +26672,10 @@ Every new entry adds its row to this table, in document order.
   (`op.EmptyOTPKey` and `op.DecodeOTPDocument`,
   `internal/op/metadata_otp.go`; `docs/exclusions.md`, "The admin metadata
   API serves four sections"). A device radosgw stored with an empty key
-  still reads back, and `(*Store).VerifyMFA` sends its checks as radosgw does
-  (`internal/driver/mfa.go`).
+  still reads back, and `(*Store).VerifyMFA` answers it not verified
+  without calling the class, as its stored `seed_bin` is empty, so no code
+  verifies through rgw-go (`uncheckedOTPDevice`, `internal/driver/mfa.go`;
+  `docs/exclusions.md`, "A stored MFA device outside the otp put's bounds does not verify").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task WP-19, 2026-10-23, comparing the otp put's
   checks with `mfa create`'s at both tags. Derived from the source, not
@@ -26782,8 +26786,14 @@ Every new entry adds its row to this table, in document order.
   InvalidArgument before it writes (`MaxOTPStepSize`,
   `internal/op/metadata_otp.go`; `docs/exclusions.md`, "The admin metadata
   API serves four sections"), so no rgw-go write stores such a device.
+  A device radosgw wrote with such a step still reads back, and
+  `(*Store).VerifyMFA` answers it not verified without calling the class
+  (`uncheckedOTPDevice`, `internal/driver/mfa.go`; `docs/exclusions.md`, "A stored MFA device outside the otp put's bounds does not verify").
   fakerados's otp class wraps the trim as the class does
-  (`otpTrimExpired`, `internal/testutil/fakerados/cls_otp_check.go`).
+  (`otpTrimExpired`, `internal/testutil/fakerados/cls_otp_check.go`; spec
+  "keeps no attempt limit for a step longer than the clock's seconds, and
+  its lookup finds no check of it",
+  `internal/testutil/fakerados/cls_otp_check_test.go`).
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task WP-19's fix round 1, 2026-10-23, checking at both
   tags its review's claim that the step's wrap removes the attempt limit.

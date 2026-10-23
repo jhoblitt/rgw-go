@@ -225,6 +225,30 @@ var _ = Describe("VerifyMFA", func() {
 			Expect(s.VerifyMFA(ctx, user, "rfc", totp(rfcStep))).To(BeFalse())
 			Expect(c.Writes(rookMetaPool, rookOTPNS, otpOID)).To(BeZero(), "cls_otp.cc:143 divides by the stored step")
 		})
+
+		// Devices outside the otp metadata put's bounds, which radosgw writes
+		// and the class checks: each check fails closed before the class
+		// runs. With the refusal taken out, the class verifies each code here
+		// but the long step's, whose check its lookup never finds again.
+		DescribeTable("is not verified, the class not called, for a stored device outside the otp put's bounds",
+			func(ctx SpecContext, edit func(*otp.OTPInfo), code string) {
+				dev := rfcDevice()
+				edit(&dev)
+				seedDevices(ctx, dev)
+				Expect(s.VerifyMFA(ctx, user, "rfc", code)).To(BeFalse())
+				Expect(c.Writes(rookMetaPool, rookOTPNS, otpOID)).To(BeZero(), "no otp_check was sent")
+			},
+			Entry("a hex seed led by a NUL, which the class parses into an empty key, whose codes anyone can make",
+				func(d *otp.OTPInfo) { d.Seed = "\x00" + d.Seed }, driver.EmptyKeyCode(rfcStep)),
+			Entry("a base32 seed of nothing but spaces, the same empty key",
+				func(d *otp.OTPInfo) { d.Seed, d.SeedType = "    ", otp.SeedBase32 }, driver.EmptyKeyCode(rfcStep)),
+			Entry("a window of UINT_MAX, whose wrong codes walk 2^33 codes on the OSD",
+				func(d *otp.OTPInfo) { d.Window = 4294967295 }, totp(rfcStep)),
+			Entry("a window one past the put's bound", func(d *otp.OTPInfo) { d.Window = 1025 }, totp(rfcStep)),
+			Entry("a step past the clock's seconds, whose checks the class neither limits nor finds",
+				func(d *otp.OTPInfo) { d.StepSize = 4294967295 }, totp(0)),
+			Entry("a step one past the put's bound", func(d *otp.OTPInfo) { d.StepSize = 3601 }, totp((rfcStep*30+5)/3601)),
+		)
 	})
 
 	Describe("the code", func() {

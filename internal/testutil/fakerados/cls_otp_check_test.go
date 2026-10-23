@@ -259,6 +259,24 @@ var _ = Describe("OTPClassAt's check methods", func() {
 			Expect(lookup(ctx, "low bits")).To(HaveField("Result", otp.CheckUnknown), "find trims the success it stored the same way")
 		})
 
+		// trim_expired subtracts the step from the clock in real_time's unsigned
+		// nanoseconds, so a step longer than the clock's seconds wraps the start
+		// past the clock
+		// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/otp/cls_otp.cc#L98-L106 at v19.2.7 and v20.2.4).
+		It("keeps no attempt limit for a step longer than the clock's seconds, and its lookup finds no check of it", func(ctx SpecContext) {
+			dev := rfcDevice()
+			dev.StepSize = 60
+			store(dev, nil, 0)
+			for i := range 7 {
+				Expect(check(ctx, "00000000", fmt.Sprintf("wrong %d", i))).To(Succeed())
+			}
+			Expect(check(ctx, "94287082", "good")).To(Succeed())
+			Expect(instance("rfc").LastChecks).To(Equal([]otp.OTPCheck{{Token: "good", Timestamp: clock, Result: otp.CheckSuccess}}),
+				"each check trims every check before it, so the device never holds five")
+			Expect(instance("rfc").LastSuccess).To(Equal(uint64(1)))
+			Expect(lookup(ctx, "good")).To(HaveField("Result", otp.CheckUnknown), "find trims the check it stored the same way")
+		})
+
 		It("fails with EIO for a code that verifies on a device of step 0, writing nothing, where the OSD divides by zero", func(ctx SpecContext) {
 			dev := rfcDevice()
 			dev.StepSize = 0

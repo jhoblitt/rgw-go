@@ -14,8 +14,14 @@ const RFCSeed = "12345678901234567890"
 // RFC 4226's dynamic truncation of the HMAC of the big-endian counter. It
 // is written apart from hotpEqual, so that the specs check one with the
 // other.
-func RFCCode(n uint64) string {
-	mac := hmac.New(sha1.New, []byte(RFCSeed))
+func RFCCode(n uint64) string { return codeOf([]byte(RFCSeed), n) }
+
+// EmptyKeyCode is RFCCode's code under a key of no bytes, which anyone can
+// make.
+func EmptyKeyCode(n uint64) string { return codeOf(nil, n) }
+
+func codeOf(key []byte, n uint64) string {
+	mac := hmac.New(sha1.New, key)
 	mac.Write(binary.BigEndian.AppendUint64(nil, n))
 	h := mac.Sum(nil)
 	o := h[len(h)-1] & 0x0f

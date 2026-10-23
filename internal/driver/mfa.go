@@ -52,17 +52,18 @@ var errOTPRecordChanged = errors.New("the otp device's record changed while it w
 // verifies. Any other result, and a device or object that is not there, is
 // false with a nil error; a failed otp_check ends the check before the
 // lookup, as OTP::check returns. Any other failure is the error. Nothing is
-// logged but the device's id and the check's result, as check_mfa logs them,
-// since the pin verifies until a check uses it or its window passes.
+// logged but the device's id, the check's result, as check_mfa logs them,
+// and why a check was not sent, since the pin verifies until a check uses it
+// or its window passes.
 //
 // It differs from radosgw where radosgw lets a code through or harms the
 // cluster: a pin holding a NUL is not verified, since the class hands
 // liboath val.c_str() and would verify a good code followed by a NUL and
-// junk; a device of step 0 is not checked, since a good code faults the OSD
-// there (docs/ceph-upstream-bugs.md, "cls_otp divides by a stored step_size
-// that is never validated"); and a code the device may have accepted before
-// is refused, which the class verifies again in the later steps of its
-// window (unusedCode).
+// junk; a stored device the otp metadata put would refuse, an empty key, a
+// step of 0 or over op.MaxOTPStepSize, or a window over op.MaxOTPWindow, is
+// not verified and the class is not called (uncheckedOTPDevice); and a code
+// the device may have accepted before is refused, which the class verifies
+// again in the later steps of its window (unusedCode).
 func (s *Store) VerifyMFA(ctx context.Context, user *meta.UserInfo, serial, pin string) (bool, error) {
 	if user == nil || !slices.Contains(user.MFAIDs, serial) || strings.IndexByte(pin, 0) >= 0 {
 		return false, nil
@@ -98,8 +99,9 @@ func (s *Store) checkOTP(ctx context.Context, pool radosclient.Pool, oid, serial
 	if err != nil {
 		return false, err
 	}
-	if before.OTP.StepSize == 0 {
-		slog.DebugContext(ctx, "otp check not sent: the device's step is 0", slog.String("otp_id", serial))
+	if why := uncheckedOTPDevice(before.OTP); why != "" {
+		slog.DebugContext(ctx, "otp check not sent: the device is outside the otp put's bounds",
+			slog.String("otp_id", serial), slog.String("reason", why))
 		return false, nil
 	}
 	req := otp.CheckOp{ID: serial, Val: pin, Token: randAlnum(otpTokenLen)}
@@ -137,6 +139,34 @@ func (s *Store) checkOTP(ctx context.Context, pool radosclient.Pool, oid, serial
 	}
 	slog.DebugContext(ctx, "otp check", logged...)
 	return true, nil
+}
+
+// uncheckedOTPDevice is why VerifyMFA sends no check for a stored device the
+// otp metadata put would not write, or "" for one it checks:
+//   - an empty key, which the class parsed from a seed liboath decodes into
+//     nothing, and whose codes anyone can make (docs/ceph-upstream-bugs.md,
+//     "radosgw's otp metadata put stores a device without a seed, whose
+//     codes anyone can make");
+//   - a step of 0, by which a good code makes the class divide
+//     ("cls_otp divides by a stored step_size that is never validated");
+//   - a step over op.MaxOTPStepSize; past the clock's seconds the class
+//     keeps no attempt limit for the device and never finds a check of it
+//     again ("cls_otp never verifies a device whose step is longer than the
+//     clock's seconds");
+//   - a window over op.MaxOTPWindow, whose walk every wrong code costs the
+//     OSD ("cls_otp verifies any stored window, an OSD CPU cost per check").
+func uncheckedOTPDevice(dev otp.OTPInfo) string {
+	switch {
+	case len(dev.SeedBin) == 0:
+		return "empty key"
+	case dev.StepSize == 0:
+		return "step of 0"
+	case dev.StepSize > op.MaxOTPStepSize:
+		return "step over the bound"
+	case dev.Window > op.MaxOTPWindow:
+		return "window over the bound"
+	}
+	return ""
 }
 
 // readOTPInstance reads the device's record under key in the object oid,
