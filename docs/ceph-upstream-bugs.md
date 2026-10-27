@@ -13258,11 +13258,61 @@ Every new entry adds its row to this table, in document order.
 - **Kind:** defect, unfixed at v19.2.6, v19.2.7 and v20.2.4: on a bucket
   whose versioning was never enabled, a write naming the null version
   links the key as a versioned object, and leaves the plain key's earlier
-  entry out of step with the head it names. Not security-relevant
-  (rgw-bug-reproduction's triage, 2026-10-12, made before the OLH link
-  and the completion's path were found): the index and stats drift stays
-  in the bucket the request writes to. Unreproduced: derived from the
-  source.
+  entry out of step with the head it names. Possibly security-relevant:
+  rgw-bug-reproduction's triage (2026-10-27) rates it yes, low. A
+  public-write grant lets an anonymous requester add objects the owner
+  can delete; this defect lets one leave state no S3 request clears,
+  with recovery admin-only and the bucket's stats and quota inflated,
+  harm beyond what the grant allows. That recovery is admin-only was
+  observed at v20.2.4 by rgw-bug-reproduction's run of 2026-10-27,
+  version-named deletes included (below); at v19.2.7 it rests on the
+  source, the same lines holding there. It is low as it costs
+  availability alone, reads no data, and needs a bucket anyone may
+  write. An anonymous PutObject reaches it: the request's key takes the
+  query's `versionId` for every request
+  ([rgw_rest_s3.cc:4976-4985](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4976-L4985) at v19.2.7,
+  [rgw_rest_s3.cc:5506-5515](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5506-L5515) at v20.2.4),
+  and `RGWPutObj::verify_permission` checks `s3:PutObject` alone on the
+  destination
+  ([rgw_op.cc:3920-3989](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3920-L3989) at v19.2.7,
+  [rgw_op.cc:4129-4198](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4129-L4198) at v20.2.4).
+  CopyObject's and CompleteMultipartUpload's destination checks are not
+  traced. This triage replaces the one of 2026-10-12, which rated it not
+  security-relevant before the OLH link, the completion's path and the
+  bucket left not empty were found. Reproduced on v19.2.7 and v20.2.4,
+  for a CopyObject's destination too: after a PutObject, a CopyObject and
+  a CompleteMultipartUpload each naming `versionId=null` over a key
+  written before, on a bucket never versioned, the versions listing held
+  each key twice as the null version, the earlier object's size beside
+  the new one's (the s3-test `test_versioning_write_version_id_ignored`,
+  [jhoblitt/ceph#27](https://github.com/jhoblitt/ceph/pull/27)). s3-tests' cleanup, which on a
+  bucket never versioned deletes each key a plain listing names by its
+  name alone, then left the bucket not empty: its DeleteBucket answered
+  BucketNotEmpty after the test's teardown and again after a later
+  test's. rgw-bug-reproduction's run on v20.2.4 (2026-10-27) went
+  further. Its versions listing named `k` twice, both
+  `VersionId=null`, of 39 and 20 bytes. A plain DELETE of `k`, then a
+  DELETE of `k?versionId=null` once per duplicate, each answered 204
+  and changed nothing, over two passes, and DeleteBucket still answered
+  409 BucketNotEmpty. `radosgw-admin bucket check --fix` changed
+  nothing, `bucket check olh` and `bucket check unlinked` refuse a
+  bucket that is not versioned, and only `bucket rm --purge-objects`
+  removed it. The mechanism, which rgw-bug-reproduction traced at ceph
+  main (its lines 7003 to 7005 of rgw_rados.cc) and which holds at both
+  floors: S3 names both the empty instance and the instance `null` as
+  versionId=null, the versions listing writing `null` for the empty one
+  ([rgw_rest_s3.cc:1842-1845](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1842-L1845) at v19.2.7,
+  [rgw_rest_s3.cc:1945-1948](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1945-L1948) at v20.2.4),
+  and the delete clears an instance `null` to the
+  empty one before it takes the unversioned path a bucket without
+  `BUCKET_VERSIONED` selects
+  ([rgw_rados.cc:5841-5850](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5841-L5850) at v19.2.7,
+  [rgw_rados.cc:6453-6462](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6453-L6462) at v20.2.4),
+  so no S3 request names the `{k, "null"}` entry, while
+  `check_bucket_empty` lists the index with its versions and answers
+  -ENOTEMPTY for any entry outside a namespace
+  ([rgw_rados.cc:5259-5304](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5259-L5304) at v19.2.7,
+  [rgw_rados.cc:5723-5768](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5723-L5768) at v20.2.4).
 - **Evidence:** paths are under `src/`; a pair of line numbers is
   v19.2.6's then v20.2.4's.
   - The request's key takes `versionId` verbatim as its instance
@@ -13380,7 +13430,8 @@ Every new entry adds its row to this table, in document order.
     The Impact below holds after a repeat too.
 - **Impact:** after a PutObject or a CompleteMultipartUpload naming
   `versionId=null` on a bucket whose versioning was never enabled, as
-  derived from the source and not reproduced:
+  derived from the source; the run reproduced the second, and a bucket
+  its cleanup could not empty (above):
   - the key is a versioned object on a bucket that was never versioned.
     Its head is an OLH whose target is `{name, "null"}`, and a plain
     listing shows the `null` version with the write's size and ETag, a
@@ -13396,10 +13447,12 @@ Every new entry adds its row to this table, in document order.
     at v19.2.7), and the link rewrites entries without accounting for them
     ([:1244-1249](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1244-L1249)).
 
-  What a later DeleteObject naming no version does to this state is not
-  traced. It takes the unversioned path the bucket's flags select
+  A later DeleteObject, naming no version or `versionId=null`, takes
+  the unversioned path the bucket's flags select
   ([rgw_rados.cc:5850](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5850)
-  at v19.2.7).
+  at v19.2.7). At v20.2.4 such deletes answered 204 and changed
+  nothing (Kind); what each does to the index entries is not traced
+  further.
 - **Releases:** v19.2.6, v19.2.7 and v20.2.4.
 - **rgw-go:** does not reproduce it. A PutObject, a CopyObject's
   destination and a CompleteMultipartUpload ignore any `versionId`, the
@@ -13414,13 +13467,14 @@ Every new entry adds its row to this table, in document order.
   OLH, so the bucket matched neither radosgw's result nor an unversioned
   write's. One naming another version wrote that instance without
   radosgw's versioned op (F12's task review, 2026-10-14).
-- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
-  (non-security).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 follow-up X13, 2026-10-08, reading what radosgw does
   with `versionId=null` on a bucket never versioned; confirmed in its
   review. The completion's path: F12's task review, 2026-10-14; the OLH
-  link: F14's task review, 2026-10-14. Derived from the source, not
-  reproduced.
+  link: F14's task review, 2026-10-14. Reproduced by phase 2 task V11,
+  2026-10-27, through its s3-test on both releases; the version-named
+  deletes and the admin-only recovery by rgw-bug-reproduction on
+  v20.2.4 the same day.
 
 ## radosgw's bucket instance metadata put overwrites unguarded on Tentacle
 
