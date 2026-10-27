@@ -476,6 +476,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's ?layout answers 200 with an empty document when its layout fails](#radosgws-layout-answers-200-with-an-empty-document-when-its-layout-fails) | pending | pending | ✓ |
 | [radosgw's ?layout checks a cap type no caps command can grant](#radosgws-layout-checks-a-cap-type-no-caps-command-can-grant) | pending | pending | ✓ |
 | [radosgw's CompleteMultipartUpload ignores a failed read of its upload info and drops the upload's retention and legal hold](#radosgws-completemultipartupload-ignores-a-failed-read-of-its-upload-info-and-drops-the-uploads-retention-and-legal-hold) | pending | pending | ✓ |
+| [radosgw hands a sync zone's endpoint credentials to any holder of zone=read](#radosgw-hands-a-sync-zones-endpoint-credentials-to-any-holder-of-zoneread) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -28317,3 +28318,105 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task L5a's review, 2026-10-27, at the completion's
   object lock fields. Derived from the source, not reproduced.
+
+## radosgw hands a sync zone's endpoint credentials to any holder of zone=read
+
+- **Kind:** defect, possibly security-relevant, unfixed at v19.2.7 and
+  v20.2.4: `GET /admin/config?type=zone` writes the zone's `tier_config` as
+  it was stored, so the S3 secret of a cloud sync zone's endpoint, or the
+  password of an elasticsearch zone's, reaches a caller holding only the
+  `zone=read` cap. rgw-bug-reproduction rated it security-relevant on
+  2026-10-27, as addendum material to the disclosed report of the zone's
+  system key ("[radosgw hands the zone's system key to any holder of
+  zone=read](#radosgw-hands-the-zones-system-key-to-any-holder-of-zoneread)").
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - It is one more input to the sink of "[radosgw hands the zone's system
+    key to any holder of
+    zone=read](#radosgw-hands-the-zones-system-key-to-any-holder-of-zoneread)":
+    `RGWOp_ZoneConfig_Get` checks `zone=read` alone
+    ([rgw_rest_config.h:27-29](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_config.h#L27-L29),
+    [rgw_rest_config.h:27-29](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_config.h#L27-L29))
+    and its `send_response` dumps the zone parameters on the request's
+    formatter
+    ([rgw_rest_config.cc:35-47](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_config.cc#L35-L47),
+    [rgw_rest_config.cc:35-47](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_config.cc#L35-L47)).
+  - `RGWZoneParams::dump` writes the zone's sync module config as it was
+    stored, `encode_json("tier_config", tier_config, f)`
+    ([rgw_zone.cc:332](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_zone.cc#L332),
+    [rgw_zone.cc:337](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L337)).
+  - The cloud sync module, which `register_module` names the zone tier
+    type `cloud`
+    ([rgw_sync_module.cc:86](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module.cc#L86),
+    [rgw_sync_module.cc:95](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module.cc#L95)),
+    takes its S3 endpoints' `access_key` and `secret` from four places in
+    that config, as its configuration comment lays them out
+    ([rgw_sync_module_aws.cc:45-120](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module_aws.cc#L45-L120),
+    [rgw_sync_module_aws.cc:45-120](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module_aws.cc#L45-L120))
+    and `AWSSyncConfig_Connection::init` reads them
+    ([rgw_sync_module_aws.cc:234-256](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module_aws.cc#L234-L256),
+    [rgw_sync_module_aws.cc:234-256](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module_aws.cc#L234-L256)):
+    - `default.connection`: `AWSSyncConfig::init` passes `default` to
+      `AWSSyncConfig_Profile::init`, which reads a profile's `connection`
+      ([rgw_sync_module_aws.cc:524-529](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module_aws.cc#L524-L529),
+      [rgw_sync_module_aws.cc:524-529](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module_aws.cc#L524-L529);
+      [rgw_sync_module_aws.cc:342-345](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module_aws.cc#L342-L345),
+      [rgw_sync_module_aws.cc:342-345](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module_aws.cc#L342-L345));
+    - each `connections` entry, which it hands to a new
+      `AWSSyncConfig_Connection`
+      ([rgw_sync_module_aws.cc:531-538](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module_aws.cc#L531-L538),
+      [rgw_sync_module_aws.cc:531-538](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module_aws.cc#L531-L538));
+    - the root `connection` and each `profiles` entry's `connection`: it
+      passes the config itself and each `profiles` entry to `init_target`
+      ([rgw_sync_module_aws.cc:549-555](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module_aws.cc#L549-L555),
+      [rgw_sync_module_aws.cc:549-555](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module_aws.cc#L549-L555)),
+      which calls the same `AWSSyncConfig_Profile::init`
+      ([rgw_sync_module_aws.cc:466-471](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module_aws.cc#L466-L471),
+      [rgw_sync_module_aws.cc:466-471](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module_aws.cc#L466-L471)).
+    Its own `dump_conf` writes the secret as `******`
+    ([rgw_sync_module_aws.cc:257-271](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module_aws.cc#L257-L271),
+    [rgw_sync_module_aws.cc:257-271](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module_aws.cc#L257-L271)),
+    and that dump is what `ldpp_dout` logs at level 5
+    ([rgw_sync_module_aws.cc:561-566](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module_aws.cc#L561-L566),
+    [rgw_sync_module_aws.cc:561-566](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module_aws.cc#L561-L566)):
+    radosgw masks the secret in its log and not in the admin API's answer.
+  - The elasticsearch module, which `register_module` names the tier type
+    `elasticsearch`
+    ([rgw_sync_module.cc:83](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module.cc#L83),
+    [rgw_sync_module.cc:92](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module.cc#L92)),
+    takes its endpoint's basic-auth `username` and `password` from the same
+    config
+    ([rgw_sync_module_es.cc:191-195](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module_es.cc#L191-L195),
+    [rgw_sync_module_es.cc:192-196](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module_es.cc#L192-L196)).
+  - The userinfo of the elasticsearch module's `endpoint` URL is a
+    credential too: the module hands `endpoint` to an `RGWRESTConn` as it is
+    ([rgw_sync_module_es.cc:179-181](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module_es.cc#L179-L181),
+    [rgw_sync_module_es.cc:180-182](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module_es.cc#L180-L182)),
+    `do_send_prepare` builds a path-style request's URL from it and the
+    resource
+    ([rgw_rest_client.cc:841-870](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_client.cc#L841-L870),
+    [rgw_rest_client.cc:848-877](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_client.cc#L848-L877)),
+    and curl takes that URL as `CURLOPT_URL`
+    ([rgw_http_client.cc:588](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_http_client.cc#L588),
+    [rgw_http_client.cc:588](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_http_client.cc#L588)),
+    where libcurl takes `user:password` from the userinfo, its documented
+    behaviour (not checked in libcurl's source). So
+    `https://user:password@host:9200` authenticates to the endpoint.
+- **Trigger:** a zone of tier type `cloud` or `elasticsearch` whose tier
+  config holds the secret or the password, in its member or in an endpoint
+  URL's userinfo, which `radosgw-admin zone modify --tier-config` sets, and
+  a `GET /admin/config?type=zone` to a gateway of that zone.
+- **Impact:** the credential for the external endpoint a sync zone writes
+  to reaches every admin user granted `zone=read`, a read cap a monitoring
+  or tooling user may hold; Rook's own admin ops user is granted it, as the
+  sibling entry shows. A Rook-managed single-site store has no sync zone.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** reproduces it: `GET /admin/config?type=zone` writes the stored
+  `tier_config` as radosgw does (`getZoneConfig`, `internal/admin/info.go`;
+  `ZoneParams.Dump`, `internal/meta/dump_zone.go`). rgw-go runs no sync
+  module (`docs/exclusions.md`, "Multisite"), so it meets a sync zone's
+  tier config only when it serves that zone.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task WP-20b, 2026-10-27, auditing the admin answers
+  that render zone configuration for tier secrets. Derived from the source,
+  not reproduced.
