@@ -474,6 +474,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's lifecycle lister skips the rest of a key whose version ending a page it removed](#radosgws-lifecycle-lister-skips-the-rest-of-a-key-whose-version-ending-a-page-it-removed) | pending | pending | ✓ |
 | [radosgw's ?layout answers 200 with an empty document when its layout fails](#radosgws-layout-answers-200-with-an-empty-document-when-its-layout-fails) | pending | pending | ✓ |
 | [radosgw's ?layout checks a cap type no caps command can grant](#radosgws-layout-checks-a-cap-type-no-caps-command-can-grant) | pending | pending | ✓ |
+| [radosgw's CompleteMultipartUpload ignores a failed read of its upload info and drops the upload's retention and legal hold](#radosgws-completemultipartupload-ignores-a-failed-read-of-its-upload-info-and-drops-the-uploads-retention-and-legal-hold) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -28149,3 +28150,68 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task WP-21, 2026-10-27, serving `?layout`. Derived
   from the source, not reproduced.
+
+## radosgw's CompleteMultipartUpload ignores a failed read of its upload info and drops the upload's retention and legal hold
+
+- **Kind:** defect, data protection, possibly security-relevant:
+  `RadosMultipartUpload::complete` does not check the result of its read of
+  the upload info, so a completion whose read of the meta object's head
+  fails writes the object without the retention and legal hold its
+  CreateMultipartUpload set, and answers success. Unreproduced: derived from
+  the source at v19.2.7, v20.2.4 and main d8552606423.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `complete` assigns `get_info`'s result to `ret` and then copies
+    `upload_information`'s retention and legal hold into the object's attrs
+    without testing `ret`
+    ([rgw_sal_rados.cc:3599-3610](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3599-L3610),
+    [rgw_sal_rados.cc:4443-4454](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4443-L4454));
+    the head write's result then overwrites `ret`
+    ([rgw_sal_rados.cc:3639](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3639),
+    [rgw_sal_rados.cc:4485](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4485)).
+    main is unchanged
+    ([rgw_sal_rados.cc:4725-4736](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/driver/rados/rgw_sal_rados.cc#L4725-L4736)).
+  - `get_info` sets `upload_information` only once the info decodes, on its
+    last lines
+    ([rgw_sal_rados.cc:3716-3717](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3716-L3717),
+    [rgw_sal_rados.cc:4573-4576](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4573-L4576)).
+    A failed read of the head, an empty head and an info that does not
+    decode each return before
+    ([rgw_sal_rados.cc:3676-3715](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3676-L3715),
+    [rgw_sal_rados.cc:4531-4572](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4531-L4572)),
+    leaving both existence flags false, so `complete` copies no lock.
+  - `RGWCompleteMultipart::execute` reads the meta object's attrs, and
+    stops on a failure there, before it calls `complete`
+    ([rgw_op.cc:6451-6456](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6451-L6456),
+    [rgw_op.cc:7262-7267](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7262-L7267)).
+    At v19.2.7 it reads the info nowhere else. At v20.2.4 it reads the info
+    first, for the placement, and refuses a failure only when `cksum_type`
+    is set, which only a read that succeeded sets
+    ([rgw_op.cc:7219-7230](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7219-L7230));
+    after a failed first read the placement is still empty, so
+    `complete`'s own read runs whole again.
+- **Trigger:** a read or decode failure of the meta object's head after
+  execute's read of its attrs succeeded: a transient OSD error on that read,
+  at v20.2.4 on both reads, or a head whose info does not decode, which
+  fails every read. No request can force either, and neither gateway writes
+  such a head, so a reproduction needs fault injection on that read.
+- **Impact:** the completed object takes the bucket's default retention,
+  dated at the completion, in place of the upload's retention, or no
+  retention at all on a bucket without a rule, and no legal hold. A
+  GOVERNANCE or COMPLIANCE retention the client set for longer than the
+  default, or a legal hold, is lost without an error, so the version can be
+  deleted once the default lapses, or at once.
+- **Releases:** v19.2.7, v20.2.4 and main d8552606423.
+- **rgw-go:** does not reproduce it. Its completion reads the meta object's
+  attrs and info in one op, under the completion lock, and refuses an info
+  it cannot read or decode before it writes anything: a failed read with
+  the read's error, an empty head with 404 NoSuchUpload, and an info that
+  does not decode with 500 UnknownError (`readMeta`,
+  `internal/driver/mp_layout.go`; `completeLocked`,
+  `internal/driver/mp_complete.go`; `docs/exclusions.md`,
+  "CompleteMultipartUpload checks the part heads and keeps the parts until
+  its head is written"). "refuses a completion whose upload info does not
+  decode, where radosgw completes it without the upload's lock"
+  (`internal/driver/objectlock_test.go`) pins it.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task L5a's review, 2026-10-27, at the completion's
+  object lock fields. Derived from the source, not reproduced.
