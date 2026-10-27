@@ -37,6 +37,30 @@ func (p Period) Dump(f formatter.Formatter, rel denc.Release) {
 	f.DumpUnsigned("realm_epoch", uint64(p.RealmEpoch))
 }
 
+// MaskPeriodTierSecrets is p with every cloud tier of its zonegroups masked
+// by MaskTierSecret. Each map on the way to a tier is copied, so the
+// caller's period, and any period sharing those maps, keeps its secrets;
+// Dump writes them unmasked, as RGWPeriod::dump does.
+func MaskPeriodTierSecrets(p Period) Period {
+	p.PeriodMap.ZoneGroups = cloneMap(p.PeriodMap.ZoneGroups, func(g ZoneGroup) ZoneGroup {
+		g.PlacementTargets = cloneMap(g.PlacementTargets, func(t ZoneGroupPlacementTarget) ZoneGroupPlacementTarget {
+			t.TierTargets = cloneMap(t.TierTargets, MaskTierSecret)
+			return t
+		})
+		return g
+	})
+	return p
+}
+
+// cloneMap is a copy of m with fn applied to each value.
+func cloneMap[K comparable, V any](m map[K]V, fn func(V) V) map[K]V {
+	out := maps.Clone(m)
+	for k, v := range out {
+		out[k] = fn(v)
+	}
+	return out
+}
+
 // Dump is RGWPeriodMap::dump
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_zone.cc#L1000-L1005 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L1040-L1045 at v20.2.4).

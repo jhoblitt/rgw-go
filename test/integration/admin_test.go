@@ -192,7 +192,8 @@ type readCase struct {
 	// the result.
 	exclusion string
 	// strip removes from radosgw's body only what the exclusion says rgw-go
-	// leaves out; it fails when there is nothing to remove.
+	// leaves out, or masks only what it says rgw-go masks; it fails when it
+	// changes nothing.
 	strip func([]byte) []byte
 	// oracle is the request whose radosgw answer stands for rgw-go's, when
 	// the exclusion makes rgw-go answer as radosgw answers another request.
@@ -539,7 +540,12 @@ var _ = Describe("the admin gate", Ordered, ContinueOnFailure, Label("integratio
 			{what: "usage with summary", path: "/admin/usage?uid=" + gateUser + "&show-summary=true"},
 			{what: "realm", path: "/admin/realm", rules: headerRules{jsonType: true, getter: true}},
 			{what: "realm list", path: "/admin/realm?list", rules: headerRules{jsonType: true, getter: true}},
-			{what: "period", path: "/admin/realm/period", rules: headerRules{jsonType: true, getter: true}},
+			{
+				// populate.sh gives the zonegroup a cloud-s3 tier with a secret.
+				what: "period", path: "/admin/realm/period", rules: headerRules{jsonType: true, getter: true},
+				exclusion: "The period getter masks a cloud tier's S3 secret",
+				strip:     maskTierSecrets,
+			},
 			{what: "bucket ratelimit", path: "/admin/ratelimit?ratelimit-scope=bucket&bucket=" + gateBucket},
 			{what: "user ratelimit", path: "/admin/ratelimit?ratelimit-scope=user&uid=" + gateUser},
 			{what: "global ratelimit", path: "/admin/ratelimit?global=true"},

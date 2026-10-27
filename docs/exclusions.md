@@ -2631,6 +2631,59 @@ review and verified against the tree.
   out, such as the client going away or the request's context ending, is
   logged and ends the connection where the body stopped, short of its
   Content-Length (`internal/s3/layout.go`).
+- **The period getter masks a cloud tier's S3 secret.** radosgw's
+  `GET /admin/realm/period` dumps every cloud tier of the period's
+  zonegroups, and `RGWZoneGroupPlacementTierS3::dump` writes the secret in
+  the clear
+  ([rgw_zone.cc:966-979](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_zone.cc#L966-L979),
+  [rgw_zone.cc:1006-1019](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L1006-L1019)), to any holder of
+  `zone=read` (`docs/ceph-upstream-bugs.md`, "[radosgw hands a cloud tier's
+  secret key to any holder of
+  zone=read](ceph-upstream-bugs.md#radosgw-hands-a-cloud-tiers-secret-key-to-any-holder-of-zoneread)").
+  rgw-go masks it as `?layout` does, in JSON and in XML, for every caller
+  but a system user: `******` for a set secret and empty for an empty one,
+  keeping the access key and the document's shape (`getPeriod`,
+  `internal/admin/realm.go`, through `meta.MaskPeriodTierSecrets`).
+  Compatibility does not mean reproducing radosgw's defects (spec §8): the
+  stored period is unchanged, and only the rendered document differs.
+  - A system user gets the period as stored, because a period pull stores
+    the document it reads, and neither `RGWPeriodPuller`'s `pull_period`
+    ([rgw_period_puller.cc:27-63](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_period_puller.cc#L27-L63),
+    [rgw_period_puller.cc:28-68](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_period_puller.cc#L28-L68)) nor
+    `radosgw-admin period pull`'s `do_period_pull`
+    ([rgw_admin.cc:2094-2137](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L2094-L2137),
+    [radosgw-admin.cc:2168-2211](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L2168-L2211))
+    sends anything that marks the request as a pull. Both sign with the
+    zone's system key: `pull_period` through the zone service's
+    `rest_master_conn`, built with `zone_params->system_key`
+    ([svc_zone.cc:549](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_zone.cc#L549)
+    and [svc_zone.cc:613](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_zone.cc#L613),
+    [svc_zone.cc:385](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_zone.cc#L385)
+    and [svc_zone.cc:417](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_zone.cc#L417)),
+    and `period pull` without `--url` through `get_remote_conn`, which reaches
+    the current period's master zone, the local zone in a single-zone realm
+    ([rgw_admin.cc:4646-4685](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L4646-L4685),
+    [radosgw-admin.cc:4887-4925](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L4887-L4925)),
+    with an `RGWRESTConn` that takes the zone's system key
+    ([rgw_rest_conn.cc:30-33](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_conn.cc#L30-L33),
+    [rgw_rest_conn.cc:31-34](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_conn.cc#L31-L34)).
+    A masked answer would overwrite the stored period's tier secret with
+    `******`, and the mask would keep nothing from a system user, who
+    passes every cap check: `op.Run` overrides an access denial for an
+    `Admin` identity, which `internal/auth/identity.go` makes every system
+    user. This is the line
+    [ceph/ceph#68690](https://github.com/ceph/ceph/pull/68690) drew with a
+    `mask_secrets=false` parameter, which neither puller at either tag
+    sends.
+  - A `period pull --url` signed with a key that is not a system user's,
+    such as a `zone=read` user's, stores `******` as the tier's secret. That
+    is the cost: multisite is excluded ("Multisite"), and such a key is the
+    defect's exposure.
+  - The admin gate's `period` case (`test/integration/admin_test.go`) names
+    this exclusion and applies the mask to radosgw's answer before it
+    compares, since `hack/rooket/populate.sh` gives the zonegroup a cloud-s3
+    tier with a secret and the gate's admin is not a system user. No s3-tests
+    test reads the admin API.
 - **A stripe shorter than its manifest says fails the read.** radosgw hands
   on the bytes such a read returned and then waits for an offset no later
   read starts at, so the GET ends without an error, its body short of its

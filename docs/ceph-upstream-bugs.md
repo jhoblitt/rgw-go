@@ -14435,12 +14435,23 @@ Every new entry adds its row to this table, in document order.
   Rook-managed single-site store has no cloud tier unless an operator adds
   one.
 - **Releases:** v19.2.6 and v20.2.4.
-- **rgw-go:** reproduces it, for fidelity: the period getter checks
-  `zone=read` before any read and writes the tier's key as radosgw does
-  (`internal/meta/dump_period.go`, `internal/admin/realm.go`); a refused
-  caller gets the error document alone. No other rgw-go path renders a
-  zonegroup or period, and none logs one. The `?layout` document renders a
-  cloud tier's key from an object's manifest, where rgw-go masks the secret
+- **rgw-go:** masks the secret (exclusion: "The period getter masks a cloud
+  tier's S3 secret", `docs/exclusions.md`), since compatibility does not
+  mean reproducing radosgw's defects (spec §8). The period getter checks
+  `zone=read` before any read and dumps the period through
+  `meta.MaskPeriodTierSecrets` (`internal/meta/dump_period.go`,
+  `internal/admin/realm.go`), which writes a set tier secret as `******` and
+  an empty one as empty, and keeps the access key. A system user, whose key
+  a period pull signs with, gets the secret, so a pull does not store the
+  mask. The stored period is unchanged, and a refused caller gets the error
+  document alone. The specs "masks a cloud tier's S3 secret in the period
+  for a zone=read caller and keeps its access key", "writes the tier's
+  secret in the clear for a system user alone" and "masks only the
+  document, so the stored period keeps the tier's secret"
+  (`internal/admin/realm_test.go`) pin it. No other
+  rgw-go path renders a zonegroup or period, and none logs one. The
+  `?layout` document renders a cloud tier's key from an object's manifest,
+  where rgw-go masks the secret too
   ("[radosgw's ?layout hands a cloud tier's S3 secret to any holder of admin=read](#radosgws-layout-hands-a-cloud-tiers-s3-secret-to-any-holder-of-adminread)").
 - **Upstream:** [#76359](https://tracker.ceph.com/issues/76359),
   "rgw/cloud-transition: obfuscate secret key in ZoneTierPlacement config
