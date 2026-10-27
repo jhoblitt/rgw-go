@@ -4473,7 +4473,10 @@ v20.2.4 tags, rgw-go does the following.
   answers a bucket with a configuration it can read. A bucket with no attr
   succeeds with nothing written in both. The state left is the absent attr
   radosgw's own delete writes, which both gateways read as no
-  configuration.
+  configuration. A DeleteBucketCors that carries an Origin, a browser's
+  among them, is answered 500 before its op runs, as every request with an
+  Origin on that bucket is ("A request whose Origin no CORS rule allows is
+  refused", below), so only a request without one clears the attr.
 - **The CORS configuration ops check the storage class once the requester
   is authorized.** radosgw reads `x-amz-storage-class` for every S3 request
   ([rgw_rest_s3.cc:5073-5076](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5073-L5076) at v19.2.7,
@@ -4572,10 +4575,13 @@ v20.2.4 tags, rgw-go does the following.
   - the configuration is the one the request's bucket record holds as the
     response is written, so a PutBucketCors is answered from the
     configuration it stored and a DeleteBucketCors from none;
-  - a configuration that does not decode adds none, and the response is the
-    op's. radosgw's `generate_cors_headers` stores its read's -EIO as the
-    op's result once the status is decided, which leaves the listings and
-    GetBucketEncryption a 200 with no document (docs/ceph-upstream-bugs.md,
+  - a configuration that does not decode adds none. A request that carries
+    an Origin is answered 500 before its op runs ("A request whose Origin no
+    CORS rule allows is refused", below), unless a refusal made before that
+    check answers it first. radosgw's `generate_cors_headers` stores its
+    read's -EIO as the op's result once the status is decided, which leaves
+    the listings and GetBucketEncryption a 200 with no document
+    (docs/ceph-upstream-bugs.md,
     "[radosgw sends no document to a request with an Origin when the
     bucket's CORS configuration does not
     decode](ceph-upstream-bugs.md#radosgw-sends-no-document-to-a-request-with-an-origin-when-the-buckets-cors-configuration-does-not-decode)");
@@ -4620,6 +4626,74 @@ v20.2.4 tags, rgw-go does the following.
   headers (https://fetch.spec.whatwg.org/#cors-preflight-fetch), and the
   preflight's headers come from its op's results alone, never from the
   Authorization header.
+- **A request whose Origin no CORS rule allows is refused.** Neither floor
+  refuses a request other than a preflight for its Origin:
+  `generate_cors_headers` leaves the CORS headers off the response of one
+  that no rule allows, and the request is served (docs/ceph-upstream-bugs.md,
+  "[radosgw serves a request whose Origin no CORS rule
+  allows](ceph-upstream-bugs.md#radosgw-serves-a-request-whose-origin-no-cors-rule-allows)").
+  radosgw's main branch refuses it with 403 AccessDenied since
+  ceph/ceph#70697, which no tag carries (`verify_cors_match`,
+  [rgw_op.cc:2088-2133](https://github.com/ceph/ceph/blob/292995374d9/src/rgw/rgw_op.cc#L2088-L2133) at 292995374d9),
+  and s3-tests' `test_cors_origin_response` and
+  `test_cors_presigned_url_non_preflight` expect the refusal. Amazon S3's
+  API reference requires "The request method (for example, GET, PUT, HEAD,
+  and so on) or the Access-Control-Request-Method header in case of a
+  pre-flight OPTIONS request" to be one of a matching rule's AllowedMethods
+  (https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketCors.html);
+  what Amazon S3 answers a request that fails it is not recorded here.
+  rgw-go refuses as main does (`verifyCORSMatch`,
+  `internal/op/corsmatch.go`, which `op.Run` calls):
+  - a request other than the preflight that carries a non-empty Origin, the
+    last of a repeated one, and whose bucket record holds a configuration,
+    is refused unless a rule allows that Origin for the request's own
+    method, as `cors.Configuration.Match` judges it ("CORS rules are matched
+    as Amazon S3 matches them", above): an Origin that main's wildcard match
+    admits only through an overlap of a pattern's prefix and suffix,
+    through its split at spaces and tabs, or through the first pieces of a
+    member with more than one `*`, is served on main and refused here. Main
+    admits `axb` for `a*b*`, which rgw-go matches only as itself; only a
+    directly written attr can hold such a member, as PutBucketCors refuses
+    it. Its Access-Control-Request-Method, which still chooses the
+    response's headers ("Every S3 response carries CORS headers once its
+    bucket is loaded", above), and its Access-Control-Request-Headers
+    choose no rule here, as on main;
+  - the check comes once the op mask has passed and before the permission
+    verdict, where main's `rgw_process_authenticated` makes it
+    ([rgw_process.cc:289-299](https://github.com/ceph/ceph/blob/292995374d9/src/rgw/rgw_process.cc#L289-L299) at 292995374d9),
+    so an admin, whom a permission denial lets through, is refused too. The
+    refusals that come before it on main still come first: the bucket
+    load's, those rgw-go's authorizer makes where radosgw refuses before the
+    op mask, and the op mask's;
+  - a request with no bucket record passes, as on main: ListBuckets, and
+    CreateBucket, whose bucket main's `init_permissions` does not load
+    ([rgw_rest.cc:1856-1864](https://github.com/ceph/ceph/blob/292995374d9/src/rgw/rgw_rest.cc#L1856-L1864) at 292995374d9);
+  - a configuration that does not decode is answered 500 UnknownError, the
+    -EIO of `read_bucket_cors` that GetBucketCors and the preflight answer
+    it with on both floors. Main's check ignores that result and matches
+    against what the decode left
+    ([rgw_op.cc:1925-1945](https://github.com/ceph/ceph/blob/292995374d9/src/rgw/rgw_op.cc#L1925-L1945) and
+    [rgw_op.cc:2100-2115](https://github.com/ceph/ceph/blob/292995374d9/src/rgw/rgw_op.cc#L2100-L2115) at 292995374d9).
+    When nothing of the attr decodes, main's configuration holds no rule
+    though it counts as present, so main refuses every request with an
+    Origin 403, a browser's PutBucketCors and DeleteBucketCors included;
+    only a partial decode lets a request through there, and rgw-go differs
+    from main by the status alone. A PutBucketCors or DeleteBucketCors that
+    carries an Origin is answered 500 here, so only a request without one
+    replaces or removes such a configuration ("DeleteBucketCors removes a
+    CORS configuration that does not decode", above). On the floors a
+    browser's PutBucketCors still replaces it, since nothing refuses that
+    request before its write;
+  - every route is checked, POST object and the website endpoint included,
+    as on main;
+  - main also lets through a request that its `rgw_gcors_*` options allow,
+    which neither floor has and rgw-go does not read.
+
+  The refusal binds a browser's cross-origin fetch, and any cross-origin
+  request of its other than a GET or HEAD, which carry an Origin. A
+  cross-origin no-cors GET or HEAD, such as an image, a script or a
+  navigation, carries none and passes the check, as does any client that
+  omits the Origin. Nothing stored changes.
 - **A POST form part ends only at a delimiter line.** radosgw's POST form
   reader takes `--` and the boundary anywhere for a part's end, with the
   CRLF before it when there is one
