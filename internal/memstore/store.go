@@ -76,6 +76,10 @@ type upload struct {
 	up       op.Upload
 	bucketID string
 	parts    map[int]*part
+	// retention and legalHold are the upload's object lock settings, nil
+	// for none.
+	retention *meta.ObjectRetention
+	legalHold *meta.ObjectLegalHold
 }
 
 type part struct {

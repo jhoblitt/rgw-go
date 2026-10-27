@@ -216,7 +216,11 @@ func (s *Store) writeMeta(ctx context.Context, hw *headWrite, x *indexOp) (headR
 	// PUT_OBJ_CREATE_EXCL
 	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3308 at v19.2.7,
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4148 at v20.2.4).
-	hw.attrs = s.finalizeHeadAttrs(hw.rec, mtime, hw.create && !hw.nonAtomic, hw.attrs)
+	attrs, ferr := s.finalizeHeadAttrs(hw.rec, mtime, hw.create && !hw.nonAtomic, hw.attrs)
+	if ferr != nil {
+		return headResult{}, ferr
+	}
+	hw.attrs, hw.mtime = attrs, mtime
 	missing := &op.ObjectState{Bucket: hw.rec, Key: hw.key}
 	if hw.nonAtomic {
 		// Without conditions write_meta's only pass assumes no entry

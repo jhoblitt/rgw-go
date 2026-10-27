@@ -61,6 +61,17 @@ type UploadParams struct {
 	// Checksum is the upload's checksum type and flags, which only a
 	// Tentacle upload stores (UploadChecksum).
 	Checksum UploadChecksum
+	// Retention is the retention the completed object takes, nil for none:
+	// multipart_upload_info's obj_retention. One that is set replaces the
+	// bucket's default retention, so it must carry a mode the request's
+	// parser validated and a date after now; a zero one would leave the
+	// object unprotected.
+	Retention *meta.ObjectRetention
+	// LegalHold is the legal hold the completed object takes, nil for none:
+	// multipart_upload_info's obj_legal_hold. It must carry a status the
+	// request's parser validated, ON or OFF; it leaves the bucket's default
+	// retention in place.
+	LegalHold *meta.ObjectLegalHold
 }
 
 // Part is one uploaded part.

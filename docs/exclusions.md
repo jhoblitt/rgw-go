@@ -2338,6 +2338,15 @@ review and verified against the tree.
   of the bucket with -EIO before either op runs
   ([svc_bucket_sobj.cc:363-369](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_bucket_sobj.cc#L363-L369),
   [svc_bucket_sobj.cc:312-318](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bucket_sobj.cc#L312-L318)).
+  A create write on such a bucket, PutObject, CopyObject or
+  CompleteMultipartUpload, answers 500 UnknownError before its head write
+  once those writes are served, as it needs the configuration's default
+  retention: it deletes the tails it wrote, or drops the tail references a
+  copy took, and a completion leaves its upload in place. Until then the
+  op layer answers all three on a bucket with object lock 501 first
+  ("Writes to a versioned or object-lock bucket answer 501 until versioning
+  is served"). Reads, CreateMultipartUpload and UploadPart, which are not
+  create writes, still succeed.
   The phase that serves bucket sync policy models it. The admin API's `GET` or `PUT
   /admin/metadata/bucket.instance` of a bucket holding a sync policy with
   groups answers 501 NotImplemented, where radosgw renders the record, and

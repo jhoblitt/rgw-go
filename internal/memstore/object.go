@@ -94,7 +94,8 @@ func (s *Store) ReadObject(_ context.Context, st *op.ObjectState, rng op.ByteRan
 }
 
 // PutObject implements op.ObjectStore. p.Checksum's type is checked before
-// the body is read, and its value once the body and its MD5 are.
+// the body is read, and its value once the body and its MD5 are. The object
+// takes its bucket's default retention (withDefaultRetention).
 func (s *Store) PutObject(_ context.Context, rec *op.BucketRecord, key meta.ObjKey, body io.Reader, p op.PutParams) (*op.PutResult, error) {
 	if err := checkChecksumType(p.Checksum); err != nil {
 		return nil, fmt.Errorf("object %s: %w", key.Name, err)
@@ -123,6 +124,9 @@ func (s *Store) PutObject(_ context.Context, rec *op.BucketRecord, key meta.ObjK
 	}
 	attrs := withChecksum(cloneAttrs(p.Attrs), ck, s.cfg.Release)
 	o := s.newObject(k, data, cmp.Or(p.ETag, hex.EncodeToString(sum[:])), attrs, p.Mtime, p.StorageClass)
+	if err := withDefaultRetention(rec, o); err != nil {
+		return nil, err
+	}
 	o.state.WriteTag = p.Tag
 	if p.Tag == "" {
 		// append_rand_alpha(cct, "", tag, 32),
@@ -266,6 +270,9 @@ func deleteAllowed(st *op.ObjectState, p op.DeleteParams) bool {
 // against the source as RGWRados::Object::Read::prepare checks a copy
 // source
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6970-L6990 at v19.2.6).
+// COPY keeps the source's attrs but its retention and legal hold
+// (withoutLockAttrs), and the copy takes its bucket's default retention
+// (withDefaultRetention).
 func (s *Store) CopyObject(_ context.Context, src *op.ObjectState, dst *op.BucketRecord, dstKey meta.ObjKey, p op.CopyParams) (*op.PutResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -286,10 +293,13 @@ func (s *Store) CopyObject(_ context.Context, src *op.ObjectState, dst *op.Bucke
 	}
 	attrs := cloneAttrs(p.Attrs)
 	if !p.ReplaceAttrs {
-		attrs = applyAttrs(so.state.Attrs, p.Attrs, nil)
+		attrs = applyAttrs(withoutLockAttrs(so.state.Attrs), p.Attrs, nil)
 	}
 	k := objKey(dstKey)
 	o := s.newObject(k, so.data, etag, attrs, p.Mtime, cmp.Or(p.StorageClass, so.state.StorageClass))
+	if err := withDefaultRetention(dst, o); err != nil {
+		return nil, err
+	}
 	o.state.WriteTag = p.Tag
 	if p.Tag == "" {
 		o.state.WriteTag = "_" + randomAlphanumeric(31)

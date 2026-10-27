@@ -28,7 +28,12 @@ const uploadIDLen = 31
 // holding the encoded multipart_upload_info naming p.Placement and p's
 // attrs, its MultiMeta index entry of size the info's length and accounted
 // size 0 on the shard of the upload's key, and one object and no bytes
-// added to the quota cache. The info carries no object lock settings. On
+// added to the quota cache. The info carries p's retention and legal hold,
+// each existing when it is set, as init sets them in the upload_info it
+// writes
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3314-L3321 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4156-L4163 at v20.2.4),
+// for the completion to write as the object's attrs. On
 // Tentacle it carries p.Checksum's type and flags, as RGWInitMultipart::execute
 // hands them to init
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7003-L7010 at v20.2.4),
@@ -55,7 +60,9 @@ func (s *Store) CreateUpload(ctx context.Context, rec *op.BucketRecord, key meta
 	if err != nil {
 		return nil, err
 	}
-	data := encodeAt(meta.MultipartUploadInfo{DestPlacement: p.Placement, CksumType: uint16(uc.Type), CksumFlags: uc.Flags}, s.release)
+	data := encodeAt(meta.MultipartUploadInfo{
+		DestPlacement: p.Placement, Retention: p.Retention, LegalHold: p.LegalHold, CksumType: uint16(uc.Type), CksumFlags: uc.Flags,
+	}, s.release)
 	now := s.now()
 	hw := &headWrite{
 		rec: rec, key: ref.key, data: data, attrs: p.Attrs, mtime: now, create: true,

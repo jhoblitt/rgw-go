@@ -40,7 +40,8 @@ func copyUpload(u *upload, rec *op.BucketRecord) *op.Upload {
 // "2~" and 31 characters of gen_rand_alphanumeric
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3278-L3283 at v19.2.6).
 // The checksum type is kept on Tentacle alone, whose multipart_upload_info
-// has one (op.UploadChecksum).
+// has one (op.UploadChecksum); the retention and legal hold on both, for the
+// completion's object.
 func (s *Store) CreateUpload(_ context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.UploadParams) (*op.Upload, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -64,6 +65,12 @@ func (s *Store) CreateUpload(_ context.Context, rec *op.BucketRecord, key meta.O
 		},
 		bucketID: rec.Info.Bucket.ID,
 		parts:    map[int]*part{},
+	}
+	if p.Retention != nil {
+		u.retention = new(*p.Retention)
+	}
+	if p.LegalHold != nil {
+		u.legalHold = new(*p.LegalHold)
 	}
 	s.uploads[uploadKey(u.bucketID, key.Name, u.up.ID)] = u
 	return copyUpload(u, rec), nil
@@ -239,9 +246,11 @@ func (s *Store) ListUploads(_ context.Context, rec *op.BucketRecord, p op.ListUp
 // least minPartSize; the object's ETag is the MD5 of the parts' binary MD5s,
 // "-" and the part count. up's If-Match and If-None-Match are checked as a
 // PUT's are, and a refused completion leaves the upload in place. The
-// object takes the upload's attrs and up's write tag, and the upload is gone
-// once it lands. A missing upload is op.ErrCompletionInProgress, as the
-// driver answers it, unless the key's object carries the ETag the parts make:
+// object takes the upload's attrs, its retention and legal hold, then the
+// bucket's default retention (withDefaultRetention), and up's write tag, and
+// the upload is gone once it lands. A missing upload is
+// op.ErrCompletionInProgress, as the driver answers it, unless the key's
+// object carries the ETag the parts make:
 // a completion retried after it succeeded is answered 200 as radosgw's
 // check_previously_completed answers it (previouslyCompleted).
 //
@@ -306,8 +315,11 @@ func (s *Store) Complete(_ context.Context, up *op.Upload, parts []op.CompletePa
 	if err := checkWrite(b.objects[k], up.IfMatch, up.IfNoneMatch); err != nil {
 		return nil, err
 	}
-	attrs := withChecksum(cloneAttrs(u.up.Attrs), ck, s.cfg.Release)
+	attrs := withUploadLock(withChecksum(cloneAttrs(u.up.Attrs), ck, s.cfg.Release), u)
 	o := s.newObject(k, data.Bytes(), etag, attrs, time.Time{}, u.up.Placement.StorageClass)
+	if err := withDefaultRetention(up.Bucket, o); err != nil {
+		return nil, err
+	}
 	if up.WriteTag != "" {
 		o.state.WriteTag = up.WriteTag
 	}
