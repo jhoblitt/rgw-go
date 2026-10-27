@@ -246,9 +246,11 @@ func (s *Store) ListUploads(_ context.Context, rec *op.BucketRecord, p op.ListUp
 // least minPartSize; the object's ETag is the MD5 of the parts' binary MD5s,
 // "-" and the part count. up's If-Match and If-None-Match are checked as a
 // PUT's are, and a refused completion leaves the upload in place. The
-// object takes the upload's attrs, its retention and legal hold, then the
-// bucket's default retention (withDefaultRetention), and up's write tag, and
-// the upload is gone once it lands. A missing upload is
+// object is written at up.Key, whose instance is the version the caller
+// chose, and takes the upload's attrs, its retention and legal hold, then
+// the bucket's default retention (withDefaultRetention), and up's write
+// tag; the upload is gone once it lands, and the result names that version
+// as the driver's does (completeResult). A missing upload is
 // op.ErrCompletionInProgress, as the driver answers it, unless the key's
 // object carries the ETag the parts make:
 // a completion retried after it succeeded is answered 200 as radosgw's
@@ -311,7 +313,7 @@ func (s *Store) Complete(_ context.Context, up *op.Upload, parts []op.CompletePa
 	if !ok {
 		return nil, fmt.Errorf("bucket of upload %s: %w", u.up.ID, op.ErrNoSuchBucket)
 	}
-	k := objKey(u.up.Key)
+	k := objKey(up.Key)
 	if err := checkWrite(b.objects[k], up.IfMatch, up.IfNoneMatch); err != nil {
 		return nil, err
 	}
@@ -325,7 +327,15 @@ func (s *Store) Complete(_ context.Context, up *op.Upload, parts []op.CompletePa
 	}
 	b.objects[k] = o
 	delete(s.uploads, uploadKey(u.bucketID, u.up.Key.Name, u.up.ID))
-	return putResult(o, ck), nil
+	return completeResult(o, ck), nil
+}
+
+// completeResult is putResult for a completion, which also names the
+// version it wrote or found: o's instance, empty for the null version.
+func completeResult(o *object, ck *cksum.Cksum) *op.PutResult {
+	res := putResult(o, ck)
+	res.Version = o.state.Key.Instance
+	return res
 }
 
 // combineParts is the checksum of an upload of type uc over parts, the
@@ -388,7 +398,10 @@ func checkSupplied(ck *cksum.Cksum, req *op.ChecksumRequest, n int) error {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7252-L7255
 // and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7433-L7504 at v20.2.4):
-// the key's current object carries the ETag the parts make, and the retried
+// the key's current version (currentObject), read with no instance as the
+// driver's currentVersion reads it and as radosgw's check reads the object
+// before the completion gives it an instance, carries the ETag the parts
+// make, and the retried
 // completion is a 200 for that object with its stored ETag, which the check
 // sets
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6584 at v19.2.7,
@@ -402,15 +415,15 @@ func (s *Store) previouslyCompleted(up *op.Upload, parts []op.CompletePart) (*op
 	if !ok {
 		return nil, false
 	}
-	o, ok := b.objects[objKey(up.Key)]
-	if !ok {
+	o := currentObject(b, up.Key.Name)
+	if o == nil {
 		return nil, false
 	}
 	want, err := op.CompleteETag(parts)
 	if err != nil || o.state.ETag != want {
 		return nil, false
 	}
-	return putResult(o, storedChecksum(o.state.Attrs)), true
+	return completeResult(o, storedChecksum(o.state.Attrs)), true
 }
 
 // Abort implements op.MultipartStore.

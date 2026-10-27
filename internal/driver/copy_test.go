@@ -207,6 +207,24 @@ var _ = Describe("CopyObject", func() {
 		Expect(readBack(ctx, srcKey)).To(Equal(body))
 	})
 
+	It("takes references for a source naming the null version copied onto its plain key, as copy_obj compares the keys as named", func(ctx SpecContext) {
+		nullSt, err := s.PrefetchObject(ctx, rec, meta.ObjKey{Name: "src", Instance: meta.NullInstance})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(nullSt.Exists).To(BeTrue())
+		_, err = s.CopyObject(ctx, nullSt, rec, srcKey, op.CopyParams{Attrs: reqAttrs(), Tag: "tx-copy"})
+		Expect(err).NotTo(HaveOccurred())
+		settle(s)
+		for _, t := range []string{tail1, tail2} {
+			Expect(refsOf(c, testDataPool, t).Refs).To(HaveKey("tx-copy\x00"), "rgw_rados.cc:4922 at v19.2.7: {src, null} is not {src, \"\"}")
+		}
+		head := c.Object(testDataPool, "", srcOID)
+		Expect(head.Xattrs).To(HaveKeyWithValue("user.rgw.tail_tag", []byte("tx-copy\x00")))
+		gcOID := fmt.Sprintf("gc.%d", driver.GCShardForTest(s, "tx-src\x00"))
+		Expect(c.GCEntries(gcPoolName, gcNS, gcOID)).To(HaveLen(1), "the overwrite queued the tails under the old tag")
+		Expect(s.GCWorkerForTest().Process(ctx, false)).To(Succeed())
+		Expect(readBack(ctx, srcKey)).To(Equal(body), "the copy's references keep the tails the GC put")
+	})
+
 	It("fails a copy onto itself whose head was overwritten since it was read, and leaves the new object", func(ctx SpecContext) {
 		s.SetRandForTest(fixedRand("NEWNEWNEWNEWNEWNEWNEWNEWNEWNEW1"))
 		newBody := bytes.Repeat([]byte("n"), 6<<20)

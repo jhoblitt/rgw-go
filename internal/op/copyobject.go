@@ -62,9 +62,12 @@ type CopyObject struct {
 	// destination ACL among them.
 	Authorized func(ctx context.Context, o *CopyObject) error
 
-	ETag      string
-	Mtime     time.Time
-	VersionID string
+	ETag  string
+	Mtime time.Time
+	// VersionID is the id of the version written and SrcVersionID that of
+	// the version copied, as its bucket names it (ResponseVersionID), each ""
+	// for none.
+	VersionID, SrcVersionID string
 
 	srcRec *BucketRecord
 	src    *ObjectState
@@ -204,12 +207,11 @@ func (o *CopyObject) checkStorageClass(r *Request) error {
 // quota unless the request is a system request, then copy_obj, whose read of
 // the source applies the conditions (Read::prepare,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4742-L4754 at v19.2.6)
-// before it copies under the request id as its tag. First Authorized runs,
-// and a public destination policy under the destination's block of public
-// ACLs is refused, as PutObject refuses one, where radosgw makes no such
-// check for a copy (docs/exclusions.md). Then a destination whose versioning
-// or object lock rgw-go does not serve, and a copy naming a version, are
-// refused.
+// before it copies under the request id as its tag, to VersionForWrite's
+// instance. First Authorized runs, and a public destination policy under the
+// destination's block of public ACLs is refused, as PutObject refuses one,
+// where radosgw makes no such check for a copy (docs/exclusions.md). Then a
+// destination with object lock is refused (objectLockUnserved).
 func (o *CopyObject) Execute(ctx context.Context, r *Request) error {
 	if o.Authorized != nil {
 		if err := o.Authorized(ctx, o); err != nil {
@@ -219,7 +221,7 @@ func (o *CopyObject) Execute(ctx context.Context, r *Request) error {
 	if blockPublicACLs(r.BucketRec) && o.ACL.IsPublic() {
 		return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
 	}
-	if err := newHeadVersioningUnserved(r.BucketRec, r.Object, o.SrcKey); err != nil {
+	if err := objectLockUnserved(r.BucketRec); err != nil {
 		return err
 	}
 	if err := bucketEncryptionUnserved(r.BucketRec); err != nil {
@@ -256,14 +258,17 @@ func (o *CopyObject) Execute(ctx context.Context, r *Request) error {
 		attrs = map[string][]byte{}
 	}
 	attrs[meta.AttrACL] = encodeAt(o.ACL, r.Env.Zone.Release())
-	res, err := r.Env.Objects.CopyObject(ctx, o.src, r.BucketRec, r.Object, CopyParams{
+	key := writeKey(r)
+	res, err := r.Env.Objects.CopyObject(ctx, o.src, r.BucketRec, key, CopyParams{
 		Attrs: attrs, ReplaceAttrs: o.Replace, StorageClass: o.StorageClass,
 		IfMatch: storeCondition(o.IfMatch), IfNoneMatch: storeCondition(o.IfNoneMatch), Tag: r.ID,
 	})
 	if err != nil {
 		return err
 	}
-	o.ETag, o.Mtime, o.VersionID = res.ETag, res.Mtime, res.Version
+	o.ETag, o.Mtime = res.ETag, res.Mtime
+	o.VersionID = ResponseVersionID(r.BucketRec, key.Instance)
+	o.SrcVersionID = ResponseVersionID(o.srcRec, o.src.Key.Instance)
 	return nil
 }
 

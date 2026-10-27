@@ -70,6 +70,9 @@ type object struct {
 	// data is never changed in place once stored, so a reader may keep a
 	// slice of it past the lock.
 	data []byte
+	// written is the epoch its head write took, which an attr write's
+	// epoch does not move (currentObject).
+	written uint64
 }
 
 type upload struct {

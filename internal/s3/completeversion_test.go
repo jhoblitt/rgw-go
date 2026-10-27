@@ -17,9 +17,9 @@ import (
 // radosgw's completion sends x-amz-version-id when version_id is not empty
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4081 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4609 at v20.2.4):
-// the instance it generates on a bucket whose versioning is enabled, which
-// rgw-go refuses with 501, or a system request's rgwx-version-id, which
-// rgw-go does not read (docs/exclusions.md).
+// the instance it generates on a bucket whose versioning is enabled, or a
+// system request's rgwx-version-id, which rgw-go does not read
+// (docs/exclusions.md).
 var _ = Describe("x-amz-version-id on CompleteMultipartUpload", func() {
 	DescribeTable("is not sent for a completion on an unversioned bucket",
 		func(ctx SpecContext, rel denc.Release) {
@@ -41,24 +41,6 @@ var _ = Describe("x-amz-version-id on CompleteMultipartUpload", func() {
 			rec = serveReq(h, http.MethodPost, "/plain/j?uploadId="+id+"&rgwx-version-id=v1", strings.NewReader(completion(md5Hex("x"))))
 			Expect(rec.Code).To(Equal(200), rec.Body.String())
 			Expect(rec.Header()).NotTo(haveHeaderAnyCase("x-amz-version-id"), "radosgw echoes it; rgw-go reads no versioning system parameter")
-		},
-		Entry("Squid", denc.Squid),
-		Entry("Tentacle", denc.Tentacle),
-	)
-})
-
-var _ = Describe("a CompleteMultipartUpload naming a version", func() {
-	DescribeTable("is answered 501 NotImplemented on an unversioned bucket and leaves the upload",
-		func(ctx SpecContext, rel denc.Release) {
-			w := newWriteWorld(ctx, rel)
-			id := w.initUpload(w.alice, "/plain/k")
-			Expect(w.send(w.alice, http.MethodPut, "/plain/k?uploadId="+id+"&partNumber=1", "x").Code).To(Equal(200))
-			for _, v := range []string{"null", "v1"} {
-				expectError(w.send(w.alice, http.MethodPost, "/plain/k?uploadId="+id+"&versionId="+v, completion(md5Hex("x"))), 501, "NotImplemented")
-			}
-			Expect(w.uploads(ctx)).To(ConsistOf(HaveField("ID", id)))
-			Expect(w.parts(ctx, "k", id)).To(HaveLen(1))
-			Expect(w.stat(ctx, "k").Exists).To(BeFalse())
 		},
 		Entry("Squid", denc.Squid),
 		Entry("Tentacle", denc.Tentacle),

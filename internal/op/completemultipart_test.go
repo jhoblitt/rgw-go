@@ -298,7 +298,7 @@ var _ = Describe("CompleteMultipart", func() {
 		Expect(op.Run(ctx, &op.CompleteMultipart{UploadID: "2~nope"}, f.bodyReq(http.MethodPost, "k", completeDoc(xmlPart("1", "x"))))).To(MatchError(op.ErrCompletionInProgress))
 	})
 
-	DescribeTable("refuses a completion on a bucket whose versioning or object lock rgw-go does not serve with 501 NotImplemented before it reads the body",
+	DescribeTable("refuses a completion on a bucket with object lock with 501 NotImplemented before it reads the body",
 		func(ctx SpecContext, flags uint32) {
 			f.setBucketFlags(ctx, flags)
 			stub := &opfakes.FakeMultipartStore{}
@@ -311,9 +311,8 @@ var _ = Describe("CompleteMultipart", func() {
 			Expect(op.Run(ctx, &op.CompleteMultipart{UploadID: id}, r)).To(MatchError(op.ErrNotImplemented))
 			Expect(stub.Invocations()).To(BeEmpty())
 		},
-		Entry("a versioned bucket", uint32(meta.BucketVersioned)),
-		Entry("a bucket whose versioning is suspended", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended)),
-		Entry("a bucket with object lock", uint32(meta.BucketObjLockEnabled)),
+		Entry("a versioned bucket with object lock", uint32(meta.BucketVersioned|meta.BucketObjLockEnabled)),
+		Entry("the object-lock flag alone", uint32(meta.BucketObjLockEnabled)),
 	)
 
 	Describe("on a bucket whose versioning was never enabled", func() {
@@ -323,43 +322,17 @@ var _ = Describe("CompleteMultipart", func() {
 			r.Object.Instance = instance
 			return r
 		}
-		// listable checks that the upload is still listed with its one part.
-		listable := func(ctx context.Context) {
-			GinkgoHelper()
-			lu := &op.ListMultipartUploads{MaxUploads: 1000}
-			Expect(op.Run(ctx, lu, f.req(http.MethodGet, "plain", ""))).To(Succeed())
-			Expect(lu.Result.Uploads).To(ConsistOf(HaveField("ID", id)))
-			Expect(f.parts(ctx, "k", id)).To(HaveLen(1))
-			stillThere(ctx)
-		}
-
-		DescribeTable("answers a completion naming a version 501 NotImplemented, as PutObject answers one, and leaves the upload listable",
+		DescribeTable("ignores a versionId and completes the upload into the plain object, as one naming no version",
 			func(ctx SpecContext, instance string) {
-				doc := onePart(ctx)
-				Expect(op.Run(ctx, &op.CompleteMultipart{UploadID: id}, naming(instance, doc))).To(MatchError(op.ErrNotImplemented))
-				listable(ctx)
-
-				Expect(op.Run(ctx, &op.CompleteMultipart{UploadID: id}, naming("", doc))).To(Succeed(), "one naming no version completes the same upload")
+				Expect(op.Run(ctx, &op.CompleteMultipart{UploadID: id}, naming(instance, onePart(ctx)))).To(Succeed())
 				Expect(f.stat(ctx, "k").Exists).To(BeTrue(), "under the plain key")
+				lu := &op.ListMultipartUploads{MaxUploads: 1000}
+				Expect(op.Run(ctx, lu, f.req(http.MethodGet, "plain", ""))).To(Succeed())
+				Expect(lu.Result.Uploads).To(BeEmpty())
 			},
 			Entry("the null version, which radosgw files in the index under the instance null", "null"),
 			Entry("another version, which radosgw writes as that instance", "v1"),
 		)
-		It("refuses before it reads the body or reaches the store", func(ctx SpecContext) {
-			stub := &opfakes.FakeMultipartStore{}
-			f.env.Multipart = stub
-			r := naming("null", "")
-			r.Body, r.ContentLength = failingReader{}, 1
-			r.Header.Set("Content-Length", "1")
-			Expect(op.Run(ctx, &op.CompleteMultipart{UploadID: id}, r)).To(MatchError(op.ErrNotImplemented))
-			Expect(stub.Invocations()).To(BeEmpty())
-		})
-		It("refuses only once the requester is authorized", func(ctx SpecContext) {
-			r := naming("null", onePart(ctx))
-			r.Identity = f.bob
-			Expect(op.Run(ctx, &op.CompleteMultipart{UploadID: id}, r)).To(MatchError(op.ErrAccessDenied))
-			listable(ctx)
-		})
 	})
 
 	Describe("the body, as read_all_input reads it", func() {
