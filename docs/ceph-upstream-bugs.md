@@ -17584,18 +17584,30 @@ Every new entry adds its row to this table, in document order.
     [rgw_op.cc:1498-1504](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1498-L1504),
     [rgw_op.cc:1735-1741](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1735-L1741)).
   - `send_response` has decided the status with `dump_errno` before it
-    calls `end_header`, and the ones that test `op_ret` afterwards send no
-    document: ListObjects returns after `dump_start`
-    ([rgw_rest_s3.cc:1905-1918](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1905-L1918),
-    [rgw_rest_s3.cc:2008-2021](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2008-L2021)),
+    calls `end_header`, so `end_header` skips its error branch, the one with
+    a `dump_start` of its own
+    ([rgw_rest.cc:620-624](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L620-L624),
+    [rgw_rest.cc:625-629](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L625-L629)),
+    and flushes the formatter, still empty, as it ends
+    ([rgw_rest.cc:652-654](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L652-L654),
+    [rgw_rest.cc:657-659](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L657-L659)).
+    The ones that test `op_ret` afterwards send no document: ListObjects
+    returns right after its `dump_start`
+    ([rgw_rest_s3.cc:1915-1918](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1915-L1918),
+    [rgw_rest_s3.cc:2018-2021](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2018-L2021)),
     as ListObjectsV2 does
-    ([rgw_rest_s3.cc:2061-2074](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2061-L2074),
-    [rgw_rest_s3.cc:2164-2177](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2164-L2177)),
-    and GetBucketEncryption skips its configuration
-    ([rgw_rest_s3.cc:3886-3904](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3886-L3904),
-    [rgw_rest_s3.cc:4337-4355](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4337-L4355)).
-    Each answers 200 with the XML declaration alone. Other `send_response`s
-    that test `op_ret` after `end_header` are not traced here.
+    ([rgw_rest_s3.cc:2071-2074](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2071-L2074),
+    [rgw_rest_s3.cc:2174-2177](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2174-L2177)),
+    and GetBucketEncryption skips its configuration and its flush
+    ([rgw_rest_s3.cc:3897-3903](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3897-L3903),
+    [rgw_rest_s3.cc:4348-4354](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4348-L4354)).
+  - Each answers 200 with no body: the declaration `dump_start` puts in the
+    formatter after `end_header` has flushed it is never sent, as nothing
+    flushes the formatter after `send_response` ("[radosgw's GetBucketCors
+    sends its document without the XML
+    declaration](#radosgws-getbucketcors-sends-its-document-without-the-xml-declaration)").
+    Other `send_response`s that test `op_ret` after `end_header` are not
+    traced here.
 - **Impact:** every cross-origin browser request to such a bucket carries
   an Origin, so its listings come back empty and an SDK fails to parse
   them; the owner's
