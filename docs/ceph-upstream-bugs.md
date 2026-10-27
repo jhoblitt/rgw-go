@@ -13401,18 +13401,19 @@ Every new entry adds its row to this table, in document order.
   ([rgw_rados.cc:5850](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5850)
   at v19.2.7).
 - **Releases:** v19.2.6, v19.2.7 and v20.2.4.
-- **rgw-go:** does not reproduce it. A PutObject, a CopyObject or a
-  CompleteMultipartUpload naming the null version answers 501
-  NotImplemented on every bucket (`newHeadVersioningUnserved`,
-  `internal/op/putobject.go`, which the completion calls since task F14,
-  `internal/op/completemultipart.go`; `docs/exclusions.md`, "Writes to a
-  versioned or object-lock bucket answer 501 until versioning is served").
-  Before F14 a completion naming it wrote the plain head and filed it
-  under `{name, "null"}` beside the plain entry, as radosgw's index
-  complete does, but linked no OLH, so the bucket matched neither
-  radosgw's result nor an unversioned write's. One naming another version
-  wrote that instance without radosgw's versioned op (F12's task review,
-  2026-10-14).
+- **rgw-go:** does not reproduce it. A PutObject, a CopyObject's
+  destination and a CompleteMultipartUpload ignore any `versionId`, the
+  null one included, and write the instance the bucket's versioning gives:
+  the plain object on a bucket never versioned, the null version on a
+  suspended one and a new version on an enabled one (`VersionForWrite`,
+  `internal/op/version.go`; `docs/exclusions.md`, "A write's versionId is
+  ignored"). Pinned in `internal/op/version_test.go` and
+  `internal/s3/versionedwrite_test.go`. Before task F14 a completion
+  naming it wrote the plain head and filed it under `{name, "null"}`
+  beside the plain entry, as radosgw's index complete does, but linked no
+  OLH, so the bucket matched neither radosgw's result nor an unversioned
+  write's. One naming another version wrote that instance without
+  radosgw's versioned op (F12's task review, 2026-10-14).
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
   (non-security).
 - **Found:** phase 1 follow-up X13, 2026-10-08, reading what radosgw does
