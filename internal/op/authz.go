@@ -26,6 +26,13 @@ type Authorizer interface {
 	VerifyBucketOwnerOrPolicy(ctx context.Context, r *Request, a policy.Action, perm acl.Permission) error
 	// VerifyObject authorizes a against r.ObjState within r.BucketRec.
 	VerifyObject(ctx context.Context, r *Request, a policy.Action, perm acl.Permission) error
+	// VerifyObjectPrelude makes VerifyObject's refusals that radosgw makes
+	// before verify_permission, and no other, each marked with
+	// BeforeVerify: the identity's, those on r.BucketRec, a missing
+	// object's and that of an object ACL that does not decode. It evaluates
+	// no permission of the object, for an op whose verify_permission
+	// authorizes nothing of it.
+	VerifyObjectPrelude(ctx context.Context, r *Request) error
 	// VerifyBucketIn is VerifyBucket against an explicit bucket and key:
 	// CopyObject's source and DeleteObjects' per-key check. key.Name "" is the
 	// bucket ARN. Every input that describes the resource comes from bucket:
@@ -65,6 +72,12 @@ func VerifyObjectPermission(ctx context.Context, r *Request, a policy.Action, pe
 	return r.Env.Authz.VerifyObject(ctx, r, a, perm)
 }
 
+// VerifyObjectPrelude makes the refusals an object op meets before
+// verify_permission through r.Env.Authz.
+func VerifyObjectPrelude(ctx context.Context, r *Request) error {
+	return r.Env.Authz.VerifyObjectPrelude(ctx, r)
+}
+
 // VerifyBucketPermissionIn authorizes a against an explicit bucket and key
 // (CopyObject's source, DeleteObjects' per-key check) through r.Env.Authz.
 func VerifyBucketPermissionIn(ctx context.Context, r *Request, a policy.Action, perm acl.Permission, bucket *BucketRecord, key meta.ObjKey) error {
@@ -102,6 +115,9 @@ func (OwnerOnly) VerifyBucketOwnerOrPolicy(_ context.Context, r *Request, _ poli
 func (OwnerOnly) VerifyObject(_ context.Context, r *Request, _ policy.Action, _ acl.Permission) error {
 	return ownerOnlyOf(r, r.BucketRec)
 }
+
+// VerifyObjectPrelude refuses nothing.
+func (OwnerOnly) VerifyObjectPrelude(context.Context, *Request) error { return nil }
 
 // VerifyBucketIn allows bucket's owner.
 func (OwnerOnly) VerifyBucketIn(_ context.Context, r *Request, _ policy.Action, _ acl.Permission, bucket *BucketRecord, _ meta.ObjKey) error {

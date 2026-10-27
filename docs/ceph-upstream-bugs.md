@@ -472,6 +472,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's lifecycle writes a delete marker over a version put after its listing](#radosgws-lifecycle-writes-a-delete-marker-over-a-version-put-after-its-listing) | pending | pending | ✓ |
 | [radosgw's lifecycle lister lists a key's versions again after a page that ends on its null version](#radosgws-lifecycle-lister-lists-a-keys-versions-again-after-a-page-that-ends-on-its-null-version) | pending | pending | ✓ |
 | [radosgw's lifecycle lister skips the rest of a key whose version ending a page it removed](#radosgws-lifecycle-lister-skips-the-rest-of-a-key-whose-version-ending-a-page-it-removed) | pending | pending | ✓ |
+| [radosgw's ?layout answers 200 with an empty document when its layout fails](#radosgws-layout-answers-200-with-an-empty-document-when-its-layout-fails) | pending | pending | ✓ |
+| [radosgw's ?layout checks a cap type no caps command can grant](#radosgws-layout-checks-a-cap-type-no-caps-command-can-grant) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -19883,6 +19885,10 @@ Every new entry adds its row to this table, in document order.
   and end the radosgw process, and with it every request the process
   serves; not reproduced. Only a requester with the `admin=read` cap
   reaches it, and only on a head without a manifest.
+  - No caps command can grant `admin=read`, so only an admin, a system user
+    and a user given the cap through `metadata put` reach the defect
+    ("[radosgw's ?layout checks a cap type no caps command can
+    grant](#radosgws-layout-checks-a-cap-type-no-caps-command-can-grant)").
   - Neither gateway leaves such a head under a key an S3 request names.
     Every radosgw write that creates one sets the manifest at both tags: the
     atomic and append processors
@@ -19984,6 +19990,10 @@ Every new entry adds its row to this table, in document order.
   is unknown. `retain_head_object` is what keeps a transitioned object
   listable, as S3 Glacier does, so an operator who wants S3's semantics
   would plausibly set it.
+  - No caps command can grant `admin=read`, so only an admin, a system user
+    and a user given the cap through `metadata put` reach the defect
+    ("[radosgw's ?layout checks a cap type no caps command can
+    grant](#radosgws-layout-checks-a-cap-type-no-caps-command-can-grant)").
 - **Note:** `?layout` is implicated in three defects, all reached with
   `admin=read` alone: this one, "[radosgw's ?layout dereferences a null
   manifest](#radosgws-layout-dereferences-a-null-manifest)", and the `dump_obj_layout` path of
@@ -28004,3 +28014,138 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task C10b, 2026-10-23, paging the lifecycle's versions
   listing. Derived from the source, not reproduced.
+
+## radosgw's ?layout answers 200 with an empty document when its layout fails
+
+- **Kind:** defect, cosmetic, not security-relevant: a `?layout` whose
+  layout failed reads as one that succeeded. Unreproduced: derived from the
+  source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWGetObjLayout::execute` does nothing
+    ([rgw_op.cc:7909-7911](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L7909-L7911),
+    [rgw_op.cc:8814-8816](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L8814-L8816)),
+    so `RGWGetObjLayout_ObjStore_S3::send_response` sends the status of an
+    `op_ret` of 0 and ends the header as `application/json`, then opens the
+    JSONFormatter's `result` section, calls `dump_obj_layout` without
+    reading its return, closes the section and flushes
+    ([rgw_rest_s3.cc:4368-4385](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4368-L4385),
+    [rgw_rest_s3.cc:4879-4896](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4879-L4896)).
+  - `dump_obj_layout` returns before it writes anything when
+    `Read::prepare` or `get_manifest` fails
+    ([rgw_sal_rados.cc:2793-2803](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2793-L2803),
+    [rgw_sal_rados.cc:3628-3638](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3628-L3638)).
+  - A JSONFormatter, not pretty by default, writes no name for a section
+    opened at the top level
+    ([Formatter.cc:199-241](https://github.com/ceph/ceph/blob/v19.2.7/src/common/Formatter.cc#L199-L241),
+    [Formatter.cc:207-249](https://github.com/ceph/ceph/blob/v20.2.4/src/common/Formatter.cc#L207-L249)),
+    so the body is `{}`, and the buffering filter sends its length
+    ([rgw_client_io_filters.h:207-253](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_client_io_filters.h#L207-L253),
+    [rgw_client_io_filters.h:207-253](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_client_io_filters.h#L207-L253)).
+- **Trigger:** none known; the candidate is a versioned key named without
+  a version whose OLH has pending entries. `read_permissions` has read the
+  object's state through the request's object context by then, and
+  `prepare` and `get_manifest` read it from there again: `get_obj_state_impl`
+  hands back the context's state once it holds the attrs
+  ([rgw_rados.cc:6271-6280](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6271-L6280),
+  [rgw_rados.cc:6885-6894](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6885-L6894)).
+  - For an OLH, though, it follows the OLH again from that cached state each
+    time it is asked to follow, which `prepare` and `get_manifest` both ask
+    ([rgw_rados.cc:7052](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7052) and
+    [rgw_rados.cc:6481](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6481),
+    [rgw_rados.cc:7705](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7705) and
+    [rgw_rados.cc:7095](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7095)),
+    through `get_olh_target_state`
+    ([rgw_rados.cc:6238-6258](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6238-L6258),
+    [rgw_rados.cc:6852-6872](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6852-L6872)).
+  - `follow_olh` acts on the pending entries in the state's attrs: it removes
+    the expired ones and runs `update_olh` for the rest, I/O that can fail,
+    and answers an `update_olh` that meets a changed OLH tag with -ENOENT
+    ([rgw_rados.cc:8969-8997](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8969-L8997),
+    [rgw_rados.cc:9715-9743](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9715-L9743)).
+    Whether the follow `read_permissions` made leaves pending entries in the
+    cached state for the next follow to act on again is not established.
+  - What `prepare` does beyond the state read is open the head's pool,
+    `get_obj_head_ioctx`, and fail with its error
+    ([rgw_rados.cc:7111-7114](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7111-L7114),
+    [rgw_rados.cc:7773-7776](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7773-L7776)).
+  How to make either call fail on a running release is open.
+- **Impact:** a holder of `admin=read`, or an admin or system user, gets
+  200 and `{}` for an object whose layout radosgw could not read, which it
+  cannot tell from a success.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** differs: it lays the object out before anything is sent and
+  answers a failure as the request's error (`op.GetObjectLayout`,
+  `internal/op/layout.go`; `docs/exclusions.md`, "`?layout` answers a
+  layout that fails with its error"). "answers a layout that fails as its
+  error, sending nothing of the document" (`internal/s3/layout_test.go`)
+  pins it.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 planning's research, 2026-10-13; checked at v19.2.7
+  and v20.2.4 by task WP-21, 2026-10-27, serving `?layout`. Derived from
+  the source, not reproduced.
+
+## radosgw's ?layout checks a cap type no caps command can grant
+
+- **Kind:** defect, not security-relevant: it refuses. Unfixed through
+  main d8552606423. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWGetObjLayout::verify_permission` is `check_cap("admin",
+    RGW_CAP_READ)` on the requester's caps
+    ([rgw_op.h:2371-2376](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2371-L2376),
+    [rgw_op.h:2542-2547](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2542-L2547)),
+    which answers -EPERM for a type the user does not hold
+    ([rgw_common.cc:2071-2081](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2071-L2081),
+    [rgw_common.cc:2134-2144](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2134-L2144)).
+  - `is_valid_cap_type` does not list `admin`
+    ([rgw_common.cc:2083-2110](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2083-L2110),
+    [rgw_common.cc:2146-2173](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2146-L2173)),
+    and `get_cap` refuses such a type with -ERR_INVALID_CAP
+    ([rgw_common.cc:1907-1915](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1907-L1915),
+    [rgw_common.cc:1970-1978](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1970-L1978)).
+    `RGWUserCapPool::add` adds caps through `add_from_string`, which stops
+    at the first cap `get_cap` refuses
+    ([rgw_user.cc:1263-1288](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_user.cc#L1263-L1288),
+    [rgw_user.cc:1268-1293](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L1268-L1293)),
+    and both a user create with caps and `caps add` go through it
+    ([rgw_user.cc:1882](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_user.cc#L1882) and
+    [rgw_user.cc:2666](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_user.cc#L2666),
+    [rgw_user.cc:1888](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L1888) and
+    [rgw_user.cc:2672](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_user.cc#L2672)).
+  - `RGWUserCaps::decode_json` keeps whatever type it reads
+    ([rgw_common.cc:2059-2069](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2059-L2069),
+    [rgw_common.cc:2122-2132](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2122-L2132)),
+    so `radosgw-admin metadata put` can store `admin=read`.
+  - `rgw_process_authenticated` overrides verify_permission's refusal for
+    a system request or an admin user at v19.2.7, and for an admin
+    identity at v20.2.4
+    ([rgw_process.cc:228-236](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L228-L236),
+    [rgw_process.cc:228-239](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L228-L239)).
+- **Impact:** `?layout` answers 403 to every user who is neither an admin
+  nor a system user, unless an operator stored `admin=read` with `metadata
+  put`; `radosgw-admin caps add --caps=admin=read` fails. Those are the
+  requesters who reach the `?layout` defects "[radosgw's ?layout
+  dereferences a null manifest](#radosgws-layout-dereferences-a-null-manifest)",
+  "[radosgw's ?layout hands a cloud tier's S3 secret to any holder of
+  admin=read](#radosgws-layout-hands-a-cloud-tiers-s3-secret-to-any-holder-of-adminread)",
+  the `dump_obj_layout` path of "[radosgw hangs or faults walking a
+  manifest whose rule has a stripe size of
+  0](#radosgw-hangs-or-faults-walking-a-manifest-whose-rule-has-a-stripe-size-of-0)"
+  and "[radosgw's ?layout answers 200 with an empty document when its
+  layout fails](#radosgws-layout-answers-200-with-an-empty-document-when-its-layout-fails)".
+  It is the gap "[Squid's account admin API checks a cap type that does
+  not exist for get and
+  delete](#squids-account-admin-api-checks-a-cap-type-that-does-not-exist-for-get-and-delete)"
+  describes for `account`, here for `admin`.
+- **Releases:** v19.2.7 and v20.2.4. Main at d8552606423 (2026-10-14)
+  still checks `admin`
+  ([rgw_op.h:2618](https://github.com/ceph/ceph/blob/d8552606423/src/rgw/rgw_op.h#L2618)),
+  and its `is_valid_cap_type` still lists no such type
+  ([rgw_common.cc:2285-2304](https://github.com/ceph/ceph/blob/d8552606423/src/rgw/rgw_common.cc#L2285-L2304)).
+- **rgw-go:** reproduces it. `?layout` checks `admin=read`
+  (`op.GetObjectLayout`, `internal/op/layout.go`). `meta.ValidCapType`
+  lists the same types, so rgw-go's caps commands refuse `admin` too
+  (`meta.ParseCap`, `internal/meta/caps.go`), and its user metadata put
+  keeps any type (`meta.Caps.UnmarshalJSON`, `internal/meta/user_json.go`).
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task WP-21, 2026-10-27, serving `?layout`. Derived
+  from the source, not reproduced.

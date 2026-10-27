@@ -626,6 +626,96 @@ var _ = Describe("Evaluator", func() {
 		})
 	})
 
+	Describe("the object prelude", func() {
+		var logs *bytes.Buffer
+		BeforeEach(func() {
+			logs = &bytes.Buffer{}
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(logs, nil)))
+			DeferCleanup(func() { slog.SetDefault(prev) })
+			f.object("pub", "badacl", []byte{0xff}, nil)
+		})
+		member := func() op.Identity {
+			i := bob()
+			i.User.GroupIDs = []string{"g1"}
+			return i
+		}
+		prelude := func(id op.Identity, bucket, key string, hdr ...string) error {
+			return f.eval.VerifyObjectPrelude(f.ctx, f.req(id, bucket, key, hdr...))
+		}
+
+		DescribeTable("makes VerifyObject's refusals before the object's permission, each marked as VerifyObject marks it",
+			func(change func(), id func() op.Identity, bucket, key string, want error) {
+				change()
+				err := prelude(id(), bucket, key)
+				Expect(err).To(MatchError(want))
+				Expect(op.IsBeforeVerify(err)).To(BeTrue(), "marked: %v", err)
+				full := f.getObject(id(), bucket, key)
+				Expect(full).To(MatchError(want), "VerifyObject's refusal")
+				Expect(op.IsBeforeVerify(full)).To(BeTrue(), "VerifyObject's mark")
+			},
+			Entry("an identity policy that does not decode", func() {}, func() op.Identity {
+				i := bob()
+				i.Attrs = map[string][]byte{attrUserPolicy: []byte("garbage")}
+				return i
+			}, "pub", "x", op.ErrAccessDenied),
+			Entry("an account that is not loaded", func() {}, func() op.Identity {
+				i := accountIdentity(ownAcct, "acct", meta.IdentityRGW)
+				i.Account = nil
+				return i
+			}, "pub", "x", op.ErrAccessDenied),
+			Entry("a suspended bucket", func() {}, bob, "susp", "o", op.ErrUserSuspended),
+			Entry("a bucket policy that does not parse", func() { f.setPolicy("pub", "{not json") }, bob, "pub", "x", op.ErrAccessDenied),
+			Entry("a public-access block that does not decode", func() { f.setAttr("", "pub", attrPublicAccess, []byte{0xff}) },
+				bob, "pub", "x", op.ErrAccessDenied),
+			Entry("a bucket ACL that does not decode", func() { f.setAttr("", "pub", meta.AttrACL, []byte{0xff}) },
+				bob, "pub", "x", op.ErrUnknown),
+			Entry("an object ACL that does not decode", func() {}, bob, "pub", "badacl", op.ErrUnknown),
+			Entry("a missing object, NoSuchKey to a requester who may list the bucket", func() {}, bob, "pub", "nope", op.ErrNoSuchKey),
+			Entry("a missing object, AccessDenied to one who may not", func() {}, bob, "priv", "nope", op.ErrAccessDenied),
+			Entry("a missing object, NoSuchKey to an admin who may not list", func() {},
+				func() op.Identity { return adminOf(bob()) }, "priv", "nope", op.ErrNoSuchKey),
+			Entry("a missing object, AccessDenied to an IAM group member", func() {}, member, "pub", "nope", op.ErrAccessDenied),
+		)
+
+		It("refuses a missing object through ListBucket's permit, x-amz-expected-bucket-owner included", func() {
+			err := prelude(bob(), "pub", "nope", "X-Amz-Expected-Bucket-Owner", "carol")
+			Expect(err).To(MatchError(op.ErrAccessDenied))
+			Expect(op.IsBeforeVerify(err)).To(BeTrue())
+		})
+
+		DescribeTable("refuses nothing verify_object_permission alone would refuse",
+			func(change func(), id func() op.Identity, bucket, key string, hdr ...string) {
+				change()
+				Expect(f.getObject(id(), bucket, key, hdr...)).To(MatchError(op.ErrAccessDenied), "VerifyObject refuses")
+				Expect(prelude(id(), bucket, key, hdr...)).To(Succeed())
+			},
+			Entry("an object ACL with no grant to the requester", func() {}, bob, "priv", "o"),
+			Entry("a bucket policy's Deny", func() { f.setPolicy("pub", doc(stmt("Deny", `"*"`, "s3:*", "arn:aws:s3:::pub/*", ""))) }, bob, "pub", "x"),
+			Entry("another expected bucket owner", func() {}, alice, "priv", "o", "X-Amz-Expected-Bucket-Owner", "bob"),
+			Entry("requester pays without x-amz-request-payer", func() {
+				f.setPolicy("payer", doc(stmt("Allow", awsPrincipal("arn:aws:iam:::user/bob"), "s3:GetObject", "arn:aws:s3:::payer/*", "")))
+			}, bob, "payer", "o"),
+		)
+
+		It("refuses no IAM group member an existing object, and logs no group refusal for it", func() {
+			Expect(prelude(member(), "pub", "x")).To(Succeed())
+			Expect(logs.String()).NotTo(ContainSubstring("refusing an iam group member"))
+			Expect(f.getObject(member(), "pub", "x")).To(MatchError(op.ErrAccessDenied), "VerifyObject refuses it")
+			Expect(logs.String()).To(ContainSubstring("refusing an iam group member"), "and logs it")
+		})
+
+		It("marks the refusal of a request that names no bucket, which VerifyObject leaves unmarked", func() {
+			r := f.req(bob(), "", "x")
+			err := f.eval.VerifyObjectPrelude(f.ctx, r)
+			Expect(err).To(MatchError(op.ErrAccessDenied))
+			Expect(op.IsBeforeVerify(err)).To(BeTrue())
+			full := f.eval.VerifyObject(f.ctx, r, policy.S3GetObject, acl.PermRead)
+			Expect(full).To(MatchError(op.ErrAccessDenied))
+			Expect(op.IsBeforeVerify(full)).To(BeFalse())
+		})
+	})
+
 	Describe("requester pays", func() {
 		BeforeEach(func() {
 			f.setPolicy("payer", doc(stmt("Allow", awsPrincipal("arn:aws:iam:::user/bob"), "s3:GetObject", "arn:aws:s3:::payer/*", "")))
