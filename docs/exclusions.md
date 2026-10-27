@@ -4385,7 +4385,15 @@ v20.2.4 tags, rgw-go does the following.
     can leave, costs proportionally more: the densest 1 MiB attr, about
     149,600 members, took 20.7 ms. Without a limit, 64 KiB of distinct
     names take seconds. A browser names only the headers its page sets
-    beyond the CORS-safelisted ones.
+    beyond the CORS-safelisted ones. rgw-go reads a stored configuration
+    of any size, as radosgw does, and caps nothing on the stored side. A
+    cap in the preflight alone would bound nothing: every other request
+    with an Origin, an anonymous one included, has the rule its Origin and
+    method choose tried against its Access-Control-Request-Headers too, at
+    the same cost for each of that rule's one-`*` members, and a
+    configuration can hold all of them in one rule. A cap below what the
+    writing radosgw admitted would refuse requests that a configuration its
+    owner stored allows.
 
   None of this changes the stored configuration, which both gateways read
   and write alike.
@@ -4421,8 +4429,8 @@ v20.2.4 tags, rgw-go does the following.
   keeps, a CORS configuration that does not
   decode](ceph-upstream-bugs.md#radosgws-deletebucketcors-refuses-and-keeps-a-cors-configuration-that-does-not-decode)").
   rgw-go's op removes the attr whatever it holds and succeeds
-  (`op.DeleteBucketCORS`, `internal/op/cors.go`), which its route, once the
-  S3 handler routes the CORS ops, will answer 204, as Amazon S3's
+  (`op.DeleteBucketCORS`, `internal/op/cors.go`), and its route answers 204
+  (`deleteBucketCORS`, `internal/s3/cors.go`), as Amazon S3's
   DeleteBucketCors, which has no such refusal, answers and as radosgw
   answers a bucket with a configuration it can read. A bucket with no attr
   succeeds with nothing written in both. The state left is the absent attr
@@ -4441,17 +4449,17 @@ v20.2.4 tags, rgw-go does the following.
   make the check once the requester is authorized, before they read the
   configuration or the body, as PutObject and CopyObject make it ("PutObject
   and CopyObject authorize a request before they read what the store holds
-  for it", below), so once the S3 handler routes them a refused requester
-  will get 403 AccessDenied. Three refusals will come ahead of the 400 that
-  radosgw's bucket load answers first: a suspended bucket's, an unparsable
-  policy's, and the 500 rgw-go's authorizer answers every requester, an
-  admin included, for a bucket ACL that does not decode
-  (`internal/authz/evaluator.go:327-330`). The preflight, which authorizes
-  nobody, makes the check where radosgw does, after the redirect and ahead
-  of an ACL that does not decode, and its answer is the same for every key
-  (`op.GetBucketCORS`,
+  for it", below), so a refused requester gets 403 AccessDenied. Three
+  refusals come ahead of the 400 that radosgw's bucket load answers first:
+  a suspended bucket's, an unparsable policy's, and the 500 rgw-go's
+  authorizer answers every requester, an admin included, for a bucket ACL
+  that does not decode (`internal/authz/evaluator.go:371-374`). The
+  preflight, which authorizes nobody, makes the check where radosgw does,
+  after the redirect and ahead of an ACL that does not decode, and its
+  answer is the same for every key (`op.GetBucketCORS`,
   `op.PutBucketCORS`, `op.DeleteBucketCORS` and `op.OptionsCORS`,
-  `internal/op/cors.go`).
+  `internal/op/cors.go`, each given the request's `x-amz-storage-class` by
+  its route in `internal/s3/cors.go`).
 - **Every S3 response carries CORS headers once its bucket is loaded.**
   radosgw's `end_header` adds the headers of the bucket's CORS configuration
   only when it is given the op
@@ -4524,9 +4532,8 @@ v20.2.4 tags, rgw-go does the following.
     when the request carries no Authorization header, a presigned request
     among them, as radosgw sends it;
   - the configuration is the one the request's bucket record holds as the
-    response is written, so once the S3 handler routes the CORS ops a
-    PutBucketCors will be answered from the configuration it stored and a
-    DeleteBucketCors from none;
+    response is written, so a PutBucketCors is answered from the
+    configuration it stored and a DeleteBucketCors from none;
   - a configuration that does not decode adds none, and the response is the
     op's. radosgw's `generate_cors_headers` stores its read's -EIO as the
     op's result once the status is decided, which leaves the listings and
@@ -4538,18 +4545,17 @@ v20.2.4 tags, rgw-go does the following.
     among them, goes out ahead of that header on a GetObject, as radosgw
     sends both (`endHeaderNames`, `internal/s3/getobject.go`).
 
-  A preflight's response will carry only its own Access-Control headers
-  once the S3 handler routes the preflight, which it answers 501 until then
-  ("A CORS preflight is answered 501 until CORS lands", below): those of the
-  rule, Origin, method and requested headers its op found, the Origin as
-  sent, as radosgw's preflight sends them (`SetPreflightHeaders`,
-  `internal/s3/headers.go`; `RGWOptionsCORS_ObjStore_S3::send_response`,
+  A preflight's response carries only its own Access-Control headers: those
+  of the rule, Origin, method and requested headers its op found, the Origin
+  as sent, as radosgw's preflight sends them (`SetPreflightHeaders`,
+  `internal/s3/headers.go`, which `optionsCORS`, `internal/s3/cors.go`,
+  calls; `RGWOptionsCORS_ObjStore_S3::send_response`,
   [rgw_rest_s3.cc:3854-3875](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3854-L3875) at v19.2.7,
   [rgw_rest_s3.cc:4305-4326](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4305-L4326) at v20.2.4).
   `SetCommonHeaders` adds none to an OPTIONS response, and no
   x-amz-request-charged ("A preflight's answer says nothing of its key's
   user", below). radosgw's preflight sends none with the refusals its
-  `execute` makes, a 400 or a 403, and neither will rgw-go's. A preflight
+  `execute` makes, a 400 or a 403, and neither does rgw-go's. A preflight
   refused once its bucket has loaded goes through `abort_early` on radosgw,
   which sends it the headers `generate_cors_headers` derives for any op,
   `*` or the Origin by the Authorization header:
@@ -4567,14 +4573,14 @@ v20.2.4 tags, rgw-go does the following.
     ([rgw_process.cc:247-250](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L247-L250) at v19.2.7,
     [rgw_process.cc:250-253](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L250-L253) at v20.2.4).
 
-  rgw-go's preflight will make the bucket load's refusals alone, with none
-  of those headers. It asks for no op mask (`op.OptionsCORS.OpMask` is 0),
+  rgw-go's preflight makes the bucket load's refusals alone, with none of
+  those headers. It asks for no op mask (`op.OptionsCORS.OpMask` is 0),
   loads no quota owner and calls no OPA, and phase 2 has no rate limiter,
-  so a preflight the others refuse on radosgw will be answered from the
+  so a preflight the others refuse on radosgw is answered from the
   configuration ("A preflight's answer says nothing of its key's user",
   below). A browser fails a preflight answered outside 200-299 whatever its
   headers (https://fetch.spec.whatwg.org/#cors-preflight-fetch), and the
-  preflight's headers will come from its op's results alone, never from the
+  preflight's headers come from its op's results alone, never from the
   Authorization header.
 - **A POST form part ends only at a delimiter line.** radosgw's POST form
   reader takes `--` and the boundary anywhere for a part's end, with the
@@ -4833,18 +4839,6 @@ does the following.
   passes its 15-minute skew check (`docs/ceph-upstream-bugs.md`, "radosgw's
   SigV2 date check wraps the request time to 32 bits"). rgw-go compares the
   full time and answers such a request with 403 RequestTimeTooSkewed.
-- **A CORS preflight is answered 501 until CORS lands.** radosgw serves an
-  OPTIONS request on a bucket or an object as its CORS preflight op
-  (`op_options`,
-  [rgw_rest_s3.cc:4823-4826](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4823-L4826) and
-  [rgw_rest_s3.cc:4908-4911](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4908-L4911) at v19.2.7,
-  [rgw_rest_s3.cc:5348-5351](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5348-L5351) and
-  [rgw_rest_s3.cc:5438-5441](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5438-L5441) at v20.2.4).
-  rgw-go authenticates a preflight as radosgw does, a signed one without
-  comparing its signature (`docs/ceph-upstream-bugs.md`, "radosgw grants a
-  signed CORS preflight without comparing its signature"), but serves no
-  preflight yet: where radosgw runs the preflight, for a signed or an
-  anonymous OPTIONS request, rgw-go answers 501 NotImplemented.
 - **A preflight's answer says nothing of its key's user.** radosgw grants
   a signed preflight without comparing its signature, so its key's id is
   all its sender has to show (`docs/ceph-upstream-bugs.md`, "radosgw grants
@@ -4930,21 +4924,20 @@ does the following.
   has one, a preflight is limited as an anonymous request.
 
   rgw-go answers every preflight whose key resolves alike, on both
-  releases. It authenticates a preflight so today: it runs a suspended
-  user's preflight (`internal/s3/handler.go:421`), takes no `rgwx-uid` on
-  any preflight (`internal/auth/verifier.go:132-137`), and reads
+  releases. It authenticates a preflight so: it runs a suspended user's
+  preflight (`internal/s3/handler.go:429`), takes no `rgwx-uid` on any
+  preflight (`internal/auth/verifier.go:132-137`), and reads
   `rgwx-bucket-instance` on no request. A suspended user's own preflight
   therefore passes where radosgw refuses it; the request it precedes is
   still refused. Only radosgw's own multisite connection sends `rgwx-`
   parameters, and multisite is excluded, so no client rgw-go serves loses
-  one. Every preflight is still answered 501 ("A CORS preflight is answered
-  501 until CORS lands", above); once the S3 handler routes it to its op,
-  `op.OptionsCORS` (`internal/op/cors.go`), the answer will depend on no
-  key:
+  one. The S3 handler routes the preflight to its op, `op.OptionsCORS`
+  (`internal/op/cors.go`), through `optionsCORS` (`internal/s3/cors.go`),
+  which reads nothing of the identity, and the answer depends on no key:
   - the op asks for no op mask, so the key of a user without the read bit
-    will get the CORS answer where radosgw answers 403 AccessDenied;
+    gets the CORS answer where radosgw answers 403 AccessDenied;
   - it loads the bucket without a system exemption, so another zonegroup's
-    bucket will be 301 PermanentRedirect for every preflight;
+    bucket is 301 PermanentRedirect for every preflight;
   - of the bucket load's refusals, it makes those whose answer radosgw
     gives every key alike, and so answers a bucket whose ACL does not
     decode with radosgw's 500 UnknownError for every key
@@ -4955,11 +4948,11 @@ does the following.
   - it makes none of those whose answer radosgw gives by key kind, which
     rgw-go makes in its authorizer, and the preflight checks no permission:
     while the bucket's ACL decodes, a suspended bucket and a bucket whose
-    policy does not parse will be answered from the CORS configuration, for
+    policy does not parse are answered from the CORS configuration, for
     every key and for an anonymous preflight alike, where radosgw answers
     all but a system key, and on Tentacle an admin's, 403 UserSuspended or
     403 AccessDenied. When the ACL does not decode as well, every preflight
-    of such a bucket will be 500, where radosgw answers the anonymous
+    of such a bucket is 500, where radosgw answers the anonymous
     preflight and every key but those 403: a suspended bucket's refusal
     returns before the ACL is decoded, and a policy's -EACCES replaces the
     decode's error
@@ -4969,18 +4962,18 @@ does the following.
     [rgw_op.cc:642-644](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L642-L644) at v20.2.4),
     and only those keys get its 500;
   - it loads no owner for a quota, so a bucket whose ACL names an owner
-    that does not load will be answered from its configuration for
-    everyone, where radosgw refuses an anonymous preflight and every key
-    but a system key and one without the modify bits;
+    that does not load is answered from its configuration for everyone,
+    where radosgw refuses an anonymous preflight and every key but a
+    system key and one without the modify bits;
   - the request a preflight precedes is still refused in each of these;
-  - a preflight's answer will carry no x-amz-request-charged, which
+  - a preflight's answer carries no x-amz-request-charged, which
     `SetCommonHeaders` (`internal/s3/headers.go`) adds to no OPTIONS
-    response, anonymous or signed, so it will say nothing of who owns a
-    requester-pays bucket;
+    response, anonymous or signed, its 301 included, so it says nothing of
+    who owns a requester-pays bucket;
   - its usage is accounted as an anonymous request's (the next entry).
 
-  The one thing of the key's user a preflight's answer will depend on is
-  its tenant. A bucket name that names none resolves under the key user's
+  The one thing of the key's user a preflight's answer depends on is its
+  tenant. A bucket name that names none resolves under the key user's
   tenant, as radosgw resolves it
   ([rgw_rest_s3.cc:4995-4998](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4995-L4998) and
   [rgw_bucket.cc:127-130](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_bucket.cc#L127-L130) at v19.2.7,
@@ -4989,10 +4982,10 @@ does the following.
   which is radosgw's reason for looking the key up at all (ceph commit
   fe15b52edb5): a tenanted user's page names its bucket without the tenant,
   and its preflight must find that bucket. A key whose user is in tenant
-  `t` will therefore get, for the name `b`, the answer an anonymous
-  preflight of `t:b` gets, so the answers of two keys whose users differ
-  only in tenant will differ only where anonymous preflights of the name
-  under each tenant do, and that is no departure from radosgw. What it
+  `t` therefore gets, for the name `b`, the answer an anonymous preflight
+  of `t:b` gets, so the answers of two keys whose users differ only in
+  tenant differ only where anonymous preflights of the name under each
+  tenant do, and that is no departure from radosgw. What it
   tells a sender holding only a key's id is which tenant's bucket of that
   name answers, from which the sender can test guesses at the key user's
   tenant against anonymous preflights of `t:b`; resolving under the default
@@ -5042,9 +5035,6 @@ does the following.
   - with no bucket named, the record is the anonymous user's, not the key's
     user's or account's;
   - a system user's preflight is logged as an anonymous one, not left out.
-
-  The preflight is answered 501 until CORS lands, and that answer loads no
-  bucket, so today only the bucketless case writes an entry.
 - **A SigV2 preflight is signed over the method it asks for on Squid too.**
   Tentacle builds a SigV2 OPTIONS request's string to sign over its
   `Access-Control-Request-Method`, and answers 400 InvalidArgument when that

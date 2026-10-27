@@ -9508,19 +9508,20 @@ Every new entry adds its row to this table, in document order.
   - It keeps the identity so granted to the preflight: `op.Run`, the S3
     handler and the admin handler refuse it everywhere else with 500
     InternalError (`op.RefuseUnverified`, `internal/op/identity.go:71-76`;
-    `internal/op/op.go:70`, `internal/s3/handler.go:397`,
+    `internal/op/op.go:70`, `internal/s3/handler.go:405`,
     `internal/admin/handler.go:277`), so a stray dispatch row fails closed.
   - Unlike radosgw, it answers every preflight whose key resolves alike, so
     the preflight tells its sender no more than a forged request of another
     method does: it runs a suspended user's preflight where radosgw answers
     403 UserSuspended, takes no `rgwx-uid` on one, and reads
-    `rgwx-bucket-instance` on no request. Its preflight op, which the S3
-    handler does not route yet, is written so that once it does the answer
-    depends on no key: it asks for no op mask, loads the bucket with no
-    system exemption, makes of the bucket load's refusals only those radosgw
-    gives every key alike (an ACL that does not decode is 500 for all),
-    loads no owner for a quota, and its answer is to carry no
-    x-amz-request-charged (`op.OptionsCORS`, `internal/op/cors.go`;
+    `rgwx-bucket-instance` on no request. The S3 handler routes the
+    preflight to its op, whose answer depends on no key: it asks for no op
+    mask, loads the bucket with no system exemption, makes of the bucket
+    load's refusals only those radosgw gives every key alike (an ACL that
+    does not decode is 500 for all), and loads no owner for a quota; the
+    route reads nothing of the identity, and its answer carries no
+    x-amz-request-charged, its 301 included (`op.OptionsCORS`,
+    `internal/op/cors.go`; `optionsCORS`, `internal/s3/cors.go`;
     `docs/exclusions.md`, "A preflight's answer says nothing of its key's
     user").
   - Unlike radosgw, it accounts a preflight's usage as an anonymous
@@ -9530,12 +9531,9 @@ Every new entry adds its row to this table, in document order.
     request's").
   - Only the preflight runs on such a request: the S3 handler dispatches an
     OPTIONS request on a bucket or an object to it and refuses any other
-    before authentication (`internal/s3/dispatch.go:32-38`, `:205`,
-    `:253`), and the admin API refuses every OPTIONS request before
+    before authentication (`internal/s3/dispatch.go:37-43`, `:252`,
+    `:305`), and the admin API refuses every OPTIONS request before
     authentication (`internal/admin/dispatch.go:142-146`).
-    The preflight is answered 501 NotImplemented until CORS's ops land
-    (`docs/exclusions.md`, "A CORS preflight is answered 501 until CORS
-    lands").
   - rgw-go has no rate limiter yet. Phase 3's preflight must neither charge
     the key's user nor apply that user's limit or exemption: it is limited
     as an anonymous request, as such a request proves only that its sender
@@ -17556,9 +17554,10 @@ Every new entry adds its row to this table, in document order.
   response once the request's bucket record is loaded, and DeleteObjects'
   status line carries them too (`internal/s3/deleteobjects.go`;
   `docs/exclusions.md`, "Every S3 response carries CORS headers once its
-  bucket is loaded"). It serves no GetBucketCors, PutBucketCors,
-  DeleteBucketCors, notification, request-payment, retention, legal-hold or
-  metadata-search route yet, and answers them 501 before any bucket loads.
+  bucket is loaded"), GetBucketCors, PutBucketCors and DeleteBucketCors
+  included (`internal/s3/cors.go`). It serves no notification,
+  request-payment, retention, legal-hold or metadata-search route yet, and
+  answers them 501 before any bucket loads.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, Task BC-7, 2026-10-22, scanning every
   `end_header` call at both tags for one without its op. Derived from the
@@ -19542,10 +19541,10 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** checked at v19.2.7 and v20.2.4.
 - **rgw-go:** does not reproduce it. `op.DeleteBucketCORS` removes the attr
   whatever it holds, through the retried and re-authorized write the other
-  bucket-config writes take, and succeeds; a bucket without the attr
-  succeeds with nothing written, as radosgw's does (`internal/op/cors.go`;
-  `docs/exclusions.md`, "DeleteBucketCors removes a CORS configuration that
-  does not decode").
+  bucket-config writes take, and succeeds, which its route answers 204; a
+  bucket without the attr succeeds with nothing written, as radosgw's does
+  (`internal/op/cors.go`, `internal/s3/cors.go`; `docs/exclusions.md`,
+  "DeleteBucketCors removes a CORS configuration that does not decode").
 - **Upstream:** none. rgw-bug-reproduction logged it as non-security; it is
   unfiled while filing is paused.
 - **Found:** phase 2 task BC-3's review, 2026-10-19, reading
