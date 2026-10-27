@@ -68,6 +68,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw abandons a control watch whose control object is deleted](#radosgw-abandons-a-control-watch-whose-control-object-is-deleted) | [#59217](https://tracker.ceph.com/issues/59217) | none |  |
 | [radosgw keeps only the low 32 bits of rgw_num_control_oids](#radosgw-keeps-only-the-low-32-bits-of-rgw_num_control_oids) | none | none |  |
 | [radosgw keeps only the low 32 bits of rgw_website_routing_rules_max_num](#radosgw-keeps-only-the-low-32-bits-of-rgw_website_routing_rules_max_num) | none | none |  |
+| [radosgw keeps only the low 32 bits of rgw_cors_rules_max_num](#radosgw-keeps-only-the-low-32-bits-of-rgw_cors_rules_max_num) | pending | pending |  |
 | [radosgw adds STANDARD to an empty placement target on decode](#radosgw-adds-standard-to-an-empty-placement-target-on-decode) | none | none |  |
 | [radosgw lets a matching referer grant replace the requester's own ACL grants](#radosgw-lets-a-matching-referer-grant-replace-the-requesters-own-acl-grants) | [#18841](https://tracker.ceph.com/issues/18841) | [ceph/ceph#14344](https://github.com/ceph/ceph/pull/14344) |  |
 | [radosgw ends a Referer's userinfo at an @ in its path](#radosgw-ends-a-referers-userinfo-at-an--in-its-path) | none | none | ✓ |
@@ -3068,6 +3069,49 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** not filed; a quirk.
 - **Found:** phase 2 unit B, Task BC-12, 2026-10-19, and its task review,
   2026-10-20; derived from the source, not reproduced.
+
+## radosgw keeps only the low 32 bits of rgw_cors_rules_max_num
+
+- **Kind:** quirk, of the S3-correctness class, not security-relevant. The
+  same narrowing as "[radosgw keeps only the low 32 bits of
+  rgw_website_routing_rules_max_num](#radosgw-keeps-only-the-low-32-bits-of-rgw_website_routing_rules_max_num)",
+  at a sink of its own: each get_params reads its own option into its own
+  `int`. Unreproduced: derived from the source.
+- **Evidence:** the same at v19.2.7 and v20.2.4; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - `rgw_cors_rules_max_num` is a `type: int` option with no `min` or
+    `max`, `with_legacy: true` and a default of 100
+    ([rgw.yaml.in:26-33](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L26-L33),
+    [rgw.yaml.in:26-33](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L26-L33)),
+    so its legacy field is an `int64_t` (`OPTION_OPT_INT`,
+    [config_values.h:41](https://github.com/ceph/ceph/blob/v19.2.7/src/common/config_values.h#L41),
+    [config_values.h:41](https://github.com/ceph/ceph/blob/v20.2.4/src/common/config_values.h#L41)).
+  - `RGWPutCORS_ObjStore_S3::get_params` assigns it to `int max_num`, and
+    takes a negative one as `CORS_RULES_MAX_NUM`, 100
+    ([rgw_rest_s3.cc:3801-3805](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3801-L3805),
+    [rgw_rest_s3.cc:4252-4256](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4252-L4256)).
+    Ceph builds as C++20
+    ([CMakeLists.txt:216](https://github.com/ceph/ceph/blob/v19.2.7/src/CMakeLists.txt#L216),
+    [CMakeLists.txt:243](https://github.com/ceph/ceph/blob/v20.2.4/src/CMakeLists.txt#L243)),
+    which defines the narrowing as modular, so only the low 32 bits count,
+    read as a signed int.
+  - The narrowed limit then refuses a PutBucketCors as any limit does, 400
+    InvalidRequest with its own value in the message
+    ([rgw_rest_s3.cc:3806-3815](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3806-L3815),
+    [rgw_rest_s3.cc:4257-4266](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4257-L4266)):
+    2^32+2 admits two rules, 2^32 none, and 2^31 becomes -2^31, which reads
+    as 100.
+- **Impact:** a configuration is held to a limit other than the one the
+  operator set, which the 400 InvalidRequest's message then names. It is
+  reachable only by misconfiguration.
+- **Releases:** v19.2.7 and v20.2.4, the tags checked.
+- **rgw-go:** matches it: `maxCORSRules` keeps the low 32 bits the same way
+  (`internal/s3/cors.go`), so both gateways hold a configuration to the
+  same limit for any setting.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 unit B, Task BC-6, 2026-10-27, reading
+  `RGWPutCORS_ObjStore_S3::get_params`; derived from the source, not
+  reproduced.
 
 ## radosgw adds STANDARD to an empty placement target on decode
 
