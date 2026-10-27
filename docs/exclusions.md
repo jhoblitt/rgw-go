@@ -2357,8 +2357,9 @@ review and verified against the tree.
   retention: it deletes the tails it wrote, or drops the tail references a
   copy took, and a completion leaves its upload in place. Until then the
   op layer answers all three on a bucket with object lock 501 first
-  ("Writes to a versioned or object-lock bucket answer 501 until versioning
-  is served"). Reads, CreateMultipartUpload and UploadPart, which are not
+  ("PutObject, CopyObject and CompleteMultipartUpload answer 501 on an
+  object-lock bucket, and the deletes and the ACL and tag writes on a
+  versioned one"). Reads, CreateMultipartUpload and UploadPart, which are not
   create writes, still succeed.
   The phase that serves bucket sync policy models it. The admin API's `GET` or `PUT
   /admin/metadata/bucket.instance` of a bucket holding a sync policy with
@@ -8311,8 +8312,7 @@ does the following.
   another writer's link stays logged and unreplayed, an If-Match on the
   linked version's ETag answers 412 through radosgw and succeeds through
   rgw-go, and one on the version before it the other way round. Both
-  gateways' replays write the same state. Versioned writes are not served
-  yet.
+  gateways' replays write the same state.
 - **A read of a versioned key named without a version id sends no
   x-amz-version-id.** radosgw's GET and HEAD answer with the id of the
   version they resolved: `Read::prepare` keeps the version it followed to
@@ -8499,28 +8499,48 @@ does the following.
   nanosecond](ceph-upstream-bugs.md#squids-deleteobjecttagging-stamps-the-object-with-the-epoch-plus-one-nanosecond)").
   A client of a Squid zone sees the object's own Last-Modified after the
   tags are removed, where v19.2.6 reports 1970-01-01.
-- **Writes to a versioned or object-lock bucket answer 501 until
-  versioning is served.** Every write rgw-go serves but the deletes,
-  PutObject, CopyObject, PutObjectAcl, PutObjectTagging,
-  DeleteObjectTagging and CompleteMultipartUpload, takes radosgw's
-  unversioned path, where radosgw's CompleteMultipartUpload writes a new
-  version, or the null one through the OLH (`rgw_op.cc:6459-6466` at
-  v19.2.6, `:7284-7291` at v20.2.4). On a bucket whose
-  versioning is enabled or suspended, or that has object lock, that path
-  would write a version's head beside the bucket's OLH under an index
-  entry for the plain key. DeleteObject and DeleteObjects would reach a
-  store whose delete takes radosgw's versioned path on a bucket whose flags
-  hold `BUCKET_VERSIONED`, but the ops do not yet answer the version id or
-  the delete marker it reports, and they would skip the retention and
-  legal-hold checks radosgw makes for a versioned delete
-  (`verify_object_lock`, `rgw_op.cc:5185-5221` and `:6845-6869` at v19.2.6,
-  `:5576-5610` and `:7782-7806` at v20.2.4). rgw-go answers such a write,
-  and any write naming a version, a copy's source included, CopyObject's
-  and UploadPartCopy's, with 501 NotImplemented before it touches the
-  store; DeleteObjects answers it through its status
-  line before its first key. radosgw serves them. The bucket listing makes
-  the same refusal for a versioned bucket ("The versions of a bucket whose
-  versioning was ever enabled are not listed").
+- **PutObject, CopyObject and CompleteMultipartUpload answer 501 on an
+  object-lock bucket, and the deletes and the ACL and tag writes on a
+  versioned one.** rgw-go serves PutObject, CopyObject and
+  CompleteMultipartUpload on a bucket whose versioning is enabled or
+  suspended, writing a new version or the null one as radosgw does ("A
+  write's versionId is ignored"), but answers them with 501 NotImplemented
+  on a bucket with object lock, once the requester is authorized and
+  before it writes anything. The stores give such a write's head the
+  bucket's default retention, as radosgw does
+  ([rgw_rados.cc:3211-3221](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3211-L3221) at v19.2.7,
+  [rgw_rados.cc:3308-3318](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3308-L3318) at v20.2.4),
+  but the ops do not yet store the retention and legal hold a
+  PutObject's or a CopyObject's object-lock headers name, as radosgw's do
+  ([rgw_op.cc:4542-4551](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4542-L4551) and
+  [rgw_op.cc:5587-5596](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5587-L5596) at v19.2.7,
+  [rgw_op.cc:4810-4819](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4810-L4819) and
+  [rgw_op.cc:6150-6159](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6150-L6159) at v20.2.4),
+  and a version written without them could be deleted; the three are
+  served on such a bucket together once they do. An append is answered
+  as on any other versioned bucket
+  ("Appends and a PUT that names a copy source but is no copy are not
+  served"). CreateMultipartUpload, UploadPart and UploadPartCopy are
+  served on a bucket with object lock, and only a request among them
+  naming a retention or a legal hold answers 501 ("A multipart upload
+  with a retention or a legal hold on a bucket with object lock answers
+  501"); it is the completion writing the head that is refused.
+  PutObjectRetention and PutObjectLegalHold, which write a version's lock
+  attrs, are object lock's own and are served on such a bucket, always a
+  versioned one. PutObjectAcl, PutObjectTagging, DeleteObjectTagging,
+  DeleteObject and DeleteObjects answer 501 on a bucket whose versioning
+  is enabled or suspended, or that has object lock, and to any request
+  naming a version. DeleteObject and
+  DeleteObjects would reach a store whose delete takes radosgw's versioned
+  path on a bucket whose flags hold `BUCKET_VERSIONED`, but the ops do not
+  yet answer the version id or the delete marker it reports, and they
+  would skip the retention and legal-hold checks radosgw makes for a
+  versioned delete (`verify_object_lock`, `rgw_op.cc:5185-5221` and
+  `:6845-6869` at v19.2.6, `:5576-5610` and `:7782-7806` at v20.2.4).
+  rgw-go answers such a write with 501 NotImplemented before it touches
+  the store, as it does an UploadPartCopy whose source names a version;
+  DeleteObjects answers it through its status line before its first key.
+  radosgw serves them.
 
   The exception is `versionId=null` on a bucket whose versioning was never
   enabled, which rgw-go takes to be one whose flags hold none of
@@ -8543,51 +8563,116 @@ does the following.
   action, `s3:DeleteObjectVersion` and the rest, as radosgw authorizes any
   key naming a version (`rgw_op.cc:5145-5147` and `:6829-6831` at v19.2.6,
   `:5535-5537` and `:7766-7768` at v20.2.4); the reads naming it were served
-  already. A PutObject, a CompleteMultipartUpload or a CopyObject naming
-  the null version, a copy as its destination or its source, still
-  answers 501: radosgw writes such a head at the plain key's oid but files
-  it in the index under the instance `null`, apart from the plain key's
-  entry (`driver/rados/rgw_rados.cc:9473` and `:7133` at v19.2.6,
-  `:10405` and `:7984` at v20.2.4; `encode_obj_index_key`,
-  `cls/rgw/cls_rgw.cc:339-346` at v19.2.6, `:389-396` at v20.2.4), then
-  links the key to an OLH as a versioned object
-  ([rgw_rados.cc:3369-3375](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3369-L3375)
-  at v19.2.7; `docs/ceph-upstream-bugs.md`, "[radosgw indexes a
-  PutObject naming versionId=null on an unversioned bucket under the null
-  instance](ceph-upstream-bugs.md#radosgw-indexes-a-putobject-naming-versionidnull-on-an-unversioned-bucket-under-the-null-instance)"),
-  and copies from a source naming it without the checks of a copy onto
-  itself (`rgw_rest_s3.cc:3541-3548` at v19.2.6, `:3821-3828` at v20.2.4).
+  already. A PutObject, a CompleteMultipartUpload and a CopyObject's
+  destination ignore it, as they ignore any `versionId` ("A write's
+  versionId is ignored"), and a CopyObject whose source names it copies
+  the plain object, without the checks of a copy onto itself, as radosgw's
+  does (`rgw_rest_s3.cc:3541-3548` at v19.2.6, `:3821-3828` at v20.2.4).
   An UploadPartCopy whose source names it answers 501 too, as one whose
   source names any version does: the exception does not reach that refusal.
-- **CompleteMultipartUpload sends no x-amz-version-id.** radosgw's
-  completion sends `x-amz-version-id` whenever its `version_id` is not
-  empty, on an error as on a success (`dump_header_if_nonempty`,
-  `rgw_rest_s3.cc:4081` at v19.2.6, `:4609` at v20.2.4). For an ordinary
-  request that is the instance it generates on a bucket whose versioning
-  is enabled and not suspended (`rgw_op.cc:6459-6466` at v19.2.6,
-  `:7284-7291` at v20.2.4; `versioning_enabled`, `rgw_common.h:1076` at
-  v19.2.6, `:1118` at v20.2.4), a completion rgw-go answers with 501
-  ("Writes to a versioned or object-lock bucket answer 501 until
-  versioning is served"); on an unversioned or suspended bucket radosgw
-  sends none either. The other source is a system request's
-  `rgwx-version-id`, which `get_system_versioning_params` reads into
-  `version_id` whatever the bucket's versioning (`rgw_op.cc:6378` and
-  `rgw_op.h:2113-2139` at v19.2.6, `:7174` and `:2280-2306` at v20.2.4),
-  so radosgw echoes it from an unversioned bucket's completion. rgw-go
-  reads neither it nor `rgwx-versioned-epoch` on any write, and serves
-  such a request as one without them, where radosgw's PutObject,
-  DeleteObject and CopyObject read both as well (`rgw_op.cc:4177`,
-  `:5273` and `:5387` at v19.2.6, `:4386`, `:5662` and `:5953` at
-  v20.2.4): PutObject echoes the version id as the completion does
-  (`rgw_rest_s3.cc:2748` at v19.2.6, `:2912` at v20.2.4), and CopyObject
-  gives its destination the instance named whatever the bucket's
-  versioning (`rgw_op.cc:5573-5574` at v19.2.6, `:6139-6140` at
-  v20.2.4). A system request whose `rgwx-versioned-epoch` does not
-  parse as a number fails all four with -EINVAL, 400 InvalidArgument
-  (`rgw_op.h:2121-2130` at v19.2.6, `:2288-2297` at v20.2.4;
-  `rgw_common.cc:61` at v19.2.6, `:62` at v20.2.4), where rgw-go
-  serves it. No radosgw component sends either parameter at either
-  release; they belong to multisite, which is excluded.
+- **A write's versionId is ignored.** S3's PutObject, CopyObject and
+  CompleteMultipartUpload take no `versionId`, and rgw-go writes the
+  object at the instance the bucket's versioning gives, whatever
+  `versionId` the request names: a new version where versioning is
+  enabled, the null version where it is suspended, and the plain object
+  where it was never enabled (`VersionForWrite`, `internal/op/version.go`).
+  A CopyObject's source is still the version its `x-amz-copy-source`
+  names. radosgw keys the request's object with its `versionId`
+  ([rgw_rest_s3.cc:4976-4985](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4976-L4985) at v19.2.7,
+  [rgw_rest_s3.cc:5506-5515](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5506-L5515) at v20.2.4)
+  and replaces that instance only on a bucket whose versioning is enabled
+  ([rgw_op.cc:4278-4285](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4278-L4285),
+  [rgw_op.cc:5576-5580](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5576-L5580) and
+  [rgw_op.cc:6462-6469](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6462-L6469) at v19.2.7,
+  [rgw_op.cc:4491-4498](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4491-L4498),
+  [rgw_op.cc:6139-6143](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6139-L6143) and
+  [rgw_op.cc:7284-7291](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7284-L7291) at v20.2.4),
+  so on any other bucket it writes the instance named: on a bucket never
+  versioned, `null` files the head in the index under the instance `null`
+  and links the key to an OLH as a versioned object
+  (`docs/ceph-upstream-bugs.md`, "[radosgw indexes a PutObject naming
+  versionId=null on an unversioned bucket under the null
+  instance](ceph-upstream-bugs.md#radosgw-indexes-a-putobject-naming-versionidnull-on-an-unversioned-bucket-under-the-null-instance)"),
+  and another id writes a version of that id.
+
+  radosgw's writes also read a system request's `rgwx-version-id` for
+  the instance and its `rgwx-versioned-epoch` for the OLH epoch
+  (`get_system_versioning_params`,
+  [rgw_op.h:2117-2143](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2117-L2143) at v19.2.7,
+  [rgw_op.h:2280-2306](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2280-L2306) at v20.2.4;
+  PutObject, CopyObject and CompleteMultipartUpload call it at
+  [rgw_op.cc:4177](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4177),
+  [rgw_op.cc:5390](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5390) and
+  [rgw_op.cc:6381](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6381) at v19.2.7,
+  [rgw_op.cc:4386](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4386),
+  [rgw_op.cc:5953](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5953) and
+  [rgw_op.cc:7174](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7174) at v20.2.4),
+  and each takes the id its own way. CopyObject writes the instance
+  `rgwx-version-id` names whatever the bucket's versioning
+  ([rgw_op.cc:5576-5580](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5576-L5580) at v19.2.7,
+  [rgw_op.cc:6139-6143](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6139-L6143) at v20.2.4).
+  PutObject and CompleteMultipartUpload take it only on a bucket whose
+  versioning is enabled
+  ([rgw_op.cc:4278-4285](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4278-L4285) and
+  [rgw_op.cc:6462-6469](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6462-L6469) at v19.2.7,
+  [rgw_op.cc:4491-4498](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4491-L4498) and
+  [rgw_op.cc:7284-7291](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7284-L7291) at v20.2.4).
+  On any other bucket they write the instance the URL names and still
+  echo the `rgwx-version-id` in `x-amz-version-id`
+  ([rgw_rest_s3.cc:2756](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2756) and
+  [rgw_rest_s3.cc:4111](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4111) at v19.2.7,
+  [rgw_rest_s3.cc:2912](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2912) and
+  [rgw_rest_s3.cc:4609](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4609) at v20.2.4),
+  naming a version they did not write. DeleteObject reads both as well,
+  the id for the delete marker it writes
+  ([rgw_op.cc:5273](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5273) at v19.2.7,
+  [rgw_op.cc:5662](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5662) at v20.2.4).
+  rgw-go reads neither parameter on any write, and serves such a request
+  as one without them. A system request whose `rgwx-versioned-epoch` does
+  not parse as a number fails all four with -EINVAL, 400 InvalidArgument
+  ([rgw_op.h:2125-2134](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2125-L2134) and
+  [rgw_common.cc:61](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L61) at v19.2.7,
+  [rgw_op.h:2288-2297](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2288-L2297) and
+  [rgw_common.cc:62](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L62) at v20.2.4),
+  where rgw-go serves it. No radosgw component sends either parameter at
+  either release; they belong to multisite, which is excluded.
+- **Writes name the null version's id and a copy's two versions.**
+  PutObject and CompleteMultipartUpload send `x-amz-version-id` with the
+  id of the version written: its instance on a bucket whose versioning is
+  enabled, `null` for the null version a suspended bucket's write makes,
+  and none on a bucket whose versioning was never enabled, where an object
+  has no version (`ResponseVersionID`, `internal/op/version.go`). A
+  completion that finishes an earlier one of its upload names the version
+  that one wrote ("CompleteMultipartUpload finishes an earlier completion
+  of its upload instead of writing it again"), and one retried after it
+  succeeded, its upload gone, names the version current on the key, whose
+  ETag the retry's parts make. radosgw answers such a retry before it
+  draws an instance, and sends no id
+  ([rgw_op.cc:6441-6444](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6441-L6444) at v19.2.7,
+  [rgw_op.cc:7252-7255](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7252-L7255) at v20.2.4).
+  CopyObject sends the same
+  `x-amz-version-id` for its destination, and
+  `x-amz-copy-source-version-id` for the version it read, by the same rule
+  on the source's bucket: the version named, or the version current when
+  none is named, `null` for the null version. radosgw's PutObject and
+  CompleteMultipartUpload send an id only when the instance is not empty,
+  so none for the null version
+  ([rgw_rest_s3.cc:2756](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2756) and
+  [rgw_rest_s3.cc:4111](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4111) at v19.2.7,
+  [rgw_rest_s3.cc:2912](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2912) and
+  [rgw_rest_s3.cc:4609](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4609) at v20.2.4;
+  `docs/ceph-upstream-bugs.md`, "[radosgw sends no x-amz-version-id for
+  the null version a write
+  makes](ceph-upstream-bugs.md#radosgw-sends-no-x-amz-version-id-for-the-null-version-a-write-makes)"),
+  and its CopyObject sends neither header
+  ([rgw_rest_s3.cc:3596-3633](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3596-L3633) at v19.2.7,
+  [rgw_rest_s3.cc:3846-3886](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3846-L3886) at v20.2.4;
+  `docs/ceph-upstream-bugs.md`, "[radosgw's CopyObject sends neither
+  x-amz-version-id nor
+  x-amz-copy-source-version-id](ceph-upstream-bugs.md#radosgws-copyobject-sends-neither-x-amz-version-id-nor-x-amz-copy-source-version-id)").
+  radosgw's completion also sends its `version_id` on an error, the
+  instance it drew for a completion that then failed; rgw-go sends the
+  header on a success alone.
 - **Writes that ask for encryption answer 501, SSE-S3 and SSE-KMS until
   phase 2 and SSE-C until phase 4.** radosgw
   encrypts a PutObject or CopyObject that sends the SSE-C headers, and
@@ -8623,13 +8708,28 @@ does the following.
     once the requester is authorized, as its `get_params` runs in `execute`,
     from its headers alone. A refused upload creates no upload, a refused part
     stores no part, and no such header is stored as an attr.
-- **Appends and a PUT that names a copy source but is no copy answer 501.**
-  radosgw serves a PUT with `?append` as an append, and a PUT whose
-  `x-amz-copy-source` comes with `x-amz-copy-source-range` and no
+- **Appends and a PUT that names a copy source but is no copy are not
+  served.** radosgw serves a PUT with `?append` as an append, and a PUT
+  whose `x-amz-copy-source` comes with `x-amz-copy-source-range` and no
   `uploadId`, or names no bucket, as a PutObject whose data it reads from
   that source (`RGWPutObj::init_processing` and `execute`, `rgw_op.cc
   :3806-3918` and `:4297-4336` at v19.2.6, `:4015-4127` at v20.2.4). The
-  PUT route answers both with 501 NotImplemented. A PUT with a non-empty
+  PUT route answers the copy with 501 NotImplemented. It answers an append
+  where radosgw's `execute` reaches its append branch, once the requester
+  is authorized and the quota checked: 409 InvalidBucketState on a bucket
+  whose versioning was ever enabled, as radosgw refuses one
+  ([rgw_op.cc:4268-4272](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4268-L4272) at v19.2.7,
+  [rgw_op.cc:4481-4485](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4481-L4485) at v20.2.4),
+  object lock or a default encryption notwithstanding, as radosgw's append
+  meets neither before its refusal
+  ([rgw_op.cc:4349](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4349) at v19.2.7,
+  [rgw_op.cc:4565](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4565) at v20.2.4),
+  and 501 NotImplemented on any other bucket, where radosgw appends. Its
+  `position` is read as `get_params` reads it, InvalidArgument when
+  `strict_strtoll` refuses it or it is negative
+  ([rgw_rest_s3.cc:2696-2708](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2696-L2708) at v19.2.7,
+  [rgw_rest_s3.cc:2849-2861](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2849-L2861) at v20.2.4).
+  A PUT with a non-empty
   `uploadId` is UploadPart or UploadPartCopy, which the multipart routes
   serve. A PUT whose `uploadId` is present but empty is neither:
   `RGWHandler_REST_S3::init` parses no copy source when `uploadId` is
@@ -8940,8 +9040,9 @@ does the following.
   lock](ceph-upstream-bugs.md#radosgws-copyobject-stores-an-object-lock-on-a-bucket-without-object-lock)").
   rgw-go refuses the copy as the PutObject is refused, once the requester
   is authorized. On a bucket with object lock both writes answer 501
-  ("Writes to a versioned or object-lock bucket answer 501 until
-  versioning is served").
+  ("PutObject, CopyObject and CompleteMultipartUpload answer 501 on an
+  object-lock bucket, and the deletes and the ACL and tag writes on a
+  versioned one").
 - **No x-amz-expiration on a write.** radosgw sends `x-amz-expiration`
   from the bucket's lifecycle rules on a PutObject's success too
   (`get_s3_expiration_header`, `rgw_rest_s3.cc:2742` at v19.2.6, `:2903`
@@ -9037,7 +9138,7 @@ does the following.
 - **A multipart upload with a retention or a legal hold on a bucket with
   object lock answers 501.** radosgw keeps the object-lock headers of
   CreateMultipartUpload and UploadPart on the upload and the parts' heads.
-  rgw-go serves no object lock until versioning is served, so it refuses a
+  rgw-go serves no object lock yet, so it refuses a
   request on such a bucket naming `x-amz-object-lock-mode` or
   `x-amz-object-lock-legal-hold` with 501 NotImplemented once the
   requester is authorized, where PutObject refuses such a bucket. The
@@ -9574,8 +9675,7 @@ does the following.
   does (`shareTails`, `internal/driver/copy.go`). The two gateways'
   objects read alike; rgw-go's write adds the references and replaces the
   overwritten null version's own tails through the GC, which radosgw's
-  `keep_tail` leaks. The S3 ops refuse a versioned write until versioning
-  is served.
+  `keep_tail` leaks.
 - **A copy carries none of its source's OLH attrs.** radosgw's copy carries
   every attr of its source's head but `olh.idtag`, `olh.info` and
   `olh.ver`, which it drops only for a bucket whose versioning is not
@@ -9863,7 +9963,7 @@ does the following.
   is the replay that applies the log. And a replay that runs after the null
   write's head write but before its link is in the log removes the data in
   rgw-go too, after which that write's link fails, as through radosgw. The
-  S3 ops that reach it still answer 501 on a versioned bucket.
+  S3 deletes that reach it still answer 501 on a versioned bucket.
 - **rgw-go removes the instance a failed versioned write made.** A
   versioned write writes its version's head and completes the version's
   instance entry in the bucket index before it links the version under the
@@ -9986,7 +10086,7 @@ does the following.
   [rgw_rados.cc:9650-9680](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9650-L9680));
   until then each read of the key runs a replay that finds nothing to
   apply, and the attr refuses the clear of the key's OLH, as any writer's
-  pending attr does. The versioned writes are not served yet.
+  pending attr does. The versioned deletes are not served yet.
 - **A versioned delete of versionId=null checks the null version itself.**
   A delete naming a version of a versioned key reads that version's index
   entry, checks If-Match, `x-amz-if-match-size` and
@@ -10026,9 +10126,10 @@ does the following.
   where radosgw inits a pending modification on the key's OLH head and
   cancels it before it answers the unlink's ENOENT, or answers 412 under a
   condition. The
-  S3 delete still answers 501 on a versioned bucket ("Writes to a versioned
-  or object-lock bucket answer 501 until versioning is served"); the
-  object store's delete does this.
+  S3 delete still answers 501 on a versioned bucket ("PutObject,
+  CopyObject and CompleteMultipartUpload answer 501 on an object-lock
+  bucket, and the deletes and the ACL and tag writes on a versioned
+  one"); the object store's delete does this.
 - **A conditional delete marker is checked against the version current when
   it links.** A delete naming no version on a versioned bucket writes a
   delete marker. radosgw checks its If-Match, `x-amz-if-match-size` and
@@ -10479,7 +10580,6 @@ does the following.
   before v19.2.7 and v20.2.1 checked a versioned write's conditions against
   the new
   instance](ceph-upstream-bugs.md#radosgw-before-v1927-and-v2021-checked-a-versioned-writes-conditions-against-the-new-instance)").
-  The S3 ops refuse a versioned write until versioning is served.
 - **A suspended bucket's conditional write is checked against the current
   version.** radosgw checks a write's If-Match and If-None-Match against the
   version current on the key's OLH only when the key has an instance; a
@@ -10509,8 +10609,7 @@ does the following.
   head write to the link (exclusion "A conditional write to a versioned
   bucket commits only if its condition held when it linked"). s3-tests'
   `test_put_object_suspended_if_match` expects the answers rgw-go's
-  PutObject gives. The S3 ops refuse a versioned write until versioning is
-  served.
+  PutObject gives.
 - **A versioned write whose link fails keeps its tails.** radosgw's PutObject
   deletes the tails it wrote whenever its head's `write_meta` fails other
   than by a timeout
@@ -10548,8 +10647,6 @@ does the following.
     it landed, keeping it whatever that link answers, and answers 500
     InternalError for a version it cannot link ("A CompleteMultipartUpload
     records itself on the meta object before its head write").
-
-  The S3 ops refuse a versioned write until versioning is served.
 - **A versioned write is counted in the quota cache before its link.**
   radosgw adds a versioned PutObject's object and bytes to the bucket's
   quota cache only once `set_olh` has succeeded, its `update_stats` coming
@@ -10563,8 +10660,7 @@ does the following.
   voided (exclusion "rgw-go removes the instance a failed versioned write
   made"). radosgw's order would have such a removal take back what was never
   added. A version that stays after its completion or its link failed, the
-  outcome unknown, stays counted, as its index entry may land. The S3 ops
-  refuse a versioned write until versioning is served.
+  outcome unknown, stays counted, as its index entry may land.
 - **zlib's compressor message states the window rgw-go deflates with.**
   radosgw's zlib compressor deflates with `compressor_zlib_winsize` and
   stores that value as each object's `compressor_message`
@@ -11035,8 +11131,7 @@ rgw-go does the following.
   that radosgw does not wait for, though the OSD applies the two operations
   in turn either way.
   The driver's versioned PutObject, CopyObject and CompleteMultipartUpload
-  await it (`linkVersion`, `internal/driver/put_versioned.go`). The S3 ops
-  refuse a versioned write until versioning is served.
+  await it (`linkVersion`, `internal/driver/put_versioned.go`).
 - **An OLH replay awaits the index completion of each version it
   removes.** radosgw's `apply_olh_log` removes each version its log names
   through the unversioned delete, whose `bucket_complete_op` it sends with
