@@ -25,9 +25,6 @@ func PurgeBucket(ctx context.Context, env *Env, rec *BucketRecord) error {
 	if err := refuseForeignPurge(env, rec); err != nil {
 		return err
 	}
-	if err := refuseVersionedPurge(rec); err != nil {
-		return err
-	}
 	if err := PurgeObjects(ctx, env, rec); err != nil {
 		return err
 	}
@@ -39,7 +36,12 @@ func PurgeBucket(ctx context.Context, env *Env, rec *BucketRecord) error {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L379-L410 at v20.2.4):
 // every entry of the plain namespace, versions included, listed unordered a
 // page at a time and deleted, an entry already gone skipped as -ENOENT is.
-// It checks nothing about rec; PurgeBucket's refusals come first.
+// It checks nothing about rec, which PurgeBucket's refusals check first, and
+// reads no object's retention or legal hold, as rgw_remove_object passes the
+// delete no object-lock check
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L148-L161 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L149-L162 at v20.2.4;
+// docs/exclusions.md, "Admin removals ignore object lock").
 //
 // On a bucket whose flags hold BUCKET_VERSIONED each entry is deleted by
 // its exact version, so the pass writes no delete marker: an entry listed
@@ -138,9 +140,6 @@ func RemoveBucketBypassGC(ctx context.Context, env *Env, rec *BucketRecord) erro
 	if err := refuseForeignPurge(env, rec); err != nil {
 		return err
 	}
-	if err := refuseVersionedPurge(rec); err != nil {
-		return err
-	}
 	if err := env.BucketAdmin.PurgeBypassGC(ctx, rec); err != nil {
 		return err
 	}
@@ -161,19 +160,4 @@ func refuseForeignPurge(env *Env, rec *BucketRecord) error {
 		return nil
 	}
 	return fmt.Errorf("%w: bucket %s belongs to zonegroup %q", ErrPermanentRedirect, rec.Info.Bucket.Name, rec.Info.Zonegroup)
-}
-
-// refuseVersionedPurge answers NotImplemented for a bucket whose versioning
-// was ever enabled, before a purge deletes anything, as the admin removal
-// routes do not serve such a bucket (docs/exclusions.md, "A purging bucket
-// removal refuses a bucket whose versioning was ever enabled"). It refuses
-// a bucket with object lock and without
-// versioning too, a state radosgw never writes and purges as an
-// unversioned bucket, which neverVersioned takes for a versioned one, and
-// the bypass-gc purge refuses both as the plain purge does.
-func refuseVersionedPurge(rec *BucketRecord) error {
-	if !neverVersioned(rec) {
-		return fmt.Errorf("%w: purging bucket %s, which is or was versioned or has object lock", ErrNotImplemented, rec.Info.Bucket.Name)
-	}
-	return nil
 }

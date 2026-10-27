@@ -23179,13 +23179,17 @@ Every new entry adds its row to this table, in document order.
   neither listed nor removed. The bucket goes, and their RADOS objects stay
   in the data pool, out of reach of S3.
 - **Releases:** v19.2.7 and v20.2.4.
-- **rgw-go:** does not meet it today: its purges refuse a bucket that is or
-  was versioned (`refuseVersionedPurge`, `internal/op/adminpurge.go`). A
-  marker whose version is gone starts past the rest of its name in rgw-go's
-  listing too, so the tasks that lift that refusal page as `nextInstance`'s
-  godoc states (`internal/driver/list.go`): a caller that deletes what it
-  lists restarts each page from an empty marker, or lists until a pass
-  finds nothing.
+- **rgw-go:** differs: a marker whose version is gone starts past the rest
+  of its name in rgw-go's listing too, so its purges list each next page of
+  a bucket whose flags hold `BUCKET_VERSIONED` from the first version left
+  of the name the page ended on (`ListObjectsParams.RelistMarker`,
+  `internal/op/bucket.go`; `PurgeObjects`, `internal/op/adminpurge.go`;
+  `docs/exclusions.md`, "A purging removal resumes each page of a versioned
+  bucket at its last key's remaining versions"), and leave no version
+  behind, which "removes every version of a key whose versions span pages,
+  resuming at the key's versions left" (`internal/op/adminpurge_test.go`)
+  and "is followed by an ordinary purge that leaves no version behind when
+  its pages end on a key's versions" (`internal/driver/purge_test.go`) pin.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V9's re-review, 2026-10-21, tracing rgw-go's
   purge pagers; verified at v19.2.7 and v20.2.4 by V9's fix round 2.
@@ -27731,16 +27735,15 @@ Every new entry adds its row to this table, in document order.
   `rgw_remove_object`, so on a versioned bucket it writes a delete marker
   where v18.2.8 removed the null version.
 - **Releases:** v19.2.7 and v20.2.4; main was not checked.
-- **rgw-go:** does not meet it: its purges refuse a bucket that is or was
-  versioned (`refuseVersionedPurge`, `internal/op/adminpurge.go`). Below
-  that refusal, their listing loop names an entry listed without an
-  instance `null` on such a bucket, so its delete removes the version
-  (`PurgeObjects`, `internal/op/adminpurge.go`; pinned in
-  `internal/op/adminpurge_test.go`). Its admin object removal follows the
-  floors: the store's delete it makes, of the plain key, writes a delete
-  marker on a versioned bucket (`internal/driver/adminobject_test.go`),
-  though the route still refuses such a bucket (`versioningUnserved`,
-  `internal/op/adminbucket.go`).
+- **rgw-go:** differs: its purges name an entry listed without an instance
+  `null` on a bucket whose flags hold `BUCKET_VERSIONED`, so the delete
+  removes the version and writes no marker (`PurgeObjects`,
+  `internal/op/adminpurge.go`; `docs/exclusions.md`, "A purging removal
+  removes a versioned bucket's null version, where radosgw writes a delete
+  marker"), as `internal/op/adminpurge_test.go` and
+  `internal/op/adminbucket_test.go` pin. Its admin object removal follows
+  the floors: it deletes the plain key, which writes a delete marker on a
+  versioned bucket (`internal/driver/adminobject_test.go`).
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V8b, 2026-10-23, reading how radosgw's listing
   names a null version for its purge; derived from the source, not
