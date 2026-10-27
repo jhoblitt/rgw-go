@@ -2593,6 +2593,22 @@ review and verified against the tree.
     the tier's non-default `retain_head_object`, and never for a
     versioning-enabled bucket's current version; a versioning-suspended
     bucket's current version keeps it, as the registry entry states.
+- **`?layout` answers a layout that fails with its error.** radosgw's
+  `?layout` sends its 200 and its header before `dump_obj_layout` runs,
+  and ignores that call's error, so a layout that fails is answered 200
+  with the empty document `{}`
+  ([rgw_rest_s3.cc:4368-4385](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4368-L4385),
+  [rgw_rest_s3.cc:4879-4896](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4879-L4896);
+  `docs/ceph-upstream-bugs.md`, "[radosgw's ?layout answers 200 with an
+  empty document when its layout
+  fails](ceph-upstream-bugs.md#radosgws-layout-answers-200-with-an-empty-document-when-its-layout-fails)").
+  rgw-go lays the object out before anything is sent (`op.GetObjectLayout`)
+  and answers a failure as the request's error: 500 InternalError for an
+  object without a manifest, 500 UnknownError for a manifest walk that
+  fails, and the store's error for any other. A failure once the header is
+  out, such as the client going away or the request's context ending, is
+  logged and ends the connection where the body stopped, short of its
+  Content-Length (`internal/s3/layout.go`).
 - **A stripe shorter than its manifest says fails the read.** radosgw hands
   on the bytes such a read returned and then waits for an offset no later
   read starts at, so the GET ends without an error, its body short of its
@@ -7694,17 +7710,12 @@ does the following.
   requester who may list the bucket (`rgw_op.cc:453-477` at v20.2.4), and
   to ListParts of a missing upload, whose policies are its meta object's
   while the state loaded is the key's (`:441-448`). v19.2.6 adds no such
-  header (`rgw_rest.cc:1893-1933`). In the object reads rgw-go serves, and
-  in ListParts of a missing upload, it sends the header where Tentacle
-  does, always `false`, also for a key whose current version is a delete
-  marker, where Tentacle sends `true`: the object store reports the marker
-  (`ObjectState.DeleteMarker`), which the S3 handler does not read. The
-  object GETs rgw-go does not serve yet, GetObjectRetention,
-  GetObjectLegalHold and `?layout`, answer 501 NotImplemented without
-  the header for a missing object as for any other, where Tentacle
-  answers 404 with `x-amz-delete-marker: false` to a requester who may
-  list the bucket (`RGWHandler_REST_Obj_S3::op_get`,
-  `rgw_rest_s3.cc:5360-5378` at v20.2.4). A website GET of a missing key
+  header (`rgw_rest.cc:1893-1933`). In the object reads rgw-go serves,
+  `?layout` among them, and in ListParts of a missing upload, it sends the
+  header where Tentacle does, always `false`, also for a key whose current
+  version is a delete marker, where Tentacle sends `true`: the object store
+  reports the marker (`ObjectState.DeleteMarker`), which the S3 handler
+  does not read. A website GET of a missing key
   whose bucket's error document is missing too gets the header twice from
   Tentacle, once from each key's `read_permissions`, the error document's
   in `serve_errordoc`
