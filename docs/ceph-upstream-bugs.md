@@ -26022,8 +26022,11 @@ Every new entry adds its row to this table, in document order.
   has it too. Not
   security-relevant (rgw-bug-reproduction's triage, 2026-10-22): a write
   condition is a compare-and-swap guarantee to its writer, not an access
-  boundary, and every version written is kept. Unreproduced: derived from
-  the source.
+  boundary, and every version written is kept. Reproduced on v19.2.7 and
+  v20.2.4 for a bucket whose versioning is enabled: all eight of eight
+  concurrent `If-None-Match: *` PutObjects of a new key succeeded in the
+  s3-test `test_put_object_versioned_if_none_match_concurrent`
+  ([jhoblitt/ceph#27](https://github.com/jhoblitt/ceph/pull/27)).
 - **Evidence:** paths are under `src/rgw/driver/rados/`.
   - The head write reads the version current on the key's OLH through
     `get_current_version_state`
@@ -26111,12 +26114,14 @@ Every new entry adds its row to this table, in document order.
   `docs/exclusions.md`, "A conditional write to a versioned bucket commits
   only if its condition held when it linked". Pinned in
   `internal/driver/put_versioned_test.go` and
-  `internal/driver/olh_cond_test.go`, against a radosgw-shaped writer too.
+  `internal/driver/olh_cond_test.go`, against a radosgw-shaped writer too,
+  and by the s3-test, whose body rgw-go passes on both releases.
 - **Upstream:** pending; prior art not searched.
 - **Found:** the phase 2 versioning research, defect 4, 2026-10-13;
   recorded by phase 2 task V7a, 2026-10-22, from the source at v19.2.7 and
   v20.2.4, and extended to main and the tentacle branch by V7a's review;
-  rgw-bug-reproduction verified the extension at the source.
+  rgw-bug-reproduction verified the extension at the source. Reproduced by
+  phase 2 task V11, 2026-10-27, through its s3-test on both releases.
 
 ## radosgw checks a suspended bucket's write conditions against the OLH head
 
