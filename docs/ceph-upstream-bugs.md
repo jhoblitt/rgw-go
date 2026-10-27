@@ -26130,8 +26130,12 @@ Every new entry adds its row to this table, in document order.
   conditional CompleteMultipartUpload, to a bucket whose versioning is
   suspended, over a key that was ever versioned, is checked against the
   key's OLH head rather than its current version. Not security-relevant: the writes it lets through replace only
-  the null version, and lose no other. Unreproduced: derived from the
-  source.
+  the null version, and lose no other. Reproduced on v19.2.7 and v20.2.4:
+  on a suspended bucket whose key holds a null version and a current
+  version with an instance, a PutObject with If-Match on the null
+  version's ETag succeeded in the s3-test
+  `test_put_object_suspended_if_match_current_version`
+  ([jhoblitt/ceph#27](https://github.com/jhoblitt/ceph/pull/27)).
 - **Evidence:** paths are under `src/rgw/`.
   - A PutObject to a bucket whose versioning is suspended keeps the key's
     instance empty: only `versioning_enabled()` gives it one
@@ -26184,7 +26188,8 @@ Every new entry adds its row to this table, in document order.
   conditional write to a versioned bucket commits only if its condition held
   when it linked", does not hold there (`docs/exclusions.md`, "A suspended
   bucket's conditional write is checked against the current version").
-  Pinned in `internal/driver/put_versioned_test.go`.
+  Pinned in `internal/driver/put_versioned_test.go`, and by the s3-test,
+  whose body rgw-go passes on both releases.
 - **Upstream:** issues pending; prior art not searched. Fixed by
   [ceph/ceph#71584](https://github.com/ceph/ceph/pull/71584) (main,
   cfe5d0f29a7, merge 6483a25aed8) and
@@ -26193,7 +26198,8 @@ Every new entry adds its row to this table, in document order.
   squid pull request was found there.
 - **Found:** phase 2 task V7a, 2026-10-22, tracing the head write's
   conditions at v19.2.7 and v20.2.4; the fix was then found in the local
-  clone's history. Upstream found it first.
+  clone's history. Upstream found it first. Reproduced by phase 2 task V11,
+  2026-10-27, through its s3-test on both releases.
 
 ## radosgw's versioned PutObject deletes its tails when its link fails
 
