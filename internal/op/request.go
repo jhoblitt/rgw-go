@@ -46,6 +46,12 @@ type Request struct {
 	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5290-L5307 at v19.2.7,
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5820-L5837 at v20.2.4).
 	Website bool
+	// WebsiteErrorDoc marks the read of a website's error document, which
+	// serve_errordoc makes for the request's own error without
+	// verify_cors_match
+	// (https://github.com/ceph/ceph/blob/292995374d9/src/rgw/rgw_rest_s3.cc#L6366-L6438 at 292995374d9),
+	// so Run's CORS origin check passes it.
+	WebsiteErrorDoc bool
 	// Path is the request path decoded once; RawPath is as the client sent it,
 	// which SigV4 canonicalizes.
 	Path    string
@@ -124,6 +130,8 @@ type Request struct {
 	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5559-L5560 at v19.2.7,
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6085-L6086 at v20.2.4).
 	Redirect string
+	// cors is BucketCORS's last decode.
+	cors corsDecode
 
 	// Status and the byte counters are filled by the protocol layer as the
 	// response goes out, for Complete, metrics and the usage log.

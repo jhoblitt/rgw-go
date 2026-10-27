@@ -245,8 +245,9 @@ func redirectStatus(code int) int {
 // serveErrorDoc is serve_errordoc
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5460-L5531 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5986-L6057 at v20.2.4):
-// a GetObject of the error document key, which no retarget precedes, under
-// the original error's status. It reports whether it answered the request;
+// a GetObject of the error document key, which no retarget precedes and no
+// CORS origin check refuses (op.Request.WebsiteErrorDoc), under the original
+// error's status. It reports whether it answered the request;
 // a failure before the response starts leaves the response unwritten, for
 // the HTML page of the original error. A document holding
 // x-amz-website-redirect-location is answered with its redirect, as the
@@ -271,7 +272,7 @@ func redirectStatus(code int) int {
 func (g *websiteGet) serveErrorDoc(ctx context.Context, w http.ResponseWriter, r *op.Request, key string, status int) bool {
 	er := *r
 	er.Object = meta.ObjKey{Name: key}
-	er.ObjState, er.Redirect = nil, ""
+	er.ObjState, er.Redirect, er.WebsiteErrorDoc = nil, "", true
 	o, _ := getObjectInput(&er) //nolint:errcheck // its one error is a partNumber's, which the read clears
 	o.Range, o.IfMatch, o.IfNoneMatch, o.IfModifiedSince, o.IfUnmodifiedSince = "", "", "", "", ""
 	o.PartNumber, o.Torrent = nil, false

@@ -139,11 +139,24 @@ var _ = Describe("CORS headers on S3 responses", func() {
 			"Access-Control-Allow-Methods": {"GET"},
 		}), "an Authorization header keeps the Origin as sent")
 	})
-	It("are not sent for a method no rule allows the Origin", func() {
+	It("are sent with the 403 that refuses a method no rule allows the Origin only from the Access-Control-Request-Method's rule, and the refused PUT writes nothing", func() {
 		rec := serveReq(w.handler(env, w.alice), http.MethodPut, "/plain/new", strings.NewReader("data"),
 			"Origin", "https://other.example", "Authorization", signedAuth)
-		Expect(rec.Code).To(Equal(http.StatusOK), rec.Body.String())
+		Expect(rec.Code).To(Equal(http.StatusForbidden), rec.Body.String())
+		Expect(rec.Body.String()).To(ContainSubstring("<Code>AccessDenied</Code>"))
 		Expect(corsOf(rec.Header())).To(BeEmpty(), "the rule for every origin allows GET alone")
+
+		rec = serveReq(w.handler(env, w.alice), http.MethodPut, "/plain/new", strings.NewReader("data"),
+			"Origin", "https://other.example", "Access-Control-Request-Method", http.MethodGet, "Authorization", signedAuth)
+		Expect(rec.Code).To(Equal(http.StatusForbidden), "the request's own method is refused")
+		Expect(corsOf(rec.Header())).To(Equal(map[string][]string{
+			"Access-Control-Allow-Origin":  {"https://other.example"},
+			"Vary":                         {"Origin"},
+			"Access-Control-Allow-Methods": {"GET"},
+		}), "the headers still come from the Access-Control-Request-Method's rule, as s3-tests' test_cors_origin_response expects")
+
+		rec = as(w.alice, http.MethodGet, "/plain/new", map[string]string{"Authorization": signedAuth})
+		Expect(rec.Code).To(Equal(http.StatusNotFound), rec.Body.String())
 	})
 	It("take the method from Access-Control-Request-Method when a request sends one", func() {
 		rec := as(w.alice, http.MethodGet, "/plain/small", app("Access-Control-Request-Method", http.MethodPut))
@@ -183,12 +196,16 @@ var _ = Describe("CORS headers on S3 responses", func() {
 		Expect(corsOf(as(w.alice, http.MethodGet, "/plain/small", map[string]string{"Authorization": signedAuth}).Header())).To(BeEmpty())
 		Expect(corsOf(as(w.alice, http.MethodGet, "/plain/small", map[string]string{"Origin": ""}).Header())).To(BeEmpty())
 	})
-	It("are not sent for a configuration that does not decode, and leave the op's answer as it is", func(ctx SpecContext) {
+	It("are not sent with the 500 that answers a request with an Origin for a configuration that does not decode", func(ctx SpecContext) {
 		Expect(w.store.PutBucketAttrs(ctx, w.plain, map[string][]byte{op.AttrCORS: {0xff}}, nil)).To(Succeed())
 		rec := as(w.alice, http.MethodGet, "/plain/small", app())
-		Expect(rec.Code).To(Equal(http.StatusOK))
-		Expect(rec.Body.Bytes()).To(Equal(readPayload(1024)))
+		Expect(rec.Code).To(Equal(http.StatusInternalServerError), rec.Body.String())
+		Expect(rec.Body.String()).To(ContainSubstring("<Code>UnknownError</Code>"))
 		Expect(corsOf(rec.Header())).To(BeEmpty())
+
+		rec = as(w.alice, http.MethodGet, "/plain/small", map[string]string{"Authorization": signedAuth})
+		Expect(rec.Code).To(Equal(http.StatusOK), "a request without an Origin reads no configuration")
+		Expect(rec.Body.Bytes()).To(Equal(readPayload(1024)))
 	})
 	It("are sent with PutBucketEncryption's and DeleteBucketEncryption's answers, which radosgw sends without them", func() {
 		h := w.handler(env, w.alice)

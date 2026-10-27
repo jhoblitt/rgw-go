@@ -80,8 +80,10 @@ func SetCommonHeaders(w http.ResponseWriter, r *op.Request) {
 //
 // The configuration is the one r.BucketRec holds as the response is
 // written, so a PutBucketCors is answered by what it stored and a
-// DeleteBucketCors by none. One that does not decode adds nothing, and is
-// left to the op to answer, as radosgw's read error is.
+// DeleteBucketCors by none; op.Request.BucketCORS decodes it once for the
+// request. One that does not decode adds nothing; Run's origin check
+// (verifyCORSMatch) answers a request with a non-empty Origin 500 for it
+// before the op runs, unless a refusal made ahead of the check comes first.
 func corsHeaders(r *op.Request) cors.Headers {
 	if r.BucketRec == nil || r.Method == http.MethodOptions {
 		return cors.Headers{}
@@ -90,12 +92,8 @@ func corsHeaders(r *op.Request) cors.Headers {
 	if !ok {
 		return cors.Headers{}
 	}
-	stored, ok := r.BucketRec.Attrs[op.AttrCORS]
-	if !ok {
-		return cors.Headers{}
-	}
-	c, err := cors.Decode(stored)
-	if err != nil {
+	c, err := r.BucketCORS()
+	if err != nil || c == nil {
 		return cors.Headers{}
 	}
 	method, ok := op.HeaderValue(r.Header, "Access-Control-Request-Method")
