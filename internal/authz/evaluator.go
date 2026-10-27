@@ -173,15 +173,50 @@ func (e *Evaluator) verifyRequestBucket(ctx context.Context, r *op.Request, a po
 // VerifyObject is verify_object_permission(s, op)
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1625-L1637 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1688-L1699 at v20.2.4)
-// against r.ObjState, after the refusals init_permissions and
-// read_permissions make: those on the request's bucket, an object ACL that
-// does not decode, and read_obj_policy's rule for a missing object
+// against r.ObjState, after objectPrelude's refusals.
+func (e *Evaluator) VerifyObject(ctx context.Context, r *op.Request, a policy.Action, perm acl.Permission) error {
+	p, err := e.objectPrelude(ctx, r, a)
+	if err != nil {
+		return err
+	}
+	if err := e.deniedAsGroupMember(ctx, &r.Identity); err != nil {
+		return e.decided(ctx, a, "iam group member", err)
+	}
+	return e.verifyObject(ctx, r, a, perm, p.bucket, p.bucket.block, p.obj, p.acl, r.Object.Name, p.ids, formObject)
+}
+
+// VerifyObjectPrelude is objectPrelude alone: VerifyObject's refusals
+// before the object's permission, which it never evaluates, so it refuses
+// an IAM group member only where missingObject does. The refusal of a
+// request that names no bucket, which VerifyObject leaves unmarked, is
+// marked too: no object op meets it once its Init has loaded the bucket.
+func (e *Evaluator) VerifyObjectPrelude(ctx context.Context, r *op.Request) error {
+	_, err := e.objectPrelude(ctx, r, policy.ActionNone)
+	if err != nil && !op.IsBeforeVerify(err) {
+		return op.BeforeVerify(err)
+	}
+	return err
+}
+
+// objectInputs are what objectPrelude read for the object's permission.
+type objectInputs struct {
+	ids    []*policy.Policy
+	bucket bucketInputs
+	obj    *op.ObjectState
+	acl    acl.Policy
+}
+
+// objectPrelude makes the refusals init_permissions and read_permissions
+// make for an object op, each marked: requestPrelude's, which leaves a
+// request that names no bucket unmarked; read_obj_policy's rule for a
+// missing object; and an object ACL that does not decode
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L385-L447 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L415-L477 at v20.2.4).
-func (e *Evaluator) VerifyObject(ctx context.Context, r *op.Request, a policy.Action, perm acl.Permission) error {
+// It logs each decision under a.
+func (e *Evaluator) objectPrelude(ctx context.Context, r *op.Request, a policy.Action) (objectInputs, error) {
 	ids, b, rule, err := e.requestPrelude(ctx, r)
 	if err != nil {
-		return e.decided(ctx, a, rule, err)
+		return objectInputs{}, e.decided(ctx, a, rule, err)
 	}
 	obj := r.ObjState
 	if obj == nil || !obj.Exists {
@@ -189,16 +224,13 @@ func (e *Evaluator) VerifyObject(ctx context.Context, r *op.Request, a policy.Ac
 		if obj != nil {
 			key = obj.Key.Name
 		}
-		return e.missingObject(ctx, r, a, b, b.block, key, ids, op.BeforeVerify)
+		return objectInputs{}, e.missingObject(ctx, r, a, b, b.block, key, ids, op.BeforeVerify)
 	}
 	oacl, err := op.ObjectACLFor(ctx, obj, b.rec)
 	if err != nil {
-		return e.decided(ctx, a, "object acl does not decode", op.BeforeVerify(err))
+		return objectInputs{}, e.decided(ctx, a, "object acl does not decode", op.BeforeVerify(err))
 	}
-	if err := e.deniedAsGroupMember(ctx, &r.Identity); err != nil {
-		return e.decided(ctx, a, "iam group member", err)
-	}
-	return e.verifyObject(ctx, r, a, perm, b, b.block, obj, oacl, r.Object.Name, ids, formObject)
+	return objectInputs{ids: ids, bucket: b, obj: obj, acl: oacl}, nil
 }
 
 // VerifyBucketIn is VerifyBucket against an explicit bucket and the key its

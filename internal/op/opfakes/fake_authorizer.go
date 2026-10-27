@@ -86,6 +86,18 @@ type FakeAuthorizer struct {
 	verifyObjectInReturnsOnCall map[int]struct {
 		result1 error
 	}
+	VerifyObjectPreludeStub        func(context.Context, *op.Request) error
+	verifyObjectPreludeMutex       sync.RWMutex
+	verifyObjectPreludeArgsForCall []struct {
+		arg1 context.Context
+		arg2 *op.Request
+	}
+	verifyObjectPreludeReturns struct {
+		result1 error
+	}
+	verifyObjectPreludeReturnsOnCall map[int]struct {
+		result1 error
+	}
 	VerifyUserStub        func(context.Context, *op.Request, policy.Action) error
 	verifyUserMutex       sync.RWMutex
 	verifyUserArgsForCall []struct {
@@ -423,6 +435,68 @@ func (fake *FakeAuthorizer) VerifyObjectInReturnsOnCall(i int, result1 error) {
 		})
 	}
 	fake.verifyObjectInReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeAuthorizer) VerifyObjectPrelude(arg1 context.Context, arg2 *op.Request) error {
+	fake.verifyObjectPreludeMutex.Lock()
+	ret, specificReturn := fake.verifyObjectPreludeReturnsOnCall[len(fake.verifyObjectPreludeArgsForCall)]
+	fake.verifyObjectPreludeArgsForCall = append(fake.verifyObjectPreludeArgsForCall, struct {
+		arg1 context.Context
+		arg2 *op.Request
+	}{arg1, arg2})
+	stub := fake.VerifyObjectPreludeStub
+	fakeReturns := fake.verifyObjectPreludeReturns
+	fake.recordInvocation("VerifyObjectPrelude", []interface{}{arg1, arg2})
+	fake.verifyObjectPreludeMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *FakeAuthorizer) VerifyObjectPreludeCallCount() int {
+	fake.verifyObjectPreludeMutex.RLock()
+	defer fake.verifyObjectPreludeMutex.RUnlock()
+	return len(fake.verifyObjectPreludeArgsForCall)
+}
+
+func (fake *FakeAuthorizer) VerifyObjectPreludeCalls(stub func(context.Context, *op.Request) error) {
+	fake.verifyObjectPreludeMutex.Lock()
+	defer fake.verifyObjectPreludeMutex.Unlock()
+	fake.VerifyObjectPreludeStub = stub
+}
+
+func (fake *FakeAuthorizer) VerifyObjectPreludeArgsForCall(i int) (context.Context, *op.Request) {
+	fake.verifyObjectPreludeMutex.RLock()
+	defer fake.verifyObjectPreludeMutex.RUnlock()
+	argsForCall := fake.verifyObjectPreludeArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *FakeAuthorizer) VerifyObjectPreludeReturns(result1 error) {
+	fake.verifyObjectPreludeMutex.Lock()
+	defer fake.verifyObjectPreludeMutex.Unlock()
+	fake.VerifyObjectPreludeStub = nil
+	fake.verifyObjectPreludeReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeAuthorizer) VerifyObjectPreludeReturnsOnCall(i int, result1 error) {
+	fake.verifyObjectPreludeMutex.Lock()
+	defer fake.verifyObjectPreludeMutex.Unlock()
+	fake.VerifyObjectPreludeStub = nil
+	if fake.verifyObjectPreludeReturnsOnCall == nil {
+		fake.verifyObjectPreludeReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.verifyObjectPreludeReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
 }
