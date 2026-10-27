@@ -28411,11 +28411,27 @@ Every new entry adds its row to this table, in document order.
   or tooling user may hold; Rook's own admin ops user is granted it, as the
   sibling entry shows. A Rook-managed single-site store has no sync zone.
 - **Releases:** v19.2.7 and v20.2.4; main not checked.
-- **rgw-go:** reproduces it: `GET /admin/config?type=zone` writes the stored
-  `tier_config` as radosgw does (`getZoneConfig`, `internal/admin/info.go`;
-  `ZoneParams.Dump`, `internal/meta/dump_zone.go`). rgw-go runs no sync
-  module (`docs/exclusions.md`, "Multisite"), so it meets a sync zone's
-  tier config only when it serves that zone.
+- **rgw-go:** masks them (exclusion: "The zone config getter masks a sync
+  zone's endpoint credentials", `docs/exclusions.md`), since compatibility
+  does not mean reproducing radosgw's defects (spec §8).
+  `GET /admin/config?type=zone` dumps the zone through `meta.MaskZoneSecrets`
+  (`getZoneConfig`, `internal/admin/info.go`; `internal/meta/dump_zone.go`),
+  which writes every member of the tier config named `secret` or `password`,
+  at any depth and in arrays, as `******` when it renders anything but the
+  empty string, the form the cloud module's own `dump_conf` uses, writes the
+  password in the userinfo of every member named `endpoint` as `******`,
+  every other byte of the URL kept, when the value is exactly a scheme,
+  `://` and an authority holding every `@` of the value, and masks any other
+  endpoint holding an `@` whole, failing closed; it keeps `access_key` and
+  `username`.
+  A system user gets the tier config as stored. The zone the gateway holds
+  is unchanged. The system key is still written, reproduced for fidelity as
+  its own entry rules. The specs "masks a sync zone's tier config
+  secrets for a zone=read caller, keeping the access keys and the system
+  key", "writes the tier config in the clear for a system user alone" and
+  "masks only the document, so the zone the gateway holds keeps its secrets"
+  (`internal/admin/info_test.go`) and those of `MaskZoneSecrets`
+  (`internal/meta/dump_zone_test.go`) pin it.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task WP-20b, 2026-10-27, auditing the admin answers
   that render zone configuration for tier secrets. Derived from the source,

@@ -2684,6 +2684,67 @@ review and verified against the tree.
     compares, since `hack/rooket/populate.sh` gives the zonegroup a cloud-s3
     tier with a secret and the gate's admin is not a system user. No s3-tests
     test reads the admin API.
+- **The zone config getter masks a sync zone's endpoint credentials.**
+  radosgw's `GET /admin/config?type=zone` dumps the zone's `tier_config` as
+  stored ([rgw_zone.cc:332](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_zone.cc#L332),
+  [rgw_zone.cc:337](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L337)),
+  so the S3 secrets of a cloud sync zone's endpoints and an elasticsearch
+  zone's password reach any holder of `zone=read`
+  (`docs/ceph-upstream-bugs.md`, "[radosgw hands a sync zone's endpoint
+  credentials to any holder of
+  zone=read](ceph-upstream-bugs.md#radosgw-hands-a-sync-zones-endpoint-credentials-to-any-holder-of-zoneread)").
+  rgw-go writes every member of the tier config named exactly `secret` or
+  `password`, at any depth and in arrays, as `******` when it renders
+  anything but the empty string, and the password in the userinfo of every
+  member named exactly `endpoint` as `******`, in JSON and in XML, for every
+  caller but a system user. It keeps `access_key`, `username` and the rest of
+  the document (`getZoneConfig`, `internal/admin/info.go`, through
+  `meta.MaskZoneSecrets`). The cloud module's own `dump_conf` writes its
+  secret in that form
+  ([rgw_sync_module_aws.cc:268](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module_aws.cc#L268),
+  [rgw_sync_module_aws.cc:268](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module_aws.cc#L268)).
+  Compatibility does not mean reproducing radosgw's defects (spec §8): the
+  zone the gateway holds is unchanged, and only the rendered document
+  differs.
+  - The names masked are those under which the cloud and elasticsearch
+    modules read their credentials (`docs/ceph-upstream-bugs.md`, the entry
+    above).
+  - An endpoint URL's userinfo is a credential too: the elasticsearch module
+    hands its `endpoint` to an `RGWRESTConn` as it is
+    ([rgw_sync_module_es.cc:179-181](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module_es.cc#L179-L181),
+    [rgw_sync_module_es.cc:180-182](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module_es.cc#L180-L182)),
+    `do_send_prepare` builds a path-style request's URL from it and the
+    resource, rewriting it for virtual-host style alone
+    ([rgw_rest_client.cc:841-870](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_client.cc#L841-L870),
+    [rgw_rest_client.cc:848-877](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_client.cc#L848-L877)),
+    and curl takes that URL as `CURLOPT_URL`
+    ([rgw_http_client.cc:588](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_http_client.cc#L588),
+    [rgw_http_client.cc:588](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_http_client.cc#L588)),
+    where libcurl takes `user:password` from the userinfo, its documented
+    behaviour. rgw-go masks an endpoint by this rule, which fails closed,
+    since curl reads URLs Go's `url.Parse` refuses and skips a run of
+    slashes after the scheme:
+    1. A value with no `@` is written as stored.
+    2. A value that is exactly an RFC 3986 scheme, `://` and an authority
+       running to the first `/`, `?` or `#`, with every `@` of the value
+       inside that authority, has everything after its userinfo's first `:`
+       written `******`, the userinfo ending at the authority's last `@`,
+       and keeps every other byte: scheme, user, host, port, path, query
+       and fragment. A userinfo without a password, or with an empty one, is
+       written as stored.
+    3. Any other value with an `@` is written `******` whole: more slashes
+       after the scheme, an `@` past the authority, a `/` ahead of the `@`,
+       no scheme, or a value that does not split so. An endpoint whose path
+       or query holds an `@` is so masked whole, which changes only what a
+       caller that is not a system user reads.
+  - The system key is still written in the clear: it is reproduced for
+    fidelity, as its own registry entry rules ("[radosgw hands the zone's
+    system key to any holder of
+    zone=read](ceph-upstream-bugs.md#radosgw-hands-the-zones-system-key-to-any-holder-of-zoneread)").
+  - A system user gets the tier config as stored, as it does the period.
+  - The admin gate's `zone config` case compares unchanged: the zone
+    `hack/rooket` creates has an empty tier config. No s3-tests test reads
+    the admin API.
 - **A stripe shorter than its manifest says fails the read.** radosgw hands
   on the bytes such a read returned and then waits for an offset no later
   read starts at, so the GET ends without an error, its body short of its
