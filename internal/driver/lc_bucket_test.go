@@ -1242,6 +1242,7 @@ var _ = Describe("the lifecycle bucket pass", func() {
 				return send()
 			}))
 			put := make(chan struct{})
+			putTime := clk.Now()
 			go func() {
 				defer GinkgoRecover()
 				defer close(put)
@@ -1253,6 +1254,12 @@ var _ = Describe("the lifecycle bucket pass", func() {
 			release()
 			Eventually(put).WithTimeout(5 * time.Second).Should(BeClosed())
 			ac.set(nil)
+			// A radosgw gateway's replay of the marker sets back the mtime its
+			// read found, the PUT's, where rgw-go's keeps the time its removal
+			// of the null data stamped (keepHeadMtime).
+			head := c.Object(testDataPool, "", rec.Info.Bucket.Marker+"_k")
+			Expect(head.Mtime).To(Equal(clk.Now()), "the removal's time")
+			head.Mtime = putTime
 			listed := versionOf(ctx, rec, "k", "DM")
 			st, err := s.StatObject(ctx, rec, meta.ObjKey{Name: "k", Instance: m.VersionID})
 			Expect(err).NotTo(HaveOccurred())

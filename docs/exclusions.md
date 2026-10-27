@@ -11046,6 +11046,31 @@ does the following.
   [rgw_rados.cc:9169-9171](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9169-L9171))
   and leaves the attr for a later read to expire, moving the mtime then. A
   null version's mtime that a radosgw gateway moved stays where it moved.
+- **The OLH init, replay and repair keep the head's mtime as it is when they
+  land.** radosgw's `olh_init_modification_impl`, `apply_olh_log` and
+  `repair_olh` change only the attrs of an existing OLH head and send the
+  mtime they read from it
+  ([rgw_rados.cc:7810-7812](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7810-L7812),
+  [rgw_rados.cc:8442-8443](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8442-L8443),
+  [rgw_rados.cc:8296-8298](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8296-L8298);
+  [rgw_rados.cc:8473-8475](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8473-L8475),
+  [rgw_rados.cc:9188-9189](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9188-L9189),
+  [rgw_rados.cc:9042-9044](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9042-L9044)),
+  under guards a null write passes, so a null write landing between the
+  read and the write has its Last-Modified set back to the one read
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's OLH init, replay and repair
+  set back the mtime of a null write landing after their
+  read](ceph-upstream-bugs.md#radosgws-olh-init-replay-and-repair-set-back-the-mtime-of-a-null-write-landing-after-their-read)").
+  rgw-go's three writes send the zero mtime, as its removals of pending
+  attrs do (the exclusion above), so the head keeps the mtime it holds when
+  the write lands, the null write's own included (`keepHeadMtime`,
+  `internal/driver/olh_head.go`). With nothing landing in between, the
+  mtime kept is the one radosgw sends, but after a replay whose removal
+  takes the null version's data out of the head: the head keeps the time
+  of that removal, where radosgw's apply sets back the mtime of the version
+  it removed, which the head no longer holds. Only a listing's check of an
+  entry still pending against the head reads the mtime there. The init of a
+  missing head creates it with no mtime, as radosgw's does.
 
 ### Bucket index differences
 
