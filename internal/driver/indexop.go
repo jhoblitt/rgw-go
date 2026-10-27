@@ -87,6 +87,9 @@ type indexOp struct {
 	// the multipart meta object and the part heads are indexed on their
 	// upload key's shard.
 	hashName string
+	// unraced marks an entry no OLH call reads or writes, whose completions
+	// join no wait set (completionManager.awaitSent).
+	unraced bool
 	// removeObjs are the entries the completion or cancel closing this op
 	// retires in the same class call, rgw_cls_obj_complete_op::remove_objs.
 	removeObjs []rgw.ObjKey
@@ -127,13 +130,21 @@ func (s *Store) newIndexOp(rec *op.BucketRecord, key meta.ObjKey, tag string) *i
 // current instance, kept until a reshard drops it.
 func (x *indexOp) currentShard(ctx context.Context) (indexShard, error) {
 	if x.shard == nil {
-		sh, err := x.s.indexShardFor(ctx, &x.rec.Info, meta.ObjKey{Name: cmp.Or(x.hashName, x.obj.Key.Name)})
+		sh, err := x.s.indexShardFor(ctx, &x.rec.Info, meta.ObjKey{Name: x.shardName()})
 		if err != nil {
 			return indexShard{}, err
 		}
 		x.shard = &sh
 	}
 	return *x.shard, nil
+}
+
+// shardName is the name the op's shard is found from.
+func (x *indexOp) shardName() string { return cmp.Or(x.hashName, x.obj.Key.Name) }
+
+// waitKey is the wait set of the op's entry (completionManager.awaitSent).
+func (x *indexOp) waitKey() waitKey {
+	return waitKey{bucket: x.obj.Bucket.Key(), name: x.shardName()}
 }
 
 // clsKey is the object's index key, rgw_obj_key::get_index_key.
@@ -193,9 +204,14 @@ func (x *indexOp) guardedOp(call func(w *radosclient.WriteOp)) *radosclient.Writ
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8575-L8629).
 // That guard finds the shard from the bucket instance on every try; this one
 // keeps the shard until a busy answer's wait or a missing shard reads the
-// instance again.
+// instance again. Each send follows the completions submitted for its name
+// before it, and the retries of those a reshard refused
+// (completionManager.awaitSent).
 func (x *indexOp) guardedWrite(ctx context.Context, call func(w *radosclient.WriteOp)) error {
 	return x.guardReshard(ctx, func(sh indexShard) error {
+		if err := x.s.w.completions.awaitSent(ctx, x.waitKey()); err != nil {
+			return err
+		}
 		_, err := sh.pool.Write(ctx, sh.oid, x.guardedOp(call), radosclient.OpFlagNone)
 		return err
 	})
@@ -259,13 +275,17 @@ func (x *indexOp) completeDelSync(ctx context.Context, ver rgw.EntryVer, removed
 // v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10239-L10244),
 // and neither reads again (docs/exclusions.md, "An index read of a versioned
-// key that finds its shard gone reads the shard the bucket now names").
+// key that finds its shard gone reads the shard the bucket now names"). Each
+// read follows the completions submitted before it as a guardedWrite does.
 func (x *indexOp) readShard(ctx context.Context, read func(sh indexShard) error) error {
 	var err error
 	for i := range reshardRetries {
 		sh, serr := x.currentShard(ctx)
 		if serr != nil {
 			return serr
+		}
+		if werr := x.s.w.completions.awaitSent(ctx, x.waitKey()); werr != nil {
+			return werr
 		}
 		err = read(sh)
 		if !errors.Is(err, radosclient.ErrNotFound) || i == reshardRetries-1 {
