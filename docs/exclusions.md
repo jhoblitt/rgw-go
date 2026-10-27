@@ -2338,6 +2338,15 @@ review and verified against the tree.
   of the bucket with -EIO before either op runs
   ([svc_bucket_sobj.cc:363-369](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_bucket_sobj.cc#L363-L369),
   [svc_bucket_sobj.cc:312-318](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bucket_sobj.cc#L312-L318)).
+  A create write on such a bucket, PutObject, CopyObject or
+  CompleteMultipartUpload, answers 500 UnknownError before its head write
+  once those writes are served, as it needs the configuration's default
+  retention: it deletes the tails it wrote, or drops the tail references a
+  copy took, and a completion leaves its upload in place. Until then the
+  op layer answers all three on a bucket with object lock 501 first
+  ("Writes to a versioned or object-lock bucket answer 501 until versioning
+  is served"). Reads, CreateMultipartUpload and UploadPart, which are not
+  create writes, still succeed.
   The phase that serves bucket sync policy models it. The admin API's `GET` or `PUT
   /admin/metadata/bucket.instance` of a bucket holding a sync policy with
   groups answers 501 NotImplemented, where radosgw renders the record, and
@@ -8988,6 +8997,20 @@ does the following.
     after the head write. A refused completion keeps them, and a crash or a
     timeout between the head write and the meta object's removal leaves the
     upload's objects and entries for a retry to retire.
+  - rgw-go reads the upload info in the one op that reads the meta
+    object's attrs, and refuses a completion whose info it cannot read or
+    decode before it writes anything: a failed read with the read's error,
+    an empty head with 404 NoSuchUpload, and an info that does not decode
+    with 500 UnknownError, leaving the upload in place. radosgw's
+    `complete` ignores the result of its read of the info
+    ([rgw_sal_rados.cc:3599-3610](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3599-L3610),
+    [rgw_sal_rados.cc:4443-4454](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4443-L4454))
+    and writes the object without the retention and legal hold the upload
+    holds, taking the bucket's default retention or none
+    (`docs/ceph-upstream-bugs.md`, "[radosgw's CompleteMultipartUpload
+    ignores a failed read of its upload info and drops the upload's
+    retention and legal
+    hold](ceph-upstream-bugs.md#radosgws-completemultipartupload-ignores-a-failed-read-of-its-upload-info-and-drops-the-uploads-retention-and-legal-hold)").
 - **CompleteMultipartUpload finishes an earlier completion of its upload
   instead of writing it again.** When the key's head names an object of the
   upload being completed, an earlier completion wrote it and its meta object

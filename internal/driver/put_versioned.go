@@ -24,27 +24,6 @@ import (
 // write awaits its index completion" and "A conditional write to a versioned
 // bucket commits only if its condition held when it linked").
 
-// headAttrsSeen, which only the specs set, sees each finalizeHeadAttrs call.
-var headAttrsSeen func(s *Store, rec *op.BucketRecord, mtime time.Time, create bool)
-
-// finalizeHeadAttrs is where a head write's attrs take what its bucket gives
-// each object it creates, once per head write: rec is the bucket, mtime the
-// time the write stamps and create whether it is PUT_OBJ_CREATE, which is
-// how _do_write_meta gives a write to an object-lock bucket with a default
-// rule its retention
-// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3211-L3221 at v19.2.7,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3308-L3318 at v20.2.4).
-// It returns attrs as they are: PutObject, CopyObject and
-// CompleteMultipartUpload, the S3 writes that are PUT_OBJ_CREATE, refuse an
-// object-lock bucket, so no write that reaches it has a default retention
-// to take.
-func (s *Store) finalizeHeadAttrs(rec *op.BucketRecord, mtime time.Time, create bool, attrs map[string][]byte) map[string][]byte {
-	if headAttrsSeen != nil {
-		headAttrsSeen(s, rec, mtime, create)
-	}
-	return attrs
-}
-
 // isOLHHead reports whether st is an OLH head, one carrying olh.ver, as
 // get_obj_state_impl sets is_olh
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6226-L6230 at v19.2.7,
