@@ -68,6 +68,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw abandons a control watch whose control object is deleted](#radosgw-abandons-a-control-watch-whose-control-object-is-deleted) | [#59217](https://tracker.ceph.com/issues/59217) | none |  |
 | [radosgw keeps only the low 32 bits of rgw_num_control_oids](#radosgw-keeps-only-the-low-32-bits-of-rgw_num_control_oids) | none | none |  |
 | [radosgw keeps only the low 32 bits of rgw_website_routing_rules_max_num](#radosgw-keeps-only-the-low-32-bits-of-rgw_website_routing_rules_max_num) | none | none |  |
+| [radosgw keeps only the low 32 bits of rgw_cors_rules_max_num](#radosgw-keeps-only-the-low-32-bits-of-rgw_cors_rules_max_num) | pending | pending |  |
 | [radosgw adds STANDARD to an empty placement target on decode](#radosgw-adds-standard-to-an-empty-placement-target-on-decode) | none | none |  |
 | [radosgw lets a matching referer grant replace the requester's own ACL grants](#radosgw-lets-a-matching-referer-grant-replace-the-requesters-own-acl-grants) | [#18841](https://tracker.ceph.com/issues/18841) | [ceph/ceph#14344](https://github.com/ceph/ceph/pull/14344) |  |
 | [radosgw ends a Referer's userinfo at an @ in its path](#radosgw-ends-a-referers-userinfo-at-an--in-its-path) | none | none | ✓ |
@@ -341,6 +342,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's POST policy never expires when its expiration is before 1970](#radosgws-post-policy-never-expires-when-its-expiration-is-before-1970) | pending | pending | ✓ |
 | [Tentacle's radosgw aborts on a POST upload that names a checksum algorithm but sends no checksum](#tentacles-radosgw-aborts-on-a-post-upload-that-names-a-checksum-algorithm-but-sends-no-checksum) | pending | pending | ✓ |
 | [radosgw's DeleteBucketCors refuses, and keeps, a CORS configuration that does not decode](#radosgws-deletebucketcors-refuses-and-keeps-a-cors-configuration-that-does-not-decode) | none | none | ✓ |
+| [radosgw's GetBucketCors sends its document without the XML declaration](#radosgws-getbucketcors-sends-its-document-without-the-xml-declaration) | pending | pending | ✓ |
 | [cls_rgw's bucket_list ignores its start key when it cannot read that key's instance entry](#cls_rgws-bucket_list-ignores-its-start-key-when-it-cannot-read-that-keys-instance-entry) | pending | pending | ✓ |
 | [Squid's radosgw serves a request with no Host as S3 when s3website outranks s3](#squids-radosgw-serves-a-request-with-no-host-as-s3-when-s3website-outranks-s3) | [#66748](https://tracker.ceph.com/issues/66748), [#66820](https://tracker.ceph.com/issues/66820) | [ceph/ceph#58339](https://github.com/ceph/ceph/pull/58339) |  |
 | [radosgw keeps the hostnames a realm reload drops until it restarts](#radosgw-keeps-the-hostnames-a-realm-reload-drops-until-it-restarts) | pending | pending | ✓ |
@@ -3068,6 +3070,49 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** not filed; a quirk.
 - **Found:** phase 2 unit B, Task BC-12, 2026-10-19, and its task review,
   2026-10-20; derived from the source, not reproduced.
+
+## radosgw keeps only the low 32 bits of rgw_cors_rules_max_num
+
+- **Kind:** quirk, of the S3-correctness class, not security-relevant. The
+  same narrowing as "[radosgw keeps only the low 32 bits of
+  rgw_website_routing_rules_max_num](#radosgw-keeps-only-the-low-32-bits-of-rgw_website_routing_rules_max_num)",
+  at a sink of its own: each get_params reads its own option into its own
+  `int`. Unreproduced: derived from the source.
+- **Evidence:** the same at v19.2.7 and v20.2.4; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - `rgw_cors_rules_max_num` is a `type: int` option with no `min` or
+    `max`, `with_legacy: true` and a default of 100
+    ([rgw.yaml.in:26-33](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L26-L33),
+    [rgw.yaml.in:26-33](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L26-L33)),
+    so its legacy field is an `int64_t` (`OPTION_OPT_INT`,
+    [config_values.h:41](https://github.com/ceph/ceph/blob/v19.2.7/src/common/config_values.h#L41),
+    [config_values.h:41](https://github.com/ceph/ceph/blob/v20.2.4/src/common/config_values.h#L41)).
+  - `RGWPutCORS_ObjStore_S3::get_params` assigns it to `int max_num`, and
+    takes a negative one as `CORS_RULES_MAX_NUM`, 100
+    ([rgw_rest_s3.cc:3801-3805](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3801-L3805),
+    [rgw_rest_s3.cc:4252-4256](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4252-L4256)).
+    Ceph builds as C++20
+    ([CMakeLists.txt:216](https://github.com/ceph/ceph/blob/v19.2.7/src/CMakeLists.txt#L216),
+    [CMakeLists.txt:243](https://github.com/ceph/ceph/blob/v20.2.4/src/CMakeLists.txt#L243)),
+    which defines the narrowing as modular, so only the low 32 bits count,
+    read as a signed int.
+  - The narrowed limit then refuses a PutBucketCors as any limit does, 400
+    InvalidRequest with its own value in the message
+    ([rgw_rest_s3.cc:3806-3815](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3806-L3815),
+    [rgw_rest_s3.cc:4257-4266](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4257-L4266)):
+    2^32+2 admits two rules, 2^32 none, and 2^31 becomes -2^31, which reads
+    as 100.
+- **Impact:** a configuration is held to a limit other than the one the
+  operator set, which the 400 InvalidRequest's message then names. It is
+  reachable only by misconfiguration.
+- **Releases:** v19.2.7 and v20.2.4, the tags checked.
+- **rgw-go:** matches it: `maxCORSRules` keeps the low 32 bits the same way
+  (`internal/s3/cors.go`), so both gateways hold a configuration to the
+  same limit for any setting.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 unit B, Task BC-6, 2026-10-27, reading
+  `RGWPutCORS_ObjStore_S3::get_params`; derived from the source, not
+  reproduced.
 
 ## radosgw adds STANDARD to an empty placement target on decode
 
@@ -9463,19 +9508,20 @@ Every new entry adds its row to this table, in document order.
   - It keeps the identity so granted to the preflight: `op.Run`, the S3
     handler and the admin handler refuse it everywhere else with 500
     InternalError (`op.RefuseUnverified`, `internal/op/identity.go:71-76`;
-    `internal/op/op.go:70`, `internal/s3/handler.go:397`,
+    `internal/op/op.go:70`, `internal/s3/handler.go:405`,
     `internal/admin/handler.go:277`), so a stray dispatch row fails closed.
   - Unlike radosgw, it answers every preflight whose key resolves alike, so
     the preflight tells its sender no more than a forged request of another
     method does: it runs a suspended user's preflight where radosgw answers
     403 UserSuspended, takes no `rgwx-uid` on one, and reads
-    `rgwx-bucket-instance` on no request. Its preflight op, which the S3
-    handler does not route yet, is written so that once it does the answer
-    depends on no key: it asks for no op mask, loads the bucket with no
-    system exemption, makes of the bucket load's refusals only those radosgw
-    gives every key alike (an ACL that does not decode is 500 for all),
-    loads no owner for a quota, and its answer is to carry no
-    x-amz-request-charged (`op.OptionsCORS`, `internal/op/cors.go`;
+    `rgwx-bucket-instance` on no request. The S3 handler routes the
+    preflight to its op, whose answer depends on no key: it asks for no op
+    mask, loads the bucket with no system exemption, makes of the bucket
+    load's refusals only those radosgw gives every key alike (an ACL that
+    does not decode is 500 for all), and loads no owner for a quota; the
+    route reads nothing of the identity, and its answer carries no
+    x-amz-request-charged, its 301 included (`op.OptionsCORS`,
+    `internal/op/cors.go`; `optionsCORS`, `internal/s3/cors.go`;
     `docs/exclusions.md`, "A preflight's answer says nothing of its key's
     user").
   - Unlike radosgw, it accounts a preflight's usage as an anonymous
@@ -9485,12 +9531,9 @@ Every new entry adds its row to this table, in document order.
     request's").
   - Only the preflight runs on such a request: the S3 handler dispatches an
     OPTIONS request on a bucket or an object to it and refuses any other
-    before authentication (`internal/s3/dispatch.go:32-38`, `:205`,
-    `:253`), and the admin API refuses every OPTIONS request before
+    before authentication (`internal/s3/dispatch.go:37-43`, `:252`,
+    `:305`), and the admin API refuses every OPTIONS request before
     authentication (`internal/admin/dispatch.go:142-146`).
-    The preflight is answered 501 NotImplemented until CORS's ops land
-    (`docs/exclusions.md`, "A CORS preflight is answered 501 until CORS
-    lands").
   - rgw-go has no rate limiter yet. Phase 3's preflight must neither charge
     the key's user nor apply that user's limit or exemption: it is limited
     as an anonymous request, as such a request proves only that its sender
@@ -17511,9 +17554,10 @@ Every new entry adds its row to this table, in document order.
   response once the request's bucket record is loaded, and DeleteObjects'
   status line carries them too (`internal/s3/deleteobjects.go`;
   `docs/exclusions.md`, "Every S3 response carries CORS headers once its
-  bucket is loaded"). It serves no GetBucketCors, PutBucketCors,
-  DeleteBucketCors, notification, request-payment, retention, legal-hold or
-  metadata-search route yet, and answers them 501 before any bucket loads.
+  bucket is loaded"), GetBucketCors, PutBucketCors and DeleteBucketCors
+  included (`internal/s3/cors.go`). It serves no notification,
+  request-payment, retention, legal-hold or metadata-search route yet, and
+  answers them 501 before any bucket loads.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, Task BC-7, 2026-10-22, scanning every
   `end_header` call at both tags for one without its op. Derived from the
@@ -17539,18 +17583,30 @@ Every new entry adds its row to this table, in document order.
     [rgw_op.cc:1498-1504](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1498-L1504),
     [rgw_op.cc:1735-1741](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1735-L1741)).
   - `send_response` has decided the status with `dump_errno` before it
-    calls `end_header`, and the ones that test `op_ret` afterwards send no
-    document: ListObjects returns after `dump_start`
-    ([rgw_rest_s3.cc:1905-1918](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1905-L1918),
-    [rgw_rest_s3.cc:2008-2021](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2008-L2021)),
+    calls `end_header`, so `end_header` skips its error branch, the one with
+    a `dump_start` of its own
+    ([rgw_rest.cc:620-624](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L620-L624),
+    [rgw_rest.cc:625-629](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L625-L629)),
+    and flushes the formatter, still empty, as it ends
+    ([rgw_rest.cc:652-654](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L652-L654),
+    [rgw_rest.cc:657-659](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L657-L659)).
+    The ones that test `op_ret` afterwards send no document: ListObjects
+    returns right after its `dump_start`
+    ([rgw_rest_s3.cc:1915-1918](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1915-L1918),
+    [rgw_rest_s3.cc:2018-2021](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2018-L2021)),
     as ListObjectsV2 does
-    ([rgw_rest_s3.cc:2061-2074](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2061-L2074),
-    [rgw_rest_s3.cc:2164-2177](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2164-L2177)),
-    and GetBucketEncryption skips its configuration
-    ([rgw_rest_s3.cc:3886-3904](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3886-L3904),
-    [rgw_rest_s3.cc:4337-4355](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4337-L4355)).
-    Each answers 200 with the XML declaration alone. Other `send_response`s
-    that test `op_ret` after `end_header` are not traced here.
+    ([rgw_rest_s3.cc:2071-2074](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2071-L2074),
+    [rgw_rest_s3.cc:2174-2177](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2174-L2177)),
+    and GetBucketEncryption skips its configuration and its flush
+    ([rgw_rest_s3.cc:3897-3903](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3897-L3903),
+    [rgw_rest_s3.cc:4348-4354](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4348-L4354)).
+  - Each answers 200 with no body: the declaration `dump_start` puts in the
+    formatter after `end_header` has flushed it is never sent, as nothing
+    flushes the formatter after `send_response` ("[radosgw's GetBucketCors
+    sends its document without the XML
+    declaration](#radosgws-getbucketcors-sends-its-document-without-the-xml-declaration)").
+    Other `send_response`s that test `op_ret` after `end_header` are not
+    traced here.
 - **Impact:** every cross-origin browser request to such a bucket carries
   an Origin, so its listings come back empty and an SDK fails to parse
   them; the owner's
@@ -19485,14 +19541,69 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** checked at v19.2.7 and v20.2.4.
 - **rgw-go:** does not reproduce it. `op.DeleteBucketCORS` removes the attr
   whatever it holds, through the retried and re-authorized write the other
-  bucket-config writes take, and succeeds; a bucket without the attr
-  succeeds with nothing written, as radosgw's does (`internal/op/cors.go`;
-  `docs/exclusions.md`, "DeleteBucketCors removes a CORS configuration that
-  does not decode").
+  bucket-config writes take, and succeeds, which its route answers 204; a
+  bucket without the attr succeeds with nothing written, as radosgw's does
+  (`internal/op/cors.go`, `internal/s3/cors.go`; `docs/exclusions.md`,
+  "DeleteBucketCors removes a CORS configuration that does not decode").
 - **Upstream:** none. rgw-bug-reproduction logged it as non-security; it is
   unfiled while filing is paused.
 - **Found:** phase 2 task BC-3's review, 2026-10-19, reading
   `RGWDeleteCORS::execute`. Derived from the source, not reproduced.
+
+## radosgw's GetBucketCors sends its document without the XML declaration
+
+- **Kind:** defect, cosmetic: GetBucketCors's 200 carries the
+  CORSConfiguration document with no `<?xml version="1.0"
+  encoding="UTF-8"?>` before it, though its `send_response` calls
+  `dump_start` to write one, as GetBucketAcl's does and sends. The document
+  is still well-formed XML, whose declaration is optional, so no S3 client
+  is known to fail on it. Not security-relevant. Unreproduced: derived from
+  the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWGetCORS_ObjStore_S3::send_response` calls `end_header`, then
+    `dump_start`, then writes the document with `dump_body`
+    ([rgw_rest_s3.cc:3758-3769](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3758-L3769),
+    [rgw_rest_s3.cc:4209-4220](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4209-L4220)).
+  - `end_header` flushes the formatter as it ends, while it is still empty
+    ([rgw_rest.cc:652-654](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L652-L654),
+    [rgw_rest.cc:657-659](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L657-L659)).
+    `dump_start` then puts the declaration in the formatter
+    ([rgw_rest.cc:571-577](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L571-L577),
+    [rgw_rest.cc:576-582](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L576-L582)),
+    and `dump_body` sends the document straight to the client, past the
+    formatter
+    ([rgw_rest.cc:786-805](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L786-L805),
+    [rgw_rest.cc:786-805](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L786-L805)).
+    `RGWCORSConfiguration_S3::to_xml` renders the document in a formatter of
+    its own, with no declaration
+    ([rgw_cors_s3.cc:166-175](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cors_s3.cc#L166-L175),
+    [rgw_cors_s3.cc:166-175](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cors_s3.cc#L166-L175)).
+  - Nothing flushes the formatter after `send_response`: `complete` is
+    `send_response` alone
+    ([rgw_op.h:294-296](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L294-L296),
+    [rgw_op.h:307-309](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L307-L309)),
+    and `process_request` goes on to `complete_request`
+    ([rgw_process.cc:260](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L260) and
+    [rgw_process.cc:454](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L454),
+    [rgw_process.cc:263](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L263) and
+    [rgw_process.cc:461](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L461)),
+    so the declaration is never sent.
+  - GetBucketAcl and GetObjectAcl, which write their document with
+    `dump_body` too, flush the formatter between `dump_start` and
+    `dump_body`, and so send the declaration
+    ([rgw_rest_s3.cc:3641-3643](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3641-L3643),
+    [rgw_rest_s3.cc:3894-3896](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3894-L3896)).
+- **Impact:** none known; only a client that requires a declaration, or
+  compares the bytes with a gateway that sends one, sees it.
+- **Releases:** v19.2.7 and v20.2.4, the tags checked.
+- **rgw-go:** reproduces it: GetBucketCors sends the document alone
+  (`getBucketCORS`, `internal/s3/cors.go`), so both gateways send the same
+  bytes; adding the declaration is a one-line change once it is fixed
+  upstream.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 unit B, Task BC-6, 2026-10-27, tracing what
+  GetBucketCors's `send_response` sends. Derived from the source, not
+  reproduced.
 
 ## cls_rgw's bucket_list ignores its start key when it cannot read that key's instance entry
 

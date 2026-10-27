@@ -268,8 +268,8 @@ var _ = Describe("serve against a cluster", Label("integration"), Ordered, func(
 			Expect(resp.Header.Get("Server")).To(Equal("Ceph Object Gateway (" + release + ")"))
 		})
 
-		It("answers 501 NotImplemented for an op it does not serve yet, a bucket's CORS preflight", func(ctx SpecContext) {
-			resp, body, err := fetch(ctx, client, http.MethodOptions, base+"/plain", nil)
+		It("answers 501 NotImplemented for an op it does not serve yet, a bucket's GetBucketRequestPayment", func(ctx SpecContext) {
+			resp, body, err := fetch(ctx, client, http.MethodGet, base+"/plain?requestPayment", nil)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(http.StatusNotImplemented))
 			Expect(body).To(ContainSubstring("<Code>NotImplemented</Code>"))

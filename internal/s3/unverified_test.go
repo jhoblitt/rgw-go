@@ -26,11 +26,13 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/s3"
 )
 
-// forgedPreflight is OPTIONS target signed for alice's key id with a secret
-// that is not hers, on one of the four signed routes.
+// forgedPreflight is OPTIONS target signed for a key id with a secret that
+// is not the key's, on one of the four signed routes.
 type forgedPreflight struct {
-	name  string
-	build func(ctx context.Context, target string) *http.Request
+	name string
+	// build makes the request, each edit applied to its headers before it
+	// is signed, so that SigV4 signs an x-amz- header an edit adds.
+	build func(ctx context.Context, target string, edits ...func(*http.Request)) *http.Request
 }
 
 const (
@@ -54,34 +56,48 @@ func forgedV2Signature(sts string) string {
 	return base64.StdEncoding.EncodeToString(mac.Sum(nil))
 }
 
-var forgedPreflights = []forgedPreflight{
-	{"SigV4 header", func(ctx context.Context, target string) *http.Request {
-		req := preflightRequest(ctx, target)
-		req.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
-		creds := aws.Credentials{AccessKeyID: unverifiedKey, SecretAccessKey: unverifiedSecret}
-		Expect(v4.NewSigner().SignHTTP(ctx, creds, req, "UNSIGNED-PAYLOAD", "s3", "us-east-1", unverifiedNow)).To(Succeed())
+// forgedPreflightsBy is a forged preflight on key's id on each of the four
+// signed routes. Each target holds a query, which the presigned routes
+// extend.
+func forgedPreflightsBy(key string) []forgedPreflight {
+	creds := aws.Credentials{AccessKeyID: key, SecretAccessKey: unverifiedSecret}
+	edited := func(req *http.Request, edits []func(*http.Request)) *http.Request {
+		for _, e := range edits {
+			e(req)
+		}
 		return req
-	}},
-	{"SigV4 presigned", func(ctx context.Context, target string) *http.Request {
-		creds := aws.Credentials{AccessKeyID: unverifiedKey, SecretAccessKey: unverifiedSecret}
-		u, _, err := v4.NewSigner().PresignHTTP(ctx, creds, preflightRequest(ctx, target+"&X-Amz-Expires=300"),
-			"UNSIGNED-PAYLOAD", "s3", "us-east-1", unverifiedNow)
-		Expect(err).NotTo(HaveOccurred())
-		parsed, err := url.Parse(u)
-		Expect(err).NotTo(HaveOccurred())
-		return preflightRequest(ctx, parsed.RequestURI())
-	}},
-	{"SigV2 header", func(ctx context.Context, target string) *http.Request {
-		req := preflightRequest(ctx, target)
-		req.Header.Set("Date", "Sun, 30 Aug 2015 12:36:00 GMT")
-		req.Header.Set("Authorization", "AWS "+unverifiedKey+":"+forgedV2Signature("GET"))
-		return req
-	}},
-	{"SigV2 presigned", func(ctx context.Context, target string) *http.Request {
-		q := "&AWSAccessKeyId=" + unverifiedKey + "&Expires=" + v2Expiry + "&Signature=" + url.QueryEscape(forgedV2Signature("GET"))
-		return preflightRequest(ctx, target+q)
-	}},
+	}
+	return []forgedPreflight{
+		{"SigV4 header", func(ctx context.Context, target string, edits ...func(*http.Request)) *http.Request {
+			req := edited(preflightRequest(ctx, target), edits)
+			req.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
+			Expect(v4.NewSigner().SignHTTP(ctx, creds, req, "UNSIGNED-PAYLOAD", "s3", "us-east-1", unverifiedNow)).To(Succeed())
+			return req
+		}},
+		{"SigV4 presigned", func(ctx context.Context, target string, edits ...func(*http.Request)) *http.Request {
+			u, _, err := v4.NewSigner().PresignHTTP(ctx, creds, edited(preflightRequest(ctx, target+"&X-Amz-Expires=300"), edits),
+				"UNSIGNED-PAYLOAD", "s3", "us-east-1", unverifiedNow)
+			Expect(err).NotTo(HaveOccurred())
+			parsed, err := url.Parse(u)
+			Expect(err).NotTo(HaveOccurred())
+			return edited(preflightRequest(ctx, parsed.RequestURI()), edits)
+		}},
+		{"SigV2 header", func(ctx context.Context, target string, edits ...func(*http.Request)) *http.Request {
+			req := edited(preflightRequest(ctx, target), edits)
+			req.Header.Set("Date", "Sun, 30 Aug 2015 12:36:00 GMT")
+			req.Header.Set("Authorization", "AWS "+key+":"+forgedV2Signature("GET"))
+			return req
+		}},
+		{"SigV2 presigned", func(ctx context.Context, target string, edits ...func(*http.Request)) *http.Request {
+			q := "&AWSAccessKeyId=" + key + "&Expires=" + v2Expiry + "&Signature=" + url.QueryEscape(forgedV2Signature("GET"))
+			return edited(preflightRequest(ctx, target+q), edits)
+		}},
+	}
 }
+
+// forgedPreflights is a forged preflight on alice's key id on each signed
+// route.
+var forgedPreflights = forgedPreflightsBy(unverifiedKey)
 
 // captureErrors sends slog's default logger to a buffer as JSON until the
 // spec ends.
@@ -148,7 +164,8 @@ var _ = Describe("An unverified identity a stray dispatch row sends past the pre
 			Expect(ran).To(BeZero())
 
 			code, body := serve(h, forgedPreflights[0].build(ctx, "/plain?acl"))
-			Expect(code).To(Equal(http.StatusNotImplemented), "the preflight itself still runs: %s", body)
+			Expect(code).To(Equal(http.StatusForbidden), "the preflight itself still runs: %s", body)
+			Expect(body).To(ContainSubstring("<Code>AccessDenied</Code>"), "plain has no CORS configuration")
 		},
 		Entry("on Squid, through the ACL op", denc.Squid, false),
 		Entry("on Tentacle, through the ACL op", denc.Tentacle, false),

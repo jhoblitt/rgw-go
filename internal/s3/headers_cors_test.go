@@ -294,19 +294,6 @@ var _ = Describe("SetPreflightHeaders", func() {
 // for an anonymous one, or the answer tells the sender something of the
 // key's user.
 var _ = Describe("a forged preflight's answer", func() {
-	// preflight stands in for the options_cors route: the op, then the two
-	// header writers this file's specs pin, then 200 with no body.
-	preflight := func(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
-		o := &op.OptionsCORS{}
-		if err := op.Run(ctx, o, r); err != nil {
-			return err
-		}
-		s3.SetPreflightHeaders(w, o)
-		s3.SetCommonHeaders(w, r)
-		w.Header().Set("Content-Length", "0")
-		w.WriteHeader(http.StatusOK)
-		return nil
-	}
 	var h *s3.Handler
 	BeforeEach(func(ctx SpecContext) {
 		store := memstore.New(memstore.Config{Release: denc.Squid, Now: func() time.Time { return unverifiedNow }})
@@ -341,16 +328,19 @@ var _ = Describe("a forged preflight's answer", func() {
 		cfg := auth.DefaultConfig()
 		cfg.Now = func() time.Time { return unverifiedNow }
 		h = s3.NewHandler(testEnv(store), auth.New(cfg, store, store), testConfig(s3.Config{}))
-		h.Register(op.OptionsCORSName, preflight)
 	})
 	type answer struct {
 		Status int
 		Header http.Header
 		Body   string
 	}
-	// answerOf is rec less its request id, which every request draws anew.
+	// answerOf is rec less its request id, which every request draws anew,
+	// with the headers the response was sent with, so that one set after the
+	// status is not among them.
 	answerOf := func(rec *httptest.ResponseRecorder) answer {
-		hdr := rec.Header().Clone()
+		res := rec.Result()
+		Expect(res.Body.Close()).To(Succeed())
+		hdr := res.Header.Clone()
 		id := exactHeader(hdr, "x-amz-request-id")
 		Expect(id).NotTo(BeEmpty())
 		delete(hdr, "x-amz-request-id")
