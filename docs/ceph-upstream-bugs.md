@@ -479,6 +479,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw hands a sync zone's endpoint credentials to any holder of zone=read](#radosgw-hands-a-sync-zones-endpoint-credentials-to-any-holder-of-zoneread) | pending | pending | ✓ |
 | [radosgw's CopyObject sends neither x-amz-version-id nor x-amz-copy-source-version-id](#radosgws-copyobject-sends-neither-x-amz-version-id-nor-x-amz-copy-source-version-id) | pending | pending | ✓ |
 | [radosgw sends no x-amz-version-id for the null version a write makes](#radosgw-sends-no-x-amz-version-id-for-the-null-version-a-write-makes) | pending | pending | ✓ |
+| [radosgw's OLH init, replay and repair set back the mtime of a null write landing after their read](#radosgws-olh-init-replay-and-repair-set-back-the-mtime-of-a-null-write-landing-after-their-read) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -28640,3 +28641,81 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V11, 2026-10-27, serving writes on a suspended
   bucket; reproduced through its s3-test on both releases.
+
+## radosgw's OLH init, replay and repair set back the mtime of a null write landing after their read
+
+- **Kind:** defect, S3-correctness, not security-relevant. A versioned key's
+  null version keeps its data in the key's OLH head, and three of radosgw's
+  writes that change only that head's attrs send the mtime they read from
+  it, to keep it. None of their guards refuses a null write that lands
+  between that read and the write, so the null version's mtime as its head
+  reports it goes back to the one read, before the null write's own.
+  Unreproduced on a running radosgw: derived from the source and seen on
+  fakerados.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `olh_init_modification_impl` asserts an existing head and sends the
+    head's mtime as read with `mtime2`
+    ([rgw_rados.cc:7810-7812](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7810-L7812),
+    [rgw_rados.cc:8473-8475](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8473-L8475)),
+    guarded on the OLH tag, or for a plain object on having none
+    ([rgw_rados.cc:7825-7840](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7825-L7840),
+    [rgw_rados.cc:8488-8503](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8488-L8503)).
+  - `apply_olh_log` sends it
+    ([rgw_rados.cc:8442-8443](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8442-L8443),
+    [rgw_rados.cc:9188-9189](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9188-L9189)),
+    guarded on the OLH tag and `olh.ver`
+    ([rgw_rados.cc:8434-8435](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8434-L8435),
+    [rgw_rados.cc:9180-9181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9180-L9181)).
+  - `repair_olh` sends it to "preserve existing mtime"
+    ([rgw_rados.cc:8296-8298](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8296-L8298),
+    [rgw_rados.cc:9042-9044](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9042-L9044)),
+    guarded on the OLH tag
+    ([rgw_rados.cc:8294-8295](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8294-L8295),
+    [rgw_rados.cc:9040-9041](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9040-L9041)).
+  - A null write's head write resets the head with `remove_rgw_head_obj`,
+    which keeps the `user.rgw.olh.` attrs, sets the OLH tag it read again,
+    and stamps its own mtime
+    ([rgw_rados.cc:6737-6744](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6737-L6744),
+    [rgw_rados.cc:5798-5803](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5798-L5803),
+    [rgw_rados.cc:3223-3228](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3223-L3228);
+    [rgw_rados.cc:7351-7358](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7351-L7358),
+    [rgw_rados.cc:6410-6415](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6410-L6415),
+    [rgw_rados.cc:3320-3325](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3320-L3325)).
+    It leaves the OLH tag and `olh.ver` as they were until its own replay,
+    so each guard above passes after it, and the OSD then writes the op's
+    mtime into the object's
+    ([PrimaryLogPG.cc:8978-8981](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L8978-L8981),
+    [PrimaryLogPG.cc:9084-9087](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L9084-L9087)).
+  - The sink is the head's mtime as a write of its attrs alone sends it, as
+    in "[radosgw's removal of an OLH head's pending attr moves the null
+    version's mtime](#radosgws-removal-of-an-olh-heads-pending-attr-moves-the-null-versions-mtime)",
+    whose two writes send none: a write of an existing head's attrs alone
+    that sent the zero mtime would keep the stored one in both.
+- **Trigger:** on a suspended bucket, a PutObject of the null version that
+  lands between another request's read of the key's head, an OLH head or a
+  plain object its init makes one, and that request's OLH init, replay or
+  repair: a versioned delete or a delete marker of the key, a read whose
+  follow replays a pending modification, or the replay after any link. Two
+  requests at once on one gateway suffice.
+- **Impact:** GET and HEAD of the null version answer a Last-Modified
+  before its write, the mtime the overwritten null version had, which a
+  conditional request or a copy's source condition then compares, while a
+  listing shows the index entry's mtime, the write's. No data changes.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** differs: its three writes send the zero mtime, for which the
+  OSD keeps the head's stored mtime, a null write's that landed after the
+  read included (`keepHeadMtime`, `internal/driver/olh_head.go`;
+  `docs/exclusions.md`, "The OLH init, replay and repair keep the head's
+  mtime as it is when they land"), which "keeps the mtime of a write
+  landing between its read and the init", "keeps the mtime of a null write
+  landing between its read and the head op" and "keeps the mtime of a null
+  write landing between its read and the rewrite"
+  (`internal/driver/olh_head_test.go`) pin. After a replay that removes the
+  null version's data from the head, the head keeps that removal's time,
+  where radosgw's apply sets back the removed version's mtime, which no
+  version holds then. A null version's mtime a radosgw gateway set back
+  stays where it was set.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C10b's review, round 2, 2026-10-23, reading every
+  write of an OLH head's mtime; registered by phase 2 task V12b,
+  2026-10-27. Derived from the source, not reproduced.
