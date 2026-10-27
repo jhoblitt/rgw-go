@@ -391,7 +391,7 @@ var _ = Describe("Signed OPTIONS requests through the s3 and admin handlers", fu
 							at = withQuery(target, c.query)
 						}
 						want := answerTo(h, f.build(ctx, http.MethodOptions, at, preflightHeaders(http.MethodGet), accessKeyOf("alice"), wrongSecret))
-						Expect(want.code).To(Equal(http.StatusNotImplemented), "%s %s: %s", f.name, at, want.body)
+						Expect(want.code).To(Equal(http.StatusNotFound), "%s %s, the preflight's NoSuchBucket: %s", f.name, at, want.body)
 						got := answerTo(h, f.build(ctx, http.MethodOptions, at, preflightHeaders(http.MethodGet), c.key, wrongSecret))
 						Expect(got).To(Equal(want), "%s %s, %s", f.name, at, c.name)
 
@@ -453,13 +453,13 @@ var _ = Describe("Signed OPTIONS requests through the s3 and admin handlers", fu
 	DescribeTable("accounts a forged preflight's usage as an anonymous request's, never under its key's user", usageCase, usageEntries())
 
 	// SigV2 takes Tentacle's method rule on Squid too.
-	DescribeTable("answers a signed preflight as radosgw authenticates it, and 501 NotImplemented until CORS serves it",
+	DescribeTable("answers a signed preflight as radosgw authenticates it, its op answering a bucket that does not exist",
 		func(ctx SpecContext, rel denc.Release) {
 			h, _ := newHandler(rel)
 			for _, f := range signedRoutes {
 				code, body := serve(h, f.build(ctx, http.MethodOptions, "/plain/k", preflightHeaders(http.MethodGet), accessKeyOf("alice"), wrongSecret))
-				Expect(code).To(Equal(http.StatusNotImplemented), "%s, a wrong signature: %s", f.name, body)
-				Expect(body).To(ContainSubstring("<Code>NotImplemented</Code>"), f.name)
+				Expect(code).To(Equal(http.StatusNotFound), "%s, a wrong signature: %s", f.name, body)
+				Expect(body).To(ContainSubstring("<Code>NoSuchBucket</Code>"), f.name)
 
 				code, body = serve(h, f.build(ctx, http.MethodOptions, "/plain/k", noMethod(), accessKeyOf("alice"), secretOf("alice")))
 				Expect(code).To(Equal(http.StatusBadRequest), "%s, no method: %s", f.name, body)
