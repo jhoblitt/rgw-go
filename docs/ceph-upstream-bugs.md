@@ -23055,10 +23055,27 @@ Every new entry adds its row to this table, in document order.
     So a PutObject of the null version on a suspended bucket whose
     completion has not reached the shard when a DeleteObject of the key
     links the null delete marker leaves the marker's list entry pending for
-    good, and every listing that reaches it repairs from it. radosgw's own
-    gateway sends the completion before the delete's link, so the trigger
-    takes two gateways, one whose completion is slow, or a writer that died
-    between its head write and its completion.
+    good, and every listing that reaches it repairs from it. So does the
+    completion of a DeleteObject or a PutObject of the key made before the
+    bucket's versioning was set, while its versioning is suspended and such
+    a delete follows, and the cancel of a null write that failed. radosgw's
+    own gateway sends each of these before the delete's link, and librados
+    keeps the two in order, so the trigger takes two gateways, one whose
+    completion is slow, or a writer that died between its head write and
+    its completion, unless the bucket reshards meanwhile; then one gateway
+    suffices. `handle_completion` queues a completion the reshard guard
+    refused, and the manager's thread sends it again in its own
+    `guard_reshard`, unordered against the request's link
+    ([rgw_rados.cc:1011-1020](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L1011-L1020) and
+    [rgw_rados.cc:905-929](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L905-L929),
+    [rgw_rados.cc:1052-1061](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1052-L1061) and
+    [rgw_rados.cc:943-967](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L943-L967)),
+    while the reshard copies the plain entry to the shard that follows with
+    its pending op, as `bi_list` and `add_entry` move entries whole
+    ([rgw_reshard.cc:839-891](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_reshard.cc#L839-L891),
+    [rgw_reshard.cc:1110-1155](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_reshard.cc#L1110-L1155)).
+    A resent completion that lands after the marker's link there leaves the
+    marker pending as a slow one does.
 - **Impact:** each consequence follows from the collision, and the review
   of phase 2 task V9 verified each at v19.2.7 and v20.2.4. Without its
   marker the plain key no longer leads `read_key_entry` to the null
@@ -23088,8 +23105,30 @@ Every new entry adds its row to this table, in document order.
   after it takes no pending op from it" and "answers an attr write on a
   key's plain entry once its completion has landed, so the null delete
   marker of the DELETE after it takes no pending op from it"
-  (`internal/driver/put_versioned_test.go`) pin. Another gateway's slow
-  completion still reaches it, and rgw-go's lifecycle then matches the
+  (`internal/driver/put_versioned_test.go`) pin. Its OLH calls to a key
+  wait for the completions and cancels it sent for that key's entries
+  before them, on whatever shard, and for the retry of each of those a
+  reshard refused, following a send the reshard refused while they waited
+  into its retry, which goes ahead of the bucket's other queued retries
+  (`completionManager.awaitSent`,
+  `internal/driver/completion.go`). So the completion of a delete or a write
+  it made before the bucket's versioning was set, the cancel of a null write
+  that failed, and a completion a reshard refused all land before the
+  marker's link, which "links the null delete marker only once the DEL
+  completion of the key's delete before the bucket's versioning was set has
+  landed", its ADD twin, "links the null delete marker only once the cancel
+  of a null write that failed before it has landed", "links the null delete
+  marker only once the retry of a completion a reshard refused has landed"
+  and "follows a completion the marker's link waits for into its retry when
+  a reshard refuses it meanwhile" (`internal/driver/put_versioned_test.go`)
+  pin. The exception is a class: any completion the gateway drops leaves
+  its pending op, and so the marker linked after it pending, as radosgw's
+  dropped one does, and an OLH call waits for it no longer. Its members are
+  a first send that fails other than busy, a retry whose bucket instance
+  cannot be read again or whose reshard guard fails, a completion whose
+  shard lookup failed, one submitted after the manager stopped, and one the
+  manager abandons as it stops. Another gateway's slow completion still
+  reaches it, and rgw-go's lifecycle then matches the
   marker by its versioned_epoch rather than the mtime the listing reports,
   so the marker still expires (`lcBucket.removeVersion`,
   `internal/driver/lc_actions.go`), which "removes a null delete marker that
@@ -23102,7 +23141,11 @@ Every new entry adds its row to this table, in document order.
   task V9, 2026-10-20, whose fix round took rgw-bug-reproduction's triage,
   which confirmed the key collision. The null delete marker's trigger was
   found by phase 2 task C10b's review, 2026-10-23, and re-triaged by
-  rgw-bug-reproduction at v20.2.4. Derived from the source, not reproduced.
+  rgw-bug-reproduction at v20.2.4; that of a completion sent before the
+  bucket's versioning was set by the same review's round 2, the same day;
+  the one-gateway reshard trigger and the failed null write's cancel by
+  phase 2 task V12b's review, 2026-10-27. Derived from the source, not
+  reproduced.
 
 ## radosgw's listing never repairs a version's list entry
 
