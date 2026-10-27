@@ -2,6 +2,7 @@ package op_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -632,6 +633,73 @@ var _ = Describe("admin user ops", func() {
 			o := newCreate("again", "", "", "")
 			o.DisplayName, o.AccountID = "root", acct2
 			Expect(run(ctx, o)).To(Succeed(), "the root's name is free again")
+		})
+		Describe("with purge-data, of a user whose bucket's versioning is or was enabled, or that has object lock", func() {
+			var (
+				x       *purgeIndex
+				buckets *opfakes.FakeBucketStore
+				objects *opfakes.FakeObjectStore
+			)
+			listed := func() []meta.ObjKey {
+				return []meta.ObjKey{{Name: "k", Instance: "v2"}, {Name: "k", Instance: "dm"}, {Name: "k"}}
+			}
+			// fake makes leseb, owning b1 with flags, whose listing and deletes
+			// x serves through fakes; the user store stays the memstore's.
+			fake := func(ctx context.Context, flags uint32) {
+				GinkgoHelper()
+				create(ctx, "leseb", "", "", "")
+				rec := bucket(ctx, "b1", user("leseb"))
+				rec.Info.Flags |= flags
+				x = &purgeIndex{versioned: true, entries: listed()}
+				buckets = new(opfakes.FakeBucketStore)
+				buckets.GetBucketReturns(rec, nil)
+				buckets.ListObjectsCalls(x.list)
+				objects = new(opfakes.FakeObjectStore)
+				objects.DeleteObjectCalls(x.del)
+				env.Buckets, env.Objects = buckets, objects
+			}
+			remove := func() *op.RemoveUser {
+				d := op.NewRemoveUser()
+				d.UID = meta.UserID{ID: "leseb"}
+				d.PurgeData = true
+				return d
+			}
+			DescribeTable("removes every version by its own instance, the bucket and then the user, reading no retention or legal hold",
+				func(ctx context.Context, flags uint32) {
+					fake(ctx, flags)
+					Expect(run(ctx, remove())).To(Succeed())
+					Expect(x.deleted).To(Equal([]meta.ObjKey{
+						{Name: "k", Instance: "v2"}, {Name: "k", Instance: "dm"}, {Name: "k", Instance: meta.NullInstance},
+					}))
+					Expect(objects.Invocations()).To(HaveLen(1), "the deletes alone, no read of an object's attrs")
+					for i := range objects.DeleteObjectCallCount() {
+						_, _, _, p := objects.DeleteObjectArgsForCall(i)
+						Expect(p).To(Equal(op.DeleteParams{}), "delete %d", i)
+					}
+					Expect(buckets.DeleteBucketCallCount()).To(Equal(1))
+					_, err := store.GetUser(ctx, meta.UserID{ID: "leseb"})
+					Expect(err).To(MatchError(op.ErrNoSuchUser))
+				},
+				Entry("versioning enabled", uint32(meta.BucketVersioned)),
+				Entry("versioning suspended", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended)),
+				Entry("object lock", uint32(meta.BucketVersioned|meta.BucketObjLockEnabled)),
+			)
+			It("answers a removal that fails part way with its failure, keeping the bucket and the user", func(ctx SpecContext) {
+				fake(ctx, meta.BucketVersioned)
+				boom := errors.New("removal failed")
+				n := 0
+				objects.DeleteObjectCalls(func(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) (*op.DeleteObjectResult, error) {
+					if n++; n == 2 {
+						return nil, boom
+					}
+					return x.del(ctx, rec, key, p)
+				})
+				Expect(run(ctx, remove())).To(MatchError(boom))
+				Expect(x.entries).To(Equal(listed()[1:]), "the first removed, the second failed, none after")
+				Expect(buckets.DeleteBucketCallCount()).To(BeZero())
+				_, err := store.GetUser(ctx, meta.UserID{ID: "leseb"})
+				Expect(err).NotTo(HaveOccurred(), "the user stays for a retry")
+			})
 		})
 	})
 

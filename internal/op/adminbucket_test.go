@@ -621,6 +621,102 @@ var _ = Describe("admin bucket ops", func() {
 			_, err := store.GetBucket(ctx, "", "test")
 			Expect(err).To(MatchError(op.ErrNoSuchBucket))
 		})
+		Describe("of a bucket whose versioning is or was enabled, or that has object lock", func() {
+			var (
+				x       *purgeIndex
+				buckets *opfakes.FakeBucketStore
+				objects *opfakes.FakeObjectStore
+				admin   *opfakes.FakeBucketAdminStore
+			)
+			// listed is the bucket's listing with versions: a version, a delete
+			// marker, the null version and an object written before versioning
+			// was enabled.
+			listed := func() []meta.ObjKey {
+				return []meta.ObjKey{{Name: "k", Instance: "v2"}, {Name: "k", Instance: "dm"}, {Name: "k"}, {Name: "pre"}}
+			}
+			// byVersion is how a purge names listed's entries on a bucket whose
+			// flags hold BUCKET_VERSIONED: each by its own version, the empty
+			// instance as null.
+			byVersion := func() []meta.ObjKey {
+				return []meta.ObjKey{
+					{Name: "k", Instance: "v2"},
+					{Name: "k", Instance: "dm"},
+					{Name: "k", Instance: meta.NullInstance},
+					{Name: "pre", Instance: meta.NullInstance},
+				}
+			}
+			// fake serves "test", with flags, from fakes: its listing and its
+			// deletes from x, holding listed.
+			fake := func(ctx context.Context, flags uint32) *op.BucketRecord {
+				GinkgoHelper()
+				rec, err := store.GetBucket(ctx, "", "test")
+				Expect(err).NotTo(HaveOccurred())
+				rec.Info.Flags |= flags
+				x = &purgeIndex{versioned: flags&meta.BucketVersioned != 0, entries: listed()}
+				buckets = new(opfakes.FakeBucketStore)
+				buckets.GetBucketReturns(rec, nil)
+				buckets.ListObjectsCalls(x.list)
+				objects = new(opfakes.FakeObjectStore)
+				objects.DeleteObjectCalls(x.del)
+				admin = new(opfakes.FakeBucketAdminStore)
+				env.Buckets, env.Objects, env.BucketAdmin = buckets, objects, admin
+				return rec
+			}
+			remove := func(bypass bool) *op.RemoveBucketAdmin {
+				d := op.NewRemoveBucketAdmin()
+				d.Bucket = "test"
+				d.PurgeObjects, d.BypassGC = !bypass, bypass
+				return d
+			}
+			DescribeTable("removes every version by its own instance and then the bucket, reading no retention or legal hold",
+				func(ctx context.Context, flags uint32, bypass bool, want []meta.ObjKey) {
+					rec := fake(ctx, flags)
+					Expect(run(ctx, remove(bypass))).To(Succeed())
+					Expect(x.deleted).To(Equal(want))
+					Expect(x.entries).To(BeEmpty())
+					for i := range objects.DeleteObjectCallCount() {
+						_, _, _, p := objects.DeleteObjectArgsForCall(i)
+						Expect(p).To(Equal(op.DeleteParams{}), "delete %d checks nothing, as rgw_remove_object passes no condition", i)
+					}
+					Expect(objects.Invocations()).To(HaveLen(1), "the deletes alone, no read of an object's attrs")
+					Expect(buckets.DeleteBucketCallCount()).To(Equal(1))
+					_, gone := buckets.DeleteBucketArgsForCall(0)
+					Expect(gone).To(BeIdenticalTo(rec))
+					if bypass {
+						Expect(admin.PurgeBypassGCCallCount()).To(Equal(1), "the bypass-gc data pass first")
+						return
+					}
+					Expect(admin.Invocations()).To(BeEmpty())
+				},
+				Entry("purge-objects, versioning enabled", uint32(meta.BucketVersioned), false, byVersion()),
+				Entry("purge-objects, versioning suspended", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended), false, byVersion()),
+				Entry("purge-objects, object lock", uint32(meta.BucketVersioned|meta.BucketObjLockEnabled), false, byVersion()),
+				Entry("purge-objects, object lock without versioning, which radosgw never writes and purges as unversioned",
+					uint32(meta.BucketObjLockEnabled), false, listed()),
+				Entry("bypass-gc, versioning enabled", uint32(meta.BucketVersioned), true, byVersion()),
+				Entry("bypass-gc, versioning suspended", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended), true, byVersion()),
+				Entry("bypass-gc, object lock", uint32(meta.BucketVersioned|meta.BucketObjLockEnabled), true, byVersion()),
+			)
+			DescribeTable("answers a removal that fails part way with its failure, removing nothing after it and keeping the bucket",
+				func(ctx context.Context, bypass bool) {
+					fake(ctx, meta.BucketVersioned)
+					boom := errors.New("removal failed")
+					n := 0
+					objects.DeleteObjectCalls(func(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) (*op.DeleteObjectResult, error) {
+						if n++; n == 2 {
+							return nil, boom
+						}
+						return x.del(ctx, rec, key, p)
+					})
+					Expect(run(ctx, remove(bypass))).To(MatchError(boom))
+					Expect(objects.DeleteObjectCallCount()).To(Equal(2), "the first removed, the second failed, none after")
+					Expect(x.entries).To(Equal(listed()[1:]))
+					Expect(buckets.DeleteBucketCallCount()).To(BeZero())
+				},
+				Entry("purge-objects", false),
+				Entry("bypass-gc", true),
+			)
+		})
 	})
 
 	Describe("quota", func() {
@@ -744,32 +840,40 @@ var _ = Describe("admin bucket ops", func() {
 			Entry("over 1024 bytes", strings.Repeat("a", 1025)),
 			Entry("not UTF-8", "a\xffb"),
 		)
-		// radosgw decides on the bucket's versioning before the unversioned
-		// path's head read, whose ENOENT the name check stands in for, and its
-		// versioned path answers no ENOENT for a missing object
-		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5774
-		// and
-		// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5853 at v19.2.6,
-		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6462
-		// and
-		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6592 at v20.2.4).
-		DescribeTable("answers NotImplemented for a bucket whose versioning is or was enabled or that has object lock, before the name check and without asking the object store",
+		// radosgw keys the object with no instance and passes the bucket's
+		// versioning to the delete, so on a versioned bucket the store writes
+		// a delete marker, and it checks no retention or legal hold
+		// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L274-L289 at v19.2.7,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L275-L290 at v20.2.4;
+		// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2928-L2949 at v19.2.7,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3766-L3787 at v20.2.4).
+		DescribeTable("deletes the plain key under the bucket's versioning, reading no retention or legal hold",
 			func(ctx context.Context, flags uint32) {
 				rec, err := store.GetBucket(ctx, "", "test")
 				Expect(err).NotTo(HaveOccurred())
 				rec.Info.Flags |= flags
 				Expect(store.PutBucketInfo(ctx, rec)).To(Succeed())
 				objs := new(opfakes.FakeObjectStore)
+				objs.DeleteObjectReturns(&op.DeleteObjectResult{VersionID: "dm", DeleteMarker: true}, nil)
 				env.Objects = objs
 				r := op.NewRemoveObjectAdmin()
 				r.Bucket = "test"
-				for _, name := range []string{"k1", "", strings.Repeat("a", 1025)} {
+				for _, name := range []string{"", strings.Repeat("a", 1025)} {
 					r.Object = name
-					Expect(run(ctx, r)).To(MatchError(op.ErrNotImplemented), "object %q", name)
+					Expect(run(ctx, r)).To(MatchError(op.ErrNoSuchKey), "object %q, under which radosgw writes a delete marker", name)
 				}
-				Expect(objs.Invocations()).To(BeEmpty())
+				r.Object = "k1"
+				Expect(run(ctx, r)).To(Succeed())
+				Expect(objs.Invocations()).To(HaveLen(1), "the delete alone, no read of the object's attrs")
+				Expect(objs.DeleteObjectCallCount()).To(Equal(1))
+				_, got, key, p := objs.DeleteObjectArgsForCall(0)
+				Expect(got.Info.Flags).To(Equal(rec.Info.Flags), "the bucket as loaded, whose flags choose the store's path")
+				Expect(key).To(Equal(meta.ObjKey{Name: "k1"}), "no instance")
+				Expect(p).To(Equal(op.DeleteParams{}), "no condition and no marker owner, as RadosObject::delete_object sets none")
 			},
-			Entry("BUCKET_VERSIONED", uint32(meta.BucketVersioned)),
+			Entry("with versioning enabled", uint32(meta.BucketVersioned)),
+			Entry("with versioning suspended", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended)),
+			Entry("with object lock", uint32(meta.BucketVersioned|meta.BucketObjLockEnabled)),
 			Entry("BUCKET_VERSIONS_SUSPENDED without BUCKET_VERSIONED, which radosgw never writes", uint32(meta.BucketVersionsSuspended)),
 			Entry("BUCKET_OBJ_LOCK_ENABLED without BUCKET_VERSIONED, which radosgw never writes", uint32(meta.BucketObjLockEnabled)),
 		)

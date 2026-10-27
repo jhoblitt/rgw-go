@@ -1430,10 +1430,15 @@ review and verified against the tree.
     longer than 1024 bytes or not UTF-8, without reading RADOS. radosgw
     hands the name to RADOS, which answers ENOENT, radosgw's 404, for most
     such names and refuses one of over about 2000 bytes as too long. On a
-    bucket whose versioning was ever enabled or that has object lock,
-    `DELETE /admin/bucket?object` answers 501 instead, whatever the name
-    ("The admin object removal refuses a bucket whose versioning was ever
-    enabled").
+    bucket whose flags hold `BUCKET_VERSIONED`, radosgw's versioned object
+    removal reads the object's state and its current version before
+    `set_olh`, but answers no ENOENT for a missing object, and so writes a
+    delete marker under any such name RADOS takes
+    ([rgw_rados.cc:5850-5869](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5850-L5869) and
+    [rgw_rados.cc:5882-5890](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5882-L5890),
+    [rgw_rados.cc:6462-6481](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6462-L6481) and
+    [rgw_rados.cc:6494-6502](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6494-L6502)),
+    where rgw-go answers the same 404 and writes nothing.
   - `GET /admin/bucket` without a uid answers a failure to list the
     bucket metadata section with its error; radosgw ends its listing
     there and answers 200 with what it listed.
@@ -1471,54 +1476,66 @@ review and verified against the tree.
   index entry names, where rgw-go leaves the object listed for a retry to
   finish. Until that retry the object reads as damaged: its head is there,
   but the tails it names may already be released.
-- **A purging bucket removal refuses a bucket whose versioning was ever
-  enabled.** `DELETE /admin/bucket` with `purge-objects` or `bypass-gc`
-  answers 501 NotImplemented for a bucket whose versioning is enabled or
-  suspended before it deletes or aborts anything in it, until versioning is
-  served (phase 2); radosgw purges the bucket's versions and delete
-  markers. `DELETE /admin/user` with `purge-data` answers the same when it
-  reaches such a bucket, with the user and that bucket left whole and the
-  buckets it removed before then gone. A removal without a purge of an
-  empty versioned bucket goes on as before. Both purges, and `DELETE
-  /admin/user` with `purge-data`, also refuse a bucket whose flags carry
-  object lock without `BUCKET_VERSIONED`, a state no radosgw op writes:
-  bucket creation enables object lock only with versioning
-  (`driver/rados/rgw_rados.cc:2392` at v19.2.6, `:2497` at v20.2.4), and
-  `RGWPutBucketObjectLock` refuses a bucket whose versioning is not enabled
-  (`rgw_op.cc:8232` at v19.2.6, `:9180` at v20.2.4). A `bucket.instance`
-  metadata put stores the flags it is given, in radosgw
-  (`driver/rados/rgw_bucket.cc:2803-2864` at v19.2.6, `:2921-2997` at
-  v20.2.4) as in rgw-go, so such a bucket can still arrive. radosgw would
-  purge it as an unversioned one, as `versioning_status` reads only the
-  versioning flags (`rgw_common.h:1075` at v19.2.6, `:1117` at v20.2.4);
-  rgw-go's purges refuse it before their first delete, taking it for a
-  versioned bucket, though the object delete itself takes radosgw's
-  unversioned path there.
-- **The admin object removal refuses a bucket whose versioning was ever
-  enabled.** `DELETE /admin/bucket?object` answers 501 NotImplemented for
-  a bucket whose versioning is enabled or suspended, or that has object
-  lock, and removes nothing, until versioning is served (phase 2). radosgw
-  keys the object with no instance and passes the bucket's versioning to
-  the delete (`RGWBucket::remove_object`,
-  `driver/rados/rgw_bucket.cc:274-289` at v19.2.6, `:275-290` at v20.2.4;
-  `RadosObject::delete_object`, `driver/rados/rgw_sal_rados.cc:2933-2937`
-  at v19.2.6, `:3775-3779` at v20.2.4), which on such a bucket writes a
-  delete marker whether or not the object exists
-  (`driver/rados/rgw_rados.cc:5774-5812` at v19.2.6, `:6462-6517` at
-  v20.2.4). With versioning enabled the marker takes a new instance and the
-  object survives as a noncurrent version. With versioning suspended the
-  marker is the null version, which replaces the pre-versioning object, the
-  bucket's null version: `rgw_bucket_link_olh` unlinks that object's entry
-  and logs its removal (`cls/rgw/cls_rgw.cc:1712-1725` and `:1809` at
-  v19.2.6, `:1853-1866` and `:1950` at v20.2.4), and `apply_olh_log`
-  removes it (`driver/rados/rgw_rados.cc:8283-8284` and `:8334-8345` at
-  v19.2.6, `:9225-9226` and `:9276-9287` at v20.2.4), as S3 has it for a
-  suspended bucket. The refusal is the route's own: the RADOS store's
-  object delete takes radosgw's versioned path, writing a delete marker, on
-  a bucket whose flags hold `BUCKET_VERSIONED`, and the unversioned path on
-  any other. The refusal follows the bucket load and comes before the
-  object-name check, as radosgw's versioned path answers no ENOENT for a
-  missing object.
+- **Admin removals ignore object lock.** `DELETE /admin/bucket?object`,
+  `DELETE /admin/bucket` with `purge-objects` or `bypass-gc`, and `DELETE
+  /admin/user` with `purge-data` read no object's retention or legal hold,
+  as radosgw's do not. radosgw's object removal and its purge delete
+  through `rgw_remove_object` and `RadosObject::delete_object`, which pass
+  no object-lock check to the delete
+  ([rgw_bucket.cc:148-161](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L148-L161),
+  [rgw_sal_rados.cc:2928-2949](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2928-L2949);
+  [rgw_bucket.cc:149-162](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L149-L162),
+  [rgw_sal_rados.cc:3766-3787](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3766-L3787)),
+  and `remove_bypass_gc` releases a version's data directly
+  ([rgw_sal_rados.cc:513-582](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L513-L582),
+  [rgw_sal_rados.cc:534-603](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L534-L603)),
+  where S3's DeleteObject and DeleteObjects check both through
+  `verify_object_lock`
+  ([rgw_op.cc:5211-5221](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5211-L5221),
+  [rgw_op.cc:6871-6878](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6871-L6878);
+  [rgw_op.cc:5601-5611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5601-L5611),
+  [rgw_op.cc:7799-7806](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7799-L7806)).
+  So the purges remove every version of an object-lock bucket, one under
+  compliance retention or a legal hold included, and then the bucket,
+  where Amazon S3 lets no request remove a version under compliance
+  retention before it ends, or one under a legal hold. The object
+  removal names no version, so on such a bucket, whose versioning radosgw
+  always enables, it writes a delete marker and removes no version. A
+  bucket whose flags carry object lock without `BUCKET_VERSIONED`, which
+  no radosgw op writes but a `bucket.instance` metadata put can store,
+  takes the unversioned path in both gateways, as `versioning_status`
+  reads only the versioning flags
+  ([rgw_common.h:1075](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L1075),
+  [rgw_common.h:1117](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1117)):
+  the object removal and the purges remove its objects outright,
+  retention and legal hold notwithstanding, as radosgw's do. rgw-go
+  keeps radosgw's behaviour because Rook deletes a bucket through the
+  purge, and a refusal would leave an object-lock bucket that Rook can
+  never delete (the owner, 2026-10-13). Each route needs the
+  `buckets=write` or `users=write` cap.
+- **A purging removal removes a versioned bucket's null version, where
+  radosgw writes a delete marker.** `DELETE /admin/bucket` with
+  `purge-objects` or `bypass-gc`, and `DELETE /admin/user` with
+  `purge-data`, remove each entry they list from a bucket whose flags hold
+  `BUCKET_VERSIONED` by its exact version, and name an entry listed
+  without an instance, the null version or an object written before
+  versioning was enabled, `null`, as radosgw's lifecycle names one
+  ([rgw_lc.cc:498-505](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L498-L505),
+  [rgw_lc.cc:506-513](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L506-L513)),
+  so the delete removes that version and writes no delete marker
+  (`PurgeObjects`, `internal/op/adminpurge.go`). radosgw's purge deletes
+  the plain key such an entry names, which on a versioned bucket writes a
+  delete marker instead: on an enabled bucket the null version survives
+  noncurrent under it, on a suspended one the null delete marker replaces
+  it, and the bucket is then removed over what is left, whose RADOS
+  objects stay out of S3's reach (`docs/ceph-upstream-bugs.md`,
+  "[radosgw's bucket purge writes a delete marker in place of a versioned
+  bucket's null
+  version](ceph-upstream-bugs.md#radosgws-bucket-purge-writes-a-delete-marker-in-place-of-a-versioned-buckets-null-version)").
+  rgw-go's purge leaves an empty index, and its bucket removal then finds
+  the bucket empty ("A purging bucket removal checks the index is empty at
+  the end"). radosgw v18.2.8 and v19.2.2 named such an entry `null` too;
+  the change came with v19.2.3 and v20.0.0.
 - **A purging removal resumes each page of a versioned bucket at its last
   key's remaining versions.** `DELETE /admin/bucket` with `purge-objects`
   or `bypass-gc`, and `DELETE /admin/user` with `purge-data`, list a bucket
@@ -1555,9 +1572,7 @@ review and verified against the tree.
   purging bucket removal checks the index is empty at the end"). A bucket
   that was never versioned is paged as radosgw pages it, since a marker
   without an instance starts after its name whether or not its entry is
-  still there. The purges' refusal of a versioned bucket ("A purging bucket
-  removal refuses a bucket whose versioning was ever enabled") comes before
-  this listing. The lifecycle pass, which keeps most of what it lists,
+  still there. The lifecycle pass, which keeps most of what it lists,
   resumes after the newest version it kept instead ("A lifecycle pass hands
   each version of a key out once").
 - **The admin bucket removal with bypass-gc leaves a versioned key's OLH
@@ -1580,9 +1595,7 @@ review and verified against the tree.
   [rgw_rados.cc:10906-10908](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L10906-L10908),
   [rgw_rados.cc:11647-11649](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L11647-L11649)).
   So the null version's tail stripes wait for the garbage collector, where
-  radosgw frees them at once. The purges' refusal of a versioned bucket
-  ("A purging bucket removal refuses a bucket whose versioning was ever
-  enabled") comes before this pass.
+  radosgw frees them at once.
 - **The admin account routes and the RADOS account store differ from
   radosgw in eight ways.** On `/admin/account` (`rgw_rest_account.cc` and
   `rgw_account.cc` at v19.2.6 and v20.2.4) and in the RADOS driver's

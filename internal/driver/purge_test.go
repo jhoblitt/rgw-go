@@ -324,9 +324,13 @@ var _ = Describe("PurgeBypassGC", func() {
 		})
 	})
 
-	DescribeTable("refuses a bucket whose versioning was ever enabled or that has object lock before it deletes anything",
+	DescribeTable("removes a bucket whose versioning was ever enabled or that has object lock through the admin op, every object and upload with it, whatever their retention or legal hold",
 		func(ctx SpecContext, flags uint32, edit func(*op.RemoveBucketAdmin)) {
 			putObject(ctx, rec, "big", 9<<20)
+			bigTails := tailOIDs(ctx, rec, "big")
+			held := c.Object(testDataPool, "", headOID(rec, "big"))
+			held.Xattrs[meta.AttrObjectRetention] = encode(meta.ObjectRetention{Mode: "COMPLIANCE", RetainUntil: time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)})
+			held.Xattrs[meta.AttrObjectLegalHold] = encode(meta.ObjectLegalHold{Status: "ON"})
 			putObject(ctx, rec, "small", 10)
 			up := initUpload(ctx, rec, "mp")
 			putPart(ctx, up, 1, 5<<20)
@@ -334,27 +338,33 @@ var _ = Describe("PurgeBypassGC", func() {
 			Expect(err).NotTo(HaveOccurred())
 			cur.Info.Flags |= flags
 			Expect(s.PutBucketInfo(ctx, cur)).To(Succeed())
-			before, entries := dataObjects(rec), indexKeys(rec)
-			extra := c.Objects(extraPoolName, "")
 
 			o := op.NewRemoveBucketAdmin()
 			o.Bucket = "b"
 			edit(o)
-			Expect(runAdmin(ctx, o)).To(MatchError(op.ErrNotImplemented))
+			Expect(runAdmin(ctx, o)).To(Succeed())
 			settle(s)
-			Expect(dataObjects(rec)).To(ConsistOf(before), "no head or tail released")
-			Expect(c.Objects(extraPoolName, "")).To(HaveLen(len(extra)), "the upload not aborted")
-			Expect(allGCEntries(c)).To(BeEmpty(), "nothing queued for GC")
-			Expect(entries).To(ContainElements("big", "small"))
-			Expect(indexKeys(rec)).To(ConsistOf(entries))
 			_, err = s.GetBucket(ctx, "", "b")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(err).To(MatchError(op.ErrNoSuchBucket))
+			for _, name := range []string{"big", "small"} {
+				Expect(c.Object(testDataPool, "", headOID(rec, name))).To(BeNil(), "%s's head", name)
+			}
+			Expect(gcOIDs()).To(ContainElements(dataObjects(rec)), "every stripe left is queued for the GC")
+			if o.BypassGC {
+				Expect(gcOIDs()).NotTo(ContainElements(bigTails), "big's tails released directly")
+				for _, oid := range bigTails {
+					Expect(c.Object(testDataPool, "", oid)).To(BeNil(), oid)
+				}
+			}
 		},
 		Entry("purge-objects, versioning enabled", uint32(meta.BucketVersioned), func(o *op.RemoveBucketAdmin) { o.PurgeObjects = true }),
+		Entry("purge-objects, versioning suspended", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended), func(o *op.RemoveBucketAdmin) { o.PurgeObjects = true }),
+		Entry("purge-objects, object lock", uint32(meta.BucketVersioned|meta.BucketObjLockEnabled), func(o *op.RemoveBucketAdmin) { o.PurgeObjects = true }),
 		Entry("bypass-gc, versioning enabled", uint32(meta.BucketVersioned), func(o *op.RemoveBucketAdmin) { o.BypassGC = true }),
 		Entry("bypass-gc, versioning suspended", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended), func(o *op.RemoveBucketAdmin) { o.BypassGC = true }),
-		Entry("purge-objects, object lock without versioning, which radosgw never writes", uint32(meta.BucketObjLockEnabled), func(o *op.RemoveBucketAdmin) { o.PurgeObjects = true }),
-		Entry("bypass-gc, object lock without versioning, which radosgw never writes", uint32(meta.BucketObjLockEnabled), func(o *op.RemoveBucketAdmin) { o.BypassGC = true }),
+		Entry("bypass-gc, object lock", uint32(meta.BucketVersioned|meta.BucketObjLockEnabled), func(o *op.RemoveBucketAdmin) { o.BypassGC = true }),
+		Entry("purge-objects, object lock without versioning, which radosgw never writes and purges as unversioned", uint32(meta.BucketObjLockEnabled), func(o *op.RemoveBucketAdmin) { o.PurgeObjects = true }),
+		Entry("bypass-gc, object lock without versioning, which radosgw never writes and purges as unversioned", uint32(meta.BucketObjLockEnabled), func(o *op.RemoveBucketAdmin) { o.BypassGC = true }),
 	)
 
 	It("fails on a bucket without index objects, as read_stats fails", func(ctx SpecContext) {

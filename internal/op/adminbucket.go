@@ -897,31 +897,27 @@ func (o *RemoveObjectAdmin) VerifyPermission(_ context.Context, r *Request) erro
 }
 
 // Execute is RGWBucket::init, then the object deleted as rgw_remove_object
-// deletes it, a missing object being -ENOENT, NoSuchKey. A bucket whose
-// versioning is or was enabled or that has object lock is answered
-// NotImplemented before the store is asked about the object: radosgw keys
-// the object with no instance and passes the bucket's versioning
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L274-L289 at v19.2.6,
+// deletes it: by the plain key, with no instance, under the bucket's
+// versioning, and with no object-lock check
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L274-L289 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L275-L290 at v20.2.4;
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L2933-L2937,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3775-L3779),
-// so on a versioned bucket it writes a delete marker, whether or not the
-// object exists
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5774-L5812 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6462-L6517 at v20.2.4).
-// The refusal is the route's: the store's delete writes a marker on a
-// bucket whose flags hold BUCKET_VERSIONED too (docs/exclusions.md). On any
-// other bucket, a name no object can carry,
-// empty, longer than 1024 bytes or not UTF-8, is answered NoSuchKey without
-// reaching the store, the answer radosgw's head read gives it, where
-// radosgw would hand a name of over about 2000 bytes to RADOS, which
-// refuses it as too long (docs/exclusions.md).
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2928-L2949,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3766-L3787;
+// docs/exclusions.md, "Admin removals ignore object lock"). So on a bucket
+// whose flags hold BUCKET_VERSIONED the store writes a delete marker with
+// no owner, whether or not the object exists
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5850-L5869 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6462-L6481 at v20.2.4),
+// and on any other a missing object is -ENOENT, NoSuchKey. A name no object
+// can carry, empty, longer than 1024 bytes or not UTF-8, is answered
+// NoSuchKey without reaching the store. That is the answer radosgw's head
+// read gives it on an unversioned bucket, though radosgw hands a name of
+// over about 2000 bytes to RADOS, which refuses it as too long; on a
+// versioned bucket radosgw writes a delete marker under any name RADOS
+// takes (docs/exclusions.md).
 func (o *RemoveObjectAdmin) Execute(ctx context.Context, r *Request) error {
 	rec, err := loadAdminBucket(ctx, r.Env, meta.UserID{}, o.Bucket)
 	if err != nil {
-		return err
-	}
-	if err := versioningUnserved(rec); err != nil {
 		return err
 	}
 	if !validAdminObjectName(o.Object) {
