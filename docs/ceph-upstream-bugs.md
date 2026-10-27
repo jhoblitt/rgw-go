@@ -477,6 +477,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's ?layout checks a cap type no caps command can grant](#radosgws-layout-checks-a-cap-type-no-caps-command-can-grant) | pending | pending | ✓ |
 | [radosgw's CompleteMultipartUpload ignores a failed read of its upload info and drops the upload's retention and legal hold](#radosgws-completemultipartupload-ignores-a-failed-read-of-its-upload-info-and-drops-the-uploads-retention-and-legal-hold) | pending | pending | ✓ |
 | [radosgw hands a sync zone's endpoint credentials to any holder of zone=read](#radosgw-hands-a-sync-zones-endpoint-credentials-to-any-holder-of-zoneread) | pending | pending | ✓ |
+| [radosgw's CopyObject sends neither x-amz-version-id nor x-amz-copy-source-version-id](#radosgws-copyobject-sends-neither-x-amz-version-id-nor-x-amz-copy-source-version-id) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -28436,3 +28437,51 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task WP-20b, 2026-10-27, auditing the admin answers
   that render zone configuration for tier secrets. Derived from the source,
   not reproduced.
+
+## radosgw's CopyObject sends neither x-amz-version-id nor x-amz-copy-source-version-id
+
+- **Kind:** defect, S3-correctness, not security-relevant: a CopyObject
+  answers without the id of the version it wrote and of the version it
+  copied, which S3 sends as `x-amz-version-id` and
+  `x-amz-copy-source-version-id`, so a client copying into a versioned
+  bucket cannot learn the new version's id from the answer, nor which
+  version an unnamed source was. Reproduced on v19.2.7 and v20.2.4:
+  each of the three copies of the s3-test
+  `test_versioning_copy_object_version_ids` ([jhoblitt/ceph#27](https://github.com/jhoblitt/ceph/pull/27)) into a
+  bucket whose versioning is enabled, from a version named, from the
+  current version with none named and from the null version, answered
+  with neither header.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWCopyObj::execute` gives the destination a new instance on a bucket
+    whose versioning is enabled, but leaves `version_id` as a system
+    request's `rgwx-version-id` set it, empty for any other request
+    ([rgw_op.cc:5576-5580](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5576-L5580),
+    [rgw_op.cc:6139-6143](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6139-L6143)).
+    `RGWPutObj::execute` copies the instance it draws into `version_id`
+    ([rgw_op.cc:4278-4285](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4278-L4285),
+    [rgw_op.cc:4491-4498](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4491-L4498)).
+  - `RGWCopyObj_ObjStore_S3::send_partial_response` and `send_response`
+    send the status, Tentacle's encryption headers and the document, and
+    neither version header
+    ([rgw_rest_s3.cc:3596-3633](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3596-L3633),
+    [rgw_rest_s3.cc:3846-3886](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3846-L3886)),
+    whatever `version_id` holds and whichever version the source's read
+    resolved.
+- **Impact:** a client that copies into a bucket whose versioning is
+  enabled must list the key's versions to learn the id of the version it
+  wrote, which a concurrent write can make ambiguous, and has no record of
+  which version of the source it copied when it named none.
+- **Releases:** v19.2.7 and v20.2.4; main was not checked.
+- **rgw-go:** differs: CopyObject sends `x-amz-version-id` for the version
+  it wrote and `x-amz-copy-source-version-id` for the version it read,
+  `null` for a null version on a bucket whose versioning was ever enabled
+  and neither on a bucket never versioned (`setVersionHeaders`,
+  `internal/s3/putobject.go`; `ResponseVersionID`,
+  `internal/op/version.go`; `docs/exclusions.md`, "Writes name the null
+  version's id and a copy's two versions"). Pinned in
+  `internal/s3/versionedwrite_test.go`, and by the s3-test, whose body
+  rgw-go passes on both releases.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task V11, 2026-10-27, serving CopyObject on a
+  versioned bucket; reproduced through its s3-test on both releases,
+  both headers for each copy.
