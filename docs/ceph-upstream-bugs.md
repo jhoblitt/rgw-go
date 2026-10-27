@@ -472,6 +472,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's lifecycle writes a delete marker over a version put after its listing](#radosgws-lifecycle-writes-a-delete-marker-over-a-version-put-after-its-listing) | pending | pending | ✓ |
 | [radosgw's lifecycle lister lists a key's versions again after a page that ends on its null version](#radosgws-lifecycle-lister-lists-a-keys-versions-again-after-a-page-that-ends-on-its-null-version) | pending | pending | ✓ |
 | [radosgw's lifecycle lister skips the rest of a key whose version ending a page it removed](#radosgws-lifecycle-lister-skips-the-rest-of-a-key-whose-version-ending-a-page-it-removed) | pending | pending | ✓ |
+| [radosgw's ?layout answers 200 with an empty document when its layout fails](#radosgws-layout-answers-200-with-an-empty-document-when-its-layout-fails) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -28004,3 +28005,72 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task C10b, 2026-10-23, paging the lifecycle's versions
   listing. Derived from the source, not reproduced.
+
+## radosgw's ?layout answers 200 with an empty document when its layout fails
+
+- **Kind:** defect, cosmetic, not security-relevant: a `?layout` whose
+  layout failed reads as one that succeeded. Unreproduced: derived from the
+  source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWGetObjLayout::execute` does nothing
+    ([rgw_op.cc:7909-7911](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L7909-L7911),
+    [rgw_op.cc:8814-8816](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L8814-L8816)),
+    so `RGWGetObjLayout_ObjStore_S3::send_response` sends the status of an
+    `op_ret` of 0 and ends the header as `application/json`, then opens the
+    JSONFormatter's `result` section, calls `dump_obj_layout` without
+    reading its return, closes the section and flushes
+    ([rgw_rest_s3.cc:4368-4385](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4368-L4385),
+    [rgw_rest_s3.cc:4879-4896](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4879-L4896)).
+  - `dump_obj_layout` returns before it writes anything when
+    `Read::prepare` or `get_manifest` fails
+    ([rgw_sal_rados.cc:2793-2803](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2793-L2803),
+    [rgw_sal_rados.cc:3628-3638](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3628-L3638)).
+  - A JSONFormatter, not pretty by default, writes no name for a section
+    opened at the top level
+    ([Formatter.cc:199-241](https://github.com/ceph/ceph/blob/v19.2.7/src/common/Formatter.cc#L199-L241),
+    [Formatter.cc:207-249](https://github.com/ceph/ceph/blob/v20.2.4/src/common/Formatter.cc#L207-L249)),
+    so the body is `{}`, and the buffering filter sends its length
+    ([rgw_client_io_filters.h:207-253](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_client_io_filters.h#L207-L253),
+    [rgw_client_io_filters.h:207-253](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_client_io_filters.h#L207-L253)).
+- **Trigger:** none known; the candidate is a versioned key named without
+  a version whose OLH has pending entries. `read_permissions` has read the
+  object's state through the request's object context by then, and
+  `prepare` and `get_manifest` read it from there again: `get_obj_state_impl`
+  hands back the context's state once it holds the attrs
+  ([rgw_rados.cc:6271-6280](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6271-L6280),
+  [rgw_rados.cc:6885-6894](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6885-L6894)).
+  - For an OLH, though, it follows the OLH again from that cached state each
+    time it is asked to follow, which `prepare` and `get_manifest` both ask
+    ([rgw_rados.cc:7052](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7052) and
+    [rgw_rados.cc:6481](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6481),
+    [rgw_rados.cc:7705](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7705) and
+    [rgw_rados.cc:7095](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7095)),
+    through `get_olh_target_state`
+    ([rgw_rados.cc:6238-6258](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6238-L6258),
+    [rgw_rados.cc:6852-6872](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6852-L6872)).
+  - `follow_olh` acts on the pending entries in the state's attrs: it removes
+    the expired ones and runs `update_olh` for the rest, I/O that can fail,
+    and answers an `update_olh` that meets a changed OLH tag with -ENOENT
+    ([rgw_rados.cc:8969-8997](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8969-L8997),
+    [rgw_rados.cc:9715-9743](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9715-L9743)).
+    Whether the follow `read_permissions` made leaves pending entries in the
+    cached state for the next follow to act on again is not established.
+  - What `prepare` does beyond the state read is open the head's pool,
+    `get_obj_head_ioctx`, and fail with its error
+    ([rgw_rados.cc:7111-7114](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7111-L7114),
+    [rgw_rados.cc:7773-7776](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7773-L7776)).
+  How to make either call fail on a running release is open.
+- **Impact:** a holder of `admin=read`, or an admin or system user, gets
+  200 and `{}` for an object whose layout radosgw could not read, which it
+  cannot tell from a success.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** differs: it lays the object out before anything is sent and
+  answers a failure as the request's error (`op.GetObjectLayout`,
+  `internal/op/layout.go`; `docs/exclusions.md`, "`?layout` answers a
+  layout that fails with its error"). "answers a layout that fails as its
+  error, sending nothing of the document" (`internal/s3/layout_test.go`)
+  pins it.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 planning's research, 2026-10-13; checked at v19.2.7
+  and v20.2.4 by task WP-21, 2026-10-27, serving `?layout`. Derived from
+  the source, not reproduced.
