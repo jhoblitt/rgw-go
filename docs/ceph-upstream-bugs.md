@@ -503,6 +503,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw from v21.0.0 deletes the current null version's data for a stale synced null delete marker](#radosgw-from-v2100-deletes-the-current-null-versions-data-for-a-stale-synced-null-delete-marker) | [#82573](https://tracker.ceph.com/issues/82573) | [ceph/ceph#72762](https://github.com/ceph/ceph/pull/72762) (open; stops the case observed) | ✓ |
 | [radosgw holds about 8 KiB of librados memory for each metadata header a PUT sends](#radosgw-holds-about-8-kib-of-librados-memory-for-each-metadata-header-a-put-sends) | none | none | ✓ |
 | [librados's op budget wraps negative for a read of 2 GiB, which aborts a Squid client and leaks a Tentacle client's throttle](#libradoss-op-budget-wraps-negative-for-a-read-of-2-gib-which-aborts-a-squid-client-and-leaks-a-tentacle-clients-throttle) | [#50031](https://tracker.ceph.com/issues/50031) | none; [ceph/ceph#24984](https://github.com/ceph/ceph/pull/24984) closed unmerged |  |
+| [radosgw answers no SHA512 checksum to a write and names it outside AWS's names](#radosgw-answers-no-sha512-checksum-to-a-write-and-names-it-outside-awss-names) | pending | [ceph/ceph#71484](https://github.com/ceph/ceph/pull/71484) |  |
+| [radosgw's UploadPartCopy answers the copied part's checksum in headers, not in CopyPartResult](#radosgws-uploadpartcopy-answers-the-copied-parts-checksum-in-headers-not-in-copypartresult) | pending | pending | ✓ |
+| [radosgw's CreateMultipartUpload answers no x-amz-checksum-type](#radosgws-createmultipartupload-answers-no-x-amz-checksum-type) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -32154,4 +32157,163 @@ Every new entry adds its row to this table, in document order.
   large reads, and the open ones that change the objecter or the throttle.
 - **Found:** 2026-11-03, while weighing goceph's ops as `calc_op_budget`
   does; derived from the source and upstream's el9 binaries, not
+  reproduced.
+
+## radosgw answers no SHA512 checksum to a write and names it outside AWS's names
+
+- **Kind:** defect, S3-correctness, not found by us: upstream has fixed it
+  on main (checked at 8aa24c51928, 2026-10-30), first tagged in the
+  development tag v22.0.0. A Tentacle radosgw computes, verifies and
+  stores a SHA512 checksum, but its table counts sha512 as no AWS type, so
+  a PutObject, UploadPart or UploadPartCopy whose checksum is SHA512 is
+  answered with no checksum header, and a checksum-mode GET or HEAD names
+  the value `x-rgw-checksum-sha512`, a header no AWS SDK reads. Its xxh3,
+  Amazon S3's XXHASH3, is answered the same way under
+  `x-rgw-checksum-xxh3`, and a completion of an xxh3 upload names its
+  element `ChecksumXXH3`, where Amazon S3's is `ChecksumXXHASH3`. No stored
+  data is damaged, and it is not security-relevant. Unreproduced: derived
+  from the source.
+- **Evidence:** paths are under `src/rgw/`, at v20.2.4 unless a link names
+  another ref; v19.2.7 has no checksum code.
+  - The table gives sha512 and xxh3 no `FLAG_AWS_CKSUM`
+    ([rgw_cksum.h:88-99](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L88-L99)),
+    and `header_name` is `x-amz-checksum-<name>` only for an AWS type,
+    `x-rgw-checksum-<name>` for any other
+    ([rgw_cksum.h:177-187](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L177-L187)).
+  - `RGWPutObj_ObjStore_S3::send_response` sends `x-amz-checksum-type` and
+    the value only when `cksum->aws()`, in its branch for a body and in its
+    branch for a copy
+    ([rgw_rest_s3.cc:2914-2917](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2914-L2917),
+    [rgw_rest_s3.cc:2922-2925](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2922-L2925)).
+  - A checksum-mode GET or HEAD sends the stored record under
+    `header_name` whatever its type
+    ([rgw_rest_s3.cc:548-586](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L548-L586)),
+    and ListParts renders a part's checksum only for an AWS type
+    ([rgw_rest_s3.cc:4709-4713](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4709-L4713)).
+    CompleteMultipartUpload's `ChecksumSHA512` element is Amazon S3's name,
+    as `element_name` has no AWS check
+    ([rgw_cksum.h:189-192](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L189-L192)),
+    but it upper-cases the table's name, so xxh3's is `ChecksumXXH3`
+    ([rgw_cksum.h:93](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L93)).
+  - Amazon S3's model answers SHA512 as `x-amz-checksum-sha512` and
+    XXHASH3 as `x-amz-checksum-xxhash3` on PutObject, UploadPart, GetObject
+    and HeadObject (botocore 1.43.90's `s3/2006-03-01/service-2.json`,
+    `PutObjectOutput`, `UploadPartOutput`, `GetObjectOutput` and
+    `HeadObjectOutput`).
+  - main at 8aa24c51928 fixes it: its table gives sha512 and xxhash3
+    `FLAG_AWS_CKSUM`
+    ([rgw_cksum.h:93-107](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_cksum.h#L93-L107)),
+    from ee6894210c6, "rgw: support new checksum types to match aws s3",
+    which [ceph/ceph#71484](https://github.com/ceph/ceph/pull/71484) merged
+    and the development tag v22.0.0 is the first tag to carry: v21.3.0
+    still gives both none
+    ([rgw_cksum.h:91-99](https://github.com/ceph/ceph/blob/v21.3.0/src/rgw/rgw_cksum.h#L91-L99)).
+- **Impact:** a client that writes with SHA512 gets no checksum back from
+  the write, and an SDK reading an object with checksum mode finds no
+  `ChecksumSHA512`; the stored checksum is right.
+- **Releases:** v20.2.4 and v21.3.0. Fixed on main 8aa24c51928 and in the
+  development tag v22.0.0. v19.2.7 has no checksum code.
+- **rgw-go:** differs. It names the types as Amazon S3 does, and as main
+  does at 8aa24c51928 (`internal/cksum/type.go`), and answers a SHA512
+  PutObject, UploadPart or UploadPartCopy with
+  `x-amz-checksum-type: FULL_OBJECT` and `x-amz-checksum-sha512`
+  (`setChecksumHeaders`, `internal/s3/checksum.go`; `docs/differences.md`,
+  "Writes answer a SHA512 checksum under AWS's name"). It computes no
+  XXHASH3 ("A checksum algorithm rgw-go does not compute is refused at
+  write"), and its S3 handler renders no stored checksum on a read yet
+  ("Stored checksums are not shown").
+- **Upstream:** fixed on main by
+  [ceph/ceph#71484](https://github.com/ceph/ceph/pull/71484) (ee6894210c6),
+  first tagged in the development tag v22.0.0; no tracker issue
+  searched.
+- **Found:** the phase 2 write-path plan's naming decision WD-8, 2026-10-13
+  (`docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md`); recorded
+  by phase 2 task WP-7, 2026-10-28, which traced the write responses.
+  Derived from the source, not reproduced.
+
+## radosgw's UploadPartCopy answers the copied part's checksum in headers, not in CopyPartResult
+
+- **Kind:** defect, S3-correctness, minor, unfixed at v20.2.4 and ceph main
+  8aa24c51928. A Tentacle radosgw answers a copied part's checksum as the
+  `x-amz-checksum-type` and `x-amz-checksum-<alg>` headers, beside a
+  `CopyPartResult` that holds only `LastModified` and `ETag`. Amazon S3
+  returns it as the document's `Checksum<ALG>` element, where an SDK reads
+  it, and defines no checksum header for UploadPartCopy, so a client
+  copying the parts of an upload with a checksum type cannot learn a
+  copied part's checksum. No stored data is damaged, and it is not
+  security-relevant. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - A part copied into an upload with a checksum type gets the upload's
+    filter, which the copy loop feeds as it feeds a body
+    ([rgw_op.cc:4601-4645](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4601-L4645)
+    at v20.2.4).
+  - `send_response`'s branch for a copy sends the checksum as two headers,
+    then `CopyPartResult` with `LastModified` and `ETag` alone
+    ([rgw_rest_s3.cc:2918-2940](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2918-L2940)
+    at v20.2.4,
+    [rgw_rest_s3.cc:3053-3076](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L3053-L3076)
+    at main 8aa24c51928).
+  - Amazon S3's model gives `UploadPartCopyOutput` no checksum header and
+    `CopyPartResult` the `ChecksumCRC32` to `ChecksumXXHASH128` elements
+    (botocore 1.43.90's `s3/2006-03-01/service-2.json`).
+  - v19.2.7 computes no checksum for a copied part, and its
+    `CopyPartResult` is the same
+    ([rgw_rest_s3.cc:2760-2779](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2760-L2779)).
+- **Impact:** an SDK sees no checksum for a part it copied. A client that
+  names each part's checksum in its completion, as Amazon S3 requires of a
+  COMPOSITE upload, has none to name for a copied part; radosgw's
+  completion reads no part checksum from the document, so the completion
+  itself succeeds.
+- **Releases:** v20.2.4 and main 8aa24c51928. v19.2.7 computes none.
+- **rgw-go:** reproduces it: a copied part's checksum is answered in the
+  two headers and `CopyPartResult` carries none (`uploadPart`,
+  `internal/s3/multipart.go`; `setChecksumHeaders`,
+  `internal/s3/checksum.go`), so there is no exclusion.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task WP-7, 2026-10-28, checking radosgw's write
+  responses against Amazon S3's model. Derived from the source, not
+  reproduced.
+
+## radosgw's CreateMultipartUpload answers no x-amz-checksum-type
+
+- **Kind:** defect, S3-correctness, cosmetic, unfixed at v20.2.4 and ceph
+  main 8aa24c51928. A Tentacle radosgw answers a CreateMultipartUpload
+  that names a checksum algorithm with `x-amz-checksum-algorithm` and
+  without the `x-amz-checksum-type` Amazon S3 answers, though it keeps the
+  upload's type, COMPOSITE or FULL_OBJECT, which it chooses itself when the
+  request names none. It also sends `x-amz-checksum-algorithm` with an
+  error that follows its read of the algorithm. No stored data is damaged,
+  and it is not security-relevant. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `get_params` reads the algorithm, then the flags,
+    `x-amz-checksum-type`'s or `cksum_flags_of` the algorithm's, and
+    refuses a pair `permitted_cksum_algo_and_type` refuses
+    ([rgw_rest_s3.cc:4507-4521](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4507-L4521)
+    at v20.2.4), and `execute` stores both in the upload
+    ([rgw_op.cc:7006-7010](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7006-L7010)
+    at v20.2.4).
+  - `send_response` sends `x-amz-checksum-algorithm` for an algorithm other
+    than none, before it looks at `op_ret`, and no `x-amz-checksum-type`
+    ([rgw_rest_s3.cc:4526-4556](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4526-L4556)
+    at v20.2.4,
+    [rgw_rest_s3.cc:4786-4815](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L4786-L4815)
+    at main 8aa24c51928).
+  - Amazon S3's model gives `CreateMultipartUploadOutput` both
+    `x-amz-checksum-algorithm` and `x-amz-checksum-type` (botocore
+    1.43.90's `s3/2006-03-01/service-2.json`).
+  - v19.2.7 keeps no upload checksum and sends neither
+    ([rgw_rest_s3.cc:4059-4085](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4059-L4085)).
+- **Impact:** a client cannot read from the creation's answer whether its
+  upload's checksum will be COMPOSITE or FULL_OBJECT; it learns that only
+  from the completion. The algorithm on an error answer is harmless.
+- **Releases:** v20.2.4 and main 8aa24c51928. v19.2.7 keeps no upload
+  checksum.
+- **rgw-go:** reproduces the missing header, and sends
+  `x-amz-checksum-algorithm` with a created upload alone
+  (`setUploadAlgorithm`, `internal/s3/checksum.go`;
+  `docs/differences.md`, "CreateMultipartUpload answers its checksum
+  algorithm only with the upload").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task WP-7, 2026-10-28, checking radosgw's write
+  responses against Amazon S3's model. Derived from the source, not
   reproduced.
