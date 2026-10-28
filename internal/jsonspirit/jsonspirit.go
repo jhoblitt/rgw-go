@@ -13,9 +13,11 @@
 // follows it unread. A throw anywhere, an object without its closing brace
 // for one, fails the whole read.
 //
-// Parse refuses with an error what it does not read as json_spirit does:
-// \x and \X escapes, a real whose value json_spirit takes from the host's
-// libm, and nesting deeper than MaxDepth.
+// Parse refuses with an error what it does not read as json_spirit does: a
+// \x or \X escape the lexer takes, a real whose value json_spirit takes from
+// the host's libm, and nesting deeper than MaxDepth. A \x that json_spirit's
+// unescaping reaches only through a short \u, which takes the first
+// backslash of an escaped backslash, it reads as json_spirit does.
 package jsonspirit
 
 import (
@@ -39,11 +41,11 @@ const MaxDepth = 10000
 // JSONParser the buffer and length, a NUL it appends included.
 //
 // A non-nil err is a form Parse refuses rather than read otherwise than
-// json_spirit does, its text saying which: a \x or \X escape, which
-// json_spirit reads or refuses by the CPU's char signedness; a real whose
-// value comes from the host's libm, one with an exponent past ±300, a
-// fraction of more than 300 digits or the exponent 126, or whose value is
-// not finite; and nesting deeper than MaxDepth.
+// json_spirit does, its text saying which: a \x or \X escape the lexer
+// takes, which json_spirit reads or refuses by the CPU's char signedness; a
+// real whose value comes from the host's libm, one with an exponent past
+// ±300, a fraction of more than 300 digits or the exponent 126, or whose
+// value is not finite; and nesting deeper than MaxDepth.
 func Parse(buf string) (root *Node, ok bool, err error) {
 	p := parser{s: buf}
 	n, ok := p.value()
@@ -256,9 +258,12 @@ func (p *parser) str() (string, bool) {
 // and v20.2.4) with append_esc_char_and_incr_iter
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L95-L131 at v19.2.7
 // and v20.2.4): the JSON escapes, \u with four hex digits, a non-hex digit
-// counting as 0, encoded by encode_utf8 even for a surrogate, and any other
-// escaped byte dropped with its backslash. A backslash in the last position
-// is kept.
+// counting as 0, encoded by encode_utf8 even for a surrogate, \x with two,
+// and any other escaped byte dropped with its backslash. A backslash in the
+// last position is kept. \u and \x take the bytes after them whatever str
+// lexed there, so a short \u can take the first backslash of an escaped
+// backslash and leave the second to start a \x, which str never lets through
+// itself (docs/ceph-upstream-bugs.md).
 func substituteEscChars(s string) string {
 	if len(s) < 2 || !strings.Contains(s, `\`) {
 		return s
@@ -284,6 +289,14 @@ func substituteEscChars(s string) string {
 			b.WriteByte('\r')
 		case '\\', '/', '"':
 			b.WriteByte(c)
+		case 'x':
+			// hex_str_to_char
+			// (https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L60-L67 at v19.2.7
+			// and v20.2.4), when two bytes follow.
+			if len(s)-i >= 3 {
+				b.WriteByte(hexToNum(s[i+1])<<4 | hexToNum(s[i+2]))
+				i += 2
+			}
 		case 'u':
 			if len(s)-i >= 5 {
 				var uc uint16

@@ -155,6 +155,8 @@ var _ = Describe("legacy tier config conversion", func() {
 		Entry("\\u escapes are encoded one by one, surrogates included", `["\ud83dé"]`, farray(fvalue("\xed\xa0\xbd\xc3\xa9", true))),
 		Entry("an unknown escape is dropped with its backslash", `["a\qb"]`, farray(fvalue("ab", true))),
 		Entry("an octal escape is dropped likewise, its first digit with the backslash", `["\101"]`, farray(fvalue("01", true))),
+		Entry("a short \\u escape takes an escaped backslash's first half, and the second starts a hex escape",
+			`["\uABC\\x41"]`, farray(fvalue("\xea\xaf\x80A", true))),
 		Entry("nested objects and arrays", `{"b": [1, "x", {"c": null}], "a": false}`, meta.JSONFormattable{
 			Type: meta.FormattableObject,
 			Object: map[string]meta.JSONFormattable{

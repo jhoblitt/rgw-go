@@ -112,6 +112,8 @@ var _ = Describe("Parse", func() {
 		Entry("an escape json_spirit drops with its backslash", string(policyDoc(future, `{"bucket": "b\qkt"}`)), "bkt", ""),
 		Entry("an octal escape, dropped likewise with its first digit", string(policyDoc(future, `{"bucket": "\101"}`)), "01", ""),
 		Entry("an octal value no char holds, dropped likewise", string(policyDoc(future, `{"bucket": "\777"}`)), "77", ""),
+		Entry("a hex escape a short u escape exposes, by taking an escaped backslash's first half",
+			string(policyDoc(future, `{"bucket": "`+u("ABC")+`\\x41"}`)), "\xea\xaf\x80A", ""),
 		Entry("bytes that are not UTF-8 in a string, kept as they are",
 			string(policyDoc(future, "{\"bucket\": \"b\xff\"}")), "b\xff", ""),
 		Entry("bytes that are not UTF-8 in a member name",

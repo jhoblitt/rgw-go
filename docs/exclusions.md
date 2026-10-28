@@ -4264,8 +4264,9 @@ does the following.
   ([ceph_json.cc:778-838](https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_json.cc#L778-L838),
   the same at v20.2.4). rgw-go reads each value with the same grammar
   (`internal/jsonspirit`) and stores what radosgw stores, but for a value
-  with a `\x` or `\X` escape, which json_spirit reads or refuses by the
-  CPU's `char` signedness (docs/ceph-upstream-bugs.md, "[radosgw's JSON
+  with a `\x` or `\X` escape json_spirit's lexer takes, which json_spirit
+  reads or refuses by the CPU's `char` signedness
+  (docs/ceph-upstream-bugs.md, "[radosgw's JSON
   parser lexes `\x` and `\X` escapes by the CPU's char signedness, and
   drops octal and `\X`
   escapes](ceph-upstream-bugs.md#radosgws-json-parser-lexes-x-and-x-escapes-by-the-cpus-char-signedness-and-drops-octal-and-x-escapes)"),
@@ -4274,7 +4275,11 @@ does the following.
   exponent 126, or a value that is not finite), or arrays and objects
   nested deeper than 10000, where json_spirit recurses without limit:
   rgw-go fails to decode such a zone with `denc.ErrMalformed`
-  (`meta.DecodeZoneParams`), where radosgw stores a value for it.
+  (`meta.DecodeZoneParams`), where radosgw stores a value for it. A `\x`
+  that json_spirit's unescaping reaches only because a `\u` whose four
+  bytes end on an escaped backslash's first half, or a reached `\x` whose
+  two bytes do, leaves the second half to start it, rgw-go reads as
+  json_spirit does.
 
 ### S3 handler differences
 
@@ -6789,8 +6794,9 @@ rgw-go does the following.
   the same at v20.2.4), and rgw-go reads it with the same grammar
   (`internal/jsonspirit`), as JSONParser does, but for three forms, which
   it answers 400 InvalidArgument, "Malformed JSON" (`postpolicy.Parse`),
-  where radosgw reads the document. One is a `\x` or `\X` escape: boost's
-  `escape_char_parse` lexes its hex digits with an overflow check on a
+  where radosgw reads the document. One is a `\x` or `\X` escape that
+  json_spirit's lexer takes: boost's `escape_char_parse` lexes its hex
+  digits with an overflow check on a
   `char`, which is signed on x86-64 and unsigned on aarch64, so radosgw
   reads some such documents on one CPU and refuses them on the other; then
   `hex_str_to_char` reads the two bytes after an `x`, whatever the lexer
@@ -6816,8 +6822,12 @@ rgw-go does the following.
   digit as 0
   ([json_spirit_reader_template.h:51-58](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L51-L58),
   [json_spirit_reader_template.h:72-93](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L72-L93),
-  the same at v20.2.4), each half of an escaped surrogate pair as the
-  three bytes `encode_utf8` writes for it, and numbers with a sign,
+  the same at v20.2.4), a `\u` or `\x` taking the bytes after it whatever
+  they are, so that a `\u` whose four bytes end on an escaped backslash's
+  first half, or a reached `\x` whose two bytes do, leaves the second half
+  to start a `\x`, read as `hex_str_to_char` reads it, each
+  half of an escaped surrogate pair as the three bytes `encode_utf8`
+  writes for it, and numbers with a sign,
   leading zeros, a dot at either end, or an integer part of any length a
   double holds. It reads the document as JSONParser does too: the first
   of duplicate names, an object condition's member of the smallest name,
