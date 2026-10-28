@@ -490,6 +490,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's lifecycle transition hides the current version once another version of its key has been removed](#radosgws-lifecycle-transition-hides-the-current-version-once-another-version-of-its-key-has-been-removed) | pending | pending | ✓ |
 | [radosgw's lifecycle transition locks a version the bucket's default retention never covered](#radosgws-lifecycle-transition-locks-a-version-the-buckets-default-retention-never-covered) | pending | pending | ✓ |
 | [radosgw's website redirect-all writes its forced 301 into the bucket's configuration instead of the rule it returns](#radosgws-website-redirect-all-writes-its-forced-301-into-the-buckets-configuration-instead-of-the-rule-it-returns) | pending | pending | ✓ |
+| [radosgw's Elasticsearch sync module deletes a document without the module's headers](#radosgws-elasticsearch-sync-module-deletes-a-document-without-the-modules-headers) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -29646,3 +29647,55 @@ Every new entry adds its row to this table, in document order.
   redirect codes against radosgw's source, and its task review;
   registered in BC-16's fix round 1, 2026-10-27. Derived from the source,
   not reproduced.
+
+## radosgw's Elasticsearch sync module deletes a document without the module's headers
+
+- **Kind:** defect, S3-correctness of the sync module, not security-relevant
+  (rgw-bug-reproduction's triage, 2026-10-27, row
+  N12-3B-ES-SYNC-DELETE-NO-AUTH-HEADERS). The module sends its
+  `default_headers` with every request it makes to Elasticsearch except
+  the removal of an object's document, which sends no headers. They are
+  Content-Type and, when the module's username and password are set, a
+  Basic Authorization header. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `default_headers` holds Content-Type
+    ([rgw_sync_module_es.cc:175](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module_es.cc#L175),
+    [rgw_sync_module_es.cc:176](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module_es.cc#L176)),
+    plus a Basic AUTHORIZATION header when the module's username and
+    password are both set
+    ([rgw_sync_module_es.cc:191-195](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module_es.cc#L191-L195),
+    [rgw_sync_module_es.cc:192-196](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module_es.cc#L192-L196)).
+  - The GET of the cluster's info, the index-create PUT and the document PUT
+    each pass `&(conf->default_headers)`
+    ([rgw_sync_module_es.cc:656](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module_es.cc#L656),
+    [rgw_sync_module_es.cc:700](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module_es.cc#L700),
+    [rgw_sync_module_es.cc:797](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module_es.cc#L797);
+    [rgw_sync_module_es.cc:657](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module_es.cc#L657),
+    [rgw_sync_module_es.cc:701](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module_es.cc#L701),
+    [rgw_sync_module_es.cc:798](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module_es.cc#L798)).
+  - `RGWElasticRemoveRemoteObjCBCR` removes an object's document with
+    `RGWDeleteRESTResourceCR(sync_env->cct, conf->conn.get(),
+    sync_env->http_manager, path, nullptr /* params */)`
+    ([rgw_sync_module_es.cc:849-851](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_module_es.cc#L849-L851),
+    [rgw_sync_module_es.cc:850-852](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_module_es.cc#L850-L852)).
+    That constructor takes no headers
+    ([rgw_cr_rest.h:338-344](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cr_rest.h#L338-L344),
+    [rgw_cr_rest.h:338-344](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cr_rest.h#L338-L344)),
+    and the request it sends passes `nullptr` for the headers of its
+    `RGWRESTDeleteResource`
+    ([rgw_cr_rest.h:351-352](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_cr_rest.h#L351-L352),
+    [rgw_cr_rest.h:351-352](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cr_rest.h#L351-L352)).
+- **Impact:** on an Elasticsearch cluster that requires the module's
+  username and password, every removal fails during sync, so the documents
+  of deleted objects stay in the index. Credentials written into the
+  endpoint URL's userinfo still reach curl, which takes the request's URL
+  whole ([rgw_http_client.cc:588](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_http_client.cc#L588),
+  [rgw_http_client.cc:588](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_http_client.cc#L588)),
+  so that way of configuring the endpoint is not affected.
+- **Releases:** v19.2.7 and v20.2.4; per rgw-bug-reproduction, main is
+  identical.
+- **rgw-go:** unaffected: it runs no sync modules (`docs/exclusions.md`,
+  "Multisite").
+- **Upstream:** pending; prior art not searched.
+- **Found:** rgw-bug-reproduction, 2026-10-27, packaging WP20B-1 (the zone
+  config's sync credentials). Derived from the source, not reproduced.
