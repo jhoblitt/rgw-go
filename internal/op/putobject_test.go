@@ -470,15 +470,19 @@ func versionedDelTags(f *writeFixture, instance string) (op.Op, *op.Request) {
 	return &op.DeleteObjectTagging{}, r
 }
 
-// versionedOps are the write ops that do not create a head, each building
-// its request for key small in plain, naming instance when it is not empty.
-// The writes that create one serve a versioned bucket (version_test.go).
-var versionedOps = map[string]opCase{
-	"DeleteObject": versionedDelete, "DeleteObjects": versionedMulti, "PutObjectACL": versionedPutACL,
-	"PutObjectTagging": versionedPutTags, "DeleteObjectTagging": versionedDelTags,
+// versionedOps are the deletes, each building its request for key small in
+// plain, naming instance when it is not empty. The writes that create a head
+// serve a versioned bucket (version_test.go), and so do attrWriteOps
+// (objectattrs_test.go).
+var versionedOps = map[string]opCase{"DeleteObject": versionedDelete, "DeleteObjects": versionedMulti}
+
+// attrWriteOps are the object ACL and tagging writes, each building its
+// request as versionedOps' do.
+var attrWriteOps = map[string]opCase{
+	"PutObjectACL": versionedPutACL, "PutObjectTagging": versionedPutTags, "DeleteObjectTagging": versionedDelTags,
 }
 
-var _ = Describe("the write ops on a bucket whose versioning is not served", func() {
+var _ = Describe("the deletes on a bucket whose versioning is not served", func() {
 	var (
 		f    *writeFixture
 		stub *opfakes.FakeObjectStore

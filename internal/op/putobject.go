@@ -282,13 +282,13 @@ func blockPublicACLs(rec *BucketRecord) bool {
 
 // versioningUnserved answers 501 NotImplemented for a bucket whose versioning
 // is or was enabled or that has object lock, and for a request that names a
-// version of any of keys, which are objects of rec's that the request removes
-// or changes in place: the deletes and the object ACL and tagging writes,
-// which rgw-go does not serve on such a bucket yet. The store's delete takes
-// radosgw's versioned path on a bucket whose flags hold BUCKET_VERSIONED, but
-// the delete ops do not yet answer the version id or the delete marker it
-// reports, and would skip the retention and legal-hold checks radosgw makes
-// for a versioned delete on a lock bucket (verify_object_lock,
+// version of any of keys, which are objects of rec's that the request
+// removes: the deletes, which rgw-go does not serve on such a bucket yet. The
+// store's delete takes radosgw's versioned path on a bucket whose flags hold
+// BUCKET_VERSIONED, but the delete ops do not yet answer the version id or
+// the delete marker it reports, and would skip the retention and legal-hold
+// checks radosgw makes for a versioned delete on a lock bucket
+// (verify_object_lock,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5185-L5221 and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6845-L6869 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5576-L5610 and
@@ -300,15 +300,11 @@ func blockPublicACLs(rec *BucketRecord) bool {
 // version names the plain object: its head is the plain key's
 // (rgw_obj_key::get_oid,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_obj_types.h#L226-L254 at v19.2.6
-// and v20.2.4), the delete and the attr writes clear the instance before
-// they reach the index (RGWRados::Object::Delete::delete_obj,
+// and v20.2.4), the delete clears the instance before it reaches the index
+// (RGWRados::Object::Delete::delete_obj,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5768-L5770 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6456-L6458 at v20.2.4;
-// RGWRados::set_attrs,
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6601-L6603
-// and
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7401-L7403),
-// and the delete takes the unversioned path whenever the bucket's flags lack
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6456-L6458 at v20.2.4),
+// and it takes the unversioned path whenever the bucket's flags lack
 // BUCKET_VERSIONED
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5774,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6462),

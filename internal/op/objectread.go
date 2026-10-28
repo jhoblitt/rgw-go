@@ -73,10 +73,12 @@ func (o *GetObjectTagging) Init(ctx context.Context, r *Request) error {
 	return statHead(ctx, r)
 }
 
-// VerifyPermission is RGWGetObjTags::verify_permission.
+// VerifyPermission is RGWGetObjTags::verify_permission. A delete marker's
+// own version is refused as such, without Last-Modified
+// (deleteMarkerVersion).
 func (o *GetObjectTagging) VerifyPermission(ctx context.Context, r *Request) error {
 	a := o.Action()
-	return VerifyObjectPermission(ctx, r, a, acl.PermFor(a))
+	return deleteMarkerVersion(ctx, r, VerifyObjectPermission(ctx, r, a, acl.PermFor(a)), false, a)
 }
 
 // Execute is RGWGetObjTags::execute, whose get_obj_attrs answers a missing
@@ -151,10 +153,12 @@ func (o *GetObjectACL) Init(ctx context.Context, r *Request) error {
 	return statHead(ctx, r)
 }
 
-// VerifyPermission is RGWGetACLs::verify_permission for an object.
+// VerifyPermission is RGWGetACLs::verify_permission for an object. A delete
+// marker's own version is refused as such, without Last-Modified
+// (deleteMarkerVersion).
 func (o *GetObjectACL) VerifyPermission(ctx context.Context, r *Request) error {
 	a := o.Action()
-	return VerifyObjectPermission(ctx, r, a, acl.PermFor(a))
+	return deleteMarkerVersion(ctx, r, VerifyObjectPermission(ctx, r, a, acl.PermFor(a)), false, a)
 }
 
 // Execute takes the policy get_obj_policy_from_attr builds (ObjectACLFor).
@@ -363,10 +367,16 @@ func (o *GetObjectAttributes) Init(ctx context.Context, r *Request) error {
 // as a missing object's, and an error that is no access denial come from the
 // first check alone. A Squid radosgw has no such op, so there the first
 // check decides: Squid knows no s3:GetObjectAttributes, and no Deny a Squid
-// policy states could refuse it.
+// policy states could refuse it. A delete marker's own version is refused as
+// such to a requester who holds either version action, without the
+// Last-Modified only GET and HEAD carry (deleteMarkerVersion).
 func (o *GetObjectAttributes) VerifyPermission(ctx context.Context, r *Request) error {
 	a := o.Action()
-	err := VerifyObjectPermission(ctx, r, a, acl.PermFor(a))
+	actions := []policy.Action{a}
+	if r.Env.Zone.Release() >= denc.Tentacle {
+		actions = append(actions, policy.S3GetObjectVersionAttributes)
+	}
+	err := deleteMarkerVersion(ctx, r, VerifyObjectPermission(ctx, r, a, acl.PermFor(a)), false, actions...)
 	if err == nil || IsBeforeVerify(err) || !errors.Is(err, ErrAccessDenied) || r.Env.Zone.Release() < denc.Tentacle {
 		return err
 	}

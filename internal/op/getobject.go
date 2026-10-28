@@ -82,7 +82,8 @@ type GetObject struct {
 	ObjSize uint64
 	// PartsCount is x-amz-mp-parts-count, nil when radosgw sends none.
 	PartsCount *int
-	// VersionID is x-amz-version-id: the instance of the object read.
+	// VersionID is x-amz-version-id: the id of the version read
+	// (readVersionID), "" for none.
 	VersionID string
 	// Status is 200, or 206 for a range.
 	Status int
@@ -139,9 +140,10 @@ func (o *GetObject) OpMask() uint32 { return OpTypeRead }
 // set on a website request, the website endpoint's retarget runs between the
 // two loads. The head is read with the prefetch prefetch_data asks for, which
 // Read::prepare later finds in its cache.
+//
+// The version id is that of the key the read resolved (readVersionID).
 func (o *GetObject) Init(ctx context.Context, r *Request) error {
 	o.Versioned = r.Object.Instance != ""
-	o.VersionID = r.Object.Instance
 	if err := o.initBucket(ctx, r); err != nil {
 		return err
 	}
@@ -150,16 +152,38 @@ func (o *GetObject) Init(ctx context.Context, r *Request) error {
 		return err
 	}
 	r.ObjState, o.State, o.CondState = st, st, st
+	if st != nil {
+		o.VersionID = readVersionID(r.BucketRec, st.Key)
+	}
 	return nil
+}
+
+// readVersionID is the version id a read of key in rec names, key being the
+// key the read resolved: the version current on a key named without one, as
+// RGWGetObj takes version_id from the object Read::prepare followed to
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2259-L2260 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2495-L2496 at v20.2.4).
+// It is the key's instance, null when the request named the null version,
+// and for an empty instance ResponseVersionID's: null on a bucket whose
+// versioning was ever enabled, where radosgw names none
+// (docs/exclusions.md, "GET, HEAD and GetObjectAttributes name the version
+// they read, null for the null version").
+func readVersionID(rec *BucketRecord, key meta.ObjKey) string {
+	if key.Instance != "" {
+		return key.Instance
+	}
+	return ResponseVersionID(rec, "")
 }
 
 // VerifyPermission is RGWGetObj::verify_permission. On Tentacle a refusal of
 // an object that exists says which permission is missing
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1201-L1209 at v20.2.4);
 // radosgw refuses a missing object earlier, in read_permissions, without one.
+// A delete marker's own version is refused as such, with its Last-Modified
+// (deleteMarkerVersion).
 func (o *GetObject) VerifyPermission(ctx context.Context, r *Request) error {
 	a := o.Action()
-	err := VerifyObjectPermission(ctx, r, a, acl.PermFor(a))
+	err := deleteMarkerVersion(ctx, r, VerifyObjectPermission(ctx, r, a, acl.PermFor(a)), true, a)
 	if err == nil || IsBeforeVerify(err) || !errors.Is(err, ErrAccessDenied) ||
 		r.ObjState == nil || !r.ObjState.Exists || r.Env.Zone.Release() < denc.Tentacle {
 		return err
@@ -475,7 +499,12 @@ func (o *GetObject) prepare(ctx context.Context, r *Request, since, unmodSince *
 // Part 1 of an object that is not multipart, or has no part 1, is the whole
 // object, as "the java sdk's TransferManager.download()" expects, with no
 // count. Any other part that is not there, and any failure to read its head,
-// is InvalidPart.
+// is InvalidPart. The version id stays the object's, where radosgw's is the
+// instance of the part head's key, which the part's UploadPart request named
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7076-L7105 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7738-L7767 at v20.2.4;
+// docs/exclusions.md, "GET, HEAD and GetObjectAttributes name the version
+// they read, null for the null version").
 func (o *GetObject) redirectToPart(ctx context.Context, r *Request) (int, error) {
 	head, n := o.CondState, *o.PartNumber
 	var (
@@ -528,7 +557,6 @@ func (o *GetObject) redirectToPart(ctx context.Context, r *Request) (int, error)
 		}
 	}
 	o.State = &part
-	o.VersionID = part.Key.Instance
 	return count, nil
 }
 

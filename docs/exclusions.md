@@ -2358,8 +2358,8 @@ review and verified against the tree.
   copy took, and a completion leaves its upload in place. Until then the
   op layer answers all three on a bucket with object lock 501 first
   ("PutObject, CopyObject and CompleteMultipartUpload answer 501 on an
-  object-lock bucket, and the deletes and the ACL and tag writes on a
-  versioned one"). Reads, CreateMultipartUpload and UploadPart, which are not
+  object-lock bucket, and the deletes on a versioned one"). Reads,
+  CreateMultipartUpload and UploadPart, which are not
   create writes, still succeed.
   The phase that serves bucket sync policy models it. The admin API's `GET` or `PUT
   /admin/metadata/bucket.instance` of a bucket holding a sync policy with
@@ -7923,10 +7923,15 @@ does the following.
   while the state loaded is the key's (`:441-448`). v19.2.6 adds no such
   header (`rgw_rest.cc:1893-1933`). In the object reads rgw-go serves,
   `?layout` among them, and in ListParts of a missing upload, it sends the
-  header where Tentacle does, always `false`, also for a key whose current
-  version is a delete marker, where Tentacle sends `true`: the object store
-  reports the marker (`ObjectState.DeleteMarker`), which the S3 handler
-  does not read. A website GET of a missing key
+  header where Tentacle does: `true` for a key whose current version is a
+  delete marker, which the object store reports (`ObjectState.DeleteMarker`),
+  on Squid too ("A key whose current version is a delete marker answers its
+  404 with x-amz-delete-marker: true on Squid too"), and `false` otherwise,
+  for a version named by a requester who may list the bucket but not read
+  the version too, a delete marker's among them, as radosgw follows no olh
+  for a key that names an instance. A requester who may read a delete
+  marker's version gets 405 instead ("A read naming a delete marker's
+  version answers 405 MethodNotAllowed"). A website GET of a missing key
   whose bucket's error document is missing too gets the header twice from
   Tentacle, once from each key's `read_permissions`, the error document's
   in `serve_errordoc`
@@ -8313,8 +8318,8 @@ does the following.
   linked version's ETag answers 412 through radosgw and succeeds through
   rgw-go, and one on the version before it the other way round. Both
   gateways' replays write the same state.
-- **A read of a versioned key named without a version id sends no
-  x-amz-version-id.** radosgw's GET and HEAD answer with the id of the
+- **GET, HEAD and GetObjectAttributes name the version they read, null for
+  the null version.** radosgw's GET and HEAD answer with the id of the
   version they resolved: `Read::prepare` keeps the version it followed to
   ([rgw_rados.cc:7105](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7105),
   [rgw_rados.cc:7767](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7767)),
@@ -8324,18 +8329,143 @@ does the following.
   and `RGWGetObj` takes `version_id` from that object
   ([rgw_op.cc:2260](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2260),
   [rgw_op.cc:2496](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2496))
-  and sends it
+  and sends it when it is not empty
   ([rgw_rest_s3.cc:469](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L469),
   [rgw_rest_s3.cc:497](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L497)).
   Tentacle's GetObjectAttributes does the same in
   `RGWGetObjAttrs_ObjStore_S3::send_response`
-  ([rgw_rest_s3.cc:3999-4010](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3999-L4010)).
-  rgw-go's GET, HEAD and GetObjectAttributes send the version id the
-  request named, so a read of a versioned key named without one sends no
-  `x-amz-version-id` where radosgw sends the current version's. Neither
-  sends one when the current version is the null version, whose instance
-  is empty. Task V14a's GET and HEAD send the resolved version's id
-  (decision D4), which retires this difference.
+  ([rgw_rest_s3.cc:3999-4010](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3999-L4010)), and
+  Squid's radosgw answers `?attributes` as a GET. rgw-go's three name the
+  version of the key their read resolved, as radosgw's do, on both releases
+  (`readVersionID`, `internal/op/getobject.go`), with two differences.
+  - The null version, read by a request that names no version, is named
+    `null` on a bucket whose versioning was ever enabled, as S3 names it,
+    where radosgw names none, the null version's instance being empty
+    (`docs/ceph-upstream-bugs.md`, "[radosgw's GET and HEAD send no
+    x-amz-version-id for the null version they
+    read](ceph-upstream-bugs.md#radosgws-get-and-head-send-no-x-amz-version-id-for-the-null-version-they-read)").
+    An object of a bucket whose versioning was never enabled has no version,
+    and neither gateway names one; a request naming `versionId=null` is
+    answered `null` by both, as it named it.
+  - A `partNumber` read names the version it reads a part of. radosgw names
+    the instance of the part head's key, which `get_part_obj_state` puts in
+    place of the object's before `Read::prepare` keeps it
+    ([rgw_rados.cc:7076-7105](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7076-L7105),
+    [rgw_rados.cc:7738-7767](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7738-L7767)), and the
+    part's tails took that instance from the key its UploadPart request
+    named
+    ([rgw_obj_manifest.cc:269](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_obj_manifest.cc#L269),
+    [rgw_obj_manifest.cc:269](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_obj_manifest.cc#L269)):
+    none, unless that request named a `versionId`.
+- **A read naming a delete marker's version answers 405
+  MethodNotAllowed.** radosgw answers a GET, HEAD, GetObjectAttributes,
+  GetObjectAcl or GetObjectTagging whose `versionId` names a delete marker
+  as it answers a version that does not exist: 404 NoSuchKey to an admin or
+  to a requester allowed `s3:ListBucket`, and 403 AccessDenied to any other
+  ([rgw_op.cc:423-447](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L423-L447),
+  [rgw_op.cc:453-477](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L453-L477)), with
+  `x-amz-delete-marker: false` on Tentacle's 404 and none on Squid
+  (`docs/ceph-upstream-bugs.md`, "[radosgw answers a read naming a delete
+  marker's version 404 NoSuchKey](ceph-upstream-bugs.md#radosgw-answers-a-read-naming-a-delete-markers-version-404-nosuchkey)").
+  Amazon S3 checks the read's permission and then answers the marker: 405
+  MethodNotAllowed with `x-amz-delete-marker: true`, and for GET and HEAD
+  the marker's `Last-Modified`
+  (https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeleteMarker.html).
+  rgw-go answers so on both releases to a
+  requester allowed the read's own version action on the marker's version:
+  `s3:GetObjectVersion` for GET, HEAD and GetObjectAttributes, with
+  Tentacle's `s3:GetObjectVersionAttributes` for GetObjectAttributes too,
+  `s3:GetObjectVersionAcl` for GetObjectAcl and `s3:GetObjectVersionTagging`
+  for GetObjectTagging (`deleteMarkerVersion`, `internal/op/deletemarker.go`).
+  A delete marker has no ACL, so that permission is decided by the
+  identity's and the bucket's policies alone, and where no policy decides
+  by the bucket's owner and an admin, who pass, and no one else
+  (`VerifyMarkerIn`, `internal/authz/evaluator.go`). Each requester gets:
+  - allowed the version action, whether or not it may list the bucket: 405
+    and `x-amz-delete-marker: true`, and on a GET or HEAD the marker's
+    `Last-Modified`, its index entry's mtime;
+  - allowed `s3:ListBucket` and not the version action, a Deny of it
+    included: radosgw's 404 NoSuchKey, with Tentacle's `false`;
+  - allowed neither: radosgw's 403 AccessDenied, without the header.
+
+  A requester who may not read the version so learns no more of a marker
+  than of a version that does not exist. One allowed the version action
+  who may not list learns that the version is a marker, as S3 tells it, and
+  gets radosgw's 403 for a version that does not exist. The 405 names no
+  version in `x-amz-version-id`. A marker counts as one only while it is
+  listed: one whose list entry an unlink at an older epoch took, leaving its
+  instance entry, answers as a missing version does
+  (`docs/ceph-upstream-bugs.md`, "[cls_rgw's bucket_unlink_instance at an
+  older epoch leaves a delete marker's instance
+  entry](ceph-upstream-bugs.md#cls_rgws-bucket_unlink_instance-at-an-older-epoch-leaves-a-delete-markers-instance-entry)").
+  The writes naming a marker's version, PutObjectAcl, PutObjectTagging and
+  DeleteObjectTagging, keep radosgw's 404 or 403; S3's documentation names
+  the 405 for reads alone.
+
+  To tell a marker from a missing version, the object store looks the
+  version up in the bucket index whenever a read names one whose head is
+  missing on a bucket whose versioning was ever enabled (`namedVersion`,
+  `internal/driver/stat.go`): one `bi_get` of the instance entry, up to
+  three for `null`, and one of the list entry when the instance entry is a
+  marker's. The lookup runs in the op's Init, before the requester is
+  authorized, so an anonymous or refused request naming a missing version
+  pays it too, and a `bi_get` that finds no entry reads the bucket
+  instance again, past the metadata cache, before it answers, as every
+  index read of a versioned key does ("An index read of a versioned key
+  that finds its shard gone reads the shard the bucket now names").
+  radosgw makes one head stat there. The status tells a requester who may
+  neither list nor read the version nothing, 403 for a version with a head,
+  a marker and a missing version alike, but the time can: a version without
+  a head costs that requester the index reads and the bucket-instance read
+  before its 403, where a version with a head costs one head read, so a
+  client, an anonymous one included, can time whether a version id, `null`
+  among them, has a head.
+- **A key whose current version is a delete marker answers its 404 with
+  x-amz-delete-marker: true on Squid too.** Tentacle's `read_permissions`
+  adds `x-amz-delete-marker: true` to the 404 of a GET or HEAD whose key's
+  current version is a delete marker
+  ([rgw_rest.cc:1936-1944](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1936-L1944)),
+  as S3 does; Squid's adds no header
+  ([rgw_rest.cc:1898-1938](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1898-L1938);
+  `docs/ceph-upstream-bugs.md`, "[Squid's 404 for a key whose current
+  version is a delete marker carries no
+  x-amz-delete-marker](ceph-upstream-bugs.md#squids-404-for-a-key-whose-current-version-is-a-delete-marker-carries-no-x-amz-delete-marker)").
+  rgw-go sends it on both releases wherever Tentacle does: to a GET or HEAD
+  of the object, its ACL, its tagging or its attributes, and to ListParts
+  of a missing upload, each naming no version, with the 404 that goes to an
+  admin or to a requester who may list the bucket (`setMissingDeleteMarker`,
+  `internal/s3/deletemarker.go`). The 403 of a requester who may not list
+  carries none, on either release. Of the headers S3's documentation shows
+  on that 404, rgw-go sends `x-amz-delete-marker: true` and not the
+  `x-amz-version-id` naming the marker that S3's sample carries
+  (https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html, "If
+  the Latest Object Is a Delete Marker", a sample rather than a rule), as
+  radosgw sends none.
+- **A copy source naming a delete marker's version answers 400
+  InvalidRequest.** radosgw's CopyObject and UploadPartCopy read a source
+  whose `versionId` names a delete marker as a missing source and answer
+  404 NoSuchKey, or 403 to a requester who may not list the source's
+  bucket
+  ([rgw_op.cc:5422-5428](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5422-L5428) and
+  [rgw_op.cc:3932-3937](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3932-L3937) at v19.2.7,
+  [rgw_op.cc:5985-5991](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5985-L5991) and
+  [rgw_op.cc:4141-4146](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4141-L4146) at v20.2.4;
+  `docs/ceph-upstream-bugs.md`, "[radosgw answers a copy source naming a
+  delete marker's version 404
+  NoSuchKey](ceph-upstream-bugs.md#radosgw-answers-a-copy-source-naming-a-delete-markers-version-404-nosuchkey)").
+  Amazon S3's UploadPartCopy reference documents 400 Bad Request for such
+  a source
+  (https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPartCopy.html);
+  its CopyObject reference documents only a source whose current version
+  is a delete marker, answered as a missing object, so the CopyObject half
+  rests on the `x-amz-copy-source` semantics the two share. rgw-go answers
+  both ops 400 InvalidRequest, with a message of its own, to a requester
+  allowed `s3:GetObjectVersion` on the source's version, decided as for a
+  read naming a marker ("A read naming a delete marker's version answers
+  405 MethodNotAllowed"), ahead of the missing source's rule
+  (`copySourceMarker`, `internal/op/deletemarker.go`). A requester not
+  allowed it keeps radosgw's 404 or 403, and a source naming no version
+  whose current version is a delete marker answers 404 as radosgw's does.
 
 ### Object write differences
 
@@ -8499,9 +8629,28 @@ does the following.
   nanosecond](ceph-upstream-bugs.md#squids-deleteobjecttagging-stamps-the-object-with-the-epoch-plus-one-nanosecond)").
   A client of a Squid zone sees the object's own Last-Modified after the
   tags are removed, where v19.2.6 reports 1970-01-01.
+- **DeleteObjectTagging naming no version removes the current version's
+  tags.** radosgw's DeleteObjectTagging writes the key as the request names
+  it (`delete_obj_attrs`,
+  [rgw_sal_rados.cc:2422-2430](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2422-L2430),
+  [rgw_sal_rados.cc:3014-3022](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3014-L3022)),
+  where its PutObjectTagging and PutObjectAcl write the version their read
+  followed to (`modify_obj_attrs`,
+  [rgw_sal_rados.cc:2402-2420](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2402-L2420),
+  [rgw_sal_rados.cc:2994-3012](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2994-L3012)).
+  On a versioned key named without a version that is the key's OLH head:
+  the current version keeps its tags, a noncurrent null version loses its
+  own, and the bucket index gains an entry for a null version the key may
+  not have (`docs/ceph-upstream-bugs.md`, "[radosgw's DeleteObjectTagging
+  naming no version writes the key's OLH head, not its current
+  version](ceph-upstream-bugs.md#radosgws-deleteobjecttagging-naming-no-version-writes-the-keys-olh-head-not-its-current-version)").
+  rgw-go removes the tags of the version its read resolved, the current
+  one, as S3 does and as its PutObjectTagging writes (`DeleteObjectTagging`,
+  `internal/op/objectattrs.go`), and leaves the OLH head and the null
+  version's index entry alone. On a key whose current version is the null
+  version both gateways write the same head.
 - **PutObject, CopyObject and CompleteMultipartUpload answer 501 on an
-  object-lock bucket, and the deletes and the ACL and tag writes on a
-  versioned one.** rgw-go serves PutObject, CopyObject and
+  object-lock bucket, and the deletes on a versioned one.** rgw-go serves PutObject, CopyObject and
   CompleteMultipartUpload on a bucket whose versioning is enabled or
   suspended, writing a new version or the null one as radosgw does ("A
   write's versionId is ignored"), but answers them with 501 NotImplemented
@@ -8527,20 +8676,23 @@ does the following.
   501"); it is the completion writing the head that is refused.
   PutObjectRetention and PutObjectLegalHold, which write a version's lock
   attrs, are object lock's own and are served on such a bucket, always a
-  versioned one. PutObjectAcl, PutObjectTagging, DeleteObjectTagging,
+  versioned one. PutObjectAcl, PutObjectTagging and DeleteObjectTagging
+  serve any version on any bucket, one with object lock included, which
+  they write as radosgw does, but for DeleteObjectTagging naming no version
+  ("DeleteObjectTagging naming no version removes the current version's
+  tags"), and an UploadPartCopy copies the version its source names.
   DeleteObject and DeleteObjects answer 501 on a bucket whose versioning
   is enabled or suspended, or that has object lock, and to any request
-  naming a version. DeleteObject and
-  DeleteObjects would reach a store whose delete takes radosgw's versioned
+  naming a version. They
+  would reach a store whose delete takes radosgw's versioned
   path on a bucket whose flags hold `BUCKET_VERSIONED`, but the ops do not
   yet answer the version id or the delete marker it reports, and they
   would skip the retention and legal-hold checks radosgw makes for a
   versioned delete (`verify_object_lock`, `rgw_op.cc:5185-5221` and
   `:6845-6869` at v19.2.6, `:5576-5610` and `:7782-7806` at v20.2.4).
-  rgw-go answers such a write with 501 NotImplemented before it touches
-  the store, as it does an UploadPartCopy whose source names a version;
-  DeleteObjects answers it through its status line before its first key.
-  radosgw serves them.
+  rgw-go answers such a delete with 501 NotImplemented before it touches
+  the store; DeleteObjects answers it through its status line before its
+  first key. radosgw serves them.
 
   The exception is `versionId=null` on a bucket whose versioning was never
   enabled, which rgw-go takes to be one whose flags hold none of
@@ -8557,19 +8709,20 @@ does the following.
   `:6601-6603` at v19.2.6, `:6456-6458` and `:7401-7403` at v20.2.4), the
   delete taking the unversioned path (`:5774`, `:6462`), as it does for
   each key of a DeleteObjects (`rgw_op.cc:6889` at v19.2.6, `:7826` at
-  v20.2.4). rgw-go serves a DeleteObject, a DeleteObjects key,
-  PutObjectAcl, PutObjectTagging and DeleteObjectTagging naming it as the
-  same request naming no version, but authorizes each for the version's
-  action, `s3:DeleteObjectVersion` and the rest, as radosgw authorizes any
-  key naming a version (`rgw_op.cc:5145-5147` and `:6829-6831` at v19.2.6,
-  `:5535-5537` and `:7766-7768` at v20.2.4); the reads naming it were served
-  already. A PutObject, a CompleteMultipartUpload and a CopyObject's
+  v20.2.4). rgw-go serves a DeleteObject and a DeleteObjects key naming it
+  as the same request naming no version, but authorizes each for
+  `s3:DeleteObjectVersion`, as radosgw authorizes any key naming a version
+  (`rgw_op.cc:5145-5147` and `:6829-6831` at v19.2.6, `:5535-5537` and
+  `:7766-7768` at v20.2.4). PutObjectAcl, PutObjectTagging and
+  DeleteObjectTagging, which no gate refuses, and the reads take
+  `versionId=null` the same way on any bucket whose versioning was never
+  enabled, each authorized for its version action. A PutObject, a CompleteMultipartUpload and a CopyObject's
   destination ignore it, as they ignore any `versionId` ("A write's
   versionId is ignored"), and a CopyObject whose source names it copies
   the plain object, without the checks of a copy onto itself, as radosgw's
   does (`rgw_rest_s3.cc:3541-3548` at v19.2.6, `:3821-3828` at v20.2.4).
-  An UploadPartCopy whose source names it answers 501 too, as one whose
-  source names any version does: the exception does not reach that refusal.
+  An UploadPartCopy whose source names it copies the plain object, as
+  radosgw's does.
 - **A write's versionId is ignored.** S3's PutObject, CopyObject and
   CompleteMultipartUpload take no `versionId`, and rgw-go writes the
   object at the instance the bucket's versioning gives, whatever
@@ -9041,8 +9194,7 @@ does the following.
   rgw-go refuses the copy as the PutObject is refused, once the requester
   is authorized. On a bucket with object lock both writes answer 501
   ("PutObject, CopyObject and CompleteMultipartUpload answer 501 on an
-  object-lock bucket, and the deletes and the ACL and tag writes on a
-  versioned one").
+  object-lock bucket, and the deletes on a versioned one").
 - **No x-amz-expiration on a write.** radosgw sends `x-amz-expiration`
   from the bucket's lifecycle rules on a PutObject's success too
   (`get_s3_expiration_header`, `rgw_rest_s3.cc:2742` at v19.2.6, `:2903`
@@ -10128,8 +10280,8 @@ does the following.
   condition. The
   S3 delete still answers 501 on a versioned bucket ("PutObject,
   CopyObject and CompleteMultipartUpload answer 501 on an object-lock
-  bucket, and the deletes and the ACL and tag writes on a versioned
-  one"); the object store's delete does this.
+  bucket, and the deletes on a versioned one"); the object store's delete
+  does this.
 - **A conditional delete marker is checked against the version current when
   it links.** A delete naming no version on a versioned bucket writes a
   delete marker. radosgw checks its If-Match, `x-amz-if-match-size` and
@@ -11232,10 +11384,10 @@ rgw-go does the following.
   or missing, and whether a listing's null version is a marker. A stale
   shard's not-found would put each wrong. Each such ENOENT, that of an
   entry that is not there included, costs a read of the bucket instance.
-  The reads of a versioned key are served and its writes are not; a named
-  delete marker and a missing version both answer 404 until Task V14a
-  sends the 405 (`docs/ceph-upstream-bugs.md`,
-  "[radosgw answers a GET or HEAD naming a delete marker's version 404 NoSuchKey](ceph-upstream-bugs.md#radosgw-answers-a-get-or-head-naming-a-delete-markers-version-404-nosuchkey)").
+  A named delete marker answers 405, and a missing version 404, to the
+  requesters "A read naming a delete marker's version answers 405
+  MethodNotAllowed" names (`docs/ceph-upstream-bugs.md`, "[radosgw answers a read naming a
+  delete marker's version 404 NoSuchKey](ceph-upstream-bugs.md#radosgw-answers-a-read-naming-a-delete-markers-version-404-nosuchkey)").
 
 ### Bucket listing differences
 

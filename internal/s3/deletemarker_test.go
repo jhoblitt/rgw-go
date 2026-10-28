@@ -13,16 +13,15 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/op"
 )
 
-// olhHeads is an object store whose StatObject refuses key k with
-// NotImplemented, which neither of rgw-go's object stores answers.
-type olhHeads struct {
+// failingStats is an object store whose StatObject of key k fails.
+type failingStats struct {
 	op.ObjectStore
 	k string
 }
 
-func (o olhHeads) StatObject(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey) (*op.ObjectState, error) {
+func (o failingStats) StatObject(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey) (*op.ObjectState, error) {
 	if key.Name == o.k {
-		return nil, op.ErrNotImplemented
+		return nil, op.ErrServiceUnavailable
 	}
 	return o.ObjectStore.StatObject(ctx, rec, key)
 }
@@ -65,11 +64,11 @@ var _ = Describe("x-amz-delete-marker on a missing object", func() {
 			Entry("ListParts of a missing upload, whose key does not exist", http.MethodGet, "/plain/nope?uploadId=2~nope"),
 			Entry("ListParts of a missing upload, whose key exists", http.MethodGet, "/plain/here?uploadId=2~nope"),
 		)
-		It("sends none when the stat of ListParts' key answers NotImplemented", func(ctx SpecContext) {
-			w.env.Objects = olhHeads{ObjectStore: w.env.Objects, k: "versioned"}
-			rec := w.send(w.alice, http.MethodGet, "/plain/versioned?uploadId=2~nope", "")
+		It("sends false when the stat of ListParts' key fails, as radosgw ignores the load's failure", func(ctx SpecContext) {
+			w.env.Objects = failingStats{ObjectStore: w.env.Objects, k: "unread"}
+			rec := w.send(w.alice, http.MethodGet, "/plain/unread?uploadId=2~nope", "")
 			Expect(rec.Code).To(Equal(http.StatusNotFound), rec.Body.String())
-			Expect(rec.Header()).NotTo(haveHeaderAnyCase("x-amz-delete-marker"))
+			Expect(exactHeader(rec.Header(), "x-amz-delete-marker")).To(Equal("false"))
 		})
 		It("sends none to a requester read_obj_policy refuses as one who may not list", func() {
 			rec := w.send(w.bob, http.MethodGet, "/plain/nope", "")
