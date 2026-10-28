@@ -493,6 +493,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's Elasticsearch sync module deletes a document without the module's headers](#radosgws-elasticsearch-sync-module-deletes-a-document-without-the-modules-headers) | pending | pending | ✓ |
 | [radosgw's JSON parser lexes `\x` and `\X` escapes by the CPU's char signedness, and drops octal and `\X` escapes](#radosgws-json-parser-lexes-x-and-x-escapes-by-the-cpus-char-signedness-and-drops-octal-and-x-escapes) | pending | pending | ✓ |
 | [radosgw's JSON parser reads a short `\u` escape through the next escape's backslash](#radosgws-json-parser-reads-a-short-u-escape-through-the-next-escapes-backslash) | pending | pending | ✓ |
+| [radosgw's permission override lets an admin delete a version under MFA delete without a code](#radosgws-permission-override-lets-an-admin-delete-a-version-under-mfa-delete-without-a-code) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -10391,10 +10392,11 @@ Every new entry adds its row to this table, in document order.
   (f28f0d9147d is first in v20.2.1), checked at v20.2.0 and v20.2.4.
   v19.2.6 is not affected.
 - **rgw-go:** checks as v19.2.6 and main do, on both releases, so it uses
-  main's corrected check where v19.2.7 and v20.2.4 carry the inversion. It
-  verifies no MFA token, so it refuses every DeleteObjects naming a
-  version on such a bucket (`internal/op/deleteobjects.go`;
-  `docs/exclusions.md`, "Deletes that need MFA are refused").
+  main's corrected check where v19.2.7 and v20.2.4 carry the inversion: a
+  DeleteObjects naming a version on such a bucket needs a verified
+  `x-amz-mfa`, the bucket owner's, and one naming none needs no MFA
+  (`checkRequest`, `internal/op/deleteobjects.go`; `docs/exclusions.md`,
+  "DeleteObjects asks for MFA for the keys that name a version").
 - **Upstream:** [#77869](https://tracker.ceph.com/issues/77869), fixed on
   main by [ceph/ceph#69821](https://github.com/ceph/ceph/pull/69821)
   (merge 8131835af85). The backport tracker,
@@ -26664,8 +26666,10 @@ Every new entry adds its row to this table, in document order.
   owns it, or for a bucket an account owns, the account's root user alone
   (`op.OwnerMFAVerified`, `internal/op/mfa.go`; `docs/exclusions.md`,
   "Only the bucket owner's x-amz-mfa satisfies MFA delete"). Its
-  DeleteObject and DeleteObjects take no verdict and refuse every delete
-  MFA delete guards ("Deletes that need MFA are refused" there).
+  DeleteObject of a version and its DeleteObjects naming one count the
+  verdict the same way (`internal/op/deleteobject.go`,
+  `internal/op/deleteobjects.go`), so a requester's own device satisfies
+  neither unless the requester owns the bucket.
 - **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
   searched.
 - **Found:** phase 2 Task V13d's automated security review, 2026-10-22;
@@ -29874,3 +29878,60 @@ Every new entry adds its row to this table, in document order.
   jsonspirit with the oracle on a corpus of backslash escapes after a
   short `\u`; registered by the task's second fix round. Derived from the
   source and the oracle, not reproduced on a running system.
+
+## radosgw's permission override lets an admin delete a version under MFA delete without a code
+
+- **Kind:** defect, possibly security-relevant: a delete of a version on a
+  bucket with MFA delete passes without an MFA code for an admin or system
+  user, and on Squid for any system request, conditional on such a user's
+  credentials. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWDeleteObj::verify_permission` returns -EACCES when the delete's
+    permission is refused, and then, on a bucket with MFA delete, a delete
+    naming a version without a verified `x-amz-mfa` returns
+    -ERR_MFA_REQUIRED
+    ([rgw_op.cc:5149-5163](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5149-L5163),
+    [rgw_op.cc:5539-5553](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5539-L5553)).
+  - At v19.2.7 `rgw_process_authenticated` overrides any negative result of
+    `verify_permission` for a system request or an identity whose
+    `is_admin_of` holds, which `LocalApplier` answers for a user whose admin
+    or system flag is set
+    ([rgw_process.cc:228-236](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L228-L236);
+    [rgw_auth.cc:1048-1051](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L1048-L1051)).
+    ERR_MFA_REQUIRED is overridden with the rest, and `execute` deletes the
+    version, whether or not the permission refused.
+  - At v20.2.4 the override passes only -EACCES, -EPERM and
+    -ERR_AUTHORIZATION, for an identity whose `is_admin()` holds
+    ([rgw_process.cc:228-239](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L228-L239);
+    [rgw_auth.cc:1068-1071](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L1068-L1071)),
+    so ERR_MFA_REQUIRED stands; but the permission's -EACCES returns before
+    the MFA check, and the override passes it, so an admin the permission
+    refuses deletes the version without a code.
+  - DeleteObjects makes its MFA check in `execute`, which no override
+    reaches, at both releases
+    ([rgw_op.cc:7067-7081](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L7067-L7081),
+    [rgw_op.cc:7969-7983](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7969-L7983)).
+  - The S3 User Guide's "[Configuring MFA
+    delete](https://docs.aws.amazon.com/AmazonS3/latest/userguide/MultiFactorAuthenticationDelete.html)"
+    (read 2026-10-22): "the bucket owner must include two forms of
+    authentication in any request to delete a version".
+- **Impact:** on Squid every admin and system user, and every system
+  request, deletes any version of a bucket with MFA delete through S3's
+  DeleteObject without a code, whatever the bucket's permissions say; on
+  Tentacle an admin or system user the bucket's permissions refuse does.
+  MFA delete exists to make a stolen key alone unable to delete versions;
+  for these keys it does not. The admin API's object removal and the
+  purges remove versions without a code on both releases, which is that
+  API's design.
+- **Releases:** v19.2.7 and v20.2.4, narrower at v20.2.4; main was not
+  checked.
+- **rgw-go:** does not reproduce it: its DeleteObject makes the MFA check
+  after any refusal its admin override would pass, and the override passes
+  an access denial alone, on both releases (`op.DeleteObject`'s
+  VerifyPermission, `internal/op/deleteobject.go`; `docs/exclusions.md`,
+  "Only the bucket owner's x-amz-mfa satisfies MFA delete" and "An admin is
+  served past a failed permission check only on an access denial").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task V12a's review, 2026-10-28, reading
+  `rgw_process_authenticated` at both tags; registered by its fix round.
+  Derived from the source, not reproduced.
