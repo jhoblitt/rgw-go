@@ -1,6 +1,7 @@
 package iso8601_test
 
 import (
+	"math"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -210,5 +211,65 @@ var _ = Describe("ParseBasic", func() {
 		Entry("a fraction of ULONG_MAX", "20150830T123600.18446744073709551615Z"),
 		Entry("a fraction past ULONG_MAX, which strtoul saturates to it", "20150830T123600.18446744073709551616Z"),
 		Entry("month 13", "20151330T123600Z"),
+	)
+})
+
+// nanos is t's nanoseconds since the epoch as real_time holds them.
+func nanos(t time.Time) uint64 { return uint64(t.UnixNano()) } //nolint:gosec // every t here is after the epoch
+
+var _ = Describe("ParseWrapped", func() {
+	DescribeTable("reads what from_iso_8601 reads without ws_terminates, real_time's nanoseconds wrapped modulo 2^64",
+		func(s string, want uint64) {
+			got, ok := iso8601.ParseWrapped(s)
+			Expect(ok).To(BeTrue(), "%q", s)
+			Expect(got).To(Equal(want), "%q", s)
+		},
+		Entry("the epoch", "1970", uint64(0)),
+		Entry("a year and a month", "2030-06", nanos(utc(2030, 6, 1, 0, 0, 0, 0))),
+		Entry("a date", "2030-06-15", nanos(utc(2030, 6, 15, 0, 0, 0, 0))),
+		Entry("an hour and Z", "2030-06-15T12Z", nanos(utc(2030, 6, 15, 12, 0, 0, 0))),
+		Entry("minutes and Z", "2030-06-15T12:30Z", nanos(utc(2030, 6, 15, 12, 30, 0, 0))),
+		Entry("a whole second and Z", "2030-06-15T12:30:45Z", nanos(utc(2030, 6, 15, 12, 30, 45, 0))),
+		Entry("one fractional digit", "2030-06-15T12:30:45.5Z", nanos(utc(2030, 6, 15, 12, 30, 45, 500_000_000))),
+		Entry("nine fractional digits", "2030-06-15T12:30:45.123456789Z", nanos(utc(2030, 6, 15, 12, 30, 45, 123_456_789))),
+		Entry("a thirteenth month, carried into the next year", "2030-13-01", nanos(utc(2031, 1, 1, 0, 0, 0, 0))),
+		Entry("hour 25, minute 61 and second 61, carried", "2030-01-01T25:61:61Z", nanos(utc(2030, 1, 2, 2, 2, 1, 0))),
+		Entry("real_time's last nanosecond", "2554-07-21T23:34:33.709551615Z", uint64(math.MaxUint64)),
+		Entry("a nanosecond past real_time's range, wrapped to the epoch", "2554-07-21T23:34:33.709551616Z", uint64(0)),
+		Entry("a date past 2554, wrapped into 2015", "2600-01-01", uint64(1434155126290448384)),
+		Entry("the largest year from_iso_8601 reads, wrapped", "9999-12-31", uint64(13594541441775828992)),
+		Entry("a day before the epoch, wrapped to 2554", "1970-01-00", uint64(18446657673709551616)),
+		Entry("month 00 of 1970, December 1969, wrapped", "1970-00", uint64(18444065673709551616)),
+	)
+	DescribeTable("refuses what from_iso_8601 refuses without ws_terminates",
+		func(s string) {
+			got, ok := iso8601.ParseWrapped(s)
+			Expect(ok).To(BeFalse(), "%q read as %d", s, got)
+			Expect(got).To(BeZero(), "%q", s)
+		},
+		Entry("an empty string", ""),
+		Entry("a year before 1970", "1969-12-31"),
+		Entry("the second before the epoch, which internal_timegm makes -1", "1970-01-00T23:59:59Z"),
+		Entry("a one-digit month", "2030-6"),
+		Entry("an hour without Z", "2030-06-15T12"),
+		Entry("a Z after a date", "2030-06-15Z"),
+		Entry("a dot without digits", "2030-06-15T12:30:45.Z"),
+		Entry("ten fractional digits", "2030-06-15T12:30:45.1234567890Z"),
+		Entry("a zone offset", "2030-06-15T12:30:45+01:00"),
+		Entry("a NUL after the Z", "2030-06-15T12:30:45Z\x00"),
+	)
+	DescribeTable("refuses a date or a time that white space follows, which Parse takes",
+		func(s string) {
+			_, ok := iso8601.ParseWrapped(s)
+			Expect(ok).To(BeFalse(), "%q", s)
+			_, ok = iso8601.Parse(s)
+			Expect(ok).To(BeTrue(), "%q", s)
+		},
+		Entry("a year and a space", "2030 "),
+		Entry("a date and a space", "2030-06-15 "),
+		Entry("a date, a space and text", "2030-06-15 trailing text"),
+		Entry("a month and a line feed", "2030-06\n"),
+		Entry("a Z and a tab", "2030-06-15T12:30:45Z\t"),
+		Entry("a fraction's Z and a space", "2030-06-15T12:30:45.5Z x"),
 	)
 })

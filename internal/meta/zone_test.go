@@ -140,6 +140,10 @@ var _ = Describe("legacy tier config conversion", func() {
 		Entry("a large integer beyond int64 is a uint64", "[18446744073709551615]", farray(fvalue("18446744073709551615", false))),
 		Entry("an integer beyond both fails the parse and is stored whole", "[-9223372036854775809]",
 			fvalue("[-9223372036854775809]", true)),
+		Entry("a real whose integer part has 301 digits, each added as a double", "[1"+strings.Repeat("0", 300)+".0]",
+			farray(fvalue("1.0000000000000002e+300", false))),
+		Entry("a real whose integer part passes DBL_MAX matches no number, so the parse fails and the text is stored whole",
+			"["+strings.Repeat("9", 309)+".0]", fvalue("["+strings.Repeat("9", 309)+".0]", true)),
 		Entry("a top-level real's printed form is longer than the text, so the text is stored as numeric", "1.5", fvalue("1.5", false)),
 		Entry("a top-level -0 likewise", "-0", fvalue("-0", false)),
 		Entry("a top-level integer is stored as printed", "42", fvalue("42", false)),
@@ -150,6 +154,9 @@ var _ = Describe("legacy tier config conversion", func() {
 		Entry("string bytes are kept whether or not they are UTF-8", "[\"caf\xe9\"]", farray(fvalue("caf\xe9", true))),
 		Entry("\\u escapes are encoded one by one, surrogates included", `["\ud83dé"]`, farray(fvalue("\xed\xa0\xbd\xc3\xa9", true))),
 		Entry("an unknown escape is dropped with its backslash", `["a\qb"]`, farray(fvalue("ab", true))),
+		Entry("an octal escape is dropped likewise, its first digit with the backslash", `["\101"]`, farray(fvalue("01", true))),
+		Entry("a short \\u escape takes an escaped backslash's first half, and the second starts a hex escape",
+			`["\uABC\\x41"]`, farray(fvalue("\xea\xaf\x80A", true))),
 		Entry("nested objects and arrays", `{"b": [1, "x", {"c": null}], "a": false}`, meta.JSONFormattable{
 			Type: meta.FormattableObject,
 			Object: map[string]meta.JSONFormattable{
@@ -169,8 +176,9 @@ var _ = Describe("legacy tier config conversion", func() {
 			Expect(d.Err()).To(MatchError(ContainSubstring("legacy tier config")))
 		},
 		Entry("a \\x escape", `["\x41"]`),
-		Entry("an octal escape", `["\101"]`),
-		Entry("a digit run over 300 digits", "["+strings.Repeat("1", 301)+".0]"),
+		Entry("a \\X escape", `["\X41"]`),
+		Entry("a fraction of more than 300 digits", "[0."+strings.Repeat("1", 301)+"]"),
+		Entry("arrays nested deeper than 10000 levels", strings.Repeat("[", 10001)+strings.Repeat("]", 10001)),
 		Entry("an exponent beyond 300", "[1e301]"),
 		Entry("an exponent beyond an int, which C++ reads as a double and stores inf", "[1e99999999999]"),
 		Entry("an exponent just beyond an int", "[1e2147483648]"),

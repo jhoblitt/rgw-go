@@ -1,9 +1,7 @@
-// Package iso8601 reads and writes ISO 8601 dates as radosgw does: Parse and
-// Format are ceph's from_iso_8601 and to_iso_8601, and ParseExtended and
-// ParseBasic are radosgw's parse_iso8601 in its two formats, with its
-// fractional seconds and its zone. It is the reader the packages that read
-// these dates are to share: op, auth and policy still keep copies of their
-// own, which are to switch to it.
+// Package iso8601 reads and writes ISO 8601 dates as radosgw does: Parse,
+// ParseWrapped and Format are ceph's from_iso_8601 and to_iso_8601, and
+// ParseExtended and ParseBasic are radosgw's parse_iso8601 in its two
+// formats, with its fractional seconds and its zone.
 package iso8601
 
 import (
@@ -33,6 +31,43 @@ func isSpace(c byte) bool { return c == ' ' || '\t' <= c && c <= '\r' }
 // header documents that every time must be representable so
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/common/iso_8601.h#L14-L33 at v19.2.7 and v20.2.4).
 func Parse(s string) (time.Time, bool) {
+	tm, nsec, ok := fromISO8601(s, true)
+	if !ok {
+		return time.Time{}, false
+	}
+	t := tm.Timegm().Add(time.Duration(nsec))
+	if t.Before(time.Unix(0, 0)) || t.After(meta.MaxRealTime) {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
+// ParseWrapped is ceph::from_iso_8601 with ws_terminates false
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/common/iso_8601.cc#L51-L151 at v19.2.7 and v20.2.4),
+// which Condition::as_date reads a policy's date with
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L384-L401 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L403-L420 at v20.2.4).
+// It reads Parse's forms, but a date or a time ends only at the end of s, so
+// white space after one is refused. The result is real_time's u64
+// nanoseconds since the epoch, which from_time_t wraps modulo 2^64 for a time
+// before the epoch or past meta.MaxRealTime. A time internal_timegm makes -1,
+// the second before the epoch, is refused, as calculate refuses it
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/common/iso_8601.cc#L39-L48 at v19.2.7 and v20.2.4).
+func ParseWrapped(s string) (uint64, bool) {
+	tm, nsec, ok := fromISO8601(s, false)
+	if !ok {
+		return 0, false
+	}
+	t := tm.Timegm().Unix()
+	if t == -1 {
+		return 0, false
+	}
+	return uint64(t)*uint64(time.Second) + uint64(nsec), true //nolint:gosec // from_time_t converts time_t to real_time's unsigned nanoseconds
+}
+
+// fromISO8601 is from_iso_8601's reading of s: the fields it fills, which
+// internal_timegm turns into seconds, and the fraction's nanoseconds.
+func fromISO8601(s string, wsTerminates bool) (strptime.Tm, int, bool) {
 	p := 0
 	digits := func(n int) (int, bool) {
 		v := 0
@@ -45,22 +80,20 @@ func Parse(s string) (time.Time, bool) {
 		}
 		return v, true
 	}
-	dateEnd := func() bool { return p == len(s) || isSpace(s[p]) }
-	timeEnd := func() bool { return p < len(s) && s[p] == 'Z' && (p+1 == len(s) || isSpace(s[p+1])) }
+	dateEnd := func() bool { return p == len(s) || wsTerminates && isSpace(s[p]) }
+	timeEnd := func() bool {
+		return p < len(s) && s[p] == 'Z' && (p+1 == len(s) || wsTerminates && isSpace(s[p+1]))
+	}
 	year, ok := digits(4)
 	if !ok || year < 1970 {
-		return time.Time{}, false
+		return strptime.Tm{}, 0, false
 	}
 	month, day, hour, minute, sec := 1, 1, 0, 0, 0
-	realTime := func(nsec int) (time.Time, bool) {
-		t := strptime.Tm{Year: year, Mon: month - 1, Mday: day, Hour: hour, Min: minute, Sec: sec}.Timegm().Add(time.Duration(nsec))
-		if t.Before(time.Unix(0, 0)) || t.After(meta.MaxRealTime) {
-			return time.Time{}, false
-		}
-		return t, true
+	fields := func() strptime.Tm {
+		return strptime.Tm{Year: year, Mon: month - 1, Mday: day, Hour: hour, Min: minute, Sec: sec}
 	}
 	if dateEnd() {
-		return realTime(0)
+		return fields(), 0, true
 	}
 	for _, field := range []struct {
 		delim byte
@@ -68,33 +101,33 @@ func Parse(s string) (time.Time, bool) {
 		end   func() bool
 	}{{'-', &month, dateEnd}, {'-', &day, dateEnd}, {'T', &hour, timeEnd}, {':', &minute, timeEnd}, {':', &sec, timeEnd}} {
 		if p == len(s) || s[p] != field.delim {
-			return time.Time{}, false
+			return strptime.Tm{}, 0, false
 		}
 		p++
 		if *field.v, ok = digits(2); !ok {
-			return time.Time{}, false
+			return strptime.Tm{}, 0, false
 		}
 		if field.end() {
-			return realTime(0)
+			return fields(), 0, true
 		}
 	}
 	if p == len(s) || s[p] != '.' {
-		return time.Time{}, false
+		return strptime.Tm{}, 0, false
 	}
 	p++
 	nsec, scale := 0, 100_000_000
 	for range 9 {
 		d, ok := digits(1)
 		if !ok {
-			return time.Time{}, false
+			return strptime.Tm{}, 0, false
 		}
 		nsec += d * scale
 		scale /= 10
 		if timeEnd() {
-			return realTime(nsec)
+			return fields(), nsec, true
 		}
 	}
-	return time.Time{}, false
+	return strptime.Tm{}, 0, false
 }
 
 // Format is ceph::to_iso_8601 in its default form, YMDhmsn

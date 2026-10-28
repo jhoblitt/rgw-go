@@ -11,12 +11,25 @@ import (
 )
 
 // fuzzSeeds are s3-tests' POST policy documents (test_s3.py at the pinned
-// s3-tests), as json.JSONEncoder writes them, and the forms JSONParser reads
-// differently from Go's Unmarshal.
+// s3-tests), as json.JSONEncoder writes them, the forms JSONParser reads
+// differently from Go's Unmarshal, and a policy for each of json_spirit's
+// grammar cases: stray commas, C white space, raw control and non-UTF-8
+// bytes, dropped and non-hex escapes, signs, leading zeros and bare dots,
+// each half of a surrogate pair alone, the long integer part, and the forms
+// rgw-go refuses.
 func fuzzSeeds() []string {
 	exp := `"expiration": "2030-01-01T00:00:00Z"`
 	base := `{"bucket": "bkt"}, ["starts-with", "$key", "foo"], {"acl": "private"}, ["starts-with", "$Content-Type", "text/plain"]`
 	return []string{
+		`{` + exp + `,, "conditions": [{"bucket": "bkt"},, ["eq", "$key", "k"],],}`,
+		"{\f" + exp + ",\v\"conditions\":\r[{\"bucket\":\t\"bkt\"}]\n}",
+		`{` + exp + `, "conditions": [{"bucket": "b` + "\x01\x00\xff" + `"}, {"b` + "\xc3" + `": "bkt"}]}`,
+		`{` + exp + `, "conditions": [{"bucket": "b\qkt"}, ["eq", "$key", "` + u("0g41") + `"], ["eq", "$x", "ab\u12"]]}`,
+		`{` + exp + `, "conditions": [["content-length-range", +1, 010], ["eq", "$x", .5], ["eq", "$y", 5.], ["eq", "$z", -.5e1]]}`,
+		`{` + exp + `, "conditions": [["eq", "$x", "` + u("d83d") + `"], ["eq", "$y", "` + u("de00") + `x"], ["eq", "$z", "` + u("d83d") + u("0041") + `"]]}`,
+		`{` + exp + `, "conditions": [["eq", "$x", 1` + strings.Repeat("0", 300) + `.0], ["eq", "$y", ` + strings.Repeat("9", 309) + `.0]]}`,
+		`{` + exp + `, "conditions": [{"bucket": "\x41"}, {"acl": "\101"}, ["eq", "$x", 1e301], ["eq", "$y", 1e126]]}`,
+		string(policyDoc("2030-01-01T00:00:00Z", `["eq", "$x", `+strings.Repeat("[", 9997)+strings.Repeat("]", 9997)+`]`)),
 		`{` + exp + `, "conditions": [` + base + `, ["content-length-range", 0, 1024]]}`,
 		`{` + exp + `, "conditions": [{"bUcKeT": "bkt"}, ["StArTs-WiTh", "$KeY", "foo"], {"AcL": "private"}, ["StArTs-WiTh", "$CoNtEnT-TyPe", "text/plain"], ["content-length-range", 0, 1024]]}`,
 		`{` + exp + `, "conditions": [{"bucket": "bkt"}, ["starts-with", "$key", "\\$foo"], {"acl": "private"}]}`,
