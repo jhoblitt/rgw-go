@@ -62,3 +62,14 @@
 ^s3tests\.functional\.test_s3::test_object_delete_annotation_keeps_object$
 ^s3tests\.functional\.test_s3::test_object_rename_missing_source_keeps_object$
 ^s3tests\.functional\.test_s3::test_object_update_encryption_keeps_object$
+
+# ListObjectVersions' KeyMarker, Prefix and Delimiter, URL-encoded under encoding-type=url; radosgw writes them as sent (exclusions: "ListObjectVersions URL-encodes KeyMarker, Prefix and Delimiter")
+^s3tests\.functional\.test_s3::test_bucket_list_versions_encoding_echo$
+
+# ListObjectsV2's Prefix and StartAfter, ListObjects' Marker, and ListMultipartUploads' markers, Prefix, Delimiter and EncodingType, URL-encoded under encoding-type=url; radosgw writes them as sent and writes no EncodingType for ListMultipartUploads (exclusions: "ListObjects, ListObjectsV2 and ListMultipartUploads URL-encode the elements S3 encodes")
+^s3tests\.functional\.test_s3::test_bucket_listv2_encoding_echo$
+^s3tests\.functional\.test_s3::test_bucket_list_encoding_marker_echo$
+^s3tests\.functional\.test_s3::test_list_multipart_upload_encoding_echo$
+
+# A used MFA code refused in the later steps of its window too; radosgw's cls_otp verifies it again in the next step (exclusions: "An MFA code the device may have accepted before does not verify")
+^s3tests\.functional\.test_s3::test_versioning_mfa_delete_code_used_once$

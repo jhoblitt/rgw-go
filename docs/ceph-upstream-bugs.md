@@ -23438,7 +23438,7 @@ Every new entry adds its row to this table, in document order.
   - s3-tests' five `test_multipart_use_cksum_helper_*` expect main's
     answer: a part GET's checksum is the part's own, typed as its upload
     ([test_s3.py:16229-16239](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L16229-L16239)),
-    as they do at rgw-go's s3-tests pin, e9c8467b114.
+    as they do at rgw-go's s3-tests pin, 4f4a1b6719e.
 - **Impact:** a client reading a multipart object by part with checksum
   mode gets a value with a `-<parts>` suffix, which is no checksum of the
   part it read, under the type COMPOSITE whatever the upload's type.

@@ -50,6 +50,14 @@ s3tests/functional/test_s3.py::test_object_lock_uploading_obj # CreateBucket wit
 s3tests/functional/test_s3.py::test_object_lock_changing_mode_from_governance_with_bypass # CreateBucket with object lock, PutObjectRetention, object lock headers on PutObject, x-amz-bypass-governance-retention
 s3tests/functional/test_s3.py::test_object_lock_changing_mode_from_governance_without_bypass # CreateBucket with object lock, PutObjectRetention, object lock headers on PutObject
 s3tests/functional/test_s3.py::test_object_lock_changing_mode_from_compliance # CreateBucket with object lock, PutObjectRetention, object lock headers on PutObject
+s3tests/functional/test_s3.py::test_object_lock_retention_in_the_past # CreateBucket with object lock, PutObject on it, PutObjectRetention, GetObjectRetention
+s3tests/functional/test_s3.py::test_object_lock_retention_bypass_denied # CreateBucket with object lock, PutObject on it, PutObjectRetention, PutBucketPolicy, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_retention_bypass_by_write_grantee # CreateBucket with object lock, PutObject on it, PutObjectRetention, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_default_retention_put_object # PutObject on a bucket with object lock, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_default_retention_copy_object # object lock headers on PutObject, CopyObject on a bucket with object lock, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_default_retention_multipart_no_lock # CompleteMultipartUpload on a bucket with object lock, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_default_retention_multipart_upload_retention # object lock headers on CreateMultipartUpload, CompleteMultipartUpload on a bucket with object lock, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_default_retention_multipart_upload_legal_hold # object lock headers on CreateMultipartUpload, CompleteMultipartUpload on a bucket with object lock, x-amz-bypass-governance-retention
 
 # POST object (browser-form uploads)
 s3tests/functional/test_s3.py::test_post_object_anonymous_request # POST object
@@ -106,6 +114,15 @@ s3tests/functional/test_s3.py::test_cors_presigned_put_object_tenant_v2 # PutBuc
 s3tests/functional/test_s3.py::test_cors_presigned_put_object_tenant # PutBucketCors, OPTIONS preflight
 s3tests/functional/test_s3.py::test_cors_presigned_put_object_tenant_with_acl # PutBucketCors, OPTIONS preflight
 s3tests/functional/test_s3.py::test_cors_presigned_url_non_preflight # PutBucketCors
+s3tests/functional/test_s3.py::test_cors_preflight_later_rule_allows_method # PutBucketCors, OPTIONS preflight
+s3tests/functional/test_s3.py::test_cors_preflight_later_rule_allows_headers # PutBucketCors, OPTIONS preflight
+s3tests/functional/test_s3.py::test_bucket_cors_storage_class_checked_after_authorization # PutBucketCors, GetBucketCors, DeleteBucketCors
+s3tests/functional/test_s3.py::test_cors_presigned_preflight_credentials # PutBucketCors, OPTIONS preflight
+s3tests/functional/test_s3.py::test_cors_presigned_v2_preflight_method_refused # PutBucketCors, OPTIONS preflight
+s3tests/functional/test_s3.py::test_cors_headers_on_bucket_config_writes # PutBucketCors, PutBucketEncryption, DeleteBucketEncryption, PutBucketPolicy, DeleteBucketPolicy, PutPublicAccessBlock, DeletePublicAccessBlock, PutObjectLockConfiguration
+s3tests/functional/test_s3.py::test_cors_headers_on_refused_bucket_config_writes # PutBucketCors, PutBucketEncryption, DeleteBucketEncryption, PutBucketPolicy, DeleteBucketPolicy, PutPublicAccessBlock, DeletePublicAccessBlock, PutObjectLockConfiguration
+s3tests/functional/test_s3.py::test_cors_signed_request_on_wildcard_rule_gets_origin # PutBucketCors
+s3tests/functional/test_s3.py::test_cors_headers_on_delete_objects_refusal # PutBucketCors
 
 # public access block
 s3tests/functional/test_s3.py::test_get_undefined_public_block # GetPublicAccessBlock, DeletePublicAccessBlock
