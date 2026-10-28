@@ -504,6 +504,16 @@ func (s *Store) unrefTails(refs []objRef, tag string) {
 // included, as radosgw keeps every attr but the two tags
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5227-L5228 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5460-L5461 at v20.2.4).
+// It rewrites src in place, dstKey being src's own key, and its head write
+// lands only on the head src was read from (headWrite.expect), as
+// transition_obj's write is guarded on the write tag its read loaded
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3201-L3203 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3298-L3300 at v20.2.4):
+// a write to the head since that read, a PUT during the stream or an attr
+// write, fails it with ConcurrentModification, a removal with NoSuchKey,
+// and putStream deletes the tails it wrote. radosgw guards no key with an
+// instance (docs/exclusions.md, "A lifecycle transition lands only on the
+// version it read").
 // Without it the copy is
 // CopyObject's, which Tentacle's RGWCopyObjDPF filters
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5770-L5893 at v20.2.4):
@@ -520,7 +530,9 @@ func (s *Store) copyData(ctx context.Context, src *op.ObjectState, dst *op.Bucke
 		return nil, err
 	}
 	w := streamWrite{tag: s.w.randTag(), attrs: attrs, size: int64(src.Size), mtime: mtime, olhEpoch: &epoch} //nolint:gosec // an object size is far below 2^63
-	if !raw {
+	if raw {
+		w.expect = src
+	} else {
 		if b, ok := attrs[meta.AttrCksum]; ok {
 			var drop bool
 			if drop, err = droppedChecksum(src, b); err != nil {

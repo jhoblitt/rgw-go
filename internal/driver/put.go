@@ -106,6 +106,9 @@ type streamWrite struct {
 	incompressible bool
 	// olhEpoch is the head write's (headWrite).
 	olhEpoch *uint64
+	// expect, when set, is the head the write may land on alone, as the
+	// caller read it (headWrite.expect).
+	expect *op.ObjectState
 }
 
 // putStream writes body as AtomicObjectProcessor does, after its prepare,
@@ -203,7 +206,7 @@ func (s *Store) putStream(ctx context.Context, rec *op.BucketRecord, key meta.Ob
 	hw := &headWrite{
 		rec: rec, key: key, tag: w.tag, data: data, manifest: &m, attrs: attrs, mtime: w.mtime,
 		ifMatch: w.ifMatch, ifNoneMatch: w.ifNoneMatch, create: true, modifyTail: true, size: size, accountedSize: accounted,
-		incompressible: incompressible, olhEpoch: w.olhEpoch,
+		incompressible: incompressible, olhEpoch: w.olhEpoch, expect: w.expect,
 	}
 	res, err := s.writeMeta(ctx, hw, s.newIndexOp(rec, key, w.tag))
 	if err != nil {
