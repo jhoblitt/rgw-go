@@ -1,6 +1,7 @@
 package admin_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -17,7 +18,8 @@ var _ = Describe("admin realm and period routes", func() {
 	const (
 		realmJSON = `{"id":"R","name":"r1","current_period":"P","epoch":2}`
 		// tierSecret is a made-up cloud tier secret key, which
-		// RGWZoneGroupPlacementTierS3::dump writes into a period.
+		// RGWZoneGroupPlacementTierS3::dump writes into a period and the
+		// period getter masks.
 		tierSecret = "made-up-tier-secret"
 	)
 	var fx *fixture
@@ -30,11 +32,14 @@ var _ = Describe("admin realm and period routes", func() {
 		tier := meta.NewZoneGroupPlacementTier()
 		tier.TierType, tier.StorageClass = meta.TierTypeCloudS3, "CLOUD"
 		tier.S3.Key = meta.AccessKey{ID: "made-up-tier-key", Secret: tierSecret}
+		noSecret := meta.NewZoneGroupPlacementTier()
+		noSecret.TierType, noSecret.StorageClass = meta.TierTypeCloudS3, "NOSECRET"
+		noSecret.S3.Key = meta.AccessKey{ID: "made-up-nosecret-key"}
 		zg := meta.ZoneGroup{
 			ID: "G", Name: "zg1", IsMaster: true, MasterZone: "zid", Zones: map[string]meta.Zone{"zid": zone}, RealmID: "R",
 			PlacementTargets: map[string]meta.ZoneGroupPlacementTarget{"default-placement": {
-				Name: "default-placement", StorageClasses: []string{"CLOUD", "STANDARD"},
-				TierTargets: map[string]meta.ZoneGroupPlacementTier{"CLOUD": tier},
+				Name: "default-placement", StorageClasses: []string{"CLOUD", "NOSECRET", "STANDARD"},
+				TierTargets: map[string]meta.ZoneGroupPlacementTier{"CLOUD": tier, "NOSECRET": noSecret},
 			}},
 		}
 		for _, epoch := range []uint32{1, 2} {
@@ -103,11 +108,48 @@ var _ = Describe("admin realm and period routes", func() {
 		Expect(x).To(HavePrefix(`<period><id>P</id><epoch>1</epoch>`))
 		Expect(x).To(ContainSubstring(`<zonegroups><obj><id>G</id>`))
 	})
-	It("writes a cloud tier's secret key into the period for a zone=read caller, as radosgw does", func() {
+	// radosgw writes the secret in the clear (docs/ceph-upstream-bugs.md,
+	// "radosgw hands a cloud tier's secret key to any holder of zone=read").
+	DescribeTable("masks a cloud tier's S3 secret in the period for a zone=read caller and keeps its access key",
+		func(format, set, empty string) {
+			addUser("caller", "zone=read")
+			b := typed(fx.get("/admin/realm/period?epoch=2"+format, "caller"))
+			Expect(b).To(ContainSubstring(set), "a set secret is masked")
+			Expect(b).To(ContainSubstring(empty), "an empty secret stays empty")
+			Expect(b).NotTo(ContainSubstring(tierSecret))
+		},
+		Entry("in JSON", "",
+			`"access_key":"made-up-tier-key","secret":"******",`,
+			`"access_key":"made-up-nosecret-key","secret":"",`),
+		Entry("in XML", "&format=xml",
+			`<access_key>made-up-tier-key</access_key><secret>******</secret>`,
+			`<access_key>made-up-nosecret-key</access_key><secret></secret>`),
+	)
+	// A zone pulling the period stores what it reads, and both of radosgw's
+	// pullers sign with the zone's system key.
+	DescribeTable("writes the tier's secret in the clear for a system user alone",
+		func(set func(*meta.UserInfo), want string) {
+			info := meta.NewUserInfo()
+			info.UserID = meta.UserID{ID: "caller"}
+			set(&info)
+			fx.store.AddUser(info)
+			b := typed(fx.get("/admin/realm/period?epoch=2", "caller"))
+			Expect(b).To(ContainSubstring(`"access_key":"made-up-tier-key","secret":"` + want + `",`))
+		},
+		Entry("a system user, as a period pull signs", func(u *meta.UserInfo) { u.System = 1 }, tierSecret),
+		Entry("an admin user that is not a system user", func(u *meta.UserInfo) { u.Admin = 1 }, "******"),
+		Entry("a zone=read user", func(u *meta.UserInfo) { Expect(u.Caps.AddString("zone=read")).To(Succeed()) }, "******"),
+	)
+	It("masks only the document, so the stored period keeps the tier's secret", func() {
 		addUser("caller", "zone=read")
-		b := typed(fx.get("/admin/realm/period?epoch=2", "caller"))
-		Expect(strings.Contains(b, `"access_key":"made-up-tier-key","secret":"`+tierSecret+`"`)).To(BeTrue(),
-			"RGWZoneGroupPlacementTierS3::dump writes the secret (docs/ceph-upstream-bugs.md)")
+		Expect(typed(fx.get("/admin/realm/period?epoch=2", "caller"))).NotTo(ContainSubstring(tierSecret))
+		// Both epochs share the fixture's zonegroup maps.
+		for _, epoch := range []uint32{1, 2} {
+			p, err := fx.store.GetPeriod(context.Background(), "R", "P", epoch)
+			Expect(err).NotTo(HaveOccurred())
+			key := p.PeriodMap.ZoneGroups["G"].PlacementTargets["default-placement"].TierTargets["CLOUD"].S3.Key
+			Expect(key).To(Equal(meta.AccessKey{ID: "made-up-tier-key", Secret: tierSecret}), "epoch %d", epoch)
+		}
 	})
 	It("reads the latest epoch for an epoch it cannot parse, as radosgw ignores get_uint32's result", func() {
 		res := fx.get("/admin/realm/period?epoch=abc", "admin")

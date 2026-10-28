@@ -61,13 +61,21 @@ func newFixture(cfg admin.Config) *fixture {
 // newFixtureAt is newFixture with the zone at release rel.
 func newFixtureAt(rel denc.Release, cfg admin.Config) *fixture {
 	GinkgoHelper()
+	return newFixtureWith(rel, cfg, func(*meta.ZoneParams) {})
+}
+
+// newFixtureWith is newFixtureAt with the zone's parameters changed by params.
+func newFixtureWith(rel denc.Release, cfg admin.Config, params func(*meta.ZoneParams)) *fixture {
+	GinkgoHelper()
 	fx := &fixture{metrics: new(opfakes.FakeMetrics)}
 	pools := meta.NewZonePlacementInfo()
 	pools.StorageClasses = meta.ZoneStorageClasses{meta.StorageClassStandard: {}, "FOO": {}}
-	fx.store = memstore.New(memstore.Config{Release: rel, Params: meta.ZoneParams{
+	zone := meta.ZoneParams{
 		ID: "zid", Name: "z1", DomainRoot: meta.ParsePool("z1.rgw.meta:root"),
 		PlacementPools: map[string]meta.ZonePlacementInfo{"default-placement": pools},
-	}})
+	}
+	params(&zone)
+	fx.store = memstore.New(memstore.Config{Release: rel, Params: zone})
 	for _, u := range []struct{ id, caps string }{
 		{"admin", "info=read;zone=read;users=*;buckets=*;usage=read;metadata=*;accounts=*"},
 		{"nocaps", ""},

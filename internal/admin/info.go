@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/jhoblitt/rgw-go/internal/formatter"
+	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 )
 
@@ -47,10 +48,20 @@ func getZoneConfig(ctx context.Context, w http.ResponseWriter, r *op.Request, q 
 	// RGWOp_ZoneConfig_Get::send_response
 	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_config.cc#L35-L47 at v19.2.6
 	// and v20.2.4): the headers go out before the dump, so no
-	// declaration or status page precedes it.
+	// declaration or status page precedes it. RGWZoneParams::dump writes a
+	// sync zone's tier config as stored
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_zone.cc#L332 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L337 at v20.2.4),
+	// its endpoints' credentials with it; they are masked but for a system
+	// user, whom every check lets through, as it does the zone's own key
+	// (docs/exclusions.md).
+	params := o.Params
+	if !r.Identity.System {
+		params = meta.MaskZoneSecrets(params)
+	}
 	return WriteDumped(w, r, q, func(f formatter.Formatter) {
 		f.OpenObjectSection("zone_params")
-		o.Params.Dump(f, r.Env.Zone.Release())
+		params.Dump(f, r.Env.Zone.Release())
 		f.CloseSection()
 	})
 }

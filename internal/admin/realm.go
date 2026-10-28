@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/jhoblitt/rgw-go/internal/formatter"
+	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 )
 
@@ -78,6 +79,29 @@ func listRealms(ctx context.Context, w http.ResponseWriter, r *op.Request, q Req
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_realm.cc#L34-L52).
 // A period whose zonegroup holds sync policy groups fails the dump, which
 // is answered NotImplemented (docs/exclusions.md).
+//
+// The document masks each cloud tier's S3 secret, which
+// RGWZoneGroupPlacementTierS3::dump writes in the clear
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_zone.cc#L966-L979 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L1006-L1019 at v20.2.4;
+// docs/exclusions.md), but for a system user. A period pull stores the
+// document it reads and sends nothing that marks it as a pull, but signs
+// with the zone's system key: pull_period
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_period_puller.cc#L27-L63 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_period_puller.cc#L28-L68 at v20.2.4)
+// through the zone service's rest_master_conn, which takes
+// zone_params->system_key
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_zone.cc#L549 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_zone.cc#L613 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_zone.cc#L385 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_zone.cc#L417 at v20.2.4),
+// and radosgw-admin's period pull without a URL through get_remote_conn
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L1825-L1842 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L1884-L1901 at v20.2.4),
+// whose RGWRESTConn takes that key
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_conn.cc#L30-L33 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_conn.cc#L31-L34 at v20.2.4).
+// A masked period would overwrite the stored secret with the mask.
 func getPeriod(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	o := &op.GetPeriod{}
 	o.RealmID, _ = q.Args.String("realm_id", "")
@@ -87,9 +111,13 @@ func getPeriod(ctx context.Context, w http.ResponseWriter, r *op.Request, q Requ
 		return err
 	}
 	rel := r.Env.Zone.Release()
+	period := o.Result
+	if !r.Identity.System {
+		period = meta.MaskPeriodTierSecrets(period)
+	}
 	return WriteTyped(w, r, q, realmContentType, func(f formatter.Formatter) {
 		f.OpenObjectSection("period")
-		o.Result.Dump(f, rel)
+		period.Dump(f, rel)
 		f.CloseSection()
 	})
 }
