@@ -4279,7 +4279,9 @@ does the following.
   that json_spirit's unescaping reaches only because a `\u` whose four
   bytes end on an escaped backslash's first half, or a reached `\x` whose
   two bytes do, leaves the second half to start it, rgw-go reads as
-  json_spirit does.
+  json_spirit does (docs/ceph-upstream-bugs.md, "[radosgw's JSON parser reads a short
+  `\u` escape through the next escape's
+  backslash](ceph-upstream-bugs.md#radosgws-json-parser-reads-a-short-u-escape-through-the-next-escapes-backslash)").
 
 ### S3 handler differences
 
@@ -6825,7 +6827,11 @@ rgw-go does the following.
   the same at v20.2.4), a `\u` or `\x` taking the bytes after it whatever
   they are, so that a `\u` whose four bytes end on an escaped backslash's
   first half, or a reached `\x` whose two bytes do, leaves the second half
-  to start a `\x`, read as `hex_str_to_char` reads it, each
+  to start a `\x`, read as `hex_str_to_char` reads it
+  (docs/ceph-upstream-bugs.md, "[radosgw's JSON parser reads a short `\u`
+  escape through the next escape's
+  backslash](ceph-upstream-bugs.md#radosgws-json-parser-reads-a-short-u-escape-through-the-next-escapes-backslash)"),
+  each
   half of an escaped surrogate pair as the three bytes `encode_utf8`
   writes for it, and numbers with a sign,
   leading zeros, a dot at either end, or an integer part of any length a

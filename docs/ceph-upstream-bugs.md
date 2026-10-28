@@ -492,6 +492,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's website redirect-all writes its forced 301 into the bucket's configuration instead of the rule it returns](#radosgws-website-redirect-all-writes-its-forced-301-into-the-buckets-configuration-instead-of-the-rule-it-returns) | pending | pending | ✓ |
 | [radosgw's Elasticsearch sync module deletes a document without the module's headers](#radosgws-elasticsearch-sync-module-deletes-a-document-without-the-modules-headers) | pending | pending | ✓ |
 | [radosgw's JSON parser lexes `\x` and `\X` escapes by the CPU's char signedness, and drops octal and `\X` escapes](#radosgws-json-parser-lexes-x-and-x-escapes-by-the-cpus-char-signedness-and-drops-octal-and-x-escapes) | pending | pending | ✓ |
+| [radosgw's JSON parser reads a short `\u` escape through the next escape's backslash](#radosgws-json-parser-reads-a-short-u-escape-through-the-next-escapes-backslash) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -29795,3 +29796,81 @@ Every new entry adds its row to this table, in document order.
   on `char` while transcribing json_spirit's escapes; the octal and `\X`
   drops and the oracle cases by the task's review. Derived from the source
   and the oracle, not reproduced on a running system.
+
+## radosgw's JSON parser reads a short `\u` escape through the next escape's backslash
+
+- **Kind:** defect, S3-correctness. Security: pending: sent to
+  rgw-bug-reproduction (2026-10-28) as an addendum to the triage of
+  "[radosgw's JSON parser lexes `\x` and `\X` escapes by the CPU's char
+  signedness, and drops octal and `\X`
+  escapes](#radosgws-json-parser-lexes-x-and-x-escapes-by-the-cpus-char-signedness-and-drops-octal-and-x-escapes)",
+  which rated that entry no, for the same reason: the escapes sit in text
+  the signer or the admin writes, which the uploader cannot alter.
+  Unreproduced on a running system: derived from the source and from a
+  C++ oracle built from it.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
+  `src/json_spirit` is identical at the two tags.
+  - The lexer's `string_` rule takes `\\` as one escape, a backslash
+    ([json_spirit_reader_template.h:503-513](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L503-L513),
+    [json_spirit_reader_template.h:503-513](https://github.com/ceph/ceph/blob/v20.2.4/src/json_spirit/json_spirit_reader_template.h#L503-L513)),
+    but the unescaping that follows does not see where the lexer's escapes
+    end. `append_esc_char_and_incr_iter`'s `u` case, guarded by four bytes
+    after the `u`
+    ([json_spirit_reader_template.h:122-129](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L122-L129),
+    [json_spirit_reader_template.h:122-129](https://github.com/ceph/ceph/blob/v20.2.4/src/json_spirit/json_spirit_reader_template.h#L122-L129)),
+    has `unicode_str_to_utf8` take those four bytes whatever they are,
+    `hex_to_num` reading a byte that is not hex as 0
+    ([json_spirit_reader_template.h:69-93](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L69-L93),
+    [json_spirit_reader_template.h:69-93](https://github.com/ceph/ceph/blob/v20.2.4/src/json_spirit/json_spirit_reader_template.h#L69-L93)).
+    A `\u` whose four bytes end on an escaped backslash's first half so
+    takes that half.
+  - `substitute_esc_chars` then goes on after the bytes the case took
+    ([json_spirit_reader_template.h:133-167](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L133-L167),
+    [json_spirit_reader_template.h:133-167](https://github.com/ceph/ceph/blob/v20.2.4/src/json_spirit/json_spirit_reader_template.h#L133-L167)),
+    so the second half starts an escape of its own with the byte after
+    it: an `x` there is the `x` case, which reads the two bytes after it
+    with `hex_str_to_char`
+    ([json_spirit_reader_template.h:114-121](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L114-L121),
+    [json_spirit_reader_template.h:114-121](https://github.com/ceph/ceph/blob/v20.2.4/src/json_spirit/json_spirit_reader_template.h#L114-L121)),
+    and any other byte is an escape the switch drops or reads. A reached
+    `\x` whose two bytes end on the next escaped backslash's first half
+    takes that half too, and the chain goes on: `["\uABC\\x4\\x41"]` reads
+    EA AF 80 40 "A" (the task's round 2 re-review).
+  - A C++ oracle, ceph v19.2.7's `src/json_spirit` and `common/utf8.c`
+    built with boost 1.83, signed and with `-funsigned-char` (phase 2 task
+    BC-30b's re-review, 2026-10-28): `["\uABC\\x41"]` reads EA AF 80 "A",
+    `["\u000\\x2f"]` reads 00 "/", and `["\uABC\\x"]` reads EA AF 80, the
+    same under both, as `hex_str_to_char` is byte arithmetic. The task's
+    second fix round rebuilt it with a driver calling
+    `json_spirit::read_string` as `JSONParser::parse` does, and also read
+    `["\uABC\\x4"]` as EA AF 80 "4", `["\uABC\\xzz"]` as EA AF 80 00,
+    `["\uxd2\\xff804"]` as E0 B4 A0 FF "804" and `["\uABC\\X41"]` as
+    EA AF 80 "41", under both builds.
+- **Sink:** json_spirit's reader under `JSONParser::parse`, the sink of
+  "[radosgw's JSON parser recurses without limit on a POST policy's
+  nesting](#radosgws-json-parser-recurses-without-limit-on-a-post-policys-nesting)"
+  and of the escape entry above, reached from `get_policy` for a POST
+  policy and from `JSONFormattable::set` for a pre-v12 zone's tier config.
+- **Impact:** a string holding a `\u` whose four bytes end on an escaped
+  backslash's first half, or a reached `\x` whose two bytes do, reads as
+  neither the lexer's escapes nor the text name it: `\uABC\\x41`, a short
+  `\u`, a backslash and "x41" to
+  the lexer, reads as EA AF 80 "A". A POST policy condition or member name
+  so written matches other bytes than its signer means; a pre-v12 zone's
+  tier config value is stored with them. A conforming JSON encoder never
+  writes a short `\u`.
+- **Releases:** v19.2.7 and v20.2.4, from the source and the oracle, not
+  from a running system. Main not checked.
+- **rgw-go:** matches. `internal/jsonspirit`'s unescaping transcribes the
+  `\u` and `\x` cases with json_spirit's bounds, so it reads such a
+  string as radosgw does, under either `char` signedness; a `\x` or `\X`
+  the lexer takes stays refused (docs/exclusions.md, "A POST policy with
+  a `\x` or `\X` escape, a number json_spirit takes from the host's libm,
+  or nesting past 10000 is refused" and "A pre-v12 zone whose old tier
+  config holds a value json_spirit reads past what rgw-go transcribes does
+  not decode").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task BC-30b's re-review, 2026-10-28, comparing
+  jsonspirit with the oracle on a corpus of backslash escapes after a
+  short `\u`; registered by the task's second fix round. Derived from the
+  source and the oracle, not reproduced on a running system.
