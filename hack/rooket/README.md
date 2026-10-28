@@ -1362,11 +1362,12 @@ makes the suite read it), and `make admin-gate` reads that file unless the
 variable names another rgw-go.
 
 `make admin-gate` runs the specs of `test/integration` labelled `rgw-go`,
-which `make integration` leaves out: the admin gate, `admin_test.go`, which
-needs the rgw-go `make rgw-go-up` started, and the website gate,
-`phase2_website_test.go`, below. The admin gate's specs sign as the user
-`rgwgo-admin`, which holds Rook's admin-ops caps and `info`, `ratelimit` and
-the write caps the trim, index check and metadata requests need, and they:
+which `make integration` leaves out: the admin gate, `admin_test.go`, and
+the CORS gate, `phase2_cors_test.go`, which need the rgw-go `make rgw-go-up`
+started, and the website gate, `phase2_website_test.go`, below. The admin
+gate's specs sign as the user `rgwgo-admin`, which holds Rook's admin-ops
+caps and `info`, `ratelimit` and the write caps the trim, index check and
+metadata requests need, and they:
 
 - compare `GetInfo`'s `cluster_id` on both gateways with `ceph fsid`;
 - make the admin calls Rook makes, in Rook's order, through go-ceph's client
@@ -1398,6 +1399,12 @@ them. `rgwgo-admin` holds every admin cap with keys committed in the spec, so
 when `go test` ends, however it ends, as `run.sh` does for its `admin`. Neither
 user is in an account, so its removal also removes the `<uid>.buckets` object
 the gateways' quota sync wrote.
+
+The CORS gate writes one CORS configuration through each gateway, has the
+other serve it, and compares the `user.rgw.cors` attr each leaves. Its
+fixtures are the user `cors-gate` and its `rgwgo-cors-*` buckets; it
+removes the user with its buckets, the user's usage records and the garbage
+the removal leaves before and after it runs.
 
 The website gate needs no `make rgw-go-up`: it builds an rgw-go of its own and
 runs it on a loopback port as `client.admin`, with `rgw_dns_s3website_name`,
