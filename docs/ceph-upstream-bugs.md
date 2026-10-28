@@ -325,6 +325,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's PutBucketWebsite answers InvalidArgument for a document that does not parse](#radosgws-putbucketwebsite-answers-invalidargument-for-a-document-that-does-not-parse) | pending | pending | ✓ |
 | [radosgw writes a website redirect's key, host and protocol raw into its Location](#radosgw-writes-a-website-redirects-key-host-and-protocol-raw-into-its-location) | pending | pending | ✓ |
 | [radosgw answers a CORS request with the first rule whose origin matches](#radosgw-answers-a-cors-request-with-the-first-rule-whose-origin-matches) | [#77575](https://tracker.ceph.com/issues/77575), [#77584](https://tracker.ceph.com/issues/77584), [#77586](https://tracker.ceph.com/issues/77586) | [ceph/ceph#69190](https://github.com/ceph/ceph/pull/69190), [ceph/ceph#69647](https://github.com/ceph/ceph/pull/69647), [ceph/ceph#69648](https://github.com/ceph/ceph/pull/69648) |  |
+| [radosgw serves a request whose Origin no CORS rule allows](#radosgw-serves-a-request-whose-origin-no-cors-rule-allows) | pending | [ceph/ceph#70697](https://github.com/ceph/ceph/pull/70697) |  |
 | [radosgw's CORS wildcard match allows origins and headers its pattern does not cover](#radosgws-cors-wildcard-match-allows-origins-and-headers-its-pattern-does-not-cover) | pending | pending | ✓ |
 | [radosgw from Quincy on lacks CVE-2021-3524's fix for CORS expose headers](#radosgw-from-quincy-on-lacks-cve-2021-3524s-fix-for-cors-expose-headers) | [CVE-2021-3524](https://nvd.nist.gov/vuln/detail/CVE-2021-3524) | none |  |
 | [radosgw's IgnorePublicAcls and ACL is_public miss grants to the anonymous user](#radosgws-ignorepublicacls-and-acl-is_public-miss-grants-to-the-anonymous-user) | pending | pending | ✓ |
@@ -17617,10 +17618,15 @@ Every new entry adds its row to this table, in document order.
   PutBucketCors can. Only a write outside radosgw or a damaged attr leaves
   such a configuration.
 - **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
-- **rgw-go:** does not reproduce it: a configuration that does not decode
-  adds no CORS headers and leaves the op's response as it is
-  (`corsHeaders`, `internal/s3/headers.go`; `docs/exclusions.md`, "Every S3
-  response carries CORS headers once its bucket is loaded").
+- **rgw-go:** does not reproduce it: a request with an Origin on such a
+  bucket is answered 500 UnknownError, `read_bucket_cors`'s -EIO, before
+  its op runs, the answer GetBucketCors and the preflight give it on both
+  floors (`verifyCORSMatch`, `internal/op/corsmatch.go`;
+  `docs/exclusions.md`, "A request whose Origin no CORS rule allows is
+  refused"). A refusal made before that check keeps its own answer, with no
+  CORS headers (`corsHeaders`, `internal/s3/headers.go`;
+  `docs/exclusions.md`, "Every S3 response carries CORS headers once its
+  bucket is loaded").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, Task BC-7, 2026-10-22, reading what
   `generate_cors_headers` does with a read error. Derived from the source,
@@ -17921,6 +17927,83 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 research, 2026-10-13, comparing `host_name_rule` with
   main's `match_rule`; confirmed by task BC-2, 2026-10-15, which found the
   tentacle backport. Derived from the source, not reproduced.
+
+## radosgw serves a request whose Origin no CORS rule allows
+
+- **Kind:** defect, S3-correctness, not security-relevant
+  (rgw-bug-reproduction's triage, 2026-10-27), not found by us: upstream
+  has fixed it on main, in no tag. A request other than a preflight that
+  carries an Origin which no rule of its bucket's CORS configuration allows
+  for the request's own method is served as one without an Origin is, and
+  its response usually lacks the CORS headers. The exception: the floors
+  test the origin's first rule against Access-Control-Request-Method before
+  the request's own method
+  ([rgw_op.cc:1579-1591](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1579-L1591),
+  [rgw_op.cc:1816-1828](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1816-L1828)),
+  so a PUT that asks GET is served with the GET rule's headers. s3-tests'
+  `test_cors_origin_response` and `test_cors_presigned_url_non_preflight`
+  expect 403. The triage's reason: radosgw has no credential a browser
+  attaches on its own, having no cookie authentication; SigV2 and SigV4
+  ride the Authorization header, which a cross-origin page cannot set
+  without a preflight; and a presigned URL, a POST policy or an anonymous
+  write must already be in the attacker's hands, who can then send the
+  request directly. The one ambient authority is network position, such as
+  an aws:SourceIp bucket policy or an internal-only gateway, on an
+  anonymous-write path, and main's refusal mitigates that only for buckets
+  that happen to have a CORS configuration. Unreproduced: derived from the
+  source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `rgw_process_authenticated` runs the op mask, OPA and
+    `verify_permission` with no CORS check among them
+    ([rgw_process.cc:207-225](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L207-L225),
+    [rgw_process.cc:207-225](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L207-L225)).
+  - `generate_cors_headers`, which `end_header` calls for a request with an
+    Origin, returns no headers when no rule's origin matches or the rule
+    does not allow the method, and refuses nothing
+    ([rgw_op.cc:1562-1591](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1562-L1591),
+    [rgw_op.cc:1799-1828](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1799-L1828)).
+  - main refuses the request with -EACCES in `verify_cors_match`
+    ([rgw_op.cc:2088-2133](https://github.com/ceph/ceph/blob/292995374d9/src/rgw/rgw_op.cc#L2088-L2133) at 292995374d9),
+    which matches the Origin against the request's own method and no
+    requested header, and which `rgw_process_authenticated` calls after
+    `verify_op_mask` and before `verify_permission`, so no admin override
+    lifts it
+    ([rgw_process.cc:289-299](https://github.com/ceph/ceph/blob/292995374d9/src/rgw/rgw_process.cc#L289-L299) at 292995374d9).
+  - The fix ignores `read_bucket_cors`'s result, which marks a
+    configuration present before it decodes it
+    ([rgw_op.cc:1925-1945](https://github.com/ceph/ceph/blob/292995374d9/src/rgw/rgw_op.cc#L1925-L1945) and
+    [rgw_op.cc:2100-2115](https://github.com/ceph/ceph/blob/292995374d9/src/rgw/rgw_op.cc#L2100-L2115) at 292995374d9),
+    so main matches a configuration that does not decode against what its
+    decode left, where the floors' GetBucketCors and preflight answer it 500
+    ("[radosgw's DeleteBucketCors refuses, and keeps, a CORS configuration
+    that does not
+    decode](#radosgws-deletebucketcors-refuses-and-keeps-a-cors-configuration-that-does-not-decode)").
+    When nothing of the attr decodes, the configuration keeps no rule while
+    it counts as present, so main refuses every request with an Origin 403,
+    a browser's PutBucketCors and DeleteBucketCors included; only a partial
+    decode lets a request through. On the floors a browser's PutBucketCors
+    still replaces such a configuration, which it does not read (the same
+    entry).
+- **Impact:** a request from an origin the owner's configuration does not
+  name is served, and only a browser's own CORS check keeps the page from
+  reading the response. A test suite, or a client, that expects the
+  refusal fails on these releases.
+- **Releases:** v19.2.7 and v20.2.4 carry it. main carries the fix since
+  a956c21a8c9; no tag, v21.1.2 included, nor the squid or tentacle branch,
+  does.
+- **rgw-go:** differs: it refuses as main does, for the request's own
+  method, once the op mask has passed and before the permission verdict,
+  but matches the Origin as its wildcards are written and answers a
+  configuration that does not decode 500 (`verifyCORSMatch`,
+  `internal/op/corsmatch.go`; `docs/exclusions.md`, "A request whose
+  Origin no CORS rule allows is refused").
+- **Upstream:** fixed on main by
+  [ceph/ceph#70697](https://github.com/ceph/ceph/pull/70697), "RGW: Verify
+  non-preflight authenticated cross origin requests": 4e056f98e78,
+  8d652cd24c1 and 7f147f02058, merged as a956c21a8c9 on 2026-09-30, in no
+  tag. Its commits name no tracker issue; prior art not searched further.
+- **Found:** phase 2 research for unit B's plan; task BC-4, 2026-10-27,
+  read the fix on main. Derived from the source, not reproduced.
 
 ## radosgw's CORS wildcard match allows origins and headers its pattern does not cover
 
@@ -19542,12 +19625,17 @@ Every new entry adds its row to this table, in document order.
   when the bucket's CORS configuration does not
   decode](#radosgw-sends-no-document-to-a-request-with-an-origin-when-the-buckets-cors-configuration-does-not-decode)").
 - **Releases:** checked at v19.2.7 and v20.2.4.
-- **rgw-go:** does not reproduce it. `op.DeleteBucketCORS` removes the attr
-  whatever it holds, through the retried and re-authorized write the other
-  bucket-config writes take, and succeeds, which its route answers 204; a
-  bucket without the attr succeeds with nothing written, as radosgw's does
-  (`internal/op/cors.go`, `internal/s3/cors.go`; `docs/exclusions.md`,
-  "DeleteBucketCors removes a CORS configuration that does not decode").
+- **rgw-go:** does not reproduce it for a request without an Origin.
+  `op.DeleteBucketCORS` removes the attr whatever it holds, through the
+  retried and re-authorized write the other bucket-config writes take, and
+  succeeds, which its route answers 204; a bucket without the attr succeeds
+  with nothing written, as radosgw's does (`internal/op/cors.go`,
+  `internal/s3/cors.go`; `docs/exclusions.md`, "DeleteBucketCors removes a
+  CORS configuration that does not decode"). A request that carries an
+  Origin, a browser's among them, is answered 500 before the op runs, as
+  every request with an Origin on that bucket is (`docs/exclusions.md`, "A
+  request whose Origin no CORS rule allows is refused"), so it cannot clear
+  the configuration either.
 - **Upstream:** none. rgw-bug-reproduction logged it as non-security; it is
   unfiled while filing is paused.
 - **Found:** phase 2 task BC-3's review, 2026-10-19, reading

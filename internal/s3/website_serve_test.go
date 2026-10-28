@@ -18,6 +18,7 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/authz"
+	"github.com/jhoblitt/rgw-go/internal/cors"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/memstore"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -528,6 +529,46 @@ var _ = Describe("the website GetObject", func() {
 				"If-Modified-Since", "Sun, 27 Sep 2037 00:00:00 GMT"),
 			Entry("whole, for a partNumber", http.MethodGet, "/missing.html?partNumber=2", http.StatusNotFound),
 		)
+		// main's serve_errordoc reads the document without verify_cors_match
+		// (https://github.com/ceph/ceph/blob/292995374d9/src/rgw/rgw_rest_s3.cc#L6366-L6438 at 292995374d9).
+		// appGetOnly gives site an error document and a CORS rule that lets
+		// appOrigin alone GET.
+		appGetOnly := func(ctx context.Context) {
+			GinkgoHelper()
+			w.setWebsite(ctx, withErrorDoc(site()))
+			rec, err := w.store.GetBucket(ctx, "", "site")
+			Expect(err).NotTo(HaveOccurred())
+			readers := &cors.Configuration{Rules: []cors.Rule{
+				{MaxAge: cors.MaxAgeInvalid, Methods: cors.MethodGet, AllowedOrigins: []string{appOrigin}},
+			}}
+			Expect(w.store.PutBucketAttrs(ctx, rec, map[string][]byte{op.AttrCORS: readers.Encode()}, nil)).To(Succeed())
+		}
+		It("serves the error document under the 403 of a request whose Origin no CORS rule allows", func(ctx SpecContext) {
+			appGetOnly(ctx)
+
+			refused := w.serve(nil, http.MethodGet, "/a.txt", "Origin", "https://other.example")
+			expectErrorDoc(refused, http.StatusForbidden, false)
+			Expect(corsOf(refused.Header())).To(BeEmpty())
+
+			allowed := w.serve(nil, http.MethodGet, "/a.txt", "Origin", appOrigin)
+			Expect(allowed.Code).To(Equal(http.StatusOK), allowed.Body.String())
+			Expect(allowed.Body.String()).To(Equal("plain text"))
+		})
+		It("answers a HEAD the check refuses with the error document's headers under its 403 and no body", func(ctx SpecContext) {
+			appGetOnly(ctx)
+
+			refused := w.serve(nil, http.MethodHead, "/a.txt", "Origin", appOrigin)
+			expectErrorDoc(refused, http.StatusForbidden, true)
+			Expect(corsOf(refused.Header())).To(BeEmpty(), "the rule lets the Origin GET alone")
+
+			asked := w.serve(nil, http.MethodHead, "/a.txt", "Origin", appOrigin, "Access-Control-Request-Method", http.MethodGet)
+			expectErrorDoc(asked, http.StatusForbidden, true)
+			Expect(corsOf(asked.Header())).To(Equal(map[string][]string{
+				"Access-Control-Allow-Origin":  {appOrigin},
+				"Vary":                         {"Origin"},
+				"Access-Control-Allow-Methods": {"GET"},
+			}), "the document's read sends the headers of the Access-Control-Request-Method's rule, as main's getop generates them")
+		})
 		It("logs the error document's request under the error's status and counts its bytes", func(ctx SpecContext) {
 			w.setWebsite(ctx, withErrorDoc(site()))
 			expectErrorDoc(w.serve(nil, http.MethodGet, "/missing.html"), http.StatusNotFound, false)

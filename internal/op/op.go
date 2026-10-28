@@ -57,10 +57,11 @@ type Op interface {
 // overrides those refusals. The authorizer makes those checks inside
 // VerifyPermission and marks their refusals with BeforeVerify, so Run calls
 // VerifyPermission ahead of the op-mask check and returns a marked refusal
-// first; the op mask then decides ahead of any other VerifyPermission error.
-// An Admin identity (auth sets Admin for admin and system users) is let
-// through such an error only when it is an access denial (EACCES, EPERM or
-// ERR_AUTHORIZATION), because the others might be invalid input
+// first; the op mask then decides ahead of any other VerifyPermission error,
+// and main's CORS origin check after it (verifyCORSMatch). An Admin identity
+// (auth sets Admin for admin and system users) is let through such an error
+// only when it is an access denial (EACCES, EPERM or ERR_AUTHORIZATION),
+// because the others might be invalid input
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L228-L239 at v20.2.4).
 // radosgw at v19.2.6 lets an admin through any error
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L228-L236);
@@ -78,6 +79,9 @@ func Run(ctx context.Context, o Op, r *Request) error {
 		return permErr
 	}
 	if err := verifyOpMask(o, r); err != nil {
+		return err
+	}
+	if err := verifyCORSMatch(o, r); err != nil {
 		return err
 	}
 	if permErr != nil {
