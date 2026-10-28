@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jhoblitt/rgw-go/internal/iso8601"
 	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 	"github.com/jhoblitt/rgw-go/internal/strptime"
 )
@@ -122,12 +123,10 @@ func checkGMTEnd(rest string) bool {
 	return strings.HasPrefix(rest, "GMT") || strings.HasPrefix(rest, "UTC")
 }
 
-// parseISO8601Basic is parse_iso8601 with extended_format false
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L599-L659 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L612-L672 at v20.2.4):
-// strptime's "%Y%m%dT%H%M%S", then, once trimmed, nothing, "Z", or '.' and a
-// fraction stringtoul accepts, and 'Z'. The fraction is dropped: radosgw's
-// auth paths pass no pns, or build the header time from whole seconds.
+// parseISO8601Basic is the instant internal_timegm makes of what
+// iso8601.ParseBasic, radosgw's parse_iso8601 without the extended format,
+// reads. The fraction is dropped: radosgw's auth paths pass no pns, or build
+// the header time from whole seconds.
 func parseISO8601Basic(s string) (time.Time, bool) {
 	t, _, ok := iso8601BasicDate(s)
 	return t, ok
@@ -137,18 +136,9 @@ func parseISO8601Basic(s string) (time.Time, bool) {
 // strptime read it, before internal_timegm carries a second 60 into the next
 // year.
 func iso8601BasicDate(s string) (t time.Time, year int, ok bool) {
-	fields, rest, ok := strptime.Parse(strptime.Tm{}, rgwtext.CString(s), "%Y%m%dT%H%M%S")
+	fields, _, ok := iso8601.ParseBasic(s)
 	if !ok {
 		return time.Time{}, 0, false
-	}
-	rest = trimSpace(rest)
-	if rest != "" && rest != "Z" {
-		if rest[0] != '.' || rest[len(rest)-1] != 'Z' {
-			return time.Time{}, 0, false
-		}
-		if _, ok := rgwtext.StringToUL(rest[1 : len(rest)-1]); !ok {
-			return time.Time{}, 0, false
-		}
 	}
 	return fields.Timegm(), fields.Year, true
 }

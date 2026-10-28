@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jhoblitt/rgw-go/internal/iso8601"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 	"github.com/jhoblitt/rgw-go/internal/strptime"
@@ -114,7 +115,7 @@ func ParseHTTPTime(s string) (time.Time, error) {
 	tm, ok := parseRFC2616(s)
 	var ns uint32
 	if !ok {
-		tm, ns, ok = parseISO8601(s)
+		tm, ns, ok = iso8601.ParseExtended(s)
 	}
 	if !ok {
 		return time.Time{}, fmt.Errorf("%w: %q is not a date radosgw parses", ErrInvalidArgument, s)
@@ -310,42 +311,6 @@ func checkGMTEnd(rest string) bool {
 
 // checkStrEnd is check_str_end: nothing but whitespace follows.
 func checkStrEnd(rest string) bool { return strings.TrimLeft(rest, cSpaces) == "" }
-
-// isoNanoScale is parse_iso8601's mul_table: the multiplier that turns a
-// fraction of n digits into nanoseconds.
-var isoNanoScale = [...]uint64{0, 100000000, 10000000, 1000000, 100000, 10000, 1000, 100, 10, 1}
-
-// parseISO8601 is parse_iso8601 in its extended format
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L599-L659 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L612-L672 at v20.2.4):
-// a date, "T" or whitespace, a time, and then, whitespace aside, nothing,
-// "Z", or "." and a fraction that stringtoul takes followed by "Z". The
-// fraction keeps radosgw's arithmetic: its value cut to 32 bits times the
-// scale for its first nine bytes, cut to 32 bits. Its formats' %T is glibc's
-// "%H:%M:%S", spelled out for strptime.Parse.
-func parseISO8601(s string) (strptime.Tm, uint32, bool) {
-	tm, rest, ok := strptime.Parse(strptime.Tm{}, s, "%Y-%m-%dT%H:%M:%S")
-	if !ok {
-		tm, rest, ok = strptime.Parse(strptime.Tm{}, s, "%Y-%m-%d %H:%M:%S")
-	}
-	if !ok {
-		return strptime.Tm{}, 0, false
-	}
-	str := strings.Trim(rest, cSpaces)
-	if str == "" || str == "Z" {
-		return tm, 0, true
-	}
-	if str[0] != '.' || str[len(str)-1] != 'Z' {
-		return strptime.Tm{}, 0, false
-	}
-	frac := str[1 : len(str)-1]
-	v, ok := rgwtext.StringToUL(frac)
-	if !ok {
-		return strptime.Tm{}, 0, false
-	}
-	digits := min(len(frac), 9)
-	return tm, uint32(uint64(v) * isoNanoScale[digits]), true //nolint:gosec // radosgw truncates the product to 32 bits
-}
 
 // utime is utime_t(sec, ns) (include/utime.h at v19.2.6 and v20.2.4): the
 // seconds cut to 32 bits, and nanoseconds past a second, but not exactly one,

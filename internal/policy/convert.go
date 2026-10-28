@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jhoblitt/rgw-go/internal/iso8601"
 	"github.com/jhoblitt/rgw-go/internal/rgwtext"
-	"github.com/jhoblitt/rgw-go/internal/strptime"
 )
 
 func hasPrefixFold(s, prefix string) bool {
@@ -98,7 +98,7 @@ func asDate(s string) (uint64, bool) {
 	case n == len(s):
 		return epochNanos(f), true
 	}
-	return fromISO8601(s)
+	return iso8601.ParseWrapped(s)
 }
 
 // AsBool is Condition::as_bool
@@ -604,79 +604,4 @@ func cvttsd2si(d float64) uint64 {
 		return uint64(int64(d)) //nolint:gosec // the instruction's two's-complement result
 	}
 	return 1 << 63
-}
-
-// fromISO8601 is ceph::from_iso_8601 with ws_terminates false
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/common/iso_8601.cc#L51-L151 at v19.2.6
-// and v20.2.4), in real_time's nanoseconds.
-func fromISO8601(s string) (uint64, bool) {
-	p := 0
-	digits := func(n int) (int, bool) {
-		v := 0
-		for range n {
-			if p == len(s) || !isDigit(s[p]) {
-				return 0, false
-			}
-			v = v*10 + int(s[p]-'0')
-			p++
-		}
-		return v, true
-	}
-	dateEnd := func() bool { return p == len(s) }
-	timeEnd := func() bool { return p == len(s)-1 && s[p] == 'Z' }
-
-	year, ok := digits(4)
-	if !ok || year < 1970 {
-		return 0, false
-	}
-	month, day, hour, minute, sec := 1, 1, 0, 0, 0
-	nanos := func(frac int) (uint64, bool) {
-		t := strptime.Tm{Year: year, Mon: month - 1, Mday: day, Hour: hour, Min: minute, Sec: sec}.Timegm().Unix()
-		if t == -1 {
-			return 0, false
-		}
-		return uint64(t)*uint64(time.Second) + uint64(frac), true //nolint:gosec // from_time_t converts time_t to real_time's unsigned nanoseconds
-	}
-	if dateEnd() {
-		return nanos(0)
-	}
-	for _, field := range []struct {
-		delim byte
-		v     *int
-		end   func() bool
-	}{
-		{'-', &month, dateEnd},
-		{'-', &day, dateEnd},
-		{'T', &hour, timeEnd},
-		{':', &minute, timeEnd},
-		{':', &sec, timeEnd},
-	} {
-		if p == len(s) || s[p] != field.delim {
-			return 0, false
-		}
-		p++
-		if *field.v, ok = digits(2); !ok {
-			return 0, false
-		}
-		if field.end() {
-			return nanos(0)
-		}
-	}
-	if p == len(s) || s[p] != '.' {
-		return 0, false
-	}
-	p++
-	frac, scale := 0, 100_000_000
-	for range 9 {
-		d, ok := digits(1)
-		if !ok {
-			return 0, false
-		}
-		frac += d * scale
-		scale /= 10
-		if timeEnd() {
-			return nanos(frac)
-		}
-	}
-	return 0, false
 }

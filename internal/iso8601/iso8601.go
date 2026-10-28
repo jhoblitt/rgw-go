@@ -1,9 +1,7 @@
 // Package iso8601 reads and writes ISO 8601 dates as radosgw does: Parse,
 // ParseWrapped and Format are ceph's from_iso_8601 and to_iso_8601, and
 // ParseExtended and ParseBasic are radosgw's parse_iso8601 in its two
-// formats, with its fractional seconds and its zone. It is the reader the
-// packages that read these dates are to share: op, auth and policy still keep
-// copies of their own, which are to switch to it.
+// formats, with its fractional seconds and its zone.
 package iso8601
 
 import (
