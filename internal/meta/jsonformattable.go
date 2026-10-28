@@ -1,15 +1,14 @@
 package meta
 
 import (
-	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/jhoblitt/rgw-go/internal/denc"
+	"github.com/jhoblitt/rgw-go/internal/jsonspirit"
 )
 
 // JSONFormattableType is JSONFormattable::Type. The decoder keeps any byte it
@@ -124,9 +123,9 @@ var errFormattablePath = errors.New("meta: invalid JSONFormattable path")
 
 // setFormattable mirrors JSONFormattable::set: name is a dotted path whose
 // components may index arrays ("a.b[2]", "list[]" to append), and val is
-// stored as json_spirit reads it when JSONParser::parse accepts it (see
-// parseJSON), else as a value quoted unless it is numeric. A form of val the
-// json_spirit transcription rejects is returned wrapping denc.ErrMalformed.
+// stored as json_spirit reads it when JSONParser::parse accepts it
+// (jsonspirit.Parse), else as a value quoted unless it is numeric. A form of
+// val jsonspirit.Parse refuses is returned wrapping denc.ErrMalformed.
 // The C++ walks each path component as it parses it, so the nodes
 // before a failing component are created, and so they are here. An escape
 // boost's escaped_list_separator rejects, which the C++ throws, is returned
@@ -153,9 +152,9 @@ func setFormattable(j *JSONFormattable, name, val string) error {
 		}
 		return parseErr
 	}
-	n, isJSON, err := parseJSON(val)
+	n, isJSON, err := jsonspirit.Parse(val)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: legacy tier config value %q: %w", denc.ErrMalformed, val, err)
 	}
 	return walkFormattable(j, path, func(f *JSONFormattable) {
 		if isJSON {
@@ -334,34 +333,29 @@ func isNumeric(s string) bool {
 // elements, an object merges into j's members in the key order of JSONObj's
 // children multimap (duplicates in document order), and a scalar
 // sets the value. The fields the new type does not use are left as they were.
-func applyJSON(j *JSONFormattable, n spiritNode) {
-	switch n.kind {
-	case 'a':
+func applyJSON(j *JSONFormattable, n *jsonspirit.Node) {
+	switch n.Kind() {
+	case jsonspirit.Array:
 		j.Type = FormattableArray
 		j.Array = nil
-		for _, c := range n.arr {
+		for _, c := range n.Children() {
 			var x JSONFormattable
-			applyJSON(&x, c)
+			applyJSON(&x, c.Node)
 			j.Array = append(j.Array, x)
 		}
-	case 'o':
+	case jsonspirit.Object:
 		j.Type = FormattableObject
 		if j.Object == nil {
 			j.Object = map[string]JSONFormattable{}
 		}
-		order := make([]int, len(n.keys))
-		for i := range order {
-			order[i] = i
-		}
-		slices.SortStableFunc(order, func(a, b int) int { return cmp.Compare(n.keys[a], n.keys[b]) })
-		for _, i := range order {
-			child := j.Object[n.keys[i]]
-			applyJSON(&child, n.values[i])
-			j.Object[n.keys[i]] = child
+		for _, c := range n.Children() {
+			child := j.Object[c.Name]
+			applyJSON(&child, c.Node)
+			j.Object[c.Name] = child
 		}
 	default:
 		j.Type = FormattableValue
-		j.Value = n.text
-		j.Quoted = n.kind == 's'
+		j.Value = n.Data()
+		j.Quoted = n.Kind() == jsonspirit.String
 	}
 }

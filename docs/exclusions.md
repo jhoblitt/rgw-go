@@ -4252,6 +4252,24 @@ does the following.
   the window. So rgw-go has fewer reads in flight for pieces of just over
   half a request, and while a slow read or a slow client holds a GET back;
   in exchange the buffers a GET holds stay within the window.
+- **A pre-v12 zone whose old tier config holds a value json_spirit reads
+  past what rgw-go transcribes does not decode.** A zone stored before
+  version 12 kept its tier config as a string map, which radosgw's
+  `RGWZoneParams::decode` converts by passing each value to
+  `JSONFormattable::set`
+  ([rgw_zone.h:241-247](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_zone.h#L241-L247),
+  [rgw_zone.h:248-254](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_zone.h#L248-L254)),
+  which stores the value JSONParser reads with json_spirit, or the text
+  where JSONParser refuses it
+  ([ceph_json.cc:778-838](https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_json.cc#L778-L838),
+  the same at v20.2.4). rgw-go reads each value with the same grammar
+  (`internal/jsonspirit`) and stores what radosgw stores, but for a value
+  with a `\x` or octal escape, a number json_spirit takes from the host's
+  libm (an exponent past 300, a fraction of more than 300 digits, the
+  exponent 126, or a value that is not finite), or arrays and objects
+  nested deeper than 10000, where json_spirit recurses without limit:
+  rgw-go fails to decode such a zone with `denc.ErrMalformed`
+  (`meta.DecodeZoneParams`), where radosgw stores a value for it.
 
 ### S3 handler differences
 
