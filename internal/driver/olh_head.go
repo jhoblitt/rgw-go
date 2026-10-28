@@ -103,10 +103,11 @@ type olhCondGuard struct {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8462-L8573 at v20.2.4):
 // one op on head that records a pending modification under a new op tag,
 // creating the head exclusively when it is missing and otherwise asserting
-// it and keeping its mtime. A head with an OLH tag is guarded on it. A head
-// without one, a plain object becoming versioned, is guarded on having none
-// and gets an olh.info naming itself, so the change is not seen; it and a
-// missing head get fresh write and OLH tags and an empty olh.ver. A lost
+// it and keeping its mtime (keepHeadMtime). A head with an OLH tag is
+// guarded on it. A head without one, a plain object becoming versioned, is
+// guarded on having none and gets an olh.info naming itself, so the change
+// is not seen; it and a missing head get fresh write and OLH tags and an
+// empty olh.ver. A lost
 // exclusive create is ECANCELED. cond, when not nil, adds its guard ahead of
 // every set, so that it sees other writers only, and expectTag, when not
 // nil, adds there cmpxattr(user.rgw.idtag, EQ, expectTag), which init itself
@@ -129,7 +130,7 @@ func (s *Store) olhInitModification(ctx context.Context, head *op.ObjectState, c
 		w.Create(true)
 	} else {
 		w.AssertExists()
-		w.SetMtime(head.Mtime)
+		keepHeadMtime(w)
 		if expectTag != nil {
 			w.CmpXattr(meta.AttrIDTag, radosclient.CmpEQ, expectTag)
 		}
@@ -294,16 +295,26 @@ func (s *Store) removeOLHPendingEntries(ctx context.Context, head *op.ObjectStat
 	return nil
 }
 
-// keepHeadMtime makes w, a removal of an OLH head's pending attrs, keep the
-// mtime the head holds when w lands. radosgw's olh_cancel_modification and
+// keepHeadMtime makes w, a write of an existing OLH head's attrs alone, keep
+// the mtime the head holds when w lands, the Last-Modified of the null
+// version whose data the head holds. radosgw's olh_cancel_modification and
 // remove_olh_pending_entries send no mtime, so librados gives their ops the
 // client's clock
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/librados/IoCtxImpl.cc#L642-L643 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/librados/IoCtxImpl.cc#L648-L649 at v20.2.4),
-// which the OSD stores as the head's mtime, the Last-Modified of the null
-// version whose data the head holds (docs/ceph-upstream-bugs.md, "radosgw's
-// removal of an OLH head's pending attr moves the null version's mtime"). The
-// OSD leaves the stored mtime as it is for a zero op mtime
+// which the OSD stores as the head's mtime (docs/ceph-upstream-bugs.md,
+// "radosgw's removal of an OLH head's pending attr moves the null version's
+// mtime"). Its OLH init, log apply and repair_olh send the mtime they read
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7811-L7812,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8442-L8443 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8297-L8298 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8474-L8475,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9188-L9189 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9043-L9044 at v20.2.4),
+// which sets back the mtime of a null write landing after the read
+// (docs/ceph-upstream-bugs.md, "radosgw's OLH init, replay and repair set
+// back the mtime of a null write landing after their read"). The OSD leaves
+// the stored mtime as it is for a zero op mtime
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L8978-L8984 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L9084-L9090 at v20.2.4),
 // so a null write landing after the head was read keeps its own.
@@ -369,8 +380,8 @@ func (s *Store) followOLH(ctx context.Context, head *op.ObjectState, update func
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8409-L8566 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9155-L9312 at v20.2.4):
 // it replays log, the pending log by epoch, onto head in one op that sets
-// olh.ver to the last epoch, keeps head's mtime and removes each entry's
-// pending attr. In epoch order a LINK_OLH takes the current version when its
+// olh.ver to the last epoch, keeps the head's mtime (keepHeadMtime) and
+// removes each entry's pending attr. In epoch order a LINK_OLH takes the current version when its
 // epoch is above head's olh.ver, when the current version has no instance,
 // or when its own instance sorts before the current one; an UNLINK_OLH marks
 // the OLH for removal until a later link; a REMOVE_INSTANCE names a version
@@ -415,7 +426,7 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 	guardOLHTag(w, head)
 	w.CmpXattr(meta.AttrOLHVer, radosclient.CmpEQ, head.Attrs[meta.AttrOLHVer])
 	w.SetXattr(meta.AttrOLHVer, []byte(strconv.FormatUint(last, 10)))
-	w.SetMtime(head.Mtime)
+	keepHeadMtime(w)
 
 	// strict_strtoll reads olh.ver through c_str(), up to a NUL, and gives 0
 	// for anything it refuses; the C++ stores the long long in a u64.
@@ -638,7 +649,8 @@ func (s *Store) clearOLHHead(ctx context.Context, idx olhIndex, head *op.ObjectS
 // for a head whose OLH tag the index no longer has, as a multisite sync
 // defect once left heads (https://tracker.ceph.com/issues/37792): unless the
 // index's OLH entry already carries head's tag, it rewrites olh.idtag and
-// olh.info from that entry under the old tag's guard, keeping head's mtime.
+// olh.info from that entry under the old tag's guard, keeping the head's
+// mtime (keepHeadMtime).
 func (s *Store) repairOLH(ctx context.Context, idx olhIndex, head *op.ObjectState) error {
 	e, err := idx.getOLH(ctx, head)
 	if err != nil {
@@ -649,7 +661,7 @@ func (s *Store) repairOLH(ctx context.Context, idx olhIndex, head *op.ObjectStat
 	}
 	w := radosclient.NewWriteOp()
 	guardOLHTag(w, head)
-	w.SetMtime(head.Mtime)
+	keepHeadMtime(w)
 	w.SetXattr(meta.AttrOLHIDTag, []byte(e.Tag))
 	info := meta.OLHInfo{Target: meta.Obj{Bucket: head.Bucket.Info.Bucket, Key: indexToObjKey(e.Key)}, Removed: e.DeleteMarker}
 	w.SetXattr(meta.AttrOLHInfo, encodeAt(info, s.release))

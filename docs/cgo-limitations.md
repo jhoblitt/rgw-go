@@ -374,6 +374,56 @@ benchmark was re-run.
   completion before they answer (`completePlain`,
   `internal/driver/headwrite.go`, which `SetObjectAttrs` also calls). No
   other ADD whose completion goes unawaited reaches an un-namespaced entry.
+  A completion or cancel sent without waiting still meets the marker's
+  link: an unversioned delete's DEL, or a write's ADD, sent on a bucket not
+  yet versioned whose versioning is then suspended, and on a suspended
+  bucket with no versioning change the cancel of a null write that failed,
+  which `cancelWrite` sends without waiting (`internal/driver/headwrite.go`).
+  The marker's inheritance and a read's missing meta both concern the
+  entries of one name, the name the shard is found from. So each OLH call,
+  the link, the unlink, the log's read, trim and clear, `bi_get` and the
+  awaited completions, first waits for every completion submitted before it
+  for its own bucket and name to answer (`completionManager.awaitSent`,
+  `internal/driver/completion.go`), which keeps librados' order where it
+  matters, and for no other name's, though on its shard. A completion a
+  reshard refused goes to its bucket's retrier, whose retry sends it to the
+  shard that follows, where the reshard has copied the plain entry with its
+  pending op: a retry landing after the marker's link there would leave the
+  marker pending too, as radosgw's retry thread can
+  (`docs/ceph-upstream-bugs.md`, "radosgw's listing repair of a null
+  version's list entry overwrites or removes the key's version marker").
+  The reshard moves an entry by its name, so the call also waits for the
+  retry of each completion of its name a reshard refused, on whatever shard
+  it lands, and a call that was waiting on the refused send follows it into
+  its retry. The DEL of a multipart part that a listing's sweep sends
+  (`deleteObjIndex`) holds no call: no OLH links a namespaced entry, and
+  the other index ops on a part's entry find its shard from the upload's
+  name. No call waits for a completion the gateway drops, which leaves its
+  pending op, and so the marker linked after it pending, as radosgw's
+  dropped one does: a first send that fails other than busy, a retry whose
+  bucket instance cannot be read again or whose reshard guard fails, a
+  completion whose shard lookup failed, one submitted after the manager
+  stopped, and one the manager abandons as it stops. The cost is up to a
+  round trip on such a call while a completion of its name is in flight,
+  where radosgw sends both at once, and, while its bucket reshards, the wait
+  for its name's retries (`completionManager.retryBucket`). One goroutine
+  per bucket waits the reshard out, polling its status as the call itself
+  does, and then sends the bucket's queued completions one at a time: first
+  those of the names a call waits on, in the order the calls began waiting,
+  then the rest by the order each name was queued, each name's in the order
+  the reshard refused them. So once the reshard is over a call waits for the
+  retry being sent, the retries of the names other calls began waiting on
+  before it, and its own name's, never for the rest of the bucket's queue.
+  The queue holds each request once: a refused completion that is the same
+  request as one still queued, by bucket, name, index key, op, tag and
+  version, is not queued again, and a call waiting on it waits for the one
+  queued. Its length is so bounded by the distinct requests the reshard
+  refused, plus a copy of the one being retried: every listing during a
+  reshard refuses one DEL for every multipart part it sweeps, and repeated
+  listings queue each part's once. No call waits out another bucket's
+  reshard, as one would behind radosgw's one retry thread, and the
+  goroutines retrying are bounded by the buckets resharding, however many
+  completions a reshard refuses.
   cls_rgw refuses a
   completion whose
   tag is no longer pending with EINVAL (`cls/rgw/cls_rgw.cc:1065-1072` at

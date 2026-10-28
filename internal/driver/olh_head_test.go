@@ -168,11 +168,25 @@ var _ = Describe("the OLH head operations", func() {
 				tagGuard(),
 				&radosclient.SetXattrStep{Name: meta.AttrOLHPendingPrefix + opTag, Value: pendingAt(now)},
 			}))
-			mt, ok := w.Mtime()
-			Expect([]any{mt, ok}).To(Equal([]any{mtime, true}))
+			keepsMtime(w)
 			Expect(head().Mtime).To(Equal(mtime))
 			Expect(head().Xattrs[meta.AttrOLHIDTag]).To(Equal([]byte(olhTag)), "the tags are kept")
 		})
+
+		DescribeTable("keeps the mtime of a write landing between its read and the init",
+			func(ctx SpecContext, stage func()) {
+				stage()
+				st := state()
+				later := nullWrite()
+				_, _, err := s.OLHInitModificationForTest(ctx, st, nil)
+				Expect(err).NotTo(HaveOccurred(), "the write keeps the OLH tag, or its absence, which is all init guards")
+				Expect(head().Mtime).To(Equal(later), "the write's mtime, not the one init read")
+			},
+			Entry("on an OLH head, a null write", func() { olhHead("5", info("", false), nil) }),
+			Entry("on a plain object, a write of it", func() {
+				seed(map[string][]byte{meta.AttrIDTag: []byte("_plain\x00")}, []byte("hello"))
+			}),
+		)
 
 		It("is ECANCELED and writes nothing when the OLH tag changed since the head was read", func(ctx SpecContext) {
 			olhHead("5", info("v1", false), nil)
@@ -675,13 +689,22 @@ var _ = Describe("the OLH head operations", func() {
 				&radosclient.RmXattrStep{Name: meta.AttrOLHPendingPrefix + tagP},
 				&radosclient.SetXattrStep{Name: meta.AttrOLHInfo, Value: info("v2", false)},
 			}))
-			mt, ok := w.Mtime()
-			Expect([]any{mt, ok}).To(Equal([]any{mtime, true}), "the head's mtime is kept")
+			keepsMtime(w)
 			Expect(idx.Methods()).To(Equal([]string{"trimLog"}))
 			Expect(idx.Calls[0].Ver).To(BeEquivalentTo(3))
 			Expect(idx.Calls[0].Head).To(BeIdenticalTo(st))
 			Expect(head().Xattrs).To(HaveKeyWithValue(meta.AttrOLHVer, []byte("3")))
 			Expect(head().Mtime).To(Equal(mtime))
+		})
+
+		It("keeps the mtime of a null write landing between its read and the head op", func(ctx SpecContext) {
+			olhHead("2", info("", false), withPending(tagP))
+			st := state()
+			later := nullWrite()
+			_, err := s.ApplyOLHLogForTest(ctx, idx, st, map[uint64][]rgwcls.OLHLogEntry{3: {link("v2", tagP)}}, tagP, nil)
+			Expect(err).NotTo(HaveOccurred(), "the null write keeps the OLH tag and olh.ver, which are all the head op guards")
+			Expect(head().Xattrs).To(HaveKeyWithValue(meta.AttrOLHVer, []byte("3")))
+			Expect(head().Mtime).To(Equal(later), "the null write's mtime, not the one the replay read")
 		})
 
 		It("lands a log reaching 10 over an olh.ver of 9, which a string GTE would refuse", func(ctx SpecContext) {
@@ -1267,9 +1290,18 @@ var _ = Describe("the OLH head operations", func() {
 				&radosclient.SetXattrStep{Name: meta.AttrOLHIDTag, Value: []byte("indextag")},
 				&radosclient.SetXattrStep{Name: meta.AttrOLHInfo, Value: info("v2", true)},
 			}))
-			mt, ok := w.Mtime()
-			Expect([]any{mt, ok}).To(Equal([]any{mtime, true}))
+			keepsMtime(w)
+			Expect(head().Mtime).To(Equal(mtime))
 			Expect(head().Xattrs).To(HaveKeyWithValue(meta.AttrOLHVer, []byte("5")), "olh.ver is not touched")
+		})
+
+		It("keeps the mtime of a null write landing between its read and the rewrite", func(ctx SpecContext) {
+			olhHead("5", info("", false), nil)
+			st := state()
+			later := nullWrite()
+			idx.OLH = rgwcls.OLHEntry{Key: rgwcls.ObjKey{Name: "k"}, Tag: "indextag", Epoch: 6}
+			Expect(s.RepairOLHForTest(ctx, idx, st)).To(Succeed(), "the null write keeps the OLH tag, which is all the rewrite guards")
+			Expect(head().Mtime).To(Equal(later), "the null write's mtime, not the one the repair read")
 		})
 
 		It("writes nothing when the tags already agree", func(ctx SpecContext) {

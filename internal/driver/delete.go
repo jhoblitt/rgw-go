@@ -213,12 +213,18 @@ func versionAsserted(w *radosclient.WriteOp) bool {
 // random tag for an empty one, as UpdateIndex::prepare does, and cls_rgw
 // refuses a tag the entry's pending map does not hold
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L1066-L1072).
+// A multipart part's, which a listing's sweep sends, joins no wait set
+// (indexOp.unraced): no OLH links a namespaced entry, and the other index
+// ops on a part's entry find its shard from the upload's name
+// (indexOp.hashName), so the only OLH call that shares its name is one on an
+// object so named, whose entries it never touches.
 func (s *Store) deleteObjIndex(rec *op.BucketRecord, key meta.ObjKey, mtime time.Time) {
 	x := &indexOp{
-		s:     s,
-		rec:   rec,
-		obj:   meta.Obj{Bucket: rec.Info.Bucket, Key: key},
-		blind: rec.Info.Layout.Current.Layout.Type == meta.IndexIndexless,
+		s:       s,
+		rec:     rec,
+		obj:     meta.Obj{Bucket: rec.Info.Bucket, Key: key},
+		blind:   rec.Info.Layout.Current.Layout.Type == meta.IndexIndexless,
+		unraced: key.NS == meta.NSMultipart,
 	}
 	x.completeDel(rgw.EntryVer{Pool: -1, Epoch: 0}, mtime)
 }

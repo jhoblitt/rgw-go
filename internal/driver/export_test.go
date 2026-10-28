@@ -255,6 +255,15 @@ func (s *Store) SetReshardWaitForTest(d time.Duration) { s.w.reshardWait = d }
 // submitted or queued and not yet done.
 func (s *Store) PendingCompletionsForTest() int { return s.w.completions.pending() }
 
+// QueuedCompletionsForTest is the number of completions a reshard refused
+// that wait for their bucket's retrier to take them.
+func (s *Store) QueuedCompletionsForTest() int {
+	m := s.w.completions
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.queued
+}
+
 // IndexOp is indexOp for the external specs.
 type IndexOp = indexOp
 

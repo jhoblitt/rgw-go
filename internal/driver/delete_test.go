@@ -6,7 +6,11 @@ import (
 	"crypto/md5" //nolint:gosec // generate_fake_tag's digest
 	"encoding/hex"
 	"fmt"
+	"runtime"
 	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -569,6 +573,201 @@ var _ = Describe("checkDiskState's multipart-part sweep", func() {
 				Expect(d.Meta.Mtime).To(BeTemporally("==", headMtime))
 			}
 		}
+	})
+
+	// sweepStore opens a Store over cl as the Describe's own is opened.
+	sweepStore := func(ctx context.Context, cl radosclient.Cluster) *driver.Store {
+		GinkgoHelper()
+		rel := denc.Squid
+		st, err := driver.Open(ctx, cl, conf(nil), driver.Options{Release: &rel})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(st.Close)
+		driver.SetClock(st, func() time.Time { return mtime })
+		st.SetRandForTest(fixedRand(putPrefix))
+		return st
+	}
+	// reshardAll sets the reshard status of every shard of the bucket.
+	reshardAll := func(ctx context.Context, status uint8) {
+		GinkgoHelper()
+		for _, o := range bucketShardOIDs(rec) {
+			setReshardStatus(ctx, c, o, status)
+		}
+	}
+	// listBig lists the bucket through st, which checks big's pending entry
+	// and sweeps its parts.
+	listBig := func(ctx context.Context, st *driver.Store) {
+		GinkgoHelper()
+		res, err := st.ListObjects(ctx, rec, op.ListObjectsParams{MaxKeys: 10})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(keys(res.Entries)).To(Equal([]string{"big"}))
+	}
+	// completeOpOf decodes the bucket_complete_op w sends.
+	completeOpOf := func(w *radosclient.WriteOp) (rgwcls.CompleteOp, bool) {
+		for _, st := range w.Steps() {
+			if x, ok := st.(*radosclient.ExecStep); ok && x.Method == "bucket_complete_op" {
+				return rgwcls.DecodeCompleteOp(denc.NewDecoder(x.In)), true
+			}
+		}
+		return rgwcls.CompleteOp{}, false
+	}
+	// sweepDel reports whether w is a sweep's unprepared part DEL.
+	sweepDel := func(w *radosclient.WriteOp) bool {
+		co, ok := completeOpOf(w)
+		return ok && co.Op == rgwcls.OpDel && co.Tag == "" && strings.HasPrefix(co.Key.Name, "_"+meta.NSMultipart+"_")
+	}
+	// completeSync sends y's awaited completion in a goroutine and returns
+	// its answer.
+	completeSync := func(ctx context.Context, y *driver.IndexOp) chan error {
+		done := make(chan error, 1)
+		go func() {
+			done <- y.CompleteSync(ctx, rgwcls.EntryVer{Pool: 7, Epoch: 2}, rgwcls.DirEntryMeta{Category: rgwcls.CategoryMain})
+		}()
+		return done
+	}
+
+	It("waits a reshard out with one poller for the part completions every listing during it sends, queueing each part's once, and no goroutine more per part", func(ctx SpecContext) {
+		const parts = 100
+		seedImplicitHead(ctx, "big", parts)
+		pc := &pollCluster{Cluster: c}
+		st := sweepStore(ctx, pc)
+		st.SetReshardWaitForTest(time.Hour)
+		reshardAll(ctx, rgwcls.ReshardInProgress)
+		stop := runStore(ctx, st)
+		// retries counts the goroutines in a completion's retry.
+		retries := func() int {
+			buf := make([]byte, 1<<20)
+			for {
+				n := runtime.Stack(buf, true)
+				if n < len(buf) {
+					return strings.Count(string(buf[:n]), "(*completionManager).retry(")
+				}
+				buf = make([]byte, 2*len(buf))
+			}
+		}
+		Eventually(func() bool {
+			n := runtime.NumGoroutine()
+			time.Sleep(50 * time.Millisecond)
+			return runtime.NumGoroutine() == n
+		}).WithTimeout(5*time.Second).Should(BeTrue(), "Run's workers have started")
+		base := runtime.NumGoroutine()
+		for i := 1; i <= 3; i++ {
+			listBig(ctx, st)
+			// The retrier holds the first part's DEL in its wait, so a later
+			// listing's copy of that one is queued again; every other copy
+			// is the same request as one queued.
+			queued := parts - 1
+			if i > 1 {
+				queued = parts
+			}
+			Eventually(st.PendingCompletionsForTest).WithTimeout(5*time.Second).Should(Equal(queued+1), "listing %d: the sweep's DELs, refused by the reshard, each part's once", i)
+			Eventually(st.QueuedCompletionsForTest).WithTimeout(5*time.Second).Should(Equal(queued), "listing %d", i)
+			Eventually(retries).WithTimeout(5*time.Second).Should(Equal(1), "listing %d: the bucket's one retrier", i)
+			Eventually(runtime.NumGoroutine).WithTimeout(5*time.Second).Should(BeNumerically("<=", base+5), "listing %d: the first sends have ended, and no goroutine waits per part", i)
+		}
+		Consistently(pc.polls.Load).WithTimeout(100*time.Millisecond).Should(BeEquivalentTo(1), "the bucket's one retry polls the reshard status, and sleeps the wait")
+		Expect(stop()).To(Succeed())
+		Expect(st.PendingCompletionsForTest()).To(BeZero(), "Run's stop abandons the queued retries")
+	})
+
+	It("lets an OLH call to another key go once the reshard ends, while the part completions the listings during it sent still wait for their retry", func(ctx SpecContext) {
+		const parts = 100
+		seedImplicitHead(ctx, "big", parts)
+		st := sweepStore(ctx, c)
+		st.SetReshardWaitForTest(time.Hour)
+		y := st.NewIndexOpForTest(rec, meta.ObjKey{Name: "zzz"}, "tag-zzz")
+		Expect(y.Prepare(ctx, rgwcls.OpAdd)).To(Succeed())
+		reshardAll(ctx, rgwcls.ReshardInProgress)
+		stop := runStore(ctx, st)
+		for range 3 {
+			listBig(ctx, st)
+		}
+		Eventually(st.QueuedCompletionsForTest).WithTimeout(5*time.Second).Should(BeNumerically(">=", parts-1), "the sweeps' DELs, refused and queued")
+		reshardAll(ctx, rgwcls.ReshardNone)
+		Eventually(completeSync(ctx, y)).WithTimeout(5*time.Second).Should(Receive(Succeed()), "no part's entry is zzz's")
+		Expect(st.PendingCompletionsForTest()).To(BeNumerically(">=", parts), "the part DELs still wait for the bucket's retrier, asleep in its wait for the reshard")
+		Expect(stop()).To(Succeed())
+	})
+
+	DescribeTable("sends the retry of a key a call waits on ahead of the part completions queued before it, once the reshard ends",
+		func(ctx SpecContext, onFirstSend bool) {
+			const parts = 300
+			seedImplicitHead(ctx, "big", parts)
+			ac := &aroundCluster{Cluster: c}
+			st := sweepStore(ctx, ac)
+			// The first part's retry polls this often, and is given up after
+			// a hundred polls, longer than the spec takes to the reshard's end.
+			st.SetReshardWaitForTest(100 * time.Millisecond)
+			k := meta.ObjKey{Name: "k"}
+			x := st.NewIndexOpForTest(rec, k, "tag-x")
+			Expect(x.Prepare(ctx, rgwcls.OpAdd)).To(Succeed())
+			y := st.NewIndexOpForTest(rec, k, "tag-y")
+			Expect(y.Prepare(ctx, rgwcls.OpAdd)).To(Succeed())
+			reshardAll(ctx, rgwcls.ReshardInProgress)
+			stop := runStore(ctx, st)
+			listBig(ctx, st)
+			Eventually(st.QueuedCompletionsForTest).WithTimeout(5*time.Second).Should(Equal(parts-1), "the sweep's DELs, all but the one the retrier holds")
+
+			arrived, held := make(chan struct{}), make(chan struct{})
+			release := sync.OnceFunc(func() { close(held) })
+			DeferCleanup(release)
+			var holding, slow atomic.Bool
+			ac.set(func(w *radosclient.WriteOp, send sendFunc) (uint64, error) {
+				switch co, ok := completeOpOf(w); {
+				case ok && co.Tag == "tag-x" && onFirstSend && holding.CompareAndSwap(false, true):
+					close(arrived)
+					<-held
+				case slow.Load() && sweepDel(w):
+					time.Sleep(10 * time.Millisecond)
+				}
+				return send()
+			})
+			x.Complete(rgwcls.EntryVer{Pool: 7, Epoch: 1}, rgwcls.DirEntryMeta{Category: rgwcls.CategoryMain})
+			var done chan error
+			if onFirstSend {
+				Eventually(arrived).WithTimeout(5 * time.Second).Should(BeClosed())
+				done = completeSync(ctx, y)
+				Consistently(done).WithTimeout(100*time.Millisecond).ShouldNot(Receive(), "the call waits on x's first send, held")
+				release()
+			}
+			Eventually(st.QueuedCompletionsForTest).WithTimeout(5*time.Second).Should(Equal(parts), "x's completion, refused and queued after the parts'")
+			if !onFirstSend {
+				done = completeSync(ctx, y)
+			}
+			Consistently(done).WithTimeout(100*time.Millisecond).ShouldNot(Receive(), "the call waits for x's retry")
+
+			slow.Store(true)
+			reshardAll(ctx, rgwcls.ReshardNone)
+			Eventually(done).WithTimeout(5 * time.Second).Should(Receive(Succeed()))
+			Expect(st.PendingCompletionsForTest()).To(BeNumerically(">", parts/2), "x's retry went ahead of the part DELs queued before it, each of which now takes 10 ms")
+			Expect(stop()).To(Succeed())
+		},
+		Entry("a call that began waiting once the completion was queued", false),
+		Entry("a call that began waiting on the completion's first send, which the reshard then refused", true),
+	)
+
+	It("holds no OLH call behind the part completions a listing's sweep sends, a call to an object named as a part included", func(ctx SpecContext) {
+		_, parts := seedImplicitHead(ctx, "big", 3)
+		ac := &aroundCluster{Cluster: c}
+		st := sweepStore(ctx, ac)
+		var inFlight atomic.Int32
+		held := make(chan struct{})
+		release := sync.OnceFunc(func() { close(held) })
+		DeferCleanup(release)
+		ac.set(func(w *radosclient.WriteOp, send sendFunc) (uint64, error) {
+			if sweepDel(w) {
+				inFlight.Add(1)
+				<-held
+			}
+			return send()
+		})
+		listBig(ctx, st)
+		Eventually(inFlight.Load).WithTimeout(5*time.Second).Should(BeEquivalentTo(len(parts)), "the sweep's DELs, held in flight")
+		y := st.NewIndexOpForTest(rec, meta.ObjKey{Name: parts[0]}, "tag-y")
+		Expect(y.Prepare(ctx, rgwcls.OpAdd)).To(Succeed())
+		Eventually(completeSync(ctx, y)).WithTimeout(5*time.Second).Should(Receive(Succeed()),
+			"the part's entry is in the multipart namespace, which no OLH call reads or writes, though its shard is found from the part's own name, the object's")
+		release()
+		settle(st)
 	})
 
 	It("stops the sweep with a warning past its stripe bound, and the listing goes on", func(ctx SpecContext) {

@@ -796,6 +796,201 @@ var _ = Describe("a versioned PutObject", func() {
 			Expect(listed()).To(Equal([]string{""}), "the marker alone, its data replaced")
 		})
 
+		// plainPut writes k through plain, a record of the bucket before its
+		// versioning was ever set.
+		plainPut := func(ctx context.Context, plain *op.BucketRecord) error {
+			_, err := s.PutObject(ctx, plain, version(""), strings.NewReader("plain"), op.PutParams{Attrs: attrs, Size: 5, Tag: "tag-plain"})
+			return err
+		}
+		// heldBeforeSuspend runs change, a write or delete of k through a
+		// record of the bucket before its versioning was ever set, after
+		// prep, when not nil, through the same record. The index completion
+		// change sends unawaited is held back. It then suspends the bucket and
+		// starts a DELETE of k, which links the null delete marker, and
+		// returns the DELETE's answer and the release of the completion.
+		heldBeforeSuspend := func(ctx context.Context, prep, change func(context.Context, *op.BucketRecord) error) (client chan error, release func()) {
+			GinkgoHelper()
+			plain := testBucket(putBucketID, 11)
+			if prep != nil {
+				Expect(prep(ctx, plain)).To(Succeed())
+				settle(s)
+			}
+			arrived, held := make(chan struct{}), make(chan struct{})
+			release = sync.OnceFunc(func() { close(held) })
+			DeferCleanup(release)
+			ac.set(onFirst("bucket_complete_op", func(send sendFunc) (uint64, error) {
+				close(arrived)
+				<-held
+				return send()
+			}))
+			Expect(change(ctx, plain)).To(Succeed(), "answered with its completion held")
+			Eventually(arrived).WithTimeout(5 * time.Second).Should(BeClosed())
+			suspend()
+			client = make(chan error, 1)
+			go func() {
+				_, err := s.DeleteObject(ctx, rec, version(""), op.DeleteParams{})
+				client <- err
+			}()
+			return client, release
+		}
+		// noPendingMarker checks that the null delete marker the DELETE linked
+		// took no pending op from the entry it replaced.
+		noPendingMarker := func(client chan error, release func()) {
+			GinkgoHelper()
+			defer release()
+			Consistently(links).WithTimeout(200*time.Millisecond).Should(BeZero(), "the marker's link waits for the completion sent to its shard before it")
+			release()
+			Eventually(client).WithTimeout(5 * time.Second).Should(Receive(Succeed()))
+			settle(s)
+			dm, ok := c.Entry(rookIndexPool, "", shard, rgwcls.InstanceIndexKey(rgwcls.ObjKey{Name: "k"}, true))
+			Expect(ok).To(BeTrue(), "the null delete marker's instance entry")
+			Expect(dm.Flags & rgwcls.FlagDeleteMarker).NotTo(BeZero())
+			Expect(dm.PendingMap).To(BeEmpty(), "bucket_link_olh's marker keeps the pending op of the plain entry it replaces, which the completion, landing on the null data key, never clears")
+		}
+
+		It("links the null delete marker only once the DEL completion of the key's delete before the bucket's versioning was set has landed", func(ctx SpecContext) {
+			client, release := heldBeforeSuspend(ctx, plainPut, func(ctx context.Context, plain *op.BucketRecord) error {
+				_, err := s.DeleteObject(ctx, plain, version(""), op.DeleteParams{})
+				return err
+			})
+			noPendingMarker(client, release)
+			Expect(listed()).To(Equal([]string{""}), "the marker alone")
+		})
+
+		It("links the null delete marker only once the ADD completion of the key's write before the bucket's versioning was set has landed", func(ctx SpecContext) {
+			client, release := heldBeforeSuspend(ctx, nil, plainPut)
+			noPendingMarker(client, release)
+			Expect(listed()).To(Equal([]string{""}), "the marker alone, the plain object's data replaced")
+		})
+
+		It("reads the null version's entry for a delete of versionId=null only once the ADD completion of the key's write before the bucket's versioning was set has landed", func(ctx SpecContext) {
+			arrived, held := make(chan struct{}), make(chan struct{})
+			release := sync.OnceFunc(func() { close(held) })
+			defer release()
+			ac.set(onFirst("bucket_complete_op", func(send sendFunc) (uint64, error) {
+				close(arrived)
+				<-held
+				return send()
+			}))
+			Expect(plainPut(ctx, testBucket(putBucketID, 11))).To(Succeed(), "answered with its completion held")
+			Eventually(arrived).WithTimeout(5 * time.Second).Should(BeClosed())
+			suspend()
+			client := make(chan error, 1)
+			go func() {
+				_, err := s.DeleteObject(ctx, rec, version(meta.NullInstance), op.DeleteParams{IfMatch: md5hex("plain")})
+				client <- err
+			}()
+			Consistently(client).WithTimeout(200*time.Millisecond).ShouldNot(Receive(), "the read of the null version's entry waits for the completion sent to its shard before it")
+			release()
+			Eventually(client).WithTimeout(5*time.Second).Should(Receive(Succeed()), "If-Match compared with the ETag the completion wrote")
+			settle(s)
+			Expect(olhHead()).To(BeNil(), "the null version's head is removed")
+			Expect(listed()).To(BeEmpty())
+		})
+
+		// deleteKey starts a DELETE of k on rec, which links the null delete
+		// marker, and returns its answer.
+		deleteKey := func(ctx context.Context) chan error {
+			client := make(chan error, 1)
+			go func() {
+				_, err := s.DeleteObject(ctx, rec, version(""), op.DeleteParams{})
+				client <- err
+			}()
+			return client
+		}
+
+		// runWorkers runs the Store's workers, the completion manager's retry
+		// worker among them, until the spec ends.
+		runWorkers := func(ctx context.Context) {
+			runCtx, stop := context.WithCancel(ctx)
+			ran := make(chan error, 1)
+			go func() { ran <- s.Run(runCtx) }()
+			DeferCleanup(func() {
+				stop()
+				Eventually(ran).WithTimeout(5 * time.Second).Should(Receive())
+			})
+		}
+
+		It("links the null delete marker only once the retry of a completion a reshard refused has landed", func(ctx SpecContext) {
+			runWorkers(ctx)
+			arrived, held := make(chan struct{}), make(chan struct{})
+			release := sync.OnceFunc(func() { close(held) })
+			defer release()
+			var sends atomic.Int32
+			ac.set(func(w *radosclient.WriteOp, send sendFunc) (uint64, error) {
+				if !callsMethod(w.Steps(), "bucket_complete_op") {
+					return send()
+				}
+				switch sends.Add(1) {
+				case 1:
+					return 0, &radosclient.Error{Errno: 2300, Op: "write"}
+				case 2:
+					close(arrived)
+					<-held
+				}
+				return send()
+			})
+			Expect(plainPut(ctx, testBucket(putBucketID, 11))).To(Succeed(), "answered with its completion refused, queued for the worker")
+			Eventually(arrived).WithTimeout(5*time.Second).Should(BeClosed(), "the worker's retry, held")
+			suspend()
+			noPendingMarker(deleteKey(ctx), release)
+		})
+
+		It("follows a completion the marker's link waits for into its retry when a reshard refuses it meanwhile", func(ctx SpecContext) {
+			runWorkers(ctx)
+			first, refuse := make(chan struct{}), make(chan struct{})
+			retried, held := make(chan struct{}), make(chan struct{})
+			refuseNow, release := sync.OnceFunc(func() { close(refuse) }), sync.OnceFunc(func() { close(held) })
+			defer refuseNow()
+			defer release()
+			var sends atomic.Int32
+			ac.set(func(w *radosclient.WriteOp, send sendFunc) (uint64, error) {
+				if !callsMethod(w.Steps(), "bucket_complete_op") {
+					return send()
+				}
+				switch sends.Add(1) {
+				case 1:
+					close(first)
+					<-refuse
+					return 0, &radosclient.Error{Errno: 2300, Op: "write"}
+				case 2:
+					close(retried)
+					<-held
+				}
+				return send()
+			})
+			Expect(plainPut(ctx, testBucket(putBucketID, 11))).To(Succeed(), "answered with its completion in flight")
+			Eventually(first).WithTimeout(5 * time.Second).Should(BeClosed())
+			suspend()
+			client := deleteKey(ctx)
+			Consistently(links).WithTimeout(200*time.Millisecond).Should(BeZero(), "the link waits for the completion's first send")
+			refuseNow()
+			Eventually(retried).WithTimeout(5*time.Second).Should(BeClosed(), "the worker's retry, held")
+			noPendingMarker(client, release)
+		})
+
+		It("links the null delete marker only once the cancel of a null write that failed before it has landed", func(ctx SpecContext) {
+			suspend()
+			arrived, held := make(chan struct{}), make(chan struct{})
+			release := sync.OnceFunc(func() { close(held) })
+			defer release()
+			var failed, holding atomic.Bool
+			ac.set(func(w *radosclient.WriteOp, send sendFunc) (uint64, error) {
+				switch {
+				case writesData(w) && failed.CompareAndSwap(false, true):
+					return failWith(syscall.EIO)(send)
+				case callsMethod(w.Steps(), "bucket_complete_op") && holding.CompareAndSwap(false, true):
+					close(arrived)
+					<-held
+				}
+				return send()
+			})
+			_, err := put(ctx, "", "plain", op.PutParams{})
+			Expect(err).To(HaveOccurred(), "the head write failed, and its prepare is canceled unawaited")
+			Eventually(arrived).WithTimeout(5*time.Second).Should(BeClosed(), "the cancel, held")
+			noPendingMarker(deleteKey(ctx), release)
+		})
+
 		It("answers a namespaced write before its completion lands, as no OLH links a namespaced key", func(ctx SpecContext) {
 			suspend()
 			release := make(chan struct{})
