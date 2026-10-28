@@ -91,10 +91,14 @@ type PutObject struct {
 	// ChecksumField is the request's checksum fields, which ChecksumForPut
 	// reads with the request's Trailers (ChecksumInput).
 	ChecksumField func(name string) (string, bool)
+	// Append is ?append, a write to an appendable object, which rgw-go does
+	// not serve (appendUnserved).
+	Append bool
 
 	ETag  string
 	Mtime time.Time
-	// VersionID is "" until versioning is implemented.
+	// VersionID is the id of the version written (ResponseVersionID), "" for
+	// none.
 	VersionID string
 	// Checksum is the checksum the store computed, nil for none.
 	Checksum *cksum.Cksum
@@ -151,13 +155,18 @@ func (o *PutObject) VerifyPermission(ctx context.Context, r *Request) error {
 // and v20.2.4) and RGWPutObj::execute in its order
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4142-L4574 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4351-L4867 at v20.2.4):
-// the key, the quota for a body of known length, the checksum request,
-// before the body as RGWPutObj_Cksum::Factory reads it (ChecksumForPut;
+// the key, the quota for a body of known length, an append's refusal
+// (appendUnserved), the checksum request, before the body as
+// RGWPutObj_Cksum::Factory reads it (ChecksumForPut;
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4601-L4611 at v20.2.4),
-// and the write, whose attrs gain the policy and, when the request tags the
-// object with any tag, the tag set (encode_obj_tags_attr,
+// and the write, at VersionForWrite's instance, whose attrs gain the policy
+// and, when the request tags the object with any tag, the tag set
+// (encode_obj_tags_attr,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.h#L2247-L2255 at v19.2.6).
-// The write tag is the request id.
+// The write tag is the request id. A bucket with object lock or a default
+// encryption is refused before rgw_max_put_size (objectLockUnserved,
+// bucketEncryptionUnserved), but not to an append: radosgw refuses one on a
+// versioned bucket, as every lock bucket is, before it meets either.
 func (o *PutObject) Execute(ctx context.Context, r *Request) error {
 	if err := checkDestPlacement(r, o.StorageClass); err != nil {
 		return err
@@ -174,11 +183,13 @@ func (o *PutObject) Execute(ctx context.Context, r *Request) error {
 	if block && o.ACL.IsPublic() {
 		return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
 	}
-	if err := newHeadVersioningUnserved(r.BucketRec, r.Object); err != nil {
-		return err
-	}
-	if err := bucketEncryptionUnserved(r.BucketRec); err != nil {
-		return err
+	if !o.Append {
+		if err := objectLockUnserved(r.BucketRec); err != nil {
+			return err
+		}
+		if err := bucketEncryptionUnserved(r.BucketRec); err != nil {
+			return err
+		}
 	}
 	if maxPut := confSize(r, "rgw_max_put_size", defaultMaxPutSize); o.Size > int64(maxPut) { //nolint:gosec // verify_params compares in off_t
 		return fmt.Errorf("%w: %d bytes over rgw_max_put_size %d", ErrEntityTooLarge, o.Size, maxPut)
@@ -190,6 +201,9 @@ func (o *PutObject) Execute(ctx context.Context, r *Request) error {
 		if err := r.Env.Stats.CheckQuota(ctx, r.BucketRec, r.BucketRec.Info.Owner, o.Size, 1); err != nil {
 			return err
 		}
+	}
+	if o.Append {
+		return appendUnserved(r.BucketRec)
 	}
 	release := r.Env.Zone.Release()
 	attrs := maps.Clone(o.Attrs)
@@ -204,7 +218,8 @@ func (o *PutObject) Execute(ctx context.Context, r *Request) error {
 	if err != nil {
 		return err
 	}
-	res, err := r.Env.Objects.PutObject(ctx, r.BucketRec, r.Object, body, PutParams{
+	key := writeKey(r)
+	res, err := r.Env.Objects.PutObject(ctx, r.BucketRec, key, body, PutParams{
 		Attrs: attrs, Size: o.Size, StorageClass: o.StorageClass,
 		IfMatch: storeCondition(o.IfMatch), IfNoneMatch: storeCondition(o.IfNoneMatch), Tag: r.ID, ContentMD5: o.ContentMD5,
 		Checksum: ck,
@@ -212,8 +227,24 @@ func (o *PutObject) Execute(ctx context.Context, r *Request) error {
 	if err != nil {
 		return err
 	}
-	o.ETag, o.Mtime, o.VersionID, o.Checksum = res.ETag, res.Mtime, res.Version, res.Checksum
+	o.ETag, o.Mtime, o.Checksum = res.ETag, res.Mtime, res.Checksum
+	o.VersionID = ResponseVersionID(r.BucketRec, key.Instance)
 	return nil
+}
+
+// appendUnserved refuses an append, which rgw-go does not serve: on a bucket
+// whose versioning was ever enabled with 409 InvalidBucketState, as
+// RGWPutObj::execute refuses one
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4268-L4272 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4481-L4485 at v20.2.4),
+// and otherwise with 501 NotImplemented, where radosgw appends
+// (docs/exclusions.md, "Appends and a PUT that names a copy source but is
+// no copy are not served").
+func appendUnserved(rec *BucketRecord) error {
+	if rec.Info.Versioned() {
+		return fmt.Errorf("%w: an append to bucket %s, whose versioning was enabled", ErrInvalidBucketState, rec.Info.Bucket.Name)
+	}
+	return fmt.Errorf("%w: appendable objects are not served yet", ErrNotImplemented)
 }
 
 // Complete does nothing: the handler logs usage once the response is written.
@@ -252,19 +283,18 @@ func blockPublicACLs(rec *BucketRecord) bool {
 // versioningUnserved answers 501 NotImplemented for a bucket whose versioning
 // is or was enabled or that has object lock, and for a request that names a
 // version of any of keys, which are objects of rec's that the request removes
-// or changes in place. Every write rgw-go serves but the deletes takes
-// radosgw's unversioned path, which on such a bucket would overwrite a
-// version's head beside the bucket's olh, under an index entry for the
-// plain key. The store's delete takes radosgw's versioned path on a bucket
-// whose flags hold BUCKET_VERSIONED, but the delete ops do not yet answer
-// the version id or the delete marker it reports, and would skip the
-// retention and legal-hold checks radosgw makes for a versioned delete on a
-// lock bucket (verify_object_lock,
+// or changes in place: the deletes and the object ACL and tagging writes,
+// which rgw-go does not serve on such a bucket yet. The store's delete takes
+// radosgw's versioned path on a bucket whose flags hold BUCKET_VERSIONED, but
+// the delete ops do not yet answer the version id or the delete marker it
+// reports, and would skip the retention and legal-hold checks radosgw makes
+// for a versioned delete on a lock bucket (verify_object_lock,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5185-L5221 and
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6845-L6869 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5576-L5610 and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7782-L7806 at v20.2.4).
-// Writes to such a bucket wait for versioning (docs/exclusions.md).
+// The writes that create a head serve such a bucket, but for one with object
+// lock (VersionForWrite, objectLockUnserved; docs/exclusions.md).
 //
 // On a bucket whose versioning was never enabled, a key naming the null
 // version names the plain object: its head is the plain key's
@@ -292,43 +322,6 @@ func versioningUnserved(rec *BucketRecord, keys ...meta.ObjKey) error {
 	}
 	for _, k := range keys {
 		if k.Instance != "" && k.Instance != meta.NullInstance {
-			return fmt.Errorf("%w: writes naming version %q of %s are not implemented", ErrNotImplemented, k.Instance, k.Name)
-		}
-	}
-	return nil
-}
-
-// newHeadVersioningUnserved is versioningUnserved for a write that creates a
-// head, whose keys may not name even the null version. radosgw writes the
-// head of a PutObject, CopyObject or CompleteMultipartUpload naming it at
-// the plain key's oid but files it in the index under the instance
-// (cls_obj_prepare_op and UpdateIndex::complete,
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L9473
-// and
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7133 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10405
-// and
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7984 at v20.2.4),
-// which cls_rgw keeps apart from the plain key's entry
-// (encode_obj_index_key,
-// https://github.com/ceph/ceph/blob/v19.2.6/src/cls/rgw/cls_rgw.cc#L339-L346 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L389-L396 at v20.2.4),
-// then links the key to an OLH as a versioned object
-// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3369-L3375 at v19.2.7);
-// and it copies from a source naming it without the checks of a copy onto
-// itself
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3541-L3548 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3821-L3828 at v20.2.4;
-// copy_obj,
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4890
-// and
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5150).
-func newHeadVersioningUnserved(rec *BucketRecord, keys ...meta.ObjKey) error {
-	if err := versioningUnserved(rec); err != nil {
-		return err
-	}
-	for _, k := range keys {
-		if k.Instance != "" {
 			return fmt.Errorf("%w: writes naming version %q of %s are not implemented", ErrNotImplemented, k.Instance, k.Name)
 		}
 	}

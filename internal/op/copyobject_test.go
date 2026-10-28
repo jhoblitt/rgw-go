@@ -102,7 +102,7 @@ var _ = Describe("CopyObject", func() {
 	It("passes the request's attrs, the ACL, the tag and the directive to the store", func(ctx SpecContext) {
 		stub := &opfakes.FakeObjectStore{}
 		stub.PrefetchObjectReturns(&op.ObjectState{Exists: true, Size: 5, Attrs: map[string][]byte{meta.AttrETag: []byte("e")}}, nil)
-		stub.CopyObjectReturns(&op.PutResult{ETag: "e", Mtime: smallMtime(), Version: "v1"}, nil)
+		stub.CopyObjectReturns(&op.PutResult{ETag: "e", Mtime: smallMtime()}, nil)
 		f.env.Objects = stub
 		o := f.copyOf("src")
 		o.Attrs = map[string][]byte{meta.AttrMetaPrefix + "n": []byte("w\x00")}
@@ -120,7 +120,7 @@ var _ = Describe("CopyObject", func() {
 		Expect(p.IfMatch).To(Equal(`"e"`))
 		Expect(p.IfNoneMatch).To(Equal("f"))
 		Expect(o.Attrs).To(HaveLen(1), "the request's attrs stay as the handler gave them")
-		Expect(o.VersionID).To(Equal("v1"))
+		Expect(o.VersionID).To(BeEmpty(), "an object of a bucket never versioned has no version id")
 	})
 	It("takes the request's metadata over the source's with REPLACE", func(ctx SpecContext) {
 		o := f.copyOf("src")
@@ -292,12 +292,7 @@ var _ = Describe("CopyObject", func() {
 			f.env.Authz = fake
 			o := f.copyOf("src")
 			o.SrcKey.Instance = instance
-			err := op.Run(ctx, o, f.req(http.MethodPut, "plain", "dst"))
-			if instance == "" {
-				Expect(err).NotTo(HaveOccurred())
-			} else {
-				Expect(err).To(MatchError(op.ErrNotImplemented), "a version is not served yet")
-			}
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "dst"))).To(Succeed())
 			Expect(fake.VerifyBucketInCallCount()).To(Equal(1))
 			_, _, a, perm, bucket, key := fake.VerifyBucketInArgsForCall(0)
 			Expect(a).To(Equal(want))

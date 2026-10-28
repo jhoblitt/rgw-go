@@ -314,8 +314,8 @@ func partCopySource(v, defaultTenant string) (tenant, bucket string, key meta.Ob
 // and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4502-L4505);
 // on one with it NotImplemented, as radosgw keeps them on the upload and
-// the parts' heads and rgw-go serves no object lock until versioning is
-// served (docs/exclusions.md). The callers make it once the requester is
+// the parts' heads and rgw-go serves no object lock yet
+// (docs/exclusions.md). The callers make it once the requester is
 // authorized, so that a refused requester learns nothing of the bucket's
 // configuration.
 func multipartObjectLock(r *op.Request) error {
@@ -353,8 +353,8 @@ type completeMultipartUploadResult struct {
 // send_response's
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4076-L4108,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4604-L4644):
-// 200 and the document, whose length radosgw's frontend adds, the ETag in
-// the quotes dump_format adds.
+// 200, x-amz-version-id (setVersionHeaders), and the document, whose length
+// radosgw's frontend adds, the ETag in the quotes dump_format adds.
 func completeMultipart(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.CompleteMultipart{
 		UploadID: r.Query.Get("uploadId"), IfMatch: headerPtr(r, "If-Match"), IfNoneMatch: headerPtr(r, "If-None-Match"),
@@ -362,6 +362,7 @@ func completeMultipart(ctx context.Context, w http.ResponseWriter, r *op.Request
 	if err := op.Run(ctx, o, r); err != nil {
 		return err
 	}
+	setVersionHeaders(w.Header(), o.VersionID, "")
 	WriteXML(w, r, http.StatusOK, completeMultipartUploadResult{
 		Xmlns: xmlnsS3, Location: xmltext.Text(completeLocation(r)), Tenant: xmltext.Text(r.Tenant),
 		Bucket: xmltext.Text(r.Bucket), Key: xmltext.Text(r.Object.Name), ETag: quotedETag(o.ETag),

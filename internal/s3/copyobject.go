@@ -28,7 +28,8 @@ import (
 // destination and the source allow the request, so that a refused requester
 // learns nothing the store holds (docs/exclusions.md).
 //
-// The success is framed as radosgw frames it: send_partial_response(0)
+// The success is framed as radosgw frames it, with the two version headers
+// radosgw does not send (setVersionHeaders): send_partial_response(0)
 // sends the common headers and application/xml without a length, so that
 // net/http frames the body chunked, then the XML declaration and the
 // CopyObjectResult open tag, flushed; send_response then sends LastModified,
@@ -62,6 +63,7 @@ func (wr *objectWrites) copyObject(ctx context.Context, w http.ResponseWriter, r
 	if r.Env.Zone.Release() >= denc.Tentacle {
 		mtime = mtime.Truncate(time.Second)
 	}
+	setVersionHeaders(w.Header(), o.VersionID, o.SrcVersionID)
 	cx, err := startChunkedXML(w, r)
 	if err == nil {
 		cx.add(xmlHeader + `<CopyObjectResult xmlns="` + xmlnsS3 + `">`)

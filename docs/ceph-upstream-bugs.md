@@ -477,6 +477,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's ?layout checks a cap type no caps command can grant](#radosgws-layout-checks-a-cap-type-no-caps-command-can-grant) | pending | pending | ✓ |
 | [radosgw's CompleteMultipartUpload ignores a failed read of its upload info and drops the upload's retention and legal hold](#radosgws-completemultipartupload-ignores-a-failed-read-of-its-upload-info-and-drops-the-uploads-retention-and-legal-hold) | pending | pending | ✓ |
 | [radosgw hands a sync zone's endpoint credentials to any holder of zone=read](#radosgw-hands-a-sync-zones-endpoint-credentials-to-any-holder-of-zoneread) | pending | pending | ✓ |
+| [radosgw's CopyObject sends neither x-amz-version-id nor x-amz-copy-source-version-id](#radosgws-copyobject-sends-neither-x-amz-version-id-nor-x-amz-copy-source-version-id) | pending | pending | ✓ |
+| [radosgw sends no x-amz-version-id for the null version a write makes](#radosgw-sends-no-x-amz-version-id-for-the-null-version-a-write-makes) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -13256,11 +13258,61 @@ Every new entry adds its row to this table, in document order.
 - **Kind:** defect, unfixed at v19.2.6, v19.2.7 and v20.2.4: on a bucket
   whose versioning was never enabled, a write naming the null version
   links the key as a versioned object, and leaves the plain key's earlier
-  entry out of step with the head it names. Not security-relevant
-  (rgw-bug-reproduction's triage, 2026-10-12, made before the OLH link
-  and the completion's path were found): the index and stats drift stays
-  in the bucket the request writes to. Unreproduced: derived from the
-  source.
+  entry out of step with the head it names. Possibly security-relevant:
+  rgw-bug-reproduction's triage (2026-10-27) rates it yes, low. A
+  public-write grant lets an anonymous requester add objects the owner
+  can delete; this defect lets one leave state no S3 request clears,
+  with recovery admin-only and the bucket's stats and quota inflated,
+  harm beyond what the grant allows. That recovery is admin-only was
+  observed at v20.2.4 by rgw-bug-reproduction's run of 2026-10-27,
+  version-named deletes included (below); at v19.2.7 it rests on the
+  source, the same lines holding there. It is low as it costs
+  availability alone, reads no data, and needs a bucket anyone may
+  write. An anonymous PutObject reaches it: the request's key takes the
+  query's `versionId` for every request
+  ([rgw_rest_s3.cc:4976-4985](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4976-L4985) at v19.2.7,
+  [rgw_rest_s3.cc:5506-5515](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5506-L5515) at v20.2.4),
+  and `RGWPutObj::verify_permission` checks `s3:PutObject` alone on the
+  destination
+  ([rgw_op.cc:3920-3989](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3920-L3989) at v19.2.7,
+  [rgw_op.cc:4129-4198](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4129-L4198) at v20.2.4).
+  CopyObject's and CompleteMultipartUpload's destination checks are not
+  traced. This triage replaces the one of 2026-10-12, which rated it not
+  security-relevant before the OLH link, the completion's path and the
+  bucket left not empty were found. Reproduced on v19.2.7 and v20.2.4,
+  for a CopyObject's destination too: after a PutObject, a CopyObject and
+  a CompleteMultipartUpload each naming `versionId=null` over a key
+  written before, on a bucket never versioned, the versions listing held
+  each key twice as the null version, the earlier object's size beside
+  the new one's (the s3-test `test_versioning_write_version_id_ignored`,
+  [jhoblitt/ceph#27](https://github.com/jhoblitt/ceph/pull/27)). s3-tests' cleanup, which on a
+  bucket never versioned deletes each key a plain listing names by its
+  name alone, then left the bucket not empty: its DeleteBucket answered
+  BucketNotEmpty after the test's teardown and again after a later
+  test's. rgw-bug-reproduction's run on v20.2.4 (2026-10-27) went
+  further. Its versions listing named `k` twice, both
+  `VersionId=null`, of 39 and 20 bytes. A plain DELETE of `k`, then a
+  DELETE of `k?versionId=null` once per duplicate, each answered 204
+  and changed nothing, over two passes, and DeleteBucket still answered
+  409 BucketNotEmpty. `radosgw-admin bucket check --fix` changed
+  nothing, `bucket check olh` and `bucket check unlinked` refuse a
+  bucket that is not versioned, and only `bucket rm --purge-objects`
+  removed it. The mechanism, which rgw-bug-reproduction traced at ceph
+  main (its lines 7003 to 7005 of rgw_rados.cc) and which holds at both
+  floors: S3 names both the empty instance and the instance `null` as
+  versionId=null, the versions listing writing `null` for the empty one
+  ([rgw_rest_s3.cc:1842-1845](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1842-L1845) at v19.2.7,
+  [rgw_rest_s3.cc:1945-1948](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1945-L1948) at v20.2.4),
+  and the delete clears an instance `null` to the
+  empty one before it takes the unversioned path a bucket without
+  `BUCKET_VERSIONED` selects
+  ([rgw_rados.cc:5841-5850](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5841-L5850) at v19.2.7,
+  [rgw_rados.cc:6453-6462](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6453-L6462) at v20.2.4),
+  so no S3 request names the `{k, "null"}` entry, while
+  `check_bucket_empty` lists the index with its versions and answers
+  -ENOTEMPTY for any entry outside a namespace
+  ([rgw_rados.cc:5259-5304](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5259-L5304) at v19.2.7,
+  [rgw_rados.cc:5723-5768](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5723-L5768) at v20.2.4).
 - **Evidence:** paths are under `src/`; a pair of line numbers is
   v19.2.6's then v20.2.4's.
   - The request's key takes `versionId` verbatim as its instance
@@ -13378,7 +13430,8 @@ Every new entry adds its row to this table, in document order.
     The Impact below holds after a repeat too.
 - **Impact:** after a PutObject or a CompleteMultipartUpload naming
   `versionId=null` on a bucket whose versioning was never enabled, as
-  derived from the source and not reproduced:
+  derived from the source; the run reproduced the second, and a bucket
+  its cleanup could not empty (above):
   - the key is a versioned object on a bucket that was never versioned.
     Its head is an OLH whose target is `{name, "null"}`, and a plain
     listing shows the `null` version with the write's size and ETag, a
@@ -13394,30 +13447,34 @@ Every new entry adds its row to this table, in document order.
     at v19.2.7), and the link rewrites entries without accounting for them
     ([:1244-1249](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1244-L1249)).
 
-  What a later DeleteObject naming no version does to this state is not
-  traced. It takes the unversioned path the bucket's flags select
+  A later DeleteObject, naming no version or `versionId=null`, takes
+  the unversioned path the bucket's flags select
   ([rgw_rados.cc:5850](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5850)
-  at v19.2.7).
+  at v19.2.7). At v20.2.4 such deletes answered 204 and changed
+  nothing (Kind); what each does to the index entries is not traced
+  further.
 - **Releases:** v19.2.6, v19.2.7 and v20.2.4.
-- **rgw-go:** does not reproduce it. A PutObject, a CopyObject or a
-  CompleteMultipartUpload naming the null version answers 501
-  NotImplemented on every bucket (`newHeadVersioningUnserved`,
-  `internal/op/putobject.go`, which the completion calls since task F14,
-  `internal/op/completemultipart.go`; `docs/exclusions.md`, "Writes to a
-  versioned or object-lock bucket answer 501 until versioning is served").
-  Before F14 a completion naming it wrote the plain head and filed it
-  under `{name, "null"}` beside the plain entry, as radosgw's index
-  complete does, but linked no OLH, so the bucket matched neither
-  radosgw's result nor an unversioned write's. One naming another version
-  wrote that instance without radosgw's versioned op (F12's task review,
-  2026-10-14).
-- **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
-  (non-security).
+- **rgw-go:** does not reproduce it. A PutObject, a CopyObject's
+  destination and a CompleteMultipartUpload ignore any `versionId`, the
+  null one included, and write the instance the bucket's versioning gives:
+  the plain object on a bucket never versioned, the null version on a
+  suspended one and a new version on an enabled one (`VersionForWrite`,
+  `internal/op/version.go`; `docs/exclusions.md`, "A write's versionId is
+  ignored"). Pinned in `internal/op/version_test.go` and
+  `internal/s3/versionedwrite_test.go`. Before task F14 a completion
+  naming it wrote the plain head and filed it under `{name, "null"}`
+  beside the plain entry, as radosgw's index complete does, but linked no
+  OLH, so the bucket matched neither radosgw's result nor an unversioned
+  write's. One naming another version wrote that instance without
+  radosgw's versioned op (F12's task review, 2026-10-14).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 follow-up X13, 2026-10-08, reading what radosgw does
   with `versionId=null` on a bucket never versioned; confirmed in its
   review. The completion's path: F12's task review, 2026-10-14; the OLH
-  link: F14's task review, 2026-10-14. Derived from the source, not
-  reproduced.
+  link: F14's task review, 2026-10-14. Reproduced by phase 2 task V11,
+  2026-10-27, through its s3-test on both releases; the version-named
+  deletes and the admin-only recovery by rgw-bug-reproduction on
+  v20.2.4 the same day.
 
 ## radosgw's bucket instance metadata put overwrites unguarded on Tentacle
 
@@ -25965,8 +26022,11 @@ Every new entry adds its row to this table, in document order.
   has it too. Not
   security-relevant (rgw-bug-reproduction's triage, 2026-10-22): a write
   condition is a compare-and-swap guarantee to its writer, not an access
-  boundary, and every version written is kept. Unreproduced: derived from
-  the source.
+  boundary, and every version written is kept. Reproduced on v19.2.7 and
+  v20.2.4 for a bucket whose versioning is enabled: all eight of eight
+  concurrent `If-None-Match: *` PutObjects of a new key succeeded in the
+  s3-test `test_put_object_versioned_if_none_match_concurrent`
+  ([jhoblitt/ceph#27](https://github.com/jhoblitt/ceph/pull/27)).
 - **Evidence:** paths are under `src/rgw/driver/rados/`.
   - The head write reads the version current on the key's OLH through
     `get_current_version_state`
@@ -26054,12 +26114,14 @@ Every new entry adds its row to this table, in document order.
   `docs/exclusions.md`, "A conditional write to a versioned bucket commits
   only if its condition held when it linked". Pinned in
   `internal/driver/put_versioned_test.go` and
-  `internal/driver/olh_cond_test.go`, against a radosgw-shaped writer too.
+  `internal/driver/olh_cond_test.go`, against a radosgw-shaped writer too,
+  and by the s3-test, whose body rgw-go passes on both releases.
 - **Upstream:** pending; prior art not searched.
 - **Found:** the phase 2 versioning research, defect 4, 2026-10-13;
   recorded by phase 2 task V7a, 2026-10-22, from the source at v19.2.7 and
   v20.2.4, and extended to main and the tentacle branch by V7a's review;
-  rgw-bug-reproduction verified the extension at the source.
+  rgw-bug-reproduction verified the extension at the source. Reproduced by
+  phase 2 task V11, 2026-10-27, through its s3-test on both releases.
 
 ## radosgw checks a suspended bucket's write conditions against the OLH head
 
@@ -26068,8 +26130,12 @@ Every new entry adds its row to this table, in document order.
   conditional CompleteMultipartUpload, to a bucket whose versioning is
   suspended, over a key that was ever versioned, is checked against the
   key's OLH head rather than its current version. Not security-relevant: the writes it lets through replace only
-  the null version, and lose no other. Unreproduced: derived from the
-  source.
+  the null version, and lose no other. Reproduced on v19.2.7 and v20.2.4:
+  on a suspended bucket whose key holds a null version and a current
+  version with an instance, a PutObject with If-Match on the null
+  version's ETag succeeded in the s3-test
+  `test_put_object_suspended_if_match_current_version`
+  ([jhoblitt/ceph#27](https://github.com/jhoblitt/ceph/pull/27)).
 - **Evidence:** paths are under `src/rgw/`.
   - A PutObject to a bucket whose versioning is suspended keeps the key's
     instance empty: only `versioning_enabled()` gives it one
@@ -26122,7 +26188,8 @@ Every new entry adds its row to this table, in document order.
   conditional write to a versioned bucket commits only if its condition held
   when it linked", does not hold there (`docs/exclusions.md`, "A suspended
   bucket's conditional write is checked against the current version").
-  Pinned in `internal/driver/put_versioned_test.go`.
+  Pinned in `internal/driver/put_versioned_test.go`, and by the s3-test,
+  whose body rgw-go passes on both releases.
 - **Upstream:** issues pending; prior art not searched. Fixed by
   [ceph/ceph#71584](https://github.com/ceph/ceph/pull/71584) (main,
   cfe5d0f29a7, merge 6483a25aed8) and
@@ -26131,7 +26198,8 @@ Every new entry adds its row to this table, in document order.
   squid pull request was found there.
 - **Found:** phase 2 task V7a, 2026-10-22, tracing the head write's
   conditions at v19.2.7 and v20.2.4; the fix was then found in the local
-  clone's history. Upstream found it first.
+  clone's history. Upstream found it first. Reproduced by phase 2 task V11,
+  2026-10-27, through its s3-test on both releases.
 
 ## radosgw's versioned PutObject deletes its tails when its link fails
 
@@ -28436,3 +28504,97 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task WP-20b, 2026-10-27, auditing the admin answers
   that render zone configuration for tier secrets. Derived from the source,
   not reproduced.
+
+## radosgw's CopyObject sends neither x-amz-version-id nor x-amz-copy-source-version-id
+
+- **Kind:** defect, S3-correctness, not security-relevant: a CopyObject
+  answers without the id of the version it wrote and of the version it
+  copied, which S3 sends as `x-amz-version-id` and
+  `x-amz-copy-source-version-id`, so a client copying into a versioned
+  bucket cannot learn the new version's id from the answer, nor which
+  version an unnamed source was. Reproduced on v19.2.7 and v20.2.4:
+  each of the three copies of the s3-test
+  `test_versioning_copy_object_version_ids` ([jhoblitt/ceph#27](https://github.com/jhoblitt/ceph/pull/27)) into a
+  bucket whose versioning is enabled, from a version named, from the
+  current version with none named and from the null version, answered
+  with neither header.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWCopyObj::execute` gives the destination a new instance on a bucket
+    whose versioning is enabled, but leaves `version_id` as a system
+    request's `rgwx-version-id` set it, empty for any other request
+    ([rgw_op.cc:5576-5580](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5576-L5580),
+    [rgw_op.cc:6139-6143](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6139-L6143)).
+    `RGWPutObj::execute` copies the instance it draws into `version_id`
+    ([rgw_op.cc:4278-4285](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4278-L4285),
+    [rgw_op.cc:4491-4498](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4491-L4498)).
+  - `RGWCopyObj_ObjStore_S3::send_partial_response` and `send_response`
+    send the status, Tentacle's encryption headers and the document, and
+    neither version header
+    ([rgw_rest_s3.cc:3596-3633](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3596-L3633),
+    [rgw_rest_s3.cc:3846-3886](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3846-L3886)),
+    whatever `version_id` holds and whichever version the source's read
+    resolved.
+- **Impact:** a client that copies into a bucket whose versioning is
+  enabled must list the key's versions to learn the id of the version it
+  wrote, which a concurrent write can make ambiguous, and has no record of
+  which version of the source it copied when it named none.
+- **Releases:** v19.2.7 and v20.2.4; main was not checked.
+- **rgw-go:** differs: CopyObject sends `x-amz-version-id` for the version
+  it wrote and `x-amz-copy-source-version-id` for the version it read,
+  `null` for a null version on a bucket whose versioning was ever enabled
+  and neither on a bucket never versioned (`setVersionHeaders`,
+  `internal/s3/putobject.go`; `ResponseVersionID`,
+  `internal/op/version.go`; `docs/exclusions.md`, "Writes name the null
+  version's id and a copy's two versions"). Pinned in
+  `internal/s3/versionedwrite_test.go`, and by the s3-test, whose body
+  rgw-go passes on both releases.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task V11, 2026-10-27, serving CopyObject on a
+  versioned bucket; reproduced through its s3-test on both releases,
+  both headers for each copy.
+
+## radosgw sends no x-amz-version-id for the null version a write makes
+
+- **Kind:** defect, S3-correctness (minor), not security-relevant: a
+  PutObject or a CompleteMultipartUpload that writes the null version, as
+  every such write to a bucket whose versioning is suspended does, answers
+  with no `x-amz-version-id`, where S3 sends `null`, the null version's id.
+  Reproduced on v19.2.7 and v20.2.4: on a suspended bucket the PutObject,
+  the CopyObject and the CompleteMultipartUpload of the s3-test
+  `test_versioning_null_version_write_names_null`
+  ([jhoblitt/ceph#27](https://github.com/jhoblitt/ceph/pull/27)) each answered without the header.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWPutObj::execute` and `RGWCompleteMultipart::execute` draw an
+    instance, and set `version_id` to it, only on a bucket whose
+    versioning is enabled
+    ([rgw_op.cc:4278-4285](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4278-L4285) and
+    [rgw_op.cc:6462-6469](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6462-L6469),
+    [rgw_op.cc:4491-4498](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4491-L4498) and
+    [rgw_op.cc:7284-7291](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7284-L7291)),
+    so on a suspended bucket `version_id` stays empty and the write is the
+    null version.
+  - Both `send_response`s send the header through
+    `dump_header_if_nonempty`
+    ([rgw_rest_s3.cc:2756](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2756) and
+    [rgw_rest_s3.cc:4111](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4111),
+    [rgw_rest_s3.cc:2912](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2912) and
+    [rgw_rest_s3.cc:4609](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4609)),
+    which sends nothing for an empty value
+    ([rgw_rest.h:780-786](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.h#L780-L786),
+    [rgw_rest.h:792-798](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.h#L792-L798)).
+  - On a bucket whose versioning was never enabled, sending none is S3's
+    answer too: such an object has no version.
+- **Impact:** a client of a suspended bucket cannot tell from the answer
+  that its write replaced the null version, rather than writing to a
+  bucket that never had versioning.
+- **Releases:** v19.2.7 and v20.2.4; main was not checked.
+- **rgw-go:** differs: PutObject and CompleteMultipartUpload send
+  `x-amz-version-id: null` for the null version on a bucket whose
+  versioning was ever enabled, and none on a bucket never versioned
+  (`ResponseVersionID`, `internal/op/version.go`; `docs/exclusions.md`,
+  "Writes name the null version's id and a copy's two versions"). Pinned in
+  `internal/s3/versionedwrite_test.go`, and by the s3-test, whose body
+  rgw-go passes on both releases.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task V11, 2026-10-27, serving writes on a suspended
+  bucket; reproduced through its s3-test on both releases.

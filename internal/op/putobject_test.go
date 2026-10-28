@@ -441,18 +441,6 @@ var _ = Describe("ErrMetadataNameTooLong", func() {
 // opCase builds a write op and its request.
 type opCase func(f *writeFixture, instance string) (op.Op, *op.Request)
 
-func versionedPut(f *writeFixture, instance string) (op.Op, *op.Request) {
-	r := f.req(http.MethodPut, "plain", "small")
-	r.Object.Instance = instance
-	return &op.PutObject{Body: failingReader{}, Size: 1}, r
-}
-
-func versionedCopy(f *writeFixture, instance string) (op.Op, *op.Request) {
-	o := f.copyOf("small")
-	o.SrcKey.Instance = instance
-	return o, f.req(http.MethodPut, "plain", "dst")
-}
-
 func versionedDelete(f *writeFixture, instance string) (op.Op, *op.Request) {
 	r := f.req(http.MethodDelete, "plain", "small")
 	r.Object.Instance = instance
@@ -482,12 +470,12 @@ func versionedDelTags(f *writeFixture, instance string) (op.Op, *op.Request) {
 	return &op.DeleteObjectTagging{}, r
 }
 
-// versionedOps are the write ops, each building its request for key small
-// in plain, naming instance when it is not empty.
+// versionedOps are the write ops that do not create a head, each building
+// its request for key small in plain, naming instance when it is not empty.
+// The writes that create one serve a versioned bucket (version_test.go).
 var versionedOps = map[string]opCase{
-	"PutObject": versionedPut, "CopyObject": versionedCopy, "DeleteObject": versionedDelete,
-	"DeleteObjects": versionedMulti, "PutObjectACL": versionedPutACL, "PutObjectTagging": versionedPutTags,
-	"DeleteObjectTagging": versionedDelTags,
+	"DeleteObject": versionedDelete, "DeleteObjects": versionedMulti, "PutObjectACL": versionedPutACL,
+	"PutObjectTagging": versionedPutTags, "DeleteObjectTagging": versionedDelTags,
 }
 
 var _ = Describe("the write ops on a bucket whose versioning is not served", func() {
@@ -527,21 +515,6 @@ var _ = Describe("the write ops on a bucket whose versioning is not served", fun
 		Entry("the null version on a bucket whose versioning is suspended", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended), "null"),
 		Entry("the null version under the suspended flag alone", uint32(meta.BucketVersionsSuspended), "null"),
 		Entry("the null version on a bucket with object lock", uint32(meta.BucketObjLockEnabled), "null"),
-	)
-	DescribeTable("answer 501 NotImplemented to a write creating a head that names the null version, even on a bucket whose versioning was never enabled",
-		func(ctx SpecContext, c opCase) {
-			o, r := c(f, "null")
-			Expect(op.Run(ctx, o, r)).To(MatchError(op.ErrNotImplemented))
-			Expect(stub.PutObjectCallCount()).To(BeZero())
-			Expect(stub.CopyObjectCallCount()).To(BeZero())
-		},
-		Entry("PutObject", versionedPut),
-		Entry("CopyObject from the null version", versionedCopy),
-		Entry("CopyObject onto the null version", func(f *writeFixture, instance string) (op.Op, *op.Request) {
-			r := f.req(http.MethodPut, "plain", "dst")
-			r.Object.Instance = instance
-			return f.copyOf("small"), r
-		}),
 	)
 	It("never hands a versioned delete on an object-lock bucket to the store", func(ctx SpecContext) {
 		f.setBucketFlags(ctx, meta.BucketVersioned|meta.BucketObjLockEnabled)

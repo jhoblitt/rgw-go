@@ -40,6 +40,10 @@ type CompleteMultipart struct {
 	ETag  string
 	Size  uint64
 	Mtime time.Time
+	// VersionID is the id of the version the store completed
+	// (ResponseVersionID), "" for none: for a completion it finishes rather
+	// than writes, the version that earlier completion wrote.
+	VersionID string
 	// Checksum is the combined checksum the store stored, nil for none.
 	Checksum *cksum.Cksum
 }
@@ -66,16 +70,8 @@ func (o *CompleteMultipart) VerifyPermission(ctx context.Context, r *Request) er
 }
 
 // Execute first refuses, once the requester is authorized and as PutObject
-// does, a bucket whose versioning or object lock rgw-go does not serve and a
-// completion naming a version, the null one included
-// (newHeadVersioningUnserved): radosgw keeps the URL's instance for the head
-// unless the bucket's versioning is enabled
-// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6462-L6469 at v19.2.7,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7284-L7291 at v20.2.4),
-// so on a bucket never versioned it would file the head in the index under
-// that instance and then link the key to an OLH as a versioned object
-// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3369-L3375 at v19.2.7).
-// Then it is RGWCompleteMultipart::execute in its order
+// does, a bucket with object lock (objectLockUnserved). Then it is
+// RGWCompleteMultipart::execute in its order
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6367-L6416 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7163-L7211 at v20.2.4):
 // get_params, whose empty upload id is -ENOTSUP, 500 UnknownError, and whose
@@ -84,9 +80,9 @@ func (o *CompleteMultipart) VerifyPermission(ctx context.Context, r *Request) er
 // more parts than rgw_multipart_part_upload_limit once repeats collapse,
 // InvalidRange (-ERANGE); then, where execute reads the upload's info, the
 // checksum the request supplies (completeChecksum); then the completion,
-// whose head takes the request id as its tag.
+// whose head takes the request id as its tag, at VersionForWrite's instance.
 func (o *CompleteMultipart) Execute(ctx context.Context, r *Request) error {
-	if err := newHeadVersioningUnserved(r.BucketRec, r.Object); err != nil {
+	if err := objectLockUnserved(r.BucketRec); err != nil {
 		return err
 	}
 	if o.UploadID == "" {
@@ -113,13 +109,14 @@ func (o *CompleteMultipart) Execute(ctx context.Context, r *Request) error {
 		return err
 	}
 	res, err := r.Env.Multipart.Complete(ctx, &Upload{
-		ID: o.UploadID, Bucket: r.BucketRec, Key: r.Object, WriteTag: r.ID,
+		ID: o.UploadID, Bucket: r.BucketRec, Key: writeKey(r), WriteTag: r.ID,
 		IfMatch: storeCondition(o.IfMatch), IfNoneMatch: storeCondition(o.IfNoneMatch), SuppliedChecksum: supplied,
 	}, o.Parts)
 	if err != nil {
 		return err
 	}
 	o.ETag, o.Size, o.Mtime, o.Checksum = res.ETag, res.Size, res.Mtime, res.Checksum
+	o.VersionID = ResponseVersionID(r.BucketRec, res.Version)
 	return nil
 }
 

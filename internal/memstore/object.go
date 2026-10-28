@@ -346,21 +346,37 @@ func (s *Store) newObject(key meta.ObjKey, data []byte, etag string, attrs map[s
 	if mtime.IsZero() {
 		mtime = s.now()
 	}
+	epoch := s.nextEpoch()
 	return &object{
 		state: op.ObjectState{
 			Key:          key,
 			Exists:       true,
 			Size:         uint64(len(data)),
 			Mtime:        mtime,
-			Epoch:        s.nextEpoch(),
+			Epoch:        epoch,
 			Attrs:        attrs,
 			ETag:         etag,
 			WriteTag:     s.newTag(),
 			StorageClass: storageClass,
 			ContentType:  contentType(attrs),
 		},
-		data: data,
+		data:    data,
+		written: epoch,
 	}
+}
+
+// currentObject is the object current on name in b, the one whose head
+// was written last, as an OLH names the version linked last; memstore
+// keeps no OLH and serves no versioned delete. It is nil when b holds no
+// object of that name. The caller holds s.mu.
+func currentObject(b *bucket, name string) *object {
+	var cur *object
+	for k, o := range b.objects {
+		if k.Name == name && (cur == nil || o.written > cur.written) {
+			cur = o
+		}
+	}
+	return cur
 }
 
 // putResult describes o, whose write computed ck, or nil.

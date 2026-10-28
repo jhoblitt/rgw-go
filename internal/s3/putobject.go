@@ -33,16 +33,17 @@ import (
 // RGWPutObj::execute takes an empty one for none
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4214 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4423 at v20.2.4).
-// A PUT naming a copy source that is no copy and an append are not served
-// yet. The op reads the request's parameters through putObjectParams once
-// the bucket is loaded, as init_processing reads them, and makes the checks
-// of stored state through putObjectChecks once the requester is authorized,
-// so that a refused requester learns nothing the store holds
-// (docs/exclusions.md). The success is send_response's: the ETag, the
-// Content-Length of 0 with Accept-Ranges that dump_content_length sends
+// A PUT naming a copy source that is no copy is not served yet, and an
+// append is refused by the op once the requester is authorized. The op
+// reads the request's parameters through putObjectParams once the bucket is
+// loaded, as init_processing reads them, and makes the checks of stored
+// state through putObjectChecks once the requester is authorized, so that a
+// refused requester learns nothing the store holds (docs/exclusions.md). The
+// success is send_response's: the ETag, the Content-Length of 0 with
+// Accept-Ranges that dump_content_length sends
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2747,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2911),
-// x-amz-version-id when there is one, Rgwx-Mtime for a system request, and
+// x-amz-version-id (setVersionHeaders), Rgwx-Mtime for a system request, and
 // the status rgw_s3_success_create_obj_status names.
 func (wr *objectWrites) putObject(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	switch {
@@ -50,13 +51,12 @@ func (wr *objectWrites) putObject(ctx context.Context, w http.ResponseWriter, r 
 		return wr.uploadPart(ctx, w, r)
 	case hasHeader(r, "X-Amz-Copy-Source"):
 		return fmt.Errorf("%w: a PUT that names a copy source but is not a copy", op.ErrNotImplemented)
-	case r.Query.Has("append"):
-		return fmt.Errorf("%w: appendable objects are not served yet", op.ErrNotImplemented)
 	}
 	o := &op.PutObject{
 		Body: r.Body, Size: r.ContentLength,
 		StorageClass: header(r, "X-Amz-Storage-Class"), CannedACL: header(r, "X-Amz-Acl"),
 		IfMatch: headerPtr(r, "If-Match"), IfNoneMatch: headerPtr(r, "If-None-Match"),
+		Append: r.Query.Has("append"),
 	}
 	o.Params = func(_ context.Context, o *op.PutObject) error { return wr.putObjectParams(r, o) }
 	o.Authorized = func(ctx context.Context, o *op.PutObject) error { return putObjectChecks(ctx, r, o) }
@@ -67,9 +67,7 @@ func (wr *objectWrites) putObject(ctx context.Context, w http.ResponseWriter, r 
 	h := w.Header()
 	SetHeader(h, "ETag", `"`+o.ETag+`"`)
 	SetContentLength(h, 0)
-	if o.VersionID != "" {
-		SetHeader(h, "x-amz-version-id", o.VersionID)
-	}
+	setVersionHeaders(h, o.VersionID, "")
 	setSystemMtime(h, r, o.Mtime)
 	w.WriteHeader(successStatus(r))
 	return nil
@@ -84,7 +82,8 @@ func (wr *objectWrites) putObject(ctx context.Context, w http.ResponseWriter, r 
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2626-L2637,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2787-L2798);
 // the object-lock headers' values are checked (objectLockHeaders); a
-// partNumber is read as for a part (partNumberArg); a Content-MD5 that
+// partNumber is read as for a part (partNumberArg); an append's position
+// (appendPosition); a Content-MD5 that
 // ceph_unarmor does not decode to 16 bytes is InvalidDigest
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4184-L4198 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4393-L4407 at v20.2.4);
@@ -109,6 +108,11 @@ func (wr *objectWrites) putObjectParams(r *op.Request, o *op.PutObject) error {
 	}
 	if _, err := partNumberArg(r); err != nil {
 		return err
+	}
+	if o.Append {
+		if err := appendPosition(r); err != nil {
+			return err
+		}
 	}
 	if v, ok := op.HeaderValue(r.Header, "Content-MD5"); ok {
 		sum, ok := cephUnarmor(rgwtext.CString(v))
@@ -147,6 +151,42 @@ func partNumberArg(r *op.Request) (int, error) {
 		return 0, fmt.Errorf("%w: part number %q: %w", op.ErrInvalidArgument, v, err)
 	}
 	return n, nil
+}
+
+// appendPosition is get_params' read of an append's position
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2696-L2708 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2849-L2861 at v20.2.4):
+// strict_strtoll's in base 10, read as the C string get_params passes it;
+// one it refuses, an absent one among them, or a negative one is
+// InvalidArgument.
+func appendPosition(r *op.Request) error {
+	v := r.Query.Get("position")
+	if n, ok := rgwtext.StrictStrtoll(rgwtext.CString(v)); !ok || n < 0 {
+		return fmt.Errorf("%w: append position %q", op.ErrInvalidArgument, v)
+	}
+	return nil
+}
+
+// setVersionHeaders sends the version ids a write reports, each when it has
+// one (op.ResponseVersionID): x-amz-version-id for the version written and,
+// for a copy, x-amz-copy-source-version-id for the version it read.
+// radosgw's PutObject and CompleteMultipartUpload send only a non-empty
+// instance, so none for the null version, and its CopyObject sends neither
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2756,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4111 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3596-L3633 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2912,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4609 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3846-L3886 at v20.2.4;
+// docs/exclusions.md, "Writes name the null version's id and a copy's two
+// versions").
+func setVersionHeaders(h http.Header, written, source string) {
+	if written != "" {
+		SetHeader(h, "x-amz-version-id", written)
+	}
+	if source != "" {
+		SetHeader(h, "x-amz-copy-source-version-id", source)
+	}
 }
 
 // putObjectChecks is the rest of get_params in its order, once the requester
@@ -227,7 +267,7 @@ func refuseEncryption(r *op.Request, query bool) error {
 // nothing of the bucket's configuration. On a bucket with object lock a
 // PutObject or CopyObject answers NotImplemented, and a multipart write
 // naming a retention or a legal hold does (multipartObjectLock), until
-// versioning is served.
+// object lock is served.
 func objectLock(r *op.Request) error {
 	if namesObjectLock(r) && r.BucketRec.Info.Flags&meta.BucketObjLockEnabled == 0 {
 		return op.ErrInvalidRequest
