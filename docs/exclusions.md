@@ -11281,10 +11281,21 @@ rgw-go does the following.
   resends a refused completion without its object locator, as radosgw's
   does; the awaited completion keeps it, which changes nothing stored once
   the prepare has made the entry. Any other failure, the class's or the
-  guard's, is the write's to answer, where radosgw's unawaited completion
-  leaves the pending entry for listing to reconcile. An error does not
-  prove the completion did not land, since one that a context end or a
-  timeout interrupted can land later, so the write never links after one.
+  guard's, is the write's to answer. radosgw's unawaited completion leaves
+  the version's instance entry pending for a listing to repair, and the
+  list entry its link then writes pending until the version is removed
+  (docs/ceph-upstream-bugs.md, "[radosgw links a versioned write whose index completion the class refused, leaving its list entry pending until the version is removed](ceph-upstream-bugs.md#radosgw-links-a-versioned-write-whose-index-completion-the-class-refused-leaving-its-list-entry-pending-until-the-version-is-removed)").
+  An error does not prove the completion did not land, since one that a
+  context end or a timeout interrupted can land later, so the write never
+  links after one.
+  After an answer that does prove it, the write cancels the prepare, as
+  radosgw's `done_cancel` cancels the prepare of a completion it could not
+  send
+  ([rgw_rados.cc:3401-3412](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3401-L3412),
+  [rgw_rados.cc:3522-3533](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3522-L3533)),
+  and then removes the version ("rgw-go removes the instance a failed
+  versioned write made"), so no entry of it is left pending
+  (`linkVersion`, `internal/driver/put_versioned.go`).
   An unversioned write of an object's plain or null entry on a bucket whose
   flags carry `BUCKET_VERSIONED`, a suspended bucket's write of a key with
   no OLH, and an attr write of such an entry, PutObjectTagging's,

@@ -290,15 +290,26 @@ func (s *Store) linkCond(hw *headWrite) olhCondition {
 // link of hw's version under its key's OLH at hw's epoch with linkCond's
 // condition, under in's op tag when the head write inited the write's
 // modification (setOLH). A completion that fails links nothing, as one that
-// lands after the link would rewrite the entry the link wrote, cancels in's
-// modification, past the end of ctx, and removes the version when its answer
-// proves the completion did not land (removeFailedVersion); setOLH removes
-// the version itself when it must. The head and its tails stay otherwise,
-// whatever is answered.
+// lands after the link would rewrite the entry the link wrote, and cancels
+// in's modification, past the end of ctx. On an answer that proves it did
+// not land it also cancels the prepare, as radosgw's done_cancel cancels the
+// prepare of a completion it could not send, after any error but a timeout
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3401-L3412 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3522-L3533 at v20.2.4),
+// and removes the version (removeFailedVersion). Without the cancel the
+// removal's completion would keep the entry, its pending tag left, as one
+// that does not exist
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1141-L1166 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1275-L1299 at v20.2.4),
+// which no listing reaches. setOLH removes the version itself when it must.
+// The head and its tails stay otherwise, whatever is answered.
 func (s *Store) linkVersion(ctx context.Context, hw *headWrite, x *indexOp, ver rgw.EntryVer, m rgw.DirEntryMeta, in *nullInit) error {
 	if err := x.completeSync(ctx, ver, m); err != nil {
 		if in != nil {
 			s.olhCancelModification(context.WithoutCancel(ctx), in.left, in.opTag)
+		}
+		if !outcomeUnknown(err) {
+			x.cancel()
 		}
 		s.removeFailedVersion(ctx, x.rec, hw.key, err)
 		return op.FromRADOS(fmt.Errorf("completing the index entry of %s: %w", versionName(x.rec, hw.key), err), op.ScopeObject)
