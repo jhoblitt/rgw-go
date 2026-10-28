@@ -484,6 +484,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's GET and HEAD send no x-amz-version-id for the null version they read](#radosgws-get-and-head-send-no-x-amz-version-id-for-the-null-version-they-read) | pending | pending | ✓ |
 | [radosgw's DeleteObjectTagging naming no version writes the key's OLH head, not its current version](#radosgws-deleteobjecttagging-naming-no-version-writes-the-keys-olh-head-not-its-current-version) | pending | pending | ✓ |
 | [radosgw answers a copy source naming a delete marker's version 404 NoSuchKey](#radosgw-answers-a-copy-source-naming-a-delete-markers-version-404-nosuchkey) | pending | pending | ✓ |
+| [radosgw links a versioned write whose index completion the class refused, leaving its list entry pending until the version is removed](#radosgw-links-a-versioned-write-whose-index-completion-the-class-refused-leaving-its-list-entry-pending-until-the-version-is-removed) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -28992,3 +28993,83 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task V14a's review, 2026-10-27, as task V14a served
   UploadPartCopy from a version; registered by its fix round. Derived from
   the source, not reproduced.
+
+## radosgw links a versioned write whose index completion the class refused, leaving its list entry pending until the version is removed
+
+- **Kind:** defect, index consistency. Not security-relevant: it needs the
+  index class or the OSD to refuse a sent completion, which no client can
+  choose. A versioned write sends its index completion without waiting for
+  the answer and links the version whatever the class answers, so after a
+  refused completion the link writes the version's list entry from the
+  pending instance entry the prepare left, and no listing ever repairs
+  that list entry. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's, unless a
+  bullet names v19.2.7 alone.
+  - `UpdateIndex::complete` sends the completion with `aio_operate` and
+    returns only the shard lookup's or the send's error
+    ([rgw_rados.cc:7300-7348](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7300-L7348) and
+    [rgw_rados.cc:9714](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9714),
+    [rgw_rados.cc:7959-8007](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7959-L8007) and
+    [rgw_rados.cc:10450](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10450)).
+    `RGWIndexCompletionManager::handle_completion` drops every answer but a
+    resharding refusal
+    ([rgw_rados.cc:1011-1017](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L1011-L1017),
+    [rgw_rados.cc:1052-1058](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1052-L1058)),
+    and the retry after one logs its own failure and goes on
+    ([rgw_rados.cc:925-929](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L925-L929),
+    [rgw_rados.cc:963-967](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L963-L967)).
+    So `_do_write_meta` goes on to `set_olh` after a refused completion
+    ([rgw_rados.cc:3352-3375](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3352-L3375),
+    [rgw_rados.cc:3473-3496](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3473-L3496)).
+  - At v19.2.7 alone: the prepare left a new version's instance entry with
+    `exists` false, a pending tag and no meta
+    ([cls_rgw.cc:847-856](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L847-L856)),
+    and the link writes that entry as both the instance entry and the list
+    entry
+    ([cls_rgw.cc:1296-1315](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1296-L1315) and
+    [cls_rgw.cc:1388-1427](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1388-L1427)).
+    A listing gets the list entry back, as the class's list does not filter
+    on `exists`
+    ([cls_rgw.cc:604-618](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L604-L618)),
+    and checks it against the head because it does not exist or has a
+    pending tag
+    ([rgw_rados.cc:10019-10024](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L10019-L10024) and
+    [rgw_rados.cc:10279-10282](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L10279-L10282)),
+    answering from the head and suggesting an update
+    ([rgw_rados.cc:10634-10667](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L10634-L10667)).
+  - `rgw_dir_suggest_changes` applies a suggestion at the key
+    `encode_obj_index_key` gives, the instance entry for a key with an
+    instance
+    ([cls_rgw.cc:339-346](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L339-L346) and
+    [cls_rgw.cc:2249-2250](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2249-L2250),
+    [cls_rgw.cc:389-396](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L389-L396) and
+    [cls_rgw.cc:2419-2420](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2419-L2420)),
+    once the pending tag is past the bucket's tag timeout
+    ([cls_rgw.cc:2283-2299](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2283-L2299),
+    [cls_rgw.cc:2453-2469](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2453-L2469)),
+    and counts the entry in the header's stats then
+    ([cls_rgw.cc:2316-2366](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2316-L2366),
+    [cls_rgw.cc:2486-2536](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2486-L2536)).
+    The list entry is never that key, so it keeps its pending tag, `exists`
+    false and the prepare's meta until the version's unlink removes it.
+- **Impact:** listings stay correct, at one head stat per listing of the
+  key for as long as the version exists. The list entry is never
+  repaired, and the bucket's header stats count the version only after a
+  listing repairs its instance entry, which waits out
+  `rgw_pending_bucket_index_op_expiration`.
+- **Releases:** v19.2.7 and v20.2.4, from the source, not reproduced; the
+  prepare, the listing's check and the class's list filter were read at
+  v19.2.7 alone. What `radosgw-admin bucket check` makes of the list entry
+  was not traced.
+- **rgw-go:** differs: its versioned write awaits the completion
+  (`docs/exclusions.md`, "A versioned write awaits its index completion"),
+  cancels the prepare on an answer that proves the completion did not
+  land, and removes the version (`linkVersion`,
+  `internal/driver/put_versioned.go`), which "cancels its index prepare
+  when its completion fails with a definite answer, so the version's
+  removal leaves no index entry" (`internal/driver/put_versioned_test.go`)
+  pins.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C11's second re-review, 2026-10-27, tracing what
+  radosgw leaves after a completion the class refuses; registered in C11's
+  third fix round the same day. Derived from the source, not reproduced.

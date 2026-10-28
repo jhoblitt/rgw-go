@@ -11281,10 +11281,13 @@ rgw-go does the following.
   resends a refused completion without its object locator, as radosgw's
   does; the awaited completion keeps it, which changes nothing stored once
   the prepare has made the entry. Any other failure, the class's or the
-  guard's, is the write's to answer, where radosgw's unawaited completion
-  leaves the pending entry for listing to reconcile. An error does not
-  prove the completion did not land, since one that a context end or a
-  timeout interrupted can land later, so the write never links after one.
+  guard's, is the write's to answer. radosgw's unawaited completion leaves
+  the version's instance entry pending for a listing to repair, and the
+  list entry its link then writes pending until the version is removed
+  (docs/ceph-upstream-bugs.md, "[radosgw links a versioned write whose index completion the class refused, leaving its list entry pending until the version is removed](ceph-upstream-bugs.md#radosgw-links-a-versioned-write-whose-index-completion-the-class-refused-leaving-its-list-entry-pending-until-the-version-is-removed)").
+  An error does not prove the completion did not land, since one that a
+  context end or a timeout interrupted can land later, so the write never
+  links after one.
   After an answer that does prove it, the write cancels the prepare, as
   radosgw's `done_cancel` cancels the prepare of a completion it could not
   send
