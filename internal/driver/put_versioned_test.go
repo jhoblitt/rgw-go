@@ -1292,6 +1292,32 @@ var _ = Describe("a versioned PutObject", func() {
 			Entry("leaving the version on a timeout, after which the completion may yet land", syscall.ETIMEDOUT, op.ErrRequestTimedOut, false),
 		)
 
+		DescribeTable("cancels its index prepare when its completion fails with a definite answer, so the version's removal leaves no index entry",
+			func(ctx SpecContext, errno syscall.Errno, want error, canceled bool) {
+				ac.set(onFirst("bucket_complete_op", failWith(errno)))
+				_, err := put(ctx, "v1", "one", op.PutParams{})
+				Expect(err).To(MatchError(want))
+				settle(s)
+				var cancels int
+				for i := range shardWrites("bucket_complete_op") {
+					if c := completion(i); c.Op == rgwcls.OpCancel && c.Tag == "tag-v1" {
+						cancels++
+					}
+				}
+				en, ok := instanceEntry("v1")
+				if canceled {
+					Expect(ok).To(BeFalse(), "no entry with exists=false and a stale pending tag outlives the removal, %+v", en)
+					Expect(cancels).To(Equal(1), "the prepare's tag is canceled, as done_cancel cancels it")
+					return
+				}
+				Expect(cancels).To(BeZero(), "a completion that may yet land is not canceled, as done_cancel skips a timeout")
+				Expect(ok).To(BeTrue())
+				Expect(en.PendingMap).To(HaveLen(1), "the prepare stays pending for the completion that may land")
+			},
+			Entry("canceling it on an answer that proves the completion did not land", syscall.EIO, op.ErrUnknown, true),
+			Entry("leaving it on a timeout", syscall.ETIMEDOUT, op.ErrRequestTimedOut, false),
+		)
+
 		DescribeTable("leaves no pending modification when a conditional null write's head write, which carries its init, or its completion fails",
 			func(ctx SpecContext, method string, errno syscall.Errno, want error) {
 				mustPut(ctx, "v1", "one")
