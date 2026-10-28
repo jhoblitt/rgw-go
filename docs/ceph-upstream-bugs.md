@@ -425,7 +425,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw stores a POST upload's x-amz-website-redirect-location with its CR and LF and sends it raw](#radosgw-stores-a-post-uploads-x-amz-website-redirect-location-with-its-cr-and-lf-and-sends-it-raw) | pending | pending | ✓ |
 | [radosgw copies an empty x-amz-website-redirect-location attr from a null pointer](#radosgw-copies-an-empty-x-amz-website-redirect-location-attr-from-a-null-pointer) | pending | pending | ✓ |
 | [radosgw's website GetObject redirects a missing part only under a tag-conditioned policy](#radosgws-website-getobject-redirects-a-missing-part-only-under-a-tag-conditioned-policy) | pending | pending | ✓ |
-| [radosgw answers a GET or HEAD naming a delete marker's version 404 NoSuchKey](#radosgw-answers-a-get-or-head-naming-a-delete-markers-version-404-nosuchkey) | pending | pending | ✓ |
+| [radosgw answers a read naming a delete marker's version 404 NoSuchKey](#radosgw-answers-a-read-naming-a-delete-markers-version-404-nosuchkey) | pending | pending | ✓ |
 | [radosgw's attr writes put a null-current OLH head's OLH attrs back, reverting a link that lands in between](#radosgws-attr-writes-put-a-null-current-olh-heads-olh-attrs-back-reverting-a-link-that-lands-in-between) | pending | pending | ✓ |
 | [radosgw sends a website error page one byte past its Content-Length](#radosgw-sends-a-website-error-page-one-byte-past-its-content-length) | pending | pending | ✓ |
 | [radosgw's website error document read takes the request's Range and conditionals back](#radosgws-website-error-document-read-takes-the-requests-range-and-conditionals-back) | pending | pending | ✓ |
@@ -480,6 +480,10 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's CopyObject sends neither x-amz-version-id nor x-amz-copy-source-version-id](#radosgws-copyobject-sends-neither-x-amz-version-id-nor-x-amz-copy-source-version-id) | pending | pending | ✓ |
 | [radosgw sends no x-amz-version-id for the null version a write makes](#radosgw-sends-no-x-amz-version-id-for-the-null-version-a-write-makes) | pending | pending | ✓ |
 | [radosgw's OLH init, replay and repair set back the mtime of a null write landing after their read](#radosgws-olh-init-replay-and-repair-set-back-the-mtime-of-a-null-write-landing-after-their-read) | pending | pending | ✓ |
+| [Squid's 404 for a key whose current version is a delete marker carries no x-amz-delete-marker](#squids-404-for-a-key-whose-current-version-is-a-delete-marker-carries-no-x-amz-delete-marker) | pending | pending | |
+| [radosgw's GET and HEAD send no x-amz-version-id for the null version they read](#radosgws-get-and-head-send-no-x-amz-version-id-for-the-null-version-they-read) | pending | pending | ✓ |
+| [radosgw's DeleteObjectTagging naming no version writes the key's OLH head, not its current version](#radosgws-deleteobjecttagging-naming-no-version-writes-the-keys-olh-head-not-its-current-version) | pending | pending | ✓ |
+| [radosgw answers a copy source naming a delete marker's version 404 NoSuchKey](#radosgw-answers-a-copy-source-naming-a-delete-markers-version-404-nosuchkey) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -24995,14 +24999,15 @@ Every new entry adds its row to this table, in document order.
   the website GetObject's attrs come from. Derived from the source, not
   reproduced.
 
-## radosgw answers a GET or HEAD naming a delete marker's version 404 NoSuchKey
+## radosgw answers a read naming a delete marker's version 404 NoSuchKey
 
-- **Kind:** defect, S3-correctness: a GET or HEAD whose `versionId` names a
-  delete marker answers 404 NoSuchKey, the answer for a version that does
-  not exist, where S3 answers 405 MethodNotAllowed with
-  `x-amz-delete-marker: true`. Not security-relevant: either answer is a
-  refusal, and the 404 goes only to an admin or a requester who may list
-  the bucket. Unreproduced: derived from the source.
+- **Kind:** defect, S3-correctness: a GET, HEAD, GetObjectAttributes,
+  GetObjectAcl or GetObjectTagging whose `versionId` names a delete marker
+  answers 404 NoSuchKey, the answer for a version that does not exist,
+  where S3 answers 405 MethodNotAllowed with `x-amz-delete-marker: true`.
+  Not security-relevant: either answer is a refusal, and the 404 goes only
+  to an admin or a requester who may list the bucket. Unreproduced: derived
+  from the source.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
   - A delete marker has no head object: the versioned delete links it under
     the key's OLH through `set_olh` with the delete-marker flag and writes
@@ -25022,22 +25027,39 @@ Every new entry adds its row to this table, in document order.
     delete marker
     ([rgw_rest.cc:1936-1944](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1936-L1944)); Squid's adds no header
     ([rgw_rest.cc:1898-1938](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1898-L1938)).
+  - GetObjectAcl and GetObjectTagging read the object's policies through
+    the same `read_obj_policy`, whose missing object is that 404 to an
+    admin or to a requester allowed `s3:ListBucket` and 403 to any other
+    ([rgw_op.cc:423-447](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L423-L447),
+    [rgw_op.cc:453-477](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L453-L477)), and Squid's
+    `?attributes` is a GET.
   - S3 answers a GET or HEAD naming a delete marker's version with 405
     MethodNotAllowed and `x-amz-delete-marker: true` (GetObject,
     https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html, as
     the phase 2 versioning research records it,
     `docs/superpowers/plans/2026-10-13-phase-2/research/research-versioning.md`
-    §2.5 and §6; the page was not fetched for this entry).
+    §2.5 and §6). Its user guide gives the 405 and the header for any
+    read naming a marker's version, with `Last-Modified` "only when using
+    the HeadObject or GetObject API operations"
+    (https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeleteMarker.html,
+    as the task V14a review quotes it, 2026-10-27; not fetched for this
+    entry).
 - **Impact:** a client cannot tell a delete marker's version id from one
   that never existed: a version id taken from ListObjectVersions answers
   404 for a marker, and the `x-amz-delete-marker` that would say so is
   absent on Squid and `false` on Tentacle.
 - **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
-- **rgw-go:** the object store tells the two apart: `StatObject`'s lookup
-  of a named version that has no head sets `ObjectState.DeleteMarker` for a
-  delete marker that is listed (`namedVersion`, `internal/driver/stat.go`).
-  The S3 layer does not read it and answers 404 NoSuchKey, as radosgw does,
-  with Tentacle's `false`; Task V14a answers the 405 (decision D2).
+- **rgw-go:** differs: the five reads naming a delete marker's version
+  answer 405 MethodNotAllowed with `x-amz-delete-marker: true` on both
+  releases, a GET or HEAD with the marker's `Last-Modified`, to a requester
+  allowed the read's own version action on it, whether or not it may list
+  the bucket; any other requester gets radosgw's 404 or 403. The object
+  store tells a listed marker from a missing version (`namedVersion`,
+  `internal/driver/stat.go`), and the op answers it (`deleteMarkerVersion`,
+  `internal/op/deletemarker.go`; `docs/exclusions.md`, "A read naming a
+  delete marker's version answers 405 MethodNotAllowed"). Pinned in
+  `internal/op/getobject_test.go`, `internal/authz/evaluator_test.go` and
+  `internal/s3/versionedread_test.go`.
 - **Upstream:** pending; prior art not searched.
 - **Found:** the phase 2 versioning research, 2026-10-13, as its defect 6;
   registered by phase 2 Task V6's fix round, 2026-10-22, whose
@@ -28719,3 +28741,254 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task C10b's review, round 2, 2026-10-23, reading every
   write of an OLH head's mtime; registered by phase 2 task V12b,
   2026-10-27. Derived from the source, not reproduced.
+
+## Squid's 404 for a key whose current version is a delete marker carries no x-amz-delete-marker
+
+- **Kind:** defect, S3-correctness, fixed in Tentacle. A GET or HEAD of a
+  key whose current version is a delete marker answers 404 NoSuchKey
+  without `x-amz-delete-marker`, which S3 sends as `true` on that 404. Not
+  security-relevant: the 404 goes only to an admin or a requester who may
+  list the bucket. Unreproduced: derived from the source.
+- **Evidence:**
+  - v19.2.7's `RGWHandler_REST::read_permissions` returns
+    `do_read_permissions`' answer and sends no header
+    ([rgw_rest.cc:1898-1938](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1898-L1938)).
+  - v20.2.4's, on the `-ENOENT` of a GET or HEAD, loads the key's state
+    following the OLH and sends `x-amz-delete-marker` naming whether the
+    current version is a delete marker
+    ([rgw_rest.cc:1936-1944](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1936-L1944)).
+    It came with Ceph commit 3fe65839df2, "rgw: hook up delete-marker
+    detection", the cherry-pick of main's 8654b1f202a, whose message cites
+    S3's documented header; v19.2.7 does not contain it, and the squid
+    branch did not carry it at 226f1401666 (2026-10-12).
+  - s3-tests' `test_delete_marker_versioned` and
+    `test_delete_marker_suspended` read the header from a HEAD's 404.
+  - S3's sample of that 404 also names the marker's version in
+    `x-amz-version-id` (API_GetObject, "If the Latest Object Is a Delete
+    Marker", as the task V14a review quotes it, 2026-10-27), which neither
+    release sends. The source is a documentation sample, not a rule, and
+    rgw-go keeps radosgw's answer.
+- **Impact:** a client of a Squid zone cannot tell from the 404 that the
+  key's current version is a delete marker, rather than a key that never
+  existed, without listing its versions.
+- **Releases:** v19.2.7; v20.2.4 has the header.
+- **rgw-go:** differs on Squid: it sends the header on both releases
+  wherever Tentacle does (`setMissingDeleteMarker`,
+  `internal/s3/deletemarker.go`; `docs/exclusions.md`, "A key whose current
+  version is a delete marker answers its 404 with x-amz-delete-marker: true
+  on Squid too"). Pinned in `internal/s3/versionedread_test.go`.
+- **Upstream:** pending; prior art not searched.
+- **Found:** the phase 2 versioning research, 2026-10-13, as its defect 7;
+  registered by phase 2 task V14a, 2026-10-27, which serves the header.
+  Derived from the source, not reproduced.
+
+## radosgw's GET and HEAD send no x-amz-version-id for the null version they read
+
+- **Kind:** defect, S3-correctness (minor), not security-relevant: a GET or
+  HEAD that names no version of a key whose current version is the null
+  version answers without `x-amz-version-id`, where S3 sends `null`, the
+  null version's id; and a `partNumber` read of a version names the
+  instance of its part head's key, usually none, instead of the version's.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `Read::prepare` keeps the key of the version it followed to
+    ([rgw_rados.cc:7105](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7105),
+    [rgw_rados.cc:7767](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7767)),
+    `RadosReadOp::prepare` copies its instance to the request's object
+    ([rgw_sal_rados.cc:2864](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2864),
+    [rgw_sal_rados.cc:3699](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3699)),
+    and `RGWGetObj::execute` takes `version_id` from it
+    ([rgw_op.cc:2260](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2260),
+    [rgw_op.cc:2496](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2496)).
+  - `send_response_data` sends it through `dump_header_if_nonempty`
+    ([rgw_rest_s3.cc:469](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L469),
+    [rgw_rest_s3.cc:497](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L497)), which sends
+    nothing for an empty value
+    ([rgw_rest.h:780-786](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.h#L780-L786),
+    [rgw_rest.h:792-798](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.h#L792-L798)). The null version
+    is the key with an empty instance, as the write that makes it leaves it
+    ("radosgw sends no x-amz-version-id for the null version a write
+    makes"), so a read that follows the OLH to it sends no id. A read
+    naming `versionId=null` keeps the instance it named and sends `null`.
+  - For a `partNumber` read, `get_part_obj_state` puts the part head's
+    state in place of the object's before `Read::prepare` keeps its key
+    ([rgw_rados.cc:7076-7105](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7076-L7105),
+    [rgw_rados.cc:7738-7767](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7738-L7767)),
+    and the part's tails carry the instance of the key their UploadPart
+    request named
+    ([rgw_obj_manifest.cc:269](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_obj_manifest.cc#L269),
+    [rgw_obj_manifest.cc:269](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_obj_manifest.cc#L269);
+    [rgw_op.cc:4265](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4265),
+    [rgw_op.cc:4478](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4478)), none unless it named a
+    `versionId`, whatever version the completion made.
+  - The null case is one more input to the sink "[radosgw sends no
+    x-amz-version-id for the null version a write
+    makes](#radosgw-sends-no-x-amz-version-id-for-the-null-version-a-write-makes)"
+    names: the empty `version_id` that `dump_header_if_nonempty` drops. A
+    fix that names the null version `null` on a bucket whose versioning
+    was ever enabled, where the header is sent, covers both.
+- **Impact:** a client reading a key cannot tell from the answer that it
+  read the null version, nor which version a `partNumber` read came from.
+- **Releases:** v19.2.7 and v20.2.4; main was not checked.
+- **rgw-go:** differs: GET, HEAD and GetObjectAttributes name the null
+  version `null` on a bucket whose versioning was ever enabled, and a
+  `partNumber` read names the object's version (`readVersionID`,
+  `internal/op/getobject.go`; `docs/exclusions.md`, "GET, HEAD and
+  GetObjectAttributes name the version they read, null for the null
+  version"). Pinned in `internal/op/getobject_test.go` and
+  `internal/s3/versionedread_test.go`.
+- **Upstream:** pending; prior art not searched.
+- **Found:** the phase 2 versioning research, 2026-10-13, as the read side
+  of its defect 8; registered by phase 2 task V14a, 2026-10-27, serving
+  versioned reads. Derived from the source, not reproduced.
+
+## radosgw's DeleteObjectTagging naming no version writes the key's OLH head, not its current version
+
+- **Kind:** defect, security: rgw-bug-reproduction's triage (2026-10-27)
+  rates it a security defect of low severity. It touches the integrity of a
+  noncurrent version's tags, which S3 lets a requester change only under
+  `s3:DeleteObjectVersionTagging`, and of the bucket index's accounting;
+  and it is an S3-correctness defect, as the current version keeps the tags
+  the request removes. Reproduced at v20.2.4 by rgw-bug-reproduction on a
+  disposable cluster, 2026-10-27.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWDeleteObjTags` authorizes a request naming no version for
+    `s3:DeleteObjectTagging` and calls `delete_obj_attrs` on `s->object`,
+    the key as the request names it
+    ([rgw_op.cc:1117-1139](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1117-L1139),
+    [rgw_op.cc:1335-1376](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1335-L1376)). At v20.2.4 its
+    own `get_obj_attrs` follows the OLH, but what it reads feeds only the
+    bucket logging record and the mtime the write stamps, never the key the
+    write goes to.
+  - `delete_obj_attrs` hands `set_obj_attrs` that object, where
+    `modify_obj_attrs`, which PutObjectTagging and PutObjectAcl call, first
+    puts in its place the version `get_obj_attrs` followed to
+    ([rgw_sal_rados.cc:2402-2430](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2402-L2430),
+    [rgw_sal_rados.cc:2994-3022](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2994-L3022)).
+  - `set_attrs` writes the head of that key, on a versioned key the OLH
+    head, which is also the null version's head when the key has one, read
+    without following the OLH
+    ([rgw_rados.cc:6801](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6801) through
+    `append_atomic_test`,
+    [rgw_rados.cc:6590](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6590);
+    [rgw_rados.cc:7415](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7415),
+    [rgw_rados.cc:7204](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7204)). It
+    removes the tag attr there, gives the head a new write tag and mtime
+    ([rgw_rados.cc:6861-6874](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6861-L6874),
+    [rgw_rados.cc:7475-7488](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7475-L7488)),
+    and prepares and completes an index ADD for the instance-less key
+    ([rgw_rados.cc:6849-6909](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6849-L6909),
+    [rgw_rados.cc:7463-7559](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7463-L7559)).
+  - cls_rgw resolves an instance-less key whose plain entry is a version
+    marker to the null version's instance entry
+    ([cls_rgw.cc:946-978](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L946-L978),
+    [cls_rgw.cc:1076-1108](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1076-L1108)), and a
+    key's first link writes that marker whether or not a plain entry was
+    there
+    ([cls_rgw.cc:1587-1633](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1587-L1633) from
+    [cls_rgw.cc:1792-1800](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1792-L1800);
+    [cls_rgw.cc:1715-1760](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1715-L1760) from
+    [cls_rgw.cc:1936](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1936)). On a key with no
+    null version, the prepare creates that entry
+    ([cls_rgw.cc:839-875](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L839-L875),
+    [cls_rgw.cc:971-1004](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L971-L1004)), and the
+    complete's ADD makes it exist and counts it in the bucket's stats
+    ([cls_rgw.cc:1168-1198](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1168-L1198),
+    [cls_rgw.cc:1301-1329](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1301-L1329)). A listing
+    does not show it, as it skips the instance entries' namespace
+    ([cls_rgw.cc:563-568](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L563-L568),
+    [cls_rgw.cc:614-619](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L614-L619)).
+- **Impact:** on a versioned key whose current version is not the null
+  version, as rgw-bug-reproduction's v20.2.4 run reproduced it:
+  - the request answers 204 and the current version keeps its tags: a HEAD
+    still shows its `x-amz-tagging-count`, and the tags go on matching
+    `s3:ExistingObjectTag` conditions;
+  - with no null version, a phantom appears: an instance entry for
+    `{k,""}`, existing and of size 0, that no listing shows and that a
+    HEAD of `versionId=null` answers 404. The bucket's `num_objects` goes
+    from 1 to 2, once per key however many calls are made. The phantom
+    outlives the key's real data, as after a DELETE of the version the
+    bucket still counts one object, and it is enough to trip a bucket's
+    max-objects quota: a later PUT answered QuotaExceeded in the run, with
+    `rgw_bucket_quota_ttl` at 2 s;
+  - with a noncurrent null version no phantom appears, and the null version
+    loses its tags instead, so a requester allowed `s3:DeleteObjectTagging`
+    and not `s3:DeleteObjectVersionTagging` changes a noncurrent version,
+    and with it what tag-conditioned policies allow on it. Its head also
+    takes the epoch's mtime on Squid, by the source ("[Squid's
+    DeleteObjectTagging stamps the object with the epoch plus one
+    nanosecond](#squids-deleteobjecttagging-stamps-the-object-with-the-epoch-plus-one-nanosecond)"),
+    and on Tentacle the current version's, which `get_obj_attrs` read
+    following the OLH
+    ([rgw_sal_rados.cc:2960-2968](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2960-L2968)).
+
+  The run's controls held: on a key whose current version is the null
+  version the request removes that version's tags, as S3 does, and a
+  DELETE naming the current version's id removes its tags. Not established:
+  Squid on a cluster, main on a cluster, lifecycle tag filters, the Swift
+  and admin callers of `delete_obj_attrs`, and what `bucket check --fix`
+  makes of the phantom.
+- **Releases:** reproduced at v20.2.4 on a disposable cluster by
+  rgw-bug-reproduction, 2026-10-27; v19.2.7 from the source, not
+  reproduced. Main is unchanged in the source, by rgw-bug-reproduction's
+  check.
+- **rgw-go:** differs: DeleteObjectTagging removes the tags of the version
+  its read resolved, the current one when none is named, and touches
+  neither the OLH head nor the null version's index entry
+  (`DeleteObjectTagging`, `internal/op/objectattrs.go`; `docs/exclusions.md`,
+  "DeleteObjectTagging naming no version removes the current version's
+  tags"). Pinned in `internal/op/objectattrs_test.go` and
+  `internal/s3/versionedread_test.go`. A bucket radosgw served keeps any
+  null instance entry it left; rgw-go's read of `versionId=null` there
+  finds a head without a manifest and an entry that is no delete marker,
+  and answers 404 NoSuchKey (`namedVersion`, `internal/driver/stat.go`).
+- **Upstream:** pending: triaged by rgw-bug-reproduction, 2026-10-27;
+  prior art not searched.
+- **Found:** phase 2 task V14a, 2026-10-27, serving DeleteObjectTagging on
+  versioned buckets, tracing a lead from task V6's review; reproduced at
+  v20.2.4 by rgw-bug-reproduction, 2026-10-27.
+
+## radosgw answers a copy source naming a delete marker's version 404 NoSuchKey
+
+- **Kind:** defect, S3-correctness, not security-relevant: a CopyObject or
+  an UploadPartCopy whose `x-amz-copy-source` names a delete marker's
+  version answers 404 NoSuchKey, or 403 to a requester who may not list
+  the source's bucket, the answers for a source that does not exist, where
+  S3 answers 400 Bad Request. Either answer is a refusal, and neither tells
+  a requester more than the other. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - Both ops key the source with its `versionId` and read its policies
+    through `read_obj_policy`, CopyObject
+    ([rgw_op.cc:5422-5428](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5422-L5428),
+    [rgw_op.cc:5985-5991](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5985-L5991)) and
+    UploadPartCopy
+    ([rgw_op.cc:3932-3937](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3932-L3937),
+    [rgw_op.cc:4141-4146](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4141-L4146)). A delete
+    marker has no head, so the read finds no object, and the missing
+    object is 404 to an admin or to a requester allowed `s3:ListBucket` on
+    the source's bucket and 403 to any other
+    ([rgw_op.cc:423-447](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L423-L447),
+    [rgw_op.cc:453-477](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L453-L477)).
+  - API_UploadPartCopy, `x-amz-copy-source`: when the `versionId` is a
+    delete marker, "Amazon S3 returns an HTTP 400 Bad Request error,
+    because you are not allowed to specify a delete marker as a version for
+    the x-amz-copy-source"
+    (https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPartCopy.html,
+    as the task V14a review quotes it, 2026-10-27; not fetched for this
+    entry). API_CopyObject documents only a source whose current version is
+    a delete marker, answered as a missing object, so the CopyObject half
+    rests on the `x-amz-copy-source` semantics the two share.
+- **Impact:** a client copying from a version id it listed cannot tell a
+  delete marker from a version that was removed.
+- **Releases:** v19.2.7 and v20.2.4; main was not checked.
+- **rgw-go:** differs: both ops answer 400 InvalidRequest, with a message
+  of rgw-go's own, to a requester allowed `s3:GetObjectVersion` on the
+  source's version, ahead of the missing source's rule; any other requester
+  keeps radosgw's 404 or 403 (`copySourceMarker`,
+  `internal/op/deletemarker.go`; `docs/exclusions.md`, "A copy source naming
+  a delete marker's version answers 400 InvalidRequest"). Pinned in
+  `internal/op/copyobject_test.go` and `internal/s3/versionedread_test.go`.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task V14a's review, 2026-10-27, as task V14a served
+  UploadPartCopy from a version; registered by its fix round. Derived from
+  the source, not reproduced.
