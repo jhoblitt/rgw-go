@@ -103,6 +103,10 @@ type Request struct {
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5556-L5559 at v20.2.4).
 	// The S3 handler's PostAuthInit sets it through Env.MFA.
 	MFAVerified bool
+	// MFAPresent is that the request carried x-amz-mfa, whether or not it
+	// verified, as postauth_init finds it in the request's env. The S3
+	// handler's PostAuthInit sets it.
+	MFAPresent bool
 	// AuthRoute is AuthResult.Route, which says what of the query a read
 	// may take.
 	AuthRoute AuthRoute

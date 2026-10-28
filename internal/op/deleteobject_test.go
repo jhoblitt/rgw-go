@@ -1,6 +1,7 @@
 package op_test
 
 import (
+	"context"
 	"math"
 	"net/http"
 	"time"
@@ -43,7 +44,7 @@ var _ = Describe("DeleteObject", func() {
 		},
 		Entry("no instance", "", policy.S3DeleteObject, nil),
 		Entry("the null instance, the plain object on a bucket whose versioning was never enabled", "null", policy.S3DeleteObjectVersion, nil),
-		Entry("a version, which is not served yet", "v1", policy.S3DeleteObjectVersion, op.ErrNotImplemented),
+		Entry("a version, which a bucket never versioned does not hold: radosgw's 204", "v1", policy.S3DeleteObjectVersion, nil),
 	)
 	It("deletes the object, answering nil for radosgw's 204, and logs no usage", func(ctx SpecContext) {
 		o := &op.DeleteObject{}
@@ -140,7 +141,7 @@ var _ = Describe("DeleteObject", func() {
 		f.env.Objects = stub
 		Expect(op.Run(ctx, &op.DeleteObject{}, f.req(http.MethodDelete, "plain", "small"))).To(Succeed())
 		_, _, _, p := stub.DeleteObjectArgsForCall(0)
-		Expect(p).To(Equal(op.DeleteParams{}))
+		Expect(p).To(Equal(op.DeleteParams{MarkerOwner: f.alice.Owner, MarkerOwnerDisplayName: "Alice"}))
 
 		o := &op.DeleteObject{
 			IfMatch: new("*"), IfMatchSize: new("-1"),
@@ -230,35 +231,156 @@ var _ = Describe("DeleteObject", func() {
 		Entry("any other failure passes", op.ErrServiceUnavailable, op.ErrServiceUnavailable),
 	)
 	Describe("on a bucket with MFA delete", func() {
-		BeforeEach(func(ctx SpecContext) { f.setBucketFlags(ctx, meta.BucketMFAEnabled) })
-
-		It("refuses a delete of a version, whose MFA rgw-go never verifies", func(ctx SpecContext) {
-			r := f.req(http.MethodDelete, "plain", "small")
-			r.Object.Instance = "null"
-			Expect(op.Run(ctx, &op.DeleteObject{}, r)).To(MatchError(op.ErrMFARequired))
-			Expect(f.stat(ctx, "small").Exists).To(BeTrue())
-		})
-		It("deletes without a version", func(ctx SpecContext) {
-			Expect(op.Run(ctx, &op.DeleteObject{}, f.req(http.MethodDelete, "plain", "small"))).To(Succeed())
-		})
-		It("refuses an admin refused the permission too, where radosgw's override skips MFA", func(ctx SpecContext) {
-			stub := &opfakes.FakeObjectStore{}
+		var stub *opfakes.FakeObjectStore
+		BeforeEach(func(ctx SpecContext) {
+			f.setBucketFlags(ctx, meta.BucketVersioned|meta.BucketMFAEnabled)
+			stub = &opfakes.FakeObjectStore{}
+			stub.DeleteObjectReturns(&op.DeleteObjectResult{}, nil)
 			f.env.Objects = stub
+		})
+		// run deletes small at instance as id, whose x-amz-mfa verified a
+		// device of id's user when verified.
+		run := func(ctx context.Context, id op.Identity, instance string, verified bool) error {
 			r := f.req(http.MethodDelete, "plain", "small")
-			r.Identity = f.bob
-			r.Identity.Admin = true
-			r.Object.Instance = "null"
-			Expect(op.Run(ctx, &op.DeleteObject{}, r)).To(MatchError(op.ErrMFARequired))
+			r.Identity, r.Object.Instance, r.MFAVerified = id, instance, verified
+			return op.Run(ctx, &op.DeleteObject{}, r)
+		}
+		// expectRefused checks err is ERR_MFA_REQUIRED, which shares
+		// AccessDenied and 403 with EACCES and differs in its errno.
+		expectRefused := func(err error) {
+			GinkgoHelper()
+			Expect(err).To(MatchError(op.ErrMFARequired))
+			Expect(op.AsError(err).Errno).To(Equal(op.ErrMFARequired.Errno), "ERR_MFA_REQUIRED, not the permission's EACCES")
+			Expect(stub.DeleteObjectCallCount()).To(BeZero(), "nothing reaches the store")
+		}
+
+		DescribeTable("deletes a version only under the owner's verified x-amz-mfa, and writes a delete marker without one",
+			func(ctx SpecContext, instance string, verified, refused bool) {
+				err := run(ctx, f.alice, instance, verified)
+				if refused {
+					expectRefused(err)
+					return
+				}
+				Expect(err).NotTo(HaveOccurred())
+				Expect(stub.DeleteObjectCallCount()).To(Equal(1))
+			},
+			Entry("a version, unverified", "v1", false, true),
+			Entry("the null version, unverified, a version as radosgw counts it", "null", false, true),
+			Entry("a version, verified", "v1", true, false),
+			Entry("the null version, verified", "null", true, false),
+			Entry("no version, unverified: the delete marker removes nothing", "", false, false),
+		)
+		It("counts no requester's code but the owner's, even one the permission lets delete", func(ctx SpecContext) {
+			f.env.Authz = &opfakes.FakeAuthorizer{}
+			expectRefused(run(ctx, f.bob, "v1", true))
+		})
+		DescribeTable("checks an admin whom the permission refuses, where radosgw's admin override skips the MFA check",
+			func(ctx SpecContext, verified bool) {
+				admin := f.bob
+				admin.Admin = true
+				expectRefused(run(ctx, admin, "v1", verified))
+			},
+			Entry("unverified", false),
+			Entry("with the admin's own code verified, which is not the owner's", true),
+		)
+		It("lets an admin the permission refuses delete a version under the owner's verified code", func(ctx SpecContext) {
+			admin := f.alice
+			admin.Admin = true
+			fake := &opfakes.FakeAuthorizer{}
+			fake.VerifyBucketReturns(op.ErrAccessDenied)
+			f.env.Authz = fake
+			Expect(run(ctx, admin, "v1", true)).To(Succeed())
+			Expect(stub.DeleteObjectCallCount()).To(Equal(1))
+		})
+		It("returns the permission's own refusal once the owner's code verified", func(ctx SpecContext) {
+			fake := &opfakes.FakeAuthorizer{}
+			fake.VerifyBucketReturns(op.ErrAccessDenied)
+			f.env.Authz = fake
+			err := run(ctx, f.alice, "v1", true)
+			Expect(err).To(MatchError(op.ErrAccessDenied))
+			Expect(op.AsError(err).Errno).To(Equal(op.ErrAccessDenied.Errno), "the permission's EACCES, not ERR_MFA_REQUIRED")
 			Expect(stub.DeleteObjectCallCount()).To(BeZero())
 		})
-		It("still returns a refusal the authorizer marks first", func(ctx SpecContext) {
-			fake := &opfakes.FakeAuthorizer{}
-			fake.VerifyBucketReturns(op.BeforeVerify(op.ErrUserSuspended))
-			f.env.Authz = fake
-			r := f.req(http.MethodDelete, "plain", "small")
-			r.Object.Instance = "null"
-			Expect(op.Run(ctx, &op.DeleteObject{}, r)).To(MatchError(op.ErrUserSuspended))
+		DescribeTable("returns a refusal op.Run never overrides as it is, ahead of the MFA check",
+			func(ctx SpecContext, refusal, want error) {
+				fake := &opfakes.FakeAuthorizer{}
+				fake.VerifyBucketReturns(refusal)
+				f.env.Authz = fake
+				admin := f.alice
+				admin.Admin = true
+				Expect(run(ctx, admin, "v1", false)).To(MatchError(want))
+				Expect(stub.DeleteObjectCallCount()).To(BeZero())
+			},
+			Entry("one the authorizer marks first", op.BeforeVerify(op.ErrUserSuspended), op.ErrUserSuspended),
+			Entry("one that is no access denial, a tag read's failure", op.ErrInternalError, op.ErrInternalError),
+		)
+	})
+	Describe("on a versioned bucket", func() {
+		var stub *opfakes.FakeObjectStore
+		BeforeEach(func() {
+			stub = &opfakes.FakeObjectStore{}
+			stub.DeleteObjectReturns(&op.DeleteObjectResult{}, nil)
+			f.env.Objects = stub
 		})
+		DescribeTable("hands the store the key, the requester as a delete marker's owner and no expected state, with the key's own update",
+			func(ctx SpecContext, flags uint32, instance string) {
+				f.setBucketFlags(ctx, flags)
+				r := f.req(http.MethodDelete, "plain", "small")
+				r.Object.Instance = instance
+				Expect(op.Run(ctx, &op.DeleteObject{}, r)).To(Succeed())
+				Expect(stub.DeleteObjectCallCount()).To(Equal(1))
+				_, rec, key, p := stub.DeleteObjectArgsForCall(0)
+				Expect(rec.Info.Flags).To(Equal(flags))
+				Expect(key).To(Equal(meta.ObjKey{Name: "small", Instance: instance}))
+				Expect(p.MarkerOwner).To(Equal(f.alice.Owner))
+				Expect(p.MarkerOwnerDisplayName).To(Equal("Alice"))
+				Expect(p.SkipOLHUpdate).To(BeFalse())
+				Expect(p.Expect).To(BeNil())
+			},
+			Entry("enabled, a delete marker", uint32(meta.BucketVersioned), ""),
+			Entry("enabled, a version", uint32(meta.BucketVersioned), "v1"),
+			Entry("suspended, the null delete marker", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended), ""),
+			Entry("suspended, the null version", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended), "null"),
+		)
+		It("names an account's user's delete marker for the account, under the account's name, as s->owner does", func(ctx SpecContext) {
+			f.setBucketFlags(ctx, meta.BucketVersioned)
+			f.env.Authz = &opfakes.FakeAuthorizer{}
+			const acct = "RGW12345678901234567"
+			u := meta.UserInfo{UserID: meta.UserID{ID: "carol"}, DisplayName: "Carol", AccountID: acct}
+			r := f.req(http.MethodDelete, "plain", "small")
+			r.Identity = op.Identity{User: &u, Owner: meta.AccountOwner(acct), Account: &meta.AccountInfo{ID: acct, Name: "acme"}, OpMask: op.OpTypeAll}
+			Expect(op.Run(ctx, &op.DeleteObject{}, r)).To(Succeed())
+			_, _, _, p := stub.DeleteObjectArgsForCall(0)
+			Expect(p.MarkerOwner).To(Equal(meta.AccountOwner(acct)))
+			Expect(p.MarkerOwnerDisplayName).To(Equal("acme"))
+		})
+		DescribeTable("answers the version and the delete marker the store reports, and none for a delete that answers success without one",
+			func(ctx SpecContext, res *op.DeleteObjectResult, storeErr error, wantVersion string, wantMarker bool) {
+				f.setBucketFlags(ctx, meta.BucketVersioned)
+				stub.DeleteObjectReturns(res, storeErr)
+				o := &op.DeleteObject{}
+				Expect(op.Run(ctx, o, f.req(http.MethodDelete, "plain", "small"))).To(Succeed())
+				Expect(o.VersionID).To(Equal(wantVersion))
+				Expect(o.DeleteMarker).To(Equal(wantMarker))
+			},
+			Entry("a delete marker written", &op.DeleteObjectResult{VersionID: "m1", DeleteMarker: true}, nil, "m1", true),
+			Entry("a version removed", &op.DeleteObjectResult{VersionID: "v1"}, nil, "v1", false),
+			Entry("an unversioned delete", &op.DeleteObjectResult{}, nil, "", false),
+			Entry("a missing version, radosgw's 204 with neither header", nil, op.ErrNoSuchKey, "", false),
+			Entry("a lost race, radosgw's 204 with neither header", nil, op.ErrConcurrentModification, "", false),
+		)
+		DescribeTable("answers 501 on a bucket with object lock, a delete marker's included, before the store",
+			func(ctx SpecContext, instance string) {
+				f.setBucketFlags(ctx, meta.BucketVersioned|meta.BucketObjLockEnabled)
+				r := f.req(http.MethodDelete, "plain", "small")
+				r.Object.Instance = instance
+				Expect(op.Run(ctx, &op.DeleteObject{}, r)).To(MatchError(op.ErrNotImplemented))
+				Expect(stub.DeleteObjectCallCount()).To(BeZero())
+			},
+			Entry("no version", ""),
+			Entry("a version", "v1"),
+			Entry("the null version", "null"),
+		)
 	})
 	DescribeTable("takes a condition header present with an empty value as radosgw does, and keeps the object",
 		func(ctx SpecContext, o *op.DeleteObject, want error) {

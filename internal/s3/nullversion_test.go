@@ -108,13 +108,18 @@ var _ = Describe("a request naming the null version", func() {
 				Entry("refusing a requester allowed s3:DeleteObject alone, as rgw_op.cc:6829-6831 at v19.2.6 does", "s3:DeleteObject", false),
 				Entry("deleting for a requester allowed s3:DeleteObjectVersion alone", "s3:DeleteObjectVersion", true),
 			)
-			DescribeTable("on a bucket whose versioning is or was enabled is answered 501 and changes nothing",
+			DescribeTable("on a bucket whose versioning is or was enabled is handed to the store's delete as the null version",
 				func(ctx SpecContext, flags uint32) {
 					w := newWriteWorld(ctx, rel)
 					w.setBucketInfo(ctx, func(i *meta.BucketInfo) { i.Flags |= flags })
-					expectStatusLine(w.send(w.alice, http.MethodPost, "/plain?delete", deleteDoc("<Key>src</Key><VersionId>null</VersionId>")), 501)
-					Expect(w.send(w.alice, http.MethodDelete, "/plain/src?versionId=null", "").Code).To(Equal(501))
-					Expect(w.stat(ctx, "src").Exists).To(BeTrue())
+					store := answering(w.store, &op.DeleteObjectResult{VersionID: meta.NullInstance}, nil)
+					w.env.Objects = store
+					rec := w.send(w.alice, http.MethodPost, "/plain?delete", deleteDoc("<Key>src</Key><VersionId>null</VersionId>"))
+					Expect(rec.Body.String()).To(Equal(deleteResultOpen + "<Deleted><Key>src</Key><VersionId>null</VersionId></Deleted></DeleteResult>"))
+					rec = w.send(w.alice, http.MethodDelete, "/plain/src?versionId=null", "")
+					expectNoContent(rec)
+					Expect(rec.Header()).To(HaveKeyWithValue("x-amz-version-id", []string{"null"}))
+					Expect(store.keys).To(Equal([]meta.ObjKey{{Name: "src", Instance: "null"}, {Name: "src", Instance: "null"}}))
 				},
 				Entry("enabled", uint32(meta.BucketVersioned)),
 				Entry("suspended", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended)),

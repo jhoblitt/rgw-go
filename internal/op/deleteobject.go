@@ -15,9 +15,9 @@ import (
 )
 
 // DeleteObject is RGWDeleteObj
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5129-L5327 at v19.2.6,
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5129-L5330 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5519-L5726 at v20.2.4;
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3427-L3470 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3435-L3500 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3685-L3750 at v20.2.4).
 // The handler fills the headers' values, url-decoded where radosgw decodes
 // them, and nil for a header that is absent. A header present with an
@@ -35,8 +35,11 @@ type DeleteObject struct {
 	IfMatchSize         *string
 	IfMatchLastModified *string
 
-	// VersionID and DeleteMarker are del_op->result: empty and false for the
-	// unversioned deletes rgw-go performs.
+	// VersionID and DeleteMarker are del_op->result, which execute keeps
+	// only from a delete that succeeded: the version a versioned delete
+	// removed or the delete marker it wrote, "null" for the null version, and
+	// whether that version is a delete marker. Both stay unset for an
+	// unversioned delete, a missing version and a lost race.
 	VersionID    string
 	DeleteMarker bool
 
@@ -99,59 +102,108 @@ func (o *DeleteObject) Init(ctx context.Context, r *Request) error {
 }
 
 // VerifyPermission is RGWDeleteObj::verify_permission
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5138-L5166 at v19.2.6,
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5138-L5166 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5528-L5556 at v20.2.4):
-// the bucket permission, then MFA for a delete of a version in a bucket with
-// MFA delete, which radosgw lets through only when the request's x-amz-mfa
-// verified. DeleteObject does not take the verdict the S3 handler's
-// PostAuthInit gives Request.MFAVerified, so it refuses every such delete,
-// an admin's included: radosgw returns the permission's refusal first,
-// which its admin override then passes without the MFA check
-// (docs/exclusions.md).
+// the bucket permission for the action the instance selects, then, for a
+// delete that names a version, "null" included, in a bucket with MFA delete,
+// ERR_MFA_REQUIRED, 403 AccessDenied, unless the request's x-amz-mfa verified
+// a device of the bucket's owner (OwnerMFAVerified), where radosgw takes any
+// requester's verified code (docs/exclusions.md, "Only the bucket owner's
+// x-amz-mfa satisfies MFA delete"). A refusal of the permission that op.Run
+// never overrides goes before the MFA check, as radosgw's refusal does. One
+// that op.Run's admin override passes still meets the check, so an admin
+// needs the owner's code too, where radosgw returns that refusal before its
+// check and its override then lets the delete through without one.
 // ERR_MFA_REQUIRED is no access denial op.Run overrides.
 func (o *DeleteObject) VerifyPermission(ctx context.Context, r *Request) error {
 	a := o.Action()
 	err := VerifyBucketPermission(ctx, r, a, acl.PermFor(a))
-	if IsBeforeVerify(err) {
+	if IsBeforeVerify(err) || err != nil && !isAccessDenial(err) {
 		return err
 	}
-	if mfaEnabled(r.BucketRec) && r.Object.Instance != "" {
-		return ErrMFARequired
+	if o.Versioned && r.BucketRec.Info.MFAEnabled() && !OwnerMFAVerified(r) {
+		return fmt.Errorf("%w: deleting version %q of %s needs the bucket owner's verified x-amz-mfa", ErrMFARequired, r.Object.Instance, r.Object.Name)
 	}
 	return err
 }
 
-// Execute is RGWDeleteObj::execute's unversioned path
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5173-L5327 at v19.2.6,
+// Execute is RGWDeleteObj::execute
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5173-L5330 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5563-L5726 at v20.2.4):
-// the delete, where a missing key is the 204
-// RGWDeleteObj_ObjStore_S3::send_response turns -ENOENT into
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3457-L3461 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3737-L3741 at v20.2.4),
+// the delete, versioned on a bucket whose versioning was ever enabled, with
+// the requester as a delete marker's owner, as del_op->params.obj_owner is
+// s->owner, and the version and delete marker it reports. A missing key or
+// version is the 204 RGWDeleteObj_ObjStore_S3::send_response turns -ENOENT
+// into
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3485-L3500 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3735-L3750 at v20.2.4),
 // and a lost race is success
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5302-L5304 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5701-L5703 at v20.2.4).
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5305-L5307 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5701-L5703 at v20.2.4),
+// each with neither header. radosgw's execute reads the object's state,
+// following the OLH, ahead of the delete and ignores what the read answers
+// unless it checks object lock; the store's delete reads what it needs
+// itself, following the OLH where a delete marker's conditions need the
+// version current, so the op makes no read of its own. A bucket with object
+// lock answers 501 (deleteLockUnserved).
 func (o *DeleteObject) Execute(ctx context.Context, r *Request) error {
-	if err := versioningUnserved(r.BucketRec, r.Object); err != nil {
+	if err := deleteLockUnserved(r.BucketRec); err != nil {
 		return err
 	}
 	if r.Object.Name == "" {
 		return ErrInvalidArgument
 	}
-	_, err := r.Env.Objects.DeleteObject(ctx, r.BucketRec, r.Object, o.params)
-	if errors.Is(err, ErrNoSuchKey) || errors.Is(err, ErrConcurrentModification) {
+	o.params.MarkerOwner, o.params.MarkerOwnerDisplayName = requesterOwner(r)
+	res, err := r.Env.Objects.DeleteObject(ctx, r.BucketRec, r.Object, o.params)
+	switch {
+	case errors.Is(err, ErrNoSuchKey), errors.Is(err, ErrConcurrentModification):
 		return nil
+	case err != nil:
+		return err
+	case res != nil:
+		o.VersionID, o.DeleteMarker = res.VersionID, res.DeleteMarker
 	}
-	return err
+	return nil
 }
 
 // Complete does nothing: the handler logs usage once the response is written.
 func (o *DeleteObject) Complete(context.Context, *Request) {}
 
-// mfaEnabled is RGWBucketInfo::mfa_enabled
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.h#L1077 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1119 at v20.2.4).
-func mfaEnabled(rec *BucketRecord) bool { return rec.Info.Flags&meta.BucketMFAEnabled != 0 }
+// deleteLockUnserved answers 501 NotImplemented for a delete in a bucket with
+// object lock: radosgw checks the retention and legal hold of a version a
+// delete names before it removes it
+// (verify_object_lock,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5186-L5221 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6854-L6878 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5576-L5611 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7782-L7806 at v20.2.4),
+// which rgw-go's deletes do not, so they refuse every delete there, a delete
+// marker's included, before they touch the store (docs/exclusions.md,
+// "DeleteObject and DeleteObjects answer 501 on an object-lock bucket").
+func deleteLockUnserved(rec *BucketRecord) error {
+	if rec.Info.ObjLockEnabled() {
+		return fmt.Errorf("%w: deletes in bucket %s, which has object lock, are not implemented", ErrNotImplemented, rec.Info.Bucket.Name)
+	}
+	return nil
+}
+
+// requesterOwner is s->owner, the owner the request acts as, which a delete
+// marker it writes names
+// (LocalApplier::get_aclowner,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L1019-L1030 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L1039-L1050 at v20.2.4):
+// the account and its name for an account's user, and otherwise the user
+// and its display name.
+func requesterOwner(r *Request) (owner meta.Owner, displayName string) {
+	id := r.Identity
+	switch {
+	case id.Owner.User == nil && id.Account != nil:
+		return id.Owner, id.Account.Name
+	case id.User != nil:
+		return id.Owner, id.User.DisplayName
+	}
+	return id.Owner, ""
+}
 
 // parseDate is utime_t::parse_date
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/include/utime.h#L397-L502 at v19.2.6

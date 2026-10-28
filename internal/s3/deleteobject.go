@@ -19,8 +19,10 @@ import (
 // absent: x-amz-delete-if-unmodified-since and
 // x-amz-if-match-last-modified-time url-decoded, If-Match and
 // x-amz-if-match-size as sent, all four read by both releases alike. The
-// success, a missing key's included, is 204 with x-amz-version-id when the
-// delete names one and x-amz-delete-marker when it made one, and no body.
+// success, a missing key's or version's included, is 204 and no body, with
+// x-amz-version-id when the delete reports a version and
+// x-amz-delete-marker: true when that version is a delete marker, the one it
+// wrote or the one it removed.
 func deleteObject(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.DeleteObject{
 		UnmodifiedSince:     decodedHeader(r, "X-Amz-Delete-If-Unmodified-Since"),

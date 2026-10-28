@@ -441,17 +441,6 @@ var _ = Describe("ErrMetadataNameTooLong", func() {
 // opCase builds a write op and its request.
 type opCase func(f *writeFixture, instance string) (op.Op, *op.Request)
 
-func versionedDelete(f *writeFixture, instance string) (op.Op, *op.Request) {
-	r := f.req(http.MethodDelete, "plain", "small")
-	r.Object.Instance = instance
-	return &op.DeleteObject{}, r
-}
-
-func versionedMulti(f *writeFixture, instance string) (op.Op, *op.Request) {
-	m := &multiDelete{}
-	return m.op([]op.DeleteObjectsEntry{{Key: meta.ObjKey{Name: "small", Instance: instance}}}, nil), f.multiReq("x")
-}
-
 func versionedPutACL(f *writeFixture, instance string) (op.Op, *op.Request) {
 	r := f.req(http.MethodPut, "plain", "small")
 	r.Object.Instance = instance
@@ -470,67 +459,8 @@ func versionedDelTags(f *writeFixture, instance string) (op.Op, *op.Request) {
 	return &op.DeleteObjectTagging{}, r
 }
 
-// versionedOps are the deletes, each building its request for key small in
-// plain, naming instance when it is not empty. The writes that create a head
-// serve a versioned bucket (version_test.go), and so do attrWriteOps
-// (objectattrs_test.go).
-var versionedOps = map[string]opCase{"DeleteObject": versionedDelete, "DeleteObjects": versionedMulti}
-
 // attrWriteOps are the object ACL and tagging writes, each building its
-// request as versionedOps' do.
+// request for key small in plain, naming instance when it is not empty.
 var attrWriteOps = map[string]opCase{
 	"PutObjectACL": versionedPutACL, "PutObjectTagging": versionedPutTags, "DeleteObjectTagging": versionedDelTags,
 }
-
-var _ = Describe("the deletes on a bucket whose versioning is not served", func() {
-	var (
-		f    *writeFixture
-		stub *opfakes.FakeObjectStore
-	)
-	BeforeEach(func(ctx SpecContext) {
-		f = newWriteFixture(ctx, denc.Squid)
-		stub = &opfakes.FakeObjectStore{}
-		st := &op.ObjectState{Exists: true, Key: meta.ObjKey{Name: "small"}, Attrs: map[string][]byte{meta.AttrACL: f.aliceACL, meta.AttrETag: []byte("e")}}
-		stub.StatObjectReturns(st, nil)
-		stub.PrefetchObjectReturns(st, nil)
-		f.env.Objects = stub
-	})
-	DescribeTable("answer 501 NotImplemented and write nothing",
-		func(ctx SpecContext, flags uint32, instance string) {
-			if flags != 0 {
-				f.setBucketFlags(ctx, flags)
-			}
-			for name, c := range versionedOps {
-				o, r := c(f, instance)
-				Expect(op.Run(ctx, o, r)).To(MatchError(op.ErrNotImplemented), name)
-			}
-			Expect(stub.PutObjectCallCount()).To(BeZero())
-			Expect(stub.CopyObjectCallCount()).To(BeZero())
-			Expect(stub.DeleteObjectCallCount()).To(BeZero())
-			Expect(stub.SetObjectAttrsCallCount()).To(BeZero())
-		},
-		Entry("a versioned bucket", uint32(meta.BucketVersioned), ""),
-		Entry("a bucket whose versioning is suspended", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended), ""),
-		Entry("the suspended flag alone", uint32(meta.BucketVersionsSuspended), ""),
-		Entry("a bucket with object lock", uint32(meta.BucketObjLockEnabled), ""),
-		Entry("a request naming a version", uint32(0), "v1"),
-		Entry("a version that differs from the null one in case alone", uint32(0), "NULL"),
-		Entry("the null version on a versioned bucket", uint32(meta.BucketVersioned), "null"),
-		Entry("the null version on a bucket whose versioning is suspended", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended), "null"),
-		Entry("the null version under the suspended flag alone", uint32(meta.BucketVersionsSuspended), "null"),
-		Entry("the null version on a bucket with object lock", uint32(meta.BucketObjLockEnabled), "null"),
-	)
-	It("never hands a versioned delete on an object-lock bucket to the store", func(ctx SpecContext) {
-		f.setBucketFlags(ctx, meta.BucketVersioned|meta.BucketObjLockEnabled)
-		o, r := versionedDelete(f, "v1")
-		Expect(op.Run(ctx, o, r)).To(MatchError(op.ErrNotImplemented))
-		Expect(stub.DeleteObjectCallCount()).To(BeZero())
-	})
-	It("refuses a DeleteObjects on such a bucket through Status, before Begin", func(ctx SpecContext) {
-		f.setBucketFlags(ctx, meta.BucketVersioned)
-		m := &multiDelete{}
-		Expect(op.Run(ctx, m.op(entriesOf("small"), nil), f.multiReq("x"))).To(MatchError(op.ErrNotImplemented))
-		Expect(m.statuses).To(ConsistOf(MatchError(op.ErrNotImplemented)))
-		Expect(m.events).NotTo(ContainElement("begin"))
-	})
-})
