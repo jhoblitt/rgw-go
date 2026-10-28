@@ -513,7 +513,11 @@ func (s *Store) unrefTails(refs []objRef, tag string) {
 // write, fails it with ConcurrentModification, a removal with NoSuchKey,
 // and putStream deletes the tails it wrote. radosgw guards no key with an
 // instance (docs/exclusions.md, "A lifecycle transition lands only on the
-// version it read").
+// version it read"). Once the head write lands, the version names the new
+// tails, so a completion or a link that then fails keeps the version and
+// them (linkVersion; docs/exclusions.md, "A lifecycle transition whose index
+// completion or link fails keeps the version"), and the version's lock
+// state is kept as read, with no default retention added (headWrite.keepLock).
 // Without it the copy is
 // CopyObject's, which Tentacle's RGWCopyObjDPF filters
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5770-L5893 at v20.2.4):
@@ -531,7 +535,7 @@ func (s *Store) copyData(ctx context.Context, src *op.ObjectState, dst *op.Bucke
 	}
 	w := streamWrite{tag: s.w.randTag(), attrs: attrs, size: int64(src.Size), mtime: mtime, olhEpoch: &epoch} //nolint:gosec // an object size is far below 2^63
 	if raw {
-		w.expect = src
+		w.expect, w.keepLock = src, true
 	} else {
 		if b, ok := attrs[meta.AttrCksum]; ok {
 			var drop bool

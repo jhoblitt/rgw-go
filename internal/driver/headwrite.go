@@ -69,13 +69,22 @@ type headWrite struct {
 	// v20.2.4
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3512-L3519).
 	completeMultipart bool
-	// expect is the head as the caller read it, for a write that is only
-	// safe on that head: there is no assume-no-entry pass and no read of
-	// its own, the guard compares against expect, and a head replaced or
-	// removed since fails the write with the guard's error instead of
-	// counting as success. radosgw has no such write; a copy onto itself
-	// needs it (docs/exclusions.md, "Object write differences").
+	// expect is the head as the caller read it, for a write that rewrites
+	// that head and is only safe on it: there is no assume-no-entry pass and
+	// no read of its own, the guard compares against expect, and a head
+	// replaced or removed since fails the write with the guard's error
+	// instead of counting as success. A versioned write with expect rewrites
+	// an existing version, which no failure of its completion or link
+	// removes (linkVersion). A copy onto itself and a lifecycle transition's
+	// raw copy make such writes, where radosgw guards on a head it may read
+	// again (docs/exclusions.md, "Object write differences" and "A lifecycle
+	// transition lands only on the version it read").
 	expect *op.ObjectState
+	// keepLock marks a write that keeps the version's lock state as it is,
+	// a lifecycle transition's: no default retention is added
+	// (finalizeHeadAttrs; docs/exclusions.md, "A lifecycle transition adds no
+	// default retention").
+	keepLock bool
 	// incompressible marks data radosgw's compressor made: its write_full is
 	// followed by the incompressible hint, as _do_write_meta follows it for
 	// an object set_compressed marked
@@ -216,7 +225,7 @@ func (s *Store) writeMeta(ctx context.Context, hw *headWrite, x *indexOp) (headR
 	// PUT_OBJ_CREATE_EXCL
 	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3308 at v19.2.7,
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4148 at v20.2.4).
-	attrs, ferr := s.finalizeHeadAttrs(hw.rec, mtime, hw.create && !hw.nonAtomic, hw.attrs)
+	attrs, ferr := s.finalizeHeadAttrs(hw.rec, mtime, hw.create && !hw.nonAtomic && !hw.keepLock, hw.attrs)
 	if ferr != nil {
 		return headResult{}, ferr
 	}

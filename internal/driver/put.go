@@ -109,6 +109,8 @@ type streamWrite struct {
 	// expect, when set, is the head the write may land on alone, as the
 	// caller read it (headWrite.expect).
 	expect *op.ObjectState
+	// keepLock keeps the version's lock state (headWrite.keepLock).
+	keepLock bool
 }
 
 // putStream writes body as AtomicObjectProcessor does, after its prepare,
@@ -206,7 +208,7 @@ func (s *Store) putStream(ctx context.Context, rec *op.BucketRecord, key meta.Ob
 	hw := &headWrite{
 		rec: rec, key: key, tag: w.tag, data: data, manifest: &m, attrs: attrs, mtime: w.mtime,
 		ifMatch: w.ifMatch, ifNoneMatch: w.ifNoneMatch, create: true, modifyTail: true, size: size, accountedSize: accounted,
-		incompressible: incompressible, olhEpoch: w.olhEpoch, expect: w.expect,
+		incompressible: incompressible, olhEpoch: w.olhEpoch, expect: w.expect, keepLock: w.keepLock,
 	}
 	res, err := s.writeMeta(ctx, hw, s.newIndexOp(rec, key, w.tag))
 	if err != nil {

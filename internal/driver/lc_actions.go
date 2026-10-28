@@ -71,6 +71,8 @@ func (b *lcBucket) entry(ctx context.Context, rec *op.BucketRecord, rule *lifecy
 		b.markCurrent(ctx, rec, probe, e, d.Effect == lifecycle.EffectNullMarker)
 	case b.versioned && d.Effect == lifecycle.EffectRemove:
 		b.removeVersion(ctx, rec, probe, d, e)
+	case d.Effect == lifecycle.EffectTransition:
+		b.transition(ctx, rec, probe, d, e)
 	default:
 		slog.WarnContext(ctx, "lifecycle takes no such action", slog.String("bucket", b.c.entry.Bucket),
 			slog.String("key", e.Key.Name), slog.String("instance", e.Key.Instance), slog.Bool("versioned", b.versioned),
@@ -123,7 +125,7 @@ func (b *lcBucket) expireCurrent(ctx context.Context, rec *op.BucketRecord, prob
 		return
 	}
 	b.p.at(ctx, lcStepReread, key)
-	cur := b.recheck(ctx, attrs)
+	cur := b.recheck(ctx, attrs, false)
 	if cur == nil {
 		return
 	}
@@ -153,17 +155,23 @@ func (b *lcBucket) expireCurrent(ctx context.Context, rec *op.BucketRecord, prob
 }
 
 // recheck is an action's read of the bucket's record again (current), just
-// before its delete, returning the record to delete with. A bucket changed
-// since the page's record, or gone, skips the action and ends the pass once
-// the rule's pool drains (noteChange), as does one whose record could not be
-// read, which is logged as that read's failure; recheck then returns nil.
-func (b *lcBucket) recheck(ctx context.Context, attrs []any) *op.BucketRecord {
+// before its delete or, with transition, its rewrite, returning the record to
+// act with. A bucket changed since the page's record, or gone, skips the
+// action and ends the pass once the rule's pool drains (noteChange), as does
+// one whose record could not be read, which is logged as that read's failure;
+// recheck then returns nil.
+func (b *lcBucket) recheck(ctx context.Context, attrs []any, transition bool) *op.BucketRecord {
 	cur, err := b.current(ctx)
+	changed := errors.Is(err, errLCChanged) || errors.Is(err, errLCStaleEntry)
 	switch {
 	case err == nil:
 		return cur
-	case errors.Is(err, errLCChanged), errors.Is(err, errLCStaleEntry):
+	case changed && transition:
+		slog.WarnContext(ctx, "lifecycle skips an object due for transition of a bucket changed during its pass", append(attrs, slog.Any("error", err))...)
+	case changed:
 		slog.WarnContext(ctx, "lifecycle skips an expired object of a bucket changed during its pass", append(attrs, slog.Any("error", err))...)
+	case transition:
+		slog.WarnContext(ctx, "lifecycle could not read the bucket's record again; the object due for transition stays", append(attrs, slog.Any("error", err))...)
 	default:
 		slog.WarnContext(ctx, "lifecycle could not read the bucket's record again; the expired object stays", append(attrs, slog.Any("error", err))...)
 	}
@@ -263,7 +271,7 @@ func (b *lcBucket) markCurrent(ctx context.Context, rec *op.BucketRecord, probe 
 		}
 	}
 	b.p.at(ctx, lcStepReread, key)
-	cur := b.recheck(ctx, attrs)
+	cur := b.recheck(ctx, attrs, false)
 	if cur == nil {
 		return
 	}
@@ -393,7 +401,7 @@ func (b *lcBucket) removeVersion(ctx context.Context, rec *op.BucketRecord, prob
 		return
 	}
 	b.p.at(ctx, lcStepReread, key)
-	cur := b.recheck(ctx, attrs)
+	cur := b.recheck(ctx, attrs, false)
 	if cur == nil {
 		return
 	}
