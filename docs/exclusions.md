@@ -4265,7 +4265,11 @@ does the following.
   the same at v20.2.4). rgw-go reads each value with the same grammar
   (`internal/jsonspirit`) and stores what radosgw stores, but for a value
   with a `\x` or `\X` escape, which json_spirit reads or refuses by the
-  CPU's `char` signedness, a number json_spirit takes from the host's
+  CPU's `char` signedness (docs/ceph-upstream-bugs.md, "[radosgw's JSON
+  parser lexes `\x` and `\X` escapes by the CPU's char signedness, and
+  drops octal and `\X`
+  escapes](ceph-upstream-bugs.md#radosgws-json-parser-lexes-x-and-x-escapes-by-the-cpus-char-signedness-and-drops-octal-and-x-escapes)"),
+  a number json_spirit takes from the host's
   libm (an exponent past 300, a fraction of more than 300 digits, the
   exponent 126, or a value that is not finite), or arrays and objects
   nested deeper than 10000, where json_spirit recurses without limit:
@@ -6792,7 +6796,11 @@ rgw-go does the following.
   `hex_str_to_char` reads the two bytes after an `x`, whatever the lexer
   took
   ([json_spirit_reader_template.h:60-67](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L60-L67),
-  the same at v20.2.4), and an `X` is dropped with its backslash. Another is
+  the same at v20.2.4), and an `X` is dropped with its backslash
+  (docs/ceph-upstream-bugs.md, "[radosgw's JSON parser lexes `\x` and `\X`
+  escapes by the CPU's char signedness, and drops octal and `\X`
+  escapes](ceph-upstream-bugs.md#radosgws-json-parser-lexes-x-and-x-escapes-by-the-cpus-char-signedness-and-drops-octal-and-x-escapes)").
+  Another is
   arrays and objects nested deeper than 10000, where json_spirit recurses
   without limit (docs/ceph-upstream-bugs.md, "[radosgw's JSON parser
   recurses without limit on a POST policy's
