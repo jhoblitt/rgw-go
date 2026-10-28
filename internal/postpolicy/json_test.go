@@ -1,6 +1,8 @@
 package postpolicy_test
 
 import (
+	"strings"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -73,6 +75,10 @@ var _ = Describe("Reading the policy's JSON", func() {
 		Entry("1e23, whose glibc pow is the double above the nearest", "1e23", "1.0000000000000001e+23"),
 		Entry("a small real", "1.5e-7", "1.4999999999999999e-07"),
 		Entry("a long fraction, accumulated as a double", "0.12345678901234567890", "0.12345678901234569"),
+		Entry("a plus sign and leading zeros, as int64_p reads them", "+007", "7"),
+		Entry("a dot first", ".5", "0.50000000000000000"),
+		Entry("a dot last", "5.", "5.0000000000000000"),
+		Entry("an integer part of 301 digits, each added as a double", "1"+strings.Repeat("0", 300)+".0", "1.0000000000000002e+300"),
 	)
 
 	DescribeTable("compares other values as get_data returns them",
@@ -84,8 +90,9 @@ var _ = Describe("Reading the policy's JSON", func() {
 		Entry("false", "false", "false"),
 		Entry("null", "null", "null"),
 		Entry("a string's escapes decoded", `"a\"b\\c\/d`+u("00e9")+`\n"`, "a\"b\\c/dé\n"),
-		Entry("an escaped surrogate pair as the one character, where json_spirit writes each half alone",
-			`"`+u("d83d")+u("de00")+`"`, "\U0001F600"),
+		Entry("an escaped surrogate pair, each half the three bytes encode_utf8 writes for it",
+			`"`+u("d83d")+u("de00")+`"`, "\xed\xa0\xbd\xed\xb8\x80"),
+		Entry("an escape json_spirit drops with its backslash", `"a\qb"`, "ab"),
 		Entry("an array, compact", `[ "a" , 1, 2.5, [], {} ]`, `["a",1,2.5000000000000000,[],{}]`),
 		Entry("an object in document order, duplicates kept", `{"b": 1, "a": null, "b": true}`, `{"b":1,"a":null,"b":true}`),
 		Entry("a nested string's escapes, and bytes iswprint refuses in the C locale",

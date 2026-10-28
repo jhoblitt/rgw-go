@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jhoblitt/rgw-go/internal/jsonspirit"
 	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 )
 
@@ -21,7 +22,7 @@ var (
 // Error is a refusal. Err is ErrInvalidArgument or ErrAccessDenied. Message
 // is the text get_policy sets in s->err.message, which quotes the policy's
 // operators and names and the form's field names as they are. Detail says
-// why the decoder refused a document whose Message is "Malformed JSON".
+// why the reader refused a document whose Message is "Malformed JSON".
 type Error struct {
 	Err     error
 	Message string
@@ -95,55 +96,54 @@ func denied(msg string) *Error { return &Error{Err: ErrAccessDenied, Message: ms
 // RGWPolicy::from_json does
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_policy_s3.cc#L238-L305 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_policy_s3.cc#L247-L314 at v20.2.4).
-// The top-level object's first expiration and first conditions are read,
-// then each child of conditions in the order JSONObj walks them
-// (node.children): an array is a condition of exactly three elements, a
-// non-empty object checks its member of the smallest name alone, and
-// anything else is refused. A refusal is an *Error naming
-// ErrInvalidArgument. JSONParser::parse takes a lone number, true, false or
-// null only when json_spirit's text for it is as long as the document with
-// the NUL get_policy appends
-// (https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_json.cc#L236-L265 at v19.2.7
-// and v20.2.4), which only a real can be, with white space or unread text
-// beside it, and then finds no expiration in it; any other is "Malformed
-// JSON".
+// JSONParser reads the document with the NUL get_policy appends
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3206 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3342 at v20.2.4),
+// so it takes a lone number, true, false or null only when json_spirit's
+// text for it is as long as the document and the NUL, which only a real can
+// be, with white space or unread text beside it, and then finds no
+// expiration in it; a document JSONParser refuses is "Malformed JSON", as is
+// one jsonspirit.Parse refuses where JSONParser reads it (docs/exclusions.md,
+// "A POST policy with a `\x` or octal escape, a number json_spirit takes from
+// the host's libm, or nesting past 10000 is refused"). The top-level
+// object's first expiration and first conditions are read, then each child
+// of conditions in the order JSONObj walks them: an array is a condition of
+// exactly three elements, a non-empty object checks its member of the
+// smallest name alone, and anything else is refused. A refusal is an *Error
+// naming ErrInvalidArgument.
 func Parse(doc []byte) (*Policy, error) {
-	root, err := readDocument(doc)
-	if err != nil {
+	root, ok, err := jsonspirit.Parse(string(doc) + "\x00")
+	switch {
+	case err != nil:
 		return nil, &Error{Err: ErrInvalidArgument, Message: msgMalformed, Detail: err.Error()}
+	case !ok:
+		return nil, &Error{Err: ErrInvalidArgument, Message: msgMalformed, Detail: "JSONParser refuses it"}
 	}
-	if root.kind == kindScalar {
-		if len(root.text) == len(doc)+1 {
-			return nil, invalid(msgNoExpiration)
-		}
-		return nil, &Error{Err: ErrInvalidArgument, Message: msgMalformed, Detail: "a lone " + root.text}
-	}
-	exp := root.find("expiration")
+	exp := root.Find("expiration")
 	if exp == nil {
 		return nil, invalid(msgNoExpiration)
 	}
-	expires, ok := parseISO8601(exp.data())
+	expires, ok := parseISO8601(exp.Data())
 	if !ok {
 		return nil, invalid(msgBadExpiration)
 	}
-	conds := root.find("conditions")
+	conds := root.Find("conditions")
 	if conds == nil {
 		return nil, invalid(msgNoConditions)
 	}
 	p := &Policy{MaxLength: math.MaxInt64, expires: expires}
-	for _, c := range conds.children() {
+	for _, c := range conds.Children() {
+		args := c.Node.Children()
 		switch {
-		case c.node.kind == kindArray:
-			if len(c.node.elems) != 3 {
+		case c.Node.Kind() == jsonspirit.Array:
+			if len(args) != 3 {
 				return nil, invalid(msgBadArray)
 			}
-			e := c.node.elems
-			if err := p.addCondition(e[0].data(), e[1].data(), e[2].data()); err != nil {
+			if err := p.addCondition(args[0].Node.Data(), args[1].Node.Data(), args[2].Node.Data()); err != nil {
 				return nil, err
 			}
-		case c.node.kind == kindObject && len(c.node.elems) > 0:
-			first := c.node.children()[0]
-			p.checks = append(p.checks, simpleCheck{name: first.name, value: first.node.data()})
+		case c.Node.Kind() == jsonspirit.Object && len(args) > 0:
+			p.checks = append(p.checks, simpleCheck{name: args[0].Name, value: args[0].Node.Data()})
 		default:
 			return nil, invalid(msgUnparsed)
 		}

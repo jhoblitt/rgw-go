@@ -6777,41 +6777,41 @@ rgw-go does the following.
   POST policy excepts a field whose name holds a NUL after a checksum
   algorithm's](ceph-upstream-bugs.md#tentacles-post-policy-excepts-a-field-whose-name-holds-a-nul-after-a-checksum-algorithms)").
   Both match the prefixes in lower case only.
-- **A POST policy is read as RFC 8259 JSON.** radosgw reads a POST
-  upload's policy document with json_spirit's grammar
+- **A POST policy with a `\x` or octal escape, a number json_spirit takes
+  from the host's libm, or nesting past 10000 is refused.** radosgw reads a
+  POST upload's policy document with json_spirit's grammar
   ([json_spirit_reader_template.h:462-519](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L462-L519),
-  the same at v20.2.4), which also takes a stray comma in an array or an
-  object, C white space such as a form feed, raw control bytes and bytes
-  that are not UTF-8 in a string, `\x` and octal escapes, a `\u` escape
-  whose digits are not hex, `hex_to_num` reading each such digit as 0
-  ([json_spirit_reader_template.h:52-58](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L52-L58),
-  [json_spirit_reader_template.h:73-93](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L73-L93),
-  the same at v20.2.4), escapes it drops, and numbers with a plus sign,
-  leading zeros, or a dot at either end. rgw-go
-  reads the document with Go's grammar and answers each of these 400
-  InvalidArgument, "Malformed JSON" (`postpolicy.Parse`). It answers so as
-  well a string that is not UTF-8, which Go's decoder would repair; an
-  escaped UTF-16 surrogate that is not half of a pair, which json_spirit
-  writes as three bytes that are no character; arrays and objects nested
-  deeper than 10000, where json_spirit recurses without limit
-  (docs/ceph-upstream-bugs.md, "[radosgw's JSON parser recurses without
-  limit on a POST policy's
-  nesting](ceph-upstream-bugs.md#radosgws-json-parser-recurses-without-limit-on-a-post-policys-nesting)");
-  and a
-  number whose value json_spirit takes from the host's libm: an exponent
-  past 300, a fraction of more than 300 digits, the exponent 126, or a
-  value that is not finite, which it writes as `inf` or `nan`. An escaped
-  surrogate pair is the one character it encodes, as RFC 8259 reads it,
-  where json_spirit writes each half alone, so a condition naming a
-  character past the Basic Multilingual Plane by its escapes matches the
-  character's UTF-8 in a field, where in radosgw only the six bytes
-  json_spirit writes match it. Otherwise rgw-go reads the
-  document as JSONParser does: the first of duplicate names, an object
-  condition's member of the smallest name, the members of an object
-  `conditions` in name order, any text after the document ignored, and
-  each value as `get_data` gives it, a number as json_spirit writes it
-  back, so `1e3` is `1000.0000000000000` and `0.3` is
-  `0.30000000000000004`.
+  the same at v20.2.4), and rgw-go reads it with the same grammar
+  (`internal/jsonspirit`), as JSONParser does, but for three forms, which
+  it answers 400 InvalidArgument, "Malformed JSON" (`postpolicy.Parse`),
+  where radosgw reads the document. One is a `\x` or octal escape, which
+  boost's `escape_char_parse` reads with an overflow check on a `char`
+  and `hex_str_to_char` as the two bytes after the `x`
+  ([json_spirit_reader_template.h:59-66](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L59-L66),
+  the same at v20.2.4), a reading rgw-go does not transcribe. Another is
+  arrays and objects nested deeper than 10000, where json_spirit recurses
+  without limit (docs/ceph-upstream-bugs.md, "[radosgw's JSON parser
+  recurses without limit on a POST policy's
+  nesting](ceph-upstream-bugs.md#radosgws-json-parser-recurses-without-limit-on-a-post-policys-nesting)").
+  The third is a number whose value json_spirit takes from the host's
+  libm: an exponent past 300, a fraction of more than 300 digits, the
+  exponent 126, or a value that is not finite, which it writes as `inf` or
+  `nan`. Otherwise rgw-go reads what json_spirit reads: a stray comma in
+  an array or an object, C white space such as a form feed, raw control
+  bytes and bytes that are not UTF-8 in a string, escapes it drops, a
+  `\u` escape whose digits are not hex, `hex_to_num` reading each such
+  digit as 0
+  ([json_spirit_reader_template.h:51-58](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L51-L58),
+  [json_spirit_reader_template.h:72-93](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L72-L93),
+  the same at v20.2.4), each half of an escaped surrogate pair as the
+  three bytes `encode_utf8` writes for it, and numbers with a sign,
+  leading zeros, a dot at either end, or an integer part of any length a
+  double holds. It reads the document as JSONParser does too: the first
+  of duplicate names, an object condition's member of the smallest name,
+  the members of an object `conditions` in name order, any text after the
+  document ignored, and each value as `get_data` gives it, a number as
+  json_spirit writes it back, so `1e3` is `1000.0000000000000` and `0.3`
+  is `0.30000000000000004`.
 - **A POST policy whose expiration is before 1970 has expired.** radosgw
   holds a POST policy's expiration as unsigned seconds,
   `uint64_t expires`
