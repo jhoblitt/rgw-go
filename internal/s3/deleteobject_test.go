@@ -1,8 +1,10 @@
 package s3_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -10,7 +12,31 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
+	"github.com/jhoblitt/rgw-go/internal/op"
 )
+
+// deleteResults is an object store whose DeleteObject answers what answer
+// gives for each key, and records the keys it was handed; memstore serves
+// no versioned delete.
+type deleteResults struct {
+	op.ObjectStore
+	answer func(key meta.ObjKey) (*op.DeleteObjectResult, error)
+	mu     sync.Mutex
+	keys   []meta.ObjKey
+}
+
+func (d *deleteResults) DeleteObject(_ context.Context, _ *op.BucketRecord, key meta.ObjKey, _ op.DeleteParams) (*op.DeleteObjectResult, error) {
+	d.mu.Lock()
+	d.keys = append(d.keys, key)
+	d.mu.Unlock()
+	return d.answer(key)
+}
+
+// answering is a deleteResults over store that answers res and err for
+// every key.
+func answering(store op.ObjectStore, res *op.DeleteObjectResult, err error) *deleteResults {
+	return &deleteResults{ObjectStore: store, answer: func(meta.ObjKey) (*op.DeleteObjectResult, error) { return res, err }}
+}
 
 // expectNoContent checks rec is a 204 with no body and no type, as
 // end_header sends a DeleteObject's
@@ -67,6 +93,86 @@ var _ = Describe("delete_obj", func() {
 		expectError(w.send(w.alice, http.MethodDelete, "/plain/src", "", "X-Amz-Delete-If-Unmodified-Since", "2026-09-28T11:00:00Z"),
 			412, "PreconditionFailed")
 		Expect(w.stat(ctx, "src").Exists).To(BeTrue())
+	})
+	DescribeTable("names the version and the delete marker the delete reports, as send_response sends del_op->result",
+		func(ctx SpecContext, flags uint32, query string, res *op.DeleteObjectResult, storeErr error, version string, marker bool) {
+			w.setBucketInfo(ctx, func(i *meta.BucketInfo) { i.Flags |= flags })
+			store := answering(w.store, res, storeErr)
+			w.env.Objects = store
+			rec := w.send(w.alice, http.MethodDelete, "/plain/src"+query, "")
+			expectNoContent(rec)
+			if version == "" {
+				Expect(rec.Header()).NotTo(haveHeaderAnyCase("x-amz-version-id"))
+			} else {
+				Expect(rec.Header()).To(HaveKeyWithValue("x-amz-version-id", []string{version}))
+			}
+			if marker {
+				Expect(rec.Header()).To(HaveKeyWithValue("x-amz-delete-marker", []string{"true"}))
+			} else {
+				Expect(rec.Header()).NotTo(haveHeaderAnyCase("x-amz-delete-marker"), "dump_header only when delete_marker")
+			}
+			Expect(store.keys).To(HaveLen(1))
+		},
+		Entry("a delete marker on an enabled bucket", uint32(meta.BucketVersioned), "",
+			&op.DeleteObjectResult{VersionID: "m1", DeleteMarker: true}, nil, "m1", true),
+		Entry("the null delete marker on a suspended bucket", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended), "",
+			&op.DeleteObjectResult{VersionID: "null", DeleteMarker: true}, nil, "null", true),
+		Entry("a version removed", uint32(meta.BucketVersioned), "?versionId=v1",
+			&op.DeleteObjectResult{VersionID: "v1"}, nil, "v1", false),
+		Entry("a delete marker removed by its version", uint32(meta.BucketVersioned), "?versionId=m1",
+			&op.DeleteObjectResult{VersionID: "m1", DeleteMarker: true}, nil, "m1", true),
+		Entry("the null delete marker removed by versionId=null", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended), "?versionId=null",
+			&op.DeleteObjectResult{VersionID: "null", DeleteMarker: true}, nil, "null", true),
+		Entry("a missing version, whose -ENOENT is the 204", uint32(meta.BucketVersioned), "?versionId=v9",
+			nil, op.ErrNoSuchKey, "", false),
+	)
+	It("hands the store the version the query names", func(ctx SpecContext) {
+		w.setBucketInfo(ctx, func(i *meta.BucketInfo) { i.Flags |= meta.BucketVersioned })
+		store := answering(w.store, &op.DeleteObjectResult{VersionID: "v1"}, nil)
+		w.env.Objects = store
+		expectNoContent(w.send(w.alice, http.MethodDelete, "/plain/src?versionId=v1", ""))
+		Expect(store.keys).To(Equal([]meta.ObjKey{{Name: "src", Instance: "v1"}}))
+	})
+	It("answers 501 on a bucket with object lock and deletes nothing", func(ctx SpecContext) {
+		w.setBucketInfo(ctx, func(i *meta.BucketInfo) { i.Flags |= meta.BucketVersioned | meta.BucketObjLockEnabled })
+		store := answering(w.store, &op.DeleteObjectResult{}, nil)
+		w.env.Objects = store
+		expectError(w.send(w.alice, http.MethodDelete, "/plain/src?versionId=v1", ""), 501, "NotImplemented")
+		expectError(w.send(w.alice, http.MethodDelete, "/plain/src", ""), 501, "NotImplemented")
+		Expect(store.keys).To(BeEmpty())
+	})
+	Describe("on a bucket with MFA delete", func() {
+		var store *deleteResults
+		BeforeEach(func(ctx SpecContext) {
+			w.setBucketInfo(ctx, func(i *meta.BucketInfo) { i.Flags |= meta.BucketVersioned | meta.BucketMFAEnabled })
+			w.alice.Info.MFAIDs = []string{mfaSerial}
+			w.env.MFA = deviceVerifier()
+			store = answering(w.store, &op.DeleteObjectResult{VersionID: "v1"}, nil)
+			w.env.Objects = store
+		})
+		DescribeTable("deletes a version only under the owner's verified x-amz-mfa, and a delete marker needs none",
+			func(target string, deleted bool, hdr ...string) {
+				rec := w.send(w.alice, http.MethodDelete, target, "", hdr...)
+				if deleted {
+					expectNoContent(rec)
+					Expect(store.keys).To(HaveLen(1))
+					return
+				}
+				expectError(rec, 403, "AccessDenied")
+				Expect(store.keys).To(BeEmpty())
+			},
+			Entry("a version without x-amz-mfa", "/plain/src?versionId=v1", false),
+			Entry("a version under a code that does not verify", "/plain/src?versionId=v1", false, "x-amz-mfa", "SERIAL 654321"),
+			Entry("a version under the owner's verified code", "/plain/src?versionId=v1", true, "x-amz-mfa", "SERIAL 123456"),
+			Entry("the null version without x-amz-mfa", "/plain/src?versionId=null", false),
+			Entry("no version without x-amz-mfa", "/plain/src", true),
+		)
+		It("refuses a version to another requester's own verified code", func(ctx SpecContext) {
+			w.grantBob(ctx, acl.PermWrite)
+			w.bob.Info.MFAIDs = []string{mfaSerial}
+			expectError(w.send(w.bob, http.MethodDelete, "/plain/src?versionId=v1", "", "x-amz-mfa", "SERIAL 123456"), 403, "AccessDenied")
+			Expect(store.keys).To(BeEmpty())
+		})
 	})
 	for _, rel := range []denc.Release{denc.Squid, denc.Tentacle} {
 		Describe("on "+rel.String(), func() {

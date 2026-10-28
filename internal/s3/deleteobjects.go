@@ -106,11 +106,12 @@ func deleteObjects(ctx context.Context, w http.ResponseWriter, r *op.Request) er
 
 // deleteResultElement renders one key's outcome as send_partial_response
 // does
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4273-L4329,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4821-L4871):
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4303-L4359 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4821-L4871 at v20.2.4):
 // a success, unless quiet, as Deleted with the Key, the VersionId when the
 // key names one, and DeleteMarker, which dump_bool writes as true, and
-// DeleteMarkerVersionId when the delete made a marker; a failure, quiet or
+// DeleteMarkerVersionId when the version the delete wrote or removed is a
+// delete marker, a removal by version naming it twice; a failure, quiet or
 // not, as Error with the Key, the VersionId even when empty, and the S3 code
 // as both Code and Message. Each text goes through xmltext.Escape, as
 // XMLFormatter::dump_string escapes it.

@@ -226,8 +226,9 @@ func withHostBucket(b, uri string) string {
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5026-L5031 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5556-L5561 at v20.2.4),
 // and sets p.Req.MFAVerified when the verifier in p.Req.Env verifies it
-// (verifyMFA). Nothing about MFA fails the request: an op that needs a
-// verified code refuses one without it.
+// (verifyMFA), and p.Req.MFAPresent when the request carries it at all.
+// Nothing about MFA fails the request: an op that needs a verified code
+// refuses one without it.
 func PostAuthInit(ctx context.Context, p Parsed) error {
 	r := p.Req
 	authTenant := r.Identity.Tenant
@@ -266,8 +267,9 @@ func PostAuthInit(ctx context.Context, p Parsed) error {
 	return nil
 }
 
-// verifyMFA sets r.MFAVerified when r's x-amz-mfa names one of the
-// requester's devices and its current code, as r.Env.MFA checks them. The
+// verifyMFA sets r.MFAPresent when r carries x-amz-mfa, whatever its value,
+// and r.MFAVerified when that value names one of the requester's devices
+// and its current code, as r.Env.MFA checks them. The
 // value splits as RadosUser::verify_mfa splits it, get_str_vec(mfa_str, " ",
 // params), at runs of spaces alone, so a tab is part of a field and no field
 // is empty
@@ -293,6 +295,7 @@ func PostAuthInit(ctx context.Context, p Parsed) error {
 // has ended.
 func verifyMFA(ctx context.Context, r *op.Request) {
 	v, ok := op.HeaderValue(r.Header, "X-Amz-Mfa")
+	r.MFAPresent = ok
 	if !ok || r.Identity.Unverified || r.Env == nil || r.Env.MFA == nil {
 		return
 	}

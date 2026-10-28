@@ -108,9 +108,77 @@ var _ = Describe("multi_object_delete", func() {
 			It("answers an empty body with the status line alone", func() {
 				expectStatusLine(post("", "Content-Length", "0"), 400)
 			})
-			It("answers a key naming a version with the status line alone until versioning is served", func(ctx SpecContext) {
-				expectStatusLine(post(deleteDoc("<Key>src</Key><VersionId>v1</VersionId>")), 501)
+			It("answers a key naming a version the bucket never versioned holds with its Deleted element, as -ENOENT is success", func(ctx SpecContext) {
+				rec := post(deleteDoc("<Key>src</Key><VersionId>v1</VersionId>"))
+				Expect(rec.Code).To(Equal(200))
+				Expect(rec.Body.String()).To(Equal(deleteResultOpen + "<Deleted><Key>src</Key><VersionId>v1</VersionId></Deleted></DeleteResult>"))
 				Expect(w.stat(ctx, "src").Exists).To(BeTrue())
+			})
+			It("names each key's version and the delete marker each delete made or removed on a versioned bucket", func(ctx SpecContext) {
+				w.setBucketInfo(ctx, func(i *meta.BucketInfo) { i.Flags |= meta.BucketVersioned })
+				w.env.Objects = &deleteResults{ObjectStore: w.store, answer: func(key meta.ObjKey) (*op.DeleteObjectResult, error) {
+					switch key.Instance {
+					case "":
+						return &op.DeleteObjectResult{VersionID: "m1", DeleteMarker: true}, nil
+					case "m0":
+						return &op.DeleteObjectResult{VersionID: "m0", DeleteMarker: true}, nil
+					case "v1":
+						return &op.DeleteObjectResult{VersionID: "v1"}, nil
+					}
+					return nil, op.ErrNoSuchKey
+				}}
+				rec := post(deleteDoc("<Key>a</Key>", "<Key>b</Key><VersionId>m0</VersionId>", "<Key>c</Key><VersionId>v1</VersionId>",
+					"<Key>d</Key><VersionId>v9</VersionId>"))
+				Expect(rec.Code).To(Equal(200))
+				Expect(rec.Body.String()).To(Equal(deleteResultOpen +
+					"<Deleted><Key>a</Key><DeleteMarker>true</DeleteMarker><DeleteMarkerVersionId>m1</DeleteMarkerVersionId></Deleted>" +
+					"<Deleted><Key>b</Key><VersionId>m0</VersionId><DeleteMarker>true</DeleteMarker><DeleteMarkerVersionId>m0</DeleteMarkerVersionId></Deleted>" +
+					"<Deleted><Key>c</Key><VersionId>v1</VersionId></Deleted>" +
+					"<Deleted><Key>d</Key><VersionId>v9</VersionId></Deleted></DeleteResult>"))
+			})
+			It("answers a bucket with object lock with the status line alone and deletes nothing", func(ctx SpecContext) {
+				w.setBucketInfo(ctx, func(i *meta.BucketInfo) { i.Flags |= meta.BucketVersioned | meta.BucketObjLockEnabled })
+				store := answering(w.store, &op.DeleteObjectResult{}, nil)
+				w.env.Objects = store
+				expectStatusLine(post(deleteDoc("<Key>src</Key>")), 501)
+				Expect(store.keys).To(BeEmpty())
+			})
+			Describe("on a bucket with MFA delete", func() {
+				var store *deleteResults
+				BeforeEach(func(ctx SpecContext) {
+					w.setBucketInfo(ctx, func(i *meta.BucketInfo) { i.Flags |= meta.BucketVersioned | meta.BucketMFAEnabled })
+					w.alice.Info.MFAIDs = []string{mfaSerial}
+					w.env.MFA = deviceVerifier()
+					store = answering(w.store, &op.DeleteObjectResult{}, nil)
+					w.env.Objects = store
+				})
+				It("answers a request naming a version without the owner's verified x-amz-mfa with the status line alone", func() {
+					expectStatusLine(post(deleteDoc("<Key>a</Key>", "<Key>src</Key><VersionId>v1</VersionId>")), 403)
+					Expect(store.keys).To(BeEmpty())
+				})
+				It("deletes the keys of a request naming a version under the owner's verified x-amz-mfa", func() {
+					rec := post(deleteDoc("<Key>a</Key>", "<Key>src</Key><VersionId>v1</VersionId>"), "x-amz-mfa", "SERIAL 123456")
+					Expect(rec.Code).To(Equal(200), rec.Body.String())
+					Expect(store.keys).To(ConsistOf(meta.ObjKey{Name: "a"}, meta.ObjKey{Name: "src", Instance: "v1"}))
+				})
+				It("deletes the keys of a request naming no version unverified", func() {
+					Expect(post(deleteDoc("<Key>a</Key>", "<Key>src</Key>")).Code).To(Equal(200))
+					Expect(store.keys).To(HaveLen(2))
+				})
+				It("answers a request naming no version whose x-amz-mfa does not verify with the status line alone, as S3 fails it", func() {
+					expectStatusLine(post(deleteDoc("<Key>a</Key>", "<Key>src</Key>"), "x-amz-mfa", "SERIAL 654321"), 403)
+					Expect(store.keys).To(BeEmpty())
+				})
+			})
+			It("deletes the keys of a request whose x-amz-mfa does not verify on a bucket without MFA delete", func(ctx SpecContext) {
+				w.setBucketInfo(ctx, func(i *meta.BucketInfo) { i.Flags |= meta.BucketVersioned })
+				w.alice.Info.MFAIDs = []string{mfaSerial}
+				w.env.MFA = deviceVerifier()
+				store := answering(w.store, &op.DeleteObjectResult{}, nil)
+				w.env.Objects = store
+				rec := post(deleteDoc("<Key>a</Key>", "<Key>src</Key><VersionId>v1</VersionId>"), "x-amz-mfa", "SERIAL 654321")
+				Expect(rec.Code).To(Equal(200), rec.Body.String())
+				Expect(store.keys).To(HaveLen(2))
 			})
 			It("answers a missing bucket with the error document before reading the body", func() {
 				expectError(w.send(w.alice, http.MethodPost, "/nope?delete", "<Delete><Object>"), 404, "NoSuchBucket")

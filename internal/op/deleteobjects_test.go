@@ -407,29 +407,257 @@ var _ = Describe("DeleteObjects", func() {
 		Expect(got["boom"]).To(MatchError("boom"))
 	})
 	Describe("on a bucket with MFA delete", func() {
-		BeforeEach(func(ctx SpecContext) { f.setBucketFlags(ctx, meta.BucketMFAEnabled) })
+		var stub *opfakes.FakeObjectStore
+		// fixture is the request's world at release, with plain versioned
+		// under MFA delete and a store that deletes every key.
+		fixture := func(ctx context.Context, release denc.Release) {
+			f = newWriteFixture(ctx, release)
+			f.setBucketFlags(ctx, meta.BucketVersioned|meta.BucketMFAEnabled)
+			stub = &opfakes.FakeObjectStore{}
+			stub.DeleteObjectReturns(&op.DeleteObjectResult{}, nil)
+			f.env.Objects = stub
+		}
+		BeforeEach(func(ctx SpecContext) { fixture(ctx, denc.Squid) })
+		// run deletes es as id, whose x-amz-mfa verified a device of id's
+		// user when verified.
+		run := func(ctx context.Context, id op.Identity, verified bool, es ...op.DeleteObjectsEntry) error {
+			r := f.multiReq("x")
+			r.Identity, r.MFAVerified = id, verified
+			return op.Run(ctx, m.op(es, nil), r)
+		}
+		// version is a request one of whose keys names a version.
+		version := func() []op.DeleteObjectsEntry {
+			return []op.DeleteObjectsEntry{{Key: meta.ObjKey{Name: "a"}}, {Key: meta.ObjKey{Name: "small", Instance: "null"}}}
+		}
+		expectRefused := func(err error) {
+			GinkgoHelper()
+			Expect(err).To(MatchError(op.ErrMFARequired))
+			Expect(op.AsError(err).Errno).To(Equal(op.ErrMFARequired.Errno), "ERR_MFA_REQUIRED, which shares AccessDenied and 403 with EACCES")
+			Expect(m.statuses).To(ConsistOf(MatchError(op.ErrMFARequired)))
+			Expect(m.events).NotTo(ContainElement("begin"))
+			Expect(stub.DeleteObjectCallCount()).To(BeZero(), "no key is deleted")
+		}
 
-		DescribeTable("refuses a request naming a version before the first key, on both releases",
+		DescribeTable("refuses a request naming a version without the owner's verified x-amz-mfa before the first key, on both releases",
 			func(ctx SpecContext, release denc.Release) {
-				if release != denc.Squid {
-					f = newWriteFixture(ctx, release)
-					f.setBucketFlags(ctx, meta.BucketMFAEnabled)
-				}
-				es := []op.DeleteObjectsEntry{{Key: meta.ObjKey{Name: "a"}}, {Key: meta.ObjKey{Name: "small", Instance: "null"}}}
-				err := op.Run(ctx, m.op(es, nil), f.multiReq("x"))
-				Expect(err).To(MatchError(op.ErrMFARequired))
-				Expect(m.statuses).To(ConsistOf(MatchError(op.ErrMFARequired)))
-				Expect(m.events).NotTo(ContainElement("begin"))
-				Expect(f.stat(ctx, "small").Exists).To(BeTrue())
+				fixture(ctx, release)
+				expectRefused(run(ctx, f.alice, false, version()...))
 			},
 			Entry("Squid", denc.Squid),
 			Entry("Tentacle, whose radosgw inverts the check", denc.Tentacle),
 		)
-		It("deletes keys without versions", func(ctx SpecContext) {
-			f = newWriteFixture(ctx, denc.Tentacle)
-			f.setBucketFlags(ctx, meta.BucketMFAEnabled)
-			Expect(op.Run(ctx, m.op(entriesOf("small"), nil), f.multiReq("x"))).To(Succeed())
-			Expect(errByKey(m.results)).To(Equal(map[string]error{"small": nil}))
+		DescribeTable("deletes every key of a request naming a version under the owner's verified x-amz-mfa, on both releases",
+			func(ctx SpecContext, release denc.Release) {
+				fixture(ctx, release)
+				Expect(run(ctx, f.alice, true, version()...)).To(Succeed())
+				Expect(errByKey(m.results)).To(Equal(map[string]error{"a": nil, "small": nil}))
+				Expect(stub.DeleteObjectCallCount()).To(Equal(2))
+			},
+			Entry("Squid", denc.Squid),
+			Entry("Tentacle", denc.Tentacle),
+		)
+		It("deletes keys without versions unverified", func(ctx SpecContext) {
+			fixture(ctx, denc.Tentacle)
+			es := []op.DeleteObjectsEntry{{Key: meta.ObjKey{Name: "small"}}, {Key: meta.ObjKey{Name: "a", Instance: ""}}}
+			Expect(run(ctx, f.alice, false, es...)).To(Succeed())
+			Expect(errByKey(m.results)).To(Equal(map[string]error{"small": nil, "a": nil}))
 		})
+		It("counts no requester's code but the owner's, even one each key's permission lets delete", func(ctx SpecContext) {
+			f.env.Authz = &opfakes.FakeAuthorizer{}
+			expectRefused(run(ctx, f.bob, true, version()...))
+		})
+		It("refuses an admin too, the check being the request's own and no permission op.Run overrides", func(ctx SpecContext) {
+			admin := f.bob
+			admin.Admin = true
+			expectRefused(run(ctx, admin, false, version()...))
+		})
+		// S3's DeleteObjects reference: "If you provide an invalid token,
+		// whether there are versioned keys in the request or not, the entire
+		// Multi-Object Delete request will fail."
+		Describe("an x-amz-mfa present", func() {
+			noVersion := func() []op.DeleteObjectsEntry { return entriesOf("small", "a") }
+			// sent deletes es as id with the header present, its code
+			// verifying a device of id's user when verified.
+			sent := func(ctx context.Context, id op.Identity, verified bool, es ...op.DeleteObjectsEntry) error {
+				r := f.multiReq("x")
+				r.Identity, r.MFAPresent, r.MFAVerified = id, true, verified
+				return op.Run(ctx, m.op(es, nil), r)
+			}
+			DescribeTable("refuses the whole request when it does not verify the owner's device, though no key names a version",
+				func(ctx SpecContext, release denc.Release) {
+					fixture(ctx, release)
+					expectRefused(sent(ctx, f.alice, false, noVersion()...))
+				},
+				Entry("Squid", denc.Squid),
+				Entry("Tentacle", denc.Tentacle),
+			)
+			It("refuses another requester's own verified code, though no key names a version", func(ctx SpecContext) {
+				f.env.Authz = &opfakes.FakeAuthorizer{}
+				expectRefused(sent(ctx, f.bob, true, noVersion()...))
+			})
+			It("deletes every key under the owner's verified code", func(ctx SpecContext) {
+				Expect(sent(ctx, f.alice, true, append(noVersion(), version()...)...)).To(Succeed())
+				Expect(stub.DeleteObjectCallCount()).To(Equal(4))
+			})
+			It("changes nothing on a bucket without MFA delete", func(ctx SpecContext) {
+				f = newWriteFixture(ctx, denc.Squid)
+				f.setBucketFlags(ctx, meta.BucketVersioned)
+				f.env.Objects = stub
+				Expect(sent(ctx, f.alice, false, append(noVersion(), version()...)...)).To(Succeed())
+				Expect(stub.DeleteObjectCallCount()).To(Equal(4))
+			})
+		})
+	})
+	Describe("on a versioned bucket", func() {
+		var stub *opfakes.FakeObjectStore
+		// call is one delete the store saw.
+		type call struct {
+			key  meta.ObjKey
+			skip bool
+		}
+		var (
+			mu    sync.Mutex
+			calls []call
+		)
+		BeforeEach(func(ctx SpecContext) {
+			f.setBucketFlags(ctx, meta.BucketVersioned)
+			calls = nil
+			stub = &opfakes.FakeObjectStore{}
+			stub.DeleteObjectStub = func(_ context.Context, _ *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) (*op.DeleteObjectResult, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				calls = append(calls, call{key, p.SkipOLHUpdate})
+				return &op.DeleteObjectResult{}, nil
+			}
+			f.env.Objects = stub
+		})
+		keys := func(es ...string) []op.DeleteObjectsEntry {
+			out := make([]op.DeleteObjectsEntry, len(es))
+			for i, e := range es {
+				name, instance, _ := strings.Cut(e, "@")
+				out[i] = op.DeleteObjectsEntry{Key: meta.ObjKey{Name: name, Instance: instance}}
+			}
+			return out
+		}
+
+		DescribeTable("groups the keys by name, skipping the OLH update of each but the last of its name, and deletes the lasts after the rest",
+			func(ctx SpecContext, flags uint32) {
+				f.setBucketFlags(ctx, flags)
+				f.conf["rgw_multi_obj_del_max_aio"] = "1"
+				Expect(op.Run(ctx, m.op(keys("b", "a", "a@v1", "b@v2", "c", "a"), nil), f.multiReq("x"))).To(Succeed())
+				Expect(calls).To(Equal([]call{
+					{meta.ObjKey{Name: "a"}, true},
+					{meta.ObjKey{Name: "a", Instance: "v1"}, true},
+					{meta.ObjKey{Name: "b"}, true},
+					{meta.ObjKey{Name: "a"}, false},
+					{meta.ObjKey{Name: "b", Instance: "v2"}, false},
+					{meta.ObjKey{Name: "c"}, false},
+				}), "std::map's name order, the request's order within a name")
+				Expect(m.results).To(HaveLen(6))
+			},
+			Entry("versioning enabled", uint32(meta.BucketVersioned)),
+			Entry("versioning suspended, which bucket->versioned() counts", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended)),
+		)
+		It("starts no name's last delete until every other delete has returned, deleting in parallel within each group", func(ctx SpecContext) {
+			f.conf["rgw_multi_obj_del_max_aio"] = "4"
+			var inFlight, maxInFlight, skipsDone, skipsTotal atomic.Int32
+			var early atomic.Bool
+			stub.DeleteObjectStub = func(_ context.Context, _ *op.BucketRecord, _ meta.ObjKey, p op.DeleteParams) (*op.DeleteObjectResult, error) {
+				n := inFlight.Add(1)
+				defer inFlight.Add(-1)
+				for {
+					cur := maxInFlight.Load()
+					if n <= cur || maxInFlight.CompareAndSwap(cur, n) {
+						break
+					}
+				}
+				if !p.SkipOLHUpdate && skipsDone.Load() != skipsTotal.Load() {
+					early.Store(true)
+				}
+				time.Sleep(5 * time.Millisecond) // holds the delete open so an overlap would be seen
+				if p.SkipOLHUpdate {
+					skipsDone.Add(1)
+				}
+				return &op.DeleteObjectResult{}, nil
+			}
+			es := keys("k", "k", "k", "k", "k", "j", "j", "j", "j", "i")
+			skipsTotal.Store(int32(len(es) - 3))
+			Expect(op.Run(ctx, m.op(es, nil), f.multiReq("x"))).To(Succeed())
+			Expect(stub.DeleteObjectCallCount()).To(Equal(len(es)))
+			Expect(early.Load()).To(BeFalse(), "a last delete started before the skipped ones had all returned")
+			Expect(maxInFlight.Load()).To(BeNumerically(">", 1), "the deletes overlap")
+			Expect(maxInFlight.Load()).To(BeNumerically("<=", 4))
+		})
+		// handle_individual_object answers a refused key before delete_obj, so
+		// nothing replays its name's skipped deletes
+		// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6837-L6847 at v19.2.7,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7765-L7775 at v20.2.4).
+		It("sends no update for a name whose last delete the permission refuses, leaving its skipped deletes pending", func(ctx SpecContext) {
+			f.conf["rgw_multi_obj_del_max_aio"] = "1"
+			authz := &opfakes.FakeAuthorizer{}
+			authz.VerifyBucketInStub = func(_ context.Context, _ *op.Request, _ policy.Action, _ acl.Permission, _ *op.BucketRecord, key meta.ObjKey) error {
+				if key.Instance == "v2" {
+					return op.ErrAccessDenied
+				}
+				return nil
+			}
+			f.env.Authz = authz
+			Expect(op.Run(ctx, m.op(keys("k@v1", "k@v3", "k@v2"), nil), f.multiReq("x"))).To(Succeed())
+			Expect(calls).To(Equal([]call{{meta.ObjKey{Name: "k", Instance: "v1"}, true}, {meta.ObjKey{Name: "k", Instance: "v3"}, true}}),
+				"the skipped deletes alone reach the store")
+			Expect(m.results).To(ContainElement(op.DeleteResult{Key: meta.ObjKey{Name: "k", Instance: "v2"}, Err: op.ErrAccessDenied}))
+		})
+		It("skips no update on a bucket whose versioning was never enabled, deleting in the request's order", func(ctx SpecContext) {
+			f = newWriteFixture(ctx, denc.Squid)
+			f.env.Objects = stub
+			f.conf["rgw_multi_obj_del_max_aio"] = "1"
+			Expect(op.Run(ctx, m.op(keys("b", "a", "b"), nil), f.multiReq("x"))).To(Succeed())
+			Expect(calls).To(Equal([]call{{meta.ObjKey{Name: "b"}, false}, {meta.ObjKey{Name: "a"}, false}, {meta.ObjKey{Name: "b"}, false}}))
+		})
+		It("hands the store the requester as a delete marker's owner and no expected state", func(ctx SpecContext) {
+			Expect(op.Run(ctx, m.op(keys("a"), nil), f.multiReq("x"))).To(Succeed())
+			_, _, _, p := stub.DeleteObjectArgsForCall(0)
+			Expect(p.MarkerOwner).To(Equal(f.alice.Owner))
+			Expect(p.MarkerOwnerDisplayName).To(Equal("Alice"))
+			Expect(p.Expect).To(BeNil())
+		})
+		It("reports the delete marker each delete made or removed, with its version, as send_partial_response takes del_op->result", func(ctx SpecContext) {
+			stub.DeleteObjectStub = func(_ context.Context, _ *op.BucketRecord, key meta.ObjKey, _ op.DeleteParams) (*op.DeleteObjectResult, error) {
+				switch key.Name {
+				case "marker":
+					return &op.DeleteObjectResult{VersionID: "m1", DeleteMarker: true}, nil
+				case "null-marker":
+					return &op.DeleteObjectResult{VersionID: "null", DeleteMarker: true}, nil
+				case "version":
+					return &op.DeleteObjectResult{VersionID: "v1"}, nil
+				}
+				return nil, fmt.Errorf("version gone: %w", op.ErrNoSuchKey)
+			}
+			Expect(op.Run(ctx, m.op(keys("marker", "marker@m1", "null-marker@null", "version@v1", "gone@v9"), nil), f.multiReq("x"))).To(Succeed())
+			Expect(m.results).To(ConsistOf(
+				op.DeleteResult{Key: meta.ObjKey{Name: "marker"}, DeleteMarker: true, MarkerVersionID: "m1"},
+				op.DeleteResult{Key: meta.ObjKey{Name: "marker", Instance: "m1"}, DeleteMarker: true, MarkerVersionID: "m1"},
+				op.DeleteResult{Key: meta.ObjKey{Name: "null-marker", Instance: "null"}, DeleteMarker: true, MarkerVersionID: "null"},
+				op.DeleteResult{Key: meta.ObjKey{Name: "version", Instance: "v1"}},
+				op.DeleteResult{Key: meta.ObjKey{Name: "gone", Instance: "v9"}},
+			))
+		})
+		It("refuses a bucket with object lock with 501 through Status before the body is parsed", func(ctx SpecContext) {
+			f.setBucketFlags(ctx, meta.BucketObjLockEnabled)
+			err := op.Run(ctx, m.op(keys("a"), nil), f.multiReq("x"))
+			Expect(err).To(MatchError(op.ErrNotImplemented))
+			Expect(m.statuses).To(ConsistOf(MatchError(op.ErrNotImplemented)))
+			Expect(m.parsed).To(BeZero())
+			Expect(stub.DeleteObjectCallCount()).To(BeZero())
+		})
+	})
+	It("deletes a key naming a version on a bucket whose versioning was never enabled", func(ctx SpecContext) {
+		stub := &opfakes.FakeObjectStore{}
+		stub.DeleteObjectReturns(&op.DeleteObjectResult{}, nil)
+		f.env.Objects = stub
+		Expect(op.Run(ctx, m.op([]op.DeleteObjectsEntry{{Key: meta.ObjKey{Name: "small", Instance: "v1"}}}, nil), f.multiReq("x"))).To(Succeed())
+		Expect(errByKey(m.results)).To(Equal(map[string]error{"small": nil}))
+		_, _, key, _ := stub.DeleteObjectArgsForCall(0)
+		Expect(key).To(Equal(meta.ObjKey{Name: "small", Instance: "v1"}))
 	})
 })

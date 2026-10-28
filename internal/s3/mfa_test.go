@@ -97,8 +97,35 @@ var _ = Describe("PostAuthInit's x-amz-mfa", func() {
 	}
 
 	It("checks no code for a request without the header", func(ctx SpecContext) {
-		Expect(initWith(ctx).MFAVerified).To(BeFalse())
+		r := initWith(ctx)
+		Expect(r.MFAVerified).To(BeFalse())
+		Expect(r.MFAPresent).To(BeFalse())
 		Expect(verifier.VerifyMFACallCount()).To(BeZero())
+	})
+
+	DescribeTable("notes a header that is present, whether or not its code verifies",
+		func(ctx SpecContext, value string, verified bool) {
+			r := initWith(ctx, value)
+			Expect(r.MFAPresent).To(BeTrue(), "%q", value)
+			Expect(r.MFAVerified).To(Equal(verified), "%q", value)
+		},
+		Entry("the device's current code", "SERIAL 123456", true),
+		Entry("another code", "SERIAL 654321", false),
+		Entry("a value that does not split in two", "SERIAL", false),
+		Entry("an empty value", "", false),
+	)
+	It("notes the header for an identity granted on its key's id alone, whose code it checks not", func(ctx SpecContext) {
+		p := mfaParsed(ctx, "/plain/k", alice, verifier, "SERIAL 123456")
+		p.Req.Identity.Unverified = true
+		Expect(s3.PostAuthInit(ctx, p)).To(Succeed())
+		Expect(p.Req.MFAPresent).To(BeTrue())
+		Expect(p.Req.MFAVerified).To(BeFalse())
+	})
+	It("notes the header in an env without a verifier", func(ctx SpecContext) {
+		p := mfaParsed(ctx, "/plain/k", alice, nil, "SERIAL 123456")
+		Expect(s3.PostAuthInit(ctx, p)).To(Succeed())
+		Expect(p.Req.MFAPresent).To(BeTrue())
+		Expect(p.Req.MFAVerified).To(BeFalse())
 	})
 
 	DescribeTable("hands the verifier the two fields a split at spaces gives, as get_str_vec splits it, and takes its verdict",

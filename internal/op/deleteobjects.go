@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -27,16 +29,18 @@ const (
 
 // DeleteResult is one key's outcome of a DeleteObjects: what
 // send_partial_response renders
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4273-L4329 at v19.2.6).
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4303-L4359 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4821-L4871 at v20.2.4).
 type DeleteResult struct {
 	// Key is the requested key; its Instance renders as VersionId.
 	Key meta.ObjKey
 	// Err is nil for success.
 	Err error
-	// DeleteMarker and MarkerVersionID are del_op->result: whether the
-	// delete created a delete marker, and its version id. Both stay unset:
-	// every delete rgw-go performs is unversioned, whose result carries
-	// neither.
+	// DeleteMarker and MarkerVersionID are del_op->result as
+	// send_partial_response takes it: whether the version the delete wrote
+	// or removed is a delete marker, and that version's id. Both stay unset
+	// for a failure, an unversioned delete, the removal of a version that is
+	// no marker and a missing key.
 	DeleteMarker    bool
 	MarkerVersionID string
 }
@@ -56,7 +60,7 @@ type DeleteObjectsEntry struct {
 }
 
 // DeleteObjects is RGWDeleteMultiObj
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6758-L7106 at v19.2.6,
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6764-L7119 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7697-L8020 at v20.2.4).
 // Init reads the body; Execute parses it through Parse and makes the
 // whole-request checks, then calls Begin once and hands each key's outcome
@@ -128,14 +132,26 @@ func (o *DeleteObjects) VerifyPermission(ctx context.Context, r *Request) error 
 }
 
 // Execute is RGWDeleteMultiObj::execute
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L7007-L7106 at v19.2.6,
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L7019-L7119 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7921-L8014 at v20.2.4):
 // the whole-request checks, each answered with send_status alone (goto
-// error at v19.2.6; v20.2.4 returns and its send_response calls
+// error at v19.2.7; v20.2.4 returns and its send_response calls
 // send_status,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L8016-L8020),
 // then begin_response and the keys, at most max(1,
-// rgw_multi_obj_del_max_aio) of them in flight.
+// rgw_multi_obj_del_max_aio) of them in flight, as handle_objects deletes
+// them
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L7008-L7017 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7910-L7919 at v20.2.4).
+// On a bucket whose versioning was ever enabled, bucket->versioned(), the
+// keys go by name, as handle_versioned_objects groups them
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6924-L6979 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7857-L7892 at v20.2.4):
+// every delete of a name but its last skips the key's OLH update, and the
+// last of each name starts once every other delete has returned, so that
+// its update replays the deletes of its name before it, one update a name
+// where each delete would make its own. Any other bucket's keys go in the
+// request's order.
 func (o *DeleteObjects) Execute(ctx context.Context, r *Request) error {
 	objects, err := o.checkRequest(r)
 	if err != nil {
@@ -146,31 +162,78 @@ func (o *DeleteObjects) Execute(ctx context.Context, r *Request) error {
 		return err
 	}
 	var mu sync.Mutex
-	g, gctx := errgroup.WithContext(ctx)
+	report := func(res DeleteResult) {
+		mu.Lock()
+		defer mu.Unlock()
+		o.Result(res)
+	}
+	if !r.BucketRec.Info.Versioned() {
+		return o.deleteAll(ctx, r, objects, false, report)
+	}
+	rest, last := groupByName(objects)
+	if err := o.deleteAll(ctx, r, rest, true, report); err != nil {
+		return err
+	}
+	return o.deleteAll(ctx, r, last, false, report)
+}
+
+// deleteAll deletes entries, at most maxAIO at once, each skipping its key's
+// OLH update when skipOLHUpdate is set, and reports each outcome as it
+// completes. It returns once every delete has.
+func (o *DeleteObjects) deleteAll(ctx context.Context, r *Request, entries []DeleteObjectsEntry, skipOLHUpdate bool, report func(DeleteResult)) error {
+	var g errgroup.Group
 	g.SetLimit(o.maxAIO(r))
-	for _, e := range objects {
+	for _, e := range entries {
 		g.Go(func() error {
-			res := o.deleteOne(gctx, r, e)
-			mu.Lock()
-			defer mu.Unlock()
-			o.Result(res)
+			report(o.deleteOne(ctx, r, e, skipOLHUpdate))
 			return nil
 		})
 	}
 	return g.Wait()
 }
 
+// groupByName is handle_versioned_objects' grouping: entries by their key's
+// name, the names in the byte order of the std::map that holds them and each
+// name's entries in the request's order; rest holds every entry of a name
+// but its last, and last the last of each name.
+func groupByName(entries []DeleteObjectsEntry) (rest, last []DeleteObjectsEntry) {
+	byName := map[string][]DeleteObjectsEntry{}
+	for _, e := range entries {
+		byName[e.Key.Name] = append(byName[e.Key.Name], e)
+	}
+	for _, name := range slices.Sorted(maps.Keys(byName)) {
+		group := byName[name]
+		rest = append(rest, group[:len(group)-1]...)
+		last = append(last, group[len(group)-1])
+	}
+	return rest, last
+}
+
 // Complete does nothing: the handler logs usage once the response is written.
 func (o *DeleteObjects) Complete(context.Context, *Request) {}
 
 // checkRequest is execute's work before begin_response, in its order
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L7019-L7068 at v19.2.6,
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L7031-L7081 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7923-L7983 at v20.2.4):
 // the body, its parse, Tentacle's refusal of an empty list, the key
-// count, and MFA. A bucket whose versioning or object lock rgw-go does
-// not serve is refused first, and a request naming a version last.
+// count, and MFA delete. A bucket with object lock is refused first
+// (deleteLockUnserved).
+//
+// On a bucket with MFA delete a request any of whose keys names a version
+// is ERR_MFA_REQUIRED, 403 AccessDenied, unless its x-amz-mfa verified a
+// device of the bucket's owner (OwnerMFAVerified), the check radosgw made
+// at v19.2.6 and makes on main. v19.2.7 and v20.2.4 invert it: they refuse a
+// request with a key naming no version and pass one whose every key names a
+// version (docs/exclusions.md, "DeleteObjects asks for MFA for the keys that
+// name a version"). A request whose x-amz-mfa is present and does not verify
+// the owner's device is refused whatever its keys name, as S3's
+// DeleteObjects reference says: "If you provide an invalid token, whether
+// there are versioned keys in the request or not, the entire Multi-Object
+// Delete request will fail"
+// (https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html).
+// The check is execute's, so op.Run's admin override never passes it.
 func (o *DeleteObjects) checkRequest(r *Request) ([]DeleteObjectsEntry, error) {
-	if err := versioningUnserved(r.BucketRec); err != nil {
+	if err := deleteLockUnserved(r.BucketRec); err != nil {
 		return nil, err
 	}
 	if len(o.body) == 0 {
@@ -191,16 +254,14 @@ func (o *DeleteObjects) checkRequest(r *Request) ([]DeleteObjectsEntry, error) {
 		}
 		return nil, fmt.Errorf("%w: %d keys over rgw_delete_multi_obj_max_num %d", ErrMalformedXML, len(objects), maxNum)
 	}
-	if mfaEnabled(r.BucketRec) {
+	if r.BucketRec.Info.MFAEnabled() && !OwnerMFAVerified(r) {
+		if r.MFAPresent {
+			return nil, fmt.Errorf("%w: an x-amz-mfa that does not verify the bucket owner's device fails the request", ErrMFARequired)
+		}
 		for _, e := range objects {
 			if e.Key.Instance != "" {
-				return nil, ErrMFARequired
+				return nil, fmt.Errorf("%w: deleting version %q of %s needs the bucket owner's verified x-amz-mfa", ErrMFARequired, e.Key.Instance, e.Key.Name)
 			}
-		}
-	}
-	for _, e := range objects {
-		if err := versioningUnserved(r.BucketRec, e.Key); err != nil {
-			return nil, err
 		}
 	}
 	return objects, nil
@@ -235,16 +296,19 @@ func (o *DeleteObjects) maxAIO(r *Request) int {
 }
 
 // deleteOne is handle_individual_object
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6818-L6910 at v19.2.6,
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6824-L6921 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7743-L7855 at v20.2.4):
 // the key, its permission, s3:DeleteObjectVersion for a key naming any
 // version, the null one included
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6829-L6831,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7766-L7768),
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6837-L6847,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7765-L7775),
 // checked in the request's bucket with the request's public-access block,
-// and the delete with the entry's conditions, where a missing key is
-// success.
-func (o *DeleteObjects) deleteOne(ctx context.Context, r *Request, e DeleteObjectsEntry) DeleteResult {
+// and the delete with the entry's conditions and the requester as a delete
+// marker's owner, del_op->params.obj_owner being s->owner, where a missing
+// key is success. radosgw reads the key's state ahead of the delete, failing
+// the key on a read that fails otherwise than with ENOENT; the store's
+// delete makes the reads it needs, whose failure fails the key alike.
+func (o *DeleteObjects) deleteOne(ctx context.Context, r *Request, e DeleteObjectsEntry, skipOLHUpdate bool) DeleteResult {
 	res := DeleteResult{Key: e.Key}
 	if e.Key.Name == "" {
 		res.Err = ErrInvalidArgument
@@ -259,9 +323,18 @@ func (o *DeleteObjects) deleteOne(ctx context.Context, r *Request, e DeleteObjec
 		res.Err = ErrAccessDenied
 		return res
 	}
-	p := DeleteParams{IfMatch: storeCondition(e.IfMatch), IfMatchSize: e.IfMatchSize, IfMatchLastModified: e.IfMatchLastModified}
-	if _, err := r.Env.Objects.DeleteObject(ctx, r.BucketRec, e.Key, p); !errors.Is(err, ErrNoSuchKey) {
+	p := DeleteParams{
+		IfMatch: storeCondition(e.IfMatch), IfMatchSize: e.IfMatchSize, IfMatchLastModified: e.IfMatchLastModified,
+		SkipOLHUpdate: skipOLHUpdate,
+	}
+	p.MarkerOwner, p.MarkerOwnerDisplayName = requesterOwner(r)
+	d, err := r.Env.Objects.DeleteObject(ctx, r.BucketRec, e.Key, p)
+	switch {
+	case errors.Is(err, ErrNoSuchKey):
+	case err != nil:
 		res.Err = err
+	case d != nil && d.DeleteMarker:
+		res.DeleteMarker, res.MarkerVersionID = true, d.VersionID
 	}
 	return res
 }

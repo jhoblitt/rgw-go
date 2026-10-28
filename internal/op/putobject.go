@@ -280,68 +280,6 @@ func blockPublicACLs(rec *BucketRecord) bool {
 	return d.Err() != nil || block.BlockPublicACLs
 }
 
-// versioningUnserved answers 501 NotImplemented for a bucket whose versioning
-// is or was enabled or that has object lock, and for a request that names a
-// version of any of keys, which are objects of rec's that the request
-// removes: the deletes, which rgw-go does not serve on such a bucket yet. The
-// store's delete takes radosgw's versioned path on a bucket whose flags hold
-// BUCKET_VERSIONED, but the delete ops do not yet answer the version id or
-// the delete marker it reports, and would skip the retention and legal-hold
-// checks radosgw makes for a versioned delete on a lock bucket
-// (verify_object_lock,
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5185-L5221 and
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6845-L6869 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5576-L5610 and
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7782-L7806 at v20.2.4).
-// The writes that create a head serve such a bucket, but for one with object
-// lock (VersionForWrite, objectLockUnserved; docs/exclusions.md).
-//
-// On a bucket whose versioning was never enabled, a key naming the null
-// version names the plain object: its head is the plain key's
-// (rgw_obj_key::get_oid,
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_obj_types.h#L226-L254 at v19.2.6
-// and v20.2.4), the delete clears the instance before it reaches the index
-// (RGWRados::Object::Delete::delete_obj,
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5768-L5770 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6456-L6458 at v20.2.4),
-// and it takes the unversioned path whenever the bucket's flags lack
-// BUCKET_VERSIONED
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5774,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6462),
-// which RGWDeleteMultiObj passes for each key
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6889 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7826 at v20.2.4).
-func versioningUnserved(rec *BucketRecord, keys ...meta.ObjKey) error {
-	if !neverVersioned(rec) {
-		return fmt.Errorf("%w: writes to bucket %s, which is or was versioned or has object lock, are not implemented",
-			ErrNotImplemented, rec.Info.Bucket.Name)
-	}
-	for _, k := range keys {
-		if k.Instance != "" && k.Instance != meta.NullInstance {
-			return fmt.Errorf("%w: writes naming version %q of %s are not implemented", ErrNotImplemented, k.Instance, k.Name)
-		}
-	}
-	return nil
-}
-
-// neverVersioned reports whether rec's versioning was never enabled.
-// Enabling versioning sets BUCKET_VERSIONED and suspending it keeps it set
-// (RGWSetBucketVersioning::execute,
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2837-L2843 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3069-L3075 at v20.2.4);
-// object lock is enabled only with versioning
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2392
-// and
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8232 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2497
-// and
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9180 at v20.2.4).
-// The suspended flag without it, which radosgw never writes, leaves the
-// state unknown, and an unknown state is taken for a versioned one.
-func neverVersioned(rec *BucketRecord) bool {
-	return rec.Info.Flags&(meta.BucketVersioned|meta.BucketVersionsSuspended|meta.BucketObjLockEnabled) == 0
-}
-
 // EmptyCondition is how a condition header present with an empty value
 // crosses the store seam, where "" means absent: a NUL, which no header can
 // carry and which starts with no non-empty ETag, so the store's prefix compare fails it
