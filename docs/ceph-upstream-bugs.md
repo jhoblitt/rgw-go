@@ -489,6 +489,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's lifecycle transition of a null version whose head is an OLH puts its OLH attrs back, reverting a link that lands during the copy](#radosgws-lifecycle-transition-of-a-null-version-whose-head-is-an-olh-puts-its-olh-attrs-back-reverting-a-link-that-lands-during-the-copy) | pending | pending | ✓ |
 | [radosgw's lifecycle transition hides the current version once another version of its key has been removed](#radosgws-lifecycle-transition-hides-the-current-version-once-another-version-of-its-key-has-been-removed) | pending | pending | ✓ |
 | [radosgw's lifecycle transition locks a version the bucket's default retention never covered](#radosgws-lifecycle-transition-locks-a-version-the-buckets-default-retention-never-covered) | pending | pending | ✓ |
+| [radosgw's website redirect-all writes its forced 301 into the bucket's configuration instead of the rule it returns](#radosgws-website-redirect-all-writes-its-forced-301-into-the-buckets-configuration-instead-of-the-rule-it-returns) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -25385,7 +25386,11 @@ Every new entry adds its row to this table, in document order.
     stores, which the admin API's metadata JSON can make any `uint16`
     (`RGWRedirectInfo::decode_json`,
     [rgw_website.cc:142-148](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L142-L148),
-    [rgw_website.cc:142-148](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L142-L148)). And the 423 of ERR_LOCKED,
+    [rgw_website.cc:142-148](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L142-L148)); a redirect of every request
+    answers it only while no index suffix is stored ("[radosgw's website
+    redirect-all writes its forced 301 into the bucket's configuration
+    instead of the rule it
+    returns](#radosgws-website-redirect-all-writes-its-forced-301-into-the-buckets-configuration-instead-of-the-rule-it-returns)"). And the 423 of ERR_LOCKED,
     which the S3 table has
     ([rgw_common.cc:130](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L130),
     [rgw_common.cc:131](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L131)) and `http_codes` has not, answers the
@@ -29571,3 +29576,73 @@ Every new entry adds its row to this table, in document order.
   default-retention block, `PUT_OBJ_CREATE` and the lock date from the
   source, and reproduced it at v20.2.4 on a disposable cluster, the same
   day.
+
+## radosgw's website redirect-all writes its forced 301 into the bucket's configuration instead of the rule it returns
+
+- **Kind:** defect, cosmetic, not security-relevant. `should_redirect`
+  means a redirect of every request to answer 301, but writes the 301 into
+  the request's copy of the bucket's configuration after it has copied that
+  configuration's `redirect_all` into the rule it returns, so the rule
+  carries the stored code. Which code a website request answers then
+  depends on whether an index suffix is stored. Derived from the source,
+  not reproduced.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's; the file
+  is the same at both tags.
+  - `RGWBucketWebsiteConf::should_redirect` copies `redirect_all` into
+    `redirect_all_rule`, then sets `redirect_all.http_redirect_code = 301`
+    on the configuration, and returns the rule
+    ([rgw_website.cc:98-114](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L98-L114),
+    [rgw_website.cc:98-114](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L98-L114)).
+  - `apply_rule` answers the rule's code when it is above 0
+    ([rgw_website.cc:61-62](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L61-L62),
+    [rgw_website.cc:61-62](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L61-L62)).
+  - With no index suffix stored, `retarget` fails at `get_effective_key`
+    before it asks `should_redirect`
+    ([rgw_rest_s3.cc:5409-5414](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5409-L5414),
+    [rgw_rest_s3.cc:5935-5940](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5935-L5940)), so
+    the website error handler's call (`should_redirect` in `error_handler`,
+    [rgw_rest_s3.cc:5545-5567](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5545-L5567),
+    [rgw_rest_s3.cc:6071-6093](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6071-L6093)) is
+    the first, and its rule carries the stored code. With a suffix stored,
+    `retarget`'s call (`should_redirect`,
+    [rgw_rest_s3.cc:5419-5429](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5419-L5429),
+    [rgw_rest_s3.cc:5945-5955](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5945-L5955)) comes
+    first and writes the 301 into the configuration, and the error handler,
+    which runs on the WebsiteRedirect `retarget` returns, copies that 301
+    into its rule and answers it.
+  - PutBucketWebsite never stores a `redirect_all` code, and stores a
+    `RedirectAllRequestsTo` alone: its decoder reads only `HostName` and
+    `Protocol` there
+    ([rgw_website.cc:324-328](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L324-L328),
+    [rgw_website.cc:324-328](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L324-L328)). The
+    bucket instance's JSON, through the admin API's or `radosgw-admin`'s
+    metadata put, stores any code, cast to `uint16`, and an index suffix
+    beside it (`RGWRedirectInfo::decode_json`,
+    [rgw_website.cc:142-148](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L142-L148),
+    [rgw_website.cc:142-148](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_website.cc#L142-L148)).
+- **Trigger:** a metadata put of a bucket instance whose `website_conf`
+  holds a `redirect_all` with a host and a nonzero `http_redirect_code`,
+  by an admin with the `metadata` write cap, then any website GET or HEAD
+  of the bucket.
+- **Impact:** the bucket redirects every request with the stored code
+  while it stores no index suffix, and with 301 while it stores one, where
+  the code means it to answer 301 either way. A code `http_codes` lacks
+  meets "[radosgw writes a status its name table lacks with a null reason
+  phrase](#radosgw-writes-a-status-its-name-table-lacks-with-a-null-reason-phrase)" only in the first case. The configuration
+  written into is the request's copy, which the bucket info cache hands out
+  by value (`read_bucket_instance_info`,
+  [svc_bucket_sobj.cc:292](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_bucket_sobj.cc#L292),
+  [svc_bucket_sobj.cc:243](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bucket_sobj.cc#L243)), and the website
+  handler has only GetObject ops, which write no bucket instance (`op_get`
+  and `op_head`, [rgw_rest_s3website.h:20-72](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3website.h#L20-L72),
+  [rgw_rest_s3website.h:20-72](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3website.h#L20-L72)), so the stored
+  instance does not change.
+- **Releases:** v19.2.7 and v20.2.4; main not checked.
+- **rgw-go:** matches radosgw: `website.Match` answers the stored code
+  while no index suffix is stored and 301 while one is
+  (`internal/website/redirect.go:45-69`), so there is no exclusion.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task BC-16, 2026-10-27, checking the website gate's
+  redirect codes against radosgw's source, and its task review;
+  registered in BC-16's fix round 1, 2026-10-27. Derived from the source,
+  not reproduced.
