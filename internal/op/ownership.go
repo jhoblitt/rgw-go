@@ -142,9 +142,9 @@ func (o *PutBucketOwnershipControls) VerifyPermission(ctx context.Context, r *Re
 // names another bucket; v21.1.2's retries authorize nothing
 // (https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L10277-L10304 at v21.1.2;
 // docs/exclusions.md, "A PutBucketAcl that loses a race is retried, and every
-// retried ACL, policy or tagging write is authorized again"). Each try of
-// BucketOwnerEnforced first holds the ACL that try read to the default
-// private one (privateBucketACL).
+// retried bucket write is authorized again"). Each try of BucketOwnerEnforced
+// first holds the ACL that try read to the default private one
+// (privateBucketACL).
 func (o *PutBucketOwnershipControls) Execute(ctx context.Context, r *Request) error {
 	if o.Params != nil {
 		if err := o.Params(ctx, o); err != nil {

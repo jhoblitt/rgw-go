@@ -127,8 +127,8 @@ func (o *PutObjectLockConfiguration) VerifyPermission(ctx context.Context, r *Re
 // retry_raced_bucket_write authorizes no retry and writes into a bucket
 // re-created under the name; rgw-go's authorizes each retry again and stops
 // there (docs/exclusions.md, "A PutBucketAcl that loses a race is retried,
-// and every retried ACL, policy or tagging write is authorized again" and
-// "A retried bucket write stops when the name names another bucket").
+// and every retried bucket write is authorized again" and "A retried bucket
+// write stops when the name names another bucket").
 func (o *PutObjectLockConfiguration) Execute(ctx context.Context, r *Request) error {
 	if !r.BucketRec.Info.VersioningEnabled() {
 		return ErrInvalidBucketState.WithMessage(msgLockNeedsVersioning)

@@ -11607,8 +11607,7 @@ Every new entry adds its row to this table, in document order.
   (`internal/op/objectattrs.go`). For either, a retry that passes those
   checks and finds the requested ACL already stored answers 200 without a
   write (`docs/exclusions.md`, "A PutBucketAcl that loses a race is
-  retried, and every retried ACL, policy or tagging write is authorized
-  again").
+  retried, and every retried bucket write is authorized again").
 - **Upstream:** [#16930](https://tracker.ceph.com/issues/16930), fixed by
   6e9a915b565923081f609048072b8d75716a74ea, "rgw: don't fail if lost race
   when setting acls", which introduced this behaviour on purpose; found by
@@ -12515,8 +12514,8 @@ Every new entry adds its row to this table, in document order.
   `retryBucketWrite`, `internal/op/bucketsubres.go`, through which the
   website writes of `internal/op/website.go` and the block writes of
   `internal/op/publicaccess.go` retry; `docs/exclusions.md`,
-  "A PutBucketAcl that loses a race is retried, and every retried ACL,
-  policy or tagging write is authorized again"), since jhoblitt/rgw-go#184
+  "A PutBucketAcl that loses a race is retried, and every retried bucket
+  write is authorized again"), since jhoblitt/rgw-go#184
   and #185. The identity's own policies are not read again: each check
   evaluates those of the user record read when the request was
   authenticated (`identityPolicies`, `internal/authz/load.go`), so a retry
@@ -24043,7 +24042,7 @@ Every new entry adds its row to this table, in document order.
   - Neither goes through `retry_raced_bucket_write`, which the tagging,
     policy, website, encryption, CORS and public-access-block writes use
     (`docs/exclusions.md`, "A PutBucketAcl that loses a race is retried,
-    and every retried ACL, policy or tagging write is authorized again"),
+    and every retried bucket write is authorized again"),
     so a version another write moved fails the write with -ECANCELED, 409
     ConcurrentModification
     ([rgw_common.cc:141](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L141),
