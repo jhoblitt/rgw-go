@@ -2,6 +2,7 @@ package meta_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -488,6 +489,26 @@ var _ = Describe("BucketInfo website_conf", func() {
 	)
 })
 
+// dumpAt is b's Dump at rel as ceph-dencoder's dump_json writes it: one
+// pretty object and a newline.
+func dumpAt(b meta.BucketInfo, rel denc.Release) string {
+	GinkgoHelper()
+	f := formatter.NewJSON(true)
+	f.OpenObjectSection("object")
+	b.Dump(f, rel)
+	f.CloseSection()
+	Expect(f.Err()).NotTo(HaveOccurred())
+	return string(f.Bytes()) + "\n"
+}
+
+// readWebsiteFixture is testdata/website/name.
+func readWebsiteFixture(name string) []byte {
+	GinkgoHelper()
+	b, err := os.ReadFile(filepath.Join("testdata", "website", name))
+	Expect(err).NotTo(HaveOccurred())
+	return b
+}
+
 // testdata/website holds, for each case, <case>.bin, the spec's own Squid
 // encoding of the bucket below (for "v1", with its configuration spliced
 // back to version 1), and what ceph-dencoder in quay.io/ceph/ceph:v19.2.7
@@ -495,23 +516,10 @@ var _ = Describe("BucketInfo website_conf", func() {
 // <case>.bin decode dump_json` as <case>.<tag>.json, and `decode encode
 // export` as <case>.<tag>.reenc. The corpus holds no bucket with a website.
 var _ = Describe("BucketInfo website against ceph-dencoder", func() {
-	dumpAt := func(b meta.BucketInfo, rel denc.Release) string {
-		f := formatter.NewJSON(true)
-		f.OpenObjectSection("object")
-		b.Dump(f, rel)
-		f.CloseSection()
-		Expect(f.Err()).NotTo(HaveOccurred())
-		return string(f.Bytes()) + "\n"
-	}
-	read := func(name string) []byte {
-		b, err := os.ReadFile(filepath.Join("testdata", "website", name))
-		Expect(err).NotTo(HaveOccurred())
-		return b
-	}
 	DescribeTable("decodes the input, re-encodes it as each release's dencoder does, and dumps it as each dumps it",
 		func(name string, w meta.WebsiteConf) {
 			want := bucketWithWebsite(w)
-			bin := read(name + ".bin")
+			bin := readWebsiteFixture(name + ".bin")
 			if name != "v1" {
 				Expect(bin).To(Equal(encodeWith(denc.Squid, want.Encode)), "the input is the spec's encoding")
 			}
@@ -521,8 +529,8 @@ var _ = Describe("BucketInfo website against ceph-dencoder", func() {
 				tag string
 				rel denc.Release
 			}{{"v19.2.7", denc.Squid}, {"v20.2.4", denc.Tentacle}} {
-				Expect(encodeWith(g.rel, got.Encode)).To(Equal(read(name+"."+g.tag+".reenc")), "%s re-encoding", g.tag)
-				doc := read(name + "." + g.tag + ".json")
+				Expect(encodeWith(g.rel, got.Encode)).To(Equal(readWebsiteFixture(name+"."+g.tag+".reenc")), "%s re-encoding", g.tag)
+				doc := readWebsiteFixture(name + "." + g.tag + ".json")
 				Expect(dumpAt(got, g.rel)).To(Equal(string(doc)), "%s dump", g.tag)
 				Expect(mustMarshal(got)).To(MatchJSON(doc), "%s JSON", g.tag)
 			}
@@ -537,5 +545,67 @@ var _ = Describe("BucketInfo website against ceph-dencoder", func() {
 		}),
 		Entry("Swift's listing members, which the dump leaves out and the encoding keeps", "swift", swiftSite()),
 		Entry("RGWBucketWebsiteConf()", "empty", meta.WebsiteConf{}),
+	)
+})
+
+// gateIndexSite is the index document, error document and routing rules
+// test/integration's website gate writes: one rule redirecting a prefix at
+// 302 to the request's host, one redirecting a missing key of another
+// prefix to a fixed host and key at the default code.
+func gateIndexSite() meta.WebsiteConf {
+	return meta.WebsiteConf{
+		IndexDocSuffix: "index.html",
+		ErrorDoc:       "error.html",
+		RoutingRules: meta.RoutingRules{
+			{
+				Condition:    meta.RoutingCondition{KeyPrefixEquals: "docs/"},
+				RedirectInfo: meta.RoutingRedirect{Redirect: meta.RedirectInfo{HTTPRedirectCode: 302}, ReplaceKeyPrefixWith: "documents/"},
+			},
+			{
+				Condition:    meta.RoutingCondition{KeyPrefixEquals: "gone/", HTTPErrorCodeReturnedEquals: 404},
+				RedirectInfo: meta.RoutingRedirect{Redirect: meta.RedirectInfo{Protocol: "https", Hostname: "example.com"}, ReplaceKeyWith: "moved.html"},
+			},
+		},
+	}
+}
+
+// gateRedirectSite is the website gate's redirect of every request.
+func gateRedirectSite() meta.WebsiteConf {
+	return meta.WebsiteConf{RedirectAll: meta.RedirectInfo{Protocol: "https", Hostname: "www.example.com"}}
+}
+
+// testdata/website/radosgw-<case>.<tag>.bin are bucket instances radosgw
+// <tag> wrote, as test/integration's website gate captures them on a
+// disposable cluster: index and redirect after its PutBucketWebsite, and v1
+// the index one with its configuration written back by hand as version 1.
+// radosgw-<case>.<tag>.json is that release's ceph-dencoder dump_json of
+// it, and radosgw-v1.<tag>.reenc that ceph-dencoder's re-encoding; it
+// re-encodes index and redirect to their own bytes.
+var _ = Describe("BucketInfo website as radosgw wrote it", func() {
+	DescribeTable("decodes radosgw's instance whole, re-encodes it as radosgw does, and dumps it as ceph-dencoder does",
+		func(name, tag string, rel denc.Release, w meta.WebsiteConf) {
+			bin := readWebsiteFixture("radosgw-" + name + "." + tag + ".bin")
+			got := decodeWhole(bin, meta.DecodeBucketInfo)
+			Expect(got.Website).To(Equal(&w), "the gate's configuration")
+			want := bin
+			if name == "v1" {
+				// RGWBucketWebsiteConf's header, at the same offset in both
+				// releases' instances of this bucket.
+				Expect(bin[263:265]).To(Equal([]byte{1, 1}), "the input configuration's version and compat")
+				Expect(binary.LittleEndian.Uint32(bin[265:269])).To(BeEquivalentTo(196), "the input configuration's length")
+				want = readWebsiteFixture("radosgw-v1." + tag + ".reenc")
+				Expect(want).To(HaveLen(len(bin)+9), "the version 2 members' 9 bytes")
+			}
+			Expect(encodeWith(rel, got.Encode)).To(Equal(want), "%s re-encoding", tag)
+			doc := readWebsiteFixture("radosgw-" + name + "." + tag + ".json")
+			Expect(dumpAt(got, rel)).To(Equal(string(doc)), "%s dump", tag)
+			Expect(mustMarshal(got)).To(MatchJSON(doc), "%s JSON", tag)
+		},
+		Entry("Squid's index document, error document and rules", "index", "v19.2.7", denc.Squid, gateIndexSite()),
+		Entry("Squid's redirect of every request", "redirect", "v19.2.7", denc.Squid, gateRedirectSite()),
+		Entry("Squid's instance with the configuration at version 1, written back as version 2", "v1", "v19.2.7", denc.Squid, gateIndexSite()),
+		Entry("Tentacle's index document, error document and rules", "index", "v20.2.4", denc.Tentacle, gateIndexSite()),
+		Entry("Tentacle's redirect of every request", "redirect", "v20.2.4", denc.Tentacle, gateRedirectSite()),
+		Entry("Tentacle's instance with the configuration at version 1, written back as version 2", "v1", "v20.2.4", denc.Tentacle, gateIndexSite()),
 	)
 })
