@@ -73,3 +73,21 @@
 
 # A used MFA code refused in the later steps of its window too; radosgw's cls_otp verifies it again in the next step (differences: "An MFA code the device may have accepted before does not verify")
 ^s3tests\.functional\.test_s3::test_versioning_mfa_delete_code_used_once$
+
+# A CORS preflight whose method or requested header only a later rule for its origin allows, answered from that rule; radosgw answers from the first rule whose origin matches and refuses it 403 (differences: "CORS rules are matched as Amazon S3 matches them")
+^s3tests\.functional\.test_s3::test_cors_preflight_later_rule_allows_method$
+^s3tests\.functional\.test_s3::test_cors_preflight_later_rule_allows_headers$
+
+# A request other than a preflight whose Origin no CORS rule allows for its method, refused 403 AccessDenied; radosgw serves it (differences: "A request whose Origin no CORS rule allows is refused")
+^s3tests\.functional\.test_s3::test_cors_origin_response$
+^s3tests\.functional\.test_s3::test_cors_presigned_url_non_preflight$
+
+# A CORS configuration op's x-amz-storage-class that the placement lacks, checked once the requester is authorized, so a requester the bucket refuses gets 403 AccessDenied; radosgw answers it 400 InvalidArgument (differences: "The CORS configuration ops check the storage class once the requester is authorized")
+^s3tests\.functional\.test_s3::test_bucket_cors_storage_class_checked_after_authorization$
+
+# The bucket configuration writes, and DeleteObjects' refusal before its first key, sent the CORS headers; radosgw sends none (differences: "Every S3 response carries CORS headers once its bucket is loaded")
+^s3tests\.functional\.test_s3::test_cors_headers_on_bucket_config_writes$
+^s3tests\.functional\.test_s3::test_cors_headers_on_delete_objects_refusal$
+
+# A presigned SigV2 preflight whose Access-Control-Request-Method names no CORS method, refused 400 InvalidArgument; Squid's radosgw signs it over its own method and answers 403 AccessDenied (differences: "A SigV2 preflight is signed over the method it asks for on Squid too")
+^s3tests\.functional\.test_s3::test_cors_presigned_v2_preflight_method_refused$
