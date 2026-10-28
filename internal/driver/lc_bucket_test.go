@@ -450,15 +450,26 @@ var _ = Describe("the lifecycle bucket pass", func() {
 		)
 
 		It("fails a bucket refused since its claim, before it lists anything", func(ctx SpecContext) {
+			tier := func(zg *meta.ZoneGroup) {
+				t := zg.PlacementTargets["default-placement"]
+				t.TierTargets = map[string]meta.ZoneGroupPlacementTier{"CLOUDY": {TierType: meta.TierTypeCloudS3, StorageClass: "CLOUDY"}}
+				zg.PlacementTargets["default-placement"] = t
+			}
+			editRoot(c, meta.ZoneGroupInfoOID("zg-ceph-objectstore"), meta.DecodeZoneGroup, tier)
+			editRoot(c, meta.PeriodOID("period-ceph-objectstore", 1), meta.DecodePeriod, func(p *meta.Period) {
+				zg := p.PeriodMap.ZoneGroups["zg-ceph-objectstore"]
+				tier(&zg)
+				p.PeriodMap.ZoneGroups["zg-ceph-objectstore"] = zg
+			})
 			open(ctx, nil)
 			rule := expireRule("transition", "")
-			rule.Transitions = map[string]lifecycle.Transition{"COLD": {Days: "30", StorageClass: "COLD"}}
+			rule.Transitions = map[string]lifecycle.Transition{"CLOUDY": {Days: "30", StorageClass: "CLOUDY"}}
 			rec, key := create(ctx, "plain", 0, lcAttr(rule))
 			put(ctx, rec, "k", "v", nil)
 			clk.Advance(lcDay)
 			settle(s)
 			c.ResetCounters()
-			Expect(h.RunForTest(ctx, key)).To(MatchError(ContainSubstring(`refused since its claim: rule transitions objects "transition"`)))
+			Expect(h.RunForTest(ctx, key)).To(MatchError(ContainSubstring(`refused since its claim: rule transitions to a cloud tier "transition"`)))
 			Expect(c.Reads(rookIndexPool, "", indexShardOID(rec, "k"))).To(BeZero(), "nothing listed")
 			Expect(stat(ctx, rec, "k").Exists).To(BeTrue())
 		})
@@ -1796,7 +1807,7 @@ var _ = Describe("the lifecycle bucket pass", func() {
 				{name: "b-versioned", flags: meta.BucketVersioned, rule: expireRule("expire", "")},
 				{name: "c-suspended", flags: meta.BucketVersioned | meta.BucketVersionsSuspended, rule: expireRule("expire", "")},
 				{name: "d-noncurrent", flags: meta.BucketVersioned, rule: noncurrent},
-				{name: "e-transition", rule: transition, reason: "rule transitions objects"},
+				{name: "e-transition", rule: transition},
 				{name: "f-cloud", rule: cloud, reason: "rule transitions to a cloud tier"},
 				{name: "g-plain", rule: expireRule("expire", "")},
 			} {
@@ -1837,7 +1848,7 @@ var _ = Describe("the lifecycle bucket pass", func() {
 			return logs.String()
 		}
 
-		It("claims a bucket ever versioned, its noncurrent rules too, and leaves a transition rule's and a cloud tier's to radosgw's worker, which claims them where rgw-go left the head", func(ctx SpecContext) {
+		It("claims a bucket ever versioned, its noncurrent rules too, and one with a transition rule, and leaves a cloud tier's to radosgw's worker, which claims it where rgw-go left the head", func(ctx SpecContext) {
 			logged := day(ctx)
 			for key, reason := range reasons {
 				Expect(logged).To(ContainSubstring(fmt.Sprintf(`"bucket":%q,"reason":%q`, key, reason)))

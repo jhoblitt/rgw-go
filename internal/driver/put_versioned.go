@@ -302,8 +302,17 @@ func (s *Store) linkCond(hw *headWrite) olhCondition {
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1141-L1166 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1275-L1299 at v20.2.4),
 // which no listing reaches. setOLH removes the version itself when it must.
-// The head and its tails stay otherwise, whatever is answered.
+// A write that rewrites an existing version in place (headWrite.expect)
+// removes it on no path, as its head names the version's data; neither
+// done_cancel nor set_olh's failure removes a version
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3352-L3375 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3473-L3496 at v20.2.4),
+// though radosgw's processor then deletes the tails the head names
+// (docs/ceph-upstream-bugs.md, "radosgw's versioned PutObject deletes its
+// tails when its link fails"). The head and its tails stay otherwise,
+// whatever is answered.
 func (s *Store) linkVersion(ctx context.Context, hw *headWrite, x *indexOp, ver rgw.EntryVer, m rgw.DirEntryMeta, in *nullInit) error {
+	rewrite := hw.expect != nil
 	if err := x.completeSync(ctx, ver, m); err != nil {
 		if in != nil {
 			s.olhCancelModification(context.WithoutCancel(ctx), in.left, in.opTag)
@@ -311,9 +320,11 @@ func (s *Store) linkVersion(ctx context.Context, hw *headWrite, x *indexOp, ver 
 		if !outcomeUnknown(err) {
 			x.cancel()
 		}
-		s.removeFailedVersion(ctx, x.rec, hw.key, err)
+		if !rewrite {
+			s.removeFailedVersion(ctx, x.rec, hw.key, err)
+		}
 		return op.FromRADOS(fmt.Errorf("completing the index entry of %s: %w", versionName(x.rec, hw.key), err), op.ScopeObject)
 	}
-	l := olhLink{Epoch: *hw.olhEpoch, Cond: s.linkCond(hw), Inited: in.inited()}
+	l := olhLink{Epoch: *hw.olhEpoch, Cond: s.linkCond(hw), Inited: in.inited(), KeepVersion: rewrite}
 	return op.FromRADOS(s.setOLH(ctx, x.rec, hw.key, l), op.ScopeObject)
 }

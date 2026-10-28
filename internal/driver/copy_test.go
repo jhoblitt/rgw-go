@@ -804,13 +804,13 @@ var _ = Describe("a copy's compression and checksum records", func() {
 		return b.Bytes()
 	}
 	// expectHint expects every write of the copy's tails in testDataPool, and
-	// its head's write_full, hinted INCOMPRESSIBLE when hinted and not
-	// otherwise.
-	expectHint := func(hinted bool) {
+	// the write_full of its head, headOID, hinted INCOMPRESSIBLE when hinted
+	// and not otherwise.
+	expectHint := func(headOID string, hinted bool) {
 		GinkgoHelper()
 		tails := tailHints(c, secondPrefix)
 		Expect(tails).NotTo(BeEmpty(), "the copy has tails")
-		after := afterWriteFull(c.LastWrite(testDataPool, "", dstOID).Steps())
+		after := afterWriteFull(c.LastWrite(testDataPool, "", headOID).Steps())
 		if hinted {
 			Expect(tails).To(HaveEach(radosclient.AllocHintFlags(512)), "add_write_hint, rgw_putobj_processor.cc:146-155 at v20.2.4")
 			Expect(after).To(Equal(&radosclient.SetAllocHintStep{Flags: 512}), "_do_write_meta, rgw_rados.cc:3330-3334 at v20.2.4")
@@ -852,13 +852,13 @@ var _ = Describe("a copy's compression and checksum records", func() {
 			case cc.raw:
 				Expect(head.Xattrs).To(HaveKeyWithValue(meta.AttrCompression, src.Attrs[meta.AttrCompression]), "the source's compression info, block map included")
 				Expect(got).To(Equal(stored(ctx, src)), "the source's stored bytes, undecoded")
-				expectHint(cc.hinted)
+				expectHint(dstOID, cc.hinted)
 			case cc.want != "":
 				Expect(dst.Compression).NotTo(BeNil(), "user.rgw.compression")
 				Expect([]any{dst.Compression.Type, dst.Compression.OrigSize}).To(Equal([]any{cc.want, uint64(10 << 20)}))
 				Expect(dst.Compression.Blocks).To(HaveLen(3), "one block per rgw_max_chunk_size of plaintext")
 				Expect(len(got)).To(BeNumerically("<", 10<<20), "the stored bytes are the codec's")
-				expectHint(true)
+				expectHint(dstOID, true)
 			default:
 				Expect(head.Xattrs).NotTo(HaveKey(meta.AttrCompression))
 				Expect(got).To(Equal(plain), "the plaintext as it is")
@@ -884,23 +884,30 @@ var _ = Describe("a copy's compression and checksum records", func() {
 			denc.Tentacle, compressionCase{srcClass: snappyClass, dstClass: compClass("random"), want: compression.Snappy, raw: true}),
 	)
 
+	// rawAttrs is src's attrs as transition_obj hands them to copy_obj_data:
+	// without the write tags.
+	rawAttrs := func(src *op.ObjectState) map[string][]byte {
+		attrs := maps.Clone(src.Attrs)
+		delete(attrs, meta.AttrIDTag)
+		delete(attrs, meta.AttrTailTag)
+		return attrs
+	}
+
 	DescribeTable("copies the stored bytes and both records as they are under the raw flag, as transition_obj's copy_obj_data runs without a data-processor factory",
 		func(ctx SpecContext, srcClass string) {
 			source(ctx, denc.Tentacle, srcClass)
 			record := cksumRecord(cksum.CRC32C, be32(0xe3069283), compositeFlags)
 			c.Object(testDataPool, "", srcOID).Xattrs[meta.AttrCksum] = record
 			src := prefetched(ctx)
-			attrs := maps.Clone(src.Attrs)
-			delete(attrs, meta.AttrIDTag)
-			delete(attrs, meta.AttrTailTag)
-			_, err := s.CopyDataForTest(ctx, src, rec, dstKey, zlibClass, attrs, true)
+			want := stored(ctx, src)
+			_, err := s.CopyDataForTest(ctx, src, rec, srcKey, zlibClass, rawAttrs(src), true)
 			Expect(err).NotTo(HaveOccurred())
 			settle(s)
-			dst, err := s.StatObject(ctx, rec, dstKey)
+			dst, err := s.StatObject(ctx, rec, srcKey)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(stored(ctx, dst)).To(Equal(stored(ctx, src)), "the source's stored bytes, though the class compresses with zlib")
-			expectHint(false)
-			head := c.Object(testDataPool, "", dstOID)
+			Expect(stored(ctx, dst)).To(Equal(want), "the source's stored bytes, though the class compresses with zlib")
+			expectHint(srcOID, false)
+			head := c.Object(testDataPool, "", srcOID)
 			Expect(head.Xattrs).To(HaveKeyWithValue(meta.AttrCksum, record), "a composite record, on an object without parts")
 			if b, ok := src.Attrs[meta.AttrCompression]; ok {
 				Expect(head.Xattrs).To(HaveKeyWithValue(meta.AttrCompression, b))
@@ -911,6 +918,50 @@ var _ = Describe("a copy's compression and checksum records", func() {
 		},
 		Entry("an uncompressed source stays uncompressed", ""),
 		Entry("a snappy source keeps its snappy blocks and compression info", snappyClass),
+	)
+
+	It("guards its head write under the raw flag on the write tag of the head the source was read from", func(ctx SpecContext) {
+		src := source(ctx, denc.Squid, "")
+		c.ResetCounters()
+		_, err := s.CopyDataForTest(ctx, src, rec, srcKey, "COLD", rawAttrs(src), true)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(c.Writes(testDataPool, "", srcOID)).To(Equal(1), "one guarded write: no exclusive create first")
+		Expect(c.LastWrite(testDataPool, "", srcOID).Steps()[0]).
+			To(Equal(&radosclient.CmpXattrStep{Name: meta.AttrIDTag, Op: radosclient.CmpEQ, Value: []byte("tx-src\x00")}),
+				"prepare_atomic_modification's cmpxattr on the idtag transition_obj's read loaded, rgw_rados.cc:6731-6735 at v19.2.7")
+	})
+
+	DescribeTable("fails under the raw flag once the head the source was read from is written or removed, leaving the head and none of its tails",
+		func(ctx SpecContext, write func(ctx context.Context, src *op.ObjectState), want error) {
+			src := source(ctx, denc.Tentacle, "")
+			s.SetRandForTest(fixedRand("THIRDTHIRDTHIRDTHIRDTHIRDTHIRD1"))
+			write(ctx, src)
+			settle(s)
+			s.SetRandForTest(fixedRand(secondPrefix))
+			var before map[string][]byte
+			if o := c.Object(testDataPool, "", srcOID); o != nil {
+				before = maps.Clone(o.Xattrs)
+			}
+			_, err := s.CopyDataForTest(ctx, src, rec, srcKey, "COLD", rawAttrs(src), true)
+			Expect(err).To(MatchError(want))
+			settle(s)
+			if before == nil {
+				Expect(c.Object(testDataPool, "", srcOID)).To(BeNil(), "no head brought back on tails queued for the GC")
+			} else {
+				Expect(c.Object(testDataPool, "", srcOID).Xattrs).To(Equal(before), "the write since the read stands")
+			}
+			Expect(poolObjects(ctx, c, coldPool, "")).To(BeEmpty(), "the tails the copy wrote, deleted")
+		},
+		Entry("a PUT, whose bytes an unguarded rewrite would replace with the old ones", func(ctx context.Context, _ *op.ObjectState) {
+			_, err := s.PutObject(ctx, rec, srcKey, strings.NewReader("new"), op.PutParams{Attrs: attrsWithACL(initiator), Size: 3, Tag: "tx-new"})
+			Expect(err).NotTo(HaveOccurred())
+		}, op.ErrConcurrentModification),
+		Entry("an attr write, as PutObjectRetention makes, whose new write tag set_attrs writes", func(ctx context.Context, src *op.ObjectState) {
+			Expect(s.SetObjectAttrs(ctx, src, map[string][]byte{meta.AttrMetaPrefix + "note": []byte("n\x00")}, nil)).To(Succeed())
+		}, op.ErrConcurrentModification),
+		Entry("a removal", func(ctx context.Context, _ *op.ObjectState) {
+			Expect(s.DeleteObject(ctx, rec, srcKey, op.DeleteParams{})).Error().To(Succeed())
+		}, op.ErrNoSuchKey),
 	)
 
 	// checksumCase is a copy under the storage class class, "" sharing the
@@ -998,13 +1049,10 @@ var _ = Describe("a copy's compression and checksum records", func() {
 		attr := slices.Concat(cksumRecord(cksum.CRC32C, be32(0xe3069283), compositeFlags), []byte{0x99})
 		c.Object(testDataPool, "", srcOID).Xattrs[meta.AttrCksum] = attr
 		src := prefetched(ctx)
-		attrs := maps.Clone(src.Attrs)
-		delete(attrs, meta.AttrIDTag)
-		delete(attrs, meta.AttrTailTag)
-		_, err := s.CopyDataForTest(ctx, src, rec, dstKey, "COLD", attrs, true)
+		_, err := s.CopyDataForTest(ctx, src, rec, srcKey, "COLD", rawAttrs(src), true)
 		Expect(err).NotTo(HaveOccurred())
 		settle(s)
-		Expect(c.Object(testDataPool, "", dstOID).Xattrs).To(HaveKeyWithValue(meta.AttrCksum, attr))
+		Expect(c.Object(testDataPool, "", srcOID).Xattrs).To(HaveKeyWithValue(meta.AttrCksum, attr))
 	})
 
 	It("computes no checksum for a copy, as RGWCopyObj computes none", func(ctx SpecContext) {

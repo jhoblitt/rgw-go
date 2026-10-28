@@ -82,11 +82,8 @@ func (p *lcPass) claimable(ctx context.Context, _ *lcWorker, key string) (bool, 
 // placement tiers to a cloud is never applied: its claim, or a head moved
 // past it, would hide it from radosgw's worker, which transitions it, for
 // the day (docs/exclusions.md, "An rgw-go-only zone never processes a bucket
-// whose rules transition to a cloud tier"). A bucket with a transition rule
-// is left to radosgw's worker too, as the bucket pass applies none
-// (docs/exclusions.md, "rgw-go's lifecycle worker leaves buckets with rules
-// it does not apply to radosgw's"). Only the rules the zone runs count, as
-// is_valid_op and zone_check choose them (lifecycle.Op.Applies).
+// whose rules transition to a cloud tier"). Only the rules the zone runs
+// count, as is_valid_op and zone_check choose them (lifecycle.Op.Applies).
 func (p *lcPass) refusal(rec *op.BucketRecord, conf lifecycle.Configuration) (reason, rule string) {
 	archive := p.s.zone.Zone.TierType == lcTierArchive
 	ops := conf.PrefixMap()
@@ -101,11 +98,6 @@ func (p *lcPass) refusal(rec *op.BucketRecord, conf lifecycle.Configuration) (re
 					return "rule transitions to a cloud tier", o.ID
 				}
 			}
-		}
-	}
-	for i := range ops {
-		if o := &ops[i].Op; o.Applies(archive) && len(o.Transitions)+len(o.NoncurTransitions) > 0 {
-			return "rule transitions objects", o.ID
 		}
 	}
 	return "", ""
@@ -230,9 +222,10 @@ var errLCChanged = errors.New("bucket changed during its lifecycle pass")
 // marker is errLCStaleEntry, as run's own load is. A bucket whose user.rgw.lc
 // is no longer the pass's, whose versioning was enabled or suspended since
 // the pass began, or that the claim predicate now refuses, its rules now
-// transitioning, is errLCChanged, so that nothing acts on a record the bucket
-// no longer holds: a delete that would write a marker taken as an
-// unversioned removal, or a delete marker written as the null one, unguarded.
+// transitioning to a cloud tier, is errLCChanged, so that nothing acts on a
+// record the bucket no longer holds: a delete that would write a marker
+// taken as an unversioned removal, or a delete marker written as the null
+// one, unguarded.
 // Any other error is the read's own. radosgw acts on the record it loaded at
 // the pass's start until the pass ends (docs/exclusions.md, "Lifecycle stops
 // a bucket's pass when the bucket changes under it").

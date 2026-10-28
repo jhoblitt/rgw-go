@@ -485,6 +485,10 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's DeleteObjectTagging naming no version writes the key's OLH head, not its current version](#radosgws-deleteobjecttagging-naming-no-version-writes-the-keys-olh-head-not-its-current-version) | pending | pending | ✓ |
 | [radosgw answers a copy source naming a delete marker's version 404 NoSuchKey](#radosgw-answers-a-copy-source-naming-a-delete-markers-version-404-nosuchkey) | pending | pending | ✓ |
 | [radosgw links a versioned write whose index completion the class refused, leaving its list entry pending until the version is removed](#radosgw-links-a-versioned-write-whose-index-completion-the-class-refused-leaving-its-list-entry-pending-until-the-version-is-removed) | pending | pending | ✓ |
+| [radosgw's lifecycle transition of a version writes its head unguarded](#radosgws-lifecycle-transition-of-a-version-writes-its-head-unguarded) | pending | pending | ✓ |
+| [radosgw's lifecycle transition of a null version whose head is an OLH puts its OLH attrs back, reverting a link that lands during the copy](#radosgws-lifecycle-transition-of-a-null-version-whose-head-is-an-olh-puts-its-olh-attrs-back-reverting-a-link-that-lands-during-the-copy) | pending | pending | ✓ |
+| [radosgw's lifecycle transition hides the current version once another version of its key has been removed](#radosgws-lifecycle-transition-hides-the-current-version-once-another-version-of-its-key-has-been-removed) | pending | pending | ✓ |
+| [radosgw's lifecycle transition locks a version the bucket's default retention never covered](#radosgws-lifecycle-transition-locks-a-version-the-buckets-default-retention-never-covered) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -14961,10 +14965,14 @@ Every new entry adds its row to this table, in document order.
   ec11f6284d0 (tentacle ceph/ceph#68826, merge 4319b618c80, 2026-05-20);
   on main by 77b86722300, which came with ceph/ceph#63794 (merge
   7e15bef2403, 2025-12-01) and is first tagged in v21.0.0.
-- **rgw-go:** unaffected before phase 2: it has no lifecycle transition,
-  and it refuses an encrypted copy source (`copyAttrs`,
-  `internal/driver/copy.go`). Phase 2's transition must record the part
-  lengths as both floors do; it cannot repair an object an affected
+- **rgw-go:** not affected: its lifecycle transition records the part
+  lengths of an encrypted object without them, from its stored manifest,
+  before the rewrite, as both floors do (`cryptPartLengths`,
+  `internal/driver/lc_transition.go`), which "keeps an encrypted multipart
+  object's part lengths, which its manifest loses, and keeps part lengths
+  it already has" (`internal/driver/lc_transition_test.go`) pins, and it
+  refuses an encrypted copy source (`copyAttrs`,
+  `internal/driver/copy.go`). It cannot repair an object an affected
   gateway transitioned.
 - **Upstream:** [#23264](https://tracker.ceph.com/issues/23264), named by
   the fix commits' `Fixes:` trailer, the server-side encryption work that
@@ -15428,8 +15436,8 @@ Every new entry adds its row to this table, in document order.
   shown"). rgw-go writes each record it encodes whole, and a copy that
   streams its data drops a source's attr that `cksum.DecodeAttr`
   refuses (`droppedChecksum`, `internal/driver/copy.go`); a copy that shares
-  the tails, and the raw copy a lifecycle transition is to use, keep the
-  attr as it is, as radosgw's copy and `transition_obj` do.
+  the tails, and a lifecycle transition's raw copy, keep the attr as it is,
+  as radosgw's copy and `transition_obj` do.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task WP-1, 2026-10-15, tracing the readers of
   `Cksum::decode`. Its review set the class and listed the iterator
@@ -20845,8 +20853,12 @@ Every new entry adds its row to this table, in document order.
   a stored Expiration Date past real_time, which radosgw wraps to
   2015-06-14 and expires at once" (`internal/driver/lc_bucket_test.go`)
   pins (`docs/exclusions.md`, "Lifecycle current expiration never acts on a
-  stored Date past real_time"). Tasks C8 and C11 record the header's and
-  the transition's answers
+  stored Date past real_time"), and its transition leaves them in their
+  class, which "keeps an object under a stored Transition Date past
+  real_time, which radosgw wraps to 2015-06-14 and transitions at once"
+  (`internal/driver/lc_transition_test.go`) pins (`docs/exclusions.md`, "A
+  lifecycle transition never acts on a stored Date past real_time"). Task
+  C8 records the header's answer
   (`docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md`).
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task C1's review, 2026-10-20, which compiled
@@ -22482,9 +22494,11 @@ Every new entry adds its row to this table, in document order.
   main not checked.
 - **rgw-go:** a streamed CopyObject drops such a record (`compositeChecksum`
   in `copyData`, `internal/driver/copy.go`; `docs/exclusions.md`, "A copy
-  that streams its data drops a composite checksum").
-  The raw copy lifecycle's transition is to use keeps it, as
-  `transition_obj` does; the transition's task decides. rgw-go's reads show
+  that streams its data drops a composite checksum"), and so does its
+  lifecycle transition, whose raw copy keeps every other attr
+  (`transitionAttrs`, `internal/driver/lc_transition.go`), which "drops a
+  composite checksum from a multipart object it rewrites without parts"
+  (`internal/driver/lc_transition_test.go`) pins. rgw-go's reads show
   no composite on an object without parts (`objectReadChecksum`,
   `internal/op/getobject.go`; `docs/exclusions.md`, "A composite checksum
   on an object without parts is not shown"), though its S3 handler renders
@@ -26306,20 +26320,56 @@ Every new entry adds its row to this table, in document order.
     drops its tail references after a head write that timed
     out](#radosgws-copy-drops-its-tail-references-after-a-head-write-that-timed-out)"
     is that fix's gap in the copy that shares its source's tails.
+  - A lifecycle transition rewrites an existing version through
+    `copy_obj_data` too
+    ([rgw_rados.cc:5235-5251](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5235-L5251) at v19.2.7,
+    [rgw_rados.cc:5468-5484](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5468-L5484) at v20.2.4),
+    and there a completion radosgw could not send loses the data as well.
+    The head write has already replaced the version's head and queued its
+    old tails for the GC
+    ([rgw_rados.cc:3346-3349](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3346-L3349) at v19.2.7,
+    [rgw_rados.cc:3467-3470](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3467-L3470) at v20.2.4).
+    `UpdateIndex::complete` sends the completion without waiting for its
+    answer, so it fails only when the shard is not found or the send itself
+    is refused
+    ([rgw_rados.cc:7300-7348](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7300-L7348) and
+    [rgw_rados.cc:9714](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9714) at v19.2.7,
+    [rgw_rados.cc:7959-8007](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7959-L8007) and
+    [rgw_rados.cc:10450](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10450) at v20.2.4);
+    a completion the class refuses goes unseen and the write links on.
+    One that fails goes to `done_cancel`, which cancels the index op and
+    returns the error
+    ([rgw_rados.cc:3352-3359](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3352-L3359) and
+    [rgw_rados.cc:3401-3412](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3401-L3412) at v19.2.7,
+    [rgw_rados.cc:3473-3480](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3473-L3480) and
+    [rgw_rados.cc:3522-3533](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3522-L3533) at v20.2.4),
+    so after it, as after a failed link, the processor deletes the new
+    tails the version's head now names.
 - **Impact:** after such a failure the version's head names tails that are
   gone. When the link had landed, the key's current version reads short or
   fails past its head's bytes; when it had not, the version is reachable by
   its id, which the failed write never returned, and through `bucket
-  check`. An object small enough to live in its head is not affected.
+  check`. A lifecycle transition whose completion cannot be sent or whose
+  link fails loses an existing version's data, its old tails to the GC and
+  its new ones to the processor, while the index still lists it. An object small enough to
+  live in its head is not affected.
 - **Releases:** v19.2.7 and v20.2.4; main was not checked.
 - **rgw-go:** differs: once a versioned write's head is written its tails
   stay whatever its completion or its link answers, and a removal of the
   version sends them to the GC (`putStream`, `internal/driver/put.go`;
   `docs/exclusions.md`, "A versioned write whose link fails keeps its
-  tails"). Pinned in `internal/driver/put_versioned_test.go`.
+  tails"). Pinned in `internal/driver/put_versioned_test.go`. A lifecycle
+  transition keeps the version itself too, its head naming the new tails,
+  whatever its completion or its link answers (`linkVersion`,
+  `internal/driver/put_versioned.go`; `docs/exclusions.md`, "A lifecycle
+  transition whose index completion or link fails keeps the version"),
+  which "keeps a version whose transition's index completion or link
+  fails" (`internal/driver/lc_transition_test.go`) pins.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V7a, 2026-10-22, tracing what a failed link
-  leaves; derived from the source, not reproduced.
+  leaves; derived from the source, not reproduced. The transition's
+  completion path in phase 2 task C11's fix round, 2026-10-27, also
+  derived from the source.
 
 ## radosgw checks a signed CORS preflight's x-amz-mfa against its key's user's device
 
@@ -28044,7 +28094,12 @@ Every new entry adds its row to this table, in document order.
 - **Impact:** GET and HEAD of the null version answer a Last-Modified later
   than its write, which a conditional request or a copy's source condition
   then compares, while a listing shows the index entry's mtime. No data
-  changes.
+  changes. A lifecycle transition never moves such a null version:
+  `transition_obj` fails with ECANCELED when the head's mtime is not the
+  listed one
+  ([rgw_rados.cc:5216-5220](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5216-L5220),
+  [rgw_rados.cc:5449-5453](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5449-L5453)),
+  on every pass.
 - **Releases:** v19.2.7 and v20.2.4; main not checked.
 - **rgw-go:** differs: its two writes send the zero mtime, for which the OSD
   keeps the head's stored mtime, a null write's that landed after the read
@@ -28065,7 +28120,13 @@ Every new entry adds its row to this table, in document order.
   `lcBucket.markCurrent`, `internal/driver/lc_actions.go`), which "writes a
   delete marker over a null current version, though a radosgw gateway's
   removal of a pending attr moved its head's mtime" and its suspended twin
-  (`internal/driver/lc_bucket_test.go`) pin.
+  (`internal/driver/lc_bucket_test.go`) pin. Its transition judges the null
+  version so too and rewrites the head at the listed mtime, which puts the
+  head's mtime back (`lcBucket.transitionListed`,
+  `internal/driver/lc_transition.go`; `docs/exclusions.md`, "A lifecycle
+  transition judges a null version by its index entry"), which "rewrites a
+  null version whose OLH head's mtime a radosgw gateway's removal of a
+  pending attr moved" (`internal/driver/lc_transition_test.go`) pins.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task C10b, 2026-10-23, on fakerados: a lifecycle pass
   that removed a key's noncurrent delete marker found the key's null
@@ -29064,8 +29125,10 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: its versioned write awaits the completion
   (`docs/exclusions.md`, "A versioned write awaits its index completion"),
   cancels the prepare on an answer that proves the completion did not
-  land, and removes the version (`linkVersion`,
-  `internal/driver/put_versioned.go`), which "cancels its index prepare
+  land, and removes the version, or keeps it for a lifecycle transition
+  (`linkVersion`, `internal/driver/put_versioned.go`; `docs/exclusions.md`,
+  "A lifecycle transition whose index completion or link fails keeps the
+  version"), which "cancels its index prepare
   when its completion fails with a definite answer, so the version's
   removal leaves no index entry" (`internal/driver/put_versioned_test.go`)
   pins.
@@ -29073,3 +29136,438 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task C11's second re-review, 2026-10-27, tracing what
   radosgw leaves after a completion the class refuses; registered in C11's
   third fix round the same day. Derived from the source, not reproduced.
+
+## radosgw's lifecycle transition of a version writes its head unguarded
+
+- **Kind:** defect, data protection and integrity, and for a version a
+  regression. Possibly security-relevant: rgw-bug-reproduction's triage
+  (2026-10-27) rates it yes. A lifecycle transition rewrites its object in
+  place, and for a key with an instance its head write compares nothing it
+  read, so an attr write made during the copy, a legal hold or a retention
+  extension among them, is reverted, and a version removed during the copy
+  is written back. The rewrite of a noncurrent null version compares the
+  head as it stands after the copy, so a null write made during the copy
+  is overwritten. A guarded rewrite that loses its race is counted as a
+  transition done. Reproduced at v20.2.4 by rgw-bug-reproduction on a
+  disposable cluster with radosgw's own lifecycle thread: a retention
+  extension and a legal hold made during the copy were reverted, a tag
+  written during the copy on a versioned bucket without object lock was
+  lost, a version deleted during the copy came back, a null write made
+  during the copy of the noncurrent null version was overwritten, and the
+  unversioned control held.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - The transition passes the version's key to `transition_obj`
+    ([rgw_lc.cc:1515-1516](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1515-L1516),
+    [rgw_lc.cc:1561-1562](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1561-L1562)),
+    which reads the head and its attrs, clears only the instance `null`,
+    and rewrites the head through `copy_obj_data` with every attr but the
+    two write tags
+    ([rgw_rados.cc:5184-5257](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5184-L5257),
+    [rgw_rados.cc:5417-5490](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5417-L5490)).
+    The copy streams the whole object before the head write, so the window
+    is the copy's length.
+  - The head write compares the write tag its object context holds only
+    for a key without an instance
+    ([rgw_rados.cc:3201-3203](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3201-L3203),
+    [rgw_rados.cc:3298-3300](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3298-L3300);
+    main d8552606423
+    [rgw_rados.cc:3470-3471](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/rgw/driver/rados/rgw_rados.cc#L3470-L3471)),
+    and `prepare_atomic_modification` then resets the head it read as
+    existing, `create(false)` and the attrs removed, with no `cmpxattr`
+    ([rgw_rados.cc:6717-6762](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6717-L6762),
+    [rgw_rados.cc:7331-7376](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7331-L7376)).
+  - PutObjectRetention and PutObjectLegalHold go through `modify_obj_attrs`
+    ([rgw_op.cc:8432](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8432) and
+    [rgw_op.cc:8537](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8537),
+    [rgw_op.cc:9380](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9380) and
+    [rgw_op.cc:9505](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9505)),
+    and `set_attrs` writes a fresh `user.rgw.idtag`
+    ([rgw_rados.cc:6851-6862](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6851-L6862),
+    [rgw_rados.cc:7464-7475](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7464-L7475)),
+    so the compare an unversioned or current null transition makes refuses
+    such a write, and a version's transition, which makes none, puts the
+    attrs it read back over it.
+  - A versioned DeleteObject of the version during the copy unlinks it and
+    removes its head. The transition's write then creates the head again;
+    its index prepare and completion write the version's instance entry
+    again
+    ([cls_rgw.cc:803-885](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L803-L885)
+    and [cls_rgw.cc:1006-1059](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1006-L1059),
+    [cls_rgw.cc:923-1010](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L923-L1010)
+    and [cls_rgw.cc:1136-1190](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1136-L1190)),
+    so the link at the version's own epoch, now below the OLH entry's, finds
+    it and writes it noncurrent with its list entry
+    ([cls_rgw.cc:1669-1688](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1669-L1688)
+    and [cls_rgw.cc:1751-1760](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1751-L1760),
+    [cls_rgw.cc:1810-1829](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1810-L1829)
+    and [cls_rgw.cc:1892-1901](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1892-L1901)).
+    Reproduced at v20.2.4: the deleted version reappeared. At v19.2.7
+    verified from the source, not run.
+  - A noncurrent null version is named by the instance `null`
+    ([rgw_lc.cc:497-505](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L497-L505),
+    [rgw_lc.cc:505-513](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L505-L513)),
+    which `transition_obj` reads and then clears for the write
+    ([rgw_rados.cc:5198-5226](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5198-L5226),
+    [rgw_rados.cc:5431-5459](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5431-L5459)),
+    so the head write takes the guard of a key without an instance. The
+    object context is keyed by the whole `rgw_obj`, instance included
+    ([rgw_rados.cc:199-227](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L199-L227),
+    [rgw_rados.cc:234-262](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L234-L262);
+    [rgw_obj_types.h:605-618](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_obj_types.h#L605-L618),
+    [rgw_obj_types.h:605-618](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_obj_types.h#L605-L618)),
+    so the write's state is not the read's. `AtomicObjectProcessor::complete`
+    marks it atomic
+    ([rgw_putobj_processor.cc:367](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L367),
+    [rgw_putobj_processor.cc:397](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L397)),
+    and `write_meta` writes in two passes
+    ([rgw_rados.cc:3461-3471](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3461-L3471),
+    [rgw_rados.cc:3582-3592](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3582-L3592)).
+    The first assumes no entry and stats nothing
+    ([rgw_rados.cc:6287-6291](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6287-L6291),
+    [rgw_rados.cc:6901-6905](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6901-L6905)),
+    so it compares nothing and makes an exclusive create
+    ([rgw_rados.cc:6737-6744](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6737-L6744),
+    [rgw_rados.cc:7351-7358](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7351-L7358)),
+    which meets the head with EEXIST. It drops the state, which
+    `RGWObjectCtx::invalidate` keeps atomic
+    ([rgw_rados.cc:234-252](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L234-L252),
+    [rgw_rados.cc:269-287](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L269-L287)),
+    and returns
+    ([rgw_rados.cc:3337-3340](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3337-L3340),
+    [rgw_rados.cc:3458-3461](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3458-L3461)).
+    The second stats the head as it stands after the copy and compares the
+    write tag it finds then
+    ([rgw_rados.cc:6731-6735](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6731-L6735),
+    [rgw_rados.cc:7345-7349](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7345-L7349)),
+    so a null write that completed during the copy passes the compare and
+    is overwritten. That pass is otherwise a whole guarded write: it sets a
+    fresh write tag
+    ([rgw_rados.cc:6746-6759](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6746-L6759),
+    [rgw_rados.cc:7360-7373](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7360-L7373)),
+    queues the replaced head's tails for the GC
+    ([rgw_rados.cc:5455-5465](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5455-L5465),
+    [rgw_rados.cc:6102-6112](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6102-L6112))
+    and counts the object as existing
+    ([rgw_rados.cc:3304-3310](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3304-L3310),
+    [rgw_rados.cc:3425-3431](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3425-L3431)).
+    Reproduced at v20.2.4 by this mechanism: the first pass failed with
+    EEXIST, the retry read the head as the concurrent null write had left
+    it, and its compare passed against that write's own tag. At v19.2.7
+    verified from the source, not run.
+  - A guarded rewrite that loses its race, its compare refused, goes to
+    `done_cancel`, which cancels the index op and, for a write with neither
+    If-Match nor If-None-Match, answers the ECANCELED as success
+    ([rgw_rados.cc:3401-3423](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3401-L3423),
+    [rgw_rados.cc:3522-3544](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3522-L3544)).
+    `copy_obj_data` asks the processor nothing about a cancel
+    ([rgw_rados.cc:5150-5152](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5150-L5152),
+    [rgw_rados.cc:5382-5385](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5382-L5385)),
+    so `transition_obj` returns 0 and the action logs TRANSITIONED
+    ([rgw_lc.cc:1526-1529](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1526-L1529),
+    [rgw_lc.cc:1582-1585](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1582-L1585)),
+    and on Tentacle commits the transition's notification
+    ([rgw_lc.cc:1573-1580](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1573-L1580)),
+    for an object that did not move. rgw-bug-reproduction's v20.2.4 cluster
+    logged TRANSITIONED for a transition whose head write was cancelled.
+- **Impact:** a legal hold or a retention extension a client sets on a
+  version while lifecycle copies it is silently undone, so the version can
+  be deleted while the client believes it protected. A version a client
+  removes while lifecycle copies it comes back as a noncurrent version. A
+  null write made while lifecycle copies the noncurrent null version is
+  replaced by the old bytes. A transition that lost its race is logged as
+  done and, on Tentacle, notified, though the object stays in its class
+  until a later pass. The window is the copy, minutes for a large object.
+- **Releases:** reproduced at v20.2.4 by rgw-bug-reproduction on a
+  disposable cluster (2026-10-27); v19.2.7 from the source, not
+  reproduced. Unfixed at v19.2.7 and v20.2.4; for a version, a
+  regression since v19.2.7 and v20.2.1. v19.2.6 guards: its
+  `prepare_atomic_modification` compares the write tag for every atomic
+  write whatever the key
+  ([rgw_rados.cc:6493-6513](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6493-L6513) at v19.2.6).
+  The instance guard is at main d8552606423 too. The noncurrent null
+  version's overwrite and the lost race's success are no part of the
+  regression: v19.2.6 has the same two passes and the same `done_cancel`.
+- **rgw-go:** differs: its transition reads the version again and goes on
+  only while it is the one listed, and its rewrite lands only on the head
+  that read returned, compared by its write tag, or by its manifest for a
+  head without one, whatever the key (`lcBucket.transition`,
+  `internal/driver/lc_transition.go`; `copyData` with raw set,
+  `internal/driver/copy.go`; `docs/exclusions.md`, "A lifecycle transition
+  lands only on the version it read"). That compare is on the head as read
+  before the copy, so a null write made during the copy fails the rewrite
+  too, and a rewrite that fails is logged as not done, with no
+  notification, and decided again at a later pass. "leaves a version
+  written or removed between its read and its rewrite, where radosgw's
+  rewrite of a version is unguarded" (`internal/driver/lc_transition_test.go`)
+  and "fails under the raw flag once the head the source was read from is
+  written or removed" (`internal/driver/copy_test.go`) pin it.
+- **Upstream:** pending: sent to rgw-bug-reproduction; related:
+  [ceph/ceph#72118](https://github.com/ceph/ceph/pull/72118), which guards
+  conditional versioned writes only, and `transition_obj` sets no condition.
+  The regression's origin is 55f5b762c67, "RGW | fix conditional Delete and
+  MultiDelete", which added `set_attr_id_tag`'s instance condition, merged
+  to main by [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348)
+  (78502297afd), to Squid by
+  [ceph/ceph#65932](https://github.com/ceph/ceph/pull/65932) (a742f50616e,
+  first in v19.2.7) and to Tentacle by
+  [ceph/ceph#65949](https://github.com/ceph/ceph/pull/65949) (c824a7fa29b,
+  first in v20.2.1).
+- **Found:** phase 2 task C11, 2026-10-27, reading `transition_obj`'s
+  guard at both tags, which rgw-bug-reproduction's intake verified at both
+  tags and main the same day; the noncurrent null version's write, later
+  in C11 the same day. C11's review the same day traced the regression to
+  its origin, corrected the noncurrent null version's mechanism to the two
+  passes and found the lost race's success. rgw-bug-reproduction
+  reproduced it at v20.2.4 on a disposable cluster the same day; v19.2.7
+  is derived from the source.
+
+## radosgw's lifecycle transition of a null version whose head is an OLH puts its OLH attrs back, reverting a link that lands during the copy
+
+- **Kind:** defect, integrity of which version a versioned key serves.
+  Possibly security-relevant, as its sibling is. One more input to the
+  sink of "[radosgw's attr writes put a null-current OLH head's OLH attrs
+  back, reverting a link that lands in
+  between](#radosgws-attr-writes-put-a-null-current-olh-heads-olh-attrs-back-reverting-a-link-that-lands-in-between)":
+  a head write that sets the OLH attrs it read again, under a compare of
+  `user.rgw.idtag` alone, which no link changes once the head is an OLH.
+  For a noncurrent null version that compare is against the tag the
+  write's second pass reads after the copy, as "[radosgw's lifecycle
+  transition of a version writes its head
+  unguarded](#radosgws-lifecycle-transition-of-a-version-writes-its-head-unguarded)"
+  traces. Reproduced at v20.2.4 by rgw-bug-reproduction on a disposable
+  cluster, only when the head already carried `olh.*` attrs: GET served
+  the old null version while the index listed the new version as latest.
+  When the current null version's head was not yet an OLH, the
+  transition's write was guarded and cancelled.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - The head must already be an OLH, carrying `olh.*` attrs. A null
+    version's head that is not yet one becomes one at the first link of
+    another version, whose init writes the head a fresh `user.rgw.idtag`
+    with its first OLH attrs
+    ([rgw_rados.cc:7842-7851](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7842-L7851),
+    [rgw_rados.cc:8505-8514](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8505-L8514)),
+    so a link landing during the copy of such a head changes the tag the
+    transition compares, and its write is refused.
+  - A null version's head is its key's OLH head. `transition_obj` reads it,
+    by the instance `null` for a noncurrent one and by the follow that
+    resolves to the head itself for a current one, as the sibling entry
+    traces, so the attrs it rewrites carry `olh.info`, `olh.ver` and any
+    pending attr as read, and it erases only the two write tags
+    ([rgw_rados.cc:5194-5233](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5194-L5233),
+    [rgw_rados.cc:5427-5466](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5427-L5466)).
+  - The head write's reset keeps the OLH attrs on disk, `remove_rgw_head_obj`
+    ([rgw_rados.cc:5798-5803](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5798-L5803),
+    [rgw_rados.cc:6410-6415](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6410-L6415)),
+    and then sets every attr it was given
+    ([rgw_rados.cc:3223-3279](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3223-L3279),
+    [rgw_rados.cc:3320-3376](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3320-L3376)),
+    so the `olh.info` and `olh.ver` it read replace those a link applied
+    during the copy wrote; `apply_olh_log`'s head op never touches
+    `user.rgw.idtag`, as the sibling entry traces.
+- **Impact:** after a version is put during the transition of the key's
+  null version, whose head is already an OLH, GET and HEAD of the key
+  serve the version the OLH named before, while the index lists the new
+  version current, until the key's next link. The window is the copy.
+- **Releases:** reproduced at v20.2.4 by rgw-bug-reproduction on a
+  disposable cluster (2026-10-27); v19.2.7 from the source, not
+  reproduced. Main not checked.
+- **rgw-go:** not affected: its transition writes none of the OLH attrs it
+  read, and its head write's reset keeps those on disk (`transitionAttrs`,
+  `internal/driver/lc_transition.go`; `docs/exclusions.md`, "A lifecycle
+  transition writes none of the OLH attrs it read"), which "rewrites the
+  null version's data in its key's OLH head without writing back the OLH
+  attrs it read, so a link landing during the rewrite stands"
+  (`internal/driver/lc_transition_test.go`) pins.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task C11, 2026-10-27, on fakerados: a mutation that
+  kept the read's OLH attrs made the key serve the version its OLH named
+  before a version put during the null version's transition.
+  rgw-bug-reproduction reproduced it at v20.2.4 on a disposable cluster
+  the same day, and found the precondition that the head already be an
+  OLH.
+
+## radosgw's lifecycle transition hides the current version once another version of its key has been removed
+
+- **Kind:** defect, S3 correctness and data visibility. Not
+  security-relevant: rgw-bug-reproduction's triage (2026-10-27). The
+  transition of a key's current version links it at the version's own
+  `versioned_epoch`, and once a noncurrent version of the key has been
+  removed that epoch is below the OLH entry's, so the link writes the
+  version noncurrent while the OLH still names it. The same link hides a
+  version made current during its copy: the removal of the current version
+  by its id makes the version behind it, the one a
+  NoncurrentVersionTransition is moving, current at a new epoch, above the
+  one the transition links at. Reproduced at v20.2.4 by
+  rgw-bug-reproduction on a disposable cluster with radosgw's own
+  lifecycle thread, for a noncurrent version's removal: the key dropped
+  from ListObjects while GET served it, with the OLH entry's epoch at 4
+  against the transition's `versioned_epoch` of 3. The version made
+  current during its copy is traced from the source, not run.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - A removal by version id unlinks at epoch 0: DeleteObject sends 0 but
+    for a system request
+    ([rgw_op.cc:5268-5285](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5268-L5285),
+    [rgw_op.cc:5657-5674](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5657-L5674)),
+    and lifecycle's removal sets no epoch
+    ([rgw_lc.cc:636-647](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L636-L647),
+    [rgw_lc.cc:655-666](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L655-L666)).
+    `unlink_instance`'s `start_modify(0)` then raises the OLH entry's epoch
+    by one
+    ([cls_rgw.cc:1917](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1917) and
+    [cls_rgw.cc:1503-1517](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1503-L1517),
+    [cls_rgw.cc:2064](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2064) and
+    [cls_rgw.cc:1630-1644](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1630-L1644)),
+    and only the unlink of the version the OLH names writes the next
+    version at the new epoch
+    ([cls_rgw.cc:1936-1958](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1936-L1958),
+    [cls_rgw.cc:2083-2099](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2083-L2099)),
+    so after a noncurrent version's removal the current version's entries
+    stay at its own epoch, below the OLH entry's.
+  - The transition links at the listed entry's `versioned_epoch`
+    ([rgw_lc.cc:1515-1516](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1515-L1516),
+    [rgw_lc.cc:1561-1562](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1561-L1562)).
+    Its index completion resets the version's instance entry to `FLAG_VER`
+    ([cls_rgw.cc:1062-1064](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1062-L1064),
+    [cls_rgw.cc:1197-1199](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1197-L1199)),
+    and the link, below the OLH entry's epoch, takes `link_olh`'s
+    old-epoch path
+    ([cls_rgw.cc:1751-1760](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1751-L1760),
+    [cls_rgw.cc:1892-1901](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1892-L1901)),
+    which writes its instance and list entries with `FLAG_VER` alone
+    ([cls_rgw.cc:1410-1427](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1410-L1427),
+    [cls_rgw.cc:1537-1554](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1537-L1554)).
+  - A version made current during its copy meets the same path. The
+    NoncurrentVersionTransition links at the epoch listed too, and the
+    unlink of the version the OLH names, the current one removed by its id
+    during the copy, writes the next version current at the new epoch
+    ([cls_rgw.cc:1936-1958](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1936-L1958),
+    [cls_rgw.cc:2083-2099](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2083-L2099)).
+    When that next version is the one being moved, its completion and its
+    link at the listed epoch, now below the OLH entry's, write it without
+    `FLAG_CURRENT` as above, while the OLH names it. Verified from the
+    source at both tags, not run.
+  - The OLH entry and the OLH head still name the version, so GET and HEAD
+    of the key serve it. A listing without versions skips a name whose
+    first entry is not current
+    ([cls_rgw.cc:610-618](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L610-L618),
+    [cls_rgw.cc:660-668](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L660-L668);
+    `is_visible`,
+    [cls_rgw_types.h:446-457](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_types.h#L446-L457),
+    [cls_rgw_types.h:446-457](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_types.h#L446-L457)),
+    so ListObjects omits the key, and ListObjectVersions lists no version
+    of it as latest.
+  - Lifecycle then takes the version for a noncurrent one, traced from the
+    source and not run. Current Expiration and Transition skip an entry
+    that is not current
+    ([rgw_lc.cc:1120-1127](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1120-L1127) and
+    [rgw_lc.cc:1328-1330](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1328-L1330),
+    [rgw_lc.cc:1140-1147](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1140-L1147) and
+    [rgw_lc.cc:1350-1352](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1350-L1352)).
+    NoncurrentVersionTransition accepts it
+    ([rgw_lc.cc:1559-1561](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1559-L1561),
+    [rgw_lc.cc:1615-1617](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1615-L1617)),
+    dated by the entry listed before it, another key's, or a zero time at
+    the listing's start
+    ([rgw_lc.cc:1614](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1614) and
+    [rgw_lc.cc:425-432](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L425-L432),
+    [rgw_lc.cc:1670](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1670) and
+    [rgw_lc.cc:425-432](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L425-L432)).
+    NoncurrentVersionExpiration never expires it: it needs more noncurrent
+    versions before it than NewerNoncurrentVersions
+    ([rgw_lc.cc:1237-1239](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1237-L1239),
+    [rgw_lc.cc:1257-1259](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1257-L1259)),
+    and the lister counts none for a name's first entry
+    ([rgw_lc.cc:414-418](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L414-L418),
+    [rgw_lc.cc:414-418](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L414-L418)),
+    which the hidden version, at its name's highest epoch, is. The
+    triage's source check at v20.2.4 found the same; no cluster run has
+    tested the expiry.
+- **Impact:** a rule set with a Transition and a
+  NoncurrentVersionExpiration, or any removal of a noncurrent version by
+  its id before a transition, reaches this, and so does a removal of the
+  current version by its id while lifecycle moves the version behind it,
+  the window being that copy. The key's current version is
+  then missing from ListObjects and has no latest version in
+  ListObjectVersions, though GET serves it; lifecycle no longer expires or
+  transitions it as current, and a NoncurrentVersionTransition can move it
+  early. No data is lost. It lasts until the key's next link.
+- **Releases:** reproduced at v20.2.4 by rgw-bug-reproduction on a
+  disposable cluster (2026-10-27); v19.2.7 from the source, not
+  reproduced. Main not checked.
+- **rgw-go:** differs: its transition links a version the OLH entry names
+  at the entry's epoch, read before the rewrite, and, after every
+  transition on a bucket ever versioned, lists the version current again
+  when the OLH entry names it once the link has landed and its entry is not
+  current, as another version's removal before the link leaves it
+  (`transitionEpoch` and `keepCurrent`, `internal/driver/lc_transition.go`;
+  `docs/exclusions.md`, "A lifecycle transition keeps the current version
+  current"). "keeps the current version current once a noncurrent
+  version's removal raised its OLH entry's epoch", "lists the current
+  version current again when another version's removal lands between its
+  OLH entry's read and its link" and "lists a noncurrent version current
+  when the current version's removal makes it current during its copy"
+  (`internal/driver/lc_transition_test.go`) pin it.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C11's review, 2026-10-27, from the source; the
+  fix round's fail-first run showed rgw-go's earlier transition hiding the
+  version the same way on fakerados, which emulates the class's steps.
+  rgw-bug-reproduction reproduced it at v20.2.4 on a disposable cluster
+  the same day. C11's re-review found the version made current during its
+  copy the same day, on fakerados.
+
+## radosgw's lifecycle transition locks a version the bucket's default retention never covered
+
+- **Kind:** defect, S3 correctness and data protection.
+  rgw-bug-reproduction's triage (2026-10-27): not security-relevant on its
+  own; the delegated case is unscored unless reproduced. A lifecycle
+  transition rewrites a version as a create, and radosgw gives a create
+  without a retention the bucket's default one, so a version that had no
+  retention of its own is locked from the transition on. The delegated
+  case: a principal with `s3:PutBucketObjectLockConfiguration` but not
+  `s3:PutObjectRetention` can lock existing versions, in COMPLIANCE mode
+  too, by setting a default rule and letting a lifecycle transition reach
+  them. Reproduced at v20.2.4 by rgw-bug-reproduction on a disposable
+  cluster, in GOVERNANCE and in COMPLIANCE mode: the default retention, the
+  version's mtime plus the rule's period, was stamped on an existing
+  version, and a DELETE of that version then answered 403.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `_do_write_meta` adds the bucket's default retention to a
+    `PUT_OBJ_CREATE` write whose attrs carry none
+    ([rgw_rados.cc:3211-3221](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3211-L3221),
+    [rgw_rados.cc:3308-3318](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3308-L3318)),
+    locked until the write's `set_mtime` plus the rule's days or years
+    ([rgw_object_lock.cc:103-111](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L103-L111),
+    [rgw_object_lock.cc:87-95](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_object_lock.cc#L87-L95)).
+  - The transition's write is one: `AtomicObjectProcessor::complete` sets
+    `PUT_OBJ_CREATE`
+    ([rgw_putobj_processor.cc:384](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L384),
+    [rgw_putobj_processor.cc:414](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L414)),
+    and `transition_obj` hands it the version's attrs as read and its
+    listed mtime as `set_mtime`
+    ([rgw_rados.cc:5235-5251](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5235-L5251),
+    [rgw_rados.cc:5468-5484](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5468-L5484)).
+  - A version with no retention of its own, one written before the bucket
+    had its default rule among them, so takes the default at its
+    transition. Amazon S3 applies a default retention to the object
+    versions placed in the bucket, as the S3 User Guide's object lock page
+    reads (read by C11's review, 2026-10-27), and a transition places none.
+- **Impact:** a version its owner never locked cannot be deleted until its
+  mtime plus the default period: in COMPLIANCE mode by nobody, in
+  GOVERNANCE mode only with a bypass. A version past that date carries a
+  retention that has run out.
+- **Releases:** reproduced at v20.2.4 by rgw-bug-reproduction on a
+  disposable cluster (2026-10-27); v19.2.7 from the source, not
+  reproduced. Main not checked.
+- **rgw-go:** differs: its transition keeps the version's lock state
+  exactly, an existing retention or legal hold kept and no default added
+  (`headWrite.keepLock`, `internal/driver/headwrite.go`; `copyData`,
+  `internal/driver/copy.go`; `docs/exclusions.md`, "A lifecycle
+  transition adds no default retention"). "keeps an object's own retention
+  and legal hold, and adds no default retention to one without"
+  (`internal/driver/lc_transition_test.go`) pins it.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C11's review, 2026-10-27, reading the task
+  brief's default retention against S3; rgw-bug-reproduction verified the
+  default-retention block, `PUT_OBJ_CREATE` and the lock date from the
+  source, and reproduced it at v20.2.4 on a disposable cluster, the same
+  day.
