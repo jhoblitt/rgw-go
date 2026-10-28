@@ -1,0 +1,44 @@
+{
+    "bucket": {
+        "name": "rgwgo-web-arix7ujkc2",
+        "marker": "2d730d9b-5294-4c20-9466-58d8503f8fd8.6300.2",
+        "bucket_id": "2d730d9b-5294-4c20-9466-58d8503f8fd8.6300.2",
+        "tenant": "",
+        "explicit_placement": {
+            "data_pool": "",
+            "data_extra_pool": "",
+            "index_pool": ""
+        }
+    },
+    "creation_time": "2026-10-28T01:58:51.751108Z",
+    "owner": "website-gate",
+    "flags": 0,
+    "zonegroup": "8a870d67-31c9-4603-a566-0b1e284c472b",
+    "placement_rule": "default-placement",
+    "has_instance_obj": false,
+    "quota": {
+        "enabled": false,
+        "check_on_raw": false,
+        "max_size": -1,
+        "max_size_kb": 0,
+        "max_objects": -1
+    },
+    "num_shards": 11,
+    "bi_shard_hash_type": 0,
+    "requester_pays": false,
+    "has_website": true,
+    "website_conf": {
+        "redirect_all": {
+            "protocol": "https",
+            "hostname": "www.example.com",
+            "http_redirect_code": 0
+        }
+    },
+    "swift_versioning": false,
+    "swift_ver_location": "",
+    "index_type": 0,
+    "mdsearch_config": [],
+    "reshard_status": 0,
+    "new_bucket_instance_id": ""
+}
+

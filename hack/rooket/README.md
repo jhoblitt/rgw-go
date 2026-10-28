@@ -1261,10 +1261,11 @@ makes the suite read it), and `make admin-gate` reads that file unless the
 variable names another rgw-go.
 
 `make admin-gate` runs the specs of `test/integration` labelled `rgw-go`,
-`admin_test.go`, which `make integration` leaves out because they need the
-rgw-go `make rgw-go-up` started. They sign as the user `rgwgo-admin`, which
-holds Rook's admin-ops caps and `info`, `ratelimit` and the write caps the
-trim, index check and metadata requests need, and they:
+which `make integration` leaves out: the admin gate, `admin_test.go`, which
+needs the rgw-go `make rgw-go-up` started, and the website gate,
+`phase2_website_test.go`, below. The admin gate's specs sign as the user
+`rgwgo-admin`, which holds Rook's admin-ops caps and `info`, `ratelimit` and
+the write caps the trim, index check and metadata requests need, and they:
 
 - compare `GetInfo`'s `cluster_id` on both gateways with `ceph fsid`;
 - make the admin calls Rook makes, in Rook's order, through go-ceph's client
@@ -1296,3 +1297,24 @@ them. `rgwgo-admin` holds every admin cap with keys committed in the spec, so
 when `go test` ends, however it ends, as `run.sh` does for its `admin`. Neither
 user is in an account, so its removal also removes the `<uid>.buckets` object
 the gateways' quota sync wrote.
+
+The website gate needs no `make rgw-go-up`: it builds an rgw-go of its own and
+runs it on a loopback port as `client.admin`, with `rgw_dns_s3website_name`,
+`rgw_enable_static_website` and the background workers off on its command
+line. radosgw reads its website name only when it starts, so the gate sets
+`rgw_dns_s3website_name` and `rgw_enable_static_website` on the radosgw's own
+config section, `client.rgw.` and its deployment's name past `rook-ceph-rgw`,
+dashes mapped to dots (`client.rgw.ceph.objectstore.a` on these clusters),
+restarts the radosgw, and when it ends removes both and restarts it again:
+about 100-145 s per release. Its fixtures are the user `website-gate` and its
+buckets, which it removes before and after it runs. A run killed before its
+cleanup, by `go test`'s timeout among others, leaves both options on that
+section and its rgw-go running; remove them by hand and restart the radosgw:
+
+```sh
+k() { ROOKET_NAME=rgw-go-squid rooket k "$@"; }  # or rgw-go-tentacle
+k -n rook-ceph exec deploy/rook-ceph-tools -- ceph config rm client.rgw.ceph.objectstore.a rgw_dns_s3website_name
+k -n rook-ceph exec deploy/rook-ceph-tools -- ceph config rm client.rgw.ceph.objectstore.a rgw_enable_static_website
+k -n rook-ceph rollout restart deploy/rook-ceph-rgw-ceph-objectstore-a
+pkill -f 'rgw-go serve -- --name=client.admin'
+```

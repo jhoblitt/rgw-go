@@ -232,9 +232,10 @@ populate: need-release ## Write the fixed data set through the RELEASE cluster's
 # ./test/integration runs in a go test of its own after the others, never
 # beside them: its specs link extra buckets to the populated user alice and
 # sync her stats, while internal/cls/user's specs pin alice's bucket list and
-# header to the population. The specs labelled rgw-go need the rgw-go make
-# rgw-go-up starts, which make admin-gate runs them against; make integration
-# leaves them out.
+# header to the population. make integration leaves out the specs labelled
+# rgw-go, which make admin-gate runs: the admin gate's need the rgw-go make
+# rgw-go-up starts, and the website gate builds an rgw-go of its own and
+# restarts the radosgw twice.
 .PHONY: integration
 integration: need-release ## Run the integration specs against the RELEASE cluster
 	@tags="$(GO_TAGS),integration"; \

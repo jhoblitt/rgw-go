@@ -1,0 +1,75 @@
+{
+    "bucket": {
+        "name": "rgwgo-web-5jfuar45bd",
+        "marker": "22f862ed-f262-4fae-8171-ca15671b88de.4830.1",
+        "bucket_id": "22f862ed-f262-4fae-8171-ca15671b88de.4830.1",
+        "tenant": "",
+        "explicit_placement": {
+            "data_pool": "",
+            "data_extra_pool": "",
+            "index_pool": ""
+        }
+    },
+    "creation_time": "2026-10-28T02:18:31.166941Z",
+    "owner": "website-gate",
+    "flags": 0,
+    "zonegroup": "c537bafc-70ac-4cb2-8adf-ec7799d4f3da",
+    "placement_rule": "default-placement",
+    "has_instance_obj": false,
+    "quota": {
+        "enabled": false,
+        "check_on_raw": false,
+        "max_size": -1,
+        "max_size_kb": 0,
+        "max_objects": -1
+    },
+    "num_shards": 11,
+    "bi_shard_hash_type": 0,
+    "requester_pays": false,
+    "has_website": true,
+    "website_conf": {
+        "index_doc_suffix": "index.html",
+        "error_doc": "error.html",
+        "routing_rules": {
+            "rules": [
+                {
+                    "condition": {
+                        "key_prefix_equals": "docs/",
+                        "http_error_code_returned_equals": 0
+                    },
+                    "redirect_info": {
+                        "redirect": {
+                            "protocol": "",
+                            "hostname": "",
+                            "http_redirect_code": 302
+                        },
+                        "replace_key_prefix_with": "documents/",
+                        "replace_key_with": ""
+                    }
+                },
+                {
+                    "condition": {
+                        "key_prefix_equals": "gone/",
+                        "http_error_code_returned_equals": 404
+                    },
+                    "redirect_info": {
+                        "redirect": {
+                            "protocol": "https",
+                            "hostname": "example.com",
+                            "http_redirect_code": 0
+                        },
+                        "replace_key_prefix_with": "",
+                        "replace_key_with": "moved.html"
+                    }
+                }
+            ]
+        }
+    },
+    "swift_versioning": false,
+    "swift_ver_location": "",
+    "index_type": 0,
+    "mdsearch_config": [],
+    "reshard_status": 0,
+    "new_bucket_instance_id": ""
+}
+
