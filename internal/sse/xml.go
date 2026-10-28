@@ -2,12 +2,8 @@ package sse
 
 import (
 	"bytes"
-	"encoding/xml"
 	"errors"
 	"fmt"
-	"io"
-	"strconv"
-	"unicode/utf8"
 
 	"github.com/jhoblitt/rgw-go/internal/xmltext"
 )
@@ -32,36 +28,29 @@ const xmlnsS3 = "http://s3.amazonaws.com/doc/2006-03-01/"
 // xmlSpace is XML's S production.
 const xmlSpace = " \t\r\n"
 
-// utf8BOM is the byte order mark xmltext.Parse skips, as expat does.
-var utf8BOM = []byte{0xef, 0xbb, 0xbf}
-
-// node is an element of the document's schema.
-type node int
-
+// The document's elements.
 const (
-	nodeRoot node = iota
-	nodeRule
-	nodeApply
-	nodeBucketKey
-	nodeAlgorithm
-	nodeKeyID
-	nodeCount
+	elemRoot      = "ServerSideEncryptionConfiguration"
+	elemRule      = "Rule"
+	elemApply     = "ApplyServerSideEncryptionByDefault"
+	elemBucketKey = "BucketKeyEnabled"
+	elemAlgorithm = "SSEAlgorithm"
+	elemKeyID     = "KMSMasterKeyID"
 )
 
-// schema is each element's name, the element it sits in, and whether it
-// holds a value rather than elements. Each appears at most once, as its
-// container does.
-var schema = [nodeCount]struct {
-	name   string
-	parent node
-	value  bool
-}{
-	nodeRoot:      {"ServerSideEncryptionConfiguration", nodeRoot, false},
-	nodeRule:      {"Rule", nodeRoot, false},
-	nodeApply:     {"ApplyServerSideEncryptionByDefault", nodeRule, false},
-	nodeBucketKey: {"BucketKeyEnabled", nodeRule, true},
-	nodeAlgorithm: {"SSEAlgorithm", nodeApply, true},
-	nodeKeyID:     {"KMSMasterKeyID", nodeApply, true},
+// schema is the document's table: the root holding Rule; Rule holding the
+// default, ApplyServerSideEncryptionByDefault, and BucketKeyEnabled, a
+// value; the default holding the values SSEAlgorithm and KMSMasterKeyID.
+// Each appears at most once, as its container does, in S3's namespace or
+// none.
+var schema = &xmltext.Schema{
+	Root: elemRoot,
+	Children: map[string][]xmltext.Child{
+		elemRoot:  {{Name: elemRule}},
+		elemRule:  {{Name: elemApply}, {Name: elemBucketKey, MaxText: maxBoolText}},
+		elemApply: {{Name: elemAlgorithm}, {Name: elemKeyID}},
+	},
+	Namespaces: []string{xmlnsS3, ""},
 }
 
 // maxBoolText is the most text BucketKeyEnabled may hold: room for 1 or 0
@@ -105,24 +94,23 @@ const maxBoolText = 64
 // once decoded, is longer than maxBoolText bytes; and a body longer than
 // MaxConfigXML. Names are read as written, as radosgw reads them.
 //
-// The body is refused at the first token that breaks one of those rules, so
-// a hostile document costs no more than its offending prefix, and only then
-// is it read with xmltext.Parse, the reader every S3 XML request body
-// shares, which refuses what expat refuses. Both read the same tokens, so a
-// value is the same to each. Last, the configuration must pass Validate,
-// which radosgw does not check. Every refusal is ErrMalformedXML; one the
-// scan makes names the byte offset of the token it refused. Client-chosen
-// text in a refusal is cut short, so a refusal's message stays small.
+// The body is read with xmltext.Scan against schema, and no tree is built:
+// the scan refuses it at the first token that breaks one of those rules, or
+// that xmltext.Parse, the reader every S3 XML request body shares, would
+// refuse as expat does, so a hostile document costs no more than its
+// offending prefix. It reads each value as its element ends, as Parse reads
+// it. Last, the configuration must pass Validate, which radosgw does not
+// check. Every refusal is ErrMalformedXML; one the scan makes names the byte
+// offset of the token it refused. Client-chosen text in a refusal is cut by
+// bytes before it is quoted, so a refusal's message stays small however its
+// runes quote.
 func ParseXML(body []byte) (BucketEncryptionConfig, error) {
 	if len(body) > MaxConfigXML {
 		return BucketEncryptionConfig{}, fmt.Errorf("%w: a %d-byte body exceeds %d bytes", ErrMalformedXML, len(body), MaxConfigXML)
 	}
-	c, err := scan(body)
-	if err != nil {
-		return BucketEncryptionConfig{}, err
-	}
-	if _, err := xmltext.Parse(body); err != nil {
-		return BucketEncryptionConfig{}, fmt.Errorf("%w: %s", ErrMalformedXML, clip(err.Error(), 128))
+	var c BucketEncryptionConfig
+	if err := xmltext.Scan(body, schema, func(e xmltext.Closed) error { return setValue(&c, e) }); err != nil {
+		return BucketEncryptionConfig{}, fmt.Errorf("%w: %w", ErrMalformedXML, err)
 	}
 	if err := c.Validate(); err != nil {
 		return BucketEncryptionConfig{}, err
@@ -130,155 +118,31 @@ func ParseXML(body []byte) (BucketEncryptionConfig, error) {
 	return c, nil
 }
 
-// scan reads body's tokens and refuses the first that breaks ParseXML's
-// rules. Every element the schema allows is at most four deep, and a value
-// holds only text, so nothing deeper is read.
-func scan(body []byte) (BucketEncryptionConfig, error) {
-	doc := bytes.TrimPrefix(body, utf8BOM)
-	base := int64(len(body) - len(doc))
-	var (
-		c    BucketEncryptionConfig
-		seen [nodeCount]bool
-		open []node
-		text []byte
-	)
-	d := xml.NewDecoder(bytes.NewReader(doc))
-	for {
-		off := base + d.InputOffset()
-		tok, err := d.RawToken()
-		if errors.Is(err, io.EOF) {
-			return c, nil
+// setValue stores in c the element e that has ended: a value's text, and
+// for Rule a rule, opened by the first of its parts to end or else by Rule's
+// own end, so an empty Rule stores a rule naming nothing.
+func setValue(c *BucketEncryptionConfig, e xmltext.Closed) error {
+	rule := func() *ServerSideEncryptionConfiguration {
+		if c.Rule == nil {
+			c.Rule = &ServerSideEncryptionConfiguration{}
 		}
-		if err != nil {
-			return BucketEncryptionConfig{}, malformedAt(off, "%s", clip(err.Error(), 128))
-		}
-		switch t := tok.(type) {
-		case xml.StartElement:
-			n, err := place(open, &seen, t.Name)
-			if err != nil {
-				return BucketEncryptionConfig{}, malformedAt(off, "%w", err)
-			}
-			if a, ok := foreignAttr(t.Attr); ok {
-				return BucketEncryptionConfig{}, malformedAt(off, "an attribute %s on %s", quote(writtenName(a.Name)), quote(writtenName(t.Name)))
-			}
-			seen[n] = true
-			open = append(open, n)
-			text = text[:0]
-			if n == nodeRule {
-				c.Rule = &ServerSideEncryptionConfiguration{}
-			}
-		case xml.EndElement:
-			if len(open) == 0 {
-				return BucketEncryptionConfig{}, malformedAt(off, "an end tag with no start tag")
-			}
-			n := open[len(open)-1]
-			open = open[:len(open)-1]
-			if t.Name != (xml.Name{Local: schema[n].name}) {
-				return BucketEncryptionConfig{}, malformedAt(off, "an end tag %s closing %s", quote(writtenName(t.Name)), schema[n].name)
-			}
-			if schema[n].value {
-				if err := setValue(&c, n, text); err != nil {
-					return BucketEncryptionConfig{}, malformedAt(off, "%w", err)
-				}
-			}
-		case xml.CharData:
-			switch {
-			case len(open) > 0 && schema[open[len(open)-1]].value:
-				if n := open[len(open)-1]; n == nodeBucketKey && len(text)+len(t) > maxBoolText {
-					return BucketEncryptionConfig{}, malformedAt(off, "%s holds more than %d bytes", schema[n].name, maxBoolText)
-				}
-				text = append(text, t...)
-			case len(bytes.Trim(t, xmlSpace)) > 0:
-				return BucketEncryptionConfig{}, malformedAt(off, "text outside a value")
-			}
-		case xml.Directive:
-			return BucketEncryptionConfig{}, malformedAt(off, "a declaration %s", quote(string(t)))
-		}
+		return c.Rule
 	}
-}
-
-// place is the schema element a start tag named n opens inside open, or why
-// it may not stand there.
-func place(open []node, seen *[nodeCount]bool, n xml.Name) (node, error) {
-	if len(open) == 0 {
-		switch {
-		case seen[nodeRoot]:
-			return 0, fmt.Errorf("a second root %s", quote(writtenName(n)))
-		case n != (xml.Name{Local: schema[nodeRoot].name}):
-			return 0, fmt.Errorf("the root is %s, not %s", quote(writtenName(n)), schema[nodeRoot].name)
-		}
-		return nodeRoot, nil
-	}
-	parent := open[len(open)-1]
-	if schema[parent].value {
-		return 0, fmt.Errorf("an element %s inside %s", quote(writtenName(n)), schema[parent].name)
-	}
-	for c := nodeRule; c < nodeCount; c++ {
-		if schema[c].parent != parent || n != (xml.Name{Local: schema[c].name}) {
-			continue
-		}
-		if seen[c] {
-			return 0, fmt.Errorf("a repeated %s", schema[c].name)
-		}
-		return c, nil
-	}
-	return 0, fmt.Errorf("an unknown element %s in %s", quote(writtenName(n)), schema[parent].name)
-}
-
-// setValue stores a value element's text in c, whose Rule the schema has
-// opened before any value.
-func setValue(c *BucketEncryptionConfig, n node, text []byte) error {
-	switch n {
-	case nodeAlgorithm:
-		c.Rule.Apply.SSEAlgorithm = string(text)
-	case nodeKeyID:
-		c.Rule.Apply.KMSMasterKeyID = string(text)
-	case nodeBucketKey:
-		v, ok := xmlBool(text)
+	switch e.Name {
+	case elemRule:
+		rule()
+	case elemAlgorithm:
+		rule().Apply.SSEAlgorithm = string(e.Text)
+	case elemKeyID:
+		rule().Apply.KMSMasterKeyID = string(e.Text)
+	case elemBucketKey:
+		v, ok := xmlBool(e.Text)
 		if !ok {
-			return fmt.Errorf("%s is %s, not a boolean", schema[n].name, quote(string(text)))
+			return fmt.Errorf("%s is %s, not a boolean", e.Name, xmltext.Quote(string(e.Text)))
 		}
-		c.Rule.BucketKeyEnabled = v
+		rule().BucketKeyEnabled = v
 	}
 	return nil
-}
-
-func malformedAt(off int64, format string, args ...any) error {
-	return fmt.Errorf("%w: %w at byte %d", ErrMalformedXML, fmt.Errorf(format, args...), off)
-}
-
-// foreignAttr is the first attribute that is not a default namespace
-// declaration of S3's namespace or of none.
-func foreignAttr(attrs []xml.Attr) (xml.Attr, bool) {
-	for _, a := range attrs {
-		if a.Name != (xml.Name{Local: "xmlns"}) || (a.Value != "" && a.Value != xmlnsS3) {
-			return a, true
-		}
-	}
-	return xml.Attr{}, false
-}
-
-// writtenName is a name as the document writes it, prefix included.
-func writtenName(n xml.Name) string {
-	if n.Space == "" {
-		return n.Local
-	}
-	return n.Space + ":" + n.Local
-}
-
-// quote is s, cut by clip to 32 bytes, quoted.
-func quote(s string) string { return strconv.Quote(clip(s, 32)) }
-
-// clip is s cut at a rune boundary to at most n bytes, marked when cut, so a
-// refusal that repeats a client's text stays small.
-func clip(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
-	}
-	return s[:n] + "..."
 }
 
 // xmlBool reads the boolean forms radosgw reads that every reference gives
@@ -349,10 +213,10 @@ func (c BucketEncryptionConfig) Validate() error {
 	alg, keyID := c.Rule.Apply.SSEAlgorithm, c.Rule.Apply.KMSMasterKeyID
 	takesKey, known := algorithms[alg]
 	if alg != "" && !known {
-		return fmt.Errorf("%w: SSEAlgorithm %s is not AES256, aws:kms, aws:kms:dsse, aws:fsx or aws:backup", ErrMalformedXML, quote(alg))
+		return fmt.Errorf("%w: SSEAlgorithm %s is not AES256, aws:kms, aws:kms:dsse, aws:fsx or aws:backup", ErrMalformedXML, xmltext.Quote(alg))
 	}
 	if keyID != "" && !takesKey {
-		return fmt.Errorf("%w: a KMSMasterKeyID with SSEAlgorithm %s, not aws:kms or aws:kms:dsse", ErrMalformedXML, quote(alg))
+		return fmt.Errorf("%w: a KMSMasterKeyID with SSEAlgorithm %s, not aws:kms or aws:kms:dsse", ErrMalformedXML, xmltext.Quote(alg))
 	}
 	return nil
 }

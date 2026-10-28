@@ -345,6 +345,10 @@ var _ = Describe("ParseXML", func() {
 		Entry("a long processing instruction target, which xmltext names", doc("", "<?"+strings.Repeat("p", 1<<19)+"*?>")),
 		Entry("a long algorithm", doc("", algorithm(strings.Repeat("x", 1<<19)))),
 		Entry("a long BucketKeyEnabled", doc("", rule(element("BucketKeyEnabled", strings.Repeat("z", 1<<19))))),
+		Entry("64 astral tag runes as the root's namespace, each quoted as ten bytes",
+			doc(` xmlns="`+strings.Repeat("\U000E0001", 64)+`"`, "")),
+		Entry("a 64-byte attribute name holding 64 astral tag runes",
+			doc(" "+strings.Repeat("n", 64)+`="`+strings.Repeat("\U000E0001", 64)+`"`, "")),
 	)
 	It("refuses a body over MaxConfigXML before reading it", func() {
 		pad := sse.MaxConfigXML + 1 - len(doc("", ""))
