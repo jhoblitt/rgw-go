@@ -4264,7 +4264,8 @@ does the following.
   ([ceph_json.cc:778-838](https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_json.cc#L778-L838),
   the same at v20.2.4). rgw-go reads each value with the same grammar
   (`internal/jsonspirit`) and stores what radosgw stores, but for a value
-  with a `\x` or octal escape, a number json_spirit takes from the host's
+  with a `\x` or `\X` escape, which json_spirit reads or refuses by the
+  CPU's `char` signedness, a number json_spirit takes from the host's
   libm (an exponent past 300, a fraction of more than 300 digits, the
   exponent 126, or a value that is not finite), or arrays and objects
   nested deeper than 10000, where json_spirit recurses without limit:
@@ -6777,18 +6778,21 @@ rgw-go does the following.
   POST policy excepts a field whose name holds a NUL after a checksum
   algorithm's](ceph-upstream-bugs.md#tentacles-post-policy-excepts-a-field-whose-name-holds-a-nul-after-a-checksum-algorithms)").
   Both match the prefixes in lower case only.
-- **A POST policy with a `\x` or octal escape, a number json_spirit takes
+- **A POST policy with a `\x` or `\X` escape, a number json_spirit takes
   from the host's libm, or nesting past 10000 is refused.** radosgw reads a
   POST upload's policy document with json_spirit's grammar
   ([json_spirit_reader_template.h:462-519](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L462-L519),
   the same at v20.2.4), and rgw-go reads it with the same grammar
   (`internal/jsonspirit`), as JSONParser does, but for three forms, which
   it answers 400 InvalidArgument, "Malformed JSON" (`postpolicy.Parse`),
-  where radosgw reads the document. One is a `\x` or octal escape, which
-  boost's `escape_char_parse` reads with an overflow check on a `char`
-  and `hex_str_to_char` as the two bytes after the `x`
-  ([json_spirit_reader_template.h:59-66](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L59-L66),
-  the same at v20.2.4), a reading rgw-go does not transcribe. Another is
+  where radosgw reads the document. One is a `\x` or `\X` escape: boost's
+  `escape_char_parse` lexes its hex digits with an overflow check on a
+  `char`, which is signed on x86-64 and unsigned on aarch64, so radosgw
+  reads some such documents on one CPU and refuses them on the other; then
+  `hex_str_to_char` reads the two bytes after an `x`, whatever the lexer
+  took
+  ([json_spirit_reader_template.h:60-67](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L60-L67),
+  the same at v20.2.4), and an `X` is dropped with its backslash. Another is
   arrays and objects nested deeper than 10000, where json_spirit recurses
   without limit (docs/ceph-upstream-bugs.md, "[radosgw's JSON parser
   recurses without limit on a POST policy's
@@ -6798,7 +6802,8 @@ rgw-go does the following.
   exponent 126, or a value that is not finite, which it writes as `inf` or
   `nan`. Otherwise rgw-go reads what json_spirit reads: a stray comma in
   an array or an object, C white space such as a form feed, raw control
-  bytes and bytes that are not UTF-8 in a string, escapes it drops, a
+  bytes and bytes that are not UTF-8 in a string, escapes it drops, an
+  octal escape among them, whose backslash and first digit go, a
   `\u` escape whose digits are not hex, `hex_to_num` reading each such
   digit as 0
   ([json_spirit_reader_template.h:51-58](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L51-L58),

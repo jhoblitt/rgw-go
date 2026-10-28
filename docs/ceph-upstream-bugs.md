@@ -19465,7 +19465,7 @@ Every new entry adds its row to this table, in document order.
   of `JSONParser` on client input were not surveyed.
 - **rgw-go:** unaffected. `postpolicy.Parse` refuses nesting deeper than
   10,000 levels as "Malformed JSON", and goroutine stacks grow
-  (docs/exclusions.md, "A POST policy with a `\x` or octal escape, a
+  (docs/exclusions.md, "A POST policy with a `\x` or `\X` escape, a
   number json_spirit takes from the host's libm, or nesting past 10000 is
   refused").
 - **Upstream:** pending: sent to rgw-bug-reproduction.

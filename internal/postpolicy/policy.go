@@ -104,7 +104,7 @@ func denied(msg string) *Error { return &Error{Err: ErrAccessDenied, Message: ms
 // be, with white space or unread text beside it, and then finds no
 // expiration in it; a document JSONParser refuses is "Malformed JSON", as is
 // one jsonspirit.Parse refuses where JSONParser reads it (docs/exclusions.md,
-// "A POST policy with a `\x` or octal escape, a number json_spirit takes from
+// "A POST policy with a `\x` or `\X` escape, a number json_spirit takes from
 // the host's libm, or nesting past 10000 is refused"). The top-level
 // object's first expiration and first conditions are read, then each child
 // of conditions in the order JSONObj walks them: an array is a condition of

@@ -154,6 +154,7 @@ var _ = Describe("legacy tier config conversion", func() {
 		Entry("string bytes are kept whether or not they are UTF-8", "[\"caf\xe9\"]", farray(fvalue("caf\xe9", true))),
 		Entry("\\u escapes are encoded one by one, surrogates included", `["\ud83dé"]`, farray(fvalue("\xed\xa0\xbd\xc3\xa9", true))),
 		Entry("an unknown escape is dropped with its backslash", `["a\qb"]`, farray(fvalue("ab", true))),
+		Entry("an octal escape is dropped likewise, its first digit with the backslash", `["\101"]`, farray(fvalue("01", true))),
 		Entry("nested objects and arrays", `{"b": [1, "x", {"c": null}], "a": false}`, meta.JSONFormattable{
 			Type: meta.FormattableObject,
 			Object: map[string]meta.JSONFormattable{
@@ -173,7 +174,7 @@ var _ = Describe("legacy tier config conversion", func() {
 			Expect(d.Err()).To(MatchError(ContainSubstring("legacy tier config")))
 		},
 		Entry("a \\x escape", `["\x41"]`),
-		Entry("an octal escape", `["\101"]`),
+		Entry("a \\X escape", `["\X41"]`),
 		Entry("a fraction of more than 300 digits", "[0."+strings.Repeat("1", 301)+"]"),
 		Entry("arrays nested deeper than 10000 levels", strings.Repeat("[", 10001)+strings.Repeat("]", 10001)),
 		Entry("an exponent beyond 300", "[1e301]"),

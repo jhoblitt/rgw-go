@@ -14,7 +14,7 @@
 // for one, fails the whole read.
 //
 // Parse refuses with an error what it does not read as json_spirit does:
-// \x and octal escapes, a real whose value json_spirit takes from the host's
+// \x and \X escapes, a real whose value json_spirit takes from the host's
 // libm, and nesting deeper than MaxDepth.
 package jsonspirit
 
@@ -39,8 +39,8 @@ const MaxDepth = 10000
 // JSONParser the buffer and length, a NUL it appends included.
 //
 // A non-nil err is a form Parse refuses rather than read otherwise than
-// json_spirit does, its text saying which: a \x or octal escape, whose
-// escape_char_parse and hex_str_to_char are not transcribed; a real whose
+// json_spirit does, its text saying which: a \x or \X escape, which
+// json_spirit reads or refuses by the CPU's char signedness; a real whose
 // value comes from the host's libm, one with an exponent past ±300, a
 // fraction of more than 300 digits or the exponent 126, or whose value is
 // not finite; and nesting deeper than MaxDepth.
@@ -216,7 +216,11 @@ func (p *parser) closing(c byte) {
 
 // str is string_: confix_p('"', *lex_escape_ch_p, '"'), where a backslash
 // takes the next byte with it, then get_str's unescaping. The string keeps
-// its bytes as they are, UTF-8 or not, as std::string does.
+// its bytes as they are, UTF-8 or not, as std::string does. An octal escape
+// is no exception: escape_char_parse takes as many octal digits as a char
+// holds, or, past that, the backslash and the first digit alone, and either
+// way get_str drops the backslash and the first digit, as it drops any escape
+// it does not know.
 func (p *parser) str() (string, bool) {
 	i := p.pos + 1
 	for {
@@ -232,10 +236,11 @@ func (p *parser) str() (string, bool) {
 			if i+1 >= len(p.s) {
 				return "", false
 			}
-			if e := p.s[i+1]; e == 'x' || e == 'X' || (e >= '0' && e <= '7') {
-				// escape_char_parse reads a hex or octal number here, with an
-				// overflow check on a char, and hex_str_to_char reads \x as
-				// the two bytes after it: not transcribed.
+			if e := p.s[i+1]; e == 'x' || e == 'X' {
+				// escape_char_parse lexes the hex digits after either with an
+				// overflow check on a char, signed on x86-64 and unsigned on
+				// aarch64, so whether the string lexes depends on the CPU
+				// (docs/ceph-upstream-bugs.md).
 				p.refuse(`\%c escape`, e)
 				return "", false
 			}
