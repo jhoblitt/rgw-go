@@ -132,7 +132,7 @@ func (o *PutBucketEncryption) VerifyPermission(ctx context.Context, r *Request) 
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8807-L8811 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9775-L9779 at v20.2.4;
 // docs/exclusions.md, "A PutBucketAcl that loses a race is retried, and
-// every retried ACL, policy or tagging write is authorized again").
+// every retried bucket write is authorized again").
 func (o *PutBucketEncryption) Execute(ctx context.Context, r *Request) error {
 	body, err := ReadParamBody(r, confSize(r, "rgw_max_put_param_size", defaultMaxPutParamSize))
 	if err != nil {

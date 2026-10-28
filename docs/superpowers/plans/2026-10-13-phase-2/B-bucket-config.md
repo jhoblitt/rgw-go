@@ -295,8 +295,8 @@ relies on fakerados behaviour beyond what it serves today.
     anonymous preflight of that name with and without the tenant.
 - **Exclusions and registry:** extends "A retried PutBucketPolicy keeps what the write it lost
   to changed" and its registry entry with PutBucketCors (defect 4, data corruption,
-  unreproduced); extends "A PutBucketAcl that loses a race is retried, and every retried ACL,
-  policy or tagging write is authorized again" with the CORS writes (defect 5); adds behaviour
+  unreproduced); extends "A PutBucketAcl that loses a race is retried, and every retried
+  bucket write is authorized again" with the CORS writes (defect 5); adds behaviour
   4's three departures and its tenant ruling, with any departure from the tenant constraint,
   to BC-5's exclusion "A preflight's answer says nothing of its key's user". The CORS writes
   also join "A retried bucket write stops when the name names another bucket", citing their
@@ -633,7 +633,7 @@ byte-identical at the two tags, and `rgw_rest_s3website.h` differs only by a lat
   keeps the winner's change; a retry re-authorized; a stored v1 configuration read by Get and
   written back as v2 by Set.
 - **Exclusions and registry:** extends "A PutBucketAcl that loses a race is retried, and every
-  retried ACL, policy or tagging write is authorized again" with the website writes.
+  retried bucket write is authorized again" with the website writes.
 - **Depends on:** BC-9. **PR:** one. **Brief:** about 120 lines.
 
 ### Task BC-12: Website configuration routes

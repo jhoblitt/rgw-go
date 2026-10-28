@@ -6620,10 +6620,10 @@ rgw-go does the following.
   authorized again and stops when the name names another bucket, as
   rgw-go's other retried bucket writes do ("A retried bucket write stops
   when the name names another bucket" and "A PutBucketAcl that loses a race
-  is retried, and every retried ACL, policy or tagging write is authorized
-  again", below); a retried BucketOwnerEnforced holds the ACL that retry
-  read to the default of the owner that ACL names, where v21.1.2 holds it
-  to the default of the owner its request loaded
+  is retried, and every retried bucket write is authorized again", below);
+  a retried BucketOwnerEnforced holds the ACL that retry read to the
+  default of the owner that ACL names, where v21.1.2 holds it to the
+  default of the owner its request loaded
   ([rgw_op.cc:10272-10300](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L10272-L10300)). The two
   defaults differ only when the bucket's ACL changed owner between the
   request's load and the retry. The S3 handler does not route the three ops
@@ -7074,9 +7074,9 @@ differ, rgw-go does the following.
   so a CORS configuration whose first write lost to a PutBucketAcl puts the
   ACL that write replaced back; rgw-go's sets only the configuration over
   the bucket as each try read it, and the winner's ACL stays.
-- **A PutBucketAcl that loses a race is retried, and every retried ACL,
-  policy or tagging write is authorized again.** radosgw stores a bucket's
-  new ACL once, under the version its request loaded, and answers 200 when
+- **A PutBucketAcl that loses a race is retried, and every retried bucket
+  write is authorized again.** radosgw stores a bucket's new ACL once,
+  under the version its request loaded, and answers 200 when
   another write of the bucket landed first, with the new ACL not stored
   (`rgw_op.cc:5920-5927` at v19.2.6, `:6582-6589` at v20.2.4;
   `docs/ceph-upstream-bugs.md`, "[radosgw's PutBucketAcl answers success
@@ -7231,9 +7231,9 @@ differ, rgw-go does the following.
   with](ceph-upstream-bugs.md#radosgws-putbucketpolicy-retry-writes-back-the-bucket-attrs-its-request-started-with)"),
   and each retry is authorized again and stops when the name names another
   bucket, as rgw-go's other retried bucket writes do ("A PutBucketAcl that
-  loses a race is retried, and every retried ACL, policy or tagging write
-  is authorized again" and "A retried bucket write stops when the name
-  names another bucket", above). A verified request sets the MFA delete
+  loses a race is retried, and every retried bucket write is authorized
+  again" and "A retried bucket write stops when the name names another
+  bucket", above). A verified request sets the MFA delete
   flag to its `MfaDelete` on every try, where radosgw sets it only when it
   differed from the flag its request loaded; the two differ only when
   another request changed the flag in between.
@@ -7669,8 +7669,8 @@ differ, rgw-go does the following.
   rgw-go retries each as its other bucket writes are retried, up to
   fifteen times after reading the bucket again by name, and authorizes the
   requester again before each retry against the bucket that retry read, as
-  "A PutBucketAcl that loses a race is retried, and every retried ACL,
-  policy or tagging write is authorized again" describes; a retry of the
+  "A PutBucketAcl that loses a race is retried, and every retried bucket
+  write is authorized again" describes; a retry of the
   delete that finds the attr gone writes nothing. A name that now names
   another bucket ends it with 409 and nothing written. The put writes the
   configuration's attr alone over the bucket each try read, where radosgw
