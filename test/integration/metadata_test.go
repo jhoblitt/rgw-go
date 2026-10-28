@@ -202,13 +202,32 @@ func listOIDs(ctx context.Context, p meta.Pool) []string {
 // kubectl runs kubectl against the manifest's rooket cluster, and only it.
 func kubectl(ctx context.Context, args ...string) []byte {
 	GinkgoHelper()
+	return kubectlIn(ctx, nil, args...)
+}
+
+// kubectlIn is kubectl with stdin as its input, none when nil.
+func kubectlIn(ctx context.Context, stdin []byte, args ...string) []byte {
+	GinkgoHelper()
+	out, err := runKubectl(ctx, stdin, args...)
+	Expect(err).NotTo(HaveOccurred())
+	return out
+}
+
+// runKubectl is kubectlIn returning its error, with kubectl's stderr in it,
+// for a caller that goes on past one.
+func runKubectl(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, cmp.Or(os.Getenv("RGW_GO_TEST_ROOKET"), "rooket"), append([]string{"kubectl"}, args...)...)
 	cmd.Env = append(os.Environ(), "ROOKET_NAME="+manifest.RooketName)
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
-	Expect(err).NotTo(HaveOccurred(), "kubectl %s: %s", strings.Join(args, " "), stderr.String())
-	return out
+	if err != nil {
+		return nil, fmt.Errorf("kubectl %s: %w: %s", strings.Join(args, " "), err, stderr.String())
+	}
+	return out, nil
 }
 
 // randName is a bucket name no other spec or run uses.
