@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -37,6 +38,7 @@ var _ = Describe("PutObjectACL", func() {
 			o := &op.PutObjectACL{Build: func(p acl.Policy) (acl.Policy, error) { return p, nil }}
 			r := f.req(http.MethodPut, "plain", "small")
 			r.Object.Instance = instance
+			f.putVersion(ctx, "small", "v1", "one")
 			err := op.Run(ctx, o, r)
 			if wantErr == nil {
 				Expect(err).NotTo(HaveOccurred())
@@ -52,7 +54,7 @@ var _ = Describe("PutObjectACL", func() {
 		},
 		Entry("no instance", "", policy.S3PutObjectAcl, nil),
 		Entry("the null instance, the plain object on a bucket whose versioning was never enabled", "null", policy.S3PutObjectVersionAcl, nil),
-		Entry("a version, which is not served yet", "v1", policy.S3PutObjectVersionAcl, op.ErrNotImplemented),
+		Entry("a version", "v1", policy.S3PutObjectVersionAcl, nil),
 	)
 	It("builds the new policy from the stored one and stores it, keeping every other attr", func(ctx SpecContext) {
 		before := f.stat(ctx, "small")
@@ -366,6 +368,7 @@ var _ = Describe("PutObjectTagging", func() {
 			o := &op.PutObjectTagging{}
 			r := f.req(http.MethodPut, "plain", "small")
 			r.Object.Instance = instance
+			f.putVersion(ctx, "small", "v1", "one")
 			err := op.Run(ctx, o, r)
 			if wantErr == nil {
 				Expect(err).NotTo(HaveOccurred())
@@ -381,7 +384,7 @@ var _ = Describe("PutObjectTagging", func() {
 		},
 		Entry("no instance", "", policy.S3PutObjectTagging, nil),
 		Entry("the null instance, the plain object on a bucket whose versioning was never enabled", "null", policy.S3PutObjectVersionTagging, nil),
-		Entry("a version, which is not served yet", "v1", policy.S3PutObjectVersionTagging, op.ErrNotImplemented),
+		Entry("a version", "v1", policy.S3PutObjectVersionTagging, nil),
 	)
 	It("stores the tag set and keeps every other attr", func(ctx SpecContext) {
 		before := f.stat(ctx, "small")
@@ -437,7 +440,7 @@ var _ = Describe("PutObjectTagging", func() {
 			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "small"))).To(Succeed())
 			Expect(f.stat(ctx, "small").Attrs).To(HaveKeyWithValue(tags.Attr, encodedTags(set())))
 		})
-		It("is not reached for a refused requester, a missing object or a version", func(ctx SpecContext) {
+		It("is not reached for a refused requester, a missing object or a missing version", func(ctx SpecContext) {
 			called := false
 			params := func(context.Context, *op.PutObjectTagging) error { called = true; return nil }
 			refused := f.req(http.MethodPut, "plain", "small")
@@ -446,7 +449,7 @@ var _ = Describe("PutObjectTagging", func() {
 			Expect(op.Run(ctx, &op.PutObjectTagging{Params: params}, f.req(http.MethodPut, "plain", "missing"))).To(MatchError(op.ErrNoSuchKey))
 			versioned := f.req(http.MethodPut, "plain", "small")
 			versioned.Object.Instance = "v1"
-			Expect(op.Run(ctx, &op.PutObjectTagging{Params: params}, versioned)).To(MatchError(op.ErrNotImplemented))
+			Expect(op.Run(ctx, &op.PutObjectTagging{Params: params}, versioned)).To(MatchError(op.ErrNoSuchKey))
 			Expect(called).To(BeFalse())
 		})
 		It("returns its error and stores nothing", func(ctx SpecContext) {
@@ -469,6 +472,7 @@ var _ = Describe("DeleteObjectTagging", func() {
 			o := &op.DeleteObjectTagging{}
 			r := f.req(http.MethodDelete, "plain", "small")
 			r.Object.Instance = instance
+			f.putVersion(ctx, "small", "v1", "one")
 			err := op.Run(ctx, o, r)
 			if wantErr == nil {
 				Expect(err).NotTo(HaveOccurred())
@@ -484,7 +488,7 @@ var _ = Describe("DeleteObjectTagging", func() {
 		},
 		Entry("no instance", "", policy.S3DeleteObjectTagging, nil),
 		Entry("the null instance, the plain object on a bucket whose versioning was never enabled", "null", policy.S3DeleteObjectVersionTagging, nil),
-		Entry("a version, which is not served yet", "v1", policy.S3DeleteObjectVersionTagging, op.ErrNotImplemented),
+		Entry("a version", "v1", policy.S3DeleteObjectVersionTagging, nil),
 	)
 	It("removes the tag attr and logs no usage", func(ctx SpecContext) {
 		set := tags.Set{}
@@ -522,4 +526,96 @@ var _ = Describe("DeleteObjectTagging", func() {
 	It("answers a missing object with NoSuchKey", func(ctx SpecContext) {
 		Expect(op.Run(ctx, &op.DeleteObjectTagging{}, f.req(http.MethodDelete, "plain", "missing"))).To(MatchError(op.ErrNoSuchKey))
 	})
+})
+
+// currentVersion is the object store a read meets once the driver follows a
+// versioned key's OLH: a read of key's name without an instance reads key,
+// its current version.
+type currentVersion struct {
+	op.ObjectStore
+	key meta.ObjKey
+}
+
+func (c currentVersion) StatObject(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey) (*op.ObjectState, error) {
+	if key.Name == c.key.Name && key.Instance == "" {
+		key = c.key
+	}
+	return c.ObjectStore.StatObject(ctx, rec, key)
+}
+
+// putVersion stores key in plain at instance with data and alice's ACL.
+func (f *writeFixture) putVersion(ctx context.Context, key, instance, data string) {
+	GinkgoHelper()
+	_, err := f.store.PutObject(ctx, f.rec, meta.ObjKey{Name: key, Instance: instance}, strings.NewReader(data),
+		op.PutParams{Size: int64(len(data)), Attrs: map[string][]byte{meta.AttrACL: f.aliceACL}})
+	Expect(err).NotTo(HaveOccurred())
+}
+
+var _ = Describe("the object ACL and tagging writes on a bucket whose versioning is or was enabled", func() {
+	var f *writeFixture
+	BeforeEach(func(ctx SpecContext) { f = newWriteFixture(ctx, denc.Squid) })
+
+	DescribeTable("write the state Init read, on any bucket and for any version",
+		func(ctx SpecContext, flags uint32, instance string) {
+			if flags != 0 {
+				f.setBucketFlags(ctx, flags)
+			}
+			for name, c := range attrWriteOps {
+				stub := &opfakes.FakeObjectStore{}
+				st := &op.ObjectState{Exists: true, Key: meta.ObjKey{Name: "small", Instance: instance}, Attrs: map[string][]byte{meta.AttrACL: f.aliceACL}}
+				stub.StatObjectReturns(st, nil)
+				f.env.Objects = stub
+				o, r := c(f, instance)
+				Expect(op.Run(ctx, o, r)).To(Succeed(), name)
+				Expect(stub.SetObjectAttrsCallCount()).To(Equal(1), name)
+				_, got, _, _ := stub.SetObjectAttrsArgsForCall(0)
+				Expect(got).To(BeIdenticalTo(st), name)
+			}
+		},
+		Entry("an enabled bucket", uint32(meta.BucketVersioned), ""),
+		Entry("an enabled bucket, naming a version", uint32(meta.BucketVersioned), "v1"),
+		Entry("a suspended bucket, naming the null version", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended), "null"),
+		Entry("a bucket with object lock, which never writes a version's retention through these", uint32(meta.BucketVersioned|meta.BucketObjLockEnabled), "v1"),
+		Entry("a bucket never versioned, naming a version", uint32(0), "v1"),
+	)
+	DescribeTable("change the version they name, the current one when they name none, and no other",
+		func(ctx SpecContext, write func(ctx context.Context, instance string) error, attr string) {
+			f.setBucketFlags(ctx, meta.BucketVersioned)
+			f.putVersion(ctx, "small", "v1", "one")
+			f.putVersion(ctx, "small", "v2", "two")
+			f.env.Objects = currentVersion{ObjectStore: f.store, key: meta.ObjKey{Name: "small", Instance: "v2"}}
+			stat := func(instance string) *op.ObjectState {
+				GinkgoHelper()
+				st, err := f.store.StatObject(ctx, f.rec, meta.ObjKey{Name: "small", Instance: instance})
+				Expect(err).NotTo(HaveOccurred())
+				return st
+			}
+			for _, v := range []string{"v1", "v2"} {
+				Expect(f.store.SetObjectAttrs(ctx, stat(v), map[string][]byte{tags.Attr: encodedTags(tags.Set{})}, nil)).To(Succeed())
+			}
+			for _, c := range []struct{ named, written, other string }{{"v1", "v1", "v2"}, {"", "v2", "v1"}} {
+				before, untouched := stat(c.written).Attrs[attr], stat(c.other).Attrs[attr]
+				Expect(write(ctx, c.named)).To(Succeed(), "naming %q", c.named)
+				Expect(stat(c.written).Attrs[attr]).NotTo(Equal(before), "naming %q writes %s", c.named, c.written)
+				Expect(stat(c.other).Attrs[attr]).To(Equal(untouched), "naming %q leaves %s alone", c.named, c.other)
+			}
+		},
+		Entry("PutObjectACL", func(ctx context.Context, instance string) error {
+			r := f.req(http.MethodPut, "plain", "small")
+			r.Object.Instance = instance
+			return op.Run(ctx, &op.PutObjectACL{Build: func(acl.Policy) (acl.Policy, error) { return publicReadOf(f.alice.Owner), nil }}, r)
+		}, meta.AttrACL),
+		Entry("PutObjectTagging", func(ctx context.Context, instance string) error {
+			set := tags.Set{}
+			Expect(set.Add("k", instance, tags.MaxObjectTags)).To(Succeed())
+			r := f.req(http.MethodPut, "plain", "small")
+			r.Object.Instance = instance
+			return op.Run(ctx, &op.PutObjectTagging{Set: set}, r)
+		}, tags.Attr),
+		Entry("DeleteObjectTagging", func(ctx context.Context, instance string) error {
+			r := f.req(http.MethodDelete, "plain", "small")
+			r.Object.Instance = instance
+			return op.Run(ctx, &op.DeleteObjectTagging{}, r)
+		}, tags.Attr),
+	)
 })

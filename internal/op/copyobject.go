@@ -131,7 +131,9 @@ func (o *CopyObject) Init(ctx context.Context, r *Request) error {
 // "radosgw checks a CopyObject source against its bucket's ACL, not the
 // object's"). rgw-go needs READ on both: the bucket check, then the object
 // check, each with the source bucket's policy and the identity's, which
-// decide before either ACL (docs/exclusions.md).
+// decide before either ACL (docs/exclusions.md). A source naming a delete
+// marker's version is refused ahead of the missing source's rule
+// (copySourceMarker).
 func (o *CopyObject) VerifyPermission(ctx context.Context, r *Request) error {
 	a := policy.S3GetObject
 	if o.SrcKey.Instance != "" {
@@ -159,6 +161,9 @@ func (o *CopyObject) VerifyPermission(ctx context.Context, r *Request) error {
 		o.src = &ObjectState{Bucket: o.srcRec, Key: o.SrcKey}
 	}
 	if !o.src.Exists {
+		if err := copySourceMarker(ctx, r, a, o.srcRec, o.src, o.SrcKey); err != nil {
+			return err
+		}
 		if err := VerifyObjectPermissionIn(ctx, r, a, perm, o.srcRec, o.src); err != nil {
 			return err
 		}

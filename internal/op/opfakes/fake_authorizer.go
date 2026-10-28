@@ -56,6 +56,22 @@ type FakeAuthorizer struct {
 	verifyBucketOwnerOrPolicyReturnsOnCall map[int]struct {
 		result1 error
 	}
+	VerifyMarkerInStub        func(context.Context, *op.Request, policy.Action, acl.Permission, *op.BucketRecord, meta.ObjKey) error
+	verifyMarkerInMutex       sync.RWMutex
+	verifyMarkerInArgsForCall []struct {
+		arg1 context.Context
+		arg2 *op.Request
+		arg3 policy.Action
+		arg4 acl.Permission
+		arg5 *op.BucketRecord
+		arg6 meta.ObjKey
+	}
+	verifyMarkerInReturns struct {
+		result1 error
+	}
+	verifyMarkerInReturnsOnCall map[int]struct {
+		result1 error
+	}
 	VerifyObjectStub        func(context.Context, *op.Request, policy.Action, acl.Permission) error
 	verifyObjectMutex       sync.RWMutex
 	verifyObjectArgsForCall []struct {
@@ -305,6 +321,72 @@ func (fake *FakeAuthorizer) VerifyBucketOwnerOrPolicyReturnsOnCall(i int, result
 		})
 	}
 	fake.verifyBucketOwnerOrPolicyReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeAuthorizer) VerifyMarkerIn(arg1 context.Context, arg2 *op.Request, arg3 policy.Action, arg4 acl.Permission, arg5 *op.BucketRecord, arg6 meta.ObjKey) error {
+	fake.verifyMarkerInMutex.Lock()
+	ret, specificReturn := fake.verifyMarkerInReturnsOnCall[len(fake.verifyMarkerInArgsForCall)]
+	fake.verifyMarkerInArgsForCall = append(fake.verifyMarkerInArgsForCall, struct {
+		arg1 context.Context
+		arg2 *op.Request
+		arg3 policy.Action
+		arg4 acl.Permission
+		arg5 *op.BucketRecord
+		arg6 meta.ObjKey
+	}{arg1, arg2, arg3, arg4, arg5, arg6})
+	stub := fake.VerifyMarkerInStub
+	fakeReturns := fake.verifyMarkerInReturns
+	fake.recordInvocation("VerifyMarkerIn", []interface{}{arg1, arg2, arg3, arg4, arg5, arg6})
+	fake.verifyMarkerInMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3, arg4, arg5, arg6)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *FakeAuthorizer) VerifyMarkerInCallCount() int {
+	fake.verifyMarkerInMutex.RLock()
+	defer fake.verifyMarkerInMutex.RUnlock()
+	return len(fake.verifyMarkerInArgsForCall)
+}
+
+func (fake *FakeAuthorizer) VerifyMarkerInCalls(stub func(context.Context, *op.Request, policy.Action, acl.Permission, *op.BucketRecord, meta.ObjKey) error) {
+	fake.verifyMarkerInMutex.Lock()
+	defer fake.verifyMarkerInMutex.Unlock()
+	fake.VerifyMarkerInStub = stub
+}
+
+func (fake *FakeAuthorizer) VerifyMarkerInArgsForCall(i int) (context.Context, *op.Request, policy.Action, acl.Permission, *op.BucketRecord, meta.ObjKey) {
+	fake.verifyMarkerInMutex.RLock()
+	defer fake.verifyMarkerInMutex.RUnlock()
+	argsForCall := fake.verifyMarkerInArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3, argsForCall.arg4, argsForCall.arg5, argsForCall.arg6
+}
+
+func (fake *FakeAuthorizer) VerifyMarkerInReturns(result1 error) {
+	fake.verifyMarkerInMutex.Lock()
+	defer fake.verifyMarkerInMutex.Unlock()
+	fake.VerifyMarkerInStub = nil
+	fake.verifyMarkerInReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeAuthorizer) VerifyMarkerInReturnsOnCall(i int, result1 error) {
+	fake.verifyMarkerInMutex.Lock()
+	defer fake.verifyMarkerInMutex.Unlock()
+	fake.VerifyMarkerInStub = nil
+	if fake.verifyMarkerInReturnsOnCall == nil {
+		fake.verifyMarkerInReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.verifyMarkerInReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
 }

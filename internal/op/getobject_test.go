@@ -983,5 +983,180 @@ var _ = Describe("GetObject", func() {
 				Expect(op.AsError(err).Message).To(BeEmpty())
 			})
 		})
+
+		Describe("a versioned key", func() {
+			// resolve sets plain's flags and has the store resolve every
+			// read to st.
+			resolve := func(ctx context.Context, flags uint32, st *op.ObjectState) {
+				GinkgoHelper()
+				rec, err := store.GetBucket(ctx, "", "plain")
+				Expect(err).NotTo(HaveOccurred())
+				rec.Info.Flags |= flags
+				Expect(store.PutBucketInfo(ctx, rec)).To(Succeed())
+				objects.StatObjectReturns(st, nil)
+				objects.PrefetchObjectReturns(st, nil)
+			}
+			// read runs o for k naming instance.
+			read := func(ctx context.Context, o op.Op, instance string) error {
+				r := req("k")
+				r.Object.Instance = instance
+				return op.Run(ctx, o, r)
+			}
+			// run reads k in plain, its flags set, naming instance, as a GET
+			// or a HEAD, the store resolving the key to st.
+			run := func(ctx context.Context, flags uint32, instance string, getData bool, st *op.ObjectState) (*op.GetObject, error) {
+				GinkgoHelper()
+				resolve(ctx, flags, st)
+				sink = &captureSink{}
+				o := &op.GetObject{GetData: getData, Sink: sink}
+				return o, read(ctx, o, instance)
+			}
+			DescribeTable("names the version the read resolved, null for the null version on a bucket ever versioned",
+				func(ctx SpecContext, flags uint32, named, resolved, want string) {
+					for _, getData := range []bool{true, false} {
+						o, err := run(ctx, flags, named, getData, state(func(st *op.ObjectState) { st.Key.Instance = resolved }))
+						Expect(err).NotTo(HaveOccurred())
+						Expect(o.VersionID).To(Equal(want), "GetData %v", getData)
+					}
+				},
+				Entry("an enabled bucket's current version, named by none", uint32(meta.BucketVersioned), "", "v2", "v2"),
+				Entry("a version named", uint32(meta.BucketVersioned), "v1", "v1", "v1"),
+				Entry("a suspended bucket's null current version, named by none", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended), "", "", "null"),
+				Entry("an enabled bucket's plain object written before versioning, named by none", uint32(meta.BucketVersioned), "", "", "null"),
+				Entry("the null version named", uint32(meta.BucketVersioned), "null", "null", "null"),
+				Entry("a bucket never versioned", uint32(0), "", "", ""),
+				Entry("the null version named on a bucket never versioned, as radosgw names it", uint32(0), "null", "null", "null"),
+				Entry("a version named on a bucket never versioned", uint32(0), "v1", "v1", "v1"),
+			)
+			It("names the object's version for a partNumber read, not the instance of the part head's key", func(ctx SpecContext) {
+				m := decodeGoldenManifest("squid-multipart")
+				head := state(func(st *op.ObjectState) {
+					st.Manifest, st.Size, st.Key.Instance = &m, m.ObjSize, "v2"
+				})
+				part := &op.ObjectState{
+					Exists: true, Size: 4 << 20, Key: meta.ObjKey{Name: "multipart.bin.2~vXcCS0UgSATwQOecOwRkZrWyEyux7jO.2", NS: meta.NSMultipart},
+					Attrs: map[string][]byte{meta.AttrETag: []byte("part2")},
+				}
+				objects.PrefetchObjectReturnsOnCall(0, head, nil)
+				objects.PrefetchObjectReturnsOnCall(1, part, nil)
+				o, _, err := get("k", func(o *op.GetObject) { o.PartNumber = new(2) })
+				Expect(err).NotTo(HaveOccurred())
+				Expect(o.State.Key).To(Equal(part.Key), "the part was read")
+				Expect(o.VersionID).To(Equal("v2"))
+			})
+
+			Describe("naming a delete marker's own version", func() {
+				var (
+					authz       *opfakes.FakeAuthorizer
+					markerMtime time.Time
+				)
+				marker := func(instance string) *op.ObjectState {
+					st := &op.ObjectState{Key: meta.ObjKey{Name: "k", Instance: instance}, DeleteMarker: true}
+					if instance != "" {
+						st.Mtime = markerMtime
+					}
+					return st
+				}
+				BeforeEach(func() {
+					markerMtime = time.Unix(1700000300, 0)
+					authz = &opfakes.FakeAuthorizer{}
+					authz.VerifyObjectReturns(op.BeforeVerify(op.ErrNoSuchKey))
+					env.Authz = authz
+				})
+				// expectMarker checks err is the 405 of k's version instance,
+				// marked BeforeVerify, with the marker's mtime when
+				// lastModified.
+				expectMarker := func(err error, instance string, lastModified bool) {
+					GinkgoHelper()
+					Expect(err).To(MatchError(op.ErrMethodNotAllowed))
+					Expect(op.IsBeforeVerify(err)).To(BeTrue())
+					me, ok := errors.AsType[*op.MarkerVersionError](err)
+					Expect(ok).To(BeTrue(), "a MarkerVersionError: %v", err)
+					Expect(me.Key).To(Equal(meta.ObjKey{Name: "k", Instance: instance}))
+					if lastModified {
+						Expect(me.LastModified).To(HaveValue(Equal(markerMtime)))
+					} else {
+						Expect(me.LastModified).To(BeNil())
+					}
+				}
+				// checked are the actions VerifyMarkerIn was asked for, each
+				// on plain's k at instance.
+				checked := func(instance string) []policy.Action {
+					GinkgoHelper()
+					var as []policy.Action
+					for i := range authz.VerifyMarkerInCallCount() {
+						_, _, a, perm, bucket, key := authz.VerifyMarkerInArgsForCall(i)
+						Expect([]any{perm, bucket.Info.Bucket.Name, key}).To(Equal([]any{acl.PermFor(a), "plain", meta.ObjKey{Name: "k", Instance: instance}}))
+						as = append(as, a)
+					}
+					return as
+				}
+				DescribeTable("answers 405 MethodNotAllowed with the marker's mtime to a requester allowed the version's read, ahead of the op mask",
+					func(ctx SpecContext, instance string, refusal error) {
+						authz.VerifyObjectReturns(refusal)
+						for _, getData := range []bool{true, false} {
+							o, err := run(ctx, meta.BucketVersioned, instance, getData, marker(instance))
+							expectMarker(err, instance, true)
+							Expect(o.VersionID).To(Equal(instance))
+							Expect(objects.ReadObjectCallCount()).To(BeZero())
+						}
+						Expect(checked(instance)).To(Equal([]policy.Action{policy.S3GetObjectVersion, policy.S3GetObjectVersion}))
+					},
+					Entry("a version id, refused 404 by read_obj_policy", "m1", op.BeforeVerify(op.ErrNoSuchKey)),
+					Entry("the null version, a null delete marker", "null", op.BeforeVerify(op.ErrNoSuchKey)),
+					Entry("a version id, refused 403 by read_obj_policy to a requester who may not list", "m1", op.BeforeVerify(op.ErrAccessDenied)),
+				)
+				DescribeTable("keeps read_obj_policy's answer for a requester refused the version's read",
+					func(ctx SpecContext, refusal, versionRefusal error) {
+						authz.VerifyObjectReturns(refusal)
+						authz.VerifyMarkerInReturns(versionRefusal)
+						_, err := run(ctx, meta.BucketVersioned, "m1", true, marker("m1"))
+						Expect(err).To(MatchError(refusal))
+						Expect(errors.As(err, new(*op.MarkerVersionError))).To(BeFalse(), "no MarkerVersionError: %v", err)
+					},
+					Entry("404 to one who may list", op.BeforeVerify(op.ErrNoSuchKey), op.ErrAccessDenied),
+					Entry("403 to one who may not", op.BeforeVerify(op.ErrAccessDenied), op.ErrAccessDenied),
+					Entry("404 when the version's check faults, which is no permission", op.BeforeVerify(op.ErrNoSuchKey), op.ErrInternalError),
+				)
+				It("passes on a refusal that is not read_obj_policy's without checking the version's read", func(ctx SpecContext) {
+					authz.VerifyObjectReturns(op.BeforeVerify(op.ErrUserSuspended))
+					_, err := run(ctx, meta.BucketVersioned, "m1", true, marker("m1"))
+					Expect(err).To(MatchError(op.ErrUserSuspended))
+					Expect(authz.VerifyMarkerInCallCount()).To(BeZero())
+				})
+				It("answers a NoSuchKey of a version that is no delete marker as it is", func(ctx SpecContext) {
+					_, err := run(ctx, meta.BucketVersioned, "v9", true, &op.ObjectState{Key: meta.ObjKey{Name: "k", Instance: "v9"}})
+					Expect(err).To(MatchError(op.ErrNoSuchKey))
+					Expect(authz.VerifyMarkerInCallCount()).To(BeZero())
+				})
+				It("answers a current delete marker, named by no version, 404 NoSuchKey", func(ctx SpecContext) {
+					_, err := run(ctx, meta.BucketVersioned, "", true, marker(""))
+					Expect(err).To(MatchError(op.ErrNoSuchKey))
+					Expect(authz.VerifyMarkerInCallCount()).To(BeZero())
+				})
+				DescribeTable("answers the ACL, tagging and attribute reads 405 too, by their own version actions, without the mtime",
+					func(ctx SpecContext, o op.Op, want ...policy.Action) {
+						resolve(ctx, meta.BucketVersioned, marker("m1"))
+						authz.VerifyMarkerInReturns(op.ErrAccessDenied)
+						authz.VerifyMarkerInReturnsOnCall(len(want)-1, nil)
+						expectMarker(read(ctx, o, "m1"), "m1", false)
+						Expect(checked("m1")).To(Equal(want))
+					},
+					Entry("GetObjectAcl", &op.GetObjectACL{}, policy.S3GetObjectVersionAcl),
+					Entry("GetObjectTagging", &op.GetObjectTagging{}, policy.S3GetObjectVersionTagging),
+					Entry("GetObjectAttributes, by s3:GetObjectVersion", &op.GetObjectAttributes{}, policy.S3GetObjectVersion),
+				)
+				It("checks GetObjectAttributes' s3:GetObjectVersionAttributes on Tentacle alone", func(ctx SpecContext) {
+					resolve(ctx, meta.BucketVersioned, marker("m1"))
+					authz.VerifyMarkerInReturns(op.ErrAccessDenied)
+					Expect(read(ctx, &op.GetObjectAttributes{}, "m1")).To(MatchError(op.ErrNoSuchKey), "Squid knows no s3:GetObjectVersionAttributes")
+					Expect(checked("m1")).To(Equal([]policy.Action{policy.S3GetObjectVersion}))
+					env.Zone = tentacle()
+					authz.VerifyMarkerInReturnsOnCall(2, nil)
+					expectMarker(read(ctx, &op.GetObjectAttributes{}, "m1"), "m1", false)
+					Expect(checked("m1")).To(Equal([]policy.Action{policy.S3GetObjectVersion, policy.S3GetObjectVersion, policy.S3GetObjectVersionAttributes}))
+				})
+			})
+		})
 	})
 })

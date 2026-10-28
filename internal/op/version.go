@@ -67,7 +67,7 @@ func ResponseVersionID(rec *BucketRecord, instance string) string {
 // three head writes are served on such a bucket together, once the ops
 // store those headers (docs/exclusions.md, "PutObject, CopyObject and
 // CompleteMultipartUpload answer 501 on an object-lock bucket, and the
-// deletes and the ACL and tag writes on a versioned one").
+// deletes on a versioned one").
 func objectLockUnserved(rec *BucketRecord) error {
 	if rec.Info.ObjLockEnabled() {
 		return fmt.Errorf("%w: writes to bucket %s, which has object lock, are not implemented", ErrNotImplemented, rec.Info.Bucket.Name)

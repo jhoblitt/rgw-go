@@ -595,3 +595,73 @@ var _ = Describe("CopyObject", func() {
 		})
 	})
 })
+
+var _ = Describe("a copy source naming a delete marker's version", func() {
+	var (
+		f       *writeFixture
+		az      *opfakes.FakeAuthorizer
+		objects *opfakes.FakeObjectStore
+		mp      *opfakes.FakeMultipartStore
+		copies  map[string]func(ctx context.Context, src meta.ObjKey) error
+	)
+	BeforeEach(func(ctx SpecContext) {
+		f = newMPFixture(ctx, denc.Squid)
+		id := f.initUpload(ctx, "k")
+		az = &opfakes.FakeAuthorizer{}
+		az.VerifyObjectInReturns(op.ErrNoSuchKey)
+		f.env.Authz = az
+		objects = &opfakes.FakeObjectStore{}
+		objects.PrefetchObjectStub = func(_ context.Context, rec *op.BucketRecord, key meta.ObjKey) (*op.ObjectState, error) {
+			return &op.ObjectState{Bucket: rec, Key: key, DeleteMarker: true}, nil
+		}
+		f.env.Objects = objects
+		mp = &opfakes.FakeMultipartStore{}
+		f.env.Multipart = mp
+		copies = map[string]func(ctx context.Context, src meta.ObjKey) error{
+			"CopyObject": func(ctx context.Context, src meta.ObjKey) error {
+				o := f.copyOf(src.Name)
+				o.SrcKey = src
+				return op.Run(ctx, o, f.req(http.MethodPut, "plain", "dst"))
+			},
+			"UploadPartCopy": func(ctx context.Context, src meta.ObjKey) error {
+				o := f.copyPartOf(id, 1, src.Name, "")
+				o.SrcKey = src
+				return op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))
+			},
+		}
+	})
+	It("is 400 InvalidRequest to a requester allowed the source version's read, ahead of the missing source's rule", func(ctx SpecContext) {
+		for name, copyFrom := range copies {
+			err := copyFrom(ctx, meta.ObjKey{Name: "src", Instance: "m1"})
+			Expect(err).To(MatchError(op.ErrInvalidRequest), name)
+			Expect(op.AsError(err).Message).NotTo(BeEmpty(), name)
+		}
+		Expect(az.VerifyMarkerInCallCount()).To(Equal(2))
+		for i := range 2 {
+			_, _, a, perm, bucket, key := az.VerifyMarkerInArgsForCall(i)
+			Expect([]any{a, perm, bucket.Info.Bucket.Name, key}).To(Equal([]any{
+				policy.S3GetObjectVersion, acl.PermFor(policy.S3GetObjectVersion), "plain", meta.ObjKey{Name: "src", Instance: "m1"},
+			}))
+		}
+		Expect(az.VerifyObjectInCallCount()).To(BeZero())
+		Expect(objects.CopyObjectCallCount()).To(BeZero())
+		Expect(mp.CopyPartCallCount()).To(BeZero())
+	})
+	DescribeTable("keeps the missing source's answer for a requester refused the version's read",
+		func(ctx SpecContext, missing error) {
+			az.VerifyMarkerInReturns(op.ErrAccessDenied)
+			az.VerifyObjectInReturns(missing)
+			for name, copyFrom := range copies {
+				Expect(copyFrom(ctx, meta.ObjKey{Name: "src", Instance: "m1"})).To(MatchError(missing), name)
+			}
+		},
+		Entry("404 to one who may list the source bucket", op.ErrNoSuchKey),
+		Entry("403 to one who may not", op.ErrAccessDenied),
+	)
+	It("answers a source whose current version is a delete marker, named by no version, as a missing source", func(ctx SpecContext) {
+		for name, copyFrom := range copies {
+			Expect(copyFrom(ctx, meta.ObjKey{Name: "src"})).To(MatchError(op.ErrNoSuchKey), name)
+		}
+		Expect(az.VerifyMarkerInCallCount()).To(BeZero())
+	})
+})

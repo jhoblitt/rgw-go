@@ -626,6 +626,52 @@ var _ = Describe("Evaluator", func() {
 		})
 	})
 
+	Describe("a delete marker's version", func() {
+		// marker is VerifyMarkerIn of s3:GetObjectVersion on bucket's k at
+		// version m1, which has no head.
+		marker := func(id op.Identity, bucket string) error {
+			GinkgoHelper()
+			r := f.req(id, bucket, "")
+			r.Object = meta.ObjKey{Name: "k", Instance: "m1"}
+			return f.eval.VerifyMarkerIn(f.ctx, r, policy.S3GetObjectVersion, acl.PermRead, r.BucketRec, r.Object)
+		}
+		It("passes the bucket's owner and an admin where no policy decides, and no one else", func() {
+			Expect(marker(alice(), "priv")).To(Succeed())
+			Expect(marker(adminOf(bob()), "priv")).To(Succeed())
+			Expect(marker(bob(), "priv")).To(MatchError(op.ErrAccessDenied))
+			Expect(marker(anon(), "priv")).To(MatchError(op.ErrAccessDenied))
+		})
+		It("consults no ACL, the bucket's public-read grant included, as a marker has none", func() {
+			Expect(marker(anon(), "pub")).To(MatchError(op.ErrAccessDenied))
+			Expect(marker(bob(), "pub")).To(MatchError(op.ErrAccessDenied))
+		})
+		It("decides by the bucket's policy on the version's object ARN", func() {
+			f.setPolicy("priv", doc(stmt("Allow", awsPrincipal("arn:aws:iam:::user/bob"), "s3:GetObjectVersion", "arn:aws:s3:::priv/k", "")))
+			Expect(marker(bob(), "priv")).To(Succeed())
+			f.setPolicy("priv", doc(stmt("Allow", awsPrincipal("arn:aws:iam:::user/bob"), "s3:GetObjectVersion", "arn:aws:s3:::priv/other", "")))
+			Expect(marker(bob(), "priv")).To(MatchError(op.ErrAccessDenied))
+			f.setPolicy("priv", doc(stmt("Deny", awsPrincipal("arn:aws:iam:::user/alice"), "s3:GetObjectVersion", "arn:aws:s3:::priv/*", "")))
+			Expect(marker(alice(), "priv")).To(MatchError(op.ErrAccessDenied), "a Deny refuses the owner")
+			Expect(marker(adminOf(alice()), "priv")).To(Succeed(), "and not an admin, as op.Run overrides a policy's refusal for one")
+		})
+		It("decides by the identity's policies", func() {
+			Expect(marker(withUserPolicy(bob(), doc(stmt("Allow", "", "s3:GetObjectVersion", "*", ""))), "priv")).To(Succeed())
+			Expect(marker(withUserPolicy(alice(), doc(stmt("Deny", "", "s3:GetObjectVersion", "*", ""))), "priv")).To(MatchError(op.ErrAccessDenied))
+		})
+		It("refuses all but the owner a public policy's Allow under RestrictPublicBuckets", func() {
+			f.setPolicy("polbkt", doc(stmt("Allow", `"*"`, "s3:GetObjectVersion", "arn:aws:s3:::polbkt/*", "")))
+			Expect(marker(bob(), "polbkt")).To(Succeed(), "bob, without the block")
+			f.setAttr("", "polbkt", attrPublicAccess, pabAttr(acl.PublicAccessBlock{RestrictPublicBuckets: true}))
+			Expect(marker(bob(), "polbkt")).To(MatchError(op.ErrAccessDenied), "bob")
+			Expect(marker(anon(), "polbkt")).To(MatchError(op.ErrAccessDenied), "anonymous")
+			Expect(marker(alice(), "polbkt")).To(Succeed(), "the owner")
+		})
+		It("makes the prelude's refusals: a suspended bucket's to all but an admin", func() {
+			Expect(marker(alice(), "susp")).To(MatchError(op.ErrUserSuspended))
+			Expect(marker(adminOf(alice()), "susp")).To(Succeed())
+		})
+	})
+
 	Describe("the object prelude", func() {
 		var logs *bytes.Buffer
 		BeforeEach(func() {

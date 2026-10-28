@@ -156,7 +156,7 @@ func (o *GetObject) retarget(ctx context.Context, r *Request) error {
 		return &WebsiteRedirectError{Code: code}
 	}
 	r.Object = meta.ObjKey{Name: eff}
-	o.Versioned, o.VersionID = false, ""
+	o.Versioned = false
 	return nil
 }
 

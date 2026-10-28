@@ -166,7 +166,9 @@ func (o *UploadPart) Init(ctx context.Context, r *Request) error {
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1560-L1608 at v19.2.6).
 // rgw-go needs READ on both, the bucket check then the object check, each
 // with the source bucket's policy and the identity's, which decide before
-// either ACL, as for CopyObject (docs/exclusions.md).
+// either ACL, as for CopyObject (docs/exclusions.md). A source naming a
+// delete marker's version is refused ahead of the missing source's rule
+// (copySourceMarker).
 func (o *UploadPart) VerifyPermission(ctx context.Context, r *Request) error {
 	destErr := VerifyBucketPermission(ctx, r, policy.S3PutObject, acl.PermFor(policy.S3PutObject))
 	if !o.CopySource || IsBeforeVerify(destErr) {
@@ -197,6 +199,9 @@ func (o *UploadPart) VerifyPermission(ctx context.Context, r *Request) error {
 	}
 	perm := acl.PermFor(a)
 	if !o.src.Exists {
+		if err := copySourceMarker(ctx, r, a, o.srcRec, o.src, o.SrcKey); err != nil {
+			return err
+		}
 		if err := VerifyObjectPermissionIn(ctx, r, a, perm, o.srcRec, o.src); err != nil {
 			return err
 		}
@@ -237,8 +242,7 @@ func (o *UploadPart) VerifyPermission(ctx context.Context, r *Request) error {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4112-L4118 at v20.2.4);
 // then Authorized runs, and a public ACL it built from the grant headers is
 // refused too, as PutObject refuses one, where radosgw stores it
-// (docs/exclusions.md). Then a copy naming a source version is refused, until
-// versioning is served.
+// (docs/exclusions.md).
 func (o *UploadPart) Execute(ctx context.Context, r *Request) error {
 	if !o.CopySource {
 		if err := checkDestPlacement(r, o.StorageClass); err != nil {
@@ -259,9 +263,6 @@ func (o *UploadPart) Execute(ctx context.Context, r *Request) error {
 	}
 	if block && o.ACL.IsPublic() {
 		return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
-	}
-	if o.CopySource && o.SrcKey.Instance != "" {
-		return fmt.Errorf("%w: copying version %q of %s is not implemented", ErrNotImplemented, o.SrcKey.Instance, o.SrcKey.Name)
 	}
 	if maxPut := confSize(r, "rgw_max_put_size", defaultMaxPutSize); o.Size > int64(maxPut) { //nolint:gosec // verify_params compares in off_t
 		return fmt.Errorf("%w: %d bytes over rgw_max_put_size %d", ErrEntityTooLarge, o.Size, maxPut)

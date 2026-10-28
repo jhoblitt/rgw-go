@@ -84,9 +84,6 @@ func (o *PutObjectACL) Execute(ctx context.Context, r *Request) error {
 	if err := aclsDisabled(r.BucketRec); err != nil {
 		return err
 	}
-	if err := versioningUnserved(r.BucketRec, r.Object); err != nil {
-		return err
-	}
 	existing, err := ObjectACLFor(ctx, r.ObjState, r.BucketRec)
 	if err != nil {
 		return err
@@ -214,13 +211,9 @@ func (o *PutObjectTagging) VerifyPermission(ctx context.Context, r *Request) err
 // OperationAborted
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L1104-L1108 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1322-L1326 at v20.2.4).
-// A version rgw-go does not serve and a missing object, which radosgw
-// refuses while it reads the object before authorizing, are refused before
-// Params reads the body.
+// A missing object, which radosgw refuses while it reads the object before
+// authorizing, is refused before Params reads the body.
 func (o *PutObjectTagging) Execute(ctx context.Context, r *Request) error {
-	if err := versioningUnserved(r.BucketRec, r.Object); err != nil {
-		return err
-	}
 	if r.ObjState == nil || !r.ObjState.Exists {
 		return fmt.Errorf("%w: %s", ErrNoSuchKey, r.Object.Name)
 	}
@@ -285,11 +278,16 @@ func (o *DeleteObjectTagging) VerifyPermission(ctx context.Context, r *Request) 
 // v19.2.6 skips the load and stamps the object with the epoch plus a
 // nanosecond (docs/ceph-upstream-bugs.md, "Squid's DeleteObjectTagging
 // stamps the object with the epoch plus one nanosecond";
-// docs/exclusions.md).
+// docs/exclusions.md). The state is the version Init resolved, for a key
+// named without a version the current one, where delete_obj_attrs writes
+// the key as named, on a versioned key its OLH head
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2422-L2430 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3014-L3022 at v20.2.4;
+// docs/ceph-upstream-bugs.md, "radosgw's DeleteObjectTagging naming no
+// version writes the key's OLH head, not its current version";
+// docs/exclusions.md, "DeleteObjectTagging naming no version removes the
+// current version's tags").
 func (o *DeleteObjectTagging) Execute(ctx context.Context, r *Request) error {
-	if err := versioningUnserved(r.BucketRec, r.Object); err != nil {
-		return err
-	}
 	if r.ObjState == nil || !r.ObjState.Exists {
 		return fmt.Errorf("%w: %s", ErrNoSuchKey, r.Object.Name)
 	}

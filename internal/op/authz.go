@@ -49,6 +49,12 @@ type Authorizer interface {
 	// between the two buckets; an object with no ACL of its own gets a default
 	// ACL owned by bucket's owner.
 	VerifyObjectIn(ctx context.Context, r *Request, a policy.Action, perm acl.Permission, bucket *BucketRecord, obj *ObjectState) error
+	// VerifyMarkerIn authorizes a against key in bucket, a delete marker's
+	// version, which has no ACL: VerifyBucketIn's split of inputs and its
+	// policies on the key's ARN, where no policy decides an admin and
+	// bucket's owner, within the permission mask for perm, passing and every
+	// other requester refused.
+	VerifyMarkerIn(ctx context.Context, r *Request, a policy.Action, perm acl.Permission, bucket *BucketRecord, key meta.ObjKey) error
 }
 
 // VerifyUserPermission authorizes a service-scope action through r.Env.Authz.
@@ -90,6 +96,12 @@ func VerifyObjectPermissionIn(ctx context.Context, r *Request, a policy.Action, 
 	return r.Env.Authz.VerifyObjectIn(ctx, r, a, perm, bucket, obj)
 }
 
+// VerifyMarkerPermissionIn authorizes a against a delete marker's version
+// through r.Env.Authz.
+func VerifyMarkerPermissionIn(ctx context.Context, r *Request, a policy.Action, perm acl.Permission, bucket *BucketRecord, key meta.ObjKey) error {
+	return r.Env.Authz.VerifyMarkerIn(ctx, r, a, perm, bucket, key)
+}
+
 // OwnerOnly is the interim authorizer: service actions are allowed, as
 // radosgw's verify_user_permission_no_policy allows them for a user with no
 // user ACL, and bucket and object actions are allowed to the bucket owner
@@ -126,6 +138,11 @@ func (OwnerOnly) VerifyBucketIn(_ context.Context, r *Request, _ policy.Action, 
 
 // VerifyObjectIn allows bucket's owner.
 func (OwnerOnly) VerifyObjectIn(_ context.Context, r *Request, _ policy.Action, _ acl.Permission, bucket *BucketRecord, _ *ObjectState) error {
+	return ownerOnlyOf(r, bucket)
+}
+
+// VerifyMarkerIn allows bucket's owner.
+func (OwnerOnly) VerifyMarkerIn(_ context.Context, r *Request, _ policy.Action, _ acl.Permission, bucket *BucketRecord, _ meta.ObjKey) error {
 	return ownerOnlyOf(r, bucket)
 }
 

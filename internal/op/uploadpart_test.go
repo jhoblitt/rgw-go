@@ -346,14 +346,10 @@ var _ = Describe("UploadPart", func() {
 			func(ctx SpecContext, instance string, want policy.Action) {
 				fake := &opfakes.FakeAuthorizer{}
 				f.env.Authz = fake
+				f.putVersion(ctx, "src", "v1", "one")
 				o := f.copyPartOf(id, 1, "src", "")
 				o.SrcKey.Instance = instance
-				err := op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))
-				if instance == "" {
-					Expect(err).NotTo(HaveOccurred())
-				} else {
-					Expect(err).To(MatchError(op.ErrNotImplemented), "a version is not served yet")
-				}
+				Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(Succeed())
 				Expect(fake.VerifyBucketInCallCount()).To(Equal(1))
 				_, _, a, perm, bucket, key := fake.VerifyBucketInArgsForCall(0)
 				Expect([]any{a, perm, bucket.Info.Bucket.Name, key}).To(Equal([]any{want, acl.PermFor(want), "plain", o.SrcKey}))
@@ -365,7 +361,24 @@ var _ = Describe("UploadPart", func() {
 				Expect([]any{a, perm}).To(Equal([]any{policy.S3PutObject, acl.PermFor(policy.S3PutObject)}))
 			},
 			Entry("no version", "", policy.S3GetObject),
-			Entry("a version", "null", policy.S3GetObjectVersion),
+			Entry("the null version", "null", policy.S3GetObjectVersion),
+			Entry("a version", "v1", policy.S3GetObjectVersion),
+		)
+		DescribeTable("copies the version the source names, on any bucket",
+			func(ctx SpecContext, flags uint32) {
+				if flags != 0 {
+					f.setBucketFlags(ctx, flags)
+				}
+				f.putVersion(ctx, "src", "v1", "one")
+				o := f.copyPartOf(id, 1, "src", "")
+				o.SrcKey.Instance = "v1"
+				Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(Succeed())
+				Expect(o.ETag).To(Equal(md5Hex([]byte("one"))), "v1's bytes, not the plain src's")
+				Expect(f.parts(ctx, "k", id)).To(ConsistOf(And(HaveField("Number", 1), HaveField("Size", uint64(3)))))
+			},
+			Entry("an enabled bucket", uint32(meta.BucketVersioned)),
+			Entry("a bucket with object lock", uint32(meta.BucketVersioned|meta.BucketObjLockEnabled)),
+			Entry("a bucket never versioned", uint32(0)),
 		)
 		DescribeTable("copies nothing when a source check refuses",
 			func(ctx SpecContext, refuse func(*opfakes.FakeAuthorizer)) {
@@ -490,16 +503,22 @@ var _ = Describe("UploadPart", func() {
 			}, op.ErrPreconditionFailed),
 			Entry("a date radosgw does not parse is InvalidArgument", func(o *op.UploadPart) { o.IfModifiedSince = new("yesterday") }, op.ErrInvalidArgument),
 		)
-		It("refuses a source version with 501 until versioning is served", func(ctx SpecContext) {
+		It("reads the version the source names and hands the store that state", func(ctx SpecContext) {
 			objs := &opfakes.FakeObjectStore{}
-			objs.PrefetchObjectReturns(&op.ObjectState{Exists: true, Key: meta.ObjKey{Name: "src", Instance: "v1"}, Attrs: map[string][]byte{meta.AttrACL: f.aliceACL}}, nil)
+			st := &op.ObjectState{Exists: true, Key: meta.ObjKey{Name: "src", Instance: "v1"}, Size: 3, Attrs: map[string][]byte{meta.AttrACL: f.aliceACL}}
+			objs.PrefetchObjectReturns(st, nil)
 			f.env.Objects = objs
 			stub := &opfakes.FakeMultipartStore{}
+			stub.CopyPartReturns(&op.PartResult{}, nil)
 			f.env.Multipart = stub
 			o := f.copyPartOf(id, 1, "src", "")
 			o.SrcKey.Instance = "v1"
-			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrNotImplemented))
-			Expect(stub.Invocations()).To(BeEmpty())
+			Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(Succeed())
+			_, _, key := objs.PrefetchObjectArgsForCall(0)
+			Expect(key).To(Equal(meta.ObjKey{Name: "src", Instance: "v1"}))
+			_, _, _, got, rng := stub.CopyPartArgsForCall(0)
+			Expect(got).To(BeIdenticalTo(st))
+			Expect(rng).To(Equal(op.ByteRange{Offset: 0, Length: 3}))
 		})
 
 		Describe("the source's ACLs, when no policy decides", func() {

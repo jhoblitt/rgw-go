@@ -288,6 +288,29 @@ func (e *Evaluator) VerifyObjectIn(ctx context.Context, r *op.Request, a policy.
 	return e.verifyObject(ctx, r, a, perm, b, reqBlock, obj, oacl, obj.Key.Name, ids, formObjectIn)
 }
 
+// VerifyMarkerIn is VerifyBucketIn on the ARN of key, a delete marker's
+// version, with the bucket owner in place of the ACL fallback: Amazon S3
+// says "A delete marker isn't associated with an access control list (ACL)
+// value"
+// (https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeleteMarker.html),
+// so where no identity or bucket policy decides, only bucket's owner passes.
+// An admin passes whatever the policies say, as op.Run lets one through a
+// policy's refusal. radosgw makes no such check: it answers a marker's
+// version as a missing object.
+func (e *Evaluator) VerifyMarkerIn(ctx context.Context, r *op.Request, a policy.Action, perm acl.Permission, bucket *op.BucketRecord, key meta.ObjKey) error {
+	ids, b, reqBlock, rule, err := e.explicitPrelude(ctx, r, bucket)
+	if err != nil {
+		return e.decided(ctx, a, rule, err)
+	}
+	if err := e.deniedAsGroupMember(ctx, &r.Identity); err != nil {
+		return e.decided(ctx, a, "iam group member", err)
+	}
+	if r.Identity.Admin {
+		return e.decided(ctx, a, "delete marker, admin", nil)
+	}
+	return e.verifyBucket(ctx, r, a, perm, b, reqBlock, key, ids, formBucketIn, true)
+}
+
 func unmarked(err error) error { return err }
 
 // decided logs which rule decided a check and returns err, nil when allowed.
