@@ -2896,10 +2896,12 @@ following.
 - **S3 XML request bodies are read with Go's `encoding/xml`, not expat.**
   radosgw reads them with expat, without namespace processing and without
   an unknown-encoding handler (`RGWXMLParser`, `rgw_xml.cc:158` and
-  `:219-221` at v19.2.6 and v20.2.4). rgw-go reads them through one
-  reader, `xmltext.Parse`, which keeps names as written, prefix included,
-  as radosgw does, and adds the well-formedness checks expat makes and Go's
-  decoder skips. It still refuses with 400 some bodies expat reads: one
+  `:219-221` at v19.2.6 and v20.2.4). rgw-go reads them through
+  `xmltext.Parse`, which keeps names as written, prefix included, as
+  radosgw does, and adds the well-formedness checks expat makes and Go's
+  decoder skips; it reads a PutPublicAccessBlock body with `xmltext.Scan`
+  alone, which refuses every body `xmltext.Parse` refuses. It still
+  refuses with 400 some bodies expat reads: one
   declaring ISO-8859-1 or US-ASCII, or written in UTF-16, the encodings
   expat knows besides UTF-8; one whose XML declaration names a version
   other than 1.0; one with a name holding more than one colon; and one that
