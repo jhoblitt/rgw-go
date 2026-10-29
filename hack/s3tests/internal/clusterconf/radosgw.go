@@ -145,7 +145,7 @@ func (c *Configurer) setRadosgw(ctx context.Context, rgw *radosgw, on bool) erro
 // until Rook has reconciled it, which it marks in the status's
 // observedGeneration once it has written the options and updated the
 // radosgw's deployment
-// (https://github.com/rook/rook/blob/v1.20.7/pkg/operator/ceph/object/controller.go#L511-L515),
+// (https://github.com/rook/rook/blob/v1.21.1/pkg/operator/ceph/object/controller.go#L523-L527),
 // and then for any rollout that update started.
 func (c *Configurer) setRgwConfig(ctx context.Context, want string) error {
 	slog.InfoContext(ctx, "setting the object store's rgwConfig", slog.String("object_store", objectStore), slog.String(lcOption, want))

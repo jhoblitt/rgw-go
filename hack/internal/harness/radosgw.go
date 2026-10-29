@@ -142,7 +142,7 @@ func (r Radosgw) Frontends() string { return r.Metadata["frontend_config#0"] }
 // RadosgwEntity is rgw's config entity. Rook runs the radosgw as client.rgw.
 // and its deployment's name past rook-ceph-rgw, dashes mapped to dots
 // (generateCephXUser in
-// https://github.com/rook/rook/blob/v1.20.7/pkg/operator/ceph/object/config.go#L161-L164),
+// https://github.com/rook/rook/blob/v1.21.1/pkg/operator/ceph/object/config.go#L161-L164),
 // and the service map's id is that name past client.rgw. config show
 // answers only for a section a running daemon reads, with the frontends
 // that daemon reports, so a wrong name stops here rather than reading or

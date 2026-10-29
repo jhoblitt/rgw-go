@@ -3869,7 +3869,7 @@ crypto/tls and net/url ones go1.27.1's.
   flush without bound (`rgw_log.cc:128-133` at both tags). The 20 s drain
   and the 10 s flush together fit the 30 s termination grace period a
   radosgw pod gets under Rook, which sets none and so leaves Kubernetes'
-  default (rook v1.20.7 sets `TerminationGracePeriodSeconds` only for the
+  default (rook v1.21.1 sets `TerminationGracePeriodSeconds` only for the
   exporter, `pkg/operator/ceph/cluster/nodedaemon/exporter.go:142`). Where
   the operator gives the pod a shorter grace period than the drain and the
   flush need, a drain that reaches its limit is SIGKILLed before the flush,
@@ -11865,11 +11865,11 @@ following.
   (`svc_zone.cc:513-533` and `:595-601` at v19.2.6, `:349-369` and
   `:399-405` at v20.2.4). rgw-go only reads: a missing zone, zonegroup or
   name object stops it at startup with an error naming the object. Rook
-  never reaches radosgw's bootstrap: rook v1.20.7 passes `rgw realm`,
+  never reaches radosgw's bootstrap: rook v1.21.1 passes `rgw realm`,
   `rgw zonegroup` and `rgw zone` to every gateway
-  (`pkg/operator/ceph/object/spec.go:440-442`) and creates the zonegroup
-  and zone with `--master` before it starts one (`objectstore.go:470`,
-  `:475`; for a zone declared through CephObjectZoneGroup and
+  (`pkg/operator/ceph/object/spec.go:458-460`) and creates the zonegroup
+  and zone with `--master` before it starts one (`objectstore.go:471`,
+  `:476`; for a zone declared through CephObjectZoneGroup and
   CephObjectZone, `zonegroup/controller.go:257-260` and
   `zone/controller.go:360-363`). A gateway started by hand against a
   cluster without them needs `radosgw-admin realm create`,
@@ -11884,9 +11884,9 @@ following.
   control or GC pool stops it at startup with an error naming the pool,
   and a request that needs another missing pool fails with an error naming
   it. Rook creates every pool a store names, or refuses a store whose
-  named pools do not exist, before it starts a gateway (rook v1.20.7
-  `pkg/operator/ceph/object/controller.go:620-654`,
-  `objectstore.go:799-823`).
+  named pools do not exist, before it starts a gateway (rook v1.21.1
+  `pkg/operator/ceph/object/controller.go:632-666`,
+  `objectstore.go:800-824`).
 
 ### Lifecycle differences
 
@@ -12661,7 +12661,7 @@ the correct S3 result, in RADOS state radosgw reads as its own.
   Each gateway processes a bucket once per its own local day, so the
   gateways of a zone must share a time zone, or a bucket is processed
   once per day of each: duplicate passes, not corruption. Rook sets no `TZ`
-  on its gateways (rook v1.20.7 names none under `pkg/`).
+  on its gateways (rook v1.21.1 names none under `pkg/`).
 
 ## Pending
 

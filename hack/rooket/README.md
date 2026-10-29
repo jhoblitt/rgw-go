@@ -8,7 +8,7 @@ store on one OSD, with host networking so that librados and S3 clients on the
 host reach its mon, OSD and radosgw. Nothing here touches any other cluster.
 
 ```sh
-make cluster-up RELEASE=squid     # quay.io/ceph/ceph:v19.2.7 under Rook v1.20.7
+make cluster-up RELEASE=squid     # quay.io/ceph/ceph:v19.2.7 under Rook v1.21.1
 make populate RELEASE=squid
 make integration RELEASE=squid    # the integration specs
 make gate RELEASE=squid           # the phase 0 gate, test/gate/
@@ -22,7 +22,7 @@ make admin-gate RELEASE=squid     # rgw-go's admin API compared with radosgw's, 
 make rgw-go-down RELEASE=squid
 make cluster-down RELEASE=squid
 
-make cluster-up RELEASE=tentacle  # quay.io/ceph/ceph:v20.2.4 under Rook v1.20.7
+make cluster-up RELEASE=tentacle  # quay.io/ceph/ceph:v20.2.4 under Rook v1.21.1
 make populate RELEASE=tentacle
 make integration RELEASE=tentacle
 make gate RELEASE=tentacle
@@ -200,7 +200,7 @@ populated cluster.
 only when it starts.
 
 Rook's operator writes the realm, zonegroup, zone and periods with the
-`radosgw-admin` of its own image, Ceph 20.2.4 in Rook v1.20.7. `populate.sh`
+`radosgw-admin` of its own image, Ceph 20.2.4 in Rook v1.21.1. `populate.sh`
 changes them with that same `radosgw-admin`, run in the operator's pod with
 the config and keyring the operator uses, so on the Squid cluster they stay in
 Tentacle's encoding, as Rook leaves them. The gate accepts a root pool object

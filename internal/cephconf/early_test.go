@@ -23,7 +23,7 @@ var _ = Describe("ParseEarly", func() {
 		Expect(e.Rest).To(Equal([]string{"--foreground", "--rgw-frontends=beast port=8080", "--setuser=ceph"}))
 	})
 	It("takes only --id from Rook's argv", func() {
-		// Rook v1.20.7's radosgw arguments (object/spec.go makeDaemonContainer,
+		// Rook v1.21.1's radosgw arguments (object/spec.go makeDaemonContainer,
 		// controller.DaemonFlags, config.DefaultFlags), mon variables expanded.
 		before := []string{
 			"--fsid=b3f3b4a4-9d6e-4a36-8f30-1f6b0c8e2d11",
@@ -46,6 +46,7 @@ var _ = Describe("ParseEarly", func() {
 			"--rgw-realm=ceph-objectstore",
 			"--rgw-zonegroup=ceph-objectstore",
 			"--rgw-zone=ceph-objectstore",
+			"--service-unique-id=rook-ceph-rgw-ceph-objectstore-a-6d8f9c7b5-x2k4p",
 		}
 		e, err := cephconf.ParseEarly(slices.Concat(before, []string{"--id=rgw.ceph.objectstore.a"}, after))
 		Expect(err).NotTo(HaveOccurred())

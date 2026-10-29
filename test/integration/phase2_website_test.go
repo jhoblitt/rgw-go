@@ -395,7 +395,7 @@ func expectSameMetadata(ctx context.Context, rgwgo webGateway, b meta.BucketID) 
 // radosgwDeployment is the cluster's one radosgw deployment and the config
 // section its radosgw reads: Rook runs it as client.rgw and its
 // deployment's name past rook-ceph-rgw, dashes mapped to dots
-// (generateCephXUser, rook pkg/operator/ceph/object/config.go at v1.20.7),
+// (generateCephXUser, rook pkg/operator/ceph/object/config.go at v1.21.1),
 // and config show answers only for a section a running daemon reads.
 func radosgwDeployment(ctx context.Context) (deploy, entity string) {
 	GinkgoHelper()
