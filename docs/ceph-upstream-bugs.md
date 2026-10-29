@@ -29803,8 +29803,9 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw's JSON parser reads a short `\u` escape through the next escape's backslash
 
-- **Kind:** defect, S3-correctness. Security: pending: sent to
-  rgw-bug-reproduction (2026-10-28) as an addendum to the triage of
+- **Kind:** defect, S3-correctness. Not security-relevant:
+  rgw-bug-reproduction's triage (2026-10-29) rates it no, as an addendum
+  to its triage of
   "[radosgw's JSON parser lexes `\x` and `\X` escapes by the CPU's char
   signedness, and drops octal and `\X`
   escapes](#radosgws-json-parser-lexes-x-and-x-escapes-by-the-cpus-char-signedness-and-drops-octal-and-x-escapes)",
@@ -29881,10 +29882,13 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw's permission override lets an admin delete a version under MFA delete without a code
 
-- **Kind:** defect, possibly security-relevant: a delete of a version on a
-  bucket with MFA delete passes without an MFA code for an admin or system
-  user, and on Squid for any system request, conditional on such a user's
-  credentials. Unreproduced: derived from the source.
+- **Kind:** defect, defence in depth and consistency between the releases.
+  Not security-relevant: rgw-bug-reproduction's triage (2026-10-29) rates it
+  no, since the override is radosgw's designed escape hatch for an admin,
+  and an admin or system key already holds full authority, purges through
+  the admin API included. A delete of a version on a bucket with MFA delete
+  passes without an MFA code for an admin or system user, and on Squid for
+  any system request. Unreproduced: derived from the source.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
   - `RGWDeleteObj::verify_permission` returns -EACCES when the delete's
     permission is refused, and then, on a bucket with MFA delete, a delete
@@ -29931,7 +29935,7 @@ Every new entry adds its row to this table, in document order.
   VerifyPermission, `internal/op/deleteobject.go`; `docs/exclusions.md`,
   "Only the bucket owner's x-amz-mfa satisfies MFA delete" and "An admin is
   served past a failed permission check only on an access denial").
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V12a's review, 2026-10-28, reading
   `rgw_process_authenticated` at both tags; registered by its fix round.
   Derived from the source, not reproduced.
