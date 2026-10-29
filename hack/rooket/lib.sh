@@ -5,7 +5,7 @@
 
 # The Rook release every cluster deploys, which supports both Ceph pins. Bump
 # it by hand: rooket takes an exact tag, never a range.
-readonly rook_version=v1.20.7
+readonly rook_version=v1.21.1
 readonly rooket=${ROOKET:-rooket}
 
 # The usage-log options go-ceph's CI sets (testing/containers/micro-osd.sh),

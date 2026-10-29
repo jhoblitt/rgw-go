@@ -14504,7 +14504,7 @@ Every new entry adds its row to this table, in document order.
   needs only to transition objects, reaches every admin user granted
   `zone=read`, a read cap a monitoring or tooling user may hold; Rook's
   own admin ops user is granted it (`rgwAdminOpsUserCaps`,
-  `pkg/operator/ceph/object/admin.go:117` at rook/rook v1.20.7). A
+  `pkg/operator/ceph/object/admin.go:117` at rook/rook v1.21.1). A
   Rook-managed single-site store has no cloud tier unless an operator adds
   one.
 - **Releases:** v19.2.6 and v20.2.4.
@@ -14597,7 +14597,7 @@ Every new entry adds its row to this table, in document order.
   monitoring or tooling user may hold, reads the system user's
   credentials; Rook's own admin ops user is granted it
   (`rgwAdminOpsUserCaps`, `pkg/operator/ceph/object/admin.go:117` at
-  rook/rook v1.20.7). A single-site zone often has no system key, and then
+  rook/rook v1.21.1). A single-site zone often has no system key, and then
   the secret is empty.
 - **Releases:** v19.2.6 and v20.2.4.
 - **rgw-go:** reproduces it, for fidelity: `GET /admin/config?type=zone`

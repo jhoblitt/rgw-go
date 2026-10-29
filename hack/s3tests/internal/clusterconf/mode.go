@@ -6,8 +6,8 @@
 // radosgw reads rgw_enable_lc_threads only when it builds its store, at
 // startup and at each realm reload, and Rook rewrites the radosgw entity's
 // options at every reconcile, the object store's rgwConfig over its own
-// (https://github.com/rook/rook/blob/v1.20.7/pkg/operator/ceph/object/config.go#L236-L250,
-// https://github.com/rook/rook/blob/v1.20.7/pkg/operator/ceph/object/config.go#L290-L297),
+// (https://github.com/rook/rook/blob/v1.21.1/pkg/operator/ceph/object/config.go#L236-L250,
+// https://github.com/rook/rook/blob/v1.21.1/pkg/operator/ceph/object/config.go#L290-L297),
 // so that radosgw's half of a mode goes through rgwConfig and then a
 // restart: a ceph config set alone would not outlast the next reconcile.
 // rgw-go reads the option once, at Open, from its own entity, which make

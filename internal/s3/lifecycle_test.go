@@ -132,7 +132,7 @@ var _ = Describe("bucket lifecycle routes", func() {
 	// Rook's bucket provisioner reconciles an OBC's bucketLifecycle by
 	// reading the bucket's configuration, treating NoSuchLifecycleConfiguration
 	// as none, and putting the OBC's when they differ or deleting the
-	// bucket's when the OBC has none (rook v1.20.7,
+	// bucket's when the OBC has none (rook v1.21.1,
 	// pkg/operator/ceph/object/bucket/provisioner.go:812-887). The bodies are
 	// what aws-sdk-go-v2's s3 serializer writes for the rules of Rook's
 	// documented example (Documentation/Storage-Configuration/Object-Storage-RGW/ceph-object-bucket-claim.md:57-77),
