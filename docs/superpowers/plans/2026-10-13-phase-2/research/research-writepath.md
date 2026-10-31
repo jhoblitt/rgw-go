@@ -322,7 +322,7 @@ It is one write op ([svc_cls.cc:65-87](https://github.com/ceph/ceph/blob/v19.2.6
 **put's status differs between the tags.** Squid answers 204 with `RGWX_UPDATE_STATUS:
 applied` (`STATUS_APPLIED`). Tentacle answers 200 without that header, as its handler returns
 the mdlog's 0. Both send `RGWX_UPDATE_VERSION: ver:0,tag:`, because no read version is ever
-set ([rgw_rest_metadata.cc:234-284](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_metadata.cc#L234-L284)).
+set ([rgw_rest_metadata.cc:234-288](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_metadata.cc#L234-L288)).
 
 **remove** reads, then removes the object under the version read
 ([rgw_metadata.cc:554-573](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_metadata.cc#L554-L573), [rgw_otp.cc:84-92](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_otp.cc#L84-L92)).

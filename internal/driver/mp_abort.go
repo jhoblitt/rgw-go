@@ -73,7 +73,7 @@ func (s *Store) Abort(ctx context.Context, up *op.Upload) error {
 // accounted size and the prefixes it was counted for, processed_prefixes,
 // so a part counted in an earlier round is not counted again, as abort's
 // `continue` skips it
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3196-L3201,
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3195-L3201,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3218).
 type abortState struct {
 	lockedAt  time.Time

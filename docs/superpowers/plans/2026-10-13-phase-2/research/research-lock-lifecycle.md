@@ -211,9 +211,9 @@ rgw-go does not reproduce).
     (365.2425 days) × years. [rgw_object_lock.cc:87-95](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_object_lock.cc#L87-L95).
     The sum is in u64 nanoseconds and wraps (§6).
   - `PUT_OBJ_CREATE` is set by: the atomic and append processors
-    ([rgw_putobj_processor.cc:384](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L384), `:745`); `copy_obj_data`
-    ([rgw_rados.cc:4976](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4976), [rgw_rados.cc:5236](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5236)), which serves the
-    streaming copy and the transition; and the multipart completion
+    ([rgw_putobj_processor.cc:384](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L384), `:745`), whose `AtomicObjectProcessor::complete` ([:414](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L414) at v20.2.4) also writes the head for `copy_obj_data`, which serves the streaming copy and the transition ([rgw_rados.cc:5150](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5150), [rgw_rados.cc:5382](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5382)); `copy_obj`'s own head write in the tail-sharing copy
+    ([rgw_rados.cc:5008](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5008), [rgw_rados.cc:5236](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5236));
+    and the multipart completion
     ([rgw_sal_rados.cc:3629](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L3629), [rgw_sal_rados.cc:4477](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4477)).
   - Not set by part heads or the multipart meta object.
 - **Write headers**: PutObject and CopyObject store the header retention and legal hold

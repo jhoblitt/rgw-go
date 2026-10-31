@@ -429,7 +429,7 @@ func (s *Store) headWriteRef(ctx context.Context, hw *headWrite) (objRef, error)
 
 // guardHead checks the write's conditions on cur, condState's state, then
 // adds to w prepare_atomic_modification's guard on st, the head as read
-// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3201-L3202
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3201-L3203
 // and
 // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6731-L6735 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3298-L3300
