@@ -697,6 +697,88 @@ benchmark was re-run.
   derived image stays one per release, because under Rook it is the Ceph
   image every daemon runs.
 
+### A private librados's RUNPATH overrides the executable's rpath
+
+- **Evidence:** Ceph's el9 builds of `librados.so.2` and
+  `libceph-common.so.2` carry a DT_RUNPATH of `/usr/lib64/ceph`: `readelf -d`
+  of each, as librados2-20.2.4-0.el9 installs it in the pinned
+  `quay.io/ceph/ceph:v20.2.4` image, shows `Library runpath:
+  [/usr/lib64/ceph]`. Ceph's build sets `CMAKE_INSTALL_RPATH` to
+  `CEPH_INSTALL_FULL_PKGLIBDIR`, its package library directory, "so
+  libceph-common can be found"
+  ([CMakeLists.txt:6-13](https://github.com/ceph/ceph/blob/v19.2.7/src/CMakeLists.txt#L6-L13),
+  [CMakeLists.txt:6-13](https://github.com/ceph/ceph/blob/v20.2.4/src/CMakeLists.txt#L6-L13)).
+  The dynamic loader searches an object's DT_RUNPATH for that object's own
+  dependencies, and for an object that has one it ignores every DT_RPATH,
+  the executable's included (ld.so(8)). So a cgo binary linked against a
+  private copy of librados with `-L<dir> -Wl,--disable-new-dtags,-rpath,<dir>`
+  loads `librados.so.2` from `<dir>`, but librados looks for
+  `libceph-common.so.2` in `/usr/lib64/ceph`, and libceph-common looks there
+  for its own dependencies, `libthrift-0.15.0.so` among them. On the build
+  host, where Fedora's librados2-19.2.6-1.fc43 installs a
+  `libceph-common.so.2` in that directory, a probe linked so against an
+  unmodified copy of the image's librados, libceph-common and libthrift
+  resolves `libceph-common.so.2 => /usr/lib64/ceph/libceph-common.so.2`
+  under `ldd`, and exits 127 with `symbol lookup error: .../librados.so.2:
+  undefined symbol: _ZN7mempool6shardsE` before it prints anything, though
+  it calls only `rados_version`: both libraries bind every symbol at load
+  (`readelf -d`: `FLAGS BIND_NOW`), and 19.2.6's libceph-common lacks one
+  that 20.2.4's librados needs.
+- **What it means:** whoever links rgw-go against a librados that is not
+  the system's, such as one copied from a Ceph image to build against a
+  cluster's release, cannot select it with the executable's rpath alone.
+  Where the host has another Ceph release's libraries in `/usr/lib64/ceph`,
+  the process takes librados from the copy and libceph-common from the
+  host. Here that failed at load, but the loader checks only that each
+  symbol exists, so a mix in which no symbol is missing would load and run
+  the two releases' code together. One of two changes keeps the set whole:
+  - Rewrite the RUNPATH of each copied file that carries one to `$ORIGIN`,
+    so that the set finds its Ceph members in its own directory however the
+    executable was linked. The build host's environment does this, as a
+    15-byte overwrite of the string in `.dynstr`, which fits because
+    `$ORIGIN` is shorter than `/usr/lib64/ceph`; `readelf -W -d --dyn-syms
+    -V` before and after differs in the runpath line alone. The two files'
+    sha256 then differ from the RPM's digests, so their provenance is the
+    pre-edit hash, which matches the RPM, and that diff.
+  - Keep the files byte-identical and have the executable load the
+    dependencies itself, adding
+    `-Wl,--push-state,--no-as-needed -l:libceph-common.so.2 -l:libthrift-0.15.0.so -Wl,--pop-state`
+    to CGO_LDFLAGS. The executable then lists both in its own DT_NEEDED,
+    found through its own rpath, and the loader reuses the loaded object of
+    that name when librados asks for it; `--no-as-needed` keeps the entries,
+    since the executable calls neither directly. The same probe linked so
+    against the unmodified copy resolves all three from the copy's
+    directory and runs `rados_create`; rgw-go itself has not been built
+    this way. It changes the symbol lookup order, `ldd` of the library
+    alone still names the host's copy, and a binary linked without the
+    extra flags falls back to the host's copy.
+
+  Where librados is the system's, as in the derived image, the RUNPATH does
+  no harm: there one package, librados2, installs both librados and
+  `/usr/lib64/ceph/libceph-common.so.2`.
+- **Plugins:** libceph-common loads its plugins, the compressors among them,
+  from `plugin_dir`, which defaults to the same `/usr/lib64/ceph`
+  (`@CEPH_INSTALL_FULL_PKGLIBDIR@`,
+  [global.yaml.in:751-760](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/global.yaml.in#L751-L760),
+  [global.yaml.in:751-760](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/global.yaml.in#L751-L760)),
+  not from beside the library. `PluginRegistry::load` opens
+  `<plugin_dir>/<type>/libceph_<name>.so`, or failing that
+  `<plugin_dir>/libceph_<name>.so`, and once it is open refuses with EXDEV
+  a plugin whose version string is not the library's own
+  ([PluginRegistry.cc:135-171](https://github.com/ceph/ceph/blob/v19.2.7/src/common/PluginRegistry.cc#L135-L171),
+  [PluginRegistry.cc:135-171](https://github.com/ceph/ceph/blob/v20.2.4/src/common/PluginRegistry.cc#L135-L171)),
+  so a private set whose process needs a plugin fails to load it unless
+  `plugin_dir` names a directory of that release's plugins. On the build
+  host `/usr/lib64/ceph` holds no `compressor` or `crypto` directory, and
+  the host's verification loaded no plugin.
+- **Class:** inherent: it comes from how Ceph builds librados, not from
+  go-ceph or cgo.
+- **Status:** worked around on the build host by the RUNPATH rewrite.
+- **Note:** a pure-Go client links no librados, so it has no library set to
+  keep whole.
+- **Found:** setting up the build host's library set for Ceph 20.2.4,
+  2026-10-30; the probes above ran on 2026-10-31.
+
 ### go-ceph cuts object names at a NUL byte
 
 - **Evidence:** librados's C API takes every object, pool, namespace and
