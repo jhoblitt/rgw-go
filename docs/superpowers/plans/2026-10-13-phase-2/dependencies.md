@@ -21,6 +21,7 @@ flowchart LR
   u_WP["WP: write path<br/>23 tasks"]
   u_T["T: gate tooling<br/>8 tasks"]
   u_CL["CL: citation links<br/>6 tasks"]
+  u_SM["SM: service map<br/>5 tasks"]
   u_S -->|4| u_V
   u_S -->|2| u_L
   u_S -->|3| u_C
@@ -1025,4 +1026,30 @@ flowchart LR
 - [CL4](CL-citation-links.md#task-cl4-the-go-comment-sweep): the Go-comment sweep
 - [CL5](CL-citation-links.md#task-cl5-hackcitecheck-plain-ceph-citations-in-markdown): hack/citecheck, plain Ceph citations in Markdown
 - [CL6](CL-citation-links.md#task-cl6-hackcitecheck-an-existing-links-lines-hold-what-its-text-names): hack/citecheck, an existing link's lines hold what its text names
+
+### SM: service map
+
+```mermaid
+flowchart LR
+  t_SM1["SM1"]
+  t_SM2["SM2"]
+  t_SM3["SM3"]
+  t_SM4["SM4"]
+  t_SM5["SM5"]
+  t_SM1 --> t_SM3
+  t_SM2 --> t_SM4
+  t_SM3 --> t_SM4
+  t_SM4 --> t_SM5
+  click t_SM1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/SM-service-map.md#task-sm1-go-ceph-fork-serviceregister-and-serviceupdatestatus" "SM1: go-ceph fork, ServiceRegister and ServiceUpdateStatus"
+  click t_SM2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/SM-service-map.md#task-sm2-harness-the-radosgw-readers-skip-any-rgw-go" "SM2: harness, the radosgw readers skip any rgw-go"
+  click t_SM3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/SM-service-map.md#task-sm3-radosclient-the-service-map-capability" "SM3: radosclient, the service-map capability"
+  click t_SM4 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/SM-service-map.md#task-sm4-cli-the-gateway-registers-and-reports-its-status" "SM4: cli, the gateway registers and reports its status"
+  click t_SM5 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/SM-service-map.md#task-sm5-integration-rgw-gos-entry-against-radosgws-on-both-releases" "SM5: integration, rgw-go's entry against radosgw's, on both releases"
+```
+
+- [SM1](SM-service-map.md#task-sm1-go-ceph-fork-serviceregister-and-serviceupdatestatus): go-ceph fork, ServiceRegister and ServiceUpdateStatus
+- [SM2](SM-service-map.md#task-sm2-harness-the-radosgw-readers-skip-any-rgw-go): harness, the radosgw readers skip any rgw-go
+- [SM3](SM-service-map.md#task-sm3-radosclient-the-service-map-capability): radosclient, the service-map capability
+- [SM4](SM-service-map.md#task-sm4-cli-the-gateway-registers-and-reports-its-status): cli, the gateway registers and reports its status
+- [SM5](SM-service-map.md#task-sm5-integration-rgw-gos-entry-against-radosgws-on-both-releases): integration, rgw-go's entry against radosgw's, on both releases
 

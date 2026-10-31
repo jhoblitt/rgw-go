@@ -43,6 +43,7 @@ The set's files:
 | `T-gate-tooling.md` | the s3-tests selection in Go, the include list, the harness, the phase 2 gate | T-tasks, with WP-22 and WP-23 |
 | `F-floor-19.2.7.md` | the floor bump to Squid v19.2.7: phase 1 maintenance that lands before phase 2 | F1-F20 |
 | `CL-citation-links.md` | Ceph citations as clickable links, in the docs and in Go comments | CL1-CL6 |
+| `SM-service-map.md` | rgw-go's registration in the manager's service map: the go-ceph binding, the harness's radosgw readers, the gateway's metadata and status | SM1-SM5 |
 
 The dependencies between the tasks are drawn in [dependencies.md](dependencies.md), one graph per unit.
 
@@ -274,7 +275,7 @@ The controller's rulings on the research's open questions, under the owner's rul
 ## Order
 
 1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, S6 once V2 lands, and S7 once V10, BC-17, BC-23, BC-10 and BC-28a land.
-2. **Then the units in parallel**, each in its own file's waves. V's foundation (V0 to V3b) comes first among the units, because L and C consume its OLH seams. B and WP start with S2, and the T unit starts at once. Within the waves:
+2. **Then the units in parallel**, each in its own file's waves. V's foundation (V0 to V3b) comes first among the units, because L and C consume its OLH seams. B and WP start with S2, and the T and SM units start at once. Within the waves:
    - The cluster tasks of every unit run one at a time.
    - The recording tasks, which append to the parity ledgers, land one at a time through the controller.
 3. **The hot-file rule** (PP-5, settled after the whole-plan review). Where two tasks only add a field, a helper or one call line to a shared file, no order is fixed: whichever lands first, the later rebases. A fixed order stays only where two tasks change the same function body: WP-6, V11 and BC-26 on the write-path op files, and V7b and WP-9 on `mp_complete.go`.
