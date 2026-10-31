@@ -3930,6 +3930,93 @@ crypto/tls and net/url ones go1.27.1's.
   the order of lines with different names, which RFC 9110, section 5.3,
   makes insignificant.
 
+### Manager differences
+
+rgw-go reaches the Ceph manager through its librados connection, as radosgw
+does. Where the two differ, checked against the v19.2.7 and v20.2.4 tags,
+rgw-go does the following.
+
+- **rgw-go does not register in the manager's service map.** radosgw
+  registers its librados instance as daemon `<global id>` of service `rgw`,
+  with its `id`, zone, zonegroup, realm, frontends and pid as metadata, once
+  its zone is loaded and its frontends run
+  ([rgw_rados.cc:1155-1184](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L1155-L1184),
+  [rgw_rados.cc:1192-1221](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1192-L1221);
+  [rgw_appmain.cc:516-521](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_appmain.cc#L516-L521),
+  [rgw_appmain.cc:524-529](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_appmain.cc#L524-L529)),
+  and sets its `current_sync` status every 10 s
+  ([rgw_sync_trace.cc:74-83](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sync_trace.cc#L74-L83),
+  [rgw_sync_trace.cc:74-83](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sync_trace.cc#L74-L83)).
+  rgw-go registers nothing, so nothing that reads the map sees it:
+  - `ceph -s` counts no rgw daemon for it
+    ([Monitor.cc:3178-3186](https://github.com/ceph/ceph/blob/v19.2.7/src/mon/Monitor.cc#L3178-L3186),
+    [Monitor.cc:3223-3231](https://github.com/ceph/ceph/blob/v20.2.4/src/mon/Monitor.cc#L3223-L3231)),
+    and `ceph versions` counts no rgw build for it
+    ([Monitor.cc:4057-4070](https://github.com/ceph/ceph/blob/v19.2.7/src/mon/Monitor.cc#L4057-L4070),
+    [Monitor.cc:4105-4118](https://github.com/ceph/ceph/blob/v20.2.4/src/mon/Monitor.cc#L4105-L4118)).
+  - `ceph service dump` and `ceph service status` do not list it, and
+    `ceph config show client.rgw.<id>` answers ENOENT, "no config state for
+    daemon"
+    ([DaemonServer.cc:2093-2139](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/DaemonServer.cc#L2093-L2139),
+    [DaemonServer.cc:2572-2618](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/DaemonServer.cc#L2572-L2618)):
+    a librados client that has not registered sends the manager no open,
+    so the manager holds none of its configuration
+    ([MgrClient.cc:198-202](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/MgrClient.cc#L198-L202),
+    [MgrClient.cc:199-203](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/MgrClient.cc#L199-L203)).
+  - The prometheus module exports no `ceph_rgw_metadata` series for it
+    where it builds them from the service map, without an orchestrator or
+    with `exclude_perf_counters` off
+    ([module.py:1346-1370](https://github.com/ceph/ceph/blob/v19.2.7/src/pybind/mgr/prometheus/module.py#L1346-L1370),
+    [module.py:1543-1567](https://github.com/ceph/ceph/blob/v20.2.4/src/pybind/mgr/prometheus/module.py#L1543-L1567)),
+    and telemetry counts no gateway for it
+    ([module.py:1285-1315](https://github.com/ceph/ceph/blob/v19.2.7/src/pybind/mgr/telemetry/module.py#L1285-L1315),
+    [module.py:1304-1334](https://github.com/ceph/ceph/blob/v20.2.4/src/pybind/mgr/telemetry/module.py#L1304-L1334)).
+  - The dashboard finds gateways only in the service map, which is the
+    whole cluster's, so on a cluster whose only gateway is rgw-go its
+    Object Gateway pages report "No RGW service is running."
+    ([rgw_client.py:45-47](https://github.com/ceph/ceph/blob/v19.2.7/src/pybind/mgr/dashboard/services/rgw_client.py#L45-L47)
+    and [rgw_client.py:74-98](https://github.com/ceph/ceph/blob/v19.2.7/src/pybind/mgr/dashboard/services/rgw_client.py#L74-L98),
+    [rgw_client.py:61-63](https://github.com/ceph/ceph/blob/v20.2.4/src/pybind/mgr/dashboard/services/rgw_client.py#L61-L63)
+    and [rgw_client.py:82-106](https://github.com/ceph/ceph/blob/v20.2.4/src/pybind/mgr/dashboard/services/rgw_client.py#L82-L106)),
+    and with a radosgw anywhere in the cluster it manages the zones through
+    the radosgws alone.
+    "Explicitly not excluded" keeps every admin endpoint the dashboard
+    calls, but that does not make the dashboard work for rgw-go while
+    rgw-go is absent from the map: the dashboard then calls none of them
+    on rgw-go.
+
+  Phase 2 plan task SM4
+  (`docs/superpowers/plans/2026-10-13-phase-2/SM-service-map.md`) registers
+  rgw-go with radosgw's metadata and status, which removes this difference.
+- **The manager gets none of radosgw's rgw perf counters from rgw-go.** A
+  registered radosgw's librados reports to the manager the perf counters
+  of its own context, which `MgrClient::_send_report` reads from
+  `get_perfcounters_collection()`
+  ([MgrClient.cc:325-444](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/MgrClient.cc#L325-L444),
+  [MgrClient.cc:326-438](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/MgrClient.cc#L326-L438)),
+  and radosgw adds its `rgw` counters to that context, which its librados
+  handle shares
+  ([rgw_perf_counters.cc:102-108](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_perf_counters.cc#L102-L108),
+  [rgw_perf_counters.cc:106-112](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_perf_counters.cc#L106-L112);
+  [rgw_rados.cc:1129](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L1129),
+  [rgw_rados.cc:1166](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1166)).
+  librados's C API has no call that adds counters to its context
+  (`docs/cgo-limitations.md`, "librados' C API cannot add perf counters to
+  the manager report"), so rgw-go cannot report radosgw's. Until it
+  registers it reports nothing to the manager, and once it does (phase 2
+  plan task SM4) its report carries librados's own counters alone. What
+  reads the manager's counters, the dashboard's per-gateway perf counter
+  API
+  ([perf_counters.py:52-55](https://github.com/ceph/ceph/blob/v19.2.7/src/pybind/mgr/dashboard/controllers/perf_counters.py#L52-L55),
+  [perf_counters.py:52-55](https://github.com/ceph/ceph/blob/v20.2.4/src/pybind/mgr/dashboard/controllers/perf_counters.py#L52-L55))
+  and the prometheus module with `exclude_perf_counters` off, gets no `rgw`
+  counter for rgw-go. That option is on by default, and the module then
+  leaves the perf counters to ceph-exporter
+  ([module.py:649-656](https://github.com/ceph/ceph/blob/v19.2.7/src/pybind/mgr/prometheus/module.py#L649-L656),
+  [module.py:738-745](https://github.com/ceph/ceph/blob/v20.2.4/src/pybind/mgr/prometheus/module.py#L738-L745)),
+  which reads each daemon's admin socket, not the manager; "Explicitly not
+  excluded" keeps rgw-go's admin-socket counters in its format.
+
 ### Zone and placement differences
 
 rgw-go resolves its zone and its placements from the root pool as radosgw's
