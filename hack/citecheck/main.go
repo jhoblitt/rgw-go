@@ -34,7 +34,10 @@
 // rewrites code span citations into links, as Rewriting below says, and
 // plain citations in Go comments, as Go comments says. --form-only
 // (CITECHECK_FORM_ONLY; make citecheck-links) checks only what needs no
-// clone, so that CI can run it; it cannot be combined with --fix.
+// clone, so that CI can run it; it cannot be combined with --fix. Every run
+// but --content checks the registries' claims about ceph main, as Claims
+// about ceph main says, which needs no clone either; with one, it also checks
+// that the commit a claim names is on ceph main.
 // --markdown-plain (CITECHECK_MARKDOWN_PLAIN) reads the plain citations in
 // markdown too, as Plain citations in markdown says; without it they are not
 // read at all. --content (CITECHECK_CONTENT; make citecheck-content) checks
@@ -99,7 +102,9 @@
 //
 // Each link must hold all of these, and so must each code span citation
 // under --fix, checked in this order, and the first that fails is its reason;
-// --form-only checks the first three, which need no clone:
+// --form-only checks the first three, which need no clone, and then refuses a
+// ref that names a branch by its name alone: HEAD, main, master, or one of
+// ceph's release branches by its codename, such as squid:
 //
 //   - it is well formed: it has a path, its lines are numbers and its symbol
 //     is a C++ name;
@@ -703,6 +708,70 @@
 // The check is opt-in: neither make check nor CI runs it, since it needs the
 // clone and its lists are for a person to read.
 //
+// # Claims about ceph main
+//
+// In the registries, docs/ceph-upstream-bugs.md and docs/exclusions.md, a
+// FILE whose path is one of them or ends in "/" and one, each claim about
+// ceph main must name, in its own sentence or its own list item, the main
+// commit it was checked at, so that "on main" never means "on main whenever
+// this was written". make citation-form-check, which make check and CI run,
+// checks it under --form-only.
+//
+// A claim is the word main, in any case, outside a code span, a link's
+// destination, a bare URL and a fenced code block, unless it is one of these,
+// none of which says what ceph main holds:
+//
+//   - in a heading or in the text of a link to one, an entry's title, which
+//     cannot carry a commit without changing its anchor;
+//   - in the list item that starts **Found:**, or one nested in it, which
+//     records how and when its entry was found, unless a commit id follows
+//     it as "main <id>" does, below;
+//   - right after Rook, s3-tests, rgw-go, rgw-rs, go-ceph or
+//     rgw-bug-reproduction, possessive or not, that project's main;
+//   - right before user, thread, loop or function, or their plurals, as the
+//     s3-tests harness's main user is;
+//   - right before a "(", or a "." and a letter, digit or "_", a function or
+//     a file, as main() and main.go are.
+//
+// So "fixed on main by ceph/ceph#72097", "fixed by ceph/ceph#72097 on main",
+// "ceph/ceph#72097, merged on main" and "Prior art: upstream fixed it on
+// main" are claims, each about what main holds.
+//
+// A commit is a word of 9 to 40 hex digits with a digit and a letter in it,
+// wherever it stands: after main or "at", in parentheses, or in a link to
+// ceph/ceph/blob/<commit>/... or ceph/ceph/commit/<commit>. A claim names one
+// when its scope does: in a list item, the item's own text, all its
+// paragraphs and the lines that run on from them, but not the items nested
+// in it or the items it is nested in; in a paragraph outside lists, its
+// sentence, which ends at a "." and a blank; in a table row, the row. A
+// commit anywhere else, in another item of its entry or in a sentence that
+// says what is below it was read at that commit, does not name one for it.
+//
+// With the clone, a claim also needs one of the commits its scope names to be
+// on ceph main: a commit the clone has that its origin/main, or its main when
+// it has no origin/main, descends from. A commit id that follows a main, as
+// "main 8aa24c51928", "main at 8aa24c51928", "main (8aa24c51928" and "main's
+// 8aa24c51928" call one main's, must be on ceph main itself, in a Found item
+// too, where only that id is checked. The reason names each commit and why
+// it is not on main, as a fork's or a stable branch's commit is not, or as a
+// commit the clone lacks is not, which a clone fetched since tells apart.
+// Under --form-only nothing tells a main commit from another branch's, so any
+// commit names one there, and a Found item's "main <id>" counts as a claim
+// that names its commit. A clone with neither an origin/main nor a main
+// branch is refused when a registry is checked.
+//
+// A commit id a main calls main's must have 9 hex digits or more, under
+// --form-only and in a Found item too: "main a742f50" fails.
+//
+// A claim that says main was not checked fails whatever its scope names:
+// "main not checked", "main: not checked", "the main branch was not checked",
+// "main was not verified", "main has not been checked", "main hasn't been
+// checked", "main not yet checked", "main was never checked", "main
+// unchecked", "main is unchecked", "main remains unchecked", "main is still
+// unverified", "main was left unchecked", and "not checked on main",
+// "unchecked on main", "not yet verified against ceph main" and the like.
+// Every entry is to say what main holds, at a commit.
+//
 // # Output
 //
 // citecheck prints a line for each citation that fails,
@@ -711,8 +780,13 @@
 //
 // where FILE is as given, LINE is the line the citation starts on and the
 // citation is as written, then citations checked: N, failed: M, and under
-// --fix rewritten: K, the code span and plain citations it rewrote. Under
-// --content it prints a line in that form for each link that fails or is
+// --fix rewritten: K, the code span and plain citations it rewrote. A claim
+// about ceph main that fails is printed in the same form, in line order with
+// the citations, LINE its main's and the claim its sentence, or in a table
+// row its cell, on one line and cut to 160 characters, the reason saying
+// what to write and where; when a registry was read, main claims checked: N,
+// failed: M follows the citations' count. Under --content it prints a line
+// in that form for each link that fails or is
 // listed, a listed one's reason starting "listed: ", then links checked: N,
 // held: H, failed: F, listed: L; a listed link fails no run. With
 // --log-level debug, each plain citation --fix resolves is logged with its
@@ -721,15 +795,16 @@
 // clause names; and under --content each link that holds, with its file and
 // line, the identifiers its lines were checked for and whether its own text
 // names them.
-// It exits 0 when none fails, 1 when one does or the files
-// command finds the list stale, and 2 for a refused command line, a file
-// it cannot read or, under --fix, write, a clone that is not a git
-// repository or is a partial one, or a git that cannot answer. go run
-// reports any nonzero status as 1, and make any failed recipe as 2, so a
-// caller that tells the statuses apart runs a binary go build made. Every
+// It exits 0 when none fails, 1 when a citation or a claim about ceph main
+// does or the files command finds the list stale, and 2 for a refused
+// command line, a file it cannot read or, under --fix, write, a clone that
+// is not a git repository or is a partial one, or a git that cannot answer.
+// go run reports any nonzero status as 1, and make any failed recipe as 2,
+// so a caller that tells the statuses apart runs a binary go build made. Every
 // file is read before any is checked. git is run only as rev-parse, config,
-// cat-file and ls-tree, which never check out or change a full clone, and
-// each ref is resolved, each file read and each tree listed once. A partial
+// cat-file, ls-tree and merge-base --is-ancestor, which never check out or
+// change a full clone, and each ref is resolved, each file read, each tree
+// listed and each commit a main claim names asked about once. A partial
 // clone, one whose extensions.partialClone is set or one of whose remotes
 // is a promisor, is refused, since git cat-file fetches an object such a
 // clone lacks from the remote and writes it into the clone.

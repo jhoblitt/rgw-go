@@ -152,7 +152,7 @@ citecheck-content: ## Check that each Ceph link's lines hold what its text names
 MARKDOWN = $(shell git ls-files '*.md')
 
 .PHONY: citation-form-check
-citation-form-check: ## Fail when a tracked markdown file holds a path:lines@ref code span citation, or a ceph link that is malformed or in a code span
+citation-form-check: ## Fail when a tracked markdown file holds a path:lines@ref code span citation, or a ceph link that is malformed, at a branch or in a code span, or a registry's ceph main claim names no main commit
 	@go run ./hack/citecheck --form-only $(MARKDOWN)
 
 # Every tracked Go file outside testdata but hack/citecheck's, whose package
@@ -161,7 +161,7 @@ citation-form-check: ## Fail when a tracked markdown file holds a path:lines@ref
 CITATION_GO_FILES = $(shell git ls-files '*.go' | grep -v -e '/testdata/' -e '^hack/citecheck/')
 
 .PHONY: citation-go-check
-citation-go-check: ## Fail when a tracked Go file's comment holds a plain Ceph citation, or a ceph link that is malformed or in a code block
+citation-go-check: ## Fail when a tracked Go file's comment holds a plain Ceph citation, or a ceph link that is malformed, at a branch or in a code block
 	@go run ./hack/citecheck --form-only $(CITATION_GO_FILES)
 
 # The list of ceph's citable files, which tells a plain citation of ceph, in

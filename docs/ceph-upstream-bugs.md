@@ -2083,12 +2083,13 @@ Every new entry adds its row to this table, in document order.
     which appends to "AWS4", for each `char` of the secret, the `n` bytes
     `encode_utf8(c, buf)` reports writing into a six-byte buffer
     (`rgw/rgw_auth_s3.cc:984-1004` at v19.2.6, `:961-981` at v20.2.4,
-    `:1002-1022` on main).
+    `:1002-1022` on main at 8aa24c51928).
   - Ceph compiles with `-fsigned-char` (`CMakeLists.txt:92-95` at
-    v19.2.6, `:99-102` at v20.2.4 and main), so a byte above 0x7f reaches
-    `encode_utf8(unsigned long, unsigned char *)` sign-extended, above
+    v19.2.6, `:99-102` at v20.2.4 and main 8aa24c51928), so a byte above 0x7f
+    reaches `encode_utf8(unsigned long, unsigned char *)` sign-extended, above
     0x7fffffff, and it returns -1 (`common/utf8.c:62-102` at both tags,
-    `:63-103` on main). `n` is a `size_t`, so it becomes SIZE_MAX, and
+    `:63-103` on main at 8aa24c51928). `n` is a `size_t`, so it becomes
+    SIZE_MAX, and
     `std::begin(buf) + n` points outside the buffer: the behaviour is
     undefined.
   - Were the byte read as the code point the function intends, it would
@@ -2559,7 +2560,7 @@ Every new entry adds its row to this table, in document order.
   op reached the loop through
   [ceph/ceph#60227](https://github.com/ceph/ceph/pull/60227) and its squid
   backport [ceph/ceph#62994](https://github.com/ceph/ceph/pull/62994); the
-  forwarding on main came with
+  forwarding on main at 8aa24c51928 came with
   [ceph/ceph#71016](https://github.com/ceph/ceph/pull/71016), the fix for
   [#80213](https://tracker.ceph.com/issues/80213).
 - **Found:** phase 1 planning of unit N, 2026-09-29; derived from the source.
@@ -3905,7 +3906,8 @@ Every new entry adds its row to this table, in document order.
   fix.
 - **Upstream:** [#72315](https://tracker.ceph.com/issues/72315), "support
   paginated s3 ListBuckets", resolved on main by
-  [ceph/ceph#64742](https://github.com/ceph/ceph/pull/64742); no squid or
+  [ceph/ceph#64742](https://github.com/ceph/ceph/pull/64742) (checked at
+  8aa24c51928); no squid or
   tentacle backport issue or pull request exists. `prefix` is
   [#75463](https://tracker.ceph.com/issues/75463), open, with
   [ceph/ceph#67920](https://github.com/ceph/ceph/pull/67920). Searched
@@ -4713,33 +4715,40 @@ Every new entry adds its row to this table, in document order.
   - An account's email index object is the user's: `get_email_obj` names it
     by the lowercased email in `user_email_pool`, under the comment "account
     email oids conflict with user email oids. this ensures that all emails
-    are globally unique" (`account.cc:103-114`, main `:120-131`).
+    are globally unique" (`account.cc:103-114`, main `:120-131` at 8aa24c51928).
   - The account side keeps that promise: `account::write` refuses a new
     email whose object exists, whoever it names, with `-EEXIST`
-    (`account.cc:312-322`, main `:329-339`).
+    (`account.cc:312-322`, main `:329-339` at 8aa24c51928).
   - The user side does not. User create and modify look for a duplicate
     with `get_user_by_email`: `RGWUser::init` under `rgw_user_unique_email`,
     which defaults to true (`driver/rados/rgw_user.cc:1421-1425` at v19.2.6,
-    `:1426-1430` at v20.2.4, main `:1366-1370`; `rgw.yaml.in:2441-2448` at
+    `:1426-1430` at v20.2.4, main `:1366-1370` at 8aa24c51928;
+    `rgw.yaml.in:2441-2448` at
     v19.2.6), and `execute_modify` (`driver/rados/rgw_user.cc:2052-2060` at
-    v19.2.6, `:2058-2066` at v20.2.4, main `:2035-2043`). That lookup goes
+    v19.2.6, `:2058-2066` at v20.2.4, main `:2035-2043` at 8aa24c51928). That
+    lookup goes
     through `get_user_info_from_index`, which answers ENOENT when the index
     names an account (`svc_user_rados.cc:700-703` at v19.2.6, `:675-678` at
-    v20.2.4, main `:691-694`), so neither check sees the account's email.
+    v20.2.4, main `:691-694` at 8aa24c51928), so neither check sees the
+    account's email.
   - The user is stored with `exclusive=false` (`driver/rados/rgw_user.cc:1500`
-    at v19.2.6, `:1505` at v20.2.4, main `:1445`), and `PutOperation::complete`
+    at v19.2.6, `:1505` at v20.2.4, main `:1445` at 8aa24c51928), and
+    `PutOperation::complete`
     writes the email object with that flag (`svc_user_rados.cc:315-325` at
-    v19.2.6, `:295-305` at v20.2.4, main `:302-312`), so the object now names
+    v19.2.6, `:295-305` at v20.2.4, main `:302-312` at 8aa24c51928), so the
+    object now names
     the user. The account keeps the email in its info, but `read_by_email`
-    answers ENOENT for it (`account.cc:233-236`, main `:250-253`), and an ACL
+    answers ENOENT for it (`account.cc:233-236`, main `:250-253` at
+    8aa24c51928), and an ACL
     grant by that email resolves to the user through `load_owner_by_email`
     (`rgw_sal_rados.cc:1296-1309` at v19.2.6, `:1835-1848` at v20.2.4, main
-    `:2124-2137`; `rgw_acl_s3.cc:504-507` at all three).
+    `:2124-2137` at 8aa24c51928; `rgw_acl_s3.cc:504-507` at all three).
   - Removing the account then deletes the email object without reading it
-    (`account::remove`, `account.cc:418-426`, main `:435-443`), although the
+    (`account::remove`, `account.cc:418-426`, main `:435-443` at 8aa24c51928),
+    although the
     user now holds it. `account::write`'s rename path, by contrast, deletes
     an old entry only when it names the account (`account.cc:277` and
-    `:290`, main `:294` and `:307`).
+    `:290`, main `:294` and `:307` at 8aa24c51928).
   - Metadata put repoints another user's email the same way, since it stores
     the user with `exclusive=false` and runs no email duplicate check at all
     (`driver/rados/rgw_user.cc:2831-2833` at v19.2.6, `:2844-2845` at
@@ -4755,10 +4764,12 @@ Every new entry adds its row to this table, in document order.
   another user can be given the same email, since the duplicate check finds
   nothing. A grant by that email then fails. An AccessControlPolicy body's
   grant answers 400 UnresolvableGrantByEmailAddress (`rgw_acl_s3.cc:504-507`
-  at all three; `rgw_common.cc:70` at v19.2.6, `:71` at v20.2.4, main `:66`).
+  at all three; `rgw_common.cc:70` at v19.2.6, `:71` at v20.2.4, main `:66`
+  at 8aa24c51928).
   An `x-amz-grant-*: emailAddress=` header's grant returns the raw ENOENT
   (`rgw_acl_s3.cc:356-360` at all three), which radosgw sends as 404
-  NoSuchKey (`rgw_common.cc:97` at v19.2.6, `:98` at v20.2.4, main `:94`).
+  NoSuchKey (`rgw_common.cc:97` at v19.2.6, `:98` at v20.2.4, main `:94` at
+  8aa24c51928).
 - **Releases:** every release with accounts, from v19.1.0; checked at
   v19.2.6, v20.2.4 and main 8aa24c51928.
 - **rgw-go:** reproduces neither the takeover nor the deletion of a user's
@@ -5093,9 +5104,9 @@ Every new entry adds its row to this table, in document order.
   - Its `0_` name-index record, chain included, stays in the shard's omap.
     But radosgw's GC processor collects only what `gc_list` returns
     (`RGWGC::process`, `rgw/driver/rados/rgw_gc.cc:550` at v19.2.6, `:565` at
-    v20.2.4, main `:487`), so the chain is never collected. Its tail objects
-    keep their refcount reference and leak, and the processor never removes
-    the record.
+    v20.2.4, main `:487` at 8aa24c51928), so the chain is never collected.
+    Its tail objects keep their refcount reference and leak, and the
+    processor never removes the record.
   - Removing or deferring the earlier entry's tag later also takes the
     survivor's time key. `gc_remove` and `gc_update_entry` delete the time
     key computed from the stored due time (`:4144`, `:4546`, `:4875`;
@@ -5106,7 +5117,7 @@ Every new entry adds its row to this table, in document order.
     v20.2.4) calls `RGWGC::async_defer_chain`. That sends `gc_defer_entry`
     through `gc_log_defer1` on an unconverted shard, and `gc_remove` beside
     the queue defer on a converted one (`rgw_gc.cc:180-223` at both tags).
-    Main no longer defers.
+    Main at 8aa24c51928 no longer defers.
 - **When it happens:** two writes to the same shard whose
   `real_clock::now()` plus `expiration_secs` agree to the nanosecond.
   `real_clock::now()` reads `CLOCK_REALTIME` on the OSD
@@ -5121,8 +5132,8 @@ Every new entry adds its row to this table, in document order.
     omap entry only when the rgw_gc queue enqueue fails with ECANCELED or
     EPERM, as on a shard `RGWGC::initialize` has not converted
     (`RGWGC::send_chain`, `rgw_gc.cc:120-139` at both tags, main
-    `:121-140`). It defers through the omap log only on a shard it has not
-    seen converted (`:180-223` at both tags).
+    `:121-140` at 8aa24c51928). It defers through the omap log only on a
+    shard it has not seen converted (`:180-223` at both tags).
 - **Impact:** a rare leak of an object's tail on an unconverted gc shard,
   and of the gc record that names it. Nothing reports it: the shard's
   listing simply never returns the entry.
@@ -5145,7 +5156,8 @@ Every new entry adds its row to this table, in document order.
   v19.2.6, v20.2.4 and main (8aa24c51928) unless a line is given per tag.
   - The manifest generator and its iterator hold the stripe number in an
     `int cur_stripe` (`rgw/driver/rados/rgw_obj_manifest.h:609` and `:509`
-    at v19.2.6, `:620` and `:520` at v20.2.4, `:632` and `:532` on main).
+    at v19.2.6, `:620` and `:520` at v20.2.4, `:632` and `:532` on main at
+    8aa24c51928).
   - `generator::create_next` sets it to `(ofs - max_head_size) /
     rule.stripe_max_size`, a u64 quotient converted to int, then adds one in
     part 0 when `max_head_size` is non-zero
@@ -5180,7 +5192,7 @@ Every new entry adds its row to this table, in document order.
   Neither `rgw_obj_stripe_size` (default 4 MiB) nor `rgw_max_put_size`
   (default 5 GiB) has a `min` or `max` (`common/options/rgw.yaml.in:1860` and
   `:127` at v19.2.6, `:1948` and `:130` at v20.2.4, `:2267` and `:161` on
-  main).
+  main at 8aa24c51928).
   - At the default stripe size behind a 4 MiB head, the names go negative in
     an object over 8 PiB (2^53 bytes) and repeat in one over 16 PiB plus the
     head.
@@ -6340,7 +6352,8 @@ Every new entry adds its row to this table, in document order.
   as [#74917](https://tracker.ceph.com/issues/74917), now resolved, for
   multipart objects whose tags radosgw had stored as URL-encoded text, and
   fixed as a decoder too strict:
-  [ceph/ceph#67336](https://github.com/ceph/ceph/pull/67336) (main), with
+  [ceph/ceph#67336](https://github.com/ceph/ceph/pull/67336) (main, checked
+  at 8aa24c51928), with
   [ceph/ceph#67926](https://github.com/ceph/ceph/pull/67926) (squid, in
   v19.2.5) and [ceph/ceph#67927](https://github.com/ceph/ceph/pull/67927)
   (tentacle, in v20.2.2), added the fallback to that text and changed only
@@ -9702,9 +9715,9 @@ Every new entry adds its row to this table, in document order.
   suspended (403 UserSuspended), and the ops log attributes the request to
   the key. Where per-user rate limits are set, such preflights drain the
   user's write-op budget, and the user's own writes are then refused as
-  rate-limited: a denial of service against that user, and on main, where an
-  account limit is set, against every user and role of the key's account
-  through that account's budget. The same limit
+  rate-limited: a denial of service against that user, and on main at
+  8aa24c51928, where an account limit is set, against every user and role of
+  the key's account through that account's budget. The same limit
   makes a forged preflight 503 SlowDown once the key user's budget is spent,
   so its answer tells the sender that user's rate state, and never so for a
   system key, or on Squid an admin's, which tells the sender that the key is
@@ -10422,9 +10435,9 @@ Every new entry adds its row to this table, in document order.
   report or fix. The option came with
   [#64797](https://tracker.ceph.com/issues/64797), which its commit
   message names, through
-  [ceph/ceph#56044](https://github.com/ceph/ceph/pull/56044) on main and
-  ceph/ceph#56343 on squid. The fix would check that the route is the
-  query string before refusing.
+  [ceph/ceph#56044](https://github.com/ceph/ceph/pull/56044) on main
+  (checked at 8aa24c51928) and ceph/ceph#56343 on squid. The fix would check
+  that the route is the query string before refusing.
 - **Found:** phase 1 unit A's plan, transcribing `get_auth_data`;
   registered in unit A, Task 10, 2026-10-05. Not reproduced.
 
@@ -10639,9 +10652,9 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.7, and Tentacle's v20.2.1 through v20.2.4
   (f28f0d9147d is first in v20.2.1), checked at v20.2.0 and v20.2.4.
   v19.2.6 is not affected.
-- **rgw-go:** checks as v19.2.6 and main do, on both releases, so it uses
-  main's corrected check where v19.2.7 and v20.2.4 carry the inversion: a
-  DeleteObjects naming a version on such a bucket needs a verified
+- **rgw-go:** checks as v19.2.6 and main 8aa24c51928 do, on both releases, so
+  it uses main's corrected check where v19.2.7 and v20.2.4 carry the
+  inversion: a DeleteObjects naming a version on such a bucket needs a verified
   `x-amz-mfa`, the bucket owner's, and one naming none needs no MFA
   (`checkRequest`, `internal/op/deleteobjects.go`; `docs/exclusions.md`,
   "DeleteObjects asks for MFA for the keys that name a version").
@@ -11307,8 +11320,9 @@ Every new entry adds its row to this table, in document order.
   `internal/memstore/multipart.go`).
 - **Upstream:** [#75999](https://tracker.ceph.com/issues/75999), named by
   the fix commits' `Fixes:` trailer; the fix is
-  [ceph/ceph#68364](https://github.com/ceph/ceph/pull/68364) on main, with
-  the backports [ceph/ceph#70108](https://github.com/ceph/ceph/pull/70108)
+  [ceph/ceph#68364](https://github.com/ceph/ceph/pull/68364) on main (still
+  fixed at 8aa24c51928), with the backports
+  [ceph/ceph#70108](https://github.com/ceph/ceph/pull/70108)
   (tentacle) and [ceph/ceph#70067](https://github.com/ceph/ceph/pull/70067)
   (squid), read from the merge commits in the ceph git history. The
   tracker's own state is pending: sent to rgw-bug-reproduction.
@@ -15242,7 +15256,8 @@ Every new entry adds its row to this table, in document order.
   x-amz-expiration").
 - **Upstream:** [#77564](https://tracker.ceph.com/issues/77564), named by
   the fix commits' `Tracker:` trailer; the fix is
-  [ceph/ceph#69642](https://github.com/ceph/ceph/pull/69642) on main, with
+  [ceph/ceph#69642](https://github.com/ceph/ceph/pull/69642) on main (still
+  fixed at 8aa24c51928), with
   the backports [ceph/ceph#70493](https://github.com/ceph/ceph/pull/70493)
   (squid) and [ceph/ceph#70494](https://github.com/ceph/ceph/pull/70494)
   (tentacle), read from the merge commits in the ceph git history. The
@@ -15308,8 +15323,9 @@ Every new entry adds its row to this table, in document order.
   the fix commits' `Fixes:` trailer, the server-side encryption work that
   also fixed "Squid labels a copy to another storage class with its
   source's class"; the fix came with
-  [ceph/ceph#63794](https://github.com/ceph/ceph/pull/63794) on main, with
-  the backports [ceph/ceph#68807](https://github.com/ceph/ceph/pull/68807)
+  [ceph/ceph#63794](https://github.com/ceph/ceph/pull/63794) on main (still
+  fixed at 8aa24c51928), with the backports
+  [ceph/ceph#68807](https://github.com/ceph/ceph/pull/68807)
   (squid) and [ceph/ceph#68826](https://github.com/ceph/ceph/pull/68826)
   (tentacle), read from the merge commits in the ceph git history. The
   tracker's own state is not checked.
@@ -15599,7 +15615,7 @@ Every new entry adds its row to this table, in document order.
   (2026-10-30). Unreproduced: derived from the source and the release
   binary.
 - **Evidence:** paths are under `src/rgw/`, at v20.2.4 unless a link names
-  main; v19.2.7 has no checksum code.
+  main at 8aa24c51928; v19.2.7 has no checksum code.
   - `Cksum::decode` reads the stored u16 type and u16 digest size and checks
     neither. It copies that many bytes into `digest`, a `std::array` of
     `max_digest_size`, 64 bytes, so a size from 65 to 65535 writes past it
@@ -15697,8 +15713,8 @@ Every new entry adds its row to this table, in document order.
   `cksum.Cksum.Encode` panics rather than write either
   (`internal/cksum/record.go`). It writes nothing radosgw would not, so
   there is no exclusion. Its write ops also refuse a request naming MD5,
-  XXHASH64 or XXHASH128, the types main stores as 9 to 11, with 400
-  InvalidArgument before the body, once the S3 handler hands them the
+  XXHASH64 or XXHASH128, the types main stores at 8aa24c51928 as 9 to 11, with
+  400 InvalidArgument before the body, once the S3 handler hands them the
   checksum headers (`internal/op/checksumreq.go`;
   `docs/exclusions.md`, "A checksum algorithm rgw-go does not compute is
   refused at write").
@@ -15785,8 +15801,8 @@ Every new entry adds its row to this table, in document order.
   next-newest current, or remove the key, and every version from epoch 2^32
   up drops out of the listings. No stored data is damaged. Fixed in v21.0.0,
   not on squid or tentacle. Not security-relevant. Prior art: upstream fixed
-  it on main before we met it. Unreproduced: derived from the source and from
-  the class's key helpers compiled on their own.
+  it on main (4195486c8ed) before we met it. Unreproduced: derived from the
+  source and from the class's key helpers compiled on their own.
 - **Evidence:** paths are under `src/cls/rgw/` unless named.
   - `decreasing_str` prints its last band, every epoch from 2^32 up, as
     `"4%020lld"` of `(long long)-num`
@@ -16237,7 +16253,8 @@ Every new entry adds its row to this table, in document order.
     refused 503 SlowDown.
   - **Bucket attr.** Every request that names the bucket and is not exempt
     is refused 503 SlowDown, whoever sends it.
-  - **Account, on main only.** An account attr that does not decode, or any
+  - **Account, on main only, at 8aa24c51928.** An account attr that does not
+    decode, or any
     failure to load the account, refuses every non-system request of the
     account's users and roles 503 SlowDown; a load failure that passes,
     such as one RADOS error, refuses only the requests that meet it.
@@ -16411,8 +16428,8 @@ Every new entry adds its row to this table, in document order.
 
 ## Main's radosgw reads an empty account when its rate limiter gives tokens back
 
-- **Kind:** defect, memory safety, on main only and in no tag. Possibly
-  security-relevant: sent to rgw-bug-reproduction on 2026-10-30, rating
+- **Kind:** defect, memory safety, on main only (8aa24c51928) and in no tag.
+  Possibly security-relevant: sent to rgw-bug-reproduction on 2026-10-30, rating
   pending. The rate limiter's token giveback reads the account of an
   identity that has none, `account->id` on an empty `std::optional`. Every
   request whose identity belongs to no account and which a user, bucket or
@@ -16487,7 +16504,8 @@ Every new entry adds its row to this table, in document order.
     user's name, and read no account there
     ([rgw/rgw_process.cc:158](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L158),
     [rgw/rgw_process.cc:158](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L158)).
-- **Impact:** on a main build where any user, bucket or anonymous rate
+- **Impact:** on a build of main at 8aa24c51928 where any user, bucket or
+  anonymous rate
   limit is enabled, a requester outside an account that exceeds it, an
   anonymous one where the anonymous limit is on, aborts a radosgw built
   with `_GLIBCXX_ASSERTIONS`, ending every request it serves; each further
@@ -16542,7 +16560,7 @@ Every new entry adds its row to this table, in document order.
   security-relevant. Unfixed through main at 8aa24c51928 (2026-10-30).
   Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/rgw/`, at v20.2.4 unless a link names
-  main; v19.2.7 has no checksum code.
+  main at 8aa24c51928; v19.2.7 has no checksum code.
   - CreateMultipartUpload's `parse_cksum_flags` sets `FLAG_COMPOSITE` for
     `x-amz-checksum-type: COMPOSITE`
     ([rgw_cksum_pipe.h:138-154](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L138-L154)),
@@ -16642,7 +16660,7 @@ Every new entry adds its row to this table, in document order.
   security-relevant. Unfixed through main at 8aa24c51928 (2026-10-30).
   Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/rgw/`, at v20.2.4 unless a link names
-  main; v19.2.7 has no checksum code.
+  main at 8aa24c51928; v19.2.7 has no checksum code.
   - A part's record carries its upload's flags without `FLAG_V2`: the put
     filter's `finalize` replaces the record's flags with the filter's
     ([rgw_cksum_pipe.h:187-191](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L187-L191)),
@@ -18528,8 +18546,8 @@ Every new entry adds its row to this table, in document order.
   8aa24c51928, the tentacle branch since 5f25f2bb0e2 and the squid branch
   since 50137a456e2; no squid or tentacle tag does.
 - **rgw-go:** differs: its rule selection, `cors.Configuration.Match`
-  (`internal/cors/match.go`), is main's `match_rule`, but it passes the
-  requested headers for a preflight alone, as Amazon S3 documents
+  (`internal/cors/match.go`), is main's `match_rule` at 8aa24c51928, but it
+  passes the requested headers for a preflight alone, as Amazon S3 documents
   (`docs/exclusions.md`, "CORS rules are matched as Amazon S3 matches
   them" and "Every S3 response carries CORS headers once its bucket is
   loaded").
@@ -18615,8 +18633,8 @@ Every new entry adds its row to this table, in document order.
   a956c21a8c9, first tagged in the development tag v22.0.0 and still fixed at
   8aa24c51928; no other tag, v21.1.2 included, nor the squid or tentacle
   branch, does.
-- **rgw-go:** differs: it refuses as main does, for the request's own
-  method, once the op mask has passed and before the permission verdict,
+- **rgw-go:** differs: it refuses as main does at 8aa24c51928, for the request's
+  own method, once the op mask has passed and before the permission verdict,
   but matches the Origin as its wildcards are written and answers a
   configuration that does not decode 500 (`verifyCORSMatch`,
   `internal/op/corsmatch.go`; `docs/exclusions.md`, "A request whose
@@ -18717,7 +18735,8 @@ Every new entry adds its row to this table, in document order.
   header injects via CORS in RGW", which Ceph rates Medium, is unfixed in
   every release from Quincy on. Its fix, which escapes a carriage return
   in an ExposeHeader, was made on three stable branches and never
-  forward-ported to main, so no release from v17.2.0 on carries it. Exploiting it needs a
+  forward-ported to main (checked at 8aa24c51928), so no release from v17.2.0 on
+  carries it. Exploiting it needs a
   client or an intermediary that ends a header line at a bare carriage
   return, which RFC 9112, section 2.2, forbids a recipient to do, so the
   rgw-bug-reproduction session's triage rates it low and conditional on a
@@ -20408,7 +20427,8 @@ Every new entry adds its row to this table, in document order.
   lists no versions yet.
 - **Upstream:** pending: sent to rgw-bug-reproduction, whose triage logged
   it as V3A-1 and verified the discarded return at the three call sites
-  cited above, at v19.2.7, v20.2.4 and main.
+  cited above, at v19.2.7, v20.2.4 and main, where they still stand at
+  8aa24c51928.
 - **Found:** phase 2 Task V3a, 2026-10-19, emulating the class's start key
   in fakerados; derived from the source, not reproduced.
 
@@ -21532,7 +21552,7 @@ Every new entry adds its row to this table, in document order.
   with a checksum type, without any checksum. No stored data is damaged,
   and it is not security-relevant. Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/rgw/`, at v20.2.4 unless a link names
-  main; v19.2.7 has no checksum code.
+  main at 8aa24c51928; v19.2.7 has no checksum code.
   - `RGWPutObj_Cksum::Factory` builds the put's checksum filter from the
     algorithm header `cksum_algorithm_hdr` finds, `x-amz-checksum-algorithm`
     else `x-amz-sdk-checksum-algorithm`, and without one from the type a
@@ -21591,7 +21611,7 @@ Every new entry adds its row to this table, in document order.
   never compared. No stored data is damaged, and it is not
   security-relevant. Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/rgw/`, at v20.2.4 unless a link names
-  main; v19.2.7 has no checksum code.
+  main at 8aa24c51928; v19.2.7 has no checksum code.
   - A part without an algorithm header gets the filter of its upload's
     type, `multipart_cksum_type`, with the header pair
     `cksum_algorithm_hdr(override_type)` gives
@@ -22875,7 +22895,7 @@ Every new entry adds its row to this table, in document order.
   security-relevant. Unfixed through main at 8aa24c51928 (2026-10-30).
   Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/rgw/`, at v20.2.4 unless a link names
-  main; v19.2.7 has no checksum code.
+  main at 8aa24c51928; v19.2.7 has no checksum code.
   - `RGWCompleteMultipart::execute` runs `try_sum_part_cksums` for an
     upload with a checksum type once it holds the completion lock, before
     `complete`
@@ -22933,7 +22953,8 @@ Every new entry adds its row to this table, in document order.
 - **Found:** the phase 2 write-path research, 2026-10-13
   (`docs/superpowers/plans/2026-10-13-phase-2/research/research-writepath.md`,
   §6, defect 1); recorded by phase 2 task WP-9, 2026-10-20, which checked it
-  at v20.2.4 and main f6f2529dd9e. Derived from the source, not reproduced;
+  at v20.2.4 and the jhoblitt/ceph rgw-go-s3tests branch at f6f2529dd9e.
+  Derived from the source, not reproduced;
   task WP-14 reproduces it.
 
 ## radosgw's CompleteMultipartUpload never compares a supplied CRC64NVME checksum
@@ -22946,7 +22967,7 @@ Every new entry adds its row to this table, in document order.
   damaged, and it is not security-relevant. Unreproduced: derived from the
   source.
 - **Evidence:** paths are under `src/rgw/`, at v20.2.4 unless a link names
-  main or v21.3.0; v19.2.7 has no checksum code.
+  main at 8aa24c51928 or v21.3.0; v19.2.7 has no checksum code.
   - `find_hdr_cksum`, the completion's search for a supplied value, takes
     the first `x-amz-checksum-<alg>` header from crc32, type 1, to blake3,
     type 7
@@ -23003,7 +23024,7 @@ Every new entry adds its row to this table, in document order.
   security-relevant. Unfixed through main at 8aa24c51928 (2026-10-30).
   Unreproduced: derived from the source.
 - **Evidence:** paths are under `src/rgw/`, at v20.2.4 unless a link names
-  main; v19.2.7 has no checksum code.
+  main at 8aa24c51928; v19.2.7 has no checksum code.
   - A supplied value `scm` other than the armored value `acm` is compared
     with `scm.compare(0, c_len, acm, 0, c_len)`, where `c_len` is `acm`'s
     length less that of `-<parts>` when the combination is a composite,
@@ -23035,7 +23056,8 @@ Every new entry adds its row to this table, in document order.
 - **Found:** the phase 2 write-path research, 2026-10-13
   (`docs/superpowers/plans/2026-10-13-phase-2/research/research-writepath.md`,
   §6, defect 7); recorded by phase 2 task WP-9, 2026-10-20, which checked it
-  at v20.2.4 and main f6f2529dd9e and added the empty value. Derived from
+  at v20.2.4 and the jhoblitt/ceph rgw-go-s3tests branch at f6f2529dd9e and
+  added the empty value. Derived from
   the source, not reproduced; task WP-14 reproduces it.
 
 ## Tentacle's copy of a compressed source into a class that does not compress it accounts the compressed size
@@ -23463,8 +23485,8 @@ Every new entry adds its row to this table, in document order.
   - "[cls_rgw's bucket_link_olh unlinks the null version's list entry
     before it checks the
     epoch](#cls_rgws-bucket_link_olh-unlinks-the-null-versions-list-entry-before-it-checks-the-epoch)"
-    may end the same way on main, in an unintended removal of the null
-    version, by another route: a stale null delete marker's removal.
+    may end the same way on main at 8aa24c51928, in an unintended removal of the
+    null version, by another route: a stale null delete marker's removal.
   - The test that settles it, not run: two zones, a versioned bucket with a
     null version, and a PUT racing DeleteObject(versionId=V), so that the
     delete's unlink lands before its replay; then check the peer's null
@@ -24196,9 +24218,10 @@ Every new entry adds its row to this table, in document order.
   COMPOSITE, with the multipart object's part count after it, whatever the
   upload's checksum type. No stored data is damaged. Not security-relevant.
   Fixed in v21.0.0, not on the tentacle branch. Prior art: upstream fixed
-  it on main before we met it. Unreproduced: derived from the source.
-- **Evidence:** at v20.2.4 unless a link names main; v19.2.7 has no
-  checksum code (it has no `src/rgw/rgw_cksum.h`).
+  it on main (9b43590e12e) before we met it. Unreproduced: derived from the
+  source.
+- **Evidence:** at v20.2.4 unless a link names main at 8aa24c51928; v19.2.7 has
+  no checksum code (it has no `src/rgw/rgw_cksum.h`).
   - A `partNumber` read redirects to the part head's state, keeping only
     the object's crypt attrs, and sets the object's parts count
     ([rgw_rados.cc:7728-7765](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7728-L7765));
@@ -24235,7 +24258,7 @@ Every new entry adds its row to this table, in document order.
   no checksum code. Fixed in v21.0.0 (ceph/ceph#66042, 590ef383142), not
   backported to tentacle.
 - **rgw-go:** differs: a `partNumber` read shows its part head's record as
-  main does (`partReadChecksum`, `internal/op/getobject.go`;
+  main does at 8aa24c51928 (`partReadChecksum`, `internal/op/getobject.go`;
   `docs/exclusions.md`, "A partNumber read shows its part's checksum
   bare"). Its S3 handler renders no stored checksum yet ("Stored checksums
   are not shown").
@@ -24248,7 +24271,8 @@ Every new entry adds its row to this table, in document order.
 - **Found:** the phase 2 write-path research, 2026-10-13
   (`docs/superpowers/plans/2026-10-13-phase-2/research/research-writepath.md`,
   §6, defect 5); recorded by phase 2 task WP-12, 2026-10-21, which checked
-  it at v20.2.4, main f6f2529dd9e, the tentacle branch and the s3-tests
+  it at v20.2.4, the jhoblitt/ceph rgw-go-s3tests branch at f6f2529dd9e,
+  the tentacle branch and the s3-tests
   pin. Derived from the source, not reproduced; task WP-14 reproduces it.
 
 ## radosgw's ListParts never reports its upload's checksum algorithm
@@ -24258,8 +24282,8 @@ Every new entry adds its row to this table, in document order.
   for any upload. No stored data is damaged. Not security-relevant.
   Unfixed through main at 8aa24c51928 (2026-10-30). Unreproduced: derived
   from the source.
-- **Evidence:** at v20.2.4 unless a link names main; v19.2.7 has no
-  checksum code.
+- **Evidence:** at v20.2.4 unless a link names main at 8aa24c51928; v19.2.7 has
+  no checksum code.
   - CreateMultipartUpload keeps the algorithm and its flags in the upload's
     `multipart_upload_info`
     ([rgw_op.cc:7006-7010](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7006-L7010)).
@@ -24293,7 +24317,8 @@ Every new entry adds its row to this table, in document order.
 - **Found:** the phase 2 write-path research, 2026-10-13
   (`docs/superpowers/plans/2026-10-13-phase-2/research/research-writepath.md`,
   §6, defect 8); recorded by phase 2 task WP-12, 2026-10-21, which checked
-  it at v20.2.4 and main f6f2529dd9e and added the missing `ChecksumType`.
+  it at v20.2.4 and the jhoblitt/ceph rgw-go-s3tests branch at f6f2529dd9e
+  and added the missing `ChecksumType`.
   Derived from the source, not reproduced; task WP-14 reproduces it.
 
 ## radosgw's bucket delete drops the lifecycle entry of a bucket it then fails to remove
@@ -24755,8 +24780,8 @@ Every new entry adds its row to this table, in document order.
     `s3:PutBucketAcl` permissions are required."
 - **Impact:** at v19.2.7 and v20.2.4, a requester denied s3:PutBucketAcl
   creates a bucket whose ACL grants everyone read, or write, or names any
-  grantee it likes, where Amazon S3 refuses the request; at main the same
-  holds for every such ACL that BlockPublicAcls does not catch, a grant
+  grantee it likes, where Amazon S3 refuses the request; at main 8aa24c51928 the
+  same holds for every such ACL that BlockPublicAcls does not catch, a grant
   header among them.
 - **Shared sink:** `RGWCreateBucket::verify_permission`, which
   "[radosgw's CreateBucket checks s3:PutBucketOwnershipControls before it reads x-amz-object-ownership](#radosgws-createbucket-checks-s3putbucketownershipcontrols-before-it-reads-x-amz-object-ownership)" describes, with "[radosgw's CreateBucket with object lock skips the two permissions Amazon S3 requires for it](#radosgws-createbucket-with-object-lock-skips-the-two-permissions-amazon-s3-requires-for-it)" beside this
@@ -27099,7 +27124,8 @@ Every new entry adds its row to this table, in document order.
     same change.
 - **Impact:** a client that relies on `If-None-Match: *` to create a key
   once, or on If-Match to change the version it read, on a bucket whose
-  versioning is enabled, and on main, the tentacle branch and the umbrella
+  versioning is enabled, and on main at 8aa24c51928, the tentacle branch and the
+  umbrella
   branch on one whose versioning is suspended, can have its write accepted though another
   writer created or changed the key first. Every version written is kept,
   though on a suspended bucket the null version holds only the last head
@@ -29015,7 +29041,7 @@ Every new entry adds its row to this table, in document order.
   instance. That delete writes a delete marker instead of removing the
   version, and the bucket is then removed without an emptiness check, so
   the version's RADOS objects outlive it. A regression on squid in
-  v19.2.3 and on main in v20.0.0, so v20.2.4 has it from its first
+  v19.2.3 and on main in v20.0.0 (485020f97b0), so v20.2.4 has it from its first
   release: v19.2.2's and v18.2.8's `rgw_remove_object` name such an entry
   `null`. Not security-relevant:
   only an admin request reaches it, and what it leaves is out of reach of
@@ -30141,7 +30167,8 @@ Every new entry adds its row to this table, in document order.
   The run's controls held: on a key whose current version is the null
   version the request removes that version's tags, as S3 does, and a
   DELETE naming the current version's id removes its tags. Not established:
-  Squid on a cluster, main on a cluster, lifecycle tag filters, the Swift
+  Squid on a cluster, main on a cluster (its source is checked at
+  8aa24c51928), lifecycle tag filters, the Swift
   and admin callers of `delete_obj_attrs`, and what `bucket check --fix`
   makes of the phantom.
 - **Releases:** reproduced at v20.2.4 on a disposable cluster by
@@ -31260,6 +31287,6 @@ Every new entry adds its row to this table, in document order.
   [ceph/ceph#48175](https://github.com/ceph/ceph/pull/48175), which added
   the walk, and [#60000](https://tracker.ceph.com/issues/60000) and
   [ceph/ceph#71039](https://github.com/ceph/ceph/pull/71039), which put the
-  read under the daemon's lock on main.
+  read under the daemon's lock on main (checked at 8aa24c51928).
 - **Found:** the service-map research for rgw-go, 2026-10-30, reading what
   a registration must carry. Derived from the source, not reproduced.

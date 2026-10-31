@@ -12,14 +12,16 @@ import (
 	"os/exec"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
 
 // Checker checks citations against a clone of ceph/ceph. It reads the clone
-// only through git rev-parse, git config, git cat-file and git ls-tree, and
-// caches every ref it resolves, every file it reads and every tree it lists,
-// so that each is asked of git once.
+// only through git rev-parse, git config, git cat-file and git ls-tree, as
+// mainCommits does through git merge-base --is-ancestor too, and caches every
+// ref it resolves, every file it reads and every tree it lists, so that each
+// is asked of git once.
 type Checker struct {
 	dir   string
 	refs  map[string]resolved
@@ -139,6 +141,22 @@ func formProblem(cite Citation) string {
 		return fmt.Sprintf("path %s is not a clean path from the repository's root", cite.Path)
 	}
 	return ""
+}
+
+// branchNames are the refs --form-only, which has no clone to ask, takes for
+// a branch: HEAD, main, master and ceph's release branches, by codename.
+var branchNames = []string{
+	"head", "main", "master", "squid", "tentacle", "umbrella", "reef", "quincy", "pacific", "octopus", "nautilus",
+	"mimic", "luminous",
+}
+
+// branchRefProblem returns why a citation whose ref is one of branchNames
+// fails under --form-only, as the clone refuses a branch, or "".
+func branchRefProblem(cite Citation) string {
+	if !slices.Contains(branchNames, strings.ToLower(cite.Ref)) {
+		return ""
+	}
+	return fmt.Sprintf("ref %s names a branch, which moves: cite a tag or a commit id", cite.Ref)
 }
 
 // Check returns why a citation is wrong, or "" when it holds, whatever its

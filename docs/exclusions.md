@@ -40,7 +40,8 @@ day with the rgw-rs session, which splits by layer:
 - Object-class requests: encoded at the same cluster-release version, so
   that request shapes added in Tentacle are reachable on Tentacle OSDs.
 - Object-class replies: decoded from the Squid version up to the newest
-  main writes. Stored index, OLH, GC, usage and lifecycle records are
+  main writes (checked at 8aa24c51928). Stored index, OLH, GC, usage and
+  lifecycle records are
   written and re-encoded by the OSD's class at that OSD's version, so a
   reply never carries an older stored encoding. The one exception is the
   `bi_*` methods, which return an entry's stored bytes. Of them rgw-go
@@ -305,8 +306,8 @@ store settings have no effect.
 What: the background worker that scans bucket stats, decides a bucket
 needs resharding, and executes the reshard.
 
-Why: off the hot path; roughly 1.4k lines in Squid and 2k in main; fully
-substitutable by `radosgw-admin bucket reshard` and
+Why: off the hot path; roughly 1.4k lines in Squid and 2k in main at
+8aa24c51928; fully substitutable by `radosgw-admin bucket reshard` and
 `radosgw-admin reshard process`, which Rook's toolbox already ships.
 
 Still required, and this is not optional: the reshard protocol on the
@@ -4918,7 +4919,8 @@ v20.2.4 tags, rgw-go does the following.
     as Amazon S3 matches them", above): an Origin that main's wildcard match
     admits only through an overlap of a pattern's prefix and suffix,
     through its split at spaces and tabs, or through the first pieces of a
-    member with more than one `*`, is served on main and refused here. Main
+    member with more than one `*`, is served on main at 8aa24c51928 and
+    refused here. Main
     admits `axb` for `a*b*`, which rgw-go matches only as itself; only a
     directly written attr can hold such a member, as PutBucketCors refuses
     it. Its Access-Control-Request-Method, which still chooses the
@@ -4952,9 +4954,9 @@ v20.2.4 tags, rgw-go does the following.
     browser's PutBucketCors still replaces it, since nothing refuses that
     request before its write;
   - every route is checked, POST object and the website endpoint included,
-    as on main;
-  - main also lets through a request that its `rgw_gcors_*` options allow,
-    which neither floor has and rgw-go does not read.
+    as on main at 8aa24c51928;
+  - main at 8aa24c51928 also lets through a request that its `rgw_gcors_*`
+    options allow, which neither floor has and rgw-go does not read.
 
   The refusal binds a browser's cross-origin fetch, and any cross-origin
   request of its other than a GET or HEAD, which carry an Origin. A
@@ -6936,8 +6938,8 @@ rgw-go does the following.
   rgw-go makes Tentacle's exception on both releases, since it serves
   single-object checksums on Squid too (`postpolicy.Policy.Check`). It
   names the algorithms as `cksum.ParseName` does, so it also excepts
-  `xxhash3`, main's name for Tentacle's `xxh3`, which the write then
-  refuses, where Tentacle needs a condition for it; main's `md5`,
+  `xxhash3`, main's name at 8aa24c51928 for Tentacle's `xxh3`, which the write
+  then refuses, where Tentacle needs a condition for it; main's `md5`,
   `xxhash64` and `xxhash128` need a condition, as on Tentacle. It needs
   the prefix at the start of the name and the whole rest to be the
   algorithm's name, where Tentacle finds the prefix anywhere in the name
@@ -10959,8 +10961,9 @@ does the following.
   A second conditional null write is the one interleaving the floors refuse
   and rgw-go refuses only within its bound: their check reads the head the
   first wrote, which exists for `If-None-Match: *` and holds the first's
-  ETag for an If-Match. Main and the tentacle branch after v20.2.4 follow the
-  OLH for that check, and let both through (`docs/ceph-upstream-bugs.md`,
+  ETag for an If-Match. Main at 8aa24c51928 and the tentacle branch after
+  v20.2.4 follow the OLH for that check, and let both through
+  (`docs/ceph-upstream-bugs.md`,
   "[radosgw's conditional versioned write checks its condition once and
   links
   unguarded](ceph-upstream-bugs.md#radosgws-conditional-versioned-write-checks-its-condition-once-and-links-unguarded)").
@@ -11290,8 +11293,8 @@ does the following.
   among them, is 400 BadDigest, and two such headers are 400
   InvalidRequest, with nothing written. A Tentacle radosgw takes the first
   header it finds from `crc32` to `blake3`, so it never reads `crc64nvme`
-  or main's types, compares that one with the combination, and ignores the
-  others
+  or main's types at 8aa24c51928, compares that one with the combination, and
+  ignores the others
   ([rgw_cksum_pipe.h:120-136](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L120-L136),
   [rgw_op.cc:7295-7341](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7295-L7341)).
   A completion of an upload without a checksum type, every Squid upload
@@ -12800,7 +12803,8 @@ reads one version's index entry with it, and `repair_olh` a name's OLH
 entry. rgw-go reads those, and one version's entries for its own lookups,
 up to three reads for `null` in the class's `read_key_entry` order;
 `bi_put`, `bi_list` and the repair paths are out on both sides. Feature
-level: both decode class replies up to what main writes. For driver-level
+level: both decode class replies up to what main writes (checked at
+8aa24c51928). For driver-level
 types both gateways
 follow the same rule, decode every version and encode at the cluster
 release's version, adopted for rgw-rs on 2026-09-25, so on Tentacle as on

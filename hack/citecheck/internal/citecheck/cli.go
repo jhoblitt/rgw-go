@@ -21,24 +21,28 @@ import (
 // neither --ceph, CITECHECK_CEPH nor the config file names one.
 const defaultCeph = "/home/jhoblitt/github/ceph"
 
-// errFailed is Run's error when a citation does not hold, errLinksFailed
-// --content's when a link fails, and errStale when the list of ceph's
-// files differs from the clone's.
+// errFailed is Run's error when a citation does not hold, errClaimsFailed
+// when a registry's claim about ceph main names no main commit,
+// errLinksFailed --content's when a link fails, and errStale when the list
+// of ceph's files differs from the clone's.
 var (
-	errFailed      = errors.New("citations failed")
-	errLinksFailed = errors.New("links failed")
-	errStale       = errors.New("is stale")
+	errFailed       = errors.New("citations failed")
+	errClaimsFailed = errors.New("main claims name no main commit")
+	errLinksFailed  = errors.New("links failed")
+	errStale        = errors.New("is stale")
 )
 
 // ExitStatus returns the exit status for an error Run returned: 0 for none,
-// 1 when a citation does not hold or the list of ceph's files is stale, and
-// 2 for anything else: a refused command line, a file that cannot be read,
-// or a clone git cannot read.
+// 1 when a citation does not hold, a registry's claim about ceph main names
+// no main commit or the list of ceph's files is stale, and 2 for anything
+// else: a refused command line, a file that cannot be read, or a clone git
+// cannot read.
 func ExitStatus(err error) int {
 	switch {
 	case err == nil:
 		return 0
-	case errors.Is(err, errFailed), errors.Is(err, errLinksFailed), errors.Is(err, errStale):
+	case errors.Is(err, errFailed), errors.Is(err, errClaimsFailed), errors.Is(err, errLinksFailed),
+		errors.Is(err, errStale):
 		return 1
 	default:
 		return 2
@@ -257,10 +261,11 @@ func isGo(name string) bool { return strings.HasSuffix(name, ".go") }
 
 // check reads every file before it checks any, so that a file that cannot
 // be read refuses the run before anything is printed, then prints each
-// citation that does not hold and the count of those checked and failed.
-// Under fix it then writes back each file it rewrote a citation in, and
-// counts the citations rewritten. With plain set, a markdown file's plain
-// citations are read too.
+// citation that does not hold and the count of those checked and failed, and
+// in a registry each claim about ceph main that names no main commit and the
+// count of the claims checked and failed. Under fix it then writes back each
+// file it rewrote a citation in, and counts the citations rewritten. With
+// plain set, a markdown file's plain citations are read too.
 func check(ctx context.Context, ceph string, m mode, plain bool, files []string, out io.Writer) error {
 	docs := make([][]byte, len(files))
 	for i, name := range files {
@@ -271,13 +276,24 @@ func check(ctx context.Context, ceph string, m mode, plain bool, files []string,
 		docs[i] = data
 	}
 	var c *Checker
+	// mc checks, with the clone, that a registry's claims about ceph main
+	// name a commit on ceph main.
+	var mc *mainCommits
 	if m != formOnly {
 		var err error
 		if c, err = NewChecker(ctx, ceph); err != nil {
 			return err
 		}
+		if slices.ContainsFunc(files, isRegistry) {
+			if mc, err = newMainCommits(ctx, c); err != nil {
+				return err
+			}
+		}
 	}
 	checked, failed, rewritten := 0, 0, 0
+	// registries reports whether a file was one of registryDocs, whose claims
+	// about ceph main are counted in claims and claimsFailed.
+	registries, claims, claimsFailed := false, 0, 0
 	outs, counts := make([][]byte, len(files)), make([]int, len(files))
 	for i, name := range files {
 		if isGo(name) {
@@ -323,13 +339,23 @@ func check(ctx context.Context, ceph string, m mode, plain bool, files []string,
 			}
 			checked += res.checked
 			failures = append(failures, res.failures...)
-			slices.SortStableFunc(failures, func(a, b goFailure) int { return cmp.Compare(a.line, b.line) })
 			edits, n = append(edits, res.edits...), n+res.rewritten
 		}
+		var unnamed []goFailure
+		if isRegistry(name) {
+			k, f, err := mainClaims(ctx, mc, docs[i])
+			if err != nil {
+				return fmt.Errorf("%s: %w", name, err)
+			}
+			registries, claims, unnamed = true, claims+k, f
+			failures = append(failures, unnamed...)
+		}
+		slices.SortStableFunc(failures, func(a, b goFailure) int { return cmp.Compare(a.line, b.line) })
 		for _, f := range failures {
-			failed++
 			fmt.Fprintf(out, "%s:%d: %s: %s\n", name, f.line, f.text, f.reason)
 		}
+		failed += len(failures) - len(unnamed)
+		claimsFailed += len(unnamed)
 		if len(edits) > 0 {
 			outs[i], counts[i] = rewrite(docs[i], edits), n
 		}
@@ -350,10 +376,17 @@ func check(ctx context.Context, ceph string, m mode, plain bool, files []string,
 	} else {
 		fmt.Fprintf(out, "citations checked: %d, failed: %d\n", checked, failed)
 	}
-	if failed > 0 {
-		return fmt.Errorf("%d of %d %w", failed, checked, errFailed)
+	if registries {
+		fmt.Fprintf(out, "main claims checked: %d, failed: %d\n", claims, claimsFailed)
 	}
-	return nil
+	var errs []error
+	if failed > 0 {
+		errs = append(errs, fmt.Errorf("%d of %d %w", failed, checked, errFailed))
+	}
+	if claimsFailed > 0 {
+		errs = append(errs, fmt.Errorf("%d of %d %w", claimsFailed, claims, errClaimsFailed))
+	}
+	return errors.Join(errs...)
 }
 
 // judge returns why a citation fails in mode m, or "" when it holds. Under
@@ -364,7 +397,7 @@ func judge(ctx context.Context, c *Checker, m mode, cite *Citation) (string, err
 	case cite.Form == CodeSpan && m != fix:
 		return notALink, nil
 	case m == formOnly:
-		return formProblem(*cite), nil
+		return cmp.Or(formProblem(*cite), branchRefProblem(*cite)), nil
 	}
 	reason, err := c.Check(ctx, *cite)
 	if err != nil || reason != "" || cite.Form != CodeSpan {

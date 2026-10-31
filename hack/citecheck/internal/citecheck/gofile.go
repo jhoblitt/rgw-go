@@ -122,6 +122,8 @@ func checkGo(ctx context.Context, c *Checker, m mode, name string, src []byte) (
 						reason = notALink + ": it is in a code block, which godoc does not link: write it outside the code block"
 					case reason == "" && m != formOnly:
 						reason, err = c.Check(ctx, it.link)
+					case reason == "":
+						reason = branchRefProblem(it.link)
 					}
 				case fileItem, contItem:
 					reason, err = g.plain(gi, pi, ii)
