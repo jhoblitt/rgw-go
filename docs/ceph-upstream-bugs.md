@@ -16679,9 +16679,9 @@ Every new entry adds its row to this table, in document order.
   passes and links over the newer one. A replay that another writer
   refuses, `update_olh`'s ECANCELED, becomes ENOENT, and the write then
   evaluates on no current version
-  ([rgw_rados.cc:8989-8995](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8989-L8995) and
+  ([rgw_rados.cc:8987-8995](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8987-L8995) and
   [rgw_rados.cc:3190-3191](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3190-L3191),
-  [rgw_rados.cc:9735-9741](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9735-L9741) and
+  [rgw_rados.cc:9733-9741](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9733-L9741) and
   [rgw_rados.cc:3287-3288](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3287-L3288)).
 - **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
 - **rgw-go:** `followOLH` (`internal/driver/olh_head.go`) resolves the
@@ -24223,7 +24223,7 @@ Every new entry adds its row to this table, in document order.
     [subsys.h:62](https://github.com/ceph/ceph/blob/v20.2.4/src/common/subsys.h#L62))
     gathers levels up to 5: `should_gather` tests a line's level against
     the larger of the log and gather levels
-    ([SubsystemMap.h:39](https://github.com/ceph/ceph/blob/v19.2.7/src/log/SubsystemMap.h#L39) and
+    ([SubsystemMap.h:40](https://github.com/ceph/ceph/blob/v19.2.7/src/log/SubsystemMap.h#L40) and
     [SubsystemMap.h:88-91](https://github.com/ceph/ceph/blob/v19.2.7/src/log/SubsystemMap.h#L88-L91),
     [SubsystemMap.h:40](https://github.com/ceph/ceph/blob/v20.2.4/src/log/SubsystemMap.h#L40) and
     [SubsystemMap.h:88-91](https://github.com/ceph/ceph/blob/v20.2.4/src/log/SubsystemMap.h#L88-L91)),
