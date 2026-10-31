@@ -201,6 +201,84 @@ func linkHolds(f *file, from, to int, ids []string) bool {
 	return false
 }
 
+// maxStatementLines bounds how far widened follows a statement that runs on
+// past a link's one line, so that a construct the lexer misreads never
+// stretches a link over a file.
+const maxStatementLines = 30
+
+// controlWords are the keywords whose parenthesis heads a statement rather
+// than a definition.
+var controlWords = map[string]bool{"if": true, "for": true, "while": true, "switch": true, "catch": true}
+
+// widened returns, for a link to one line, the lines that line starts and
+// later lines finish, and what they are, "definition" or "statement": the
+// definition of a function, a class, a struct, a union or an enum whose
+// header starts on it, through the "}" that closes it; or else the statement
+// that starts on it, through the line its ";" is on, as a call whose
+// arguments run on is. For a link to several lines, or a line that starts
+// neither, it returns the link's own lines and "".
+func widened(f *file, from, to int) (wideFrom, wideTo int, what string) {
+	if from != to {
+		return from, to, ""
+	}
+	f.analyze()
+	lo, hi := f.lineStart(from), f.lineEnd(from)
+	for _, b := range f.blocks {
+		if b.head >= lo && b.head < hi && definition(f.code[b.head:b.open]) {
+			return from, f.lineOf(b.close), "definition"
+		}
+	}
+	start := skipBlanks(f.code, lo)
+	if start >= hi || skipBlanks(f.code, f.boundary(start)) != start {
+		return from, to, ""
+	}
+	depth := 0
+	for i := start; i < len(f.code); i++ {
+		switch f.code[i] {
+		case '(', '[':
+			depth++
+		case ')', ']':
+			depth--
+		case '{', '}':
+			return from, to, ""
+		case ';':
+			if depth > 0 {
+				continue
+			}
+			if end := f.lineOf(i); end > from && end-from <= maxStatementLines {
+				return from, end, "statement"
+			}
+			return from, to, ""
+		}
+	}
+	return from, to, ""
+}
+
+// definition reports whether a block's header defines a function, a class, a
+// struct, a union or an enum: a name and a parenthesis after it that closes
+// within the header, the name no control keyword, or the keyword that names
+// the kind. A namespace is no definition here, nor is an extern "C" block,
+// nor a lambda passed to a call, whose call's parenthesis the header leaves
+// open.
+func definition(header string) bool {
+	if scope, names := scopeOf(header); scope {
+		return len(names) > 0 && lastWord(header, "namespace") < 0
+	}
+	if lastWord(header, "enum") >= 0 {
+		return true
+	}
+	before, _, found := strings.Cut(header, "(")
+	if !found || strings.Count(header, "(") != strings.Count(header, ")") {
+		return false
+	}
+	name := strings.TrimRight(before, " \t\n")
+	j := len(name)
+	for j > 0 && isIdent(name[j-1]) {
+		j--
+	}
+	return j < len(name) && !controlWords[name[j:]]
+}
+
 // qualifiedIn reports whether the qualified name id, A::B, stands in s[lo:hi],
 // s being the file's text or its code, as B with a qualifier that agrees with
 // A's, as compatible says: one written before it, or the scopes it is

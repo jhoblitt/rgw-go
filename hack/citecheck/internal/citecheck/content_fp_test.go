@@ -63,6 +63,48 @@ const fixtureLCHelper = `static int shards = 32;
 
 `
 
+// fixtureVer is src/rgw/rgw_fp_ver.cc at both releases: RGWFp::send_response
+// at lines 2-7, which dumps MfaDelete at line 5; RGWFp::set_olh at 9-14,
+// whose call at lines 11-12 passes unmod_since on its second line;
+// RGWFp::send_status at 16-19, which dumps nothing; RGWFp::get_params at
+// 21-29, which calls read_status and sets status_changed; and
+// RGWFp::read_status at 31-34.
+const fixtureVer = `// A fixture for the content specs' one-line links.
+void RGWFp::send_response()
+{
+  dump_start(s);
+  s->formatter->dump_string("MfaDelete", mfa_status);
+  rgw_flush_formatter_and_reset(s, s->formatter);
+}
+
+int RGWFp::set_olh(optional_yield y)
+{
+  int r = olh_init(dpp, bucket_info,
+                   params.unmod_since, y);
+  return r;
+}
+
+void RGWFp::send_status()
+{
+  dump_start(s);
+}
+
+int RGWFp::get_params(optional_yield y)
+{
+  int r = read_status(y);
+  if (r < 0) {
+    return r;
+  }
+  status_changed = true;
+  return 0;
+}
+
+int RGWFp::read_status(optional_yield y)
+{
+  return decode_status(y, &status_changed);
+}
+`
+
 // newFPFixture returns a ceph fixture whose v19.2.6 and v20.2.4, the
 // releases the [S] and [T] markers name, hold the files the specs of the
 // sweep's false positives cite.
@@ -70,6 +112,7 @@ func newFPFixture() *cephFixture {
 	r := newCephFixture()
 	r.write(arnPath, fixtureArn)
 	r.write(lcPath, fixtureLC)
+	r.write(verPath, fixtureVer)
 	r.commit("squid")
 	r.git("tag", "v19.2.6")
 	lines := strings.SplitAfter(fixtureLC, "\n")
@@ -82,6 +125,7 @@ func newFPFixture() *cephFixture {
 const (
 	arnPath = "src/rgw/rgw_fp_arn.h"
 	lcPath  = "src/rgw/rgw_fp_lc.cc"
+	verPath = "src/rgw/rgw_fp_ver.cc"
 )
 
 // lcRuns returns a Go comment that cites lc_process and lc_remove at each
@@ -165,7 +209,50 @@ var _ = Describe("The content of links the sweep's false positives cite", func()
 			lcJoined("v20.2.4"), 3),
 	)
 
+	DescribeTable("lists, rather than fails, a link the sweep found failed though nothing beside it judges its lines",
+		reports,
+		Entry("D6: a one-line link to a function's first line, by a name in its body", "doc.md",
+			"`MfaDelete` must be Enabled or Disabled ([rgw_fp_ver.cc:2]("+cephURL("v19.2.6", verPath, "L2")+")).\n",
+			[]string{"1: " + cephURL("v19.2.6", verPath, "L2") + ": listed: line 2 holds none of MfaDelete, but the " +
+				"definition that starts on it, through line 7, holds one"},
+			"links checked: 1, held: 0, failed: 0, listed: 1", 0),
+		Entry("D6: a one-line link to a call's first line, by a name on the call's next line", "doc.md",
+			"`unmod_since` is passed through ([rgw_fp_ver.cc:11]("+cephURL("v19.2.6", verPath, "L11")+")).\n",
+			[]string{"1: " + cephURL("v19.2.6", verPath, "L11") + ": listed: line 11 holds none of unmod_since, but the " +
+				"statement that starts on it, through line 12, holds one"},
+			"links checked: 1, held: 0, failed: 0, listed: 1", 0),
+		Entry("D6 (review D6-1), documented: a one-line link drifted onto a caller's first line, its body naming them",
+			"doc.md", "`status_changed` is set by `read_status` ([rgw_fp_ver.cc:21]("+cephURL("v19.2.6", verPath, "L21")+
+				")).\n",
+			[]string{"1: " + cephURL("v19.2.6", verPath, "L21") + ": listed: line 21 holds none of status_changed, " +
+				"read_status, but the definition that starts on it, through line 29, holds one"},
+			"links checked: 1, held: 0, failed: 0, listed: 1", 0),
+		Entry("D6 (review D6-2), documented: a one-line link drifted onto a caller's first line, its body calling it",
+			"doc.md", "The status is decoded by `read_status` ([rgw_fp_ver.cc:21]("+cephURL("v19.2.6", verPath, "L21")+
+				")).\n",
+			[]string{"1: " + cephURL("v19.2.6", verPath, "L21") + ": listed: line 21 holds none of read_status, but the " +
+				"definition that starts on it, through line 29, holds one"},
+			"links checked: 1, held: 0, failed: 0, listed: 1", 0),
+	)
+
 	DescribeTable("still fails a wrong link of the same shape", reports,
+		Entry("D6: a one-line link to the first line of a function whose body lacks the name", "doc.md",
+			"`MfaDelete` must be Enabled or Disabled ([rgw_fp_ver.cc:16]("+cephURL("v19.2.6", verPath, "L16")+")).\n",
+			[]string{"1: " + cephURL("v19.2.6", verPath, "L16") + ": line 16 of src/rgw/rgw_fp_ver.cc at v19.2.6 holds " +
+				"none of the identifiers named beside it, MfaDelete, which stand elsewhere in it; the nearest line that " +
+				"holds one is 5"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
+		Entry("D6: a one-line link to a statement that ends on its line", "doc.md",
+			"`MfaDelete` must be Enabled or Disabled ([rgw_fp_ver.cc:4]("+cephURL("v19.2.6", verPath, "L4")+")).\n",
+			[]string{"1: " + cephURL("v19.2.6", verPath, "L4") + ": line 4 of src/rgw/rgw_fp_ver.cc at v19.2.6 holds " +
+				"none of the identifiers named beside it, MfaDelete, which stand elsewhere in it; the nearest line that " +
+				"holds one is 5"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
+		Entry("D6 (review D6-3): a one-line link whose own text names what the definition its line starts calls",
+			"doc.md", "The status is decoded first ([`read_status`]("+cephURL("v19.2.6", verPath, "L21")+")).\n",
+			[]string{"1: " + cephURL("v19.2.6", verPath, "L21") + ": line 21 of src/rgw/rgw_fp_ver.cc at v19.2.6 holds " +
+				"none of the identifiers its text names, read_status; the nearest line that holds one is 23"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
 		Entry(`D7: "A at v19.2.6 and B, C at v20.2.4 and D", C linked at v19.2.6`, "fix.go",
 			lcRuns("v19.2.6", "v19.2.6"),
 			[]string{"6: " + cephURL("v19.2.6", lcPath, "L2-L5") + `: its text names v20.2.4, by the "at v20.2.4" after ` +

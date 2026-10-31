@@ -625,6 +625,16 @@
 // them, the link's lines exactly and none either side, or in the header of a
 // block that encloses them, as a function's does its body.
 //
+// A link to one line may stand for what that line starts: the definition of
+// a function, a class, a struct, a union or an enum whose header starts on
+// it, through the "}" that closes it; or else the statement that starts on
+// it, through the line of its ";", 30 lines on at most, as a call whose
+// arguments run on does. When its line holds none of the names beside it and
+// what the line starts holds one, the link is listed, not held, since a link
+// that drifted onto another definition's first line would hold so too. A
+// link whose own text names the identifiers says which line it means, so it
+// fails when that line holds none of them.
+//
 // A link whose own text names identifiers fails when its lines hold none of
 // them. One whose identifiers are named beside it fails when its lines hold
 // none of those its file holds. When its file holds none, it fails when the
