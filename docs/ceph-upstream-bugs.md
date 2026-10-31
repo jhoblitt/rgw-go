@@ -300,6 +300,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's zstd compress leaks its compression stream when libzstd fails](#radosgws-zstd-compress-leaks-its-compression-stream-when-libzstd-fails) | [#73522](https://tracker.ceph.com/issues/73522) | [ceph/ceph#65915](https://github.com/ceph/ceph/pull/65915) |  |
 | [radosgw's rate limiter answers SlowDown for a rate-limit attr that does not decode](#radosgws-rate-limiter-answers-slowdown-for-a-rate-limit-attr-that-does-not-decode) | pending | pending | ✓ |
 | [radosgw v21 writes rate limits that Squid and Tentacle misread without error](#radosgw-v21-writes-rate-limits-that-squid-and-tentacle-misread-without-error) | pending | pending | ✓ |
+| [Main's radosgw reads an empty account when its rate limiter gives tokens back](#mains-radosgw-reads-an-empty-account-when-its-rate-limiter-gives-tokens-back) | none | none | ✓ |
 | [radosgw stores a COMPOSITE CRC upload's checksum as a full-object CRC](#radosgw-stores-a-composite-crc-uploads-checksum-as-a-full-object-crc) | pending | pending | ✓ |
 | [radosgw reports a single-part CRC upload's full-object checksum as COMPOSITE](#radosgw-reports-a-single-part-crc-uploads-full-object-checksum-as-composite) | pending | pending | ✓ |
 | [radosgw's bucket instance JSON drops a Swift container's web listing settings](#radosgws-bucket-instance-json-drops-a-swift-containers-web-listing-settings) | pending | pending | ✓ |
@@ -16063,6 +16064,131 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 Task BC-5, fix round 3, 2026-10-15, checking the
   record's encoding for the rate limiter's -EIO entry; derived from the
   source, not reproduced.
+
+## Main's radosgw reads an empty account when its rate limiter gives tokens back
+
+- **Kind:** defect, memory safety, on main only and in no tag. Possibly
+  security-relevant: sent to rgw-bug-reproduction on 2026-10-30, rating
+  pending. The rate limiter's token giveback reads the account of an
+  identity that has none, `account->id` on an empty `std::optional`. Every
+  request whose identity belongs to no account and which a user, bucket or
+  anonymous limit refuses reaches it, unauthenticated requests included
+  when the anonymous limit is enabled. A build with `_GLIBCXX_ASSERTIONS`
+  aborts radosgw there, and any other build has undefined behaviour.
+  Unreproduced: derived from the source by code analysis alone.
+- **Evidence:** paths are under `src/`, at main 8aa24c51928 (2026-10-30).
+  - The defect. `rate_limit` binds the identity's account as
+    `const std::optional<RGWAccountInfo>& account`
+    ([rgw/rgw_process.cc:118](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_process.cc#L118)),
+    charges the account's limit only `if (account)`
+    ([:178-180](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_process.cc#L178-L180)),
+    and then, under `if (!limit_account && (limit_bucket || limit_user))`,
+    runs `std::string account_key = account->id;` to give the account's
+    tokens back
+    ([:209-214](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_process.cc#L209-L214)).
+    Without an account `limit_account` stays 0, so a user or bucket
+    refusal takes the branch and dereferences the empty optional.
+  - The reach.
+    - An identity belongs to no account unless its user does: the S3 key
+      engine loads an account only for a user whose `account_id` is set
+      ([rgw/rgw_auth.cc:159-164](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_auth.cc#L159-L164),
+      called from
+      [rgw/rgw_rest_s3.cc:7302-7305](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L7302-L7305)),
+      the anonymous engine passes `std::nullopt` as the account
+      ([rgw/rgw_auth.cc:1387-1391](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_auth.cc#L1387-L1391);
+      the fourth parameter of `create_apl_local`,
+      [rgw/rgw_auth.h:805-813](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_auth.h#L805-L813)),
+      and `LocalApplier::get_account` returns what it was given
+      ([rgw/rgw_auth.h:797-799](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_auth.h#L797-L799)).
+    - `limit_user` is the user's own limit when its attr enables one, else
+      the global user limit, and for the anonymous user the global
+      anonymous limit when that is enabled
+      ([rgw/rgw_process.cc:152-171](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_process.cc#L152-L171),
+      [:183-185](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_process.cc#L183-L185)).
+      `limit_bucket` is the bucket's limit, or the global bucket limit, for
+      a request that names a bucket
+      ([:187-207](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_process.cc#L187-L207)).
+      Each is the delay `should_rate_limit` returns, nonzero once the limit
+      is spent
+      ([rgw/rgw_ratelimit.h:311-322](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_ratelimit.h#L311-L322)).
+    - The global limits come from the current period
+      (`RadosStore::get_ratelimit`,
+      [rgw/driver/rados/rgw_sal_rados.cc:2770-2776](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_sal_rados.cc#L2770-L2776));
+      `radosgw-admin global ratelimit set --ratelimit-scope=anonymous`
+      sets the anonymous one
+      ([rgw/radosgw-admin/radosgw-admin.cc:4965-4966](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/radosgw-admin/radosgw-admin.cc#L4965-L4966)).
+    - `rate_limit` runs for every request but a health check or a system
+      request
+      ([rgw/rgw_process.cc:97-100](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_process.cc#L97-L100)),
+      before the op executes
+      ([:395-398](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_process.cc#L395-L398)).
+  - The blast radius. libstdc++'s `std::optional::operator->` checks that
+    the optional holds a value with `__glibcxx_assert` (GCC 15's
+    `<optional>`, read locally), which aborts the process in a build with
+    `-D_GLIBCXX_ASSERTIONS`. main's RPM build takes its flags from
+    `$RPM_OPT_FLAGS`
+    ([ceph.spec.in:1718-1719](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/ceph.spec.in#L1718-L1719)),
+    which carried the flag into the v20.2.4 el9 release binary, as
+    "[radosgw's checksum decode overruns its digest buffer and its type
+    table](#radosgws-checksum-decode-overruns-its-digest-buffer-and-its-type-table)"
+    records; Ceph's own CMake adds it only to a Debug build
+    ([src/CMakeLists.txt:218-220](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/CMakeLists.txt#L218-L220)).
+    Without the flag the copy reads a `std::string` from optional storage
+    that was never constructed: undefined behaviour.
+  - The code came with 6563d8c2c23, "RGW: support IAM account rate
+    limiter", merged through
+    [ceph/ceph#71681](https://github.com/ceph/ceph/pull/71681) (merge
+    eb3b634bccd, 2026-10-29); `git tag --contains 6563d8c2c23` names no
+    tag. v19.2.7 and v20.2.4 give back only the user's tokens, by the
+    user's name, and read no account there
+    ([rgw/rgw_process.cc:158](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L158),
+    [rgw/rgw_process.cc:158](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L158)).
+- **Impact:** on a main build where any user, bucket or anonymous rate
+  limit is enabled, a requester outside an account that exceeds it, an
+  anonymous one where the anonymous limit is on, aborts a radosgw built
+  with `_GLIBCXX_ASSERTIONS`, ending every request it serves; each further
+  refusal does so again once it restarts. Without the flag the behaviour is
+  undefined. Requests of an account's users and roles, and system
+  requests, do not reach it.
+- **Releases:** main only: checked at 8aa24c51928 (2026-10-30); in no tag.
+  v19.2.7 and v20.2.4 do not have the code.
+- **rgw-go:** not affected: it has no rate limiter yet. Phase 3's must give
+  an account's tokens back only for a request whose identity has an
+  account.
+- **Upstream:** none found; unfiled. Searched 2026-10-30, each method first
+  run on a known match:
+  - ceph/ceph pull requests, through `gh search prs` (ceph/ceph has GitHub
+    issues disabled), which finds #71681 by `IAM account rate limiter` and
+    the open [ceph/ceph#70008](https://github.com/ceph/ceph/pull/70008),
+    distributed rate-limit backends that touch neither `rgw_process.cc` nor
+    the account giveback, by `giveback_tokens`. Terms: `71681` and
+    `ratelimit` updated since 2026-10-29 (#71681 alone), `account rate
+    limit` (#71681 and a 2023 accounts PR), `rate limit crash` (none),
+    `rate limit` updated since 2026-10-29 and `rate limit tokens` since
+    2026-09-01 (backports and unrelated work), `account->id` (unrelated
+    account PRs).
+  - #71681's six review comments and its conversation: none names the
+    giveback or an empty account.
+  - Every ceph/ceph pull request created from 2026-10-29 on, 106 at the
+    search, by the files it touches: none touches `src/rgw/rgw_process.cc`
+    or `src/rgw/rgw_ratelimit.h`; the method finds #71681 itself. The
+    last change to `rgw_process.cc` on main is still #71681's merge at
+    main 25b65002899 (2026-10-31, read with `gh api`).
+  - tracker.ceph.com, every project's issues of every status through the
+    issue filter "any searchable field contains", which finds
+    [#78006](https://tracker.ceph.com/issues/78006), #70008's feature, by
+    `giveback_tokens`. Terms: `account->id`, `ratelimit_retry_after` and
+    `rate_limit account` (none); `account rate limiter`, `ratelimit
+    account`, `get_account`, `rate_limit`, `ratelimit`, `rate limit crash`,
+    `IAM account rate` and `account rate limit`, whose hits name no such
+    fault. The last two find the account rate limit's feature request,
+    [#69162](https://tracker.ceph.com/issues/69162), and its duplicate
+    [#78605](https://tracker.ceph.com/issues/78605).
+- **Found:** the ceph main sweep's second round, 2026-10-30, reading main's
+  `rate_limit` for the account inputs of "[radosgw's rate limiter answers
+  SlowDown for a rate-limit attr that does not
+  decode](#radosgws-rate-limiter-answers-slowdown-for-a-rate-limit-attr-that-does-not-decode)";
+  derived from the source, not reproduced.
 
 ## radosgw stores a COMPOSITE CRC upload's checksum as a full-object CRC
 
