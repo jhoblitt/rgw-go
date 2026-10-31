@@ -72,6 +72,25 @@ Each fix below that is not this document lands on main before phase 2's tasks st
 | PP-26 | An agent re-ran a command the permission classifier had refused | Major | subagent-driven-development; project CLAUDE.md | open |
 | PP-27 | Review findings became new tasks instead of being fixed in their task | Major | subagent-driven-development; the rulings brief; project CLAUDE.md | open |
 | PP-28 | The auto-mode classifier stopped pushes and merges the owner had cleared | Major | the owner's settings permission rules; github-conventions' commits.md; subagent-driven-development | open |
+| PP-29 | The controller's own checks ran with no host load budget | Major | subagent-driven-development; project CLAUDE.md | open |
+| PP-30 | Corrections reasoned one step away from the artifact they corrected | Minor | the controller's rulings brief; the message template for leads sent to another session | open |
+| PP-31 | Security leads opened with the impact, which invites a by-design reply | Minor | the dispatch environment's registry rule; the task review brief; code-conventions' bug-reports.md | open |
+| PP-32 | A security property of a registered defect was carried, not worked | Major | writing-plans; the plan review brief; the registry's entry rules | open |
+| PP-33 | Entering a worktree isolated every agent in the session | Major | subagent-driven-development; the global CLAUDE.md's worktree rule | open |
+| PP-34 | An upstream guard was cited without checking that it runs | Major | the task review brief; code-conventions' bug-reports.md; the registry's entry rules | open |
+| PP-35 | Host resources stayed held after the work that took them | Minor | the controller's build wrapper; the rooket skill's teardown rule | open |
+| PP-36 | A dispatch asked an agent for writes its role forbids | Minor | subagent-driven-development; the dispatch environment | open |
+| PP-37 | The harness refused a subagent's write of its own report | Minor | the dispatch environment's report contract | open |
+| PP-38 | A review the plan required was skipped at merge | Major | subagent-driven-development; the controller's ship scripts | open |
+| PP-39 | A seam fixed before its consumers existed hid the state it hands them | Minor | writing-plans; the plan review's checklist | open |
+| PP-40 | GitHub's views lagged a push, and the merge tooling read the lag as a result | Minor | github-conventions' "Watching CI"; the controller's merge scripts | open |
+| PP-41 | The controller's sandboxed and unsandboxed commands saw different temporary directories | Minor | the global CLAUDE.md's sandbox notes; the controller's helpers | open |
+| PP-42 | The integration suite failed every night for two weeks, and nothing watched it | Major | subagent-driven-development; github-conventions' "Watching CI"; writing-plans | open |
+| PP-43 | The registries' claims about ceph main named no commit, so they aged silently | Minor | the registries' entry rules; hack/citecheck | open |
+| PP-44 | The citation content check's false positives hid its real errors | Minor | hack/citecheck; the CI workflows; the plan and review briefs | open |
+| PP-45 | A wait loop matched its own command line and never ended | Minor | subagent-driven-development's scripts | open |
+| PP-46 | Scratch in /tmp exhausted the build host's per-user quota | Minor | the dispatch environment; the controller's build wrapper | open |
+| PP-47 | A general standing instruction could not stand in for a workflow acknowledgement | Major | the owner; the merge gate's acknowledgement check; subagent-driven-development | open |
 
 ## PP-1: Plan code treated as binding mandated a data-loss race
 
