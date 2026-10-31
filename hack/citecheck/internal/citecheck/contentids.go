@@ -127,6 +127,22 @@ func besideRun(norm string, pos, lo, hi int) string {
 	return norm[from:start] + " " + norm[end+1:to]
 }
 
+// cppKeywords are C++'s keywords, which name no code of their own and stand
+// in any file's code, so that a file whose lines hold one is no evidence that
+// a link cites the wrong file.
+var cppKeywords = func() map[string]bool {
+	m := map[string]bool{}
+	for w := range strings.FieldsSeq(`alignas alignof and asm auto bool break case catch char class const consteval
+	constexpr constinit const_cast continue co_await co_return co_yield decltype default delete do double
+	dynamic_cast else enum explicit export extern false final float for friend goto if inline int long mutable
+	namespace new noexcept not nullptr operator or override private protected public register reinterpret_cast
+	requires return short signed sizeof static static_assert static_cast struct switch template this thread_local
+	throw true try typedef typeid typename union unsigned using virtual void volatile wchar_t while`) {
+		m[w] = true
+	}
+	return m
+}()
+
 // reEscape is a markdown backslash escape, a backslash before an ASCII
 // punctuation character.
 var reEscape = regexp.MustCompile(`\\([[:punct:]])`)

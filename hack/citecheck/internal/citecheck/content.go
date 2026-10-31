@@ -328,7 +328,8 @@ func (lc *linkChecker) namedFile(it *goItem, continued bool) (name, how string) 
 // name none of whose parts is generic, in those the rest of its section
 // does, where a common name would stand in some file's lines by chance. A
 // file that holds one only on other lines is no evidence: a name beside a
-// link is as often an error table's or a neighboring citation's.
+// link is as often an error table's or a neighboring citation's. Nor is a
+// C++ keyword, which stands in any file's code.
 func (lc *linkChecker) elsewhere(ctx context.Context, commit string, cite Citation, ids []string) (string, error) {
 	gi, pi := lc.at[0], lc.at[1]
 	scans := lc.d.groups[gi]
@@ -339,6 +340,7 @@ func (lc *linkChecker) elsewhere(ctx context.Context, commit string, cite Citati
 		}
 	}
 	seen := map[string]bool{cite.Path: true}
+	ids = slices.DeleteFunc(slices.Clone(ids), func(id string) bool { return cppKeywords[id] })
 	qualified := slices.DeleteFunc(slices.Clone(ids), func(id string) bool {
 		parts := strings.Split(id, "::")
 		return len(parts) < 2 || slices.ContainsFunc(parts, func(p string) bool { return genericWords[strings.ToLower(p)] })

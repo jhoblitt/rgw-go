@@ -641,12 +641,16 @@
 // same lines of another file at its ref hold one: a file its paragraph links
 // or names, or, for a qualified name none of whose parts is generic, one the
 // rest of its section does; and it is listed otherwise. A file that holds one
-// on other lines is no evidence. A link beside which nothing counts as an
-// identifier is listed too, not failed. A link that would be listed fails
-// instead when its text writes lines alone, as a continuation does, and the
-// nearest link, citation or file name before it in its section is of another
-// file. A failure for its lines names the nearest line that holds one, and
-// whether the same lines at v19.2.6 or v20.2.4 do.
+// on other lines is no evidence; nor is a C++ keyword, such as namespace,
+// which stands in any file's code. A file another link of the same run cites
+// is evidence too, though there its same lines may hold a common name of that
+// file by chance: nothing tells that from a link of the run to the wrong
+// file, so a reviewer reads such a failure. A link beside which nothing
+// counts as an identifier is listed too, not failed. A link that would be
+// listed fails instead when its text writes lines alone, as a continuation
+// does, and the nearest link, citation or file name before it in its section
+// is of another file. A failure for its lines names the nearest line that
+// holds one, and whether the same lines at v19.2.6 or v20.2.4 do.
 //
 // The check is opt-in: neither make check nor CI runs it, since it needs the
 // clone and its lists are for a person to read.

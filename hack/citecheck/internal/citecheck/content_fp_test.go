@@ -105,6 +105,39 @@ int RGWFp::read_status(optional_yield y)
 }
 `
 
+// fixtureAsio is src/rgw/rgw_fp_asio.cc at both releases: ClientIO::init_env
+// at lines 2-7 and ClientIO::flush at 9-13, neither naming RGWEnv.
+const fixtureAsio = `// A fixture for the content specs' runs of two files.
+void ClientIO::init_env(CephContext* cct)
+{
+  for (auto& field : request) {
+    env.set(field.name, field.value);
+  }
+}
+
+void ClientIO::flush()
+{
+  stream.flush();
+  sent = true;
+}
+`
+
+// fixtureEnv is src/rgw/rgw_fp_env.cc at both releases: RGWEnv's
+// constructor and init at lines 3-7, and RGWEnv::set at 9-12.
+const fixtureEnv = `// A fixture for the content specs' runs of two files.
+#include "rgw_fp_env.h"
+RGWEnv::RGWEnv() = default;
+void RGWEnv::init(CephContext* cct)
+{
+  conf.init(cct);
+}
+
+void RGWEnv::set(std::string name, std::string val)
+{
+  env_map[std::move(name)] = std::move(val);
+}
+`
+
 // newFPFixture returns a ceph fixture whose v19.2.6 and v20.2.4, the
 // releases the [S] and [T] markers name, hold the files the specs of the
 // sweep's false positives cite.
@@ -113,6 +146,8 @@ func newFPFixture() *cephFixture {
 	r.write(arnPath, fixtureArn)
 	r.write(lcPath, fixtureLC)
 	r.write(verPath, fixtureVer)
+	r.write(asioPath, fixtureAsio)
+	r.write(envPath, fixtureEnv)
 	r.commit("squid")
 	r.git("tag", "v19.2.6")
 	lines := strings.SplitAfter(fixtureLC, "\n")
@@ -123,9 +158,17 @@ func newFPFixture() *cephFixture {
 }
 
 const (
-	arnPath = "src/rgw/rgw_fp_arn.h"
-	lcPath  = "src/rgw/rgw_fp_lc.cc"
-	verPath = "src/rgw/rgw_fp_ver.cc"
+	arnPath  = "src/rgw/rgw_fp_arn.h"
+	lcPath   = "src/rgw/rgw_fp_lc.cc"
+	verPath  = "src/rgw/rgw_fp_ver.cc"
+	asioPath = "src/rgw/rgw_fp_asio.cc"
+	envPath  = "src/rgw/rgw_fp_env.cc"
+)
+
+var (
+	// asio27 is ClientIO::init_env's lines, and env912 RGWEnv::set's.
+	asio27 = cephURL("v19.2.6", asioPath, "L2-L7")
+	env912 = cephURL("v19.2.6", envPath, "L9-L12")
 )
 
 // lcRuns returns a Go comment that cites lc_process and lc_remove at each
@@ -233,9 +276,41 @@ var _ = Describe("The content of links the sweep's false positives cite", func()
 			[]string{"1: " + cephURL("v19.2.6", verPath, "L21") + ": listed: line 21 holds none of read_status, but the " +
 				"definition that starts on it, through line 29, holds one"},
 			"links checked: 1, held: 0, failed: 0, listed: 1", 0),
+		Entry("D5: a C++ keyword its file lacks, which the same lines of a file its paragraph names hold", "doc.md",
+			"The `namespace` field is new (rgw_fp_arn.h differs; [rgw_fp_asio.cc:2-7]("+asio27+")).\n",
+			[]string{"1: " + asio27 + ": listed: none of the identifiers named beside it, namespace, stands in " +
+				"src/rgw/rgw_fp_asio.cc at v19.2.6"},
+			"links checked: 1, held: 0, failed: 0, listed: 1", 0),
 	)
 
 	DescribeTable("still fails a wrong link of the same shape", reports,
+		Entry("D5, documented: a name its file lacks, which the same lines of a file another link of its run cites hold",
+			"doc.md",
+			"beast sets one `RGWEnv` variable per header field ([rgw_fp_asio.cc:2-7]("+asio27+"), [rgw_fp_env.cc:9-12]("+
+				env912+")).\n",
+			[]string{"1: " + asio27 + ": none of the identifiers named beside it, RGWEnv, stands in src/rgw/rgw_fp_asio.cc " +
+				"at v19.2.6, but lines 2-7 of src/rgw/rgw_fp_env.cc, which its paragraph names, hold RGWEnv"},
+			"links checked: 2, held: 1, failed: 1, listed: 0", 1),
+		Entry("D5 (review D5-1): a run's second link to the wrong file, its sibling citing the right one", "doc.md",
+			"Each header field lands in `RGWEnv` ([rgw_fp_env.cc:3-7]("+cephURL("v19.2.6", envPath, "L3-L7")+
+				"), [rgw_fp_asio.cc:9-12]("+cephURL("v19.2.6", asioPath, "L9-L12")+")).\n",
+			[]string{"1: " + cephURL("v19.2.6", asioPath, "L9-L12") + ": none of the identifiers named beside it, RGWEnv, " +
+				"stands in src/rgw/rgw_fp_asio.cc at v19.2.6, but lines 9-12 of src/rgw/rgw_fp_env.cc, which its " +
+				"paragraph names, hold RGWEnv"},
+			"links checked: 2, held: 1, failed: 1, listed: 0", 1),
+		Entry("D5 (review D5-2): the same wrong link, the right file cited in another run of the paragraph", "doc.md",
+			"`RGWEnv` is built in [rgw_fp_env.cc:3-7]("+cephURL("v19.2.6", envPath, "L3-L7")+"). Each header field "+
+				"lands in `RGWEnv` ([rgw_fp_asio.cc:9-12]("+cephURL("v19.2.6", asioPath, "L9-L12")+")).\n",
+			[]string{"1: " + cephURL("v19.2.6", asioPath, "L9-L12") + ": none of the identifiers named beside it, RGWEnv, " +
+				"stands in src/rgw/rgw_fp_asio.cc at v19.2.6, but lines 9-12 of src/rgw/rgw_fp_env.cc, which its " +
+				"paragraph names, hold RGWEnv"},
+			"links checked: 2, held: 1, failed: 1, listed: 0", 1),
+		Entry("D5: a name its file lacks, which the same lines of a file another run of its paragraph cites hold",
+			"doc.md",
+			"`RGWEnv` is set in [rgw_fp_env.cc:9-12]("+env912+"); `RGWEnv` starts in [rgw_fp_asio.cc:2-7]("+asio27+").\n",
+			[]string{"1: " + asio27 + ": none of the identifiers named beside it, RGWEnv, stands in src/rgw/rgw_fp_asio.cc " +
+				"at v19.2.6, but lines 2-7 of src/rgw/rgw_fp_env.cc, which its paragraph names, hold RGWEnv"},
+			"links checked: 2, held: 1, failed: 1, listed: 0", 1),
 		Entry("D6: a one-line link to the first line of a function whose body lacks the name", "doc.md",
 			"`MfaDelete` must be Enabled or Disabled ([rgw_fp_ver.cc:16]("+cephURL("v19.2.6", verPath, "L16")+")).\n",
 			[]string{"1: " + cephURL("v19.2.6", verPath, "L16") + ": line 16 of src/rgw/rgw_fp_ver.cc at v19.2.6 holds " +
