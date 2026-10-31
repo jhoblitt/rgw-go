@@ -637,7 +637,23 @@
 //
 // A link whose own text names identifiers fails when its lines hold none of
 // them. One whose identifiers are named beside it fails when its lines hold
-// none of those its file holds. When its file holds none, it fails when the
+// none of those its file holds.
+//
+// The check cannot tell a word of prose from a name of code: beside "a block
+// of public ACLs is refused", ACLs, a word its file writes only in comments,
+// fails a link whose lines are the right ones but lack it; and so does an S3
+// operation's, an error code's or a header's name written in prose,
+// InvalidArgument or ETag, that its file writes only in a literal, as an
+// error table does. A link to the wrong lines or file names such a word the
+// same way, so the failure stands, and a reviewer reads it.
+//
+// The check cannot read a negative claim: "registers the managers without
+// `set_logging`" names set_logging because the right lines lack it, so such
+// a link fails, and a reviewer reads the failure. No rule on the words tells
+// it from "a request with no `x-amz-content-sha256` is refused", whose right
+// lines test the very name and whose drifted copy must fail.
+//
+// When its file holds none of the names beside it, a link fails when the
 // same lines of another file at its ref hold one: a file its paragraph links
 // or names, or, for a qualified name none of whose parts is generic, one the
 // rest of its section does; and it is listed otherwise. A file that holds one

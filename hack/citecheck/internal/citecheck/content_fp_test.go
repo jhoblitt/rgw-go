@@ -138,11 +138,87 @@ void RGWEnv::set(std::string name, std::string val)
 }
 `
 
+// fixtureACL is src/rgw/rgw_fp_acl.cc at both releases: ACLs written only in
+// the comment at line 4, InvalidArgument only in the error table's literal
+// at line 6, RGWFp::verify_acl at lines 9-15, whose refusal is 11-13,
+// RGWFp::check_range at 17-23, whose refusal is 19-21, and get_obj_state,
+// another file's function, named only in the comment at line 25.
+const fixtureACL = `// A fixture for the content specs' names that name no code.
+#include "rgw_fp.h"
+
+// Canned ACLs are refused under a public access block.
+static const rgw_http_errors errs({
+  { EINVAL, { 400, "InvalidArgument" }},
+});
+
+int RGWFp::verify_acl(req_state* s)
+{
+  if (s->block_public && s->canned_acl == "public-read") {
+    return -EACCES;
+  }
+  return 0;
+}
+
+int RGWFp::check_range(int ofs)
+{
+  if (ofs < 0) {
+    return -EINVAL;
+  }
+  return 0;
+}
+
+// get_obj_state, in rgw_fp_rados.cc, reads the head first.
+`
+
+// fixtureNeg is src/rgw/rgw_fp_neg.cc at both releases: RGWFp::register_admin
+// at lines 4-9, which registers the admin managers at 6-7 and never calls
+// set_logging; RGWFp::register_s3 at 11-17, which calls it at 14;
+// RGWFp::verify_sha at 19-25, which refuses a request with no
+// x-amz-content-sha256 at 21-23; and RGWFp::check_etag at 27-34, which
+// compares If-Match at 29-32.
+const fixtureNeg = `// A fixture for the content specs' negative claims.
+#include "rgw_fp.h"
+
+int RGWFp::register_admin(RGWREST* rest)
+{
+  rest->register_resource("usage", new RGWRESTMgr_Usage);
+  rest->register_resource("user", new RGWRESTMgr_User);
+  return 0;
+}
+
+int RGWFp::register_s3(RGWREST* rest)
+{
+  auto* mgr = new RGWRESTMgr_S3;
+  mgr->set_logging(true);
+  rest->register_default_mgr(mgr);
+  return 0;
+}
+
+int RGWFp::verify_sha(req_state* s)
+{
+  if (!s->info.env->exists("HTTP_X_AMZ_CONTENT_SHA256")) {
+    return -EINVAL;
+  }
+  return 0;
+}
+
+int RGWFp::check_etag(req_state* s, const std::string& etag)
+{
+  const char* if_match = s->info.env->get("HTTP_IF_MATCH");
+  if (if_match && etag != if_match) {
+    return -ERR_PRECONDITION_FAILED;
+  }
+  return 0;
+}
+`
+
 // newFPFixture returns a ceph fixture whose v19.2.6 and v20.2.4, the
 // releases the [S] and [T] markers name, hold the files the specs of the
 // sweep's false positives cite.
 func newFPFixture() *cephFixture {
 	r := newCephFixture()
+	r.write(aclPath, fixtureACL)
+	r.write(negPath, fixtureNeg)
 	r.write(arnPath, fixtureArn)
 	r.write(lcPath, fixtureLC)
 	r.write(verPath, fixtureVer)
@@ -163,12 +239,19 @@ const (
 	verPath  = "src/rgw/rgw_fp_ver.cc"
 	asioPath = "src/rgw/rgw_fp_asio.cc"
 	envPath  = "src/rgw/rgw_fp_env.cc"
+	aclPath  = "src/rgw/rgw_fp_acl.cc"
+	negPath  = "src/rgw/rgw_fp_neg.cc"
 )
 
 var (
 	// asio27 is ClientIO::init_env's lines, and env912 RGWEnv::set's.
 	asio27 = cephURL("v19.2.6", asioPath, "L2-L7")
 	env912 = cephURL("v19.2.6", envPath, "L9-L12")
+	// acl1113 is verify_acl's refusal, and acl1921 check_range's.
+	acl1113 = cephURL("v19.2.6", aclPath, "L11-L13")
+	acl1921 = cephURL("v19.2.6", aclPath, "L19-L21")
+	// neg67 is register_admin's registrations.
+	neg67 = cephURL("v19.2.6", negPath, "L6-L7")
 )
 
 // lcRuns returns a Go comment that cites lc_process and lc_remove at each
@@ -250,6 +333,12 @@ var _ = Describe("The content of links the sweep's false positives cite", func()
 			lcRuns("v19.2.6", "v20.2.4"), 4),
 		Entry(`D7 (review D7-2): "A at v19.2.6 and B and C at v20.2.4", B joined by "and" to C, so at v20.2.4`, "doc.md",
 			lcJoined("v20.2.4"), 3),
+		Entry(`D4 (review D4-1): a name after "no" as a condition the lines test`, "doc.md",
+			"A request with no `x-amz-content-sha256` is refused ([rgw_fp_neg.cc:21-23]("+
+				cephURL("v19.2.6", negPath, "L21-L23")+")).\n", 1),
+		Entry(`D4 (review D4-4): a name after "does not match" the lines compare`, "doc.md",
+			"An ETag that does not match `If-Match` fails with 412 ([rgw_fp_neg.cc:29-32]("+
+				cephURL("v19.2.6", negPath, "L29-L32")+")).\n", 1),
 	)
 
 	DescribeTable("lists, rather than fails, a link the sweep found failed though nothing beside it judges its lines",
@@ -284,6 +373,62 @@ var _ = Describe("The content of links the sweep's false positives cite", func()
 	)
 
 	DescribeTable("still fails a wrong link of the same shape", reports,
+		Entry("D1, documented: an error code in prose its file writes only in a literal, the right lines lacking it",
+			"doc.md", "A negative offset is InvalidArgument ([rgw_fp_acl.cc:19-21]("+acl1921+")).\n",
+			[]string{"1: " + acl1921 + ": lines 19-21 of src/rgw/rgw_fp_acl.cc at v19.2.6 hold none of the identifiers " +
+				"named beside it, InvalidArgument, which stand elsewhere in it; the nearest line that holds one is 6"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
+		Entry("D1 (fix round 3): an error code in prose its file writes only in a literal, linking the wrong lines",
+			"doc.md", "A negative offset is InvalidArgument ([rgw_fp_acl.cc:11-13]("+acl1113+")).\n",
+			[]string{"1: " + acl1113 + ": lines 11-13 of src/rgw/rgw_fp_acl.cc at v19.2.6 hold none of the identifiers " +
+				"named beside it, InvalidArgument, which stand elsewhere in it; the nearest line that holds one is 6"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
+		Entry("D1, documented: a plural in prose its file writes only in a comment, the right lines lacking it",
+			"doc.md",
+			"A public canned ACL under a block of public ACLs is refused ([rgw_fp_acl.cc:11-13]("+acl1113+")).\n",
+			[]string{"1: " + acl1113 + ": lines 11-13 of src/rgw/rgw_fp_acl.cc at v19.2.6 hold none of the identifiers " +
+				"named beside it, ACLs, which stand elsewhere in it; the nearest line that holds one is 4"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
+		Entry("D1 (re-review 4): a plural in prose its file writes only in a comment, linking the wrong lines", "doc.md",
+			"A public canned ACL under a block of public ACLs is refused ([rgw_fp_acl.cc:19-21]("+acl1921+")).\n",
+			[]string{"1: " + acl1921 + ": lines 19-21 of src/rgw/rgw_fp_acl.cc at v19.2.6 hold none of the identifiers " +
+				"named beside it, ACLs, which stand elsewhere in it; the nearest line that holds one is 4"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
+		Entry("D1 (review D1-1): a code-span name its file writes only in a comment, the link's file the wrong one",
+			"doc.md", "`get_obj_state` reads the head first ([rgw_fp_acl.cc:19-21]("+acl1921+")).\n",
+			[]string{"1: " + acl1921 + ": lines 19-21 of src/rgw/rgw_fp_acl.cc at v19.2.6 hold none of the identifiers " +
+				"named beside it, get_obj_state, which stand elsewhere in it; the nearest line that holds one is 25"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
+		Entry("D1 (review D1-2): its own text names a name its file writes only in a comment", "doc.md",
+			"The head is read first ([`get_obj_state`]("+acl1921+")).\n",
+			[]string{"1: " + acl1921 + ": lines 19-21 of src/rgw/rgw_fp_acl.cc at v19.2.6 hold none of the identifiers " +
+				"its text names, get_obj_state; the nearest line that holds one is 25"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
+		Entry("D1: its own text names an error code in prose its file writes only in a literal", "doc.md",
+			"A negative offset is refused ([InvalidArgument]("+acl1113+")).\n",
+			[]string{"1: " + acl1113 + ": lines 11-13 of src/rgw/rgw_fp_acl.cc at v19.2.6 hold none of the identifiers " +
+				"its text names, InvalidArgument; the nearest line that holds one is 6"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
+		Entry("D4 (review D4-2): a name after \"no\" as a condition, the link drifted to other lines", "doc.md",
+			"A request with no `x-amz-content-sha256` is refused ([rgw_fp_neg.cc:6-7]("+neg67+")).\n",
+			[]string{"1: " + neg67 + ": lines 6-7 of src/rgw/rgw_fp_neg.cc at v19.2.6 hold none of the identifiers " +
+				"named beside it, x-amz-content-sha256, which stand elsewhere in it; the nearest line that holds one is 21"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
+		Entry("D4 (review D4-3): a name after \"does not match\", the link drifted to other lines", "doc.md",
+			"An ETag that does not match `If-Match` fails with 412 ([rgw_fp_neg.cc:6-7]("+neg67+")).\n",
+			[]string{"1: " + neg67 + ": lines 6-7 of src/rgw/rgw_fp_neg.cc at v19.2.6 hold none of the identifiers " +
+				"named beside it, If-Match, which stand elsewhere in it; the nearest line that holds one is 29"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
+		Entry(`D4, documented: a name after "without", which the right lines lack`, "doc.md",
+			"radosgw registers the admin managers without `set_logging` ([rgw_fp_neg.cc:6-7]("+neg67+")).\n",
+			[]string{"1: " + neg67 + ": lines 6-7 of src/rgw/rgw_fp_neg.cc at v19.2.6 hold none of the identifiers " +
+				"named beside it, set_logging, which stand elsewhere in it; the nearest line that holds one is 14"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
+		Entry(`D4, documented: a name after "do not" and a verb in a Go comment, which the right lines lack`, "fix.go",
+			"package fix\n\n// The admin API's managers do not call set_logging\n// ("+neg67+").\nfunc admin() {}\n",
+			[]string{"4: " + neg67 + ": lines 6-7 of src/rgw/rgw_fp_neg.cc at v19.2.6 hold none of the identifiers " +
+				"named beside it, set_logging, which stand elsewhere in it; the nearest line that holds one is 14"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
 		Entry("D5, documented: a name its file lacks, which the same lines of a file another link of its run cites hold",
 			"doc.md",
 			"beast sets one `RGWEnv` variable per header field ([rgw_fp_asio.cc:2-7]("+asio27+"), [rgw_fp_env.cc:9-12]("+
@@ -305,6 +450,17 @@ var _ = Describe("The content of links the sweep's false positives cite", func()
 				"stands in src/rgw/rgw_fp_asio.cc at v19.2.6, but lines 9-12 of src/rgw/rgw_fp_env.cc, which its " +
 				"paragraph names, hold RGWEnv"},
 			"links checked: 2, held: 1, failed: 1, listed: 0", 1),
+		Entry("D1: a code name beside a plural its file writes only in a comment", "doc.md",
+			"`check_range` refuses a public canned ACL under a block of public ACLs ([rgw_fp_acl.cc:11-13]("+acl1113+
+				")).\n",
+			[]string{"1: " + acl1113 + ": lines 11-13 of src/rgw/rgw_fp_acl.cc at v19.2.6 hold none of the identifiers " +
+				"named beside it, check_range, ACLs, which stand elsewhere in it; the nearest line that holds one is 17"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
+		Entry("D1: a name in a code span its file writes only in a literal", "doc.md",
+			"A negative offset is `InvalidArgument` ([rgw_fp_acl.cc:11-13]("+acl1113+")).\n",
+			[]string{"1: " + acl1113 + ": lines 11-13 of src/rgw/rgw_fp_acl.cc at v19.2.6 hold none of the identifiers " +
+				"named beside it, InvalidArgument, which stand elsewhere in it; the nearest line that holds one is 6"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
 		Entry("D5: a name its file lacks, which the same lines of a file another run of its paragraph cites hold",
 			"doc.md",
 			"`RGWEnv` is set in [rgw_fp_env.cc:9-12]("+env912+"); `RGWEnv` starts in [rgw_fp_asio.cc:2-7]("+asio27+").\n",
