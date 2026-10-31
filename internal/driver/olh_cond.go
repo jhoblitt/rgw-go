@@ -245,9 +245,9 @@ func (s *Store) evalOLHCond(ctx context.Context, idx *bucketOLHIndex, head *op.O
 // so it evaluates on the version current before the replay; and it takes a
 // refused replay, update_olh's ECANCELED, for ENOENT, evaluating on no
 // current version
-// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8989-L8995 and
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8987-L8995 and
 // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3190-L3191 at v19.2.7,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9735-L9741 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9733-L9741 and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3287-L3288 at v20.2.4).
 // rgw-go answers as its reads do (docs/exclusions.md, "A read that replays a
 // pending modification answers the version current after it";
