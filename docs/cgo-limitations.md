@@ -804,6 +804,35 @@ benchmark was re-run.
 - **Found:** phase 2 research for versioning, recorded with the OLH head
   operations, 2026-10-15.
 
+### librados' C API cannot add perf counters to the manager report
+
+- **Evidence:** a librados client that registers as a service daemon
+  reports to the manager the perf counters of its own CephContext:
+  `MgrClient::_send_report` walks `cct->get_perfcounters_collection()`
+  ([MgrClient.cc:325-444](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/MgrClient.cc#L325-L444),
+  [MgrClient.cc:326-438](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/MgrClient.cc#L326-L438)).
+  radosgw shares one context between its process and its librados handle
+  (`init_with_context`,
+  [rgw_rados.cc:1129](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L1129),
+  [rgw_rados.cc:1166](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1166))
+  and adds its `rgw` logger to it
+  ([rgw_perf_counters.cc:102-108](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_perf_counters.cc#L102-L108),
+  [rgw_perf_counters.cc:106-112](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_perf_counters.cc#L106-L112)),
+  so its report carries them. librados.h declares no perf counter call at
+  either tag, so a C client's context holds librados's own counters alone,
+  and rgw-go, which counts its requests in Go, cannot add them to the
+  report.
+- **Class:** inherent in the C API.
+- **Status:** accepted. `docs/exclusions.md`, "The manager gets none of
+  radosgw's rgw perf counters from rgw-go", records the difference. rgw-go
+  serves its own counters on its `--metrics-addr` listener, and
+  ceph-exporter, which the prometheus module leaves the perf counters to by
+  default, reads a daemon's admin socket rather than the manager.
+- **Note:** a pure-Go client speaks the manager protocol itself, so it can
+  report any counters; it then sends the registration, the beacons and the
+  close itself too.
+- **Found:** the service-map research, 2026-10-30.
+
 ## RADOS semantics that shape the client
 
 These come from the OSD, not from cgo, so a pure-Go client has them too.
@@ -856,3 +885,4 @@ These come from the OSD, not from cgo, so a pure-Go client has them too.
 | `IOContext.LockExclusive` and `IOContext.Unlock` call librados synchronously (`rados_lock_exclusive` and `rados_unlock`; go-ceph cbf97f85fcf5 rados/ioctx.go:483-505, :582-594), and goceph's `Pool.LockExclusive` and `Pool.Unlock` check ctx only on entry (`withIOContext`, internal/radosclient/goceph/pool.go). With `rados_osd_op_timeout` at its default of 0, a lock or unlock waits as long as its PG is unavailable, whatever ctx does, so a caller cannot bound a shutdown that takes or releases one. Both calls send one write op holding cls_lock's `lock` or `unlock` exec (`IoCtx::lock_exclusive` and `IoCtx::unlock`, librados_cxx.cc:1772-1802 at v19.2.7, :1779-1809 at v20.2.4; cls_lock_client.cc:32-81 at both tags) | C9's re-review, round 1 | Worked around in the lifecycle worker, which sends that same op as a write op (`lcShard.tryLock` and `lcShard.unlock`, internal/driver/lc_worker.go), so goceph's callback and pipe completion modes stop waiting for it at ctx's end and leave it in flight; a lock left so that lands later lapses after its duration. goceph's sync mode (`--rados-completions=sync`) still waits for the OSD, and in every mode `Close` still waits for an op left in flight (see "Cancellation stops only the client"), so a lock or unlock on an unavailable PG still holds the gateway's exit. The lifecycle entry writes' `guardLCModify` and `unlockLC` (internal/driver/lc_shards.go) and the GC's shard lock (internal/driver/gc.go) still use the synchronous calls. Lifted for every caller by sending cls_lock's exec as a write op, as the lifecycle worker does, which needs no fork change, by an aio lock and unlock binding in the fork, or by a non-zero `rados_osd_op_timeout` |
 | (rgw-go seam, not go-ceph) `radosclient.ExecResult` reports a positive class return as success but does not surface the value | Task 12 | Open; add an accessor if a class client needs the value |
 | go-ceph's read-op exec step dropped a failed call's output: `ReadOpExecStep.Bytes` returns `ErrOperationIncomplete` for a step whose prval is negative, although librados hands the output buffer over whatever the method returned ([librados_c.cc:4291-4323](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/librados_c.cc#L4291-L4323), [librados_c.cc:4291-4323](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/librados_c.cc#L4291-L4323)) and the OSD keeps a failed op's output in its reply ([PrimaryLogPG.cc:4210-4234](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L4210-L4234), [PrimaryLogPG.cc:4287-4311](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L4287-L4311)). cls_rgw's `bucket_list` encodes its reply, the marker to resume from included, before it answers advance-and-retry (-EFBIG) ([cls_rgw.cc:680-691](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L680-L691), [cls_rgw.cc:730-741](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L730-L741)), so that reply was lost | V Task 0 | Fixed on `rgw-go` (jhoblitt/go-ceph#16, fork-only): `ReadOpExecStep.Output`, behind `ceph_preview`, returns the output whatever the method returned. `radosclient.ExecResult.Reply` carries it beside the negative return value, filled by goceph's read-exec finisher and by fakerados (internal/radosclient/results.go, goceph/translate.go, internal/testutil/fakerados/steps.go) |
+| go-ceph binds neither `rados_service_register` nor `rados_service_update_status`, upstream at v0.42.1 or on the fork's `rgw-go` at 2bd6901ea775, so rgw-go cannot register in the manager's service map | The service-map research, 2026-10-30 | Open: phase 2 plan task SM1 adds `Conn.ServiceRegister` and `Conn.ServiceUpdateStatus` under `ceph_preview` on `rgw-go` |
