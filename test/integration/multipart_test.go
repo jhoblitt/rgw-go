@@ -27,6 +27,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/cli"
 	"github.com/jhoblitt/rgw-go/internal/cls/lock"
 	"github.com/jhoblitt/rgw-go/internal/denc"
@@ -225,6 +226,17 @@ func expectCompletionInProgress(err error, who string) {
 // keyHead is the head object of key in rec's bucket.
 func keyHead(rec *op.BucketRecord, key string) string {
 	return meta.Stripe{Obj: meta.Obj{Bucket: rec.Info.Bucket, Key: meta.ObjKey{Name: key}}}.OID()
+}
+
+// headCksum decodes the checksum record key's head carries in
+// user.rgw.cksum, which it must.
+func headCksum(ctx context.Context, rec *op.BucketRecord, key string) cksum.Cksum {
+	GinkgoHelper()
+	attrs := rawXattrs(ctx, keyHead(rec, key))
+	Expect(attrs).To(HaveKey(meta.AttrCksum), "%s's checksum attr", key)
+	c, err := cksum.DecodeAttr(attrs[meta.AttrCksum])
+	Expect(err).NotTo(HaveOccurred(), "decoding %s's checksum record", key)
+	return c
 }
 
 // metaOID is the meta object of upload id of key in rec's bucket.
@@ -605,27 +617,39 @@ var _ = Describe("the multipart oracle against radosgw and radosgw-admin", Order
 		Expect(metaObjects(ctx, rec)).NotTo(ContainElement(metaOID(rec, key, id)), "the meta object once completed")
 
 		if release >= denc.Tentacle {
-			// A checksum radosgw stored with the upload is decoded and
-			// ignored: the parts are listed and completed without one, and
-			// the object carries none (docs/exclusions.md, "Client checksums
-			// are ignored until phase 2").
-			const ckey = "k2-crc32"
-			out, err := viaRGW.CreateMultipartUpload(ctx, &awss3.CreateMultipartUploadInput{
-				Bucket: aws.String(mpBucket), Key: aws.String(ckey), ChecksumAlgorithm: s3types.ChecksumAlgorithmCrc32,
-			})
-			Expect(err).NotTo(HaveOccurred(), "CreateMultipartUpload with CRC32 through radosgw")
-			cid := aws.ToString(out.UploadId)
+			// An upload a Tentacle radosgw began with a checksum algorithm
+			// keeps it through rgw-go, whose completion combines the parts'
+			// checksums into the object's as radosgw's does
+			// (docs/exclusions.md, "Client checksums are ignored until phase
+			// 2" and "A multipart upload's combined CRC follows its checksum
+			// type"), so the object's record is the one radosgw stores when it
+			// completes a twin of the same parts itself. rgw-go's S3 handler
+			// renders no checksum: ListParts shows no part's ("Stored
+			// checksums are not shown"), and the completion's response none
+			// ("A first CompleteMultipartUpload shows no checksum in its
+			// response").
+			const ckey, twinKey = "k2-crc32", "k2-crc32-radosgw"
 			cbodies := [][]byte{randBytes(5 * mib), randBytes(1 * mib)}
-			var cparts []s3types.CompletedPart
-			for i, b := range cbodies {
-				n := int32(i + 1) //nolint:gosec // two parts
-				po, perr := viaRGW.UploadPart(ctx, &awss3.UploadPartInput{
-					Bucket: aws.String(mpBucket), Key: aws.String(ckey), UploadId: aws.String(cid), PartNumber: aws.Int32(n),
-					Body: bytes.NewReader(b), ContentLength: aws.Int64(int64(len(b))), ChecksumAlgorithm: s3types.ChecksumAlgorithmCrc32,
+			crc32Upload := func(key string) (string, []s3types.CompletedPart) {
+				GinkgoHelper()
+				out, err := viaRGW.CreateMultipartUpload(ctx, &awss3.CreateMultipartUploadInput{
+					Bucket: aws.String(mpBucket), Key: aws.String(key), ChecksumAlgorithm: s3types.ChecksumAlgorithmCrc32,
 				})
-				Expect(perr).NotTo(HaveOccurred(), "UploadPart with CRC32 through radosgw")
-				cparts = append(cparts, s3types.CompletedPart{PartNumber: aws.Int32(n), ETag: po.ETag})
+				Expect(err).NotTo(HaveOccurred(), "CreateMultipartUpload %s with CRC32 through radosgw", key)
+				id := aws.ToString(out.UploadId)
+				var parts []s3types.CompletedPart
+				for i, b := range cbodies {
+					n := int32(i + 1) //nolint:gosec // two parts
+					po, perr := viaRGW.UploadPart(ctx, &awss3.UploadPartInput{
+						Bucket: aws.String(mpBucket), Key: aws.String(key), UploadId: aws.String(id), PartNumber: aws.Int32(n),
+						Body: bytes.NewReader(b), ContentLength: aws.Int64(int64(len(b))), ChecksumAlgorithm: s3types.ChecksumAlgorithmCrc32,
+					})
+					Expect(perr).NotTo(HaveOccurred(), "UploadPart %s part %d with CRC32 through radosgw", key, n)
+					parts = append(parts, s3types.CompletedPart{PartNumber: aws.Int32(n), ETag: po.ETag})
+				}
+				return id, parts
 			}
+			cid, cparts := crc32Upload(ckey)
 			status, body := rawRequest(ctx, rgwgo.url, http.MethodGet, "/"+mpBucket+"/"+ckey+"?uploadId="+cid)
 			Expect(status).To(Equal(http.StatusOK), "%s", body)
 			Expect(string(body)).NotTo(ContainSubstring("<Checksum"), "rgw-go's ListParts of a CRC32 upload")
@@ -639,7 +663,11 @@ var _ = Describe("the multipart oracle against radosgw and radosgw-admin", Order
 				HaveField("ChecksumSHA1", BeNil()), HaveField("ChecksumSHA256", BeNil()), HaveField("ChecksumType", BeEmpty()),
 			), "rgw-go's completion of a CRC32 upload carries no checksum")
 			expectRadosgwReads(ctx, ckey, cetag, slices.Concat(cbodies...))
-			Expect(rawXattrs(ctx, keyHead(rec, ckey))).NotTo(HaveKey("user.rgw.cksum"), "the completed object's checksum")
+			tid, tparts := crc32Upload(twinKey)
+			mustComplete(ctx, viaRGW, twinKey, tid, tparts, cbodies...)
+			theirs := headCksum(ctx, rec, twinKey)
+			Expect(theirs.Type).To(Equal(cksum.CRC32), "the checksum type of radosgw's completion")
+			Expect(headCksum(ctx, rec, ckey)).To(Equal(theirs), "rgw-go's completed checksum record against radosgw's of the same parts")
 			expectBucketCheckClean(ctx, mpBucket)
 		}
 	})
