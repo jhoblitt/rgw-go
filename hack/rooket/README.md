@@ -74,11 +74,14 @@ writes the same data and manifest again.
 
 ## Prerequisites
 
-- rooket at the commit `.github/actions/rooket-cluster/action.yml` pins, the
+- rooket at the release `.github/actions/rooket-cluster/action.yml` pins, the
   setup CI's cluster workflows share, with its own prerequisites: a container
-  engine, `kind`, `kubectl`, `helm`, and the iSCSI tooling. Every `cluster-up` creates the OSD's iSCSI target and every
-  `cluster-down` removes it with the disk image, so both need root;
-  `rooket sudoers install` removes the prompt.
+  engine, `kind`, `kubectl`, `helm`, and the iSCSI tooling. In CI,
+  [jhoblitt/rooket-action](https://github.com/jhoblitt/rooket-action) installs
+  that rooket, and `kind`, `kubectl` and `helm` at the action's own pins, and
+  the iSCSI tooling, and selects the runner's docker. Every `cluster-up` creates
+  the OSD's iSCSI target and every `cluster-down` removes it with the disk
+  image, so both need root; `rooket sudoers install` removes the prompt.
 - The AWS CLI v2, `jq` and `python3`, for `populate.sh`.
 - `jq`, for `rgw-go-up.sh` and `rgw-go-down.sh`, and for `make test`, whose
   specs run their reads of `rgw-go.log`.

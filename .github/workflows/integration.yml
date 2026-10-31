@@ -36,8 +36,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # The tools' and rooket's pins live in the action, which s3tests.yml
-      # shares.
+      # rooket's pin lives in the action, which s3tests.yml shares, and kind's,
+      # kubectl's and helm's in the jhoblitt/rooket-action it runs.
       - name: Start and populate the cluster
         id: cluster
         uses: ./.github/actions/rooket-cluster
