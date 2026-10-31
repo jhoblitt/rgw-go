@@ -406,7 +406,10 @@ type namedRef struct{ ref, how string }
 //   - a marker or a tag right before it, blanks alone between;
 //   - an "at", "in" or "on" and a tag after it or after the citations listed
 //     with it, unless "and", "or", "/" or "," and another tag follow it, and
-//     "at both tags" after it, which names no one;
+//     "at both tags" after it, which names no one; but for a citation joined
+//     by "and" or "or" to another's own "at <tag>" that ends its group, as B
+//     is in "A at v19.2.7 and B, C at v20.2.4", only one right after it, and
+//     else that tag;
 //   - an "at", "in" or "on" and a marker right after it;
 //   - and, when none of those ties it, an "at" or "in" and a tag that closes
 //     the parenthesis it stands in, as parenRef finds one.
@@ -437,11 +440,15 @@ func namedRefs(ps *paraScan, it *goItem) (out []namedRef, tied bool) {
 			out = append(out, namedRef{ref: w, how: "right before it"})
 		}
 	}
-	if t, both := tagAfter(ps.norm, it.pos+1); t != "" || both {
+	cut, joined := afterOwnTagCut(ps.norm, it.pos)
+	if t, both := tagAfter(cut, it.pos+1); t != "" || both {
 		tied = true
 		if t != "" && !anotherTagAfter(ps.norm[it.pos+1:], t) {
 			out = append(out, namedRef{ref: t, how: `by the "at ` + t + `" after it`})
 		}
+	} else if joined != "" {
+		tied = true
+		out = append(out, namedRef{ref: joined, how: `by the "at ` + joined + `" it is joined to by "and" or "or"`})
 	}
 	if m := reAtMark.FindStringSubmatch(ps.norm[it.pos+1:]); m != nil {
 		tied = true
@@ -454,6 +461,39 @@ func namedRefs(ps *paraScan, it *goItem) (out []namedRef, tied bool) {
 		}
 	}
 	return out, tied
+}
+
+// reAfterOwnTag is what stands between two citations when the first carries
+// its own "at <tag>" and the second is joined to it by "and" or "or", as B is
+// in "A at v19.2.7 and B", and the tag. A comma alone starts another group, as
+// C does in "A and B at v19.2.7, C and D at v20.2.4".
+var reAfterOwnTag = regexp.MustCompile(`^\s*(?:at|in|on)\s+(` + tagForm + `)\s*,?\s*(?:and|or)\s+$`)
+
+// reGroupEnd is what ends a group of citations right after one: a comma, a
+// ";", a ".", a ")" or the end of the text.
+var reGroupEnd = regexp.MustCompile(`^\s*(?:[,;.)]|$)`)
+
+// afterOwnTagCut returns norm and "", or, for the citation at pos when it is
+// joined to a citation's own "at <tag>" and ends its group, norm cut at the
+// citation after it, so that tagAfter reads only an "at <tag>" right after
+// it, and that tag, which ties the citation when nothing after it does: in "A
+// at v19.2.7 and B, C at v20.2.4 and D" B is at v19.2.7, and the v20.2.4 is
+// C's and D's. A citation that "and" or "or" joins to the next one starts a
+// group of its own, as B does in "A at v19.2.7 and B and C at v20.2.4", where
+// B and C are at v20.2.4.
+func afterOwnTagCut(norm string, pos int) (cut, joined string) {
+	prev := strings.LastIndexByte(norm[:pos], citeMark)
+	if prev < 0 {
+		return norm, ""
+	}
+	m := reAfterOwnTag.FindStringSubmatch(norm[prev+1 : pos])
+	if m == nil || !reGroupEnd.MatchString(norm[pos+1:]) {
+		return norm, ""
+	}
+	if k := strings.IndexByte(norm[pos+1:], citeMark); k >= 0 {
+		return norm[:pos+1+k], m[1]
+	}
+	return norm, m[1]
 }
 
 // reAnotherTag is "and", "or", "/" or "," and a tag, maybe after an "at",
@@ -582,7 +622,8 @@ func ownTie(ps *paraScan, o *goItem) bool {
 	if o.mark != "" || reTag.MatchString(unescape(o.label)) || reTiedBefore.MatchString(ps.norm[:o.pos]) {
 		return true
 	}
-	if t, both := tagAfter(ps.norm, o.pos+1); t != "" || both {
+	cut, joined := afterOwnTagCut(ps.norm, o.pos)
+	if t, both := tagAfter(cut, o.pos+1); t != "" || both || joined != "" {
 		return true
 	}
 	return reAtMark.MatchString(ps.norm[o.pos+1:])

@@ -573,12 +573,17 @@
 //     marker or a tag in its text, unless the text names two releases; a
 //     marker or a tag right before it; an "at", "in" or "on" and a tag after
 //     it or after the citations listed with it, unless "and", "or", "/" or ","
-//     and another tag follow that tag; an "at", "in" or "on" and [S] or [T]
-//     right after it; and, when none of those ties it, an "at <tag>", "in
-//     <tag>", "all at <tag>" or "all in <tag>" after the ";" or "," that
-//     closes the parenthesis it stands in, unless a citation between it and
-//     the ")" carries a tie of its own. "At both tags" after it ties it to
-//     neither release. So a clause that names two releases ties neither;
+//     and another tag follow that tag, though for a citation joined by "and"
+//     or "or" to another's own "at <tag>", when a comma or the group's end
+//     follows it, only one right after it, and else that other's tag, so
+//     that in "A at v19.2.7 and B, C at v20.2.4 and D" B is at v19.2.7, and
+//     in "A at v19.2.7 and B and C at v20.2.4" B is at v20.2.4; an "at", "in"
+//     or "on" and [S] or [T] right after it;
+//     and, when none of those ties it, an "at <tag>", "in <tag>", "all at
+//     <tag>" or "all in <tag>" after the ";" or "," that closes the
+//     parenthesis it stands in, unless a citation between it and the ")"
+//     carries a tie of its own. "At both tags" after it ties it to neither
+//     release. So a clause that names two releases ties neither;
 //   - when nothing ties a release to it, it links no lines at v20.2.4 while
 //     another citation of its paragraph carries a [T], since a paragraph
 //     that marks its Tentacle citations so leaves its Squid ones unmarked;

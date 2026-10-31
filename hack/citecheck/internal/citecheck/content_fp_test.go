@@ -43,21 +43,77 @@ int other::count()
 }
 `
 
+// fixtureLC is src/rgw/rgw_fp_lc.cc at v19.2.6: RGWFp::lc_process at lines
+// 2-5, and RGWFp::lc_remove, which calls it, at 7-10.
+const fixtureLC = `// A fixture for the content specs' release ties.
+int RGWFp::lc_process(int shard)
+{
+  return remove_entry(shard);
+}
+
+int RGWFp::lc_remove(int shard)
+{
+  return lc_process(shard);
+}
+`
+
+// fixtureLCHelper is what v20.2.4 inserts at line 2 of rgw_fp_lc.cc, which
+// moves lc_process to 4-7 and lc_remove to 9-12.
+const fixtureLCHelper = `static int shards = 32;
+
+`
+
 // newFPFixture returns a ceph fixture whose v19.2.6 and v20.2.4, the
 // releases the [S] and [T] markers name, hold the files the specs of the
-// sweep's false positives cite, and v20.2.4 rgw_fp_new.cc besides.
+// sweep's false positives cite.
 func newFPFixture() *cephFixture {
 	r := newCephFixture()
-	r.write("src/rgw/rgw_fp_arn.h", fixtureArn)
+	r.write(arnPath, fixtureArn)
+	r.write(lcPath, fixtureLC)
 	r.commit("squid")
 	r.git("tag", "v19.2.6")
-	r.write("src/rgw/rgw_fp_new.cc", "// new\nint fresh() { return 0; }\n")
+	lines := strings.SplitAfter(fixtureLC, "\n")
+	r.write(lcPath, lines[0]+fixtureLCHelper+strings.Join(lines[1:], ""))
 	r.commit("tentacle")
 	r.git("tag", "v20.2.4")
 	return r
 }
 
-const arnPath = "src/rgw/rgw_fp_arn.h"
+const (
+	arnPath = "src/rgw/rgw_fp_arn.h"
+	lcPath  = "src/rgw/rgw_fp_lc.cc"
+)
+
+// lcRuns returns a Go comment that cites lc_process and lc_remove at each
+// release in the sweep's D7 form, "A at v19.2.6 and B, C at v20.2.4 and D",
+// with B linked at bRef and C at cRef.
+func lcRuns(bRef, cRef string) string {
+	bLines := map[string]string{"v19.2.6": "L7-L10", "v20.2.4": "L9-L12"}[bRef]
+	cLines := map[string]string{"v19.2.6": "L2-L5", "v20.2.4": "L4-L7"}[cRef]
+	return "package fix\n\n// lcProcess drops the entry, as RGWFp::lc_process does\n// (" +
+		cephURL("v19.2.6", lcPath, "L2-L5") + " at v19.2.6\n// and " + cephURL(bRef, lcPath, bLines) + ",\n// " +
+		cephURL(cRef, lcPath, cLines) + " at v20.2.4\n// and " + cephURL("v20.2.4", lcPath, "L9-L12") + ").\n" +
+		"func lcProcess() {}\n"
+}
+
+// lcPairs returns markdown that cites lc_process and lc_remove at each
+// release as "A and B at v19.2.6, C and D at v20.2.4", with C linked at
+// cRef.
+func lcPairs(cRef string) string {
+	cLines := map[string]string{"v19.2.6": "L2-L5", "v20.2.4": "L4-L7"}[cRef]
+	return "`RGWFp::lc_process` drops the entry ([rgw_fp_lc.cc:2-5](" + cephURL("v19.2.6", lcPath, "L2-L5") +
+		") and [:7-10](" + cephURL("v19.2.6", lcPath, "L7-L10") + ") at v19.2.6, [:4-7](" + cephURL(cRef, lcPath, cLines) +
+		") and [:9-12](" + cephURL("v20.2.4", lcPath, "L9-L12") + ") at v20.2.4).\n"
+}
+
+// lcJoined returns markdown that cites lc_process and lc_remove as "A at
+// v19.2.6 and B and C at v20.2.4", with B, lc_process, linked at bRef.
+func lcJoined(bRef string) string {
+	bLines := map[string]string{"v19.2.6": "L2-L5", "v20.2.4": "L4-L7"}[bRef]
+	return "`RGWFp::lc_process` drops the entry ([rgw_fp_lc.cc:2-5](" + cephURL("v19.2.6", lcPath, "L2-L5") +
+		") at v19.2.6 and [rgw_fp_lc.cc:4-7](" + cephURL(bRef, lcPath, bLines) + ") and [rgw_fp_lc.cc:9-12](" +
+		cephURL("v20.2.4", lcPath, "L9-L12") + ") at v20.2.4).\n"
+}
 
 var _ = Describe("The content of links the sweep's false positives cite", func() {
 	var (
@@ -103,9 +159,33 @@ var _ = Describe("The content of links the sweep's false positives cite", func()
 			"Service is `rgw::Service` ([rgw_fp_arn.h:6-8]("+cephURL("v19.2.6", arnPath, "L6-L8")+")).\n", 1),
 		Entry("D8: a qualified name declared by the header of a block that encloses its lines", "doc.md",
 			"The services are `rgw::Service`'s ([rgw_fp_arn.h:7]("+cephURL("v19.2.6", arnPath, "L7")+")).\n", 1),
+		Entry(`D7: "A at v19.2.6 and B, C at v20.2.4 and D", B tied to A's "at v19.2.6", not C's "at v20.2.4"`, "fix.go",
+			lcRuns("v19.2.6", "v20.2.4"), 4),
+		Entry(`D7 (review D7-2): "A at v19.2.6 and B and C at v20.2.4", B joined by "and" to C, so at v20.2.4`, "doc.md",
+			lcJoined("v20.2.4"), 3),
 	)
 
 	DescribeTable("still fails a wrong link of the same shape", reports,
+		Entry(`D7: "A at v19.2.6 and B, C at v20.2.4 and D", C linked at v19.2.6`, "fix.go",
+			lcRuns("v19.2.6", "v19.2.6"),
+			[]string{"6: " + cephURL("v19.2.6", lcPath, "L2-L5") + `: its text names v20.2.4, by the "at v20.2.4" after ` +
+				"it, but it links lines at v19.2.6"},
+			"links checked: 4, held: 3, failed: 1, listed: 0", 1),
+		Entry(`D7 (review D7-1): "A at v19.2.6 and B, C at v20.2.4 and D", B linked at v20.2.4`, "fix.go",
+			lcRuns("v20.2.4", "v20.2.4"),
+			[]string{"5: " + cephURL("v20.2.4", lcPath, "L9-L12") + `: its text names v19.2.6, by the "at v19.2.6" it ` +
+				`is joined to by "and" or "or", but it links lines at v20.2.4`},
+			"links checked: 4, held: 3, failed: 1, listed: 0", 1),
+		Entry(`D7: "A at v19.2.6 and B and C at v20.2.4", B linked at v19.2.6`, "doc.md",
+			lcJoined("v19.2.6"),
+			[]string{"1: " + cephURL("v19.2.6", lcPath, "L2-L5") + `: its text names v20.2.4, by the "at v20.2.4" after ` +
+				"it, but it links lines at v19.2.6"},
+			"links checked: 3, held: 2, failed: 1, listed: 0", 1),
+		Entry(`D7: "A and B at v19.2.6, C and D at v20.2.4", C linked at v19.2.6, a comma starting its group`, "doc.md",
+			lcPairs("v19.2.6"),
+			[]string{"1: " + cephURL("v19.2.6", lcPath, "L2-L5") + `: its text names v20.2.4, by the "at v20.2.4" after ` +
+				"it, but it links lines at v19.2.6"},
+			"links checked: 4, held: 3, failed: 1, listed: 0", 1),
 		Entry("D8: a qualified name whose last part its lines declare inside another namespace", "doc.md",
 			"Service is `rgw::Service` ([rgw_fp_arn.h:14-16]("+cephURL("v19.2.6", arnPath, "L14-L16")+")).\n",
 			[]string{"1: " + cephURL("v19.2.6", arnPath, "L14-L16") + ": lines 14-16 of src/rgw/rgw_fp_arn.h at " +
