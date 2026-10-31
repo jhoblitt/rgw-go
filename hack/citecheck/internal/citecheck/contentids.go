@@ -181,20 +181,43 @@ func (d *goDoc) blankPkgs(text string) string {
 }
 
 // linkHolds reports whether one of ids stands in lines from to to of f, or in
-// the header of a block that encloses them, as a function's does its body.
+// the header of a block that encloses them, as a function's does its body; a
+// qualified name, A::B, stands also where qualifiedIn finds it.
 func linkHolds(f *file, from, to int, ids []string) bool {
-	lines := f.text[f.lineStart(from):f.lineEnd(to)]
+	lo, hi := f.lineStart(from), f.lineEnd(to)
 	for _, id := range ids {
-		if standsIn(lines, id) {
+		if standsIn(f.text[lo:hi], id) || f.qualifiedIn(f.text, id, lo, hi) {
 			return true
 		}
 	}
 	f.analyze()
 	for _, b := range f.enclosing(from, to) {
 		for _, id := range ids {
-			if standsIn(f.code[b.head:b.open], id) {
+			if standsIn(f.code[b.head:b.open], id) || f.qualifiedIn(f.code, id, b.head, b.open) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// qualifiedIn reports whether the qualified name id, A::B, stands in s[lo:hi],
+// s being the file's text or its code, as B with a qualifier that agrees with
+// A's, as compatible says: one written before it, or the scopes it is
+// declared in, as enum struct B is declared inside namespace A. A B with no
+// qualifier, written or declared, such as one used in a function's body,
+// does not count, so that a name standing bare in some other scope's lines
+// is not taken for A's.
+func (f *file) qualifiedIn(s, id string, lo, hi int) bool {
+	parts := strings.Split(strings.TrimPrefix(id, "::"), "::")
+	if len(parts) < 2 || strings.Contains(id, "*") {
+		return false
+	}
+	name, qual := parts[len(parts)-1], parts[:len(parts)-1]
+	f.analyze()
+	for _, at := range occurrences(s, lo, hi, name) {
+		if q := f.qualifier(s, at, lo); len(q) > 0 && compatible(qual, q) {
+			return true
 		}
 	}
 	return false

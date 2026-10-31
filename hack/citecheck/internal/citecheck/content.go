@@ -162,6 +162,11 @@ func (lc *linkChecker) check(ctx context.Context, ps *paraScan, it *goItem) (rea
 		return "", false, err
 	}
 	f := obj.f
+	if linkHolds(f, cite.From, cite.To, ids) {
+		slog.DebugContext(ctx, "a link holds what its text names", slog.String("file", lc.name), slog.Int("line", lc.line),
+			slog.String("link", cite.Text), slog.Any("identifiers", ids), slog.Bool("own_text", own))
+		return "", false, nil
+	}
 	if !own {
 		named := ids
 		ids = slices.DeleteFunc(slices.Clone(ids), func(id string) bool { return !f.has(id) })
@@ -174,11 +179,6 @@ func (lc *linkChecker) check(ctx context.Context, ps *paraScan, it *goItem) (rea
 			}
 			return listing(reason)
 		}
-	}
-	if linkHolds(f, cite.From, cite.To, ids) {
-		slog.DebugContext(ctx, "a link holds what its text names", slog.String("file", lc.name), slog.Int("line", lc.line),
-			slog.String("link", cite.Text), slog.Any("identifiers", ids), slog.Bool("own_text", own))
-		return "", false, nil
 	}
 	which := "named beside it"
 	if own {

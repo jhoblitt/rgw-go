@@ -602,17 +602,23 @@
 // citation's, whole code tokens only, with markdown's backslash escapes
 // dropped, a code span's name with a "*", as `HTTP_X_AMZ_GRANT_*`, kept whole,
 // and in a Go file the names that are rgw-go's left out; and the words beside
-// it with each file's name blanked. A name from beside it that its file does
-// not hold at all is left out too, since such a name is as often an error
-// table's, a neighboring citation's or rgw-go's own as the link's.
+// it with each file's name blanked. A name from beside it that its file's text
+// nowhere writes is left out too, unless its lines hold it as a declaration,
+// below, since such a name is as often an error table's, a neighboring
+// citation's or rgw-go's own as the link's.
 //
 // An identifier stands in text as a whole word; a name of words joined by "_"
 // also as a run of the words of a longer one, write_meta in _do_write_meta; a
 // name with a "*" as a pattern, each "*" any run of letters, digits, "_" and
-// "-"; and a header's name also in its CGI form, as radosgw reads a request's
-// headers, x-amz-acl as HTTP_X_AMZ_ACL. A link's lines hold one when it stands
-// in them, the link's lines exactly and none either side, or in the header of
-// a block that encloses them, as a function's does its body.
+// "-"; a header's name also in its CGI form, as radosgw reads a request's
+// headers, x-amz-acl as HTTP_X_AMZ_ACL; and a qualified name, A::B, also as a
+// B whose own qualifier agrees with A, the shorter of the two being the
+// longer's last names: the qualifier written before B, after the names of
+// the scopes B is declared in when it is declared where it stands, as enum
+// struct B inside namespace A is; though not as a B with no qualifier at all,
+// as one used in a function's body. A link's lines hold one when it stands in
+// them, the link's lines exactly and none either side, or in the header of a
+// block that encloses them, as a function's does its body.
 //
 // A link whose own text names identifiers fails when its lines hold none of
 // them. One whose identifiers are named beside it fails when its lines hold
