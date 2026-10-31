@@ -297,29 +297,14 @@ func widened(f *file, from, to int) (wideFrom, wideTo int, what string) {
 	return from, to, ""
 }
 
-// definition reports whether a block's header defines a function, a class, a
-// struct, a union or an enum: a name and a parenthesis after it that closes
-// within the header, the name no control keyword, or the keyword that names
-// the kind. A namespace is no definition here, nor is an extern "C" block,
-// nor a lambda passed to a call, whose call's parenthesis the header leaves
-// open.
+// definition reports whether a block's header defines a function, as
+// definedName reads one, or a class, a struct, a union or an enum. A
+// namespace is no definition here, nor is an extern "C" block.
 func definition(header string) bool {
 	if scope, names := scopeOf(header); scope {
 		return len(names) > 0 && lastWord(header, "namespace") < 0
 	}
-	if lastWord(header, "enum") >= 0 {
-		return true
-	}
-	before, _, found := strings.Cut(header, "(")
-	if !found || strings.Count(header, "(") != strings.Count(header, ")") {
-		return false
-	}
-	name := strings.TrimRight(before, " \t\n")
-	j := len(name)
-	for j > 0 && isIdent(name[j-1]) {
-		j--
-	}
-	return j < len(name) && !controlWords[name[j:]]
+	return lastWord(header, "enum") >= 0 || definedName(header) != ""
 }
 
 // qualifiedIn reports whether the qualified name id, A::B, stands in s[lo:hi],

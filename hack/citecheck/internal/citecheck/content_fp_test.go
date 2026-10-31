@@ -247,12 +247,90 @@ func runCopy(loopT string) string {
 		"](" + cephURL("v20.2.4", runPath, loopT) + ") at v20.2.4).\n"
 }
 
+// fixtureRead is src/rgw/rgw_fp_read.cc at both releases: index_of at lines
+// 2-10; read_with_boundary at 12-15, which calls it; RGWFp::read_line at
+// 17-21, which calls read_with_boundary; RGWFp::get_data at 23-26, which
+// calls read_with_boundary too; RGWFp::send at 28-31, which neither
+// read_line reaches nor reaches read_line; clamp_window at 33-36; and
+// RGWFp::read_all at 38-42, which calls clamp_window and read_line, three
+// calls from index_of.
+const fixtureRead = `// A fixture for the content specs' subjects reached through calls.
+static int index_of(const char* buf, int len)
+{
+  for (int i = 0; i < len; i++) {
+    if (buf[i] == '\n') {
+      return i;
+    }
+  }
+  return -1;
+}
+
+static int read_with_boundary(const char* buf, int len)
+{
+  return index_of(buf, len);
+}
+
+int RGWFp::read_line(const char* buf, int len)
+{
+  int max = std::min(len, max_chunk);
+  return read_with_boundary(buf, max);
+}
+
+int RGWFp::get_data(const char* buf, int len)
+{
+  return read_with_boundary(buf, len);
+}
+
+int RGWFp::send(const char* buf, int len)
+{
+  return write(buf, len);
+}
+
+static int clamp_window(int len)
+{
+  return len > 64 ? 64 : len;
+}
+
+int RGWFp::read_all(const char* buf, int len)
+{
+  int w = clamp_window(len);
+  return read_line(buf, w);
+}
+`
+
+// fixtureLambda is src/rgw/rgw_fp_lambda.cc at both releases: helper_x at
+// lines 2-5; RGWFp::walk at 7-13, which passes std::for_each a lambda that
+// calls helper_x; and RGWFp::scan at 15-19, which calls std::for_each with
+// no lambda.
+const fixtureLambda = `// A fixture for the content specs' lambdas passed to calls.
+static int helper_x(int v)
+{
+  return v * 2;
+}
+
+int RGWFp::walk(std::vector<int>& v)
+{
+  std::for_each(v.begin(), v.end(), [&](int& x) {
+    x = helper_x(x);
+  });
+  return 0;
+}
+
+int RGWFp::scan(std::vector<int>& w)
+{
+  std::for_each(w.begin(), w.end(), print_one);
+  return 0;
+}
+`
+
 // newFPFixture returns a ceph fixture whose v19.2.6 and v20.2.4, the
 // releases the [S] and [T] markers name, hold the files the specs of the
 // sweep's false positives cite, and whose v19.2.7, a point release between
 // them, changes none of those files.
 func newFPFixture() *cephFixture {
 	r := newCephFixture()
+	r.write(readPath, fixtureRead)
+	r.write(lambdaPath, fixtureLambda)
 	r.write(runPath, fixtureRun)
 	r.write(aclPath, fixtureACL)
 	r.write(negPath, fixtureNeg)
@@ -276,14 +354,16 @@ func newFPFixture() *cephFixture {
 }
 
 const (
-	arnPath  = "src/rgw/rgw_fp_arn.h"
-	lcPath   = "src/rgw/rgw_fp_lc.cc"
-	verPath  = "src/rgw/rgw_fp_ver.cc"
-	asioPath = "src/rgw/rgw_fp_asio.cc"
-	envPath  = "src/rgw/rgw_fp_env.cc"
-	aclPath  = "src/rgw/rgw_fp_acl.cc"
-	negPath  = "src/rgw/rgw_fp_neg.cc"
-	runPath  = "src/rgw/rgw_fp_run.cc"
+	arnPath    = "src/rgw/rgw_fp_arn.h"
+	lcPath     = "src/rgw/rgw_fp_lc.cc"
+	verPath    = "src/rgw/rgw_fp_ver.cc"
+	asioPath   = "src/rgw/rgw_fp_asio.cc"
+	envPath    = "src/rgw/rgw_fp_env.cc"
+	aclPath    = "src/rgw/rgw_fp_acl.cc"
+	negPath    = "src/rgw/rgw_fp_neg.cc"
+	runPath    = "src/rgw/rgw_fp_run.cc"
+	readPath   = "src/rgw/rgw_fp_read.cc"
+	lambdaPath = "src/rgw/rgw_fp_lambda.cc"
 )
 
 var (
@@ -446,6 +526,23 @@ var _ = Describe("The content of links the sweep's false positives cite", func()
 					cephURL("v19.2.6", runPath, "L10-L13") + " cites the same code at v19.2.6 and holds none either",
 			},
 			"links checked: 4, held: 2, failed: 0, listed: 2", 0),
+		Entry("D2: a function its text names that reaches its lines' function through two calls", "doc.md",
+			"read_line finds a line end within its window ([rgw_fp_read.cc:4-8]("+cephURL("v19.2.6", readPath, "L4-L8")+
+				")).\n",
+			[]string{"1: " + cephURL("v19.2.6", readPath, "L4-L8") + ": listed: its lines hold none of read_line, but " +
+				"they lie in index_of, which read_line reaches through read_with_boundary"},
+			"links checked: 1, held: 0, failed: 0, listed: 1", 0),
+		Entry("D2: a function its text names that its lines reach through two calls", "doc.md",
+			"A line end is found by `index_of` ([rgw_fp_read.cc:25]("+cephURL("v19.2.6", readPath, "L25")+")).\n",
+			[]string{"1: " + cephURL("v19.2.6", readPath, "L25") + ": listed: its lines hold none of index_of, but they " +
+				"reach index_of through read_with_boundary"},
+			"links checked: 1, held: 0, failed: 0, listed: 1", 0),
+		Entry("D2 (review D2-2), documented: a link drifted from the function its text names into a helper it calls",
+			"doc.md", "`read_line` caps the window at the chunk size ([rgw_fp_read.cc:4-8]("+
+				cephURL("v19.2.6", readPath, "L4-L8")+")).\n",
+			[]string{"1: " + cephURL("v19.2.6", readPath, "L4-L8") + ": listed: its lines hold none of read_line, but " +
+				"they lie in index_of, which read_line reaches through read_with_boundary"},
+			"links checked: 1, held: 0, failed: 0, listed: 1", 0),
 		Entry("D3 (review D3-1), documented: a run's links drifted identically at both releases, onto other code",
 			"doc.md",
 			"A range past the end fails `range_to_ofs` once the copy loop reaches it ([rgw_fp_run.cc:6]("+
@@ -485,6 +582,43 @@ var _ = Describe("The content of links the sweep's false positives cite", func()
 			"A public canned ACL under a block of public ACLs is refused ([rgw_fp_acl.cc:19-21]("+acl1921+")).\n",
 			[]string{"1: " + acl1921 + ": lines 19-21 of src/rgw/rgw_fp_acl.cc at v19.2.6 hold none of the identifiers " +
 				"named beside it, ACLs, which stand elsewhere in it; the nearest line that holds one is 4"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
+		Entry("D2: a function its text names that neither reaches its lines' function nor is reached", "doc.md",
+			"read_line finds a line end within its window ([rgw_fp_read.cc:30]("+cephURL("v19.2.6", readPath, "L30")+
+				")).\n",
+			[]string{"1: " + cephURL("v19.2.6", readPath, "L30") + ": line 30 of src/rgw/rgw_fp_read.cc at v19.2.6 holds " +
+				"none of the identifiers named beside it, read_line, which stand elsewhere in it; the nearest line that " +
+				"holds one is 41"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
+		Entry("D2: a function its text names that its lines reach through no call", "doc.md",
+			"A line end is found by `index_of` ([rgw_fp_read.cc:30]("+cephURL("v19.2.6", readPath, "L30")+")).\n",
+			[]string{"1: " + cephURL("v19.2.6", readPath, "L30") + ": line 30 of src/rgw/rgw_fp_read.cc at v19.2.6 holds " +
+				"none of the identifiers named beside it, index_of, which stand elsewhere in it; the nearest line that " +
+				"holds one is 14"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
+		Entry("D2 (review D2-1): its own text names a function that reaches its lines' function", "doc.md",
+			"The window is capped first ([`RGWFp::read_line`]("+cephURL("v19.2.6", readPath, "L4-L8")+")).\n",
+			[]string{"1: " + cephURL("v19.2.6", readPath, "L4-L8") + ": lines 4-8 of src/rgw/rgw_fp_read.cc at v19.2.6 " +
+				"hold none of the identifiers its text names, RGWFp::read_line, RGWFp, read_line; the nearest line that " +
+				"holds one is 17"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
+		Entry("D2 (review D2-3): a function its text names that its lines reach only through three calls", "doc.md",
+			"`index_of` scans for the newline ([rgw_fp_read.cc:40-41]("+cephURL("v19.2.6", readPath, "L40-L41")+")).\n",
+			[]string{"1: " + cephURL("v19.2.6", readPath, "L40-L41") + ": lines 40-41 of src/rgw/rgw_fp_read.cc at " +
+				"v19.2.6 hold none of the identifiers named beside it, index_of, which stand elsewhere in it; the " +
+				"nearest line that holds one is 14"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
+		Entry("D2 (review D2-4): a function that reaches the lines only through another function's lambda", "doc.md",
+			"`RGWFp::scan` prints each element ([rgw_fp_lambda.cc:3-4]("+cephURL("v19.2.6", lambdaPath, "L3-L4")+")).\n",
+			[]string{"1: " + cephURL("v19.2.6", lambdaPath, "L3-L4") + ": lines 3-4 of src/rgw/rgw_fp_lambda.cc at " +
+				"v19.2.6 hold none of the identifiers named beside it, RGWFp::scan, RGWFp, which stand elsewhere in it; " +
+				"the nearest line that holds one is 7"},
+			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
+		Entry("D2, documented: a variable its text names that its lines' function's caller reads", "doc.md",
+			"`max_chunk` bounds the window ([rgw_fp_read.cc:14]("+cephURL("v19.2.6", readPath, "L14")+")).\n",
+			[]string{"1: " + cephURL("v19.2.6", readPath, "L14") + ": line 14 of src/rgw/rgw_fp_read.cc at v19.2.6 holds " +
+				"none of the identifiers named beside it, max_chunk, which stand elsewhere in it; the nearest line that " +
+				"holds one is 19"},
 			"links checked: 1, held: 0, failed: 1, listed: 0", 1),
 		Entry("D1 (review D1-1): a code-span name its file writes only in a comment, the link's file the wrong one",
 			"doc.md", "`get_obj_state` reads the head first ([rgw_fp_acl.cc:19-21]("+acl1921+")).\n",

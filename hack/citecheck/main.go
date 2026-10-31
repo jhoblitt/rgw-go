@@ -672,6 +672,19 @@
 // code, beside names other links hold, is listed too: a reviewer reads the
 // listed links.
 //
+// A link whose lines hold none of the names beside it is listed, not failed,
+// too when a function one of them names, defined once in its file, reaches
+// the function its lines are in through calls, two at most, each to a
+// function the file defines once, or its lines reach the named function so:
+// the text names a caller of its code, read_line for index_of's lines when
+// read_line calls read_with_boundary and that calls index_of, or a callee. It
+// is listed, not held, since a link that drifted into a function the named
+// one calls would be joined to it so too. A qualified name counts only for a
+// definition whose qualifier agrees with it; a name the file defines more
+// than once, as each op's execute, is followed nowhere; a lambda passed to a
+// call defines no function of the call's name; and a link whose own text
+// names the function is not listed so, but fails.
+//
 // When its file holds none of the names beside it, a link fails when the
 // same lines of another file at its ref hold one: a file its paragraph links
 // or names, or, for a qualified name none of whose parts is generic, one the

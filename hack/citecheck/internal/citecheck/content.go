@@ -120,16 +120,17 @@ type linkChecker struct {
 // its ref's, as releaseReason says; when its text names another file; when
 // the identifiers its own text names stand neither in its lines nor in the
 // header of a block that encloses them; and, when its text names none, when
-// those named beside it that its file holds stand in neither, and is listed
-// instead when othersNames finds those other links'. A link to one line that
-// holds none of the names beside it is listed instead when the definition or
-// the statement the line starts, as widened reads it, holds one; one whose
-// own text names them is not, as it says which line it means. When its file
-// holds none of those, it fails still when the same lines of another file
-// its paragraph names hold one, or of one its section names hold a
-// qualified name none of whose parts is generic, as elsewhere says. When
-// nothing beside it counts, or none of it stands anywhere, it fails when its
-// text, lines alone, continues a citation of another file, and is listed
+// those named beside it that its file holds stand in neither. One whose
+// names are beside it is listed instead when othersNames finds those other
+// links', when reached finds them joined to its lines by calls, or, for a
+// link to one line, when the definition or the statement the line starts, as
+// widened reads it, holds one; one whose own text names them is never
+// relaxed so. When its file holds none of the names beside it, it fails
+// still when the same lines of another file its paragraph names hold one, or
+// of one its section names hold a qualified name none of whose parts is
+// generic, as elsewhere says. When nothing beside it counts, or none of it
+// stands anywhere, it fails when its text, lines alone, continues a citation
+// of another file, and is listed
 // otherwise.
 func (lc *linkChecker) check(ctx context.Context, ps *paraScan, it *goItem) (reason string, listed bool, err error) {
 	c, cite := lc.c, it.link
@@ -171,7 +172,8 @@ func (lc *linkChecker) check(ctx context.Context, ps *paraScan, it *goItem) (rea
 			slog.String("link", cite.Text), slog.Any("identifiers", ids), slog.Bool("own_text", own))
 		return "", false, nil
 	}
-	if from, to, what := widened(f, cite.From, cite.To); !own && what != "" && linkHolds(f, from, to, ids) {
+	from, to, what := widened(f, cite.From, cite.To)
+	if !own && what != "" && linkHolds(f, from, to, ids) {
 		return listing(fmt.Sprintf("line %d holds none of %s, but the %s that starts on it, through line %d, holds one",
 			cite.From, strings.Join(ids, ", "), what, to))
 	}
@@ -192,6 +194,9 @@ func (lc *linkChecker) check(ctx context.Context, ps *paraScan, it *goItem) (rea
 			return "", false, err
 		} else if why != "" {
 			return listing(why)
+		}
+		if how := reached(f, from, to, ids); how != "" {
+			return listing("its lines hold none of " + strings.Join(ids, ", ") + ", but " + how)
 		}
 	}
 	which := "named beside it"
