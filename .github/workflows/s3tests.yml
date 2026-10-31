@@ -51,8 +51,11 @@ jobs:
 
       # The S3 path: every internal package can change what it answers, so
       # only docs and records skip the run. Three dots count the pull
-      # request's own changes only, and --no-renames counts a file moved out
-      # of the path by its old name too.
+      # request's own changes only; --no-renames counts a file moved out of
+      # the path by its old name too; -z gives each name as it is, where git
+      # would otherwise quote one holding a non-ASCII or control character and
+      # no pattern would match it; and %q keeps a name from writing a line of
+      # its own to the log, where a workflow command could start.
       - name: Decide whether the pull request touches the S3 path
         id: filter
         env:
@@ -65,17 +68,18 @@ jobs:
             echo "run=true" >>"$GITHUB_OUTPUT"
             exit 0
           fi
-          files="$(git diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA")"
+          files="${RUNNER_TEMP}/changed-files"
+          git diff -z --name-only --no-renames "$BASE_SHA...$HEAD_SHA" >"$files"
           run=false
-          while IFS= read -r path; do
+          while IFS= read -r -d '' path; do
             case "$path" in
               internal/* | cmd/* | go.mod | go.sum | hack/s3tests/* | hack/internal/* | hack/rooket/* | hack/parity/* | \
                 test/s3tests/* | .github/workflows/s3tests.yml | .github/actions/rooket-cluster/*)
-                echo "on the S3 path: $path"
+                printf 'on the S3 path: %q\n' "$path"
                 run=true
                 ;;
             esac
-          done <<<"$files"
+          done <"$files"
           echo "run=${run}"
           echo "run=${run}" >>"$GITHUB_OUTPUT"
 
