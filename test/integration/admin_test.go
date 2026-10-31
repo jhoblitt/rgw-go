@@ -231,8 +231,6 @@ var _ = Describe("the admin gate", Ordered, ContinueOnFailure, Label("integratio
 		createUser(ctx, gateReader, gateReadKey, "--caps", "user-info-without-keys=read")
 		admin(ctx, "quota", "set", "--quota-scope=user", "--uid", gateUser, "--max-objects", "100", "--max-size", "1048576")
 		admin(ctx, "quota", "enable", "--quota-scope=user", "--uid", gateUser)
-		admin(ctx, "ratelimit", "set", "--ratelimit-scope=user", "--uid", gateUser, "--max-read-ops", "10", "--max-write-bytes", "4096")
-		admin(ctx, "ratelimit", "enable", "--ratelimit-scope=user", "--uid", gateUser)
 
 		s3c := s3At(endpoint, gateUserKey)
 		for _, b := range []string{gateBucket, gateEmptyBucket} {
@@ -245,6 +243,11 @@ var _ = Describe("the admin gate", Ordered, ContinueOnFailure, Label("integratio
 			})
 			Expect(err).NotTo(HaveOccurred(), "writing %s/%s through radosgw", gateBucket, key)
 		}
+		// The ratelimits come after the fixture writes: obj2 alone overdraws
+		// --max-write-bytes 4096, and radosgw refuses the user's next write
+		// with 503 SlowDown until the tokens refill.
+		admin(ctx, "ratelimit", "set", "--ratelimit-scope=user", "--uid", gateUser, "--max-read-ops", "10", "--max-write-bytes", "4096")
+		admin(ctx, "ratelimit", "enable", "--ratelimit-scope=user", "--uid", gateUser)
 		admin(ctx, "ratelimit", "set", "--ratelimit-scope=bucket", "--bucket", gateBucket, "--max-write-ops", "20")
 		admin(ctx, "ratelimit", "enable", "--ratelimit-scope=bucket", "--bucket", gateBucket)
 		var st struct {
