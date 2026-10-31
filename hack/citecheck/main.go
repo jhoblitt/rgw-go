@@ -653,6 +653,25 @@
 // it from "a request with no `x-amz-content-sha256` is refused", whose right
 // lines test the very name and whose drifted copy must fail.
 //
+// A link whose names beside it are other links' is listed, not failed, when
+// its run cites its code at two major versions and they agree: each of the
+// names stands in the lines of another link of its paragraph at its release,
+// and a link of its run cites its file at a release of another major
+// version, v20 for a v19 link, holds none of them either, and cites the same
+// code, blanks aside, the lines of each read as they are. So in "fails
+// `range_to_ofs` once the copy loop reaches it (A and B at v19.2.6, C and D
+// at v20.2.4)", A and C holding the call and B and D the same loop, B and D
+// are listed. A name beside it that no other link holds may be its own, so
+// when one is, as `copy_chunk` would be in "once the loop's `copy_chunk`
+// reaches it" were B and D to cite other code, the link fails as before. Two
+// point releases of one major version share their code, so their agreeing
+// shows nothing, and a run at one release shows no such thing either, since
+// each of its links may hold the names, as a list of call sites does, and
+// the one that holds none may have drifted; their links fail as before. A
+// pair drifted the same way at both major versions, onto the same other
+// code, beside names other links hold, is listed too: a reviewer reads the
+// listed links.
+//
 // When its file holds none of the names beside it, a link fails when the
 // same lines of another file at its ref hold one: a file its paragraph links
 // or names, or, for a qualified name none of whose parts is generic, one the

@@ -58,13 +58,19 @@ func withGlobs(ids, globs []string) []string {
 // its paragraph or, in a table, its cell, markdown's backslash escapes
 // dropped.
 func (lc *linkChecker) beside(ps *paraScan, it *goItem) string {
-	lo, hi := 0, len(ps.norm)
+	lo, hi := lc.bounds(ps, it)
+	return unescape(besideRun(ps.norm, it.pos, lo, hi))
+}
+
+// bounds returns the bounds in its paragraph's norm of the words a link's
+// run is read in: in a table, its cell; otherwise the whole paragraph.
+func (lc *linkChecker) bounds(ps *paraScan, it *goItem) (lo, hi int) {
 	if lc.md != nil {
 		if at := lc.md.at[ps]; lc.md.blocks[at[0]][at[1]].kind == mdRow {
-			lo, hi = sentence(ps.norm, it.pos, true)
+			return sentence(ps.norm, it.pos, true)
 		}
 	}
-	return unescape(besideRun(ps.norm, it.pos, lo, hi))
+	return 0, len(ps.norm)
 }
 
 // reSpanGlob is a code span that holds a name with a "*" that stands for any
@@ -89,20 +95,7 @@ var reRunGap = regexp.MustCompile(`^(?:[\s,;()]+|\b(?:and|or)\b|\b(?:at|in|on)\s
 // citation's names are not its, and a list's lead-in names are each of its
 // citations'.
 func besideRun(norm string, pos, lo, hi int) string {
-	var marks []int
-	for i := lo; i < hi; i++ {
-		if norm[i] == citeMark {
-			marks = append(marks, i)
-		}
-	}
-	k, _ := slices.BinarySearch(marks, pos)
-	first, last := k, k
-	for first > 0 && reRunGap.MatchString(norm[marks[first-1]+1:marks[first]]) {
-		first--
-	}
-	for last+1 < len(marks) && reRunGap.MatchString(norm[marks[last]+1:marks[last+1]]) {
-		last++
-	}
+	marks, first, last := runOf(norm, pos, lo, hi)
 	start, end := marks[first], marks[last]
 	from := max(lo, sentenceStart(norm, start))
 	if first > 0 {
@@ -125,6 +118,40 @@ func besideRun(norm string, pos, lo, hi int) string {
 		}
 	}
 	return norm[from:start] + " " + norm[end+1:to]
+}
+
+// runOf returns the offsets of the citations' placeholders in norm within lo
+// and hi, and the first and the last of those in the run of citations whose
+// placeholder is at pos, as besideRun reads a run.
+func runOf(norm string, pos, lo, hi int) (marks []int, first, last int) {
+	for i := lo; i < hi; i++ {
+		if norm[i] == citeMark {
+			marks = append(marks, i)
+		}
+	}
+	k, _ := slices.BinarySearch(marks, pos)
+	first, last = k, k
+	for first > 0 && reRunGap.MatchString(norm[marks[first-1]+1:marks[first]]) {
+		first--
+	}
+	for last+1 < len(marks) && reRunGap.MatchString(norm[marks[last]+1:marks[last+1]]) {
+		last++
+	}
+	return marks, first, last
+}
+
+// siblings returns the other links of a link's run, as besideRun reads the
+// run, in their order, each with no problem of its own.
+func (lc *linkChecker) siblings(ps *paraScan, it *goItem) []*goItem {
+	lo, hi := lc.bounds(ps, it)
+	marks, first, last := runOf(ps.norm, it.pos, lo, hi)
+	var out []*goItem
+	for _, o := range ps.items {
+		if o != it && o.kind == linkItem && o.link.Problem == "" && o.pos >= marks[first] && o.pos <= marks[last] {
+			out = append(out, o)
+		}
+	}
+	return out
 }
 
 // cppKeywords are C++'s keywords, which name no code of their own and stand

@@ -212,11 +212,48 @@ int RGWFp::check_etag(req_state* s, const std::string& etag)
 }
 `
 
+// fixtureRun is src/rgw/rgw_fp_run.cc at v19.2.6: RGWFp::copy at lines 4-15,
+// which calls range_to_ofs at line 6 and runs its copy loop at 10-13.
+const fixtureRun = `// A fixture for the content specs' runs of citations.
+#include "rgw_fp.h"
+
+int RGWFp::copy(optional_yield y)
+{
+  int r = range_to_ofs(total, ofs, end);
+  if (r < 0) {
+    return r;
+  }
+  while (ofs <= end) {
+    r = copy_chunk(ofs);
+    ofs += chunk;
+  }
+  return r;
+}
+`
+
+// fixtureRunHelpers is what v20.2.4 inserts at line 4 of rgw_fp_run.cc,
+// which moves copy to 7-18, its range_to_ofs call to 9 and its loop to 13-16.
+const fixtureRunHelpers = `static int chunk = 4096;
+static int total = 0;
+
+`
+
+// runCopy returns markdown that cites range_to_ofs's call and the copy loop
+// at each release, the loop at v20.2.4 linked at lines loopT.
+func runCopy(loopT string) string {
+	return "A range past the end fails `range_to_ofs` once the copy loop reaches it ([rgw_fp_run.cc:6](" +
+		cephURL("v19.2.6", runPath, "L6") + ") and [:10-13](" + cephURL("v19.2.6", runPath, "L10-L13") +
+		") at v19.2.6, [:9](" + cephURL("v20.2.4", runPath, "L9") + ") and [:" + strings.ReplaceAll(loopT, "L", "") +
+		"](" + cephURL("v20.2.4", runPath, loopT) + ") at v20.2.4).\n"
+}
+
 // newFPFixture returns a ceph fixture whose v19.2.6 and v20.2.4, the
 // releases the [S] and [T] markers name, hold the files the specs of the
-// sweep's false positives cite.
+// sweep's false positives cite, and whose v19.2.7, a point release between
+// them, changes none of those files.
 func newFPFixture() *cephFixture {
 	r := newCephFixture()
+	r.write(runPath, fixtureRun)
 	r.write(aclPath, fixtureACL)
 	r.write(negPath, fixtureNeg)
 	r.write(arnPath, fixtureArn)
@@ -226,8 +263,13 @@ func newFPFixture() *cephFixture {
 	r.write(envPath, fixtureEnv)
 	r.commit("squid")
 	r.git("tag", "v19.2.6")
+	r.write("src/rgw/rgw_fp_point.cc", "// a point release touches another file\n")
+	r.commit("squid point release")
+	r.git("tag", "v19.2.7")
 	lines := strings.SplitAfter(fixtureLC, "\n")
 	r.write(lcPath, lines[0]+fixtureLCHelper+strings.Join(lines[1:], ""))
+	lines = strings.SplitAfter(fixtureRun, "\n")
+	r.write(runPath, strings.Join(lines[:3], "")+fixtureRunHelpers+strings.Join(lines[3:], ""))
 	r.commit("tentacle")
 	r.git("tag", "v20.2.4")
 	return r
@@ -241,6 +283,7 @@ const (
 	envPath  = "src/rgw/rgw_fp_env.cc"
 	aclPath  = "src/rgw/rgw_fp_acl.cc"
 	negPath  = "src/rgw/rgw_fp_neg.cc"
+	runPath  = "src/rgw/rgw_fp_run.cc"
 )
 
 var (
@@ -339,6 +382,11 @@ var _ = Describe("The content of links the sweep's false positives cite", func()
 		Entry(`D4 (review D4-4): a name after "does not match" the lines compare`, "doc.md",
 			"An ETag that does not match `If-Match` fails with 412 ([rgw_fp_neg.cc:29-32]("+
 				cephURL("v19.2.6", negPath, "L29-L32")+")).\n", 1),
+		Entry("D3 (re-review D3-5): a run whose loop links hold the name beside them no other link holds", "doc.md",
+			"A range past the end fails `range_to_ofs` once the loop's `copy_chunk` reaches it ([rgw_fp_run.cc:6]("+
+				cephURL("v19.2.6", runPath, "L6")+") and [:10-13]("+cephURL("v19.2.6", runPath, "L10-L13")+") at v19.2.6, "+
+				"[:9]("+cephURL("v20.2.4", runPath, "L9")+") and [:13-16]("+cephURL("v20.2.4", runPath, "L13-L16")+
+				") at v20.2.4).\n", 4),
 	)
 
 	DescribeTable("lists, rather than fails, a link the sweep found failed though nothing beside it judges its lines",
@@ -370,6 +418,50 @@ var _ = Describe("The content of links the sweep's false positives cite", func()
 			[]string{"1: " + asio27 + ": listed: none of the identifiers named beside it, namespace, stands in " +
 				"src/rgw/rgw_fp_asio.cc at v19.2.6"},
 			"links checked: 1, held: 0, failed: 0, listed: 1", 0),
+		Entry("D3: a run's names another link of its release holds, the same code at the other release holding none",
+			"doc.md", runCopy("L13-L16"),
+			[]string{
+				"1: " + cephURL("v19.2.6", runPath, "L10-L13") + ": listed: the names beside it, range_to_ofs, are " +
+					"other links': each stands in the lines of a link of its paragraph at v19.2.6, " +
+					cephURL("v19.2.6", runPath, "L6") + " first; " +
+					cephURL("v20.2.4", runPath, "L13-L16") + " cites the same code at v20.2.4 and holds none either",
+				"1: " + cephURL("v20.2.4", runPath, "L13-L16") + ": listed: the names beside it, range_to_ofs, are " +
+					"other links': each stands in the lines of a link of its paragraph at v20.2.4, " +
+					cephURL("v20.2.4", runPath, "L9") + " first; " +
+					cephURL("v19.2.6", runPath, "L10-L13") + " cites the same code at v19.2.6 and holds none either",
+			},
+			"links checked: 4, held: 2, failed: 0, listed: 2", 0),
+		Entry("D3: a run's names a link of another run of its paragraph holds, the releases agreeing", "doc.md",
+			"The copy runs past `range_to_ofs`'s check ([rgw_fp_run.cc:10-13]("+cephURL("v19.2.6", runPath, "L10-L13")+
+				") and [:13-16]("+cephURL("v20.2.4", runPath, "L13-L16")+"); `RGWFp::copy`, [:6]("+
+				cephURL("v19.2.6", runPath, "L6")+") and [:9]("+cephURL("v20.2.4", runPath, "L9")+")).\n",
+			[]string{
+				"1: " + cephURL("v19.2.6", runPath, "L10-L13") + ": listed: the names beside it, range_to_ofs, are " +
+					"other links': each stands in the lines of a link of its paragraph at v19.2.6, " +
+					cephURL("v19.2.6", runPath, "L6") + " first; " +
+					cephURL("v20.2.4", runPath, "L13-L16") + " cites the same code at v20.2.4 and holds none either",
+				"1: " + cephURL("v20.2.4", runPath, "L13-L16") + ": listed: the names beside it, range_to_ofs, are " +
+					"other links': each stands in the lines of a link of its paragraph at v20.2.4, " +
+					cephURL("v20.2.4", runPath, "L9") + " first; " +
+					cephURL("v19.2.6", runPath, "L10-L13") + " cites the same code at v19.2.6 and holds none either",
+			},
+			"links checked: 4, held: 2, failed: 0, listed: 2", 0),
+		Entry("D3 (review D3-1), documented: a run's links drifted identically at both releases, onto other code",
+			"doc.md",
+			"A range past the end fails `range_to_ofs` once the copy loop reaches it ([rgw_fp_run.cc:6]("+
+				cephURL("v19.2.6", runPath, "L6")+") and [:7-9]("+cephURL("v19.2.6", runPath, "L7-L9")+") at v19.2.6, [:9]("+
+				cephURL("v20.2.4", runPath, "L9")+") and [:10-12]("+cephURL("v20.2.4", runPath, "L10-L12")+") at v20.2.4).\n",
+			[]string{
+				"1: " + cephURL("v19.2.6", runPath, "L7-L9") + ": listed: the names beside it, range_to_ofs, are " +
+					"other links': each stands in the lines of a link of its paragraph at v19.2.6, " +
+					cephURL("v19.2.6", runPath, "L6") + " first; " +
+					cephURL("v20.2.4", runPath, "L10-L12") + " cites the same code at v20.2.4 and holds none either",
+				"1: " + cephURL("v20.2.4", runPath, "L10-L12") + ": listed: the names beside it, range_to_ofs, are " +
+					"other links': each stands in the lines of a link of its paragraph at v20.2.4, " +
+					cephURL("v20.2.4", runPath, "L9") + " first; " +
+					cephURL("v19.2.6", runPath, "L7-L9") + " cites the same code at v19.2.6 and holds none either",
+			},
+			"links checked: 4, held: 2, failed: 0, listed: 2", 0),
 	)
 
 	DescribeTable("still fails a wrong link of the same shape", reports,
@@ -450,6 +542,51 @@ var _ = Describe("The content of links the sweep's false positives cite", func()
 				"stands in src/rgw/rgw_fp_asio.cc at v19.2.6, but lines 9-12 of src/rgw/rgw_fp_env.cc, which its " +
 				"paragraph names, hold RGWEnv"},
 			"links checked: 2, held: 1, failed: 1, listed: 0", 1),
+		Entry("D3: a run's names another link of its release holds, the other release's lines another code", "doc.md",
+			runCopy("L14-L17"),
+			[]string{
+				"1: " + cephURL("v19.2.6", runPath, "L10-L13") + ": lines 10-13 of src/rgw/rgw_fp_run.cc at v19.2.6 " +
+					"hold none of the identifiers named beside it, range_to_ofs, which stand elsewhere in it; the nearest " +
+					"line that holds one is 6",
+				"1: " + cephURL("v20.2.4", runPath, "L14-L17") + ": lines 14-17 of src/rgw/rgw_fp_run.cc at v20.2.4 " +
+					"hold none of the identifiers named beside it, range_to_ofs, which stand elsewhere in it; the nearest " +
+					"line that holds one is 9",
+			},
+			"links checked: 4, held: 2, failed: 2, listed: 0", 1),
+		Entry("D3, documented: a run at one release whose names another link of it holds", "doc.md",
+			"A range past the end fails `range_to_ofs` once the copy loop reaches it ([rgw_fp_run.cc:6]("+
+				cephURL("v19.2.6", runPath, "L6")+"), [:10-13]("+cephURL("v19.2.6", runPath, "L10-L13")+")).\n",
+			[]string{"1: " + cephURL("v19.2.6", runPath, "L10-L13") + ": lines 10-13 of src/rgw/rgw_fp_run.cc at " +
+				"v19.2.6 hold none of the identifiers named beside it, range_to_ofs, which stand elsewhere in it; the " +
+				"nearest line that holds one is 6"},
+			"links checked: 2, held: 1, failed: 1, listed: 0", 1),
+		Entry("D3 (review D3-3): a run at two point releases of one major version, both drifted the same way", "doc.md",
+			"A range past the end fails `range_to_ofs` once the copy loop reaches it ([rgw_fp_run.cc:6]("+
+				cephURL("v19.2.6", runPath, "L6")+") and [:7-9]("+cephURL("v19.2.6", runPath, "L7-L9")+") at v19.2.6, [:6]("+
+				cephURL("v19.2.7", runPath, "L6")+") and [:7-9]("+cephURL("v19.2.7", runPath, "L7-L9")+") at v19.2.7).\n",
+			[]string{
+				"1: " + cephURL("v19.2.6", runPath, "L7-L9") + ": lines 7-9 of src/rgw/rgw_fp_run.cc at v19.2.6 hold none " +
+					"of the identifiers named beside it, range_to_ofs, which stand elsewhere in it; the nearest line " +
+					"that holds one is 6; at v20.2.4 they hold one",
+				"1: " + cephURL("v19.2.7", runPath, "L7-L9") + ": lines 7-9 of src/rgw/rgw_fp_run.cc at v19.2.7 hold none " +
+					"of the identifiers named beside it, range_to_ofs, which stand elsewhere in it; the nearest line " +
+					"that holds one is 6; at v20.2.4 they hold one",
+			},
+			"links checked: 4, held: 2, failed: 2, listed: 0", 1),
+		Entry("D3 (re-review D3-4): a run drifted identically at both majors, beside a name no other link holds",
+			"doc.md",
+			"A range past the end fails `range_to_ofs` once the loop's `copy_chunk` reaches it ([rgw_fp_run.cc:6]("+
+				cephURL("v19.2.6", runPath, "L6")+") and [:7-9]("+cephURL("v19.2.6", runPath, "L7-L9")+") at v19.2.6, [:9]("+
+				cephURL("v20.2.4", runPath, "L9")+") and [:10-12]("+cephURL("v20.2.4", runPath, "L10-L12")+") at v20.2.4).\n",
+			[]string{
+				"1: " + cephURL("v19.2.6", runPath, "L7-L9") + ": lines 7-9 of src/rgw/rgw_fp_run.cc at v19.2.6 hold none " +
+					"of the identifiers named beside it, range_to_ofs, copy_chunk, which stand elsewhere in it; the " +
+					"nearest line that holds one is 6; at v20.2.4 they hold one",
+				"1: " + cephURL("v20.2.4", runPath, "L10-L12") + ": lines 10-12 of src/rgw/rgw_fp_run.cc at v20.2.4 hold " +
+					"none of the identifiers named beside it, range_to_ofs, copy_chunk, which stand elsewhere in it; the " +
+					"nearest line that holds one is 9; at v19.2.6 they hold one",
+			},
+			"links checked: 4, held: 2, failed: 2, listed: 0", 1),
 		Entry("D1: a code name beside a plural its file writes only in a comment", "doc.md",
 			"`check_range` refuses a public canned ACL under a block of public ACLs ([rgw_fp_acl.cc:11-13]("+acl1113+
 				")).\n",

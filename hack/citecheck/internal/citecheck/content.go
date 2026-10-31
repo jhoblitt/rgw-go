@@ -120,11 +120,11 @@ type linkChecker struct {
 // its ref's, as releaseReason says; when its text names another file; when
 // the identifiers its own text names stand neither in its lines nor in the
 // header of a block that encloses them; and, when its text names none, when
-// those named beside it that its file holds stand in neither. A link to one
-// line that holds none of the names beside it is listed instead when the
-// definition or the statement the line starts, as widened reads it, holds
-// one; one whose own text names them is not, as it says which line it means.
-// When its file
+// those named beside it that its file holds stand in neither, and is listed
+// instead when othersNames finds those other links'. A link to one line that
+// holds none of the names beside it is listed instead when the definition or
+// the statement the line starts, as widened reads it, holds one; one whose
+// own text names them is not, as it says which line it means. When its file
 // holds none of those, it fails still when the same lines of another file
 // its paragraph names hold one, or of one its section names hold a
 // qualified name none of whose parts is generic, as elsewhere says. When
@@ -187,6 +187,12 @@ func (lc *linkChecker) check(ctx context.Context, ps *paraScan, it *goItem) (rea
 			}
 			return listing(reason)
 		}
+		var why string
+		if why, err = lc.othersNames(ctx, ps, it, r.commit, f, ids); err != nil {
+			return "", false, err
+		} else if why != "" {
+			return listing(why)
+		}
 	}
 	which := "named beside it"
 	if own {
@@ -212,6 +218,98 @@ func (lc *linkChecker) check(ctx context.Context, ps *paraScan, it *goItem) (rea
 		reason += "; at " + strings.Join(tags, " and ") + " " + they + " one"
 	}
 	return reason, false, nil
+}
+
+// othersNames returns why the names beside a link, ids, which its lines hold
+// none of, are other links' rather than its own, or "": each of them stands
+// in the lines of another link of its paragraph at the link's commit, those
+// of its run first, and a link of its run cites the link's file at a release
+// of another major version, v20 for a v19 link, holds none of them either,
+// and its lines are the same code as the link's, blanks aside. A run that
+// cites each piece of code at both releases names beside it what the other
+// pieces hold; the release where the pieces agree shows the link is not a
+// drifted copy of a piece that holds them. A name no other link holds may be
+// the link's own, which its drifted lines lack, so one beside it shows
+// nothing. Two point releases of one major version, v19.2.6 and v19.2.7,
+// share their code, so their agreeing shows nothing; nor does a run at one
+// release, since its links may each hold the names, as a list of call sites
+// does, and one that holds none may be wrong. A link's lines are read as
+// they are, never widened.
+func (lc *linkChecker) othersNames(ctx context.Context, ps *paraScan, it *goItem, commit string, f *file,
+	ids []string,
+) (string, error) {
+	cite := it.link
+	major := releaseMajor(cite.Ref)
+	if major == "" {
+		return "", nil
+	}
+	text := blankless(f.text[f.lineStart(cite.From):f.lineEnd(cite.To)])
+	var holder, counterpart *goItem
+	var at string
+	held := map[string]bool{}
+	sibs := lc.siblings(ps, it)
+	links := slices.Clone(sibs)
+	for _, o := range ps.items {
+		if o != it && o.kind == linkItem && o.link.Problem == "" && !slices.Contains(sibs, o) {
+			links = append(links, o)
+		}
+	}
+	for _, o := range links {
+		inRun := slices.Contains(sibs, o)
+		r, err := lc.c.resolve(ctx, o.link.Ref)
+		if err != nil {
+			return "", err
+		}
+		if r.commit == "" {
+			continue
+		}
+		obj, err := lc.c.read(ctx, r.commit, o.link.Path)
+		if err != nil {
+			return "", err
+		}
+		if obj.kind != "blob" || o.link.To > obj.f.lines() {
+			continue
+		}
+		if r.commit == commit {
+			for _, id := range ids {
+				if linkHolds(obj.f, o.link.From, o.link.To, []string{id}) {
+					held[id] = true
+					if holder == nil {
+						holder = o
+					}
+				}
+			}
+			continue
+		}
+		if inRun && counterpart == nil && o.link.Path == cite.Path &&
+			releaseMajor(o.link.Ref) != "" && releaseMajor(o.link.Ref) != major &&
+			!linkHolds(obj.f, o.link.From, o.link.To, ids) &&
+			blankless(obj.f.text[obj.f.lineStart(o.link.From):obj.f.lineEnd(o.link.To)]) == text {
+			counterpart, at = o, o.link.Ref
+		}
+	}
+	if counterpart == nil || slices.ContainsFunc(ids, func(id string) bool { return !held[id] }) {
+		return "", nil
+	}
+	return fmt.Sprintf("the names beside it, %s, are other links': each stands in the lines of a link of its paragraph "+
+		"at %s, %s first; %s cites the same code at %s and holds none either", strings.Join(ids, ", "), cite.Ref,
+		holder.link.Text, counterpart.link.Text, at), nil
+}
+
+// blankless returns s with its blanks dropped, so that two releases' lines
+// that differ only in their blanks compare equal.
+func blankless(s string) string { return strings.Join(strings.Fields(s), "") }
+
+// reReleaseTag is a release tag, v19.2.6.
+var reReleaseTag = regexp.MustCompile(`^` + tagForm + `$`)
+
+// releaseMajor returns the major version of a ref that is a release tag, as
+// majorOf reads one, or "" for any other ref, such as a commit id.
+func releaseMajor(ref string) string {
+	if !reReleaseTag.MatchString(ref) {
+		return ""
+	}
+	return majorOf(ref)
 }
 
 // releaseReason returns why a link's text ties to it a release other than
