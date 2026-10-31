@@ -203,6 +203,36 @@ func (o adminObject) manifest() adminManifest {
 	return m
 }
 
+// compression decodes o's compression info, which it must carry.
+func (o adminObject) compression() meta.CompressionInfo {
+	GinkgoHelper()
+	Expect(o.Compression).NotTo(BeEmpty(), "object stat's compression of %s", o.Name)
+	var c meta.CompressionInfo
+	Expect(json.Unmarshal(o.Compression, &c)).To(Succeed(), "object stat's compression: %s", o.Compression)
+	return c
+}
+
+// expectBlocksTile requires c's blocks to lay out the object as
+// RGWPutObj_Compress records them: in plaintext order from 0, each starting
+// below orig_size and past the one before it, and stored back to back from 0
+// to the stored size, the manifest's obj_size.
+func expectBlocksTile(what string, c meta.CompressionInfo, stored uint64) {
+	GinkgoHelper()
+	Expect(c.Blocks).NotTo(BeEmpty(), "%s: the compression blocks", what)
+	var end uint64
+	for i, b := range c.Blocks {
+		if i == 0 {
+			Expect(b.OldOfs).To(BeZero(), "%s: the first block's plaintext offset", what)
+		} else {
+			Expect(b.OldOfs).To(BeNumerically(">", c.Blocks[i-1].OldOfs), "%s: block %d's plaintext offset", what, i)
+		}
+		Expect(b.NewOfs).To(Equal(end), "%s: block %d is stored where the block before it ends", what, i)
+		end = b.NewOfs + b.Len
+	}
+	Expect(c.Blocks[len(c.Blocks)-1].OldOfs).To(BeNumerically("<", c.OrigSize), "%s: the last block's plaintext offset", what)
+	Expect(end).To(Equal(stored), "%s: the blocks' stored end against the manifest's obj_size", what)
+}
+
 // keys is the set of attr names o shows: those object stat decodes under
 // their own names, mapped back to the attr, and those under attrs.
 func (o adminObject) keys() []string {

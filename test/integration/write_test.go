@@ -194,13 +194,25 @@ var _ = Describe("the write path against radosgw-admin and the coexisting radosg
 			class := slices.Sorted(maps.Keys(manifest.StorageClasses))[0]
 			body := randBytes(10 * mib)
 			putRGWGo(ctx, rec, "obj", body, op.PutParams{Attrs: rgwgoAttrs(http.Header{}), StorageClass: class})
-			o := objectStat(ctx, name, "obj")
+			_, err := s3Client(alice()).PutObject(ctx, &awss3.PutObjectInput{
+				Bucket: aws.String(name), Key: aws.String("obj-radosgw"), Body: bytes.NewReader(body),
+				StorageClass: s3types.StorageClass(class),
+			})
+			Expect(err).NotTo(HaveOccurred(), "PutObject into %s through radosgw", class)
+			o, t := objectStat(ctx, name, "obj"), objectStat(ctx, name, "obj-radosgw")
 			Expect(o.Attrs).To(HaveKeyWithValue(meta.AttrStorageClass, class), "object stat's storage class")
 			Expect(o.manifest().TailPlacement.PlacementRule).To(Equal(store.ZoneGroup().DefaultPlacement.Name+"/"+class),
 				"the tail placement")
-			// Compression on the write path is phase 2 (design §9), so rgw-go
-			// stores the class's object as written.
-			Expect(o.Compression).To(BeEmpty(), "rgw-go compresses nothing")
+			// Two encoders of one codec need not make blocks of the same
+			// length, so the twin's type and orig_size are compared, and each
+			// object's blocks must tile it on their own.
+			oc, tc := o.compression(), t.compression()
+			Expect(oc.Type).To(Equal(manifest.StorageClasses[class]), "rgw-go compresses with %s's codec", class)
+			Expect(oc.Type).To(Equal(tc.Type), "rgw-go's compression type against radosgw's")
+			Expect(oc.OrigSize).To(Equal(tc.OrigSize), "rgw-go's orig_size against radosgw's")
+			Expect(oc.OrigSize).To(BeEquivalentTo(len(body)), "orig_size")
+			expectBlocksTile("rgw-go's object", oc, o.manifest().ObjSize)
+			expectBlocksTile("radosgw's object", tc, t.manifest().ObjSize)
 			head, err := s3Client(alice()).HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String(name), Key: aws.String("obj")})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(head.StorageClass).To(BeEquivalentTo(class), "HeadObject through radosgw")
