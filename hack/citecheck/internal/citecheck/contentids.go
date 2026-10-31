@@ -58,13 +58,19 @@ func withGlobs(ids, globs []string) []string {
 // its paragraph or, in a table, its cell, markdown's backslash escapes
 // dropped.
 func (lc *linkChecker) beside(ps *paraScan, it *goItem) string {
-	lo, hi := 0, len(ps.norm)
+	lo, hi := lc.bounds(ps, it)
+	return unescape(besideRun(ps.norm, it.pos, lo, hi))
+}
+
+// bounds returns the bounds in its paragraph's norm of the words a link's
+// run is read in: in a table, its cell; otherwise the whole paragraph.
+func (lc *linkChecker) bounds(ps *paraScan, it *goItem) (lo, hi int) {
 	if lc.md != nil {
 		if at := lc.md.at[ps]; lc.md.blocks[at[0]][at[1]].kind == mdRow {
-			lo, hi = sentence(ps.norm, it.pos, true)
+			return sentence(ps.norm, it.pos, true)
 		}
 	}
-	return unescape(besideRun(ps.norm, it.pos, lo, hi))
+	return 0, len(ps.norm)
 }
 
 // reSpanGlob is a code span that holds a name with a "*" that stands for any
@@ -89,20 +95,7 @@ var reRunGap = regexp.MustCompile(`^(?:[\s,;()]+|\b(?:and|or)\b|\b(?:at|in|on)\s
 // citation's names are not its, and a list's lead-in names are each of its
 // citations'.
 func besideRun(norm string, pos, lo, hi int) string {
-	var marks []int
-	for i := lo; i < hi; i++ {
-		if norm[i] == citeMark {
-			marks = append(marks, i)
-		}
-	}
-	k, _ := slices.BinarySearch(marks, pos)
-	first, last := k, k
-	for first > 0 && reRunGap.MatchString(norm[marks[first-1]+1:marks[first]]) {
-		first--
-	}
-	for last+1 < len(marks) && reRunGap.MatchString(norm[marks[last]+1:marks[last+1]]) {
-		last++
-	}
+	marks, first, last := runOf(norm, pos, lo, hi)
 	start, end := marks[first], marks[last]
 	from := max(lo, sentenceStart(norm, start))
 	if first > 0 {
@@ -126,6 +119,56 @@ func besideRun(norm string, pos, lo, hi int) string {
 	}
 	return norm[from:start] + " " + norm[end+1:to]
 }
+
+// runOf returns the offsets of the citations' placeholders in norm within lo
+// and hi, and the first and the last of those in the run of citations whose
+// placeholder is at pos, as besideRun reads a run.
+func runOf(norm string, pos, lo, hi int) (marks []int, first, last int) {
+	for i := lo; i < hi; i++ {
+		if norm[i] == citeMark {
+			marks = append(marks, i)
+		}
+	}
+	k, _ := slices.BinarySearch(marks, pos)
+	first, last = k, k
+	for first > 0 && reRunGap.MatchString(norm[marks[first-1]+1:marks[first]]) {
+		first--
+	}
+	for last+1 < len(marks) && reRunGap.MatchString(norm[marks[last]+1:marks[last+1]]) {
+		last++
+	}
+	return marks, first, last
+}
+
+// siblings returns the other links of a link's run, as besideRun reads the
+// run, in their order, each with no problem of its own.
+func (lc *linkChecker) siblings(ps *paraScan, it *goItem) []*goItem {
+	lo, hi := lc.bounds(ps, it)
+	marks, first, last := runOf(ps.norm, it.pos, lo, hi)
+	var out []*goItem
+	for _, o := range ps.items {
+		if o != it && o.kind == linkItem && o.link.Problem == "" && o.pos >= marks[first] && o.pos <= marks[last] {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// cppKeywords are C++'s keywords, which name no code of their own and stand
+// in any file's code, so that a file whose lines hold one is no evidence that
+// a link cites the wrong file.
+var cppKeywords = func() map[string]bool {
+	m := map[string]bool{}
+	for w := range strings.FieldsSeq(`alignas alignof and asm auto bool break case catch char class const consteval
+	constexpr constinit const_cast continue co_await co_return co_yield decltype default delete do double
+	dynamic_cast else enum explicit export extern false final float for friend goto if inline int long mutable
+	namespace new noexcept not nullptr operator or override private protected public register reinterpret_cast
+	requires return short signed sizeof static static_assert static_cast struct switch template this thread_local
+	throw true try typedef typeid typename union unsigned using virtual void volatile wchar_t while`) {
+		m[w] = true
+	}
+	return m
+}()
 
 // reEscape is a markdown backslash escape, a backslash before an ASCII
 // punctuation character.
@@ -181,20 +224,106 @@ func (d *goDoc) blankPkgs(text string) string {
 }
 
 // linkHolds reports whether one of ids stands in lines from to to of f, or in
-// the header of a block that encloses them, as a function's does its body.
+// the header of a block that encloses them, as a function's does its body; a
+// qualified name, A::B, stands also where qualifiedIn finds it.
 func linkHolds(f *file, from, to int, ids []string) bool {
-	lines := f.text[f.lineStart(from):f.lineEnd(to)]
+	lo, hi := f.lineStart(from), f.lineEnd(to)
 	for _, id := range ids {
-		if standsIn(lines, id) {
+		if standsIn(f.text[lo:hi], id) || f.qualifiedIn(f.text, id, lo, hi) {
 			return true
 		}
 	}
 	f.analyze()
 	for _, b := range f.enclosing(from, to) {
 		for _, id := range ids {
-			if standsIn(f.code[b.head:b.open], id) {
+			if standsIn(f.code[b.head:b.open], id) || f.qualifiedIn(f.code, id, b.head, b.open) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// maxStatementLines bounds how far widened follows a statement that runs on
+// past a link's one line, so that a construct the lexer misreads never
+// stretches a link over a file.
+const maxStatementLines = 30
+
+// controlWords are the keywords whose parenthesis heads a statement rather
+// than a definition.
+var controlWords = map[string]bool{"if": true, "for": true, "while": true, "switch": true, "catch": true}
+
+// widened returns, for a link to one line, the lines that line starts and
+// later lines finish, and what they are, "definition" or "statement": the
+// definition of a function, a class, a struct, a union or an enum whose
+// header starts on it, through the "}" that closes it; or else the statement
+// that starts on it, through the line its ";" is on, as a call whose
+// arguments run on is. For a link to several lines, or a line that starts
+// neither, it returns the link's own lines and "".
+func widened(f *file, from, to int) (wideFrom, wideTo int, what string) {
+	if from != to {
+		return from, to, ""
+	}
+	f.analyze()
+	lo, hi := f.lineStart(from), f.lineEnd(from)
+	for _, b := range f.blocks {
+		if b.head >= lo && b.head < hi && definition(f.code[b.head:b.open]) {
+			return from, f.lineOf(b.close), "definition"
+		}
+	}
+	start := skipBlanks(f.code, lo)
+	if start >= hi || skipBlanks(f.code, f.boundary(start)) != start {
+		return from, to, ""
+	}
+	depth := 0
+	for i := start; i < len(f.code); i++ {
+		switch f.code[i] {
+		case '(', '[':
+			depth++
+		case ')', ']':
+			depth--
+		case '{', '}':
+			return from, to, ""
+		case ';':
+			if depth > 0 {
+				continue
+			}
+			if end := f.lineOf(i); end > from && end-from <= maxStatementLines {
+				return from, end, "statement"
+			}
+			return from, to, ""
+		}
+	}
+	return from, to, ""
+}
+
+// definition reports whether a block's header defines a function, as
+// definedName reads one, or a class, a struct, a union or an enum. A
+// namespace is no definition here, nor is an extern "C" block.
+func definition(header string) bool {
+	if scope, names := scopeOf(header); scope {
+		return len(names) > 0 && lastWord(header, "namespace") < 0
+	}
+	return lastWord(header, "enum") >= 0 || definedName(header) != ""
+}
+
+// qualifiedIn reports whether the qualified name id, A::B, stands in s[lo:hi],
+// s being the file's text or its code, as B with a qualifier that agrees with
+// A's, as compatible says: one written before it, or the scopes it is
+// declared in, as enum struct B is declared inside namespace A. A B with no
+// qualifier, written or declared, such as one used in a function's body,
+// does not count, so that a name standing bare in some other scope's lines
+// is not taken for A's.
+func (f *file) qualifiedIn(s, id string, lo, hi int) bool {
+	parts := strings.Split(strings.TrimPrefix(id, "::"), "::")
+	if len(parts) < 2 || strings.Contains(id, "*") {
+		return false
+	}
+	name, qual := parts[len(parts)-1], parts[:len(parts)-1]
+	f.analyze()
+	for _, at := range occurrences(s, lo, hi, name) {
+		if q := f.qualifier(s, at, lo); len(q) > 0 && compatible(qual, q) {
+			return true
 		}
 	}
 	return false

@@ -573,12 +573,17 @@
 //     marker or a tag in its text, unless the text names two releases; a
 //     marker or a tag right before it; an "at", "in" or "on" and a tag after
 //     it or after the citations listed with it, unless "and", "or", "/" or ","
-//     and another tag follow that tag; an "at", "in" or "on" and [S] or [T]
-//     right after it; and, when none of those ties it, an "at <tag>", "in
-//     <tag>", "all at <tag>" or "all in <tag>" after the ";" or "," that
-//     closes the parenthesis it stands in, unless a citation between it and
-//     the ")" carries a tie of its own. "At both tags" after it ties it to
-//     neither release. So a clause that names two releases ties neither;
+//     and another tag follow that tag, though for a citation joined by "and"
+//     or "or" to another's own "at <tag>", when a comma or the group's end
+//     follows it, only one right after it, and else that other's tag, so
+//     that in "A at v19.2.7 and B, C at v20.2.4 and D" B is at v19.2.7, and
+//     in "A at v19.2.7 and B and C at v20.2.4" B is at v20.2.4; an "at", "in"
+//     or "on" and [S] or [T] right after it;
+//     and, when none of those ties it, an "at <tag>", "in <tag>", "all at
+//     <tag>" or "all in <tag>" after the ";" or "," that closes the
+//     parenthesis it stands in, unless a citation between it and the ")"
+//     carries a tie of its own. "At both tags" after it ties it to neither
+//     release. So a clause that names two releases ties neither;
 //   - when nothing ties a release to it, it links no lines at v20.2.4 while
 //     another citation of its paragraph carries a [T], since a paragraph
 //     that marks its Tentacle citations so leaves its Squid ones unmarked;
@@ -602,30 +607,98 @@
 // citation's, whole code tokens only, with markdown's backslash escapes
 // dropped, a code span's name with a "*", as `HTTP_X_AMZ_GRANT_*`, kept whole,
 // and in a Go file the names that are rgw-go's left out; and the words beside
-// it with each file's name blanked. A name from beside it that its file does
-// not hold at all is left out too, since such a name is as often an error
-// table's, a neighboring citation's or rgw-go's own as the link's.
+// it with each file's name blanked. A name from beside it that its file's text
+// nowhere writes is left out too, unless its lines hold it as a declaration,
+// below, since such a name is as often an error table's, a neighboring
+// citation's or rgw-go's own as the link's.
 //
 // An identifier stands in text as a whole word; a name of words joined by "_"
 // also as a run of the words of a longer one, write_meta in _do_write_meta; a
 // name with a "*" as a pattern, each "*" any run of letters, digits, "_" and
-// "-"; and a header's name also in its CGI form, as radosgw reads a request's
-// headers, x-amz-acl as HTTP_X_AMZ_ACL. A link's lines hold one when it stands
-// in them, the link's lines exactly and none either side, or in the header of
-// a block that encloses them, as a function's does its body.
+// "-"; a header's name also in its CGI form, as radosgw reads a request's
+// headers, x-amz-acl as HTTP_X_AMZ_ACL; and a qualified name, A::B, also as a
+// B whose own qualifier agrees with A, the shorter of the two being the
+// longer's last names: the qualifier written before B, after the names of
+// the scopes B is declared in when it is declared where it stands, as enum
+// struct B inside namespace A is; though not as a B with no qualifier at all,
+// as one used in a function's body. A link's lines hold one when it stands in
+// them, the link's lines exactly and none either side, or in the header of a
+// block that encloses them, as a function's does its body.
+//
+// A link to one line may stand for what that line starts: the definition of
+// a function, a class, a struct, a union or an enum whose header starts on
+// it, through the "}" that closes it; or else the statement that starts on
+// it, through the line of its ";", 30 lines on at most, as a call whose
+// arguments run on does. When its line holds none of the names beside it and
+// what the line starts holds one, the link is listed, not held, since a link
+// that drifted onto another definition's first line would hold so too. A
+// link whose own text names the identifiers says which line it means, so it
+// fails when that line holds none of them.
 //
 // A link whose own text names identifiers fails when its lines hold none of
 // them. One whose identifiers are named beside it fails when its lines hold
-// none of those its file holds. When its file holds none, it fails when the
+// none of those its file holds.
+//
+// The check cannot tell a word of prose from a name of code: beside "a block
+// of public ACLs is refused", ACLs, a word its file writes only in comments,
+// fails a link whose lines are the right ones but lack it; and so does an S3
+// operation's, an error code's or a header's name written in prose,
+// InvalidArgument or ETag, that its file writes only in a literal, as an
+// error table does. A link to the wrong lines or file names such a word the
+// same way, so the failure stands, and a reviewer reads it.
+//
+// The check cannot read a negative claim: "registers the managers without
+// `set_logging`" names set_logging because the right lines lack it, so such
+// a link fails, and a reviewer reads the failure. No rule on the words tells
+// it from "a request with no `x-amz-content-sha256` is refused", whose right
+// lines test the very name and whose drifted copy must fail.
+//
+// A link whose names beside it are other links' is listed, not failed, when
+// its run cites its code at two major versions and they agree: each of the
+// names stands in the lines of another link of its paragraph at its release,
+// and a link of its run cites its file at a release of another major
+// version, v20 for a v19 link, holds none of them either, and cites the same
+// code, blanks aside, the lines of each read as they are. So in "fails
+// `range_to_ofs` once the copy loop reaches it (A and B at v19.2.6, C and D
+// at v20.2.4)", A and C holding the call and B and D the same loop, B and D
+// are listed. A name beside it that no other link holds may be its own, so
+// when one is, as `copy_chunk` would be in "once the loop's `copy_chunk`
+// reaches it" were B and D to cite other code, the link fails as before. Two
+// point releases of one major version share their code, so their agreeing
+// shows nothing, and a run at one release shows no such thing either, since
+// each of its links may hold the names, as a list of call sites does, and
+// the one that holds none may have drifted; their links fail as before. A
+// pair drifted the same way at both major versions, onto the same other
+// code, beside names other links hold, is listed too: a reviewer reads the
+// listed links.
+//
+// A link whose lines hold none of the names beside it is listed, not failed,
+// too when a function one of them names, defined once in its file, reaches
+// the function its lines are in through calls, two at most, each to a
+// function the file defines once, or its lines reach the named function so:
+// the text names a caller of its code, read_line for index_of's lines when
+// read_line calls read_with_boundary and that calls index_of, or a callee. It
+// is listed, not held, since a link that drifted into a function the named
+// one calls would be joined to it so too. A qualified name counts only for a
+// definition whose qualifier agrees with it; a name the file defines more
+// than once, as each op's execute, is followed nowhere; a lambda passed to a
+// call defines no function of the call's name; and a link whose own text
+// names the function is not listed so, but fails.
+//
+// When its file holds none of the names beside it, a link fails when the
 // same lines of another file at its ref hold one: a file its paragraph links
 // or names, or, for a qualified name none of whose parts is generic, one the
 // rest of its section does; and it is listed otherwise. A file that holds one
-// on other lines is no evidence. A link beside which nothing counts as an
-// identifier is listed too, not failed. A link that would be listed fails
-// instead when its text writes lines alone, as a continuation does, and the
-// nearest link, citation or file name before it in its section is of another
-// file. A failure for its lines names the nearest line that holds one, and
-// whether the same lines at v19.2.6 or v20.2.4 do.
+// on other lines is no evidence; nor is a C++ keyword, such as namespace,
+// which stands in any file's code. A file another link of the same run cites
+// is evidence too, though there its same lines may hold a common name of that
+// file by chance: nothing tells that from a link of the run to the wrong
+// file, so a reviewer reads such a failure. A link beside which nothing
+// counts as an identifier is listed too, not failed. A link that would be
+// listed fails instead when its text writes lines alone, as a continuation
+// does, and the nearest link, citation or file name before it in its section
+// is of another file. A failure for its lines names the nearest line that
+// holds one, and whether the same lines at v19.2.6 or v20.2.4 do.
 //
 // The check is opt-in: neither make check nor CI runs it, since it needs the
 // clone and its lists are for a person to read.

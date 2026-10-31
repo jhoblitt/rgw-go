@@ -120,12 +120,17 @@ type linkChecker struct {
 // its ref's, as releaseReason says; when its text names another file; when
 // the identifiers its own text names stand neither in its lines nor in the
 // header of a block that encloses them; and, when its text names none, when
-// those named beside it that its file holds stand in neither. When its file
-// holds none of those, it fails still when the same lines of another file
-// its paragraph names hold one, or of one its section names hold a
-// qualified name none of whose parts is generic, as elsewhere says. When
-// nothing beside it counts, or none of it stands anywhere, it fails when its
-// text, lines alone, continues a citation of another file, and is listed
+// those named beside it that its file holds stand in neither. One whose
+// names are beside it is listed instead when othersNames finds those other
+// links', when reached finds them joined to its lines by calls, or, for a
+// link to one line, when the definition or the statement the line starts, as
+// widened reads it, holds one; one whose own text names them is never
+// relaxed so. When its file holds none of the names beside it, it fails
+// still when the same lines of another file its paragraph names hold one, or
+// of one its section names hold a qualified name none of whose parts is
+// generic, as elsewhere says. When nothing beside it counts, or none of it
+// stands anywhere, it fails when its text, lines alone, continues a citation
+// of another file, and is listed
 // otherwise.
 func (lc *linkChecker) check(ctx context.Context, ps *paraScan, it *goItem) (reason string, listed bool, err error) {
 	c, cite := lc.c, it.link
@@ -162,6 +167,16 @@ func (lc *linkChecker) check(ctx context.Context, ps *paraScan, it *goItem) (rea
 		return "", false, err
 	}
 	f := obj.f
+	if linkHolds(f, cite.From, cite.To, ids) {
+		slog.DebugContext(ctx, "a link holds what its text names", slog.String("file", lc.name), slog.Int("line", lc.line),
+			slog.String("link", cite.Text), slog.Any("identifiers", ids), slog.Bool("own_text", own))
+		return "", false, nil
+	}
+	from, to, what := widened(f, cite.From, cite.To)
+	if !own && what != "" && linkHolds(f, from, to, ids) {
+		return listing(fmt.Sprintf("line %d holds none of %s, but the %s that starts on it, through line %d, holds one",
+			cite.From, strings.Join(ids, ", "), what, to))
+	}
 	if !own {
 		named := ids
 		ids = slices.DeleteFunc(slices.Clone(ids), func(id string) bool { return !f.has(id) })
@@ -174,11 +189,15 @@ func (lc *linkChecker) check(ctx context.Context, ps *paraScan, it *goItem) (rea
 			}
 			return listing(reason)
 		}
-	}
-	if linkHolds(f, cite.From, cite.To, ids) {
-		slog.DebugContext(ctx, "a link holds what its text names", slog.String("file", lc.name), slog.Int("line", lc.line),
-			slog.String("link", cite.Text), slog.Any("identifiers", ids), slog.Bool("own_text", own))
-		return "", false, nil
+		var why string
+		if why, err = lc.othersNames(ctx, ps, it, r.commit, f, ids); err != nil {
+			return "", false, err
+		} else if why != "" {
+			return listing(why)
+		}
+		if how := reached(f, from, to, ids); how != "" {
+			return listing("its lines hold none of " + strings.Join(ids, ", ") + ", but " + how)
+		}
 	}
 	which := "named beside it"
 	if own {
@@ -204,6 +223,98 @@ func (lc *linkChecker) check(ctx context.Context, ps *paraScan, it *goItem) (rea
 		reason += "; at " + strings.Join(tags, " and ") + " " + they + " one"
 	}
 	return reason, false, nil
+}
+
+// othersNames returns why the names beside a link, ids, which its lines hold
+// none of, are other links' rather than its own, or "": each of them stands
+// in the lines of another link of its paragraph at the link's commit, those
+// of its run first, and a link of its run cites the link's file at a release
+// of another major version, v20 for a v19 link, holds none of them either,
+// and its lines are the same code as the link's, blanks aside. A run that
+// cites each piece of code at both releases names beside it what the other
+// pieces hold; the release where the pieces agree shows the link is not a
+// drifted copy of a piece that holds them. A name no other link holds may be
+// the link's own, which its drifted lines lack, so one beside it shows
+// nothing. Two point releases of one major version, v19.2.6 and v19.2.7,
+// share their code, so their agreeing shows nothing; nor does a run at one
+// release, since its links may each hold the names, as a list of call sites
+// does, and one that holds none may be wrong. A link's lines are read as
+// they are, never widened.
+func (lc *linkChecker) othersNames(ctx context.Context, ps *paraScan, it *goItem, commit string, f *file,
+	ids []string,
+) (string, error) {
+	cite := it.link
+	major := releaseMajor(cite.Ref)
+	if major == "" {
+		return "", nil
+	}
+	text := blankless(f.text[f.lineStart(cite.From):f.lineEnd(cite.To)])
+	var holder, counterpart *goItem
+	var at string
+	held := map[string]bool{}
+	sibs := lc.siblings(ps, it)
+	links := slices.Clone(sibs)
+	for _, o := range ps.items {
+		if o != it && o.kind == linkItem && o.link.Problem == "" && !slices.Contains(sibs, o) {
+			links = append(links, o)
+		}
+	}
+	for _, o := range links {
+		inRun := slices.Contains(sibs, o)
+		r, err := lc.c.resolve(ctx, o.link.Ref)
+		if err != nil {
+			return "", err
+		}
+		if r.commit == "" {
+			continue
+		}
+		obj, err := lc.c.read(ctx, r.commit, o.link.Path)
+		if err != nil {
+			return "", err
+		}
+		if obj.kind != "blob" || o.link.To > obj.f.lines() {
+			continue
+		}
+		if r.commit == commit {
+			for _, id := range ids {
+				if linkHolds(obj.f, o.link.From, o.link.To, []string{id}) {
+					held[id] = true
+					if holder == nil {
+						holder = o
+					}
+				}
+			}
+			continue
+		}
+		if inRun && counterpart == nil && o.link.Path == cite.Path &&
+			releaseMajor(o.link.Ref) != "" && releaseMajor(o.link.Ref) != major &&
+			!linkHolds(obj.f, o.link.From, o.link.To, ids) &&
+			blankless(obj.f.text[obj.f.lineStart(o.link.From):obj.f.lineEnd(o.link.To)]) == text {
+			counterpart, at = o, o.link.Ref
+		}
+	}
+	if counterpart == nil || slices.ContainsFunc(ids, func(id string) bool { return !held[id] }) {
+		return "", nil
+	}
+	return fmt.Sprintf("the names beside it, %s, are other links': each stands in the lines of a link of its paragraph "+
+		"at %s, %s first; %s cites the same code at %s and holds none either", strings.Join(ids, ", "), cite.Ref,
+		holder.link.Text, counterpart.link.Text, at), nil
+}
+
+// blankless returns s with its blanks dropped, so that two releases' lines
+// that differ only in their blanks compare equal.
+func blankless(s string) string { return strings.Join(strings.Fields(s), "") }
+
+// reReleaseTag is a release tag, v19.2.6.
+var reReleaseTag = regexp.MustCompile(`^` + tagForm + `$`)
+
+// releaseMajor returns the major version of a ref that is a release tag, as
+// majorOf reads one, or "" for any other ref, such as a commit id.
+func releaseMajor(ref string) string {
+	if !reReleaseTag.MatchString(ref) {
+		return ""
+	}
+	return majorOf(ref)
 }
 
 // releaseReason returns why a link's text ties to it a release other than
@@ -320,7 +431,8 @@ func (lc *linkChecker) namedFile(it *goItem, continued bool) (name, how string) 
 // name none of whose parts is generic, in those the rest of its section
 // does, where a common name would stand in some file's lines by chance. A
 // file that holds one only on other lines is no evidence: a name beside a
-// link is as often an error table's or a neighboring citation's.
+// link is as often an error table's or a neighboring citation's. Nor is a
+// C++ keyword, which stands in any file's code.
 func (lc *linkChecker) elsewhere(ctx context.Context, commit string, cite Citation, ids []string) (string, error) {
 	gi, pi := lc.at[0], lc.at[1]
 	scans := lc.d.groups[gi]
@@ -331,6 +443,7 @@ func (lc *linkChecker) elsewhere(ctx context.Context, commit string, cite Citati
 		}
 	}
 	seen := map[string]bool{cite.Path: true}
+	ids = slices.DeleteFunc(slices.Clone(ids), func(id string) bool { return cppKeywords[id] })
 	qualified := slices.DeleteFunc(slices.Clone(ids), func(id string) bool {
 		parts := strings.Split(id, "::")
 		return len(parts) < 2 || slices.ContainsFunc(parts, func(p string) bool { return genericWords[strings.ToLower(p)] })
@@ -406,7 +519,10 @@ type namedRef struct{ ref, how string }
 //   - a marker or a tag right before it, blanks alone between;
 //   - an "at", "in" or "on" and a tag after it or after the citations listed
 //     with it, unless "and", "or", "/" or "," and another tag follow it, and
-//     "at both tags" after it, which names no one;
+//     "at both tags" after it, which names no one; but for a citation joined
+//     by "and" or "or" to another's own "at <tag>" that ends its group, as B
+//     is in "A at v19.2.7 and B, C at v20.2.4", only one right after it, and
+//     else that tag;
 //   - an "at", "in" or "on" and a marker right after it;
 //   - and, when none of those ties it, an "at" or "in" and a tag that closes
 //     the parenthesis it stands in, as parenRef finds one.
@@ -437,11 +553,15 @@ func namedRefs(ps *paraScan, it *goItem) (out []namedRef, tied bool) {
 			out = append(out, namedRef{ref: w, how: "right before it"})
 		}
 	}
-	if t, both := tagAfter(ps.norm, it.pos+1); t != "" || both {
+	cut, joined := afterOwnTagCut(ps.norm, it.pos)
+	if t, both := tagAfter(cut, it.pos+1); t != "" || both {
 		tied = true
 		if t != "" && !anotherTagAfter(ps.norm[it.pos+1:], t) {
 			out = append(out, namedRef{ref: t, how: `by the "at ` + t + `" after it`})
 		}
+	} else if joined != "" {
+		tied = true
+		out = append(out, namedRef{ref: joined, how: `by the "at ` + joined + `" it is joined to by "and" or "or"`})
 	}
 	if m := reAtMark.FindStringSubmatch(ps.norm[it.pos+1:]); m != nil {
 		tied = true
@@ -454,6 +574,39 @@ func namedRefs(ps *paraScan, it *goItem) (out []namedRef, tied bool) {
 		}
 	}
 	return out, tied
+}
+
+// reAfterOwnTag is what stands between two citations when the first carries
+// its own "at <tag>" and the second is joined to it by "and" or "or", as B is
+// in "A at v19.2.7 and B", and the tag. A comma alone starts another group, as
+// C does in "A and B at v19.2.7, C and D at v20.2.4".
+var reAfterOwnTag = regexp.MustCompile(`^\s*(?:at|in|on)\s+(` + tagForm + `)\s*,?\s*(?:and|or)\s+$`)
+
+// reGroupEnd is what ends a group of citations right after one: a comma, a
+// ";", a ".", a ")" or the end of the text.
+var reGroupEnd = regexp.MustCompile(`^\s*(?:[,;.)]|$)`)
+
+// afterOwnTagCut returns norm and "", or, for the citation at pos when it is
+// joined to a citation's own "at <tag>" and ends its group, norm cut at the
+// citation after it, so that tagAfter reads only an "at <tag>" right after
+// it, and that tag, which ties the citation when nothing after it does: in "A
+// at v19.2.7 and B, C at v20.2.4 and D" B is at v19.2.7, and the v20.2.4 is
+// C's and D's. A citation that "and" or "or" joins to the next one starts a
+// group of its own, as B does in "A at v19.2.7 and B and C at v20.2.4", where
+// B and C are at v20.2.4.
+func afterOwnTagCut(norm string, pos int) (cut, joined string) {
+	prev := strings.LastIndexByte(norm[:pos], citeMark)
+	if prev < 0 {
+		return norm, ""
+	}
+	m := reAfterOwnTag.FindStringSubmatch(norm[prev+1 : pos])
+	if m == nil || !reGroupEnd.MatchString(norm[pos+1:]) {
+		return norm, ""
+	}
+	if k := strings.IndexByte(norm[pos+1:], citeMark); k >= 0 {
+		return norm[:pos+1+k], m[1]
+	}
+	return norm, m[1]
 }
 
 // reAnotherTag is "and", "or", "/" or "," and a tag, maybe after an "at",
@@ -582,7 +735,8 @@ func ownTie(ps *paraScan, o *goItem) bool {
 	if o.mark != "" || reTag.MatchString(unescape(o.label)) || reTiedBefore.MatchString(ps.norm[:o.pos]) {
 		return true
 	}
-	if t, both := tagAfter(ps.norm, o.pos+1); t != "" || both {
+	cut, joined := afterOwnTagCut(ps.norm, o.pos)
+	if t, both := tagAfter(cut, o.pos+1); t != "" || both || joined != "" {
 		return true
 	}
 	return reAtMark.MatchString(ps.norm[o.pos+1:])
