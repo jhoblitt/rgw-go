@@ -1,10 +1,11 @@
 # Upstream Ceph defects
 
 This registry records the defects in upstream ceph/ceph that rgw-go runs
-into: in radosgw, the RGW object classes, librados, librbd, the monitors, or
-the OSD behaviour they rely on. rgw-go must coexist with radosgw on the same
-pools, so a defect in radosgw's behaviour is part of the compatibility
-contract (section 8 of the design spec). The registry says, per defect:
+into: in radosgw, the RGW object classes, librados, librbd, the monitors, the
+manager, or the OSD behaviour they rely on. rgw-go must coexist with radosgw
+on the same pools, so a defect in radosgw's behaviour is part of the
+compatibility contract (section 8 of the design spec). The registry says,
+per defect:
 - which releases carry it;
 - whether rgw-go reproduces it, works around it, or is unaffected;
 - where it stands upstream.
@@ -494,6 +495,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's JSON parser lexes `\x` and `\X` escapes by the CPU's char signedness, and drops octal and `\X` escapes](#radosgws-json-parser-lexes-x-and-x-escapes-by-the-cpus-char-signedness-and-drops-octal-and-x-escapes) | pending | pending | ✓ |
 | [radosgw's JSON parser reads a short `\u` escape through the next escape's backslash](#radosgws-json-parser-reads-a-short-u-escape-through-the-next-escapes-backslash) | pending | pending | ✓ |
 | [radosgw's permission override lets an admin delete a version under MFA delete without a code](#radosgws-permission-override-lets-an-admin-delete-a-version-under-mfa-delete-without-a-code) | pending | pending | ✓ |
+| [The manager's config show reads an rgw service daemon's id without checking it exists](#the-managers-config-show-reads-an-rgw-service-daemons-id-without-checking-it-exists) | none | none | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -29939,3 +29941,120 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task V12a's review, 2026-10-28, reading
   `rgw_process_authenticated` at both tags; registered by its fix round.
   Derived from the source, not reproduced.
+
+## The manager's config show reads an rgw service daemon's id without checking it exists
+
+- **Kind:** defect, possibly security-relevant: the manager's `config show`,
+  for a name holding `rgw`, reads each rgw service daemon's `id` metadata
+  without checking that it is there, which for an entry without one is
+  undefined behaviour in the active manager, most likely its crash. A client
+  the cluster authenticates, holding no manager caps, can register such an
+  entry. Sent to the rgw-bug-reproduction session on 2026-10-30; its rating
+  is pending. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `config show` and `config show-with-defaults` split `who` at its first
+    dot into a type and a name
+    ([DaemonKey.cc:3-11](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/DaemonKey.cc#L3-L11),
+    [DaemonKey.cc:3-11](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/DaemonKey.cc#L3-L11)).
+    When the name holds `rgw`, they walk every DaemonState of service
+    `rgw` and read `daemon->metadata.find("id")->second` with no check that
+    the key is there
+    ([DaemonServer.cc:2093-2133](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/DaemonServer.cc#L2093-L2133),
+    [DaemonServer.cc:2572-2612](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/DaemonServer.cc#L2572-L2612);
+    the read at
+    [DaemonServer.cc:2115](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/DaemonServer.cc#L2115),
+    [DaemonServer.cc:2594](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/DaemonServer.cc#L2594)).
+    The walk stops only at the entry whose `id` is the name past its next
+    dot, so it reads every entry before that one, and every entry when none
+    matches or the name has no second dot.
+  - `ActivePyModules::dump_server` reads the same key only after checking
+    it is there
+    ([ActivePyModules.cc:93-95](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/ActivePyModules.cc#L93-L95),
+    [ActivePyModules.cc:95-97](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/ActivePyModules.cc#L95-L97)).
+  - `handle_open` takes any open whose `service_daemon` is set, with no cap
+    check: it builds a DaemonState for a new service and daemon name, and
+    replaces an existing one's metadata whole with the open's
+    ([DaemonServer.cc:553-641](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/DaemonServer.cc#L553-L641),
+    [DaemonServer.cc:557-645](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/DaemonServer.cc#L557-L645);
+    `DaemonState::set_metadata` assigns the map,
+    [DaemonState.cc:167-171](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/DaemonState.cc#L167-L171),
+    [DaemonState.cc:169-173](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/DaemonState.cc#L169-L173)).
+    It writes the open's metadata into the service map only for a new
+    entry, or for one registered by another session, whose gid differs
+    from the opening session's
+    ([DaemonServer.cc:607-614](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/DaemonServer.cc#L607-L614),
+    [DaemonServer.cc:611-618](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/DaemonServer.cc#L611-L618));
+    both of the Trigger's cases below are one or the other.
+  - The session needs no manager caps: `ms_handle_fast_authentication`
+    parses the caps a session's ticket carries and admits one that carries
+    none
+    ([DaemonServer.cc:267-303](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/DaemonServer.cc#L267-L303),
+    [DaemonServer.cc:277-313](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/DaemonServer.cc#L277-L313)).
+    Rook v1.21.1's radosgw holds `osd 'allow rwx'` and `mon 'allow rw'`
+    alone (pkg/operator/ceph/object/config.go:170) and registers.
+  - librados's `rados_service_register` makes such an open: the service and
+    daemon names are the caller's, only `osd`, `mds`, `client`, `mon` and
+    `mgr` are refused, and the metadata is the caller's dict and the system
+    keys librados collects, none of which is `id`
+    ([RadosClient.cc:1069-1106](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/RadosClient.cc#L1069-L1106),
+    [RadosClient.cc:1071-1108](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/RadosClient.cc#L1071-L1108);
+    [util.cc:228-379](https://github.com/ceph/ceph/blob/v19.2.7/src/common/util.cc#L228-L379),
+    [util.cc:228-379](https://github.com/ceph/ceph/blob/v20.2.4/src/common/util.cc#L228-L379)).
+    radosgw's own registration always writes `id`
+    ([rgw_rados.cc:1155-1184](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L1155-L1184),
+    [rgw_rados.cc:1192-1221](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1192-L1221)).
+  - The entry outlives a failover. A new active manager builds a
+    DaemonState for every service map entry from the map's metadata
+    ([DaemonServer.cc:3147-3196](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/DaemonServer.cc#L3147-L3196),
+    [DaemonServer.cc:3610-3659](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/DaemonServer.cc#L3610-L3659)),
+    and the registering client's librados opens a session to it with the
+    same metadata
+    ([MgrClient.cc:193-202](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/MgrClient.cc#L193-L202),
+    [MgrClient.cc:194-203](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/MgrClient.cc#L194-L203)).
+- **Trigger:** a client registers an `rgw` service daemon without `id`, or
+  under a running gateway's daemon name, its gid, which strips that
+  gateway's `id`. Then anyone holding `mgr 'allow r'`, the caps the command
+  needs
+  ([MgrCommands.h:183-190](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/MgrCommands.h#L183-L190),
+  [MgrCommands.h:191-198](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/MgrCommands.h#L191-L198)),
+  runs `ceph config show` or `config show-with-defaults` for a name holding
+  `rgw`, such as `client.rgw.<store>.<x>`, the entity every Rook gateway
+  runs as.
+- **Impact:** `find` returns `end()`, and `->second` copies a string out of
+  the map's header node: undefined behaviour, whose likely outcome is the
+  active manager's crash. A standby takes over, rebuilds the entry from the
+  service map, and meets it on the next such command, for as long as the
+  entry lasts. A registering client that stops cleanly sends the manager a
+  close, which removes the entry at once
+  ([MgrClient.cc:82-94](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/MgrClient.cc#L82-L94),
+  [MgrClient.cc:83-95](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/MgrClient.cc#L83-L95);
+  [DaemonServer.cc:686-710](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/DaemonServer.cc#L686-L710),
+  [DaemonServer.cc:690-714](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/DaemonServer.cc#L690-L714));
+  the entry of one that dies without closing lasts until
+  `mgr_service_beacon_grace` passes without its beacon. While no manager is
+  active, the manager's commands, its modules, the dashboard, prometheus and
+  the orchestrator among them, and service map updates stop. Client I/O,
+  which goes to the OSDs, is not affected.
+- **Releases:** v19.2.7 and v20.2.4. Main at 8aa24c51928 (2026-10-30) still
+  reads the key unchecked, now under the daemon's lock (ceph/ceph#71039).
+- **rgw-go:** not affected: it registers nothing today. Phase 2 plan task
+  SM4, which makes it register, writes `id` in every registration, as
+  radosgw does (`docs/superpowers/plans/2026-10-13-phase-2/SM-service-map.md`).
+- **Upstream:** none. A prior-art search on 2026-10-30 found no issue or fix
+  PR, each search first checked against a known match. It covered GitHub
+  pull requests on ceph/ceph, where issues are disabled, for
+  `metadata.find("id")`; `"config show"` with rgw, crash or segfault;
+  `handle_open service_daemon`; `"service daemon" caps mgr`;
+  `rados_service_register`; `"service map" mgr crash`; and the open pull
+  requests naming DaemonServer. It covered tracker.ceph.com's full-text
+  issue search for `"config show"` in titles; `"config show"` with segfault
+  or crash; `DaemonServer::_handle_command`; `metadata.find`;
+  `service_daemon caps`; `handle_open`; `rados_service_register`; and
+  `MMgrOpen`. Related but distinct:
+  [#63944](https://tracker.ceph.com/issues/63944) and
+  [ceph/ceph#48175](https://github.com/ceph/ceph/pull/48175), which added
+  the walk, and [#60000](https://tracker.ceph.com/issues/60000) and
+  [ceph/ceph#71039](https://github.com/ceph/ceph/pull/71039), which put the
+  read under the daemon's lock on main.
+- **Found:** the service-map research for rgw-go, 2026-10-30, reading what
+  a registration must carry. Derived from the source, not reproduced.
