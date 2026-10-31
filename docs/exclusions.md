@@ -6,7 +6,8 @@ with Kafka and AMQP delivery excluded, sized against Rook's integration
 tests). Companion to the design spec, which is not yet written. Everything
 under "Excluded" was decided in the rgw-go design session. Every claim
 about C++ behavior below was checked against ceph/ceph main at
-e234256339f and, where a release is named, against the v19.2.3 tag.
+e234256339f, and its claims about main again at 8aa24c51928 (2026-10-30),
+and, where a release is named, against the v19.2.3 tag.
 
 Since 2026-09-25 this document is also the canonical feature set for
 rgw-rs, which tracks it instead of keeping its own list. A material change
@@ -325,9 +326,9 @@ the guard on its own index writes and can answer busy-resharding even
 when the client sends no guard op; rgw-go still sends the guard and
 decodes the added log-record status value and the header's log-entry
 count. Squid's
-class lacks the newer index methods that main's radosgw probes for
-(`bucket_init_index2`, `bucket_refresh_instance`, `bi_put_entries`,
-`reshard_log_trim`), so rgw-go uses the original index-init method and
+class lacks the newer index methods that main's radosgw (8aa24c51928)
+probes for (`bucket_init_index2`, `bucket_refresh_instance`,
+`bi_put_entries`, `reshard_log_trim`), so rgw-go uses the original index-init method and
 never calls the other three on Squid. rgw-go logs a warning at startup
 when dynamic resharding is enabled in config.
 
@@ -464,9 +465,9 @@ registry object; removal deletes both. On releases whose topic record
 carries a shard count, radosgw creates one queue object per shard, the
 first named as above and the rest with a numeric suffix, each initialized
 and registered, with the count taken at creation from
-`rgw_bucket_persistent_notif_num_shards`, default 11 in main, and each
-event routed to the shard radosgw's hash of bucket and key selects; a
-topic record without the field has one shard. rgw-go follows the same
+`rgw_bucket_persistent_notif_num_shards`, default 11 in main at
+8aa24c51928, and each event routed to the shard radosgw's hash of bucket
+and key selects; a topic record without the field has one shard. rgw-go follows the same
 contract by reading the count from the same option through librados and
 from the topic record. A topic named like the registry object is
 rejected. rgw-go runs no deliverer for these queues, but it does run the
@@ -597,9 +598,9 @@ review and verified against the tree.
   example the user-stats reset in the user class and, on ceph main though
   in neither floor release, the OLH link and instance-unlink methods, which
   answer the epoch they used
-  ([cls_rgw.cc:1927-1929](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/cls/rgw/cls_rgw.cc#L1927-L1929),
-  [cls_rgw.cc:2173-2176](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/cls/rgw/cls_rgw.cc#L2173-L2176), at
-  d8552606423; "OLH epochs differ by OSD release"), return their data only when the
+  ([cls_rgw.cc:1932-1934](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/cls/rgw/cls_rgw.cc#L1932-L1934),
+  [cls_rgw.cc:2178-2181](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/cls/rgw/cls_rgw.cc#L2178-L2181), at
+  8aa24c51928; "OLH epochs differ by OSD release"), return their data only when the
   operation carries the return-vector flag, which the librados C API
   exposes for read-op operate but not for write-op exec, whose signature
   has no output buffer. The OSD classifies a class call as a write from
@@ -633,10 +634,10 @@ review and verified against the tree.
   epoch names one: a lifecycle transition's link, and the link that puts
   back a version whose removal was refused. The class on main takes the
   time in nanoseconds for an epoch of 0 and answers the epoch it used
-  ([cls_rgw.cc:1865](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/cls/rgw/cls_rgw.cc#L1865),
-  [cls_rgw.cc:1927-1929](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/cls/rgw/cls_rgw.cc#L1927-L1929),
-  [cls_rgw.cc:2173-2176](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/cls/rgw/cls_rgw.cc#L2173-L2176), at
-  d8552606423), which neither floor carries.
+  ([cls_rgw.cc:1870](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/cls/rgw/cls_rgw.cc#L1870),
+  [cls_rgw.cc:1932-1934](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/cls/rgw/cls_rgw.cc#L1932-L1934),
+  [cls_rgw.cc:2178-2181](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/cls/rgw/cls_rgw.cc#L2178-L2181), at
+  8aa24c51928), which neither floor carries.
 - **Compression: decode all four codecs on read.** radosgw may have
   written zlib, snappy, zstd or lz4 depending on the zone's placement
   configuration. rgw-go reads all four from the first release, whatever
@@ -702,9 +703,9 @@ review and verified against the tree.
   implementations exclude one another only if they take the same locks
   by name. On the S3 data path that is the exclusive lock named
   `RGWCompleteMultipart` on the multipart meta object, held for
-  `rgw_mp_lock_max_time` and renewed on main, which is what stops two
-  gateways completing the same upload at once. The meta object lives in
-  the placement's data-extra pool (normally `<zone>.rgw.buckets.non-ec`;
+  `rgw_mp_lock_max_time` and renewed on main (8aa24c51928), which is what
+  stops two gateways completing the same upload at once. The meta object
+  lives in the placement's data-extra pool (normally `<zone>.rgw.buckets.non-ec`;
   the data pool only when none is configured), so a lock taken on that
   name in the data pool excludes nothing. The workers take
   `gc_process`, `lc_process` and `reshard_process`, plus one lock per
@@ -4627,30 +4628,30 @@ v20.2.4 tags, rgw-go does the following.
     `driver/rados/rgw_user.cc:1977` at v19.2.6, `:1983` at v20.2.4;
     docs/ceph-upstream-bugs.md, "radosgw's bucket delete and user purge
     orphan the objects of a bucket with no zonegroup id").
-- **CORS rules are matched as Amazon S3 matches them.** rgw-go answers a
-  CORS request from the first rule, in stored order, that allows its
-  Origin, its method and, for a preflight, every header its
-  Access-Control-Request-Headers names (`cors.Configuration.Match`,
-  `internal/cors/match.go`). Amazon S3 "uses the first `CORSRule` rule that
-  matches the incoming browser request" on those three
+- **CORS rules are matched as Amazon S3 matches them.** rgw-go answers a CORS
+  request from the first rule, in stored order, that allows its Origin, its
+  method and, for a preflight, every header its Access-Control-Request-Headers
+  names (`cors.Configuration.Match`, `internal/cors/match.go`). Amazon S3
+  "uses the first `CORSRule` rule that matches the incoming browser request"
+  on those three
   (https://docs.aws.amazon.com/AmazonS3/latest/userguide/cors.html#cors-eval-criteria;
   the PutBucketCors reference as the AWS SDK for Go carries it,
   [api.go:8329-8342](https://github.com/aws/aws-sdk-go/blob/7112c0a0c2d01713a9db2d57f0e5722225baf5b5/service/s3/api.go#L8329-L8342)),
-  and so does radosgw's `match_rule` on main since cc1dcecee08, on the
-  tentacle branch since 5f25f2bb0e2 and on the squid branch since
-  50137a456e2, which no release carries, though for every request rather
-  than a preflight alone. Both floors
-  take the first rule whose AllowedOrigin matches the Origin alone. They
-  refuse a preflight 403 when that rule does not allow its method or a
-  requested header, and send no CORS headers on another response when it
-  does not allow the method, so a later rule for the same origin is never
-  used (docs/ceph-upstream-bugs.md, "[radosgw answers a CORS request with
-  the first rule whose origin
+  and so does radosgw's `match_rule` on main since cc1dcecee08, first tagged
+  in the development tag v22.0.0 and still so at 8aa24c51928 (2026-10-30), on
+  the tentacle branch since 5f25f2bb0e2 and on the squid branch since
+  50137a456e2, which no squid or tentacle release carries, though for every
+  request rather than a preflight alone. Both floors take the first rule whose
+  AllowedOrigin matches the Origin alone. They refuse a preflight 403 when
+  that rule does not allow its method or a requested header, and send no CORS
+  headers on another response when it does not allow the method, so a later
+  rule for the same origin is never used (docs/ceph-upstream-bugs.md,
+  "[radosgw answers a CORS request with the first rule whose origin
   matches](ceph-upstream-bugs.md#radosgw-answers-a-cors-request-with-the-first-rule-whose-origin-matches)").
-  rgw-go also differs from the floors in what a rule allows and in how much
-  a preflight may ask:
+  rgw-go also differs from the floors in what a rule allows and in how much a
+  preflight may ask:
   - **An empty Origin matches no rule**, as main's `RGWCORSRule::matches`
-    refuses one. The floors match an `Origin` header with an empty value
+    refuses one at 8aa24c51928. The floors match an `Origin` header with an empty value
     against a rule that allows `*`, so an anonymous request carrying one is
     sent `Access-Control-Allow-Origin: *` (`generate_cors_headers`,
     [rgw_op.cc:1541-1600](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1541-L1600),
@@ -4810,7 +4811,8 @@ v20.2.4 tags, rgw-go does the following.
   from the rule that "CORS rules are matched as Amazon S3 matches them"
   (above) chooses for the request:
   - the method is Access-Control-Request-Method when the request sends one,
-    and its own otherwise, on any request, as both floors and main take it.
+    and its own otherwise, on any request, as both floors and main
+    (8aa24c51928) take it.
     Amazon S3's API reference matches a request other than a preflight by
     its own method: "The request method (for example, GET, PUT, HEAD, and so
     on) or the Access-Control-Request-Method header in case of a pre-flight
@@ -4832,7 +4834,7 @@ v20.2.4 tags, rgw-go does the following.
     ordinary request, an anonymous one included, chooses both the bucket and
     the names. Main's `generate_cors_headers` chooses the rule with them for
     every request
-    ([rgw_op.cc:2003-2010](https://github.com/ceph/ceph/blob/cc1dcecee08/src/rgw/rgw_op.cc#L2003-L2010) at cc1dcecee08);
+    ([rgw_op.cc:2040-2047](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_op.cc#L2040-L2047) at 8aa24c51928);
   - Access-Control-Allow-Origin is `*` for a rule that allows every origin
     when the request carries no Authorization header, a presigned request
     among them, as radosgw sends it;
@@ -4892,22 +4894,23 @@ v20.2.4 tags, rgw-go does the following.
   Authorization header.
 - **A request whose Origin no CORS rule allows is refused.** Neither floor
   refuses a request other than a preflight for its Origin:
-  `generate_cors_headers` leaves the CORS headers off the response of one
-  that no rule allows, and the request is served (docs/ceph-upstream-bugs.md,
+  `generate_cors_headers` leaves the CORS headers off the response of one that
+  no rule allows, and the request is served (docs/ceph-upstream-bugs.md,
   "[radosgw serves a request whose Origin no CORS rule
   allows](ceph-upstream-bugs.md#radosgw-serves-a-request-whose-origin-no-cors-rule-allows)").
   radosgw's main branch refuses it with 403 AccessDenied since
-  ceph/ceph#70697, which no tag carries (`verify_cors_match`,
-  [rgw_op.cc:2088-2133](https://github.com/ceph/ceph/blob/292995374d9/src/rgw/rgw_op.cc#L2088-L2133) at 292995374d9),
-  and s3-tests' `test_cors_origin_response` and
-  `test_cors_presigned_url_non_preflight` expect the refusal. Amazon S3's
-  API reference requires "The request method (for example, GET, PUT, HEAD,
-  and so on) or the Access-Control-Request-Method header in case of a
-  pre-flight OPTIONS request" to be one of a matching rule's AllowedMethods
+  ceph/ceph#70697, which the development tag v22.0.0 is the first tag to carry
+  (`verify_cors_match`,
+  [rgw_op.cc:2088-2133](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_op.cc#L2088-L2133)
+  at 8aa24c51928), and s3-tests' `test_cors_origin_response` and
+  `test_cors_presigned_url_non_preflight` expect the refusal. Amazon S3's API
+  reference requires "The request method (for example, GET, PUT, HEAD, and so
+  on) or the Access-Control-Request-Method header in case of a pre-flight
+  OPTIONS request" to be one of a matching rule's AllowedMethods
   (https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketCors.html);
-  what Amazon S3 answers a request that fails it is not recorded here.
-  rgw-go refuses as main does (`verifyCORSMatch`,
-  `internal/op/corsmatch.go`, which `op.Run` calls):
+  what Amazon S3 answers a request that fails it is not recorded here. rgw-go
+  refuses as main does (`verifyCORSMatch`, `internal/op/corsmatch.go`, which
+  `op.Run` calls):
   - a request other than the preflight that carries a non-empty Origin, the
     last of a repeated one, and whose bucket record holds a configuration,
     is refused unless a rule allows that Origin for the request's own
@@ -4924,20 +4927,20 @@ v20.2.4 tags, rgw-go does the following.
     choose no rule here, as on main;
   - the check comes once the op mask has passed and before the permission
     verdict, where main's `rgw_process_authenticated` makes it
-    ([rgw_process.cc:289-299](https://github.com/ceph/ceph/blob/292995374d9/src/rgw/rgw_process.cc#L289-L299) at 292995374d9),
+    ([rgw_process.cc:346-356](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_process.cc#L346-L356) at 8aa24c51928),
     so an admin, whom a permission denial lets through, is refused too. The
     refusals that come before it on main still come first: the bucket
     load's, those rgw-go's authorizer makes where radosgw refuses before the
     op mask, and the op mask's;
   - a request with no bucket record passes, as on main: ListBuckets, and
     CreateBucket, whose bucket main's `init_permissions` does not load
-    ([rgw_rest.cc:1856-1864](https://github.com/ceph/ceph/blob/292995374d9/src/rgw/rgw_rest.cc#L1856-L1864) at 292995374d9);
+    ([rgw_rest.cc:1856-1864](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest.cc#L1856-L1864) at 8aa24c51928);
   - a configuration that does not decode is answered 500 UnknownError, the
     -EIO of `read_bucket_cors` that GetBucketCors and the preflight answer
     it with on both floors. Main's check ignores that result and matches
     against what the decode left
-    ([rgw_op.cc:1925-1945](https://github.com/ceph/ceph/blob/292995374d9/src/rgw/rgw_op.cc#L1925-L1945) and
-    [rgw_op.cc:2100-2115](https://github.com/ceph/ceph/blob/292995374d9/src/rgw/rgw_op.cc#L2100-L2115) at 292995374d9).
+    ([rgw_op.cc:1925-1945](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_op.cc#L1925-L1945) and
+    [rgw_op.cc:2100-2115](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_op.cc#L2100-L2115) at 8aa24c51928).
     When nothing of the attr decodes, main's configuration holds no rule
     though it counts as present, so main refuses every request with an
     Origin 403, a browser's PutBucketCors and DeleteBucketCors included;
@@ -6789,7 +6792,7 @@ rgw-go does the following.
   verified a device of the bucket's owner ("Only the bucket owner's
   x-amz-mfa satisfies MFA delete", below), and serves one whose keys name
   none without MFA (`checkRequest`, `internal/op/deleteobjects.go`). That
-  is the check v19.2.6 made and ceph main makes. A request whose
+  is the check v19.2.6 made and ceph main makes at 8aa24c51928. A request whose
   `x-amz-mfa` is present but does not verify the owner's device is refused
   the same way whatever its keys name, as Amazon S3's DeleteObjects
   reference says: "If you provide an invalid token, whether there are
@@ -7852,8 +7855,8 @@ differ, rgw-go does the following.
   not match: s3-tests, written against AWS, expect InvalidDigest for a
   value that decodes short and for an empty one, and BadDigest for a
   mismatch
-  ([test_headers.py:189-207](https://github.com/ceph/ceph/blob/d8552606423c86efe4df2d39c0b7e4b20ba69c73/src/test/rgw/s3-tests/s3tests/functional/test_headers.py#L189-L207)
-  at ceph main d8552606). radosgw's own PutObject answers a decoded length
+  ([test_headers.py:189-207](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/test/rgw/s3-tests/s3tests/functional/test_headers.py#L189-L207)
+  at ceph main 8aa24c51928). radosgw's own PutObject answers a decoded length
   other than 16 with InvalidDigest
   ([rgw_op.cc:4184-4194](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4184-L4194),
   [rgw_op.cc:4393-4403](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4393-L4403)).
@@ -8379,9 +8382,9 @@ does the following.
   shown"), a checksum-mode GET or HEAD with `partNumber` reports the part
   head's own `user.rgw.cksum` as its armor alone, with
   `x-amz-checksum-type` COMPOSITE only when the record's flags say
-  COMPOSITE, as main does
-  ([rgw_rest_s3.cc:569-608](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_rest_s3.cc#L569-L608),
-  [rgw_cksum.h:417-424](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_cksum.h#L417-L424))
+  COMPOSITE, as main does at 8aa24c51928
+  ([rgw_rest_s3.cc:569-608](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L569-L608),
+  [rgw_cksum.h:417-424](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_cksum.h#L417-L424))
   and s3-tests' five `test_multipart_use_cksum_helper_*` expect. A v20.2.4
   radosgw types a part's record as the whole object's, by
   `get_checksum_type` with the object's parts count, which answers
@@ -9825,7 +9828,7 @@ does the following.
   whose head write was in flight longer than `rgw_mp_lock_max_time`, after
   its renewal, can land its head there, and this completion's head write
   then queues that head's tails, the same parts, for the GC. radosgw main
-  has the same window.
+  has the same window, as at 8aa24c51928.
 - **AbortMultipartUpload removes the upload before it frees the parts.**
   rgw-go aborts an upload as `RadosMultipartUpload::abort` does
   (`driver/rados/rgw_sal_rados.cc:3151-3263` at v19.2.6, `:3995-4107` at
@@ -11122,8 +11125,8 @@ does the following.
   CreateMultipartUpload on Tentacle answers the same ("CreateMultipartUpload
   refuses the checksum algorithms rgw-go does not compute"). MD5, XXHASH64
   and XXHASH128 are main's types 9 to 11
-  ([rgw_cksum.h:41-56](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_cksum.h#L41-L56)
-  at main), for which a v20.2.4 radosgw has no id: it indexes its
+  ([rgw_cksum.h:41-56](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_cksum.h#L41-L56)
+  at main 8aa24c51928), for which a v20.2.4 radosgw has no id: it indexes its
   nine-entry table with a record's stored type
   ([rgw_cksum.h:88-99](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L88-L99),
   [rgw_cksum.h:147-149](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L147-L149);
@@ -11141,8 +11144,8 @@ does the following.
   radosgw computes and stores the checksums it names XXH3 and BLAKE3, which
   rgw-go does not: phase 2 takes no XXH3 or BLAKE3 dependency, though
   XXHASH3 is a type AWS defines
-  ([rgw_cksum.h:93-107](https://github.com/ceph/ceph/blob/f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3/src/rgw/rgw_cksum.h#L93-L107)
-  at main). Squid's radosgw has no checksum code and ignores every such
+  ([rgw_cksum.h:93-107](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_cksum.h#L93-L107)
+  at main 8aa24c51928). Squid's radosgw has no checksum code and ignores every such
   header. An UploadPart, an UploadPartCopy or a CompleteMultipartUpload of
   an upload whose stored type rgw-go does not compute, xxh3 or blake3 from
   a Tentacle radosgw or a type above 8 from a newer one, answers 501
@@ -12811,7 +12814,8 @@ fewer than first thought, verified against the release tags on
 first in v20.2.0; the OLH log read's version 2 and the version 8 index
 entry metadata carried inside the complete and link-OLH requests are
 Umbrella, first in the v21.1.0 release candidate; and the OLH epoch reply
-on link and unlink exists only on unreleased main and feeds only the
+on link and unlink exists only on main, first tagged in the development
+tag v22.0.0 (checked at 8aa24c51928, 2026-10-30), and feeds only the
 multisite log. So on a Tentacle cluster the two gateways differ in one
 request struct until rgw-rs adds it, and the stored records the OSD
 writes are identical for both regardless. The benchmark plan records
