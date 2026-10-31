@@ -30,12 +30,16 @@ before committing it. Where a `Makefile` is present, `make check` is the local g
 
 The integration suite and the phase 0 gate run against disposable one-worker Rook
 clusters, one each for Squid and Tentacle, which [rooket](https://github.com/jhoblitt/rooket)
-stands up on kind. The `integration` workflow runs them nightly and on demand with
-`gh workflow run integration.yml`. It does not gate pull requests; locally, the same
-steps are in [hack/rooket/README.md](hack/rooket/README.md).
-After the gate it checks radosgw's go-ceph rgw/admin outcomes against
-`test/admin/baseline/`, then runs `make admin-parity` and `make admin-gate` against
-rgw-go; it does not run the seam microbenchmark.
+stands up on kind. The `integration` workflow runs them on every pull request and on
+demand with `gh workflow run integration.yml`; locally, the same steps are in
+[hack/rooket/README.md](hack/rooket/README.md). Unless the pull request changes only
+files no step reads, markdown, `docs/`, `LICENSE`, `test/s3tests/`, the other
+workflows and their files under `.github/`, `.commitlintrc.yml`, `.golangci.yml` and
+`.goreleaser.yaml`, it brings up both releases' clusters, and after the gate it
+checks radosgw's go-ceph rgw/admin outcomes against `test/admin/baseline/`, then
+runs `make admin-parity` and `make admin-gate` against rgw-go; otherwise it passes
+without a cluster. It does not run the seam microbenchmark. Its `integration` job is
+the check to require.
 
 The `s3tests` workflow runs on every pull request. When the pull request changes the
 S3 path, anything under `internal/`, `cmd/`, `hack/s3tests/`, `hack/rooket/`,

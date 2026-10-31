@@ -430,7 +430,7 @@ encrypted is stored in the clear and no ciphertext is served.
 |---|---|---|---|
 | Unit specs, Ginkgo and Gomega | librados-dev, no cluster | `denc`, `meta`, class marshalling, auth, policy, ACL, the dispatcher, every op against counterfeiter fakes, the frontend in-process | `make test`, every PR |
 | Corpus and vector goldens | nothing at run time | every encoding in scope: each corpus object decodes to the JSON ceph-dencoder dumps and re-encodes to the bytes ceph-dencoder produces; generated vectors for types the corpus lacks and for Squid-version encodings; nondeterministic types compare decoded values | `make test`, every PR |
-| Integration specs, `//go:build integration` | a disposable cluster | the seam in all three modes, the driver's layout and protocols, the live oracle matrix against radosgw, the admin API through go-ceph's rgw/admin client | on demand and at gates |
+| Integration specs, `//go:build integration` | a disposable cluster | the seam in all three modes, the driver's layout and protocols, the live oracle matrix against radosgw, the admin API through go-ceph's rgw/admin client | both releases on every PR unless every file it changes is one no step reads, docs, records, the other workflows' files and other tools' config; on demand and at gates |
 | s3-tests parity | a disposable cluster, radosgw's recorded baseline | the phase's s3-tests set against rgw-go, diffed with radosgw's outcomes | Squid on every PR touching the S3 path; Tentacle at gates and on demand |
 | Rook end to end | kind, Rook, the derived image | the object suite, both TLS passes | nightly and at gates |
 
@@ -490,12 +490,18 @@ pinned commit until the bindings are upstream, bumped by hand.
 CI adds an install of librados-dev, Squid or newer, to the template's test,
 lint and checks jobs; those jobs build and run unit specs and never connect
 to a cluster, so the headers alone matter there. Three added workflows.
-Two do not gate pull requests: an integration workflow, nightly and on
-demand, that brings up the disposable Rook clusters on the runner with a
-pinned rooket, one job per release, and runs the integration specs, the
-oracle matrix and the phase 0 gate; and a
-Rook workflow, nightly and on demand, that builds the derived image and
-runs the object suite on kind.
+An integration workflow, on pull requests and on demand, brings up the
+disposable Rook clusters on the runner with a pinned rooket, one job per
+release, and runs the integration specs, the oracle matrix and the phase 0
+gate. Its filter is a skip list rather than a path list: a pull request
+skips the clusters only when every file it changes is one no step reads,
+docs, records, the other workflows' files and other tools' config, so a
+file the list does not name, a new one included, runs them. Like the
+s3-tests check below, it always starts, passes without work when it
+skips, and is judged by a job of its own, the check to require, which
+reads each release's job on its own. A Rook workflow, nightly and on
+demand, builds the derived image and runs the object suite on kind; it
+does not gate pull requests.
 
 The third, an s3-tests workflow on pull requests and on demand, is the
 required check of section 9. Its path filter is the S3 path: all of
