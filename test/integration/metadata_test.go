@@ -110,6 +110,23 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 	Expect(err).NotTo(HaveOccurred())
 })
 
+// The suite collects its garbage last: not every spec that leaves garbage
+// collects it, whether one that does runs after it depends on the random
+// spec order, and the steps that reuse the cluster next, the phase 0 gate
+// among them, expect no object a spec left to the collector. An entry the
+// collector cannot process fails here: what it leaves, tails without
+// xattrs, the gate only counts. Ginkgo runs this before the cleanups
+// BeforeSuite deferred, which close the store and the cluster; it does
+// nothing when BeforeSuite failed before opening the store, as then no spec
+// ran.
+var _ = AfterSuite(func(ctx SpecContext) {
+	if store == nil {
+		return
+	}
+	gcProcess(ctx)
+	Expect(gcList(ctx)).To(BeEmpty(), "gc list --include-all after the suite's gc pass")
+})
+
 // admin runs radosgw-admin on the populated site and returns its stdout.
 func admin(ctx context.Context, args ...string) []byte {
 	GinkgoHelper()

@@ -232,19 +232,23 @@ populate: need-release ## Write the fixed data set through the RELEASE cluster's
 # ./test/integration runs in a go test of its own after the others, never
 # beside them: its specs link extra buckets to the populated user alice and
 # sync her stats, while internal/cls/user's specs pin alice's bucket list and
-# header to the population. make integration leaves out the specs labelled
-# rgw-go, which make admin-gate runs: the admin gate's need the rgw-go make
-# rgw-go-up starts, and the website gate builds an rgw-go of its own and
-# restarts the radosgw twice.
+# header to the population. It runs when the first go test fails too, so a
+# failure there hides none of its results, and the target fails if either
+# does. make integration leaves out the specs labelled rgw-go, which make
+# admin-gate runs: the admin gate's need the rgw-go make rgw-go-up starts,
+# and the website gate builds an rgw-go of its own and restarts the radosgw
+# twice.
 .PHONY: integration
 integration: need-release ## Run the integration specs against the RELEASE cluster
 	@tags="$(GO_TAGS),integration"; \
 	pkgs=$$(grep -rl --include='*_test.go' 'Label("integration"' cmd hack internal | sed -e 's|/[^/]*$$||' -e 's|^|./|' | sort -u); \
 	[ -n "$$pkgs" ] || { echo "no package outside test/ holds an integration spec" >&2; exit 1; }; \
+	status=0; \
 	RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf \
-	  go test "-tags=$$tags" -race -count=1 $$pkgs -ginkgo.label-filter=integration -ginkgo.fail-on-empty && \
+	  go test "-tags=$$tags" -race -count=1 $$pkgs -ginkgo.label-filter=integration -ginkgo.fail-on-empty || status=1; \
 	RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf \
-	  go test "-tags=$$tags" -race -count=1 ./test/integration '-ginkgo.label-filter=integration && !rgw-go' -ginkgo.fail-on-empty
+	  go test "-tags=$$tags" -race -count=1 ./test/integration '-ginkgo.label-filter=integration && !rgw-go' -ginkgo.fail-on-empty || status=1; \
+	exit $$status
 
 # The admin gate signs as rgwgo-admin, which holds every admin cap with keys
 # the spec commits; the specs remove it when they end, and the trap removes

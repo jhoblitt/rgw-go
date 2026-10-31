@@ -2840,6 +2840,29 @@ review and verified against the tree.
   decoded at `rgw_op.cc:7474-7501` in `check_previously_completed`, where a
   decode failure is logged and still answers 200, `:7498-7500`, all at
   v20.2.4); rgw-go answers the same 200 without them.
+- **A first CompleteMultipartUpload shows no checksum in its response.** A
+  Tentacle radosgw that completes an upload created with a checksum
+  algorithm combines its parts' checksums and renders the result in the
+  response: a `<Checksum*>` element holding the armored checksum, which
+  `armored_cksum` appends `-<parts>` to for a composite
+  ([rgw_op.cc:7145-7151](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7145-L7151)),
+  and `<ChecksumType>`
+  ([rgw_rest_s3.cc:4635-4639](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4635-L4639)).
+  A Squid radosgw's `RGWCompleteMultipart_ObjStore_S3::send_response`
+  renders neither
+  ([rgw_rest_s3.cc:4106-4138](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4106-L4138)).
+  rgw-go's completion of such an upload combines and stores the object's
+  checksum ("Client checksums are ignored until phase 2", "A multipart
+  upload's combined CRC follows its checksum type"), but its S3 handler
+  renders neither element on either release (`internal/s3/multipart.go`),
+  so on Tentacle it hides a checksum radosgw shows; on Squid nothing
+  differs. A retried completion and ListParts hide theirs alike ("ListParts
+  lists the parts of an upload whose checksum does not decode, and shows no
+  part's checksum; a retried CompleteMultipartUpload shows no checksum"),
+  as do the reads ("Stored checksums are not shown"). Phase 2's task WP-7
+  renders the elements
+  (`docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md`, its
+  behaviour 4).
 - **Members of IAM groups are refused until phase 3 evaluates group
   policies.** radosgw loads, with a user's own identity policies, the
   inline and managed policies of every IAM group the user's record lists

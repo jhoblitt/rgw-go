@@ -100,6 +100,16 @@ func (l Limiter) Release(n int64) { l.l.release(n) }
 // Stats reports what the limiter holds and how often a submission parked.
 func (l Limiter) Stats() radosclient.Stats { return l.l.stats() }
 
+// ClusterLimiter exposes the in-flight limiter of c, a Cluster Connect
+// returned, which its Pools' reads and writes park on.
+func ClusterLimiter(c radosclient.Cluster) Limiter {
+	gc, ok := c.(*cluster)
+	if !ok {
+		panic("not a goceph cluster")
+	}
+	return Limiter{gc.limit}
+}
+
 // DeriveLimits sizes a limiter from the objecter options in opts, as Connect
 // does from librados's; an option opts lacks is one librados cannot read.
 func DeriveLimits(opts map[string]string) (ops int, bytes int64) {

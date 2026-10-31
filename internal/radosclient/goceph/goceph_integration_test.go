@@ -604,6 +604,18 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 					Expect(err).NotTo(HaveOccurred())
 					DeferCleanup(removeObject, pool, names[i])
 				}
+				// The spec holds the whole op limit while the reads start, so
+				// that each of them parks: a sync read holds its slot on an OS
+				// thread inside librados, and whether a free-running burst ever
+				// fills the limit depends on how fast the runtime starts those
+				// threads. The holds are bounded: a limit below 8 would park
+				// them for good.
+				held := goceph.ClusterLimiter(cl)
+				hold, cancel := context.WithTimeout(ctx, 5*time.Second)
+				defer cancel()
+				for i := range 8 {
+					Expect(held.Acquire(hold, 0)).To(Succeed(), "holding op slot %d of the client's 8", i+1)
+				}
 				var peak atomic.Int32
 				var g errgroup.Group
 				for i := range 256 {
@@ -615,12 +627,17 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 						return err
 					})
 				}
+				Eventually(func() uint64 { return stats.Stats().ThrottleWaits }).WithContext(ctx).
+					WithTimeout(time.Minute).WithPolling(10*time.Millisecond).Should(BeEquivalentTo(256), "reads parked on the held limit")
+				for range 8 {
+					held.Release(0)
+				}
 				Expect(g.Wait()).To(Succeed())
 				AddReportEntry("limiter", fmt.Sprintf("%s: peak in-flight ops %d, throttle waits %d",
 					mode, peak.Load(), stats.Stats().ThrottleWaits))
 				Expect(peak.Load()).To(BeNumerically("<=", 8), "in-flight ops observed")
 				Expect(peak.Load()).To(BeNumerically(">", 1), "the reads overlapped")
-				Expect(stats.Stats().ThrottleWaits).To(BeNumerically(">", 0), "some reads parked")
+				Expect(stats.Stats().ThrottleWaits).To(BeEquivalentTo(256), "every read parked once")
 			})
 
 			It("counts the operations and payload bytes it submits, and gives back every budget", func(ctx SpecContext) {
