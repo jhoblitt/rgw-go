@@ -259,6 +259,11 @@ Each fix below that is not this document lands on main before phase 2's tasks st
   - Adversarial review is for the components the spec names as security boundaries, such as authentication, authorization and the parsers that face clients. Test and build tooling is not among them.
 - **Fix:** phase 2's plan gives each unit a threat-model line. The task-review brief tells reviewers to judge against it. A line in the project CLAUDE.md states it.
 - **Candidate home:** writing-plans; the task-review brief.
+- **Update (2026-10-31):** the owner adopted a hardening goal, rgw-go suitable for the
+  commodity Internet, and widened the rule: every change to the request path the design
+  spec's threat model lists gets adversarial review, from the frontend to the cgo boundary.
+  The parity ledgers and other test and build tooling stay outside it. The project
+  CLAUDE.md line says so.
 
 ## PP-15: Large shell scripts were written where Go commands were due
 
