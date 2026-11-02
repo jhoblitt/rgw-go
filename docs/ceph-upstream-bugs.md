@@ -19385,8 +19385,11 @@ Every new entry adds its row to this table, in document order.
   once more at each other zone, inside its window.
   - A replay needs the user's credentials and a recently used `x-amz-mfa`
     value.
-  - The rgw-bug-reproduction session reproduced it on v21.1.2 on a two-zone
-    realm, assesses it as not security-relevant, and filed it publicly as
+  - The rgw-bug-reproduction session rates it security conditional, CVSS 3.1
+    2.6 (AV:N/AC:H/PR:L/UI:R/S:U/C:N/I:L/A:N): MFA's one use of a code
+    becomes one use per zone. Its later "not security-relevant" call, under
+    which it filed the issue publicly, it withdrew on 2026-11-02.
+  - It reproduced the defect on v21.1.2 on a two-zone realm and filed it as
     [#82571](https://tracker.ceph.com/issues/82571) on 2026-11-02. One
     `x-amz-mfa` value sent four times to an MFA-delete bucket drew 204 and
     then 403 from the first zone, and 204 and then 403 from the second.
