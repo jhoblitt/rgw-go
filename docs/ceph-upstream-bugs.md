@@ -295,7 +295,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [cls_rgw mis-sorts and cannot list versions whose epoch is 2^32 or more](#cls_rgw-mis-sorts-and-cannot-list-versions-whose-epoch-is-232-or-more) | pending | [ceph/ceph#62469](https://github.com/ceph/ceph/pull/62469) |  |
 | [cls_rgw's read_olh_log reads the first epoch of an empty pending log](#cls_rgws-read_olh_log-reads-the-first-epoch-of-an-empty-pending-log) | pending | pending | ✓ |
 | [cls_rgw's bucket_link_olh drops the REMOVE_INSTANCE it logs for a delete marker at an older epoch](#cls_rgws-bucket_link_olh-drops-the-remove_instance-it-logs-for-a-delete-marker-at-an-older-epoch) | pending | [ceph/ceph#62469](https://github.com/ceph/ceph/pull/62469), [ceph/ceph#67661](https://github.com/ceph/ceph/pull/67661) |  |
-| [cls_rgw's bucket_link_olh unlinks the null version's list entry before it checks the epoch](#cls_rgws-bucket_link_olh-unlinks-the-null-versions-list-entry-before-it-checks-the-epoch) | pending | pending | ✓ |
+| [cls_rgw's bucket_link_olh unlinks the null version's list entry before it checks the epoch](#cls_rgws-bucket_link_olh-unlinks-the-null-versions-list-entry-before-it-checks-the-epoch) | [#82572](https://tracker.ceph.com/issues/82572) | [ceph/ceph#72762](https://github.com/ceph/ceph/pull/72762) (open; stops only the case where the OLH names the null entry) | ✓ |
 | [cls_rgw's bucket_unlink_instance at an older epoch leaves a delete marker's instance entry](#cls_rgws-bucket_unlink_instance-at-an-older-epoch-leaves-a-delete-markers-instance-entry) | pending | pending | ✓ |
 | [radosgw's zstd compress leaks its compression stream when libzstd fails](#radosgws-zstd-compress-leaks-its-compression-stream-when-libzstd-fails) | [#73522](https://tracker.ceph.com/issues/73522) | [ceph/ceph#65915](https://github.com/ceph/ceph/pull/65915) |  |
 | [radosgw's rate limiter answers SlowDown for a rate-limit attr that does not decode](#radosgws-rate-limiter-answers-slowdown-for-a-rate-limit-attr-that-does-not-decode) | pending | pending | ✓ |
@@ -332,9 +332,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw from Quincy on lacks CVE-2021-3524's fix for CORS expose headers](#radosgw-from-quincy-on-lacks-cve-2021-3524s-fix-for-cors-expose-headers) | [CVE-2021-3524](https://nvd.nist.gov/vuln/detail/CVE-2021-3524) | none |  |
 | [radosgw's IgnorePublicAcls and ACL is_public miss grants to the anonymous user](#radosgws-ignorepublicacls-and-acl-is_public-miss-grants-to-the-anonymous-user) | pending | pending | ✓ |
 | [radosgw lets an ACL grant change a bucket's public access block](#radosgw-lets-an-acl-grant-change-a-buckets-public-access-block) | pending | pending | ✓ |
-| [cls_rgw from v21.0.0 cannot find the list keys of versions that Squid and Tentacle wrote at epochs of 2^32 or more](#cls_rgw-from-v2100-cannot-find-the-list-keys-of-versions-that-squid-and-tentacle-wrote-at-epochs-of-232-or-more) | pending | pending | ✓ |
+| [cls_rgw from v21.0.0 cannot find the list keys of versions that Squid and Tentacle wrote at epochs of 2^32 or more](#cls_rgw-from-v2100-cannot-find-the-list-keys-of-versions-that-squid-and-tentacle-wrote-at-epochs-of-232-or-more) | [#82574](https://tracker.ceph.com/issues/82574) | none | ✓ |
 | [radosgw's otp metadata put keeps a dropped device's id in the otp header](#radosgws-otp-metadata-put-keeps-a-dropped-devices-id-in-the-otp-header) | pending | pending | ✓ |
-| [radosgw's otp replay state stays in the zone that recorded it](#radosgws-otp-replay-state-stays-in-the-zone-that-recorded-it) | pending | pending | ✓ |
+| [radosgw's otp replay state stays in the zone that recorded it](#radosgws-otp-replay-state-stays-in-the-zone-that-recorded-it) | [#82571](https://tracker.ceph.com/issues/82571) | none | ✓ |
 | [radosgw adds any header an aws-chunked trailer names to the request after its body](#radosgw-adds-any-header-an-aws-chunked-trailer-names-to-the-request-after-its-body) | pending | pending | ✓ |
 | [radosgw's verify_mfa logs an x-amz-mfa value that does not split in two, its code included](#radosgws-verify_mfa-logs-an-x-amz-mfa-value-that-does-not-split-in-two-its-code-included) | pending | pending | ✓ |
 | [radosgw serves bucket configuration requests it has no op for as ListObjects, CreateBucket and DeleteBucket, deleting an empty bucket](#radosgw-serves-bucket-configuration-requests-it-has-no-op-for-as-listobjects-createbucket-and-deletebucket-deleting-an-empty-bucket) | pending | [ceph/ceph#64152](https://github.com/ceph/ceph/pull/64152) |  |
@@ -497,6 +497,10 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's JSON parser reads a short `\u` escape through the next escape's backslash](#radosgws-json-parser-reads-a-short-u-escape-through-the-next-escapes-backslash) | pending | pending | ✓ |
 | [radosgw's permission override lets an admin delete a version under MFA delete without a code](#radosgws-permission-override-lets-an-admin-delete-a-version-under-mfa-delete-without-a-code) | pending | pending | ✓ |
 | [The manager's config show reads an rgw service daemon's id without checking it exists](#the-managers-config-show-reads-an-rgw-service-daemons-id-without-checking-it-exists) | none | none | ✓ |
+| [radosgw's first sync of a bucket from a peer zone never applies the peer's earlier removals](#radosgws-first-sync-of-a-bucket-from-a-peer-zone-never-applies-the-peers-earlier-removals) | [#58939](https://tracker.ceph.com/issues/58939) | none |  |
+| [radosgw's sync stores a peer's null delete marker as a numbered one once the destination sees versioning enabled](#radosgws-sync-stores-a-peers-null-delete-marker-as-a-numbered-one-once-the-destination-sees-versioning-enabled) | [#73540](https://tracker.ceph.com/issues/73540) (Resolved; this case remains) | none; [ceph/ceph#65948](https://github.com/ceph/ceph/pull/65948) fixed #73540 and leaves this case |  |
+| [A Squid or Tentacle zone lists none of the versions it syncs from a v21 zone](#a-squid-or-tentacle-zone-lists-none-of-the-versions-it-syncs-from-a-v21-zone) | [#82574](https://tracker.ceph.com/issues/82574), [#73058](https://tracker.ceph.com/issues/73058), [#73059](https://tracker.ceph.com/issues/73059) | [ceph/ceph#62469](https://github.com/ceph/ceph/pull/62469) (not backported) |  |
+| [radosgw from v21.0.0 deletes the current null version's data for a stale synced null delete marker](#radosgw-from-v2100-deletes-the-current-null-versions-data-for-a-stale-synced-null-delete-marker) | [#82573](https://tracker.ceph.com/issues/82573) | [ceph/ceph#72762](https://github.com/ceph/ceph/pull/72762) (open; stops the case observed) | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -15892,12 +15896,18 @@ Every new entry adds its row to this table, in document order.
       the skipped versions survive, unlisted and reachable only by their
       version ids.
   - Either outcome needs the current version and an older one both at epochs
-    of 2^32 or more, the older one at 2^63 or below. One name reaches that
-    range only after about four billion changes. A system request's epoch is
-    int-range, so only a negative one reaches band 4, and then only its top
-    half, which sorts in the right order.
+    of 2^32 or more, the older one at 2^63 or below. In a single zone one
+    name reaches that range only after about four billion changes. A system
+    request's epoch is int-range, so only a negative one reaches band 4, and
+    then only its top half, which sorts in the right order.
   - A version whose epoch is 2^32 or more is in no bucket listing,
     ListObjectVersions included.
+  - Multisite sync reaches band 4's negative half with every version a v21
+    zone sends: v21 gives each version a nanosecond timestamp epoch, and a
+    Squid or Tentacle zone links the version at it, as "[A Squid or Tentacle
+    zone lists none of the versions it syncs from a v21
+    zone](#a-squid-or-tentacle-zone-lists-none-of-the-versions-it-syncs-from-a-v21-zone)"
+    traces.
 - **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4. v21.0.0
   and later are fixed for the keys they write, not for the keys these
   releases wrote ("cls_rgw from v21.0.0 cannot find the list keys of versions that Squid and Tentacle wrote at epochs of 2^32 or more").
@@ -16015,7 +16025,11 @@ Every new entry adds its row to this table, in document order.
     That needs a marker whose instance id equals a stored version's, so in
     practice only the null version reaches this path.
 - **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4; fixed in
-  v21.0.0 and later.
+  v21.0.0 and later. There the logged removal reaches `apply_olh_log` also
+  when the null version it names is newer than the marker and current, and
+  deletes that version's data: "[radosgw from v21.0.0 deletes the current
+  null version's data for a stale synced null delete
+  marker](#radosgw-from-v2100-deletes-the-current-null-versions-data-for-a-stale-synced-null-delete-marker)".
 - **rgw-go:** reproduces it in fakerados, whose `RGWClass` emulates the class
   (`rgwBucketLinkOLH`, `internal/testutil/fakerados/cls_rgw_olh.go`;
   pinned in `internal/testutil/fakerados/cls_rgw_olh_test.go`). The gateway
@@ -16033,12 +16047,16 @@ Every new entry adds its row to this table, in document order.
 ## cls_rgw's bucket_link_olh unlinks the null version's list entry before it checks the epoch
 
 - **Kind:** defect, S3-correctness of versioning, multisite only: a null
-  delete marker linked at an epoch below the OLH entry's unlinks the null
-  data's list entry whatever the data's epoch, so a current null version
-  newer than the marker drops out of every listing while it stays current.
-  Not security-relevant. Still on main at 8aa24c51928 (2026-10-30).
-  Unreproduced: derived from the source and from fakerados's emulation of
-  the class.
+  link at an epoch below the OLH entry's unlinks the key's other null entry
+  before the epoch check refuses it. A null delete marker so unlinks the
+  null data's list entry whatever the data's epoch, so a current null
+  version newer than the marker drops out of every listing while it stays
+  current; a null write so removes a newer null delete marker's list and
+  instance entries while the OLH still names the marker. Not
+  security-relevant. Still on main at 8aa24c51928 (2026-10-30). The marker
+  case is derived from the source and from fakerados's emulation of the
+  class; the rgw-bug-reproduction session reproduced the null-write case on
+  v21.1.2 and filed it as [#82572](https://tracker.ceph.com/issues/82572).
 - **Evidence:** paths are under `src/` unless named.
   - For an empty instance the link reads the other null entry and, when one
     is the data and the other a marker, unlinks the other's list entry
@@ -16047,6 +16065,20 @@ Every new entry adds its row to this table, in document order.
     before `start_modify` compares the epochs
     ([cls_rgw.cc:1751](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1751),
     [cls_rgw.cc:1892](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1892)).
+    v21.1.2 keeps that order
+    ([cls_rgw.cc:1895-1906](https://github.com/ceph/ceph/blob/v21.1.2/src/cls/rgw/cls_rgw.cc#L1895-L1906)
+    before
+    [cls_rgw.cc:1928](https://github.com/ceph/ceph/blob/v21.1.2/src/cls/rgw/cls_rgw.cc#L1928)).
+  - For a null write over a null delete marker, `removing` is false, so the
+    link also removes the marker's instance entry, before the epoch check
+    too
+    ([cls_rgw.cc:1725-1731](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1725-L1731),
+    [cls_rgw.cc:1866-1872](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1866-L1872),
+    [cls_rgw.cc:1908-1914](https://github.com/ceph/ceph/blob/v21.1.2/src/cls/rgw/cls_rgw.cc#L1908-L1914)).
+    A refused write is then written noncurrent, and the OLH entry keeps
+    naming the marker. v21.1.2's refusing branch writes the OLH entry with
+    a `CLS_RGW_OLH_OP_STALE` log entry and leaves its key
+    ([cls_rgw.cc:1997-2012](https://github.com/ceph/ceph/blob/v21.1.2/src/cls/rgw/cls_rgw.cc#L1997-L2012)).
   - When `start_modify` refuses the marker's epoch, the class writes the
     marker noncurrent and returns without writing the OLH entry
     ([cls_rgw.cc:1751-1760](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1751-L1760),
@@ -16063,25 +16095,41 @@ Every new entry adds its row to this table, in document order.
 - **Impact:** when the null data is the current version and newer than the
   marker, a GET of the key serves it while no bucket listing shows it as
   current, and ListObjectVersions omits it.
-  - A lead, unverified: main fixes the dropped removal, so the stale marker's
-    REMOVE_INSTANCE for the null version reaches `apply_olh_log`
-    ([rgw_rados.cc:10129-10130](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_rados.cc#L10129-L10130)
-    and
-    [rgw_rados.cc:10189-10201](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_rados.cc#L10189-L10201),
-    at 8aa24c51928) while the OLH entry still names that null data, so main
-    may delete the current null version's data rather than only unlist it.
-    The delete path was not traced.
-- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4; main at
-  8aa24c51928 is still affected.
+  - When an older null write lands over a newer null delete marker, the
+    zone lists neither the marker nor any current version, only the write as
+    noncurrent. GET answers 404, since the OLH names the marker, and
+    `GET ?versionId=null` serves the older write. The other zone keeps the
+    marker, so the zones disagree. The rgw-bug-reproduction session saw this
+    on v21.1.2 for 8 of 8 keys written by a PUT on one zone and a DELETE on
+    the other 50 ms later, with the writing zone's sync paused to fix the
+    order, and for 18 and 17 of 24 keys in runs without a pause (#82572). In
+    its second case a numbered version written after the marker had made it
+    noncurrent, and the older null write still replaced the marker in the
+    index, the OLH keeping the numbered version.
+  - From v21.0.0 the stale marker's logged removal of the null version also
+    reaches `apply_olh_log`, which deletes the current null version's data:
+    "[radosgw from v21.0.0 deletes the current null version's data for a
+    stale synced null delete
+    marker](#radosgw-from-v2100-deletes-the-current-null-versions-data-for-a-stale-synced-null-delete-marker)".
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4, and
+  v21.1.2, where the null-write case was reproduced; main at 8aa24c51928 is
+  still affected.
 - **rgw-go:** reproduces it in fakerados, whose `RGWClass` emulates the class
   (`rgwBucketLinkOLH`, `internal/testutil/fakerados/cls_rgw_olh.go`;
   pinned in `internal/testutil/fakerados/cls_rgw_olh_test.go`). The gateway
   links no versions yet.
-- **Upstream:** pending: sent to rgw-bug-reproduction. Still on main at
-  8aa24c51928.
+- **Upstream:** [#82572](https://tracker.ceph.com/issues/82572), filed
+  2026-11-02 by the rgw-bug-reproduction session with a patch that moves the
+  unlink after the epoch check; no pull request. Still on main at
+  8aa24c51928. [ceph/ceph#72762](https://github.com/ceph/ceph/pull/72762)
+  (open, for [#81812](https://tracker.ceph.com/issues/81812)) returns early
+  with a stale log entry when the op's key is the OLH's current key at an
+  older epoch, which stops the case where the OLH names the other null
+  entry and not the one where it names a numbered version.
 - **Found:** phase 2 Task V3b, 2026-10-15, emulating the class in fakerados;
   split from a joint entry in its review the same day, which also raised the
-  main-side lead. Derived from the source, not reproduced.
+  main-side lead. Derived from the source; the null-write case reproduced on
+  v21.1.2 by the rgw-bug-reproduction session, 2026-11-02.
 
 ## cls_rgw's bucket_unlink_instance at an older epoch leaves a delete marker's instance entry
 
@@ -19092,8 +19140,11 @@ Every new entry adds its row to this table, in document order.
   encodes its epoch and re-keys nothing already stored, so it no longer
   derives those versions' stored keys: it lists them again, in the old
   order, and leaves their keys behind when it rewrites or removes them. No
-  object data is damaged. Not security-relevant. Prior art not searched.
-  Unreproduced: derived from the source.
+  object data is damaged. Not security-relevant. Derived from the source;
+  the rgw-bug-reproduction session reproduced it in a multisite upgrade of
+  a v20.2.4 zone to v21.1.2 and filed it as
+  [#82574](https://tracker.ceph.com/issues/82574) on 2026-11-02, after a
+  prior-art search that found no report.
 - **Evidence:** paths are under `src/cls/rgw/` unless named.
   - Squid and Tentacle key an epoch from 2^32 up as `4` and the digits of
     `(long long)-num` ("cls_rgw mis-sorts and cannot list versions whose
@@ -19152,21 +19203,42 @@ Every new entry adds its row to this table, in document order.
   - Deleting the current version, when it is such a version, promotes from
     where its key would sit in the new encoding, not from where it is
     stored.
-  - Only epochs of 2^32 or more are affected. One name reaches them only
-    after about four billion changes, or through a system request's
-    negative `rgwx-versioned-epoch`.
+  - Only epochs of 2^32 or more are affected. In a single zone one name
+    reaches them only after about four billion changes, or through a system
+    request's negative `rgwx-versioned-epoch`. In a zonegroup where a v21
+    zone feeds a Squid or Tentacle zone, every version the older zone syncs
+    from it, and every version it later writes of the same keys, is keyed
+    so ("[A Squid or Tentacle zone lists none of the versions it syncs from
+    a v21
+    zone](#a-squid-or-tentacle-zone-lists-none-of-the-versions-it-syncs-from-a-v21-zone)"),
+    so a rolling upgrade to v21 meets this for every key versioned during
+    it.
+  - The rgw-bug-reproduction session's run (#82574): on the upgraded zone a
+    key with four versions listed its old entries oldest first, the newest
+    flagged latest; a delete of the current version answered 204 and left
+    that version listed as current, though a HEAD of it answered 404; the
+    oldest version became current, listed twice, and a GET served it; one
+    more PUT left two versions flagged latest. A bucket created after the
+    upgrade behaved correctly.
 - **Releases:** the keys are written by Squid and Tentacle, checked at
   v19.2.7 and v20.2.4, and read by v21.0.0 and later, checked at v21.0.0
   and v21.3.0.
 - **rgw-go:** writes these releases' keys (`DecreasingStr` in
   `internal/cls/rgw/indexkey.go`), so a bucket it wrote meets this once its
   cluster moves to v21. rgw-go serves Squid and Tentacle only.
-- **Upstream:** pending: sent to rgw-bug-reproduction
-  (V1-3-OLH-LEGACY-4DASH-KEYS-AFTER-UPGRADE). Prior art not searched.
+- **Upstream:** [#82574](https://tracker.ceph.com/issues/82574), filed
+  2026-11-02 by the rgw-bug-reproduction session
+  (V1-3-OLH-LEGACY-4DASH-KEYS-AFTER-UPGRADE) with a patch that teaches the
+  class the old keys where it removes or replaces list entries; no pull
+  request. The change that brought the new encoding,
+  [ceph/ceph#62469](https://github.com/ceph/ceph/pull/62469), has a tentacle
+  backport, [#73058](https://tracker.ceph.com/issues/73058), still New with
+  no pull request; were it to land, an upgrade within Tentacle would meet
+  such keys wherever they were written.
 - **Found:** phase 2 task V1's triage by rgw-bug-reproduction, 2026-10-15;
   checked against v21.0.0 and v21.3.0, and widened to the list keys the
-  class cannot find, on 2026-10-19. Derived from the source, not
-  reproduced.
+  class cannot find, on 2026-10-19. Derived from the source; reproduced in
+  a multisite upgrade by the rgw-bug-reproduction session, 2026-11-02.
 
 ## radosgw's otp metadata put keeps a dropped device's id in the otp header
 
@@ -19313,8 +19385,11 @@ Every new entry adds its row to this table, in document order.
   once more at each other zone, inside its window.
   - A replay needs the user's credentials and a recently used `x-amz-mfa`
     value.
-  - Prior art not searched. Unreproduced: derived from the source, and a
-    reproduction needs two zones.
+  - The rgw-bug-reproduction session reproduced it on v21.1.2 on a two-zone
+    realm, assesses it as not security-relevant, and filed it publicly as
+    [#82571](https://tracker.ceph.com/issues/82571) on 2026-11-02. One
+    `x-amz-mfa` value sent four times to an MFA-delete bucket drew 204 and
+    then 403 from the first zone, and 204 and then 403 from the second.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
   - The class keeps a device's replay state, `last_checks` and
     `last_success`, beside its `otp_info_t` in the device's `otp_instance`
@@ -19357,7 +19432,9 @@ Every new entry adds its row to this table, in document order.
     without the device.
   - A single zone is unaffected: its gateways share one otp object.
 - **Releases:** checked at v19.2.7 and v20.2.4, where the class, the
-  document, the check and the sync are the same.
+  document, the check and the sync are the same; reproduced on v21.1.2,
+  whose check refuses and records the step the same way
+  ([cls_otp.cc:141-146](https://github.com/ceph/ceph/blob/v21.1.2/src/cls/otp/cls_otp.cc#L141-L146)).
 - **rgw-go:** affected the same way. `(*Store).VerifyMFA` checks on the
   local zone's otp object, as radosgw's check does
   (`internal/driver/mfa.go`), and its refusal of a code the device may have
@@ -19367,11 +19444,17 @@ Every new entry adds its row to this table, in document order.
   replay state, as radosgw's does (`op.OTPDocument`,
   `internal/op/metadata_otp.go`), and its put keeps the local replay state
   of each device the document keeps.
-- **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
-  searched.
+- **Upstream:** [#82571](https://tracker.ceph.com/issues/82571), filed
+  2026-11-02 by the rgw-bug-reproduction session after a search of the
+  tracker and of ceph/ceph pull requests found no report. Its suggested fix
+  changes only `doc/radosgw/mfa.rst`, whose multisite paragraph at v21.1.2
+  says the one-time password configuration resides in the local zone's
+  OSDs and advises different tokens for different zones; making the zones
+  agree is left to a design choice, and no pull request is open.
 - **Found:** phase 2 Task WP-17's review, 2026-10-19, while tracing what the
   plan's otp put reset could mean; checked at both tags in its fix round.
-  Derived from the source, not reproduced.
+  Derived from the source; reproduced on v21.1.2 by the rgw-bug-reproduction
+  session, 2026-11-02.
 
 ## radosgw adds any header an aws-chunked trailer names to the request after its body
 
@@ -23482,11 +23565,13 @@ Every new entry adds its row to this table, in document order.
   - The replay of an unlink that names the null version flags each of its
     removals the same way, so another writer's version that replay removes
     is synced as the null version's removal too.
-  - "[cls_rgw's bucket_link_olh unlinks the null version's list entry
-    before it checks the
-    epoch](#cls_rgws-bucket_link_olh-unlinks-the-null-versions-list-entry-before-it-checks-the-epoch)"
-    may end the same way on main at 8aa24c51928, in an unintended removal of the
-    null version, by another route: a stale null delete marker's removal.
+  - "[radosgw from v21.0.0 deletes the current null version's data for a
+    stale synced null delete
+    marker](#radosgw-from-v2100-deletes-the-current-null-versions-data-for-a-stale-synced-null-delete-marker)"
+    ends the same way from v21.0.0 on, and on main at 8aa24c51928, in an
+    unintended removal of the null version by another route: a stale null
+    delete marker's removal, which the rgw-bug-reproduction session
+    reproduced on v21.1.2.
   - The test that settles it, not run: two zones, a versioned bucket with a
     null version, and a PUT racing DeleteObject(versionId=V), so that the
     delete's unlink lands before its replay; then check the peer's null
@@ -31299,3 +31384,413 @@ Every new entry adds its row to this table, in document order.
 - **Found:** the service-map research for rgw-go, 2026-10-30, reading what
   a registration must carry, derived from the source; reproduced by the
   rgw-bug-reproduction session on 2026-11-02 on disposable clusters.
+
+## radosgw's first sync of a bucket from a peer zone never applies the peer's earlier removals
+
+- **Kind:** defect, multisite consistency: a zone's first sync of a bucket
+  from a peer zone reads the peer's bucket index log from its newest entry,
+  and the full sync before that only copies what the peer still lists. So
+  an object or version the zone holds, and the peer removed before that
+  first sync, stays in the zone for good, with no sync error. Not
+  security-relevant as assessed by the rgw-bug-reproduction session.
+  Observed on v21.1.2 by that session, not reproduced as a dedicated
+  filing; the mechanism below is verified in the source.
+- **Evidence:** links are v21.1.2's unless named, under
+  `src/rgw/driver/rados/`.
+  - Data sync syncs a bucket shard from a peer when it processes a datalog
+    entry that names it: `RGWDataSyncSingleEntryCR` calls
+    `RGWRunBucketSourcesSyncCR`
+    ([rgw_data_sync.cc:1487-1490](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_data_sync.cc#L1487-L1490)),
+    which runs `RGWSyncBucketCR` for each sync pipe through
+    `sync_bucket_shard_cr`
+    ([rgw_data_sync.cc:5376-5378](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_data_sync.cc#L5376-L5378)).
+    Once caught up, data sync polls a datalog shard every
+    `rgw_data_sync_poll_interval`, 20 seconds by default
+    ([rgw.yaml.in:2357-2363](https://github.com/ceph/ceph/blob/v21.1.2/src/common/options/rgw.yaml.in#L2357-L2363)).
+  - `RGWSyncBucketCR` reads the bucket's full sync status object and, when
+    there is none, as before the zone's first sync of that bucket from that
+    peer, creates it in state Init
+    ([rgw_data_sync.cc:5844-5864](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_data_sync.cc#L5844-L5864)).
+  - In state Init it reads the peer's bucket index log info
+    ([rgw_data_sync.cc:5893-5894](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_data_sync.cc#L5893-L5894);
+    the request is `/admin/log?type=bucket-index&info`,
+    [rgw_data_sync.cc:955-963](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_data_sync.cc#L955-L963)).
+    `InitBucketFullSyncStatusCR` takes the peer's max markers from it
+    ([rgw_data_sync.cc:3745](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_data_sync.cc#L3745)),
+    writes them as each shard's incremental position and sets state Full
+    ([rgw_data_sync.cc:3788-3805](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_data_sync.cc#L3788-L3805);
+    `RGWInitBucketShardSyncStatusCoroutine`,
+    [rgw_data_sync.cc:3389-3395](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_data_sync.cc#L3389-L3395)).
+  - Full sync lists the peer's bucket with `?versions`
+    ([rgw_data_sync.cc:4067-4077](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_data_sync.cc#L4067-L4077))
+    and syncs each entry it lists, as a fetch or as a delete marker
+    ([rgw_data_sync.cc:4682-4700](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_data_sync.cc#L4682-L4700);
+    `get_modify_op`,
+    [rgw_cr_rados.h:1772-1780](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_cr_rados.h#L1772-L1780)),
+    then sets state Incremental
+    ([rgw_data_sync.cc:4739-4745](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_data_sync.cc#L4739-L4745)).
+    Nothing in it removes a local object or version that the listing
+    lacks.
+  - Incremental sync lists the peer's log from the stored position
+    ([rgw_data_sync.cc:4930-4932](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_data_sync.cc#L4930-L4932)),
+    so a removal the peer logged before the init is never read.
+  - The same code is at v19.2.7
+    ([rgw_data_sync.cc:3389-3395](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_data_sync.cc#L3389-L3395),
+    [rgw_data_sync.cc:4746-4753](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_data_sync.cc#L4746-L4753),
+    [rgw_data_sync.cc:5893-5911](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_data_sync.cc#L5893-L5911))
+    and at v20.2.4
+    ([rgw_data_sync.cc:3390-3396](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_data_sync.cc#L3390-L3396),
+    [rgw_data_sync.cc:4696-4703](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_data_sync.cc#L4696-L4703),
+    [rgw_data_sync.cc:5843-5861](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_data_sync.cc#L5843-L5861)).
+- **Impact:** in a zonegroup of two zones or more, a zone that holds an
+  object or a version of a bucket when its sync of that bucket from a peer
+  begins keeps it after the peer removed it, when the peer logged the
+  removal before the zone's first datalog entry for the bucket from that
+  peer. The zones then disagree for good. The rgw-bug-reproduction session
+  met it in two runs with two zones in one zonegroup, traced with
+  `debug_rgw_sync` 20: a zone started its sync of a peer's newly created
+  bucket on the first datalog entry it processed from the peer, about one
+  poll after the bucket's creation, and a version the peer had deleted
+  before then stayed on the zone, with no sync error.
+- **Releases:** observed on v21.1.2; the same code at v19.2.7 and v20.2.4,
+  and on ceph main at 8aa24c51928 (2026-10-30)
+  ([rgw_data_sync.cc:3415-3421](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_data_sync.cc#L3415-L3421),
+  [rgw_data_sync.cc:4755-4762](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_data_sync.cc#L4755-L4762),
+  [rgw_data_sync.cc:5917-5935](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_data_sync.cc#L5917-L5935),
+  [rgw_data_sync.cc:6045-6048](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_data_sync.cc#L6045-L6048)).
+- **rgw-go:** unaffected: it runs no data sync (`docs/exclusions.md`,
+  "Multisite"), so it never starts a bucket's sync from a peer zone, and a
+  cluster it serves has a single zone, with no peer whose removals it must
+  apply.
+- **Upstream:** not filed on its own. The closest report is
+  [#58939](https://tracker.ceph.com/issues/58939) (New, 2023), the same lost
+  removal met when a bucket's full sync restarts and sets the incremental
+  positions again past a delete; its analysis names
+  `InitBucketFullSyncStatusCR`. Related:
+  [#47555](https://tracker.ceph.com/issues/47555) (New, 2020), a delete made
+  before a zone's first full sync of the bucket, which that full sync copies
+  back; and [#58911](https://tracker.ceph.com/issues/58911) (Resolved), the
+  copy back during full sync, fixed in v19.2.0 by
+  [ceph/ceph#51715](https://github.com/ceph/ceph/pull/51715) through the
+  replication trace. Searched on 2026-11-02 by task MSREG: tracker.ceph.com
+  rgw issue descriptions for `InitBucketFullSyncStatusCR`, `inc_marker`,
+  `max_marker`, "full sync", "never synced" and "delete is missed"; ceph/ceph
+  pull requests for "full sync" with delete, bucket and multisite, for
+  "deleted" with "full sync", for `max_marker` with sync, for
+  `InitBucketFullSyncStatusCR`, and for #58939's, #47555's and #58911's
+  numbers. None changes where the first sync starts. Each method was first
+  checked against a known match: the tracker's "timestamp-based" returns
+  #82574, and the pull request search "timestamp-based epochs" returns
+  ceph/ceph#62469.
+- **Found:** the rgw-bug-reproduction session's multisite runs on disposable
+  rooket clusters (Rook v1.21.1), reported 2026-11-02; the mechanism checked
+  in the source by task MSREG the same day. Observed, not reproduced as a
+  dedicated filing.
+
+## radosgw's sync stores a peer's null delete marker as a numbered one once the destination sees versioning enabled
+
+- **Kind:** defect, S3-correctness of versioning, multisite only:
+  incremental sync builds a peer's null delete marker from the destination
+  bucket's versioning state when it applies it, not from the marker. A
+  destination that already sees versioning enabled again stores the marker
+  under a new random version id, beside the null version it should have
+  replaced. It is what remains of
+  [#73540](https://tracker.ceph.com/issues/73540) after that issue's fix.
+  Not security-relevant as assessed by the rgw-bug-reproduction session.
+  Observed on v21.1.2 by that session, not reproduced as a dedicated
+  filing; the mechanism below is verified in the source.
+- **Evidence:** links are v21.1.2's unless named.
+  - The source's null delete marker has an empty instance: on a
+    versioning-suspended bucket `Delete::delete_obj` clears the marker's
+    instance and draws none
+    ([rgw_rados.cc:6844-6859](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_rados.cc#L6844-L6859)).
+    The class logs its link as `CLS_RGW_OP_LINK_OLH_DM` under the op's key,
+    that empty instance, with the request's bilog flags and the
+    versioned-op flag
+    ([cls_rgw.cc:2040-2044](https://github.com/ceph/ceph/blob/v21.1.2/src/cls/rgw/cls_rgw.cc#L2040-L2044)),
+    and the link request carries no bilog flags, so no null-version flag
+    ([rgw_rados.cc:9390-9398](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_rados.cc#L9390-L9398);
+    [cls_rgw_client.cc:302-323](https://github.com/ceph/ceph/blob/v21.1.2/src/cls/rgw/cls_rgw_client.cc#L302-L323)).
+  - The destination's incremental sync keys the entry by its object and
+    instance
+    ([rgw_data_sync.cc:5009](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_data_sync.cc#L5009))
+    and hands a `LINK_OLH_DM` to `create_delete_marker`
+    ([rgw_data_sync.cc:4469-4472](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_data_sync.cc#L4469-L4472)),
+    which builds an `RGWRemoveObjCR` for a delete marker
+    ([rgw_data_sync.cc:3086-3093](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_data_sync.cc#L3086-L3093)).
+    `RGWAsyncRemoveObj` takes the marker's version id from the key's
+    instance, empty here, and its bucket from the sync pipe's destination
+    bucket info
+    ([rgw_cr_rados.h:1398-1406](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_cr_rados.h#L1398-L1406)).
+  - It sets the delete's versioning status to `BUCKET_VERSIONED` and the
+    destination bucket's own status
+    ([rgw_cr_rados.cc:965-967](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_cr_rados.cc#L965-L967)),
+    which is #73540's fix, commit 7e3d493dc32, "rgw/multisite: check the
+    local bucket's versioning status when replicating deletion from
+    remote".
+  - `Delete::delete_obj` gives a marker without an explicit version id a
+    random instance unless that status carries `BUCKET_VERSIONS_SUSPENDED`
+    ([rgw_rados.cc:6844-6859](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_rados.cc#L6844-L6859)).
+    So the destination's bucket record at the time of the apply decides,
+    and once it records versioning enabled again the marker is numbered.
+  - Full sync keeps the null: a listed entry whose version id is `null` and
+    whose versioned epoch is nonzero keeps the `null` instance
+    ([rgw_cr_rados.h:1767-1769](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_cr_rados.h#L1767-L1769)),
+    which `delete_obj` takes as an explicit version id and writes as the
+    null marker. Only incremental sync, whose log entry holds the empty
+    instance, loses it.
+  - v20.2.4 has the same fix and code
+    ([rgw_cr_rados.cc:997-999](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_cr_rados.cc#L997-L999),
+    [rgw_cr_rados.h:1412-1414](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_cr_rados.h#L1412-L1414),
+    [rgw_rados.cc:6460-6475](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6460-L6475)),
+    from its tentacle backport, first tagged in v20.2.2. v19.2.7 sets
+    `BUCKET_VERSIONED` alone
+    ([rgw_cr_rados.cc:942-944](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_cr_rados.cc#L942-L944)),
+    so there every null delete marker incremental sync applies is numbered,
+    which is #73540 itself; its squid backport merged after v19.2.7 and is
+    in no tag.
+- **Impact:** in a multisite zonegroup, a delete without a version id on a
+  versioning-suspended bucket writes a null delete marker that replaces the
+  key's null version. When the bucket's versioning is then enabled again
+  and a peer zone records that before it applies the marker, the peer keeps
+  the null version and adds a numbered delete marker over it. The zones
+  then disagree for good: the peer lists one version more, under a version
+  id the source never had, and serves `GET ?versionId=null` with data the
+  source removed. The rgw-bug-reproduction session saw a zone store a null
+  delete marker as a numbered one after it had seen versioning enabled
+  again, in the v21.1.2 runs behind
+  [#82572](https://tracker.ceph.com/issues/82572).
+- **Releases:** Tentacle from v20.2.2, checked at v20.2.4; v21.0.0 and
+  later, observed on v21.1.2; and ceph main at 8aa24c51928 (2026-10-30),
+  which keeps the same code
+  ([rgw_cr_rados.cc:966-968](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_cr_rados.cc#L966-L968),
+  [rgw_cr_rados.h:1398-1400](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_cr_rados.h#L1398-L1400),
+  [rgw_rados.cc:7062-7077](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_rados.cc#L7062-L7077)).
+  Before the fix, as at v19.2.7, every such marker is numbered (#73540).
+- **rgw-go:** unaffected: it has no multisite sync (`docs/exclusions.md`,
+  "Multisite"), so it never applies a peer zone's delete marker, and a
+  marker radosgw's sync stored, null or numbered, is served as stored.
+- **Upstream:** not filed on its own.
+  [#73540](https://tracker.ceph.com/issues/73540), "rgw/multisite: object
+  deletion is not properly synced on versioning-suspended bucket"
+  (Resolved, closed 2025-10-30), reported every such marker as numbered.
+  Its fix, [ceph/ceph#65948](https://github.com/ceph/ceph/pull/65948)
+  (merge ba63fd529e2, first tagged in v21.0.0), reads the destination's
+  state, which leaves this case. Its backports are
+  [#73684](https://tracker.ceph.com/issues/73684), through
+  [ceph/ceph#66168](https://github.com/ceph/ceph/pull/66168) (merged
+  2026-05-09, first tagged in v20.2.2), and
+  [#73685](https://tracker.ceph.com/issues/73685), through
+  [ceph/ceph#66169](https://github.com/ceph/ceph/pull/66169) (merged
+  2026-10-13, in no tag).
+  [ceph/ceph#25842](https://github.com/ceph/ceph/pull/25842), "rgw:
+  RGWAsyncRemoveObj uses bucket versioning status", took the same
+  approach in 2019 and was closed unmerged.
+  [#45620](https://tracker.ceph.com/issues/45620) (New, 2020) reports
+  `test_suspended_delete_marker_full_sync` failing on a delete marker's
+  version id, `null` against a numbered one, unanalysed. Searched on
+  2026-11-02 by task MSREG: tracker.ceph.com rgw issue descriptions for
+  `RGWAsyncRemoveObj`, `versioning_status`, "null delete marker" and
+  "suspended delete marker", the last of which returns #73540; ceph/ceph
+  pull requests for "delete marker" with suspended and multisite, which
+  returns ceph/ceph#65948, and for `RGWAsyncRemoveObj`.
+- **Found:** the rgw-bug-reproduction session's multisite runs of 2026-11-02
+  on disposable rooket clusters (Rook v1.21.1), beside #82572; the mechanism
+  checked in the source by task MSREG the same day. Observed, not reproduced
+  as a dedicated filing.
+
+## A Squid or Tentacle zone lists none of the versions it syncs from a v21 zone
+
+- **Kind:** defect, S3-correctness of versioning in a zonegroup that mixes
+  releases, as a rolling upgrade to v21 does: a v21 zone's versions carry
+  nanosecond timestamp epochs, and a Squid or Tentacle zone that syncs them
+  keys each at that epoch, in the list key form its own class cannot decode
+  ("[cls_rgw mis-sorts and cannot list versions whose epoch is 2^32 or
+  more](#cls_rgw-mis-sorts-and-cannot-list-versions-whose-epoch-is-232-or-more)").
+  So that zone lists none of them, nor any version it later writes of the
+  same keys, while a GET naming a version serves it. No object data is
+  damaged. Not security-relevant as assessed by the rgw-bug-reproduction
+  session. Observed with a v20.2.4 zone fed by a v21.1.2 zone by that
+  session, before the upgrade that
+  [#82574](https://tracker.ceph.com/issues/82574) reports, not reproduced as
+  a dedicated filing; the mechanism below is verified in the source.
+- **Evidence:**
+  - v21's class gives a new version the epoch its request names, or the
+    time of its link in nanoseconds since 1970, and logs that epoch in the
+    version's bucket index log entry
+    ([cls_rgw.cc:1865](https://github.com/ceph/ceph/blob/v21.1.2/src/cls/rgw/cls_rgw.cc#L1865),
+    [cls_rgw.cc:1927](https://github.com/ceph/ceph/blob/v21.1.2/src/cls/rgw/cls_rgw.cc#L1927),
+    [cls_rgw.cc:2029-2030](https://github.com/ceph/ceph/blob/v21.1.2/src/cls/rgw/cls_rgw.cc#L2029-L2030),
+    at v21.1.2), as [ceph/ceph#62469](https://github.com/ceph/ceph/pull/62469)
+    made it, first tagged in v21.0.0. No zonegroup feature gates it: v21.1.2
+    knows resharding, compress-encrypted and notification_v2 only
+    ([rgw_zone_features.h:15-25](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_zone_features.h#L15-L25)).
+  - A Tentacle zone's incremental sync takes the log entry's epoch as the
+    version's versioned epoch
+    ([rgw_data_sync.cc:5104-5106](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_data_sync.cc#L5104-L5106)),
+    its full sync the listing's
+    ([rgw_data_sync.cc:4696-4703](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_data_sync.cc#L4696-L4703)),
+    and the fetch hands it to `fetch_remote_obj`
+    ([rgw_cr_rados.cc:815-836](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_cr_rados.cc#L815-L836)),
+    whose write links the version at it
+    ([rgw_rados.cc:4467-4469](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L4467-L4469),
+    [rgw_rados.cc:3490-3492](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3490-L3492)),
+    all at v20.2.4. Squid's incremental sync takes it the same way
+    ([rgw_data_sync.cc:5154-5156](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_data_sync.cc#L5154-L5156),
+    at v19.2.7).
+  - Tentacle's class takes a named epoch as the OLH entry's own and writes
+    the version's list key at it
+    ([cls_rgw.cc:1630-1644](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1630-L1644),
+    [cls_rgw.cc:1965](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1965)).
+    A timestamp of about 1.8e18 is above 2^32, so `decreasing_str` writes it
+    as `4-` and nineteen digits
+    ([cls_rgw.cc:322-340](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L322-L340)),
+    which `decode_list_index_key` refuses and `rgw_bucket_list` skips
+    ([cls_rgw.cc:467-512](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L467-L512),
+    [cls_rgw.cc:645-652](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L645-L652)),
+    all at v20.2.4. Squid's class does the same
+    ([cls_rgw.cc:1503-1517](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1503-L1517),
+    [cls_rgw.cc:272-290](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L272-L290),
+    [cls_rgw.cc:595-602](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L595-L602),
+    at v19.2.7).
+  - A local write that names no epoch takes the OLH entry's epoch plus one
+    ([cls_rgw.cc:1636-1641](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1636-L1641),
+    at v20.2.4), in the same range, so the zone's own later versions of
+    those keys are unlisted too.
+  - The rgw-bug-reproduction session's run, a v21.1.2 master zone and a
+    v20.2.4 zone in a second cluster: the v20.2.4 zone's index held only
+    `x\0v4-<epoch>` list keys for the three synced versions and for its own
+    fourth, ListObjectVersions and ListObjectsV2 returned none of them, and
+    `GET ?versionId` served each.
+- **Impact:** during a rolling upgrade to v21, or in any zonegroup where a
+  v21 zone feeds a Squid or Tentacle zone, the older zone's ListObjectVersions
+  and ListObjectsV2 leave out every version it syncs from the v21 zone and
+  every version it then writes of the same keys; they are reachable only by
+  version id. A full sync from that zone lists the same nothing: in the
+  session's run the fourth version, written on the v20.2.4 zone, never
+  reached the v21.1.2 zone, whose first sync of the bucket from it was a
+  full sync over the empty listing. Once the older zone is upgraded, its
+  class lists those keys again but cannot find them ("[cls_rgw from v21.0.0
+  cannot find the list keys of versions that Squid and Tentacle wrote at
+  epochs of 2^32 or
+  more](#cls_rgw-from-v2100-cannot-find-the-list-keys-of-versions-that-squid-and-tentacle-wrote-at-epochs-of-232-or-more)").
+- **Releases:** the keys are written by Squid and Tentacle, checked at
+  v19.2.7 and v20.2.4, for epochs from v21.0.0 and later, observed with
+  v21.1.2. Ceph main at 8aa24c51928 (2026-10-30) still gives timestamp
+  epochs and logs them
+  ([cls_rgw.cc:1870](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/cls/rgw/cls_rgw.cc#L1870),
+  [cls_rgw.cc:1932](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/cls/rgw/cls_rgw.cc#L1932),
+  [cls_rgw.cc:2039](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/cls/rgw/cls_rgw.cc#L2039)),
+  with no zonegroup feature for them
+  ([rgw_zone_features.h:16-18](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_zone_features.h#L16-L18)).
+  Backporting ceph/ceph#62469 to the older zone's release would key such
+  epochs in v21's bands and read the old keys, as v21.0.0 does.
+- **rgw-go:** unaffected as deployed: multisite is excluded, and adding a
+  second zone to a cluster rgw-go serves is unsupported
+  (`docs/exclusions.md`, "Multisite"), so no synced epoch reaches a bucket
+  it serves. The skip is the class's, on the OSD, so a Squid or Tentacle
+  zone fed by a v21 zone would list the same nothing through rgw-go, whose
+  `DecodeListIndexKey` (`internal/cls/rgw/indexkey.go`) carries the class's
+  refusal.
+- **Upstream:** [#82574](https://tracker.ceph.com/issues/82574), filed
+  2026-11-02 by the rgw-bug-reproduction session, reports this as the state
+  of the zone before its upgrade; the fix it suggests is for the upgraded
+  zone. The backports of ceph/ceph#62469, of
+  [#68466](https://tracker.ceph.com/issues/68466), are
+  [#73058](https://tracker.ceph.com/issues/73058) for tentacle, New with no
+  pull request, and [#73059](https://tracker.ceph.com/issues/73059) for
+  squid, In Progress after
+  [ceph/ceph#73185](https://github.com/ceph/ceph/pull/73185) was closed
+  unmerged on 2026-10-28. A tracker.ceph.com search of rgw issue
+  descriptions on 2026-11-02 by task MSREG, for `decode_list_index_key`,
+  "failed to decode list index key", "rolling upgrade versioned" and "mixed
+  version multisite", found no other report; a ceph/ceph pull request
+  search for `decreasing_str` returns ceph/ceph#62469 alone.
+- **Found:** the rgw-bug-reproduction session's mixed-release run of
+  2026-11-02 on two disposable rooket clusters (Rook v1.21.1), at v21.1.2
+  and v20.2.4; the mechanism checked in the source by task MSREG the same
+  day. Observed, not reproduced as a dedicated filing.
+
+## radosgw from v21.0.0 deletes the current null version's data for a stale synced null delete marker
+
+- **Kind:** defect, data loss in a multisite zone: from v21.0.0, a null
+  delete marker that sync applies at an older epoch than the key's current
+  null version makes radosgw delete that version's data, while the OLH
+  still names it as current. Not security-relevant as assessed by the
+  rgw-bug-reproduction session, which reproduced it on v21.1.2 and filed it
+  as [#82573](https://tracker.ceph.com/issues/82573) on 2026-11-02; the
+  mechanism below is verified in the source.
+- **Evidence:** links are v21.1.2's unless named.
+  - For a null delete marker over null data, `rgw_bucket_link_olh` sets
+    `removing`
+    ([cls_rgw.cc:1895-1914](https://github.com/ceph/ceph/blob/v21.1.2/src/cls/rgw/cls_rgw.cc#L1895-L1914)).
+    When `start_modify` refuses the marker's epoch
+    ([cls_rgw.cc:1928](https://github.com/ceph/ceph/blob/v21.1.2/src/cls/rgw/cls_rgw.cc#L1928)),
+    the refusing branch writes the marker noncurrent and, `removing` set,
+    logs `CLS_RGW_OLH_OP_REMOVE_INSTANCE` for the op's key, the null key,
+    and writes the OLH entry with it; it logs no link
+    ([cls_rgw.cc:1997-2012](https://github.com/ceph/ceph/blob/v21.1.2/src/cls/rgw/cls_rgw.cc#L1997-L2012)).
+  - radosgw's `apply_olh_log` collects each logged removal
+    ([rgw_rados.cc:9719-9721](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_rados.cc#L9719-L9721)),
+    rewrites the OLH attr only for a link it applies
+    ([rgw_rados.cc:9767-9775](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_rados.cc#L9767-L9775)),
+    and deletes each collected instance with a versioning status of 0
+    ([rgw_rados.cc:9777-9789](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_rados.cc#L9777-L9789);
+    [rgw_rados.cc:7129-7153](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_rados.cc#L7129-L7153)).
+    For the null key that is the head object, which `remove_rgw_head_obj`
+    strips to its OLH attrs
+    ([rgw_rados.cc:7076](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_rados.cc#L7076);
+    [rgw_rados.cc:6794-6799](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_rados.cc#L6794-L6799)).
+    So the OLH keeps naming the null version, whose data is gone.
+  - Tentacle logs the same removal in that branch but never writes the
+    entry, so the removal never reaches `apply_olh_log` there ("[cls_rgw's
+    bucket_link_olh drops the REMOVE_INSTANCE it logs for a delete marker at
+    an older
+    epoch](#cls_rgws-bucket_link_olh-drops-the-remove_instance-it-logs-for-a-delete-marker-at-an-older-epoch)";
+    [cls_rgw.cc:1892-1901](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1892-L1901),
+    at v20.2.4). The write came with that entry's fix, first tagged in
+    v21.0.0.
+  - For data sync to apply the marker, its racing-write check has to let it
+    through: `RGWAsyncRemoveObj` skips the removal only when the
+    destination's object is newer by mtime
+    ([rgw_cr_rados.cc:893-896](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/driver/rados/rgw_cr_rados.cc#L893-L896)),
+    while the class compares epochs, and v21's class takes a local write's
+    epoch from the OSD's clock when it links the version
+    ([cls_rgw.cc:1865](https://github.com/ceph/ceph/blob/v21.1.2/src/cls/rgw/cls_rgw.cc#L1865),
+    [cls_rgw.cc:1927](https://github.com/ceph/ceph/blob/v21.1.2/src/cls/rgw/cls_rgw.cc#L1927)),
+    after the write that set its mtime. So a current null version newer
+    than the marker by epoch, and not by mtime, lets the marker through.
+- **Impact:** in a multisite zone, a versioning-suspended bucket's key whose
+  null write in one zone races a delete without a version id in another can
+  lose the null version's data in the zone that applies the marker. There
+  ListObjectVersions shows the marker noncurrent and no current version,
+  the head object keeps only its OLH attrs, and GET answers 200 with an
+  empty body and no ETag, while the other zone keeps the data. The
+  rgw-bug-reproduction session met it on v21.1.2, with sync running
+  normally, for 5 of 24 keys: those whose DELETE it sent 3 to 11 ms after
+  the other zone's CompleteMultipartUpload.
+- **Releases:** v21.0.0 and later, reproduced on v21.1.2, and ceph main at
+  8aa24c51928 (2026-10-30), whose refusing branch still logs and writes the
+  removal
+  ([cls_rgw.cc:2006-2021](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/cls/rgw/cls_rgw.cc#L2006-L2021))
+  and whose `apply_olh_log` still deletes it
+  ([rgw_rados.cc:10129-10130](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_rados.cc#L10129-L10130),
+  [rgw_rados.cc:10189-10201](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_rados.cc#L10189-L10201)).
+  Not v19.2.7 or v20.2.4, which drop the log.
+- **rgw-go:** unaffected: it serves Squid and Tentacle, whose class never
+  writes this branch's log, and it has no multisite sync
+  (`docs/exclusions.md`, "Multisite") to apply a marker at an older epoch.
+- **Upstream:** [#82573](https://tracker.ceph.com/issues/82573), filed
+  2026-11-02 by the rgw-bug-reproduction session with a patch that logs
+  `CLS_RGW_OLH_OP_STALE` instead for a null key; no pull request.
+  [ceph/ceph#72762](https://github.com/ceph/ceph/pull/72762) (open, for
+  [#81812](https://tracker.ceph.com/issues/81812)) returns early with a
+  stale log entry when the op's key is the OLH's current key at an older
+  epoch, which stops the case observed, where the current version is the
+  null data.
+- **Found:** raised as a lead in phase 2 Task V3b's review, 2026-10-15, in
+  "[cls_rgw's bucket_link_olh unlinks the null version's list entry before
+  it checks the
+  epoch](#cls_rgws-bucket_link_olh-unlinks-the-null-versions-list-entry-before-it-checks-the-epoch)";
+  reproduced on v21.1.2 by the rgw-bug-reproduction session, 2026-11-02;
+  the mechanism checked in the source by task MSREG the same day.
