@@ -67,7 +67,9 @@ before writing Go here.
   disclosure, and never link that session's private disclosure gists from the registry (PP-4).
 - The parity ledgers and their tooling are a regression test, not a security boundary: harden
   them against honest mistakes only. Adversarial review is for the security boundaries the spec
-  names (PP-14).
+  names (PP-14), and every change to the request path the design spec's threat model lists is
+  one: anything an untrusted byte reaches, from the frontend to the cgo boundary (owner,
+  2026-10-31).
 - An instruction to act once a condition holds is the go-ahead: when it holds, check what can be
   observed (agents drained, sessions idle, load, running processes) and act, without asking
   again (PP-16).
