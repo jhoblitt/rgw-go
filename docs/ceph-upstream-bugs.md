@@ -390,7 +390,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's lifecycle work window reads numbers rgw_lifecycle_work_time does not give](#radosgws-lifecycle-work-window-reads-numbers-rgw_lifecycle_work_time-does-not-give) | none | [ceph/ceph#65585](https://github.com/ceph/ceph/pull/65585) | ✓ |
 | [radosgw aborts on a negative rgw_lc_max_worker and divides by zero on an rgw_lc_max_wp_worker of 0](#radosgw-aborts-on-a-negative-rgw_lc_max_worker-and-divides-by-zero-on-an-rgw_lc_max_wp_worker-of-0) | pending | pending | ✓ |
 | [radosgw's guard_lc_modify unlocks a lifecycle shard lock it did not take](#radosgws-guard_lc_modify-unlocks-a-lifecycle-shard-lock-it-did-not-take) | pending | pending | ✓ |
-| [radosgw's set_olh passes log_data_change as its replay's null_verid](#radosgws-set_olh-passes-log_data_change-as-its-replays-null_verid) | pending | pending | ✓ |
+| [radosgw's set_olh passes log_data_change as its replay's null_verid](#radosgws-set_olh-passes-log_data_change-as-its-replays-null_verid) | [#81779](https://tracker.ceph.com/issues/81779) | [ceph/ceph#72708](https://github.com/ceph/ceph/pull/72708) | ✓ |
 | [radosgw's set_olh cancels the pending attr of a link that timed out, though it may have landed](#radosgws-set_olh-cancels-the-pending-attr-of-a-link-that-timed-out-though-it-may-have-landed) | pending | pending | ✓ |
 | [radosgw's ListObjectVersions skips a key's older versions after a null delete marker](#radosgws-listobjectversions-skips-a-keys-older-versions-after-a-null-delete-marker) | pending | pending | ✓ |
 | [radosgw's versions listing repeats a key's newer versions when a round ends on its null version](#radosgws-versions-listing-repeats-a-keys-newer-versions-when-a-round-ends-on-its-null-version) | pending | pending | ✓ |
@@ -23598,7 +23598,10 @@ Every new entry adds its row to this table, in document order.
   [rgw_rados.cc:8028](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8028);
   rgw-go's `logOp`, `internal/driver/indexop.go`), and a zone that logs
   data is excluded (`docs/exclusions.md`, "Multisite").
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** [#81779](https://tracker.ceph.com/issues/81779); the fix,
+  [ceph/ceph#72708](https://github.com/ceph/ceph/pull/72708), "rgw: pass
+  null_verid explicitly in set_olh's update_olh calls", is open and under
+  review (checked 2026-11-02).
 - **Found:** phase 2 Task V5b, 2026-10-20, transcribing the bilog flags of
   `apply_olh_log`'s removals; rgw-bug-reproduction's triage the same day
   rated it conditionally security-relevant. Derived from the source, not
