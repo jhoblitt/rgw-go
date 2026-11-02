@@ -13,10 +13,13 @@ before writing Go here.
 
 ## rgw-go facts
 
-- cgo: every build and test compiles go-ceph and needs librados headers. On this machine
-  `librados-devel` is absent; use `CGO_CFLAGS=-I/home/jhoblitt/github/ceph/src/include`
-  and `CGO_LDFLAGS=-L$HOME/.local/lib/rgw-go` where that directory holds
-  `librados.so -> /usr/lib64/librados.so.2`. CI installs `librados-dev`.
+- cgo: every build and test compiles go-ceph against librados 20.2.4, CI's client. Never use
+  the system packages or Ceph v19.2.6. On this machine the headers are Ceph v20.2.4's
+  `src/include` under `/home/jhoblitt/.local/share/rgw-go/ceph-v20.2.4/`, and the library set,
+  copied from the pinned Tentacle image, is `/home/jhoblitt/.local/lib/rgw-go-20.2.4/`.
+  `gobuild.sh` sets `CGO_CFLAGS` and `CGO_LDFLAGS`; the latter's rpath is load-bearing, since
+  without it a binary runs the system librados. CI installs `librados-dev` 20.2.4 from
+  download.ceph.com.
 - Host load: every go, make and golangci-lint command on this host, the agents' and the
   controller's, runs through `.claude/worktrees/phase-1-exec/.superpowers/tools/ctrl/gobuild.sh`,
   one host-wide flock with `GOFLAGS=-p=4 GOMAXPROCS=4`, so only one build or test runs at a
