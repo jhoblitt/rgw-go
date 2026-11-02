@@ -31176,13 +31176,15 @@ Every new entry adds its row to this table, in document order.
 
 ## The manager's config show reads an rgw service daemon's id without checking it exists
 
-- **Kind:** defect, possibly security-relevant: the manager's `config show`,
-  for a name holding `rgw`, reads each rgw service daemon's `id` metadata
-  without checking that it is there, which for an entry without one is
-  undefined behaviour in the active manager, most likely its crash. A client
-  the cluster authenticates, holding no manager caps, can register such an
-  entry. Sent to the rgw-bug-reproduction session on 2026-10-30; its rating
-  is pending. Unreproduced: derived from the source.
+- **Kind:** defect, security-relevant (conditional): the manager's `config
+  show`, for a name holding `rgw`, reads each rgw service daemon's `id`
+  metadata without checking that it is there, which for an entry without one
+  is undefined behaviour in the active manager, and in practice its abort. A
+  client the cluster authenticates, holding no manager caps, can register
+  such an entry. Reproduced on v20.2.4 and v21.1.2 by the rgw-bug-reproduction
+  session on 2026-11-02, which rates it security conditional, CVSS 3.1 3.5
+  (5.7 if the manager's loss of availability is rated High): a low-privilege
+  key plants the entry and an operator's routine command triggers it.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
   - `config show` and `config show-with-defaults` split `who` at its first
     dot into a type and a name
@@ -31253,9 +31255,14 @@ Every new entry adds its row to this table, in document order.
   `rgw`, such as `client.rgw.<store>.<x>`, the entity every Rook gateway
   runs as.
 - **Impact:** `find` returns `end()`, and `->second` copies a string out of
-  the map's header node: undefined behaviour, whose likely outcome is the
-  active manager's crash. A standby takes over, rebuilds the entry from the
-  service map, and meets it on the next such command, for as long as the
+  the map's header node: undefined behaviour. Reproduced, the active manager
+  aborts with `std::bad_alloc` in `DaemonServer::_handle_command`, not a
+  segmentation fault. The CLI re-sends the command to each manager the
+  monitors activate, so one run of the command aborted the active manager
+  three times, and the monitors replaced it with the standby. The planting
+  client re-registered with the new active manager, and the same command
+  aborted it too. A standby that takes over rebuilds the entry from the
+  service map and meets it on the next such command, for as long as the
   entry lasts. A registering client that stops cleanly sends the manager a
   close, which removes the entry at once
   ([MgrClient.cc:82-94](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/MgrClient.cc#L82-L94),
@@ -31267,8 +31274,9 @@ Every new entry adds its row to this table, in document order.
   active, the manager's commands, its modules, the dashboard, prometheus and
   the orchestrator among them, and service map updates stop. Client I/O,
   which goes to the OSDs, is not affected.
-- **Releases:** v19.2.7 and v20.2.4. Main at 8aa24c51928 (2026-10-30) still
-  reads the key unchecked, now under the daemon's lock (ceph/ceph#71039).
+- **Releases:** v19.2.7 and v20.2.4 by the source; reproduced on v20.2.4 and
+  v21.1.2. Main at 8aa24c51928 (2026-10-30) still reads the key unchecked,
+  now under the daemon's lock (ceph/ceph#71039).
 - **rgw-go:** not affected: it registers nothing today. Phase 2 plan task
   SM4, which makes it register, writes `id` in every registration, as
   radosgw does (`docs/superpowers/plans/2026-10-13-phase-2/SM-service-map.md`).
@@ -31289,4 +31297,5 @@ Every new entry adds its row to this table, in document order.
   [ceph/ceph#71039](https://github.com/ceph/ceph/pull/71039), which put the
   read under the daemon's lock on main (checked at 8aa24c51928).
 - **Found:** the service-map research for rgw-go, 2026-10-30, reading what
-  a registration must carry. Derived from the source, not reproduced.
+  a registration must carry, derived from the source; reproduced by the
+  rgw-bug-reproduction session on 2026-11-02 on disposable clusters.
