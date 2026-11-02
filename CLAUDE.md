@@ -37,10 +37,10 @@ before writing Go here.
   that would improve performance while staying S3-compliant; add an entry whenever work meets
   one. rgw-go keeps the formats byte-identical, and recording an entry never blocks a task.
 - `docs/ceph-upstream-bugs.md` is the registry of defects in upstream ceph/ceph that rgw-go
-  meets (radosgw, the RGW classes, librados, librbd, the OSD, the monitors); add or update an
-  entry, with evidence at a named release tag, whenever work meets one, and share it with
-  rgw-rs. Every entry's **Upstream** line links its tracker.ceph.com issues and upstream PRs;
-  update it in the same change that files, finds or closes one.
+  meets (radosgw, the RGW classes, librados, librbd, the OSD, the monitors, the manager); add
+  or update an entry, with evidence at a named release tag, whenever work meets one, and share
+  it with rgw-rs. Every entry's **Upstream** line links its tracker.ceph.com issues and
+  upstream PRs; update it in the same change that files, finds or closes one.
 - Every behaviour that differs from radosgw is recorded in `docs/exclusions.md` in the same
   change that introduces it.
 - `docs/porting-process.md` is the registry of planning and orchestration problems in the port;
