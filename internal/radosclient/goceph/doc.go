@@ -22,10 +22,12 @@
 // pinned, until librados reports it done, then releases it. The seam's
 // results are left untouched in that case.
 //
-// Before submitting, every Read and Write parks on its Cluster's in-flight
-// limiter, which admits a bounded number of operations and payload bytes.
-// The bounds sit under librados's objecter throttle, objecter_inflight_ops
-// and objecter_inflight_op_bytes, which blocks the submitting thread inside
+// Before building its go-ceph op, every Read and Write parks on its Cluster's
+// in-flight limiter, which admits a bounded number of operations and payload
+// bytes. Building copies a write's data and an exec's input into librados's
+// memory, so only admitted operations hold those copies. The bounds sit
+// under librados's objecter throttle, objecter_inflight_ops and
+// objecter_inflight_op_bytes, which blocks the submitting thread inside
 // librados once it is reached; the limiter makes a burst wait on goroutines
 // instead. An operation holds its share until librados is done with it,
 // abandoned ones included. Stats reports what was submitted and what the

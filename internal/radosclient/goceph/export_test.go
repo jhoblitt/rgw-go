@@ -154,3 +154,35 @@ func DetachedCluster() radosclient.Cluster { return &cluster{} }
 func LimitedCluster(maxOps int, maxBytes int64) radosclient.InflightLimiter {
 	return &cluster{limit: newLimiter(maxOps, maxBytes)}
 }
+
+// ClosedPool is a closed Pool on a Cluster with no connection, returned with
+// the Cluster's in-flight limiter, which admits maxOps operations and maxBytes
+// bytes. A Read or Write the limiter admits builds its go-ceph op and is then
+// refused with ErrClosed where it would take an I/O context.
+func ClosedPool(maxOps int, maxBytes int64) (radosclient.Pool, Limiter) {
+	c := &cluster{limit: newLimiter(maxOps, maxBytes)}
+	return &pool{state: &poolState{cluster: c, name: "closed", closed: true}}, Limiter{c.limit}
+}
+
+// RadosReadOp and RadosWriteOp are the go-ceph ops Read and Write build and
+// submit.
+type (
+	RadosReadOp  = readOp
+	RadosWriteOp = writeOp
+)
+
+// SetNewReadOp makes Read create its go-ceph op with f until the returned
+// restore runs.
+func SetNewReadOp(f func() RadosReadOp) (restore func()) {
+	old := newReadOp
+	newReadOp = f
+	return func() { newReadOp = old }
+}
+
+// SetNewWriteOp makes Write create its go-ceph op with f until the returned
+// restore runs.
+func SetNewWriteOp(f func() RadosWriteOp) (restore func()) {
+	old := newWriteOp
+	newWriteOp = f
+	return func() { newWriteOp = old }
+}

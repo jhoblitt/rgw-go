@@ -280,22 +280,6 @@ func (p *pool) Close() error {
 	return p.state.close()
 }
 
-// admit parks on the Cluster's in-flight limiter for one operation of n
-// payload bytes, then takes an I/O context for it. The caller releases n to
-// the limiter once librados is done with the operation.
-func (p *pool) admit(ctx context.Context, op string, n int64) (*handle, error) {
-	limit := p.state.cluster.limit
-	if err := limit.acquire(ctx, n); err != nil {
-		return nil, err
-	}
-	h, err := p.state.acquire(op, p.locator)
-	if err != nil {
-		limit.release(n)
-		return nil, err
-	}
-	return h, nil
-}
-
 // checkNames refuses an oid or a locator holding a NUL: go-ceph hands each
 // to librados as a C string, which ends at the NUL, so the operation would
 // act on another object.
@@ -305,6 +289,31 @@ func (p *pool) checkNames(op, oid string) error {
 	}
 	return nil
 }
+
+// readOp is the go-ceph read op Read builds and submits.
+type readOp interface {
+	readBuilder
+	Operate(ioctx *rados.IOContext, oid string, flags rados.OperationFlags) error
+	OperateAsync(ioctx *rados.IOContext, oid string, flags rados.OperationFlags) (*rados.AioCompletion, error)
+	Release()
+}
+
+// writeOp is the go-ceph write op Write builds and submits.
+type writeOp interface {
+	writeBuilder
+	Operate(ioctx *rados.IOContext, oid string, flags rados.OperationFlags) error
+	OperateWithMtime(ioctx *rados.IOContext, oid string, mtime rados.Timespec, flags rados.OperationFlags) error
+	OperateAsync(ioctx *rados.IOContext, oid string, flags rados.OperationFlags) (*rados.AioCompletion, error)
+	OperateAsyncWithMtime(ioctx *rados.IOContext, oid string, mtime rados.Timespec, flags rados.OperationFlags) (*rados.AioCompletion, error)
+	Release()
+}
+
+// newReadOp and newWriteOp create the go-ceph ops Read and Write build.
+// Specs replace them.
+var (
+	newReadOp  = func() readOp { return rados.CreateReadOp() }
+	newWriteOp = func() writeOp { return rados.CreateWriteOp() }
+)
 
 // Read runs a read op and returns the object version the OSD reports.
 func (p *pool) Read(ctx context.Context, oid string, op *radosclient.ReadOp, flags radosclient.OpFlags) (uint64, error) {
@@ -318,40 +327,57 @@ func (p *pool) Read(ctx context.Context, oid string, op *radosclient.ReadOp, fla
 	if err != nil {
 		return 0, err
 	}
-	rop := rados.CreateReadOp()
+	name := p.state.opName("read", oid)
+	n := weight(op.Steps())
+	cl := p.state.cluster
+	err = cl.limit.acquire(ctx, n)
+	if err != nil {
+		return 0, err
+	}
+	// held is as in Write.
+	held := true
+	defer func() {
+		if held {
+			cl.limit.release(n)
+		}
+	}()
+	// As in Write, only an admitted op is built: building copies exec inputs
+	// into librados's memory
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/librados/librados_c.cc#L4305-L4323)
+	// and allocates the buffer of a read the caller gave none.
+	rop := newReadOp()
 	defer rop.Release()
 	fs, err := translateRead(rop, op)
 	if err != nil {
 		return 0, err
 	}
-	name := p.state.opName("read", oid)
-	n := weight(op.Steps())
-	h, err := p.admit(ctx, name, n)
+	h, err := p.state.acquire(name, p.locator)
 	if err != nil {
 		return 0, err
 	}
-	cl := p.state.cluster
 	cl.reads.add(n)
 
 	if cl.mode == ModeSync {
 		opErr := rop.Operate(h.ioctx, oid, rflags)
 		version, verr := h.ioctx.GetLastVersion()
 		p.state.release(h)
+		held = false
 		cl.limit.release(n)
 		return syncResult(name, fs, opErr, version, verr)
 	}
 
 	c, err := rop.OperateAsync(h.ioctx, oid, rflags)
 	p.state.giveBack(h)
+	if err != nil {
+		p.state.finish(h)
+		return 0, toSeamError(name, err)
+	}
 	// An abandoned operation keeps its budget until the reaper runs done:
 	// its completion owns the operation's buffers until librados finishes.
+	held = false
 	done := func() {
 		p.state.finish(h)
 		cl.limit.release(n)
-	}
-	if err != nil {
-		done()
-		return 0, toSeamError(name, err)
 	}
 	if err := cl.reaper.await(ctx, c, done); err != nil {
 		return 0, err
@@ -373,23 +399,42 @@ func (p *pool) Write(ctx context.Context, oid string, op *radosclient.WriteOp, f
 	if err != nil {
 		return 0, err
 	}
-	wop := rados.CreateWriteOp()
+	name := p.state.opName("write", oid)
+	n := weight(op.Steps())
+	cl := p.state.cluster
+	err = cl.limit.acquire(ctx, n)
+	if err != nil {
+		return 0, err
+	}
+	// held is whether the deferred release below still owes the limiter n.
+	// The sync path's own release takes it over, or done once OperateAsync
+	// has the op. Deferred before the op's Release, the release runs after
+	// it, so on a failure before then, a panic included, n comes back only
+	// once the op's copy is freed.
+	held := true
+	defer func() {
+		if held {
+			cl.limit.release(n)
+		}
+	}()
+	// Building copies the payload into librados's memory
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/librados/librados_c.cc#L3768-L3793),
+	// so only an op the limiter admitted holds a copy.
+	wop := newWriteOp()
 	defer wop.Release()
 	fs, err := translateWrite(wop, op)
 	if err != nil {
 		return 0, err
 	}
-	name := p.state.opName("write", oid)
-	n := weight(op.Steps())
-	h, err := p.admit(ctx, name, n)
+	h, err := p.state.acquire(name, p.locator)
 	if err != nil {
 		return 0, err
 	}
-	cl := p.state.cluster
 	cl.writes.add(n)
 
 	mtime, hasMtime := op.Mtime()
 	if cl.mode == ModeSync {
+		held = false
 		defer cl.limit.release(n)
 		return p.writeSync(h, wop, oid, name, fs, wflags, mtime, hasMtime)
 	}
@@ -401,13 +446,14 @@ func (p *pool) Write(ctx context.Context, oid string, op *radosclient.WriteOp, f
 		c, err = wop.OperateAsync(h.ioctx, oid, wflags)
 	}
 	p.state.giveBack(h)
+	if err != nil {
+		p.state.finish(h)
+		return 0, toSeamError(name, err)
+	}
+	held = false
 	done := func() {
 		p.state.finish(h)
 		cl.limit.release(n)
-	}
-	if err != nil {
-		done()
-		return 0, toSeamError(name, err)
 	}
 	if err := cl.reaper.await(ctx, c, done); err != nil {
 		return 0, err
@@ -418,7 +464,7 @@ func (p *pool) Write(ctx context.Context, oid string, op *radosclient.WriteOp, f
 }
 
 // writeSync runs wop with the blocking Operate.
-func (p *pool) writeSync(h *handle, wop *rados.WriteOp, oid, name string, fs []finisher,
+func (p *pool) writeSync(h *handle, wop writeOp, oid, name string, fs []finisher,
 	flags rados.OperationFlags, mtime time.Time, hasMtime bool,
 ) (uint64, error) {
 	var err error
