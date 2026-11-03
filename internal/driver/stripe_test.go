@@ -628,6 +628,67 @@ var _ = Describe("part writer", func() {
 		Expect(c.Object(testDataPool, "", partOID(2)).Data).To(Equal(body[:4<<20]))
 		Expect(c.Object(testDataPool, "", shadowOID(2, 1)).Data).To(Equal(body[4<<20:]))
 	})
+
+	DescribeTable("draws a part's first-stripe buffer of one chunk from the tail buffers it goes back to, so parts add none to them",
+		func(ctx SpecContext, declared int64) {
+			const parts = 8
+			pool := &lifoPool{}
+			s.SetTailBufsForTest(pool)
+			afterFirst := 0
+			for i := range parts {
+				n := uint32(i + 1)
+				// A 4 MiB first stripe and a 3 MiB shadow piece read to the
+				// end. A body ending on a chunk would draw one more buffer to
+				// find its end while the last write may still hold its own, and
+				// the pool's count would depend on which came first.
+				body := partPattern(i, 7)
+				tw := writer(ctx, n)
+				_, err := tw.Consume(ctx, bytes.NewReader(body), declared, md5.New())
+				Expect(err).NotTo(HaveOccurred(), "part %d", n)
+				Expect(tw.Drain()).To(Succeed(), "part %d", n)
+				Expect(c.Object(testDataPool, "", partOID(i+1)).Data).To(Equal(body[:4<<20]), "part %d's head", n)
+				Expect(c.Object(testDataPool, "", shadowOID(i+1, 1)).Data).To(Equal(body[4<<20:]), "part %d's shadow", n)
+				if i == 0 {
+					afterFirst = pool.Len()
+				}
+			}
+			Expect(pool.Len()).To(Equal(afterFirst), "the pool holds after %d parts what it held after the first", parts)
+		},
+		Entry("a part of its declared length, whose first stripe is one chunk", int64(7<<20)),
+		Entry("a part whose body runs past its declared length, whose first stripe grows to one chunk", int64(10)),
+	)
+
+	DescribeTable("never writes or hashes the stale bytes of a recycled first-stripe buffer",
+		func(ctx SpecContext, body []byte, draws int, after func(body []byte) []byte) {
+			pool := &lifoPool{}
+			s.SetTailBufsForTest(pool)
+			poison := bytes.Repeat([]byte{0xAA}, 4<<20)
+			poisoned := &poison
+			pool.Put(poisoned)
+			tw := writer(ctx, 1)
+			h := md5.New()
+			// A declared length short of the body grows the first stripe's
+			// buffer to one chunk, which is drawn.
+			size, err := tw.Consume(ctx, bytes.NewReader(body), 10, h)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(tw.Drain()).To(Succeed())
+			Expect(size).To(BeEquivalentTo(len(body)))
+			Expect(pool.Draws(poisoned)).To(Equal(draws), "the first stripe, and any shadow piece after it, was read into the poisoned chunk buffer")
+			Expect(*poisoned).To(Equal(after(body)), "the buffer holds stale bytes past what was read into it last")
+			stored := bytes.Clone(c.Object(testDataPool, "", partOID(1)).Data)
+			if shadow := c.Object(testDataPool, "", shadowOID(1, 1)); shadow != nil {
+				stored = append(stored, shadow.Data...)
+			}
+			Expect(stored).To(Equal(body), "the part head and its shadow hold the body and nothing else")
+			Expect(bytes.IndexByte(stored, 0xAA)).To(Equal(-1), "no poisoned byte was written")
+			sum := md5.Sum(body)
+			Expect(h.Sum(nil)).To(Equal(sum[:]), "the part's MD5 is the body's")
+		},
+		Entry("a first stripe shorter than a chunk, beside a megabyte of the poison", mibPattern(3), 1,
+			func(body []byte) []byte { return append(bytes.Clone(body), bytes.Repeat([]byte{0xAA}, 1<<20)...) }),
+		Entry("a first stripe of one chunk, then a shadow piece read into the same buffer beside the head's bytes", mibPattern(5), 2,
+			func(body []byte) []byte { return append(bytes.Clone(body[4<<20:]), body[1<<20:4<<20]...) }),
+	)
 })
 
 var _ = Describe("body byte budget", func() {
@@ -1036,6 +1097,66 @@ func mibPattern(n int) []byte {
 		b[i] = byte(1 + i>>20)
 	}
 	return b
+}
+
+// partPattern is mibPattern for the k-th of several bodies, k below 15: n MiB,
+// n below 16, whose every MiB holds a byte value of its own and of k, so a
+// piece of another body or of another MiB shows.
+func partPattern(k, n int) []byte {
+	b := make([]byte, n<<20)
+	for i := range b {
+		b[i] = byte(16*k + 1 + i>>20)
+	}
+	return b
+}
+
+// lifoPool is a tail buffer pool that hands out the buffer put last and,
+// unlike a sync.Pool, never drops one, at any GOMAXPROCS and under -race. It
+// records every buffer Get handed out.
+type lifoPool struct {
+	mu    sync.Mutex
+	bufs  []any
+	drawn []any
+}
+
+var _ driver.BufPool = (*lifoPool)(nil)
+
+func (p *lifoPool) Get() any {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.bufs) == 0 {
+		return nil
+	}
+	b := p.bufs[len(p.bufs)-1]
+	p.bufs = p.bufs[:len(p.bufs)-1]
+	p.drawn = append(p.drawn, b)
+	return b
+}
+
+func (p *lifoPool) Put(b any) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.bufs = append(p.bufs, b)
+}
+
+// Len is the number of buffers the pool holds.
+func (p *lifoPool) Len() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.bufs)
+}
+
+// Draws is the number of times Get handed out b.
+func (p *lifoPool) Draws(b any) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for _, d := range p.drawn {
+		if d == b {
+			n++
+		}
+	}
+	return n
 }
 
 // zeros reads as an endless run of zero bytes.

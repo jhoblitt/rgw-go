@@ -58,9 +58,10 @@ type Store struct {
 	// those handed back and not taken out again.
 	readBufs       sync.Pool
 	pooledReadBufs atomic.Int64
-	// tailBufs holds the *[]byte buffers a PUT reads its tail pieces into,
-	// each at least one chunk.
-	tailBufs sync.Pool
+	// tailBufs holds the *[]byte buffers PUTs read their tail chunks and
+	// parts their first stripes into, each exactly one chunk of the layout
+	// that pooled it: a *sync.Pool, or a spec's fake.
+	tailBufs bufPool
 	quota    statsCaches
 	usage    usageLogger
 	// newTicker makes the tickers the workers run on.
@@ -150,7 +151,7 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 	opts.logWorkersNotRun(ctx)
 	s := &Store{
 		cluster: cluster, conf: conf, opts: opts, release: release, zone: zc, names: names, roots: roots, pools: pools, sysobj: sys, readCfg: readCfg,
-		mp: mp, lc: newLCIndex(), newTicker: newTimeTicker,
+		mp: mp, lc: newLCIndex(), newTicker: newTimeTicker, tailBufs: new(sync.Pool),
 	}
 	s.heads = unfollowedHeads{s}
 	s.bgAIO = semaphore.NewWeighted(int64(opts.bucketIndexMaxAIO))
