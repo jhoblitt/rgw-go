@@ -1,4 +1,20 @@
 # Managed by github-conventions (references/security.md); converge rewrites it.
+#
+# Exception to the template: it does not use the init and analyze actions.
+# Go's extraction compiles the packages, and cgo needs librados's headers, so
+# it must run inside the release builder (hack/image/Containerfile.builder),
+# which no Ubuntu package stands in for. CodeQL can follow a build only from
+# inside the container that runs it, and init and analyze could run inside
+# the builder only as a job container, which the runner pulls from a
+# registry before the first step; the builder is built or restored from the
+# Actions cache by a step, so a container job would need it published to a
+# registry. Instead setup-codeql installs the CLI the pinned action pairs
+# with, the database is created inside Tentacle's builder through
+# hack/image/run.sh, its autobuild taking the build tags from GOFLAGS, the
+# code-scanning suite analyzes it, and upload-sarif uploads the results. With
+# no category given, upload-sarif files them under the one the analyze action
+# used, the workflow file and this job's id, .github/workflows/codeql.yml:analyze,
+# so the existing alerts carry over; renaming either starts a new category.
 name: codeql
 
 on:
@@ -26,26 +42,47 @@ jobs:
     permissions:
       contents: read
       security-events: write
+    env:
+      RGW_GO_ENGINE: docker
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+      - name: Load Tentacle's builder
+        uses: ./.github/actions/builder
+        with:
+          release: tentacle
+
+      - name: Install the CodeQL CLI
+        id: codeql
+        uses: github/codeql-action/setup-codeql@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           languages: go
-          build-mode: autobuild
 
-      - name: Install librados headers
+      # The CLI's directory and the database's are mounted at their own paths,
+      # so the CLI inside the builder finds both where the runner has them.
+      # The Makefile is the one home of the build tags.
+      - name: Create the Go database inside Tentacle's builder
+        env:
+          CODEQL: ${{ steps.codeql.outputs.codeql-path }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends librados-dev
-
-      # Autobuild takes the build tags from GOFLAGS; the Makefile is their one home.
-      - name: Read the build tags
-        run: echo "GOFLAGS=-tags=$(make -s print-go-tags)" >> "$GITHUB_ENV"
+          dist=$(dirname "${CODEQL}")
+          databases=${RUNNER_TEMP}/codeql
+          mkdir -p "${databases}"
+          GOFLAGS="-tags=$(make -s print-go-tags)" hack/image/run.sh \
+            -v "${dist}:${dist}" -v "${databases}:${databases}" -- tentacle \
+            "${CODEQL}" database create "${databases}/go" --language=go --source-root=. --overwrite
 
       - name: Analyze
-        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        env:
+          CODEQL: ${{ steps.codeql.outputs.codeql-path }}
+        run: |
+          "${CODEQL}" database analyze "${RUNNER_TEMP}/codeql/go" codeql/go-queries:codeql-suites/go-code-scanning.qls \
+            --format=sarif-latest --output="${RUNNER_TEMP}/go.sarif"
+
+      - name: Upload the results
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: ${{ runner.temp }}/go.sarif
