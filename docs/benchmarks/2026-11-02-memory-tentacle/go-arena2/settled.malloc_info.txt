@@ -1,0 +1,5 @@
+arena current MiB  max MiB mprotect MiB  free MiB
+    0        17.5     33.5         17.5      16.5
+    1        32.5     40.5         40.5      29.0
+(0 arenas under 1 MiB current not listed)
+arenas 2; system current 50.0 MiB, max 74.0 MiB; free in bins 45.5 MiB (91%); in use 4.5 MiB; mmapped chunks 1 of 1.4 MiB; aspace total 50.0 MiB, mprotect 58.0 MiB

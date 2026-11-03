@@ -591,10 +591,65 @@ benchmark was re-run.
 - **Measured (quiet host):** CPU per operation was 749 to 930 µs for
   read4m and 885 to 2574 µs for write4m, against 20 to 115 µs for read4k and
   write4k, across modes and concurrencies on both releases; the read4k
-  profile at 256 is attributed in "Phase 1 measurement" above. Allocation is
-  not measured
+  profile at 256 is attributed in "Phase 1 measurement" above
   ([Squid](benchmarks/2026-10-02-seam-squid/REPORT.md),
-  [Tentacle](benchmarks/2026-10-02-seam-tentacle/REPORT.md)).
+  [Tentacle](benchmarks/2026-10-02-seam-tentacle/REPORT.md)). Those runs
+  measure no allocation; the memory the copy costs is measured in part,
+  below.
+- **Measured (memory, Tentacle):** a write's bytes are held twice while in
+  flight: once in rgw-go's Go buffer until the write completes, and once in
+  librados's copy
+  ([librados_c.cc:3768-3793](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/librados_c.cc#L3768-L3793)).
+  radosgw holds them once: it hands librados the bufferlist it already holds
+  ([rgw_putobj_processor.cc:168-181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L168-L181)),
+  and the C++ write op copies that bufferlist, which shares its buffers, not
+  the bytes
+  ([librados_cxx.cc:467-481](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/librados_cxx.cc#L467-L481)).
+  On 2026-11-02 rgw-go's C heap grew with writes and not with reads: from 83
+  to 195 MiB across the PUT phases of 256 MiB objects at 1-2 in flight, and
+  flat through the GETs
+  ([2026-11-02-memory-tentacle](benchmarks/2026-11-02-memory-tentacle/REPORT.md),
+  section 4). That growth is RssAnon less Go's resident estimate, not
+  `malloc_info`, and by the end of the run 98% of glibc's heap was free, so
+  it shows what the copies leave in glibc's heap (see "librados's buffers
+  live in glibc's heap, which keeps them after use"), not the bytes a write
+  holds in flight. Neither those bytes, at 32 in flight, nor the copy's CPU
+  is measured.
+
+### librados's buffers live in glibc's heap, which keeps them after use
+
+- **Evidence:** librados copies every write's data into a bufferlist of its
+  own, with `bl.append(buffer, len)` in `rados_write_op_write` and
+  `rados_write_op_write_full`
+  ([librados_c.cc:3768-3793](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/librados_c.cc#L3768-L3793)),
+  and links no allocator
+  ([src/librados/CMakeLists.txt:34-36](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/CMakeLists.txt#L34-L36)).
+  The shipped libraries agree: `readelf -d` on `librados.so.2.0.0` and
+  `libceph-common.so.2` from `quay.io/ceph/ceph:v20.2.4` lists no malloc,
+  tcmalloc or jemalloc in NEEDED. radosgw links the build's allocator,
+  tcmalloc when gperftools is found
+  ([CMakeLists.txt:457-465](https://github.com/ceph/ceph/blob/v20.2.4/CMakeLists.txt#L457-L465),
+  [src/rgw/CMakeLists.txt:495-500](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/CMakeLists.txt#L495-L500)).
+  So in rgw-go those 4 MiB copies come from glibc malloc. glibc gives a
+  contended thread its own arena, its dynamic mmap threshold (mallopt(3))
+  moves chunks of that size into the arenas, and it keeps the arenas' top
+  chunks.
+- **Status:** open. Two settings mitigate it, measured at 1-2 in flight
+  ([2026-11-02-memory-tentacle](benchmarks/2026-11-02-memory-tentacle/REPORT.md),
+  section 6). `MALLOC_ARENA_MAX=2` left 2 arenas holding 50.0 MiB and cut
+  the end-of-run VmRSS from 238 to 107 MiB, at no measured CPU cost; its
+  cost at 32 in flight is unmeasured.
+  `GLIBC_TUNABLES=glibc.malloc.mmap_threshold=1048576` left 18.5 MiB and an
+  end-of-run VmRSS of 77 MiB, for 29% more gateway CPU on 256 MiB objects,
+  all of it system time. Nothing sets either today.
+- **Measure:** arena count, `malloc_info`'s free bytes and VmRSS after a
+  large-object profile, per setting, and the arena-lock contention
+  `MALLOC_ARENA_MAX` costs at 32 in flight. Squid was not measured.
+- **Measured (Tentacle):** after 256 MiB PUTs and GETs at 1-2 in flight,
+  rgw-go's 41 arenas held 192.4 MiB, 98% of it free (`malloc_info`), and
+  `malloc_trim(0)` returned 6.4 MiB of it
+  ([2026-11-02-memory-tentacle](benchmarks/2026-11-02-memory-tentacle/REPORT.md)).
+- **Note:** a pure-Go client removes it: it would leave no C heap.
 
 ### A read needs its buffer sized up front
 

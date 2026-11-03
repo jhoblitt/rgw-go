@@ -1,0 +1,54 @@
+     14276      14276     4  file /home/jhoblitt/github/rgw-go/.claude/worktrees/agent-afcd56a79765766cb/bin/rgw-go
+     11760      11760     3  anon Go heap arenas (randomized base)
+      7544       7544     5  file /home/jhoblitt/.local/lib/rgw-go-20.2.4/libceph-common.so.2
+      3644        534     4  file /usr/lib64/libcrypto.so.3.5.8
+      3432       3432    51  anon other
+      2900       2900    21  anon glibc arena
+      1776         28     4  file /usr/lib64/libc.so.6
+      1728        403     4  file /usr/lib64/libstdc++.so.6.0.34
+       992        992     5  file /home/jhoblitt/.local/lib/rgw-go-20.2.4/librados.so.2.0.0
+       808        808     1  [heap] glibc main arena
+       768        768     1  [stack]
+       408          9     4  file /usr/lib64/libm.so.6
+       404        404     6  file /home/jhoblitt/.local/lib/rgw-go-20.2.4/libthrift-0.15.0.so
+       380        380     4  file /usr/lib64/libnl-route-3.so.200.26.0
+       268        161     4  file /usr/lib64/libssh.so.4.10.5
+       224         12     4  file /usr/lib64/ld-linux-x86-64.so.2
+       224        133     4  file /usr/lib64/libkrb5.so.3.3
+       208         73     4  file /usr/lib64/libssl.so.3.5.8
+       196        107     4  file /usr/lib64/libcurl.so.4.8.0
+       184        102     4  file /usr/lib64/libldap.so.2.0.200
+       180         81     4  file /usr/lib64/libudev.so.1.7.11
+       176         95     4  file /usr/lib64/libevent-2.1.so.7.0.2
+       164          8     4  file /usr/lib64/libpcre2-8.so.0.15.0
+       156         51     3  file /usr/lib64/libcrypt.so.2.0.0
+       156         74     4  file /usr/lib64/libgssapi_krb5.so.2.2
+       156          9     3  file /usr/lib64/libgcc_s-15-20260722.so.1
+       144         28     4  file /usr/lib64/libblkid.so.1.1.0
+       140         67     4  file /usr/lib64/libnghttp2.so.14.28.5
+       136        136     1  anon low (binary bss)
+       136        136     4  file /usr/lib64/libnl-3.so.200.26.0
+       124         58     4  file /usr/lib64/libunistring.so.5.0.0
+       124          8     4  file /usr/lib64/libselinux.so.1
+       120         25     3  file /usr/lib64/libbrotlicommon.so.1.2.0
+       112        112     4  file /usr/lib64/libibverbs.so.1.14.58.0
+       112          8     4  file /usr/lib64/libz.so.1.3.1.zlib-ng
+       108         51     4  file /usr/lib64/libsasl2.so.3.0.0
+        96         96     4  file /usr/lib64/librdmacm.so.1.3.58.0
+        92         45     3  file /usr/lib64/libk5crypto.so.3.1
+        76         29     3  file /usr/lib64/libpsl.so.5.3.5
+        68         15     4  file /usr/lib64/libresolv.so.2
+        68         33     4  file /usr/lib64/liblber.so.2.0.200
+        64         27     4  file /usr/lib64/libkrb5support.so.0.1
+        60         26     3  file /usr/lib64/libidn2.so.0.4.0
+        52         14     3  file /usr/lib64/libbrotlidec.so.1.2.0
+        48          8     4  file /usr/lib64/libcap.so.2.76
+        32          8     6  file /usr/local/lib64/libinput-config.so
+        24         20     4  file /usr/lib64/libcom_err.so.2.1
+        20         10     3  file /usr/lib64/libkeyutils.so.1.10
+         8          0     1  [vdso]
+         8          0     1  [vvar]
+         0          0     1  [vsyscall]
+         0          0     1  [vvar_vclock]
+         0          0    21  anon glibc arena reserve
+     55084      46104        total (kB Rss, kB Pss)
