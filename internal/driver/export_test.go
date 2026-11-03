@@ -160,6 +160,13 @@ func ReadEntryPoint(s *Store, ctx context.Context, tenant, name string) (meta.Bu
 // and not taken out again; the pool may have dropped some of them since.
 func (s *Store) PooledBuffersForTest() int64 { return s.pooledReadBufs.Load() }
 
+// BufPool is bufPool for the external specs' fakes.
+type BufPool = bufPool
+
+// SetTailBufsForTest makes p the pool s's PUTs draw their tail buffers from
+// and hand them back to.
+func (s *Store) SetTailBufsForTest(p BufPool) { s.tailBufs = p }
+
 // ReadStoredForTest is readStored for the external specs.
 func (s *Store) ReadStoredForTest(ctx context.Context, st *op.ObjectState, ofs, n uint64, w io.Writer) error {
 	return s.readStored(ctx, st, ofs, n, w)
