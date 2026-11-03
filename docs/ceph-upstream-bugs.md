@@ -502,6 +502,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [A Squid or Tentacle zone lists none of the versions it syncs from a v21 zone](#a-squid-or-tentacle-zone-lists-none-of-the-versions-it-syncs-from-a-v21-zone) | [#82574](https://tracker.ceph.com/issues/82574), [#73058](https://tracker.ceph.com/issues/73058), [#73059](https://tracker.ceph.com/issues/73059) | [ceph/ceph#62469](https://github.com/ceph/ceph/pull/62469) (not backported) |  |
 | [radosgw from v21.0.0 deletes the current null version's data for a stale synced null delete marker](#radosgw-from-v2100-deletes-the-current-null-versions-data-for-a-stale-synced-null-delete-marker) | [#82573](https://tracker.ceph.com/issues/82573) | [ceph/ceph#72762](https://github.com/ceph/ceph/pull/72762) (open; stops the case observed) | ✓ |
 | [radosgw holds about 8 KiB of librados memory for each metadata header a PUT sends](#radosgw-holds-about-8-kib-of-librados-memory-for-each-metadata-header-a-put-sends) | none | none | ✓ |
+| [librados's op budget wraps negative for a read of 2 GiB, which aborts a Squid client and leaks a Tentacle client's throttle](#libradoss-op-budget-wraps-negative-for-a-read-of-2-gib-which-aborts-a-squid-client-and-leaks-a-tentacle-clients-throttle) | [#50031](https://tracker.ceph.com/issues/50031) | none; [ceph/ceph#24984](https://github.com/ceph/ceph/pull/24984) closed unmerged |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -31965,3 +31966,191 @@ Every new entry adds its row to this table, in document order.
   change, 2026-11-03, which measured librados's cost per step; the
   measurement run again and the source checked at both tags for this entry.
   Derived from the source, not reproduced.
+
+## librados's op budget wraps negative for a read of 2 GiB, which aborts a Squid client and leaks a Tentacle client's throttle
+
+- **Kind:** defect: a librados client that sends a read of 2 GiB or more
+  aborts on Squid's el9 release builds, and on Tentacle's aborts or leaks
+  its in-flight throttle until it hangs. Not security-relevant through radosgw
+  or rgw-go, neither of which sends a read that long unless its operator
+  configures it to. Unreproduced: derived from the source and from the
+  disassembly of upstream's el9 builds.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - The sum is an `int`. `Objecter::calc_op_budget` adds each write step's
+    data length, and each read step's extent length when that is positive
+    as an `int64_t`, to an `int`
+    ([Objecter.cc:3338-3354](https://github.com/ceph/ceph/blob/v19.2.7/src/osdc/Objecter.cc#L3338-L3354),
+    [Objecter.cc:3502-3518](https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.cc#L3502-L3518)).
+    The extent length is 64 bits
+    ([rados.h:588](https://github.com/ceph/ceph/blob/v19.2.7/src/include/rados.h#L588),
+    [rados.h:590](https://github.com/ceph/ceph/blob/v20.2.4/src/include/rados.h#L590)),
+    and C++20
+    ([CMakeLists.txt:216](https://github.com/ceph/ceph/blob/v19.2.7/src/CMakeLists.txt#L216),
+    [CMakeLists.txt:243](https://github.com/ceph/ceph/blob/v20.2.4/src/CMakeLists.txt#L243))
+    keeps the sum's low 32 bits, so a read of 2 GiB up to 4 GiB less a
+    byte has a budget of its length less 4 GiB; one of exactly 4 GiB has
+    0, and one of 6 GiB up to 8 GiB is negative again. An op whose steps
+    together pass `INT_MAX` wraps the same way.
+  - Read ops reach it. librados's direct reads refuse a length past
+    `INT_MAX` with EDOM (`IoCtxImpl::read`,
+    [IoCtxImpl.cc:1365-1369](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/IoCtxImpl.cc#L1365-L1369),
+    [IoCtxImpl.cc:1374-1378](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/IoCtxImpl.cc#L1374-L1378);
+    `aio_read`,
+    [IoCtxImpl.cc:819-825](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/IoCtxImpl.cc#L819-L825),
+    [IoCtxImpl.cc:828-834](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/IoCtxImpl.cc#L828-L834)),
+    but its read ops do not: `rados_read_op_read`
+    ([librados_c.cc:4248-4262](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/librados_c.cc#L4248-L4262),
+    [librados_c.cc:4248-4262](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/librados_c.cc#L4248-L4262))
+    and `ObjectReadOperation::read`
+    ([librados_cxx.cc:207-212](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/librados_cxx.cc#L207-L212),
+    [librados_cxx.cc:207-212](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/librados_cxx.cc#L207-L212))
+    hand the length to `ObjectOperation::read` as it is
+    ([Objecter.h:499-507](https://github.com/ceph/ceph/blob/v19.2.7/src/osdc/Objecter.h#L499-L507),
+    [Objecter.h:497-505](https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.h#L497-L505)),
+    and `rados_read_op_operate` and `IoCtx::operate` submit it through
+    `IoCtxImpl::operate_read`
+    ([IoCtxImpl.cc:682-717](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/IoCtxImpl.cc#L682-L717),
+    [IoCtxImpl.cc:689-726](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/IoCtxImpl.cc#L689-L726)).
+    The budget is the length asked for, not what the object holds, so any
+    object will do, and the client takes it before it sends the op, so
+    before anything the OSD checks, `osd_max_object_size` included.
+  - The take. librados turns on the objecter's balanced budget
+    ([RadosClient.cc:263](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/RadosClient.cc#L263),
+    [RadosClient.cc:265](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/RadosClient.cc#L265)),
+    so `_take_op_budget` takes the budget through `_throttle_op`
+    ([Objecter.h:2676-2687](https://github.com/ceph/ceph/blob/v19.2.7/src/osdc/Objecter.h#L2676-L2687),
+    [Objecter.h:2645-2656](https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.h#L2645-L2656)),
+    which tries `Throttle::get_or_fail` and, when that fails, waits in
+    `Throttle::get`
+    ([Objecter.cc:3356-3381](https://github.com/ceph/ceph/blob/v19.2.7/src/osdc/Objecter.cc#L3356-L3381),
+    [Objecter.cc:3520-3545](https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.cc#L3520-L3545)).
+    `get_or_fail` checks the amount with the C library's `assert`
+    ([Throttle.cc:186-219](https://github.com/ceph/ceph/blob/v19.2.7/src/common/Throttle.cc#L186-L219),
+    [Throttle.cc:187-220](https://github.com/ceph/ceph/blob/v20.2.4/src/common/Throttle.cc#L187-L220)),
+    which NDEBUG removes; `get` checks it with `ceph_assert`
+    ([Throttle.cc:153-181](https://github.com/ceph/ceph/blob/v19.2.7/src/common/Throttle.cc#L153-L181),
+    [Throttle.cc:154-182](https://github.com/ceph/ceph/blob/v20.2.4/src/common/Throttle.cc#L154-L182)),
+    which ceph_assert.h defines with no NDEBUG test, and ceph_assert.h does
+    not redefine `assert`
+    ([ceph_assert.h:95-109](https://github.com/ceph/ceph/blob/v19.2.7/src/include/ceph_assert.h#L95-L109),
+    [ceph_assert.h:96-113](https://github.com/ceph/ceph/blob/v20.2.4/src/include/ceph_assert.h#L96-L113)).
+    A negative amount is held back only while the count is past the limit
+    by more than the amount's size (`Throttle::_should_wait`,
+    [Throttle.h:47-54](https://github.com/ceph/ceph/blob/v19.2.7/src/common/Throttle.h#L47-L54),
+    [Throttle.h:47-54](https://github.com/ceph/ceph/blob/v20.2.4/src/common/Throttle.h#L47-L54)),
+    so in practice `get_or_fail` refuses it only while another op is
+    waiting on the throttle.
+  - Which builds drop the `assert`. Ceph's CMake makes a build that names
+    no build type and has no .git, as one from a release tarball,
+    RelWithDebInfo at v20.2.4 but leaves it without one at v19.2.7
+    ([CMakeLists.txt:15-24](https://github.com/ceph/ceph/blob/v19.2.7/CMakeLists.txt#L15-L24),
+    [CMakeLists.txt:15-25](https://github.com/ceph/ceph/blob/v20.2.4/CMakeLists.txt#L15-L25));
+    ceph.spec.in names none
+    ([ceph.spec.in:1379-1486](https://github.com/ceph/ceph/blob/v19.2.7/ceph.spec.in#L1379-L1486),
+    [ceph.spec.in:1420-1533](https://github.com/ceph/ceph/blob/v20.2.4/ceph.spec.in#L1420-L1533)),
+    and CMake adds `-DNDEBUG` only for its Release, RelWithDebInfo and
+    MinSizeRel types (`Modules/Compiler/GNU.cmake`, read at CMake 3.31).
+    Upstream's el9 builds agree. In the `libceph-common.so.2`, which holds
+    both the objecter and the throttle, of librados2-20.2.4-0.el9, as
+    `quay.io/ceph/ceph:v20.2.4` installs it, and of 20.2.0-0.el9,
+    `Throttle::get_or_fail` makes no test of the amount's sign and the
+    library imports no `__assert_fail`; in that of 19.2.3-0.el9, built in
+    upstream's Sepia lab, it sends a negative amount to `__assert_fail` for
+    line 193. From v19.2.3 to v19.2.7 neither CMakeLists.txt's build type
+    logic, ceph.spec.in nor Throttle.cc changes. Debian's packages were not
+    checked.
+  - The put skips it. `_finish_op`, which puts back an op's own budget,
+    does so only when the budget is not negative, -1 meaning none
+    ([Objecter.h:2046](https://github.com/ceph/ceph/blob/v19.2.7/src/osdc/Objecter.h#L2046),
+    [Objecter.h:2029](https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.h#L2029);
+    [Objecter.cc:3185-3188](https://github.com/ceph/ceph/blob/v19.2.7/src/osdc/Objecter.cc#L3185-L3188),
+    [Objecter.cc:3349-3352](https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.cc#L3349-L3352)).
+    So `put_op_budget_bytes` and its `ceph_assert(op_budget >= 0)`
+    ([Objecter.h:2689-2693](https://github.com/ceph/ceph/blob/v19.2.7/src/osdc/Objecter.h#L2689-L2693),
+    [Objecter.h:2658-2662](https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.h#L2658-L2662))
+    never see a negative budget, and neither its bytes nor the op's slot in
+    the ops throttle, which only `put_op_budget_bytes` returns, comes back.
+- **Impact:** a client that sends such a read
+  - on Squid's el9 build aborts in `get_or_fail`'s `assert` before the read
+    is sent;
+  - on Tentacle's aborts in `get`'s `ceph_assert` if another op is waiting
+    on the byte throttle. Otherwise the read is sent, the byte throttle's
+    count drops by the budget's size, 4 GiB less the length for a read of
+    2 GiB up to 4 GiB, and the read takes one of the client's
+    `objecter_inflight_ops` slots, and neither comes back. Each such read
+    so lets the client put that many more bytes in flight than
+    `objecter_inflight_op_bytes` allows for the rest of its life, and once
+    the slots such reads hold and the ops in flight fill
+    `objecter_inflight_ops`, every later op of the client waits in
+    `Throttle::get` for ever. The limits are 1024 ops and 100 MiB by
+    default
+    ([global.yaml.in:2378-2389](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/global.yaml.in#L2378-L2389),
+    [global.yaml.in:2423-2434](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/global.yaml.in#L2423-L2434)),
+    and radosgw raises the ops to 24576
+    ([rgw_main.cc:83](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_main.cc#L83),
+    [rgw_main.cc:83](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_main.cc#L83)).
+- **Trigger:** a librados application that submits a read op of 2 GiB or
+  more, which harms only itself. No S3 request makes radosgw send one: a
+  GET reads each piece at most to the end of its RADOS object and at most
+  `rgw_get_obj_max_req_size` (`Read::iterate`,
+  [rgw_rados.cc:7641](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7641),
+  [rgw_rados.cc:8300](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8300);
+  `iterate_obj`,
+  [rgw_rados.cc:7658-7728](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7658-L7728),
+  [rgw_rados.cc:8321-8391](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8321-L8391)),
+  4 MiB by default
+  ([rgw.yaml.in:1914-1924](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L1914-L1924),
+  [rgw.yaml.in:2008-2018](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L2008-L2018)).
+  Only an operator could make it send one, by raising that option to
+  2 GiB or more and storing RADOS objects that large, which
+  `osd_max_object_size`, 128 MiB by default, bounds
+  ([global.yaml.in:3727-3732](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/global.yaml.in#L3727-L3732),
+  [global.yaml.in:3784-3789](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/global.yaml.in#L3784-L3789))
+  and `rgw_obj_stripe_size`, 4 MiB by default, keeps radosgw from writing
+  ([rgw.yaml.in:1866-1878](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L1866-L1878),
+  [rgw.yaml.in:1948-1960](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L1948-L1960)).
+- **Releases:** v19.2.7 and v20.2.4; older releases not checked. Main at
+  18e1652a482 (2026-11-02) is the same: its sum is still an `int`
+  ([Objecter.cc:3840-3856](https://github.com/ceph/ceph/blob/18e1652a4824c1ebdf72dbca447c474b09399561/src/osdc/Objecter.cc#L3840-L3856)),
+  `_finish_op` and `_finish_unsent_op` still skip a negative budget
+  ([Objecter.cc:3662-3665](https://github.com/ceph/ceph/blob/18e1652a4824c1ebdf72dbca447c474b09399561/src/osdc/Objecter.cc#L3662-L3665),
+  [Objecter.cc:3690-3693](https://github.com/ceph/ceph/blob/18e1652a4824c1ebdf72dbca447c474b09399561/src/osdc/Objecter.cc#L3690-L3693)),
+  and a build that names no build type is RelWithDebInfo, as at v20.2.4
+  ([CMakeLists.txt:19-29](https://github.com/ceph/ceph/blob/18e1652a4824c1ebdf72dbca447c474b09399561/CMakeLists.txt#L19-L29)).
+- **rgw-go:** its own accounting does not wrap: goceph's limiter weighs an
+  op's steps in an `int64` that saturates (`weight`,
+  `internal/radosclient/goceph/limiter.go:147-174`). It reads as radosgw
+  does, each piece at most to its stripe's end and at most
+  `rgw_get_obj_max_req_size` (`walk`, `internal/driver/read.go:189-246`),
+  which it takes with no upper bound
+  (`internal/driver/readpool.go:27-42`), and it sends each piece through
+  go-ceph's read op, which calls `rados_read_op_read`. So it meets the
+  defect only under the settings radosgw needs.
+- **Upstream:** [#50031](https://tracker.ceph.com/issues/50031), filed
+  2021-03-29 and still New, reports the `int` sum for a write op's data, a
+  3 GB omap value set with `rados setomapval`, and `get_or_fail`'s
+  `assert`; it has no fix PR, and covers neither reads, which need no data,
+  nor Tentacle's leak, which are unfiled.
+  [ceph/ceph#24984](https://github.com/ceph/ceph/pull/24984) made the
+  budget an `int64_t` in 2018 and was closed unmerged in 2019 for
+  [ceph/ceph#25976](https://github.com/ceph/ceph/pull/25976), which fixed a
+  different misreading of an op's union for
+  [#37932](https://tracker.ceph.com/issues/37932).
+  [#9592](https://tracker.ceph.com/issues/9592), resolved in 2014, met the
+  same wrap with a `rados_write` of more than 2 GiB; its fixes,
+  [ceph/ceph#2584](https://github.com/ceph/ceph/pull/2584) and
+  [ceph/ceph#2590](https://github.com/ceph/ceph/pull/2590), capped
+  librados's direct writes and appends, not the sum. The open
+  [ceph/ceph#72442](https://github.com/ceph/ceph/pull/72442), which reworks
+  how the objecter waits for budget, keeps the `int`. A prior-art search on
+  2026-11-03, each search first checked against a known match, covered
+  tracker.ceph.com's full-text issue search for `calc_op_budget`,
+  `put_op_budget_bytes`, `op_budget >= 0`, `_take_op_budget`,
+  `_throttle_op`, `op_budget`, `get_or_fail`, `assert(c >= 0)`,
+  `keep_balanced_budget`, `objecter_bytes`, `rados_read_op_read`, negative
+  budget, and 2GB, 2GiB and large reads; and ceph/ceph's pull requests,
+  where issues are disabled, for the same identifiers, budget overflow and
+  large reads, and the open ones that change the objecter or the throttle.
+- **Found:** 2026-11-03, while weighing goceph's ops as `calc_op_budget`
+  does; derived from the source and upstream's el9 binaries, not
+  reproduced.
