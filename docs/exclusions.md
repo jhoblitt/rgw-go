@@ -3141,6 +3141,56 @@ checked against the v19.2.6 and v20.2.4 tags, rgw-go does the following.
   flags to librados, which applies `-d`'s log settings to its own logging,
   and neither changes how rgw-go runs. Rook passes `--foreground`
   (`pkg/operator/ceph/object/spec.go:454` at rook f09547c14).
+- **The Go runtime's memory limit is sized from the cgroup's.** At start,
+  before it connects to RADOS, rgw-go sets the Go runtime's soft memory
+  limit to a share of its cgroup v2 memory limit, rounded down to a byte:
+  `RGW_GO_MEMORY_LIMIT_RATIO`, or `--memory-limit-ratio`, 0.8 by default.
+  The cgroup's limit is the smallest finite `memory.max` from the cgroup
+  `/proc/self/cgroup` names, under `/sys/fs/cgroup`, up to that mount's
+  root, which in a container with its own cgroup namespace is the
+  container's cgroup.
+  - With the limit set, the Go collector runs before the runtime's memory
+    reaches it; with none, `GOGC`'s default lets the heap grow to twice the
+    live heap whatever the pod allows. The rest of the cgroup's limit is
+    left for what the Go runtime does not count: glibc's heap, which holds
+    librados's buffers, and the binary and its libraries. Near the limit the
+    collector runs more often, and with a live heap above it the runtime
+    holds the collector to about half the CPU (`runtime/mgclimit.go:9-18`
+    at go1.27.3).
+  - rgw-go sets no limit, and logs why, when `GOMEMLIMIT` holds anything
+    but the empty string, which the runtime applies itself and which
+    stands; at a ratio of 0; on cgroup v1, or a hybrid hierarchy whose
+    memory controller is v1's; when `/sys/fs/cgroup` holds no cgroup v2
+    hierarchy, or one without the memory controller, since rgw-go looks
+    for one nowhere else; and when every `memory.max` is `max`. It refuses
+    to start with a ratio that is not a number from 0 to 1. It logs a
+    warning and sets no limit when it cannot read `/proc/self/cgroup`,
+    `cgroup.controllers` or a `memory.max`, cannot parse
+    `/proc/self/cgroup` or a `memory.max`, or finds no directory for its
+    cgroup under the mount; a cgroup with no `memory.max`, as the
+    hierarchy's root and one whose parent does not enable the memory
+    controller have none, is passed over.
+  - radosgw sizes nothing from its cgroup's memory limit. Ceph sizes an
+    OSD's `osd_memory_target`, and no other daemon's option, from the pod:
+    to Rook's `POD_MEMORY_REQUEST`, held to `POD_MEMORY_LIMIT` times
+    `osd_memory_target_cgroup_limit_ratio`, and by default to that product
+    alone
+    ([config.cc:543-585](https://github.com/ceph/ceph/blob/v19.2.7/src/common/config.cc#L543-L585),
+    [config.cc:544-586](https://github.com/ceph/ceph/blob/v20.2.4/src/common/config.cc#L544-L586)).
+    That ratio defaults to 0.8 too, Ceph's own precedent for rgw-go's
+    default
+    ([global.yaml.in:3874-3884](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/global.yaml.in#L3874-L3884),
+    [global.yaml.in:3947-3957](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/global.yaml.in#L3947-L3957)).
+    The cgroup v1 limit Ceph reads is only reported, as `mem_cgroup_limit`
+    in the metadata a librados client registers in the manager's service
+    map
+    ([util.cc:168-201](https://github.com/ceph/ceph/blob/v19.2.7/src/common/util.cc#L168-L201)
+    and [util.cc:354-358](https://github.com/ceph/ceph/blob/v19.2.7/src/common/util.cc#L354-L358),
+    [util.cc:168-201](https://github.com/ceph/ceph/blob/v20.2.4/src/common/util.cc#L168-L201)
+    and [util.cc:354-358](https://github.com/ceph/ceph/blob/v20.2.4/src/common/util.cc#L354-L358);
+    [RadosClient.cc:1089](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/RadosClient.cc#L1089),
+    [RadosClient.cc:1091](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/RadosClient.cc#L1091)).
+    Clients see no difference.
 
 ### Request parsing and dispatch differences
 

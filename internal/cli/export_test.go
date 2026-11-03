@@ -3,6 +3,7 @@ package cli
 import (
 	"net/http"
 
+	"github.com/jhoblitt/rgw-go/internal/memlimit"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/s3"
 )
@@ -47,6 +48,14 @@ func GatewayStoreForTest(zi op.ZoneInfo, maxConcurrent int64) gatewayStore {
 // rather than a store's.
 func NewGatewayForTest(env *op.Env, a s3.Authenticator, cfg s3.Config) *Gateway {
 	return newGateway(env, a, cfg)
+}
+
+// SetMemorySizer makes serve size the Go memory limit with s until the
+// returned restore runs.
+func SetMemorySizer(s memlimit.Sizer) (restore func()) {
+	old := processSizer
+	processSizer = func() memlimit.Sizer { return s }
+	return func() { processSizer = old }
 }
 
 // NewAdminRouter is NewRouter with adminH at adminPath.
