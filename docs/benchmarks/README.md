@@ -13,6 +13,8 @@ on.
 | 2026-10-15 | seam limiter | Squid, Ceph 19.2.7 | none: the seam microbenchmark at rgw-go 49c333f | [2026-10-15-seam-limiter-squid](2026-10-15-seam-limiter-squid/) |
 | 2026-10-15 | seam limiter | Tentacle, Ceph 20.2.4 | none: the seam microbenchmark at rgw-go 49c333f | [2026-10-15-seam-limiter-tentacle](2026-10-15-seam-limiter-tentacle/) |
 | 2026-11-02 | memory | Tentacle, Ceph 20.2.4 | rgw-go 5700129 against radosgw 20.2.4 | [2026-11-02-memory-tentacle](2026-11-02-memory-tentacle/REPORT.md) |
+| 2026-11-03 | allocator | Tentacle, Ceph 20.2.4 | rgw-go 5700129 on glibc malloc and on tcmalloc, against radosgw 20.2.4 | [2026-11-03-allocator-tentacle](2026-11-03-allocator-tentacle/REPORT.md) |
+| 2026-11-03 | buffers | Tentacle, Ceph 20.2.4 | four throwaway builds of rgw-go 5700129 with the first-stripe fix, on tcmalloc | [2026-11-03-buffers-tentacle](2026-11-03-buffers-tentacle/REPORT.md) |
 
 The 2026-10-02 runs, measured on a quiet host, replace the preliminary
 2026-10-01 runs, measured on a busy one, which also predate the bracketed
@@ -73,6 +75,12 @@ callback and +22 and +20 in pipe (Squid, Tentacle), with no errors.
 The 2026-11-02 memory run's REPORT.md is written by hand, not rendered by
 `hack/bench/report`. Its directory holds a subdirectory per run with the
 summaries the report's tables are built from.
+
+The 2026-11-03 allocator and buffer runs' REPORT.md files are written by hand
+too, each over the per-run summaries and generated tables in its directory.
+Their 32- and 64-way loads came not from elbencho but from `s3load`, a Go
+driver written for them, whose source is in the allocator run's directory;
+their throughputs compare with each other's, not with the 2026-10-15 bench's.
 
 A seam run is `make bench-seam RELEASE=<release>` (`hack/bench/seam`,
 described in `hack/rooket/README.md`). Its directory holds `env.json`, the
