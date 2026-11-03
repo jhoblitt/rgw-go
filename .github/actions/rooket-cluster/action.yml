@@ -41,7 +41,7 @@ runs:
     # of its own rooket's node image: a rooket here whose node image is more
     # than one minor from that kubectl is outside kubectl's supported skew.
     - name: Prepare the runner and install rooket
-      uses: jhoblitt/rooket-action@e1bb55b62d12ec03397781e5d0e9b16db17ca235 # v1.0.0
+      uses: jhoblitt/rooket-action@50c13c194401bb855130d7031e9fef095ac8f500 # v1.0.2
       with:
         rooket-version: v0.1.0
         rooket-sha256: f528fd390223bfcf12b10227c8be5851a9c5048ae45f2df41e0b3a6951d56e17
