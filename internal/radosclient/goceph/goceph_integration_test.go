@@ -143,6 +143,13 @@ func (c *cancelAfterCheck) Err() error {
 	return nil
 }
 
+// The integration run's own copy of the unit spec: make integration runs only
+// the integration label, and CI runs each cluster's specs in that release's
+// builder, so this is where Squid's specs show they run Squid's librados.
+var _ = Describe("the librados the integration specs run", Label("integration"), func() {
+	It("is the Ceph version of the release whose builder runs them", expectBuilderLibrados)
+})
+
 var _ = Describe("goceph against a cluster", Label("integration"), func() {
 	for _, mode := range []goceph.Mode{goceph.ModeSync, goceph.ModeCallback, goceph.ModePipe} {
 		Context(string(mode), func() {
