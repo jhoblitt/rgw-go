@@ -14,14 +14,15 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/version"
 )
 
 // Registry is rgw-go's Prometheus registry: a minimal surface (per-op counts
-// and latency, in-flight requests, RADOS ops and bytes), nothing radosgw's
-// perf counters or the ops log cover.
+// and latency, in-flight requests, RADOS ops and bytes, the memory budget),
+// nothing radosgw's perf counters or the ops log cover.
 type Registry struct {
 	reg      *prometheus.Registry
 	requests *prometheus.CounterVec
@@ -30,6 +31,7 @@ type Registry struct {
 	bytesOut prometheus.Counter
 	inFlight prometheus.Gauge
 	rados    *radosCollector
+	budget   *budgetCollector
 }
 
 var _ op.Metrics = (*Registry)(nil)
@@ -70,12 +72,13 @@ func New() *Registry {
 			Name: "rgw_go_requests_in_flight",
 			Help: "Requests being served.",
 		}),
-		rados: &radosCollector{reporters: make(map[string]radosclient.StatsReporter)},
+		rados:  &radosCollector{reporters: make(map[string]radosclient.StatsReporter)},
+		budget: &budgetCollector{},
 	}
 	r.reg.MustRegister(
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-		build, r.requests, r.duration, bodyBytes, r.inFlight, r.rados,
+		build, r.requests, r.duration, bodyBytes, r.inFlight, r.rados, r.budget,
 		threadsCollector{proc: os.DirFS("/proc")},
 	)
 	return r
@@ -112,6 +115,18 @@ func (r *Registry) WatchRADOS(mode string, s radosclient.StatsReporter) {
 // protobuf format to a scraper that asks for it.
 func (r *Registry) Handler() http.Handler {
 	return promhttp.HandlerFor(r.reg, promhttp.HandlerOpts{})
+}
+
+// MemoryBudgetReporter is satisfied by the driver's Store, whose memory
+// budget the registry reads on every scrape.
+type MemoryBudgetReporter interface {
+	MemoryBudgetStats() driver.MemoryBudgetStats
+}
+
+// WatchMemoryBudget reports m's memory budget, reading it on every scrape;
+// a nil m stops reporting it.
+func (r *Registry) WatchMemoryBudget(m MemoryBudgetReporter) {
+	r.budget.watch(m)
 }
 
 var statusClasses = [...]string{"1xx", "2xx", "3xx", "4xx", "5xx"}
@@ -184,6 +199,79 @@ func (c *radosCollector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(radosBytesInFlight, prometheus.GaugeValue, float64(st.InflightBytes), mode)
 		ch <- prometheus.MustNewConstMetric(radosThrottleWaits, prometheus.CounterValue, float64(st.ThrottleWaits), mode)
 	}
+}
+
+var (
+	budgetBytes = prometheus.NewDesc("rgw_go_memory_budget_bytes",
+		"The memory budget every buffer of object data draws on (total), and the most of it the buffers a request keeps for its whole transfer (hold) and prefetched heads (prefetch) may take.",
+		[]string{"class"}, nil)
+	budgetHeld = prometheus.NewDesc("rgw_go_memory_budget_held_bytes",
+		"Bytes of the memory budget held, by class: transfer buffers (piece), buffers kept for a whole transfer (hold) and prefetched heads (prefetch).",
+		[]string{"class"}, nil)
+	budgetWaiting = prometheus.NewDesc("rgw_go_memory_budget_waiting",
+		"Draws on the memory budget waiting for room now, by class.",
+		[]string{"class"}, nil)
+	budgetWaits = prometheus.NewDesc("rgw_go_memory_budget_waits_total",
+		"Draws on the memory budget that waited for room, by class; a draw granted at once is not counted.",
+		[]string{"class"}, nil)
+	budgetWaited = prometheus.NewDesc("rgw_go_memory_budget_wait_seconds_total",
+		"Time the draws rgw_go_memory_budget_waits_total counts waited, by class.",
+		[]string{"class"}, nil)
+	budgetSlowdowns = prometheus.NewDesc("rgw_go_memory_budget_slowdowns_total",
+		"First draws of a request on the memory budget that waited out their deadline and were answered 503 SlowDown, by class.",
+		[]string{"class"}, nil)
+	budgetPrefetchSkipped = prometheus.NewDesc("rgw_go_memory_budget_prefetch_skipped_total",
+		"Head prefetches refused, a GET's, a copy source's or a versioned key's followed head, because the memory budget's prefetch room was spent or another draw was waiting; the head's bytes are then read with the data.",
+		nil, nil)
+)
+
+// budgetCollector reads the watched memory budget once per scrape.
+type budgetCollector struct {
+	mu sync.Mutex
+	r  MemoryBudgetReporter
+}
+
+func (c *budgetCollector) watch(m MemoryBudgetReporter) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.r = m
+}
+
+func (c *budgetCollector) Describe(ch chan<- *prometheus.Desc) {
+	for _, d := range []*prometheus.Desc{budgetBytes, budgetHeld, budgetWaiting, budgetWaits, budgetWaited, budgetSlowdowns, budgetPrefetchSkipped} {
+		ch <- d
+	}
+}
+
+func (c *budgetCollector) Collect(ch chan<- prometheus.Metric) {
+	c.mu.Lock()
+	r := c.r
+	c.mu.Unlock()
+	if r == nil {
+		return
+	}
+	st := r.MemoryBudgetStats()
+	gauge := func(d *prometheus.Desc, v int64, class string) {
+		ch <- prometheus.MustNewConstMetric(d, prometheus.GaugeValue, float64(v), class)
+	}
+	counter := func(d *prometheus.Desc, v float64, class string) {
+		ch <- prometheus.MustNewConstMetric(d, prometheus.CounterValue, v, class)
+	}
+	gauge(budgetBytes, st.Size, "total")
+	gauge(budgetBytes, st.HoldCap, "hold")
+	gauge(budgetBytes, st.PrefetchCap, "prefetch")
+	gauge(budgetHeld, st.PieceHeld, "piece")
+	gauge(budgetHeld, st.HoldHeld, "hold")
+	gauge(budgetHeld, st.PrefetchHeld, "prefetch")
+	gauge(budgetWaiting, st.PieceWaiting, "piece")
+	gauge(budgetWaiting, st.HoldWaiting, "hold")
+	counter(budgetWaits, float64(st.PieceWaits), "piece")
+	counter(budgetWaits, float64(st.HoldWaits), "hold")
+	counter(budgetWaited, st.PieceWaited.Seconds(), "piece")
+	counter(budgetWaited, st.HoldWaited.Seconds(), "hold")
+	counter(budgetSlowdowns, float64(st.PieceSlowdowns), "piece")
+	counter(budgetSlowdowns, float64(st.HoldSlowdowns), "hold")
+	ch <- prometheus.MustNewConstMetric(budgetPrefetchSkipped, prometheus.CounterValue, float64(st.PrefetchSkipped))
 }
 
 var processThreads = prometheus.NewDesc("rgw_go_process_threads",

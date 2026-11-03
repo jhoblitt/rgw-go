@@ -691,7 +691,7 @@ var _ = Describe("part writer", func() {
 	)
 })
 
-var _ = Describe("body byte budget", func() {
+var _ = Describe("memory budget on the write path", func() {
 	var (
 		c   *fakerados.Cluster
 		s   *driver.Store
@@ -711,58 +711,48 @@ var _ = Describe("body byte budget", func() {
 		Expect(err).NotTo(HaveOccurred())
 		return tw
 	}
-	held := func() int64 { return s.BodyBudgetForTest().Held }
-	// openBounded opens a Store over c as a cluster whose in-flight limiter
-	// bounds its payload at limit bytes, with the options kv, for a gateway
-	// that admits requests requests at once.
-	openBounded := func(ctx context.Context, limit, requests int64, kv map[string]string) *driver.Store {
-		GinkgoHelper()
-		rel := denc.Squid
-		st, err := driver.Open(ctx, boundedCluster{Cluster: c, bytes: limit}, conf(kv), driver.Options{Release: &rel, MaxConcurrentRequests: requests})
-		Expect(err).NotTo(HaveOccurred())
-		return st
+	held := func() int64 { return s.MemoryBudgetForTest().Held }
+	// blockTails makes the writes of tails 1 to n of the i-th PUT wait for
+	// the returned release.
+	blockTails := func(i, n int) (release func()) {
+		ch := make(chan struct{})
+		unblock := sync.OnceFunc(func() { close(ch) })
+		DeferCleanup(unblock)
+		for t := 1; t <= n; t++ {
+			c.BeforeWrite(testDataPool, "", tailOID(prefix(i), t), func(*fakerados.Object) { <-ch })
+		}
+		return unblock
 	}
 
-	It("is unbounded on a cluster without an in-flight limiter", func() {
-		Expect(s.BodyBudgetForTest().Size).To(BeEquivalentTo(int64(math.MaxInt64)), "fakerados has none")
+	It("is unbounded on a Store opened without a memory limit", func() {
+		Expect(s.MemoryBudgetForTest().Size).To(BeEquivalentTo(int64(math.MaxInt64)))
 	})
 
-	DescribeTable("is the in-flight limiter's byte bound, raised to a piece for every request the gateway admits",
-		func(ctx SpecContext, limit, requests int64, kv map[string]string, want int64) {
-			st := openBounded(ctx, limit, requests, kv)
-			Expect(st.MaxConcurrentRequests()).To(Equal(requests), "the cap the store was given")
-			Expect(st.BodyBudgetForTest().Size).To(Equal(want))
+	DescribeTable("is sized from the Go memory limit",
+		func(ctx SpecContext, limit int64, ratio float64, want func(*driver.Store) int64) {
+			rel := denc.Squid
+			st, err := driver.Open(ctx, c, conf(nil), driver.Options{Release: &rel, MaxConcurrentRequests: 1024, MemoryLimit: limit, MemoryBudgetRatio: ratio})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.MaxConcurrentRequests()).To(BeEquivalentTo(1024), "the cap the store was given")
+			Expect(st.MemoryBudgetForTest().Size).To(Equal(want(st)))
 		},
-		Entry("radosgw's defaults: 1024 four-MiB pieces, above the limiter's fifteen sixteenths of 100 MiB",
-			int64(98304000), int64(1024), nil, int64(1024*(4<<20))),
-		Entry("the limiter's bound, above the pieces of a small cap",
-			int64(98304000), int64(2), nil, int64(98304000)),
-		Entry("a part's first stripe, larger than a chunk, as the piece",
-			int64(98304000), int64(1024), map[string]string{"rgw_obj_stripe_size": "8388608"}, int64(1024*(8<<20))),
-		Entry("a first stripe past the window, as the window and the byte that shows it",
-			int64(1), int64(2), map[string]string{"rgw_obj_stripe_size": "33554432"}, int64(2*((16<<20)+1))),
-		Entry("no request cap, under which radosgw holds as many bodies as it serves",
-			int64(98304000), int64(0), nil, int64(math.MaxInt64)),
-		Entry("a negative cap, which caps nothing",
-			int64(98304000), int64(-1), nil, int64(math.MaxInt64)),
-		Entry("a cap whose pieces pass 2^63",
-			int64(98304000), int64(math.MaxInt64), nil, int64(math.MaxInt64)),
-		Entry("a limiter turned off, as librados's throttle at 0",
-			int64(math.MaxInt64), int64(1024), nil, int64(math.MaxInt64)),
+		Entry("half the limit by default", int64(1<<30), 0.0, func(*driver.Store) int64 { return 512 << 20 }),
+		Entry("the ratio given", int64(1<<30), 0.25, func(*driver.Store) int64 { return 256 << 20 }),
+		Entry("raised to the least one request needs when the share is smaller",
+			int64(64<<20), 0.0, func(st *driver.Store) int64 { return st.MemoryBudgetFloorForTest() }),
 	)
 
-	It("keeps a piece for each request the gateway admits, whatever rgw_max_concurrent_requests the driver could read", func(ctx SpecContext) {
-		st := openBounded(ctx, 98304000, 1024, map[string]string{"rgw_max_concurrent_requests": "2"})
-		Expect(st.BodyBudgetForTest().Size).To(Equal(int64(1024 * (4 << 20))))
+	It("needs at the defaults room for a copy's hold twice and the largest piece four times", func() {
+		Expect(s.MemoryBudgetFloorForTest()).To(BeEquivalentTo(2*((16<<20)+(10<<20)+(8<<20))),
+			"a 16 MiB read window, a compressor's 10 MiB and two 4 MiB decoder blocks")
 	})
 
-	It("lets a PUT through while slow clients each hold a piece's share, the budget keeping a piece for every request", func(ctx SpecContext) {
-		// A limiter bound that two pieces fill, and a cap of three requests.
-		s = openBounded(ctx, 8<<20, 3, nil)
+	It("holds back another PUT while stalled clients hold the budget, and lets it through once one leaves", func(ctx SpecContext) {
+		s.SetMemoryBudgetForTest(16<<20, 0)
 		slowCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		slowDone := make(chan error, 2)
-		for i := range 2 {
+		slowDone := make(chan error, 4)
+		for i := range 4 {
 			slow := writer(ctx, i)
 			go func() {
 				// Its head and a megabyte of its first tail piece, then nothing,
@@ -772,26 +762,32 @@ var _ = Describe("body byte budget", func() {
 				slowDone <- err
 			}()
 		}
-		Eventually(held).WithTimeout(5*time.Second).WithPolling(time.Millisecond).Should(BeEquivalentTo(8<<20),
-			"each slow client holds its piece's share while it sends nothing")
-		fast := writer(ctx, 2)
+		Eventually(held).WithTimeout(5*time.Second).WithPolling(time.Millisecond).Should(BeEquivalentTo(16<<20),
+			"each stalled client holds its piece's share while it sends nothing")
+		fast := writer(ctx, 4)
 		body := mibPattern(20)
-		_, size, err := fast.Consume(ctx, bytes.NewReader(body), int64(len(body)), md5.New())
-		Expect(err).NotTo(HaveOccurred(), "the third request reads and writes its pieces past the two that stall")
-		Expect(fast.Drain()).To(Succeed())
-		Expect(size).To(BeEquivalentTo(20 << 20))
-		Expect(c.Object(testDataPool, "", tailOID(prefix(2), 4)).Data).To(Equal(body[16<<20:]))
-		Expect(held()).To(BeEquivalentTo(8<<20), "the slow clients still hold theirs")
+		fastDone := make(chan error, 1)
+		go func() {
+			_, _, err := fast.Consume(ctx, bytes.NewReader(body), int64(len(body)), md5.New())
+			fastDone <- err
+		}()
+		Consistently(fastDone).WithTimeout(100*time.Millisecond).WithPolling(5*time.Millisecond).ShouldNot(Receive(),
+			"the stalled clients hold back the next PUT's tail")
 		cancel()
-		for range 2 {
+		for range 4 {
 			Eventually(slowDone).WithTimeout(5 * time.Second).Should(Receive(MatchError(context.Canceled)))
 		}
+		Eventually(fastDone).WithTimeout(5*time.Second).Should(Receive(BeNil()), "the shares they gave back let it through")
+		Expect(fast.Drain()).To(Succeed())
+		Expect(c.Object(testDataPool, "", tailOID(prefix(4), 4)).Data).To(Equal(body[16<<20:]))
 		Expect(held()).To(BeZero())
 	}, SpecTimeout(20*time.Second))
 
 	It("holds no more than the budget in the tail buffers of concurrent PUTs whose windows exceed it", func(ctx SpecContext) {
-		const budget, puts = 8 << 20, 4
-		s.SetBodyBudgetForTest(budget)
+		// Five PUTs of two tail pieces each, whose 16 MiB windows would take
+		// them all at once, on a budget eight pieces spend.
+		const budget, puts = 32 << 20, 5
+		s.SetMemoryBudgetForTest(budget, 0)
 		release := make(chan struct{})
 		unblock := sync.OnceFunc(func() { close(release) })
 		DeferCleanup(unblock)
@@ -809,7 +805,9 @@ var _ = Describe("body byte budget", func() {
 		var read atomic.Int64
 		done := make(chan error, puts)
 		for _, tw := range writers {
-			body := &countingReader{r: io.LimitReader(zeros{}, 32<<20), n: &read}
+			// A byte short of three chunks, so the second piece ends the body
+			// and no probe of its end takes a share.
+			body := &countingReader{r: io.LimitReader(zeros{}, 12<<20-1), n: &read}
 			go func() {
 				_, _, err := tw.Consume(ctx, body, -1, md5.New())
 				done <- err
@@ -826,10 +824,10 @@ var _ = Describe("body byte budget", func() {
 		for _, tw := range writers {
 			buffered += tw.Buffered()
 		}
-		Expect(buffered).To(BeNumerically("<=", budget), "four 16 MiB windows, whose tail buffers share one 8 MiB budget")
-		Expect(s.BodyBudgetForTest()).To(And(HaveField("Held", BeEquivalentTo(buffered)), HaveField("Peak", BeEquivalentTo(budget))),
+		Expect(buffered).To(BeNumerically("<=", budget), "five 16 MiB windows, whose tail buffers share one 32 MiB budget")
+		Expect(s.MemoryBudgetForTest()).To(And(HaveField("Held", BeEquivalentTo(buffered)), HaveField("Peak", BeEquivalentTo(budget))),
 			"every buffer carries its share")
-		Expect(started.Load()).To(BeEquivalentTo(2), "two 4 MiB pieces in flight spend the budget")
+		Expect(started.Load()).To(BeEquivalentTo(8), "eight 4 MiB pieces in flight spend the budget")
 		unblock()
 		for range puts {
 			Eventually(done).WithTimeout(10 * time.Second).Should(Receive(BeNil()))
@@ -841,19 +839,16 @@ var _ = Describe("body byte budget", func() {
 	})
 
 	It("waits for the budget before it reads a piece, and holds nothing when canceled while it waits", func(ctx SpecContext) {
-		s.SetBodyBudgetForTest(4 << 20)
-		release := make(chan struct{})
-		unblock := sync.OnceFunc(func() { close(release) })
-		DeferCleanup(unblock)
-		c.BeforeWrite(testDataPool, "", tailOID(prefix(0), 1), func(*fakerados.Object) { <-release })
+		s.SetMemoryBudgetForTest(16<<20, 0)
+		unblock := blockTails(0, 4)
 		first := writer(ctx, 0)
 		firstDone := make(chan error, 1)
 		go func() {
-			_, _, err := first.Consume(ctx, bytes.NewReader(mibPattern(8)), 8<<20, md5.New())
+			_, _, err := first.Consume(ctx, bytes.NewReader(mibPattern(20)), 20<<20, md5.New())
 			firstDone <- err
 		}()
-		Eventually(held).WithTimeout(5*time.Second).WithPolling(time.Millisecond).Should(BeEquivalentTo(4<<20),
-			"the first PUT's tail piece in flight holds the whole budget")
+		Eventually(held).WithTimeout(5*time.Second).WithPolling(time.Millisecond).Should(BeEquivalentTo(16<<20),
+			"the first PUT's tail pieces in flight hold the whole budget")
 		reqCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		second := writer(ctx, 1)
@@ -869,27 +864,49 @@ var _ = Describe("body byte budget", func() {
 			"the tail piece is not read before its share is taken")
 		cancel()
 		Eventually(secondDone).WithTimeout(5 * time.Second).Should(Receive(MatchError(context.Canceled)))
-		Expect(held()).To(BeEquivalentTo(4<<20), "the canceled PUT took nothing")
+		Expect(held()).To(BeEquivalentTo(16<<20), "the canceled PUT took nothing")
 		unblock()
 		Eventually(firstDone).WithTimeout(5 * time.Second).Should(Receive(BeNil()))
 		Expect(first.Drain()).To(Succeed())
 		Expect(held()).To(BeZero())
 	})
 
+	It("answers SlowDown for a first piece that waits past its deadline, holding nothing", func(ctx SpecContext) {
+		s.SetMemoryBudgetForTest(16<<20, 50*time.Millisecond)
+		unblock := blockTails(0, 4)
+		first := writer(ctx, 0)
+		firstDone := make(chan error, 1)
+		go func() {
+			_, _, err := first.Consume(ctx, bytes.NewReader(mibPattern(20)), 20<<20, md5.New())
+			firstDone <- err
+		}()
+		Eventually(held).WithTimeout(5 * time.Second).WithPolling(time.Millisecond).Should(BeEquivalentTo(16 << 20))
+		_, _, err := writer(ctx, 1).Consume(ctx, bytes.NewReader(mibPattern(8)), 8<<20, md5.New())
+		Expect(err).To(MatchError(op.ErrSlowDown))
+		Expect(held()).To(BeEquivalentTo(16<<20), "the refused PUT took nothing")
+		Expect(s.MemoryBudgetStats()).To(HaveField("PieceSlowdowns", BeEquivalentTo(1)))
+		unblock()
+		Eventually(firstDone).WithTimeout(5 * time.Second).Should(Receive(BeNil()))
+		Expect(first.Drain()).To(Succeed())
+	}, SpecTimeout(10*time.Second))
+
 	It("gives a PUT's share back when its client goes away mid-piece, to the PUT waiting for it", func(ctx SpecContext) {
-		s.SetBodyBudgetForTest(4 << 20)
+		s.SetMemoryBudgetForTest(16<<20, 0)
 		reqCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		stalled := writer(ctx, 0)
-		stalledDone := make(chan error, 1)
-		go func() {
-			body := io.MultiReader(bytes.NewReader(make([]byte, 5<<20)), ctxReader{reqCtx})
-			_, _, err := stalled.Consume(reqCtx, body, 12<<20, md5.New())
-			stalledDone <- err
-		}()
-		Eventually(held).WithTimeout(5*time.Second).WithPolling(time.Millisecond).Should(BeEquivalentTo(4<<20),
-			"the stalled PUT's tail piece holds the whole budget while its client sends nothing")
-		next := writer(ctx, 1)
+		stalled := make([]*driver.TailWriter, 4)
+		stalledDone := make(chan error, len(stalled))
+		for i := range stalled {
+			stalled[i] = writer(ctx, i)
+			go func() {
+				body := io.MultiReader(bytes.NewReader(make([]byte, 5<<20)), ctxReader{reqCtx})
+				_, _, err := stalled[i].Consume(reqCtx, body, 12<<20, md5.New())
+				stalledDone <- err
+			}()
+		}
+		Eventually(held).WithTimeout(5*time.Second).WithPolling(time.Millisecond).Should(BeEquivalentTo(16<<20),
+			"the stalled PUTs' tail pieces hold the whole budget while their clients send nothing")
+		next := writer(ctx, 4)
 		body := mibPattern(8)
 		nextDone := make(chan error, 1)
 		go func() {
@@ -899,16 +916,20 @@ var _ = Describe("body byte budget", func() {
 		Consistently(nextDone).WithTimeout(100*time.Millisecond).WithPolling(5*time.Millisecond).ShouldNot(Receive(),
 			"the next PUT's tail waits for the budget")
 		cancel()
-		Eventually(stalledDone).WithTimeout(5 * time.Second).Should(Receive(MatchError(context.Canceled)))
-		Eventually(nextDone).WithTimeout(5*time.Second).Should(Receive(BeNil()), "the canceled PUT's share lets the next one read")
+		for range stalled {
+			Eventually(stalledDone).WithTimeout(5 * time.Second).Should(Receive(MatchError(context.Canceled)))
+		}
+		Eventually(nextDone).WithTimeout(5*time.Second).Should(Receive(BeNil()), "the canceled PUTs' shares let the next one read")
 		Expect(next.Drain()).To(Succeed())
-		Expect(c.Object(testDataPool, "", tailOID(prefix(1), 1)).Data).To(Equal(body[4<<20:]))
-		stalled.Discard()
+		Expect(c.Object(testDataPool, "", tailOID(prefix(4), 1)).Data).To(Equal(body[4<<20:]))
+		for _, tw := range stalled {
+			tw.Discard()
+		}
 		Expect(held()).To(BeZero())
 	})
 
-	It("completes a PUT whose window exceeds the whole budget, each piece taking all of it in turn", func(ctx SpecContext) {
-		s.SetBodyBudgetForTest(1 << 20)
+	It("completes a PUT whose pieces exceed the room the budget keeps for pieces, each taking that room", func(ctx SpecContext) {
+		s.SetMemoryBudgetForTest(1<<20, 0)
 		tw := writer(ctx, 0)
 		body := mibPattern(20)
 		_, size, err := tw.Consume(ctx, bytes.NewReader(body), int64(len(body)), md5.New())
@@ -918,12 +939,12 @@ var _ = Describe("body byte budget", func() {
 		for n := 1; n <= 4; n++ {
 			Expect(c.Object(testDataPool, "", tailOID(prefix(0), n)).Data).To(Equal(body[n<<22:(n+1)<<22]), "tail %d", n)
 		}
-		Expect(s.BodyBudgetForTest()).To(Equal(driver.BodyBudget{Size: 1 << 20, Held: 0, Peak: 1 << 20}),
-			"a 4 MiB piece takes the whole 1 MiB budget and proceeds alone")
+		Expect(s.MemoryBudgetForTest()).To(And(HaveField("Held", BeZero()), HaveField("Peak", BeNumerically("<=", 1<<20))),
+			"a 4 MiB piece takes the quarter of the 1 MiB budget pieces always keep, and proceeds")
 	}, SpecTimeout(10*time.Second))
 
 	It("gives every share back when a tail write fails", func(ctx SpecContext) {
-		s.SetBodyBudgetForTest(8 << 20)
+		s.SetMemoryBudgetForTest(32<<20, 0)
 		c.FailNextWrite(testDataPool, "", tailOID(prefix(0), 1), syscall.ETIMEDOUT)
 		tw := writer(ctx, 0)
 		_, _, err := tw.Consume(ctx, bytes.NewReader(mibPattern(16)), 16<<20, md5.New())
@@ -951,7 +972,7 @@ var _ = Describe("body byte budget", func() {
 	const partHead = putBucketID + "__multipart_part.2~id.1"
 
 	It("hands a part's kept first stripe and its share over through resume, and gives the share back once written", func(ctx SpecContext) {
-		s.SetBodyBudgetForTest(8 << 20)
+		s.SetMemoryBudgetForTest(32<<20, 0)
 		c.Put(testDataPool, "", partHead, []byte("old"))
 		body := bytes.NewReader(mibPattern(6))
 		first := partWriter(ctx)
@@ -968,7 +989,7 @@ var _ = Describe("body byte budget", func() {
 	})
 
 	It("gives a kept first stripe's share back on discard", func(ctx SpecContext) {
-		s.SetBodyBudgetForTest(8 << 20)
+		s.SetMemoryBudgetForTest(32<<20, 0)
 		c.Put(testDataPool, "", partHead, []byte("old"))
 		first := partWriter(ctx)
 		_, err := first.Consume(ctx, bytes.NewReader(mibPattern(6)), 6<<20, md5.New())
@@ -981,7 +1002,7 @@ var _ = Describe("body byte budget", func() {
 	DescribeTable("gives a part's first-stripe share back when it cannot be read whole",
 		func(ctx SpecContext, kv map[string]string, body func() io.Reader, want error) {
 			s = openPutStore(ctx, c, denc.Squid, kv, time.Now())
-			s.SetBodyBudgetForTest(64 << 20)
+			s.SetMemoryBudgetForTest(256<<20, 0)
 			_, err := partWriter(ctx).Consume(ctx, body(), -1, md5.New())
 			Expect(err).To(MatchError(want))
 			Expect(held()).To(BeZero())
@@ -996,7 +1017,7 @@ var _ = Describe("body byte budget", func() {
 
 	It("gives a tail piece's share back when the body passes rgw_max_put_size", func(ctx SpecContext) {
 		s = openPutStore(ctx, c, denc.Squid, map[string]string{"rgw_max_put_size": "6291456"}, time.Now())
-		s.SetBodyBudgetForTest(8 << 20)
+		s.SetMemoryBudgetForTest(32<<20, 0)
 		tw := writer(ctx, 0)
 		_, _, err := tw.Consume(ctx, bytes.NewReader(mibPattern(10)), -1, md5.New())
 		Expect(err).To(MatchError(op.ErrEntityTooLarge))
@@ -1006,7 +1027,7 @@ var _ = Describe("body byte budget", func() {
 
 	DescribeTable("gives every share back when a panic unwinds the request, which the handler's recovery survives",
 		func(ctx SpecContext, start func(context.Context) func() error) {
-			s.SetBodyBudgetForTest(8 << 20)
+			s.SetMemoryBudgetForTest(32<<20, 0)
 			consume := start(ctx)
 			var err error
 			Expect(func() { err = consume() }).To(PanicWith("boom"))
@@ -1037,19 +1058,16 @@ var _ = Describe("body byte budget", func() {
 		}),
 	)
 
-	It("takes a part's first stripe's share before it reads the stripe", func(ctx SpecContext) {
-		s.SetBodyBudgetForTest(4 << 20)
-		release := make(chan struct{})
-		unblock := sync.OnceFunc(func() { close(release) })
-		DeferCleanup(unblock)
-		c.BeforeWrite(testDataPool, "", tailOID(prefix(0), 1), func(*fakerados.Object) { <-release })
+	It("takes a part's first stripe's share before it reads the stripe, and its window room after", func(ctx SpecContext) {
+		s.SetMemoryBudgetForTest(16<<20, 0)
+		unblock := blockTails(0, 4)
 		tail := writer(ctx, 0)
 		tailDone := make(chan error, 1)
 		go func() {
-			_, _, err := tail.Consume(ctx, bytes.NewReader(mibPattern(8)), 8<<20, md5.New())
+			_, _, err := tail.Consume(ctx, bytes.NewReader(mibPattern(20)), 20<<20, md5.New())
 			tailDone <- err
 		}()
-		Eventually(held).WithTimeout(5 * time.Second).WithPolling(time.Millisecond).Should(BeEquivalentTo(4 << 20))
+		Eventually(held).WithTimeout(5 * time.Second).WithPolling(time.Millisecond).Should(BeEquivalentTo(16 << 20))
 		part := partWriter(ctx)
 		var read atomic.Int64
 		partDone := make(chan error, 1)
@@ -1068,15 +1086,6 @@ var _ = Describe("body byte budget", func() {
 		Expect(held()).To(BeZero())
 	})
 })
-
-// boundedCluster is a fake cluster whose in-flight limiter bounds its
-// payload bytes at bytes.
-type boundedCluster struct {
-	*fakerados.Cluster
-	bytes int64
-}
-
-func (b boundedCluster) MaxInflightBytes() int64 { return b.bytes }
 
 // panicReader reads r, then panics with "boom" where r would end.
 type panicReader struct{ r io.Reader }

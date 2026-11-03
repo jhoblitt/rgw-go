@@ -50,16 +50,23 @@ import (
 // codec's *compression.DecodeError and no op error, so that the handler can
 // answer radosgw's 403 or 404 while no byte of the body has gone out.
 func (s *Store) ReadObject(ctx context.Context, st *op.ObjectState, rng op.ByteRange, sink io.Writer) error {
+	return s.readObject(ctx, st, rng, sink, s.mem.newStage())
+}
+
+// readObject is ReadObject with the read drawing on mem. A compressed
+// object's decoder blocks are mem's hold, its first draw.
+func (s *Store) readObject(ctx context.Context, st *op.ObjectState, rng op.ByteRange, sink io.Writer, mem *memStage) error {
 	if rng.Length == 0 {
 		return nil
 	}
+	defer mem.done()
 	ci := st.Compression
 	// rgw_compression_info_from_attr takes an object of type none as
 	// uncompressed, once it has refused an empty block list with -EIO
 	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_compression.cc#L20-L22 at v19.2.6
 	// and v20.2.4), which is the op's to answer.
 	if ci == nil || ci.Type == compression.None {
-		return s.readStored(ctx, st, rng.Offset, rng.Length, sink)
+		return s.readStored(ctx, st, rng.Offset, rng.Length, sink, mem)
 	}
 	if rng.Offset > ci.OrigSize || rng.Length > ci.OrigSize-rng.Offset {
 		return fmt.Errorf("%w: %d bytes at %d, past the %d of %s", op.ErrInternalError, rng.Length, rng.Offset, ci.OrigSize, objName(st))
@@ -69,10 +76,33 @@ func (s *Store) ReadObject(ctx context.Context, st *op.ObjectState, rng op.ByteR
 		// handle_data's "Cannot load compressor of type", -EIO.
 		return fmt.Errorf("%w: %s: %w", op.ErrUnknown, objName(st), err)
 	}
+	win, err := compressedWindow(st, rng)
+	if err != nil {
+		return err
+	}
+	if err := mem.hold(ctx, decodeBlocks(ci, win)); err != nil {
+		return err
+	}
+	stream := compression.NewStream(dec, ci.Blocks, ci.OrigSize, win, ci.CompressorMessage, sink)
+	if err := s.readStored(ctx, st, win.CompOfs, win.CompEnd-win.CompOfs+1, decoding{st: st, stream: stream}, mem); err != nil {
+		return err
+	}
+	if err := stream.Close(); err != nil {
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			err = fmt.Errorf("%w: the stored bytes end inside a block: %w", compression.ErrCorrupt, err)
+		}
+		return decodeErr(st, err)
+	}
+	return nil
+}
+
+// compressedWindow is the block window that rng, within st, a compressed
+// object, reads: fixup_range takes every block for a request without a range
+// and the blocks a range touches otherwise; for a range of the whole object
+// the two agree. A block map that does not hold together is UnknownError.
+func compressedWindow(st *op.ObjectState, rng op.ByteRange) (compression.Window, error) {
+	ci := st.Compression
 	end := rng.Offset + rng.Length - 1
-	// fixup_range takes every block for a request without a range and the
-	// blocks a range touches otherwise; for a range of the whole object the
-	// two agree.
 	win, err := compression.Range(ci.Blocks, rng.Offset != 0 || end != ci.OrigSize-1, rng.Offset, end)
 	switch {
 	case err != nil:
@@ -83,19 +113,43 @@ func (s *Store) ReadObject(ctx context.Context, st *op.ObjectState, rng op.ByteR
 		err = fmt.Errorf("%w: blocks %d-%d end at %d, past the %d stored bytes", compression.ErrCorrupt, win.First, win.Last, win.CompEnd+1, st.Size)
 	}
 	if err != nil {
-		return fmt.Errorf("%w: compression info of %s: %w", op.ErrUnknown, objName(st), err)
+		return compression.Window{}, fmt.Errorf("%w: compression info of %s: %w", op.ErrUnknown, objName(st), err)
 	}
-	stream := compression.NewStream(dec, ci.Blocks, ci.OrigSize, win, ci.CompressorMessage, sink)
-	if err := s.readStored(ctx, st, win.CompOfs, win.CompEnd-win.CompOfs+1, decoding{st: st, stream: stream}); err != nil {
-		return err
-	}
-	if err := stream.Close(); err != nil {
-		if errors.Is(err, io.ErrUnexpectedEOF) {
-			err = fmt.Errorf("%w: the stored bytes end inside a block: %w", compression.ErrCorrupt, err)
+	return win, nil
+}
+
+// decodeBlocks is what decoding win's blocks holds: compression.Stream's
+// buffer of the largest stored block, which a block arriving in pieces is
+// gathered in, and its buffer of the largest decoded one.
+func decodeBlocks(ci *meta.CompressionInfo, win compression.Window) uint64 {
+	var stored, decoded uint64
+	for i := win.First; i <= win.Last && i < len(ci.Blocks); i++ {
+		b := ci.Blocks[i]
+		end := ci.OrigSize
+		if i+1 < len(ci.Blocks) {
+			end = ci.Blocks[i+1].OldOfs
 		}
-		return decodeErr(st, err)
+		stored = max(stored, b.Len)
+		if end > b.OldOfs {
+			decoded = max(decoded, end-b.OldOfs)
+		}
 	}
-	return nil
+	return satAdd(stored, decoded)
+}
+
+// decoderHold is decodeBlocks for a read of rng of st, 0 for an
+// uncompressed object or a read readObject refuses.
+func decoderHold(st *op.ObjectState, rng op.ByteRange) uint64 {
+	ci := st.Compression
+	if ci == nil || ci.Type == compression.None || rng.Length == 0 ||
+		rng.Offset > ci.OrigSize || rng.Length > ci.OrigSize-rng.Offset {
+		return 0
+	}
+	win, err := compressedWindow(st, rng)
+	if err != nil {
+		return 0
+	}
+	return decodeBlocks(ci, win)
 }
 
 // decoding is the writer a compressed object's stored bytes go to: the
@@ -137,7 +191,8 @@ func decodeErr(st *op.ObjectState, err error) error {
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5067,
 // Read::iterate at v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5338).
-func (s *Store) readStored(ctx context.Context, st *op.ObjectState, ofs, n uint64, w io.Writer) error {
+// Its read buffers draw on mem.
+func (s *Store) readStored(ctx context.Context, st *op.ObjectState, ofs, n uint64, w io.Writer, mem *memStage) error {
 	if n == 0 {
 		return nil
 	}
@@ -149,7 +204,7 @@ func (s *Store) readStored(ctx context.Context, st *op.ObjectState, ofs, n uint6
 			return manifestErr(st, err)
 		}
 	}
-	return s.stream(ctx, st, ofs, n, w)
+	return s.stream(ctx, st, ofs, n, w, mem)
 }
 
 // piece is one RADOS read: iterate_obj's (read_obj, obj_ofs, read_ofs, len,
@@ -286,9 +341,10 @@ type result struct {
 	// from the prefetch or read into a buffer of its own.
 	buf *[]byte
 	// window is the piece's share of the window, its buffer's size, held
-	// until it is written.
-	window int64
-	done   chan struct{}
+	// until it is written, and share its share of the memory budget, held as
+	// long.
+	window, share int64
+	done          chan struct{}
 }
 
 // stream is Read::iterate with get_obj_iterate_cb and get_obj_data::flush:
@@ -300,10 +356,13 @@ type result struct {
 // as in radosgw's throttle; so the buffers a request holds, the completions
 // waiting on a slow earlier piece's among them, stay within the window. A
 // buffer is at most rgw_get_obj_max_req_size, which Open keeps within the
-// window, so a piece always fits. After a failure nothing more is written,
-// and stream waits for every read it issued before it returns, as
-// get_obj_data::cancel drains them.
-func (s *Store) stream(ctx context.Context, st *op.ObjectState, ofs, n uint64, w io.Writer) error {
+// window, so a piece always fits. Each buffer also takes its share of the
+// memory budget from mem once the window has room for it, and the delivery
+// loop, which never draws, gives both back. After a failure nothing more is
+// written, and stream waits for every read it issued before it returns, as
+// get_obj_data::cancel drains them. A panic in the sink, which the request's
+// recovery survives, gives back the shares of every result not yet written.
+func (s *Store) stream(ctx context.Context, st *op.ObjectState, ofs, n uint64, w io.Writer, mem *memStage) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	window := semaphore.NewWeighted(toInt64(s.readCfg.window))
@@ -313,11 +372,29 @@ func (s *Store) stream(ctx context.Context, st *op.ObjectState, ofs, n uint64, w
 	go func() {
 		defer close(results)
 		walked <- s.walk(st, ofs, n, func(p piece) error {
-			return s.issue(ctx, st, p, window, &reads, results)
+			return s.issue(ctx, st, p, window, mem, &reads, results)
 		})
+	}()
+	// cur is the result being written, nil once its share is given back;
+	// a panic unwinds past it with the rest of the queue still to drain.
+	var cur *result
+	drained := false
+	defer func() {
+		if drained {
+			return
+		}
+		cancel()
+		if cur != nil {
+			mem.give(cur.share)
+		}
+		for r := range results {
+			<-r.done
+			mem.give(r.share)
+		}
 	}()
 	var failed error
 	for r := range results {
+		cur = r
 		<-r.done
 		if failed == nil {
 			if failed = deliver(st, r, w); failed != nil {
@@ -327,8 +404,11 @@ func (s *Store) stream(ctx context.Context, st *op.ObjectState, ofs, n uint64, w
 		if r.window > 0 {
 			window.Release(r.window)
 		}
+		mem.give(r.share)
+		cur = nil
 		s.recycle(r)
 	}
+	drained = true
 	reads.Wait()
 	if failed != nil {
 		return failed
@@ -338,25 +418,32 @@ func (s *Store) stream(ctx context.Context, st *op.ObjectState, ofs, n uint64, w
 
 // issue queues p's result: from the prefetch for the head bytes it holds, as
 // get_obj_iterate_cb serves them, and otherwise from a read started once the
-// window has room for it.
-func (s *Store) issue(ctx context.Context, st *op.ObjectState, p piece, window *semaphore.Weighted, reads *sync.WaitGroup, results chan<- *result) error {
+// window has room for it and mem has its share.
+func (s *Store) issue(ctx context.Context, st *op.ObjectState, p piece, window *semaphore.Weighted, mem *memStage, reads *sync.WaitGroup, results chan<- *result) error {
 	if have := uint64(len(st.Head)); p.inHead && p.objOfs < have {
 		k := min(have-p.objOfs, p.n)
 		served := p
 		served.n = k
 		done := make(chan struct{})
 		close(done)
+		mem.servedHead()
 		results <- &result{p: served, data: st.Head[p.objOfs : p.objOfs+k], done: done}
 		if k == p.n {
 			return nil
 		}
 		p.objOfs, p.ofs, p.n = p.objOfs+k, p.ofs+k, p.n-k
 	}
-	weight := toInt64(s.readBufLen(p.n))
+	n := s.readBufLen(p.n)
+	weight := toInt64(n)
 	if err := window.Acquire(ctx, weight); err != nil {
 		return err
 	}
-	r := &result{p: p, window: weight, done: make(chan struct{})}
+	share, err := mem.piece(ctx, n)
+	if err != nil {
+		window.Release(weight)
+		return err
+	}
+	r := &result{p: p, window: weight, share: share, done: make(chan struct{})}
 	reads.Go(func() {
 		defer close(r.done)
 		var buf []byte

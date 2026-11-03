@@ -177,7 +177,7 @@ var _ = Describe("multipart layout", func() {
 		Expect(err).To(MatchError(op.ErrInvalidArgument))
 	})
 
-	It("reads the meta object in one op composing version, xattrs, stat and the first chunk", func(ctx SpecContext) {
+	It("reads the meta object in one op composing version, xattrs, stat and its first 4 KiB", func(ctx SpecContext) {
 		cold := meta.PlacementRule{Name: "default-placement", StorageClass: "COLD"}
 		seedMeta(ctx, c, rec, "multipart.bin", "2~AkTb", cold, attrsWithACL(initiator), &version.ObjVersion{Ver: 3, Tag: "t"})
 		c.Object(extraPoolName, "", metaOID(rec, "multipart.bin", "2~AkTb")).Xattrs["user.other"] = []byte("x")
@@ -196,7 +196,7 @@ var _ = Describe("multipart layout", func() {
 		Expect(steps[2]).To(BeAssignableToTypeOf(&radosclient.StatStep{}))
 		Expect(steps[3]).To(BeAssignableToTypeOf(&radosclient.ReadStep{}))
 		Expect(steps[3]).To(HaveField("Offset", BeZero()))
-		Expect(steps[3]).To(HaveField("Length", BeEquivalentTo(4<<20)), "raw_obj_stat's first chunk, rgw_max_chunk_size")
+		Expect(steps[3]).To(HaveField("Length", BeEquivalentTo(4<<10)), "metaReadSize, where raw_obj_stat reads rgw_max_chunk_size")
 		Expect(st.Info.DestPlacement).To(Equal(cold))
 		Expect(st.Version).To(Equal(version.ObjVersion{Ver: 3, Tag: "t"}))
 		Expect(st.Attrs).To(HaveKey(meta.AttrACL))
@@ -204,6 +204,72 @@ var _ = Describe("multipart layout", func() {
 		Expect(st.Attrs).NotTo(HaveKey(version.XattrName))
 		Expect(st.Size).To(BeEquivalentTo(len(encode(meta.MultipartUploadInfo{DestPlacement: cold}))))
 		Expect(st.Mtime).To(Equal(c.Object(extraPoolName, "", oid).Mtime))
+	})
+
+	It("fits the longest info radosgw writes, on either release, in the first read's 4 KiB", func(ctx SpecContext) {
+		rule := meta.PlacementRule{Name: "default-placement", StorageClass: "COLD"}
+		info := meta.MultipartUploadInfo{
+			DestPlacement: rule,
+			Retention:     &meta.ObjectRetention{Mode: "GOVERNANCE", RetainUntil: time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)},
+			LegalHold:     &meta.ObjectLegalHold{Status: "OFF"},
+			CksumType:     1, CksumFlags: 1,
+		}
+		for rel, fixed := range map[denc.Release]int{denc.Squid: 61, denc.Tentacle: 65} {
+			e := denc.NewEncoder()
+			info.Encode(e, rel)
+			Expect(e.Bytes()).To(HaveLen(fixed+len(rule.String())), "metaReadSize's sum on %v", rel)
+		}
+		oid := metaOID(rec, "k", "2~x")
+		seedMeta(ctx, c, rec, "k", "2~x", rule, attrsWithACL(initiator), nil)
+		c.ResetCounters()
+		Expect(s.ReadMetaForTest(ctx, rec, meta.ObjKey{Name: "k"}, "2~x")).Error().NotTo(HaveOccurred())
+		Expect(c.Reads(extraPoolName, "", oid)).To(Equal(1))
+	})
+
+	DescribeTable("reads a meta object longer than its first read again, by the same op, into a buffer the memory budget counts",
+		func(ctx SpecContext, class string, tail int, chunked bool) {
+			rule := meta.PlacementRule{Name: "default-placement", StorageClass: class}
+			oid := metaOID(rec, "k", "2~x")
+			seedMeta(ctx, c, rec, "k", "2~x", rule, attrsWithACL(initiator), nil)
+			o := c.Object(extraPoolName, "", oid)
+			o.Data = append(o.Data, make([]byte, tail)...)
+			length := len(o.Data)
+			if chunked {
+				length = 4 << 20
+			}
+			reads := 0
+			var held []int64
+			st := s
+			c.BeforeRead(extraPoolName, "", oid, func() {
+				reads++
+				held = append(held, st.MemoryBudgetStats().PieceHeld)
+			})
+			got, err := s.ReadMetaForTest(ctx, rec, meta.ObjKey{Name: "k"}, "2~x")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.Info.DestPlacement).To(Equal(rule), "decoded the same")
+			Expect(reads).To(Equal(2))
+			steps := c.LastRead(extraPoolName, "", oid).Steps()
+			Expect(steps).To(HaveLen(4), "version, xattrs, stat and the read again")
+			Expect(steps[3]).To(HaveField("Length", BeEquivalentTo(length)))
+			Expect(held).To(HaveExactElements(BeZero(), BeEquivalentTo(length)), "the first read draws nothing, the second its buffer")
+			Expect(s.MemoryBudgetStats().PieceHeld).To(BeZero())
+		},
+		Entry("whole, an info whose storage class is longer than 4 KiB", strings.Repeat("C", 5000), 0, false),
+		Entry("up to rgw_max_chunk_size, as raw_obj_stat reads it, bytes past the info", "COLD", 5<<20, true),
+	)
+
+	It("makes a long meta object's second read wait for the memory budget, and answers it SlowDown", func(ctx SpecContext) {
+		oid := metaOID(rec, "k", "2~x")
+		seedMeta(ctx, c, rec, "k", "2~x", meta.PlacementRule{Name: "default-placement"}, attrsWithACL(initiator), nil)
+		o := c.Object(extraPoolName, "", oid)
+		o.Data = append(o.Data, make([]byte, 8<<10)...)
+		s.SetMemoryBudgetForTest(64<<20, 50*time.Millisecond)
+		DeferCleanup(s.FillMemoryBudgetForTest())
+		c.ResetCounters()
+		_, err := s.ReadMetaForTest(ctx, rec, meta.ObjKey{Name: "k"}, "2~x")
+		Expect(err).To(MatchError(op.ErrSlowDown))
+		Expect(c.Reads(extraPoolName, "", oid)).To(Equal(1), "the first read alone")
+		Expect(s.MemoryBudgetStats().PieceSlowdowns).To(BeEquivalentTo(1))
 	})
 
 	It("reads a meta object without a version as version zero", func(ctx SpecContext) {

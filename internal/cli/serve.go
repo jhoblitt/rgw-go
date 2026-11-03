@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -53,6 +54,9 @@ func newServeCmd(v *viper.Viper) *cobra.Command {
 	f.Float64("memory-limit-ratio", memlimit.DefaultRatio,
 		"share of the cgroup v2 memory limit to set the Go runtime's soft memory limit to, 0 for none; "+
 			"a GOMEMLIMIT in the environment is used instead (RGW_GO_MEMORY_LIMIT_RATIO)")
+	f.Float64("memory-budget-ratio", driver.DefaultMemoryBudgetRatio,
+		"share of the Go memory limit, or of 80% of physical memory without one, that the buffers of object data "+
+			"may hold before requests wait, above 0 and at most 1 (RGW_GO_MEMORY_BUDGET_RATIO)")
 	return cmd
 }
 
@@ -65,9 +69,14 @@ type serveSettings struct {
 	// that is not a number as 0, which would turn the limit off unannounced.
 	memoryLimitArg   string
 	memoryLimitRatio float64
+	// memoryBudgetArg is --memory-budget-ratio as viper's string, parsed into
+	// memoryBudgetRatio for the same reason.
+	memoryBudgetArg   string
+	memoryBudgetRatio float64
 }
 
-// validate checks s and returns it with its memory limit ratio parsed.
+// validate checks s and returns it with its memory limit and memory budget
+// ratios parsed.
 func (s serveSettings) validate() (serveSettings, error) {
 	switch s.mode {
 	case goceph.ModeSync, goceph.ModeCallback, goceph.ModePipe:
@@ -79,6 +88,14 @@ func (s serveSettings) validate() (serveSettings, error) {
 		return s, fmt.Errorf("--memory-limit-ratio %w", err)
 	}
 	s.memoryLimitRatio = r
+	b, err := memlimit.ParseRatio(s.memoryBudgetArg)
+	switch {
+	case err != nil:
+		return s, fmt.Errorf("--memory-budget-ratio %w", err)
+	case b == 0:
+		return s, fmt.Errorf("--memory-budget-ratio %q would leave the buffers unbounded; it takes a number above 0 and at most 1", s.memoryBudgetArg)
+	}
+	s.memoryBudgetRatio = b
 	return s, nil
 }
 
@@ -99,13 +116,14 @@ var errNoArguments = errors.New("-h or --help for usage")
 // which may print the version and exit, then the gateway.
 func serve(ctx context.Context, v *viper.Viper, stdout io.Writer, args []string) error {
 	s := serveSettings{
-		metricsAddr:    v.GetString("metrics-addr"),
-		mode:           goceph.Mode(v.GetString("rados-completions")),
-		memoryLimitArg: v.GetString("memory-limit-ratio"),
+		metricsAddr:     v.GetString("metrics-addr"),
+		mode:            goceph.Mode(v.GetString("rados-completions")),
+		memoryLimitArg:  v.GetString("memory-limit-ratio"),
+		memoryBudgetArg: v.GetString("memory-budget-ratio"),
 	}
 	slog.DebugContext(ctx, "serve settings",
 		slog.String("metrics_addr", s.metricsAddr), slog.String("rados_completions", string(s.mode)),
-		slog.String("memory_limit_ratio", s.memoryLimitArg))
+		slog.String("memory_limit_ratio", s.memoryLimitArg), slog.String("memory_budget_ratio", s.memoryBudgetArg))
 	if len(args) == 0 {
 		return errNoArguments
 	}
@@ -175,6 +193,9 @@ rgw-go logs to stderr and takes its own settings from the environment:
   RGW_GO_MEMORY_LIMIT_RATIO  Go memory limit as a share of the cgroup's, 0 for none
                              (default ` + strconv.FormatFloat(memlimit.DefaultRatio, 'g', -1, 64) +
 	`); a set GOMEMLIMIT is used instead
+  RGW_GO_MEMORY_BUDGET_RATIO share of the Go memory limit that object data buffers
+                             hold before requests wait, above 0 and at most 1
+                             (default ` + strconv.FormatFloat(driver.DefaultMemoryBudgetRatio, 'g', -1, 64) + `)
 `
 
 // envToVec is ceph's env_to_vec for a set CEPH_ARGS
@@ -235,7 +256,7 @@ var privilegeOptions = []string{"setuser", "setgroup", "setuser_match_path"}
 // limit first, so that the limit holds for everything the gateway
 // allocates.
 func (s serveSettings) run(ctx context.Context, early cephconf.EarlyArgs) (err error) {
-	processSizer().Size(ctx, s.memoryLimitRatio)
+	limit := processSizer().Size(ctx, s.memoryLimitRatio)
 	cfg := goceph.Config{
 		Cluster:      early.Cluster,
 		Name:         early.Name,
@@ -281,7 +302,7 @@ func (s serveSettings) run(ctx context.Context, early cephconf.EarlyArgs) (err e
 		slog.WarnContext(ctx, "ignoring frontends", slog.Any("frontends", others))
 	}
 
-	dopts, err := DriverOptions(conf)
+	dopts, err := DriverOptions(ctx, conf, limit, s.memoryBudgetRatio)
 	if err != nil {
 		return err
 	}
@@ -291,7 +312,7 @@ func (s serveSettings) run(ctx context.Context, early cephconf.EarlyArgs) (err e
 	}
 	defer func() { err = errors.Join(err, store.Close()) }()
 	reg := metrics.New()
-	if err = watchRADOS(reg, s.mode, cluster); err != nil {
+	if err = watchStore(reg, s.mode, cluster, store); err != nil {
 		return fmt.Errorf("watching rados metrics: %w", err)
 	}
 	zone := store.Zone()
@@ -361,15 +382,24 @@ type Gateway struct {
 }
 
 // DriverOptions are the options serve opens the store with: the cap on the
-// requests the gateway admits, rgw_max_concurrent_requests, which the
-// store's body budget keeps a piece for each of. NewGateway takes its cap
-// back from the store, so the two are one value.
-func DriverOptions(conf *cephconf.Options) (driver.Options, error) {
+// requests the gateway admits, rgw_max_concurrent_requests, which NewGateway
+// takes back from the store, so the two are one value; and the memory
+// budget's sizing, from the Go memory limit memlimit left and the budget's
+// ratio. A limit of 0 or less, which GOMEMLIMIT=0 or a cgroup limit that
+// scales to nothing leaves, is logged and taken as no limit, so the budget
+// is sized from physical memory: serve never opens the driver without one.
+func DriverOptions(ctx context.Context, conf *cephconf.Options, limit memlimit.Result, budgetRatio float64) (driver.Options, error) {
 	maxConcurrent, err := conf.Int64("rgw_max_concurrent_requests")
 	if err != nil {
 		return driver.Options{}, fmt.Errorf("reading rgw_max_concurrent_requests: %w", err)
 	}
-	return driver.Options{MaxConcurrentRequests: maxConcurrent}, nil
+	memLimit := limit.Limit
+	if memLimit <= 0 {
+		slog.WarnContext(ctx, "the go memory limit is not positive; sizing the memory budget from physical memory",
+			slog.Int64("memory_limit_bytes", memLimit))
+		memLimit = math.MaxInt64
+	}
+	return driver.Options{MaxConcurrentRequests: maxConcurrent, MemoryLimit: memLimit, MemoryBudgetRatio: budgetRatio}, nil
 }
 
 // gatewayStore is what the S3 handler's options come from besides the
@@ -473,6 +503,16 @@ func serveAndRun(gctx context.Context, g *errgroup.Group, serve, run func(contex
 // errNoStats is a RADOS client without the stats the rgw_go_rados_* metrics
 // report.
 var errNoStats = errors.New("the rados client reports no stats")
+
+// watchStore reports c's RADOS stats under mode and store's memory budget
+// in reg.
+func watchStore(reg *metrics.Registry, mode goceph.Mode, c radosclient.Cluster, store metrics.MemoryBudgetReporter) error {
+	if err := watchRADOS(reg, mode, c); err != nil {
+		return err
+	}
+	reg.WatchMemoryBudget(store)
+	return nil
+}
 
 // watchRADOS reports c's RADOS stats in reg under mode.
 func watchRADOS(reg *metrics.Registry, mode goceph.Mode, c radosclient.Cluster) error {

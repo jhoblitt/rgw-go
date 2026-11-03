@@ -2,8 +2,12 @@ package cli_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +26,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/cli"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/driver"
+	"github.com/jhoblitt/rgw-go/internal/memlimit"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/metrics"
 	"github.com/jhoblitt/rgw-go/internal/op"
@@ -488,7 +493,7 @@ var _ = Describe("S3Config", func() {
 		Entry("names joined with a space", "web.a.com web.b.com"),
 	)
 
-	It("caps the requests it admits at the cap the store keeps the body budget for, not at a second read of the option", func() {
+	It("caps the requests it admits at the cap the store was opened with, not at a second read of the option", func() {
 		opts["rgw_max_concurrent_requests"] = "2"
 		cfg, err := cli.S3Config(cephconf.NewOptions(opts), cli.GatewayStoreForTest(zi, 1024), 4107)
 		Expect(err).NotTo(HaveOccurred())
@@ -548,14 +553,40 @@ var _ = Describe("S3Config", func() {
 })
 
 var _ = Describe("DriverOptions", func() {
-	It("passes rgw_max_concurrent_requests to the driver as the cap on the requests the gateway admits", func() {
-		o, err := cli.DriverOptions(cephconf.NewOptions(cephconf.MapGetter{"rgw_max_concurrent_requests": "1024"}))
+	conf := func() *cephconf.Options {
+		return cephconf.NewOptions(cephconf.MapGetter{"rgw_max_concurrent_requests": "1024"})
+	}
+
+	It("passes the request cap, the Go memory limit and the budget's ratio to the driver", func(ctx SpecContext) {
+		o, err := cli.DriverOptions(ctx, conf(), memlimit.Result{Limit: 1 << 30}, 0.25)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(o).To(Equal(driver.Options{MaxConcurrentRequests: 1024}))
+		Expect(o).To(Equal(driver.Options{MaxConcurrentRequests: 1024, MemoryLimit: 1 << 30, MemoryBudgetRatio: 0.25}))
 	})
 
-	It("names the option when it cannot read it", func() {
-		_, err := cli.DriverOptions(cephconf.NewOptions(cephconf.MapGetter{"rgw_max_concurrent_requests": "lots"}))
+	It("passes no limit as no limit, which sizes the budget from physical memory", func(ctx SpecContext) {
+		o, err := cli.DriverOptions(ctx, conf(), memlimit.Result{Limit: math.MaxInt64}, 0.5)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(o.MemoryLimit).To(BeEquivalentTo(int64(math.MaxInt64)))
+	})
+
+	DescribeTable("takes a limit of 0 or less as no limit, with a warning naming it, so the budget is never off",
+		func(ctx SpecContext, limit int64) {
+			var logs bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+			defer slog.SetDefault(prev)
+			o, err := cli.DriverOptions(ctx, conf(), memlimit.Result{Limit: limit}, 0.5)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(o.MemoryLimit).To(BeEquivalentTo(int64(math.MaxInt64)), "the physical memory stand-in")
+			Expect(logs.String()).To(ContainSubstring(`"level":"WARN"`))
+			Expect(logs.String()).To(ContainSubstring(fmt.Sprintf(`"memory_limit_bytes":%d`, limit)))
+		},
+		Entry("GOMEMLIMIT=0", int64(0)),
+		Entry("a negative limit", int64(-1)),
+	)
+
+	It("names the option when it cannot read it", func(ctx SpecContext) {
+		_, err := cli.DriverOptions(ctx, cephconf.NewOptions(cephconf.MapGetter{"rgw_max_concurrent_requests": "lots"}), memlimit.Result{Limit: 1 << 30}, 0.5)
 		Expect(err).To(MatchError(HavePrefix("reading rgw_max_concurrent_requests: ")))
 	})
 })
@@ -625,6 +656,25 @@ var _ = Describe("WatchRADOS", func() {
 		err := cli.WatchRADOS(metrics.New(), goceph.ModeCallback, new(radosclientfakes.FakeCluster))
 		Expect(err).To(MatchError(cli.ErrNoStats))
 		Expect(err).To(MatchError(ContainSubstring("FakeCluster")))
+	})
+})
+
+// budgetStore is a store that reports a memory budget of size bytes.
+type budgetStore struct{ size int64 }
+
+func (b budgetStore) MemoryBudgetStats() driver.MemoryBudgetStats {
+	return driver.MemoryBudgetStats{Size: b.size}
+}
+
+var _ = Describe("WatchStore", func() {
+	It("reports the cluster's RADOS stats and the store's memory budget", func(ctx SpecContext) {
+		reg := metrics.New()
+		c := statsCluster{FakeCluster: new(radosclientfakes.FakeCluster), stats: radosclient.Stats{InflightOps: 3}}
+		Expect(cli.WatchStore(reg, goceph.ModePipe, c, budgetStore{size: 1 << 20})).To(Succeed())
+		rec := httptest.NewRecorder()
+		reg.Handler().ServeHTTP(rec, httptest.NewRequestWithContext(ctx, http.MethodGet, "/metrics", nil))
+		Expect(rec.Body.String()).To(ContainSubstring(`rgw_go_rados_ops_in_flight{mode="pipe"} 3`))
+		Expect(rec.Body.String()).To(ContainSubstring(`rgw_go_memory_budget_bytes{class="total"} 1.048576e+06`))
 	})
 })
 

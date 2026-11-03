@@ -63,9 +63,18 @@ func (s *Store) headState(ctx context.Context, rec *op.BucketRecord, key meta.Ob
 		return nil, err
 	}
 	if _, olh := st.Attrs[meta.AttrOLHVer]; olh && key.Instance == meta.NullInstance && st.Manifest == nil {
+		dropHead(st)
 		return &op.ObjectState{Bucket: rec, Key: key}, nil
 	}
 	return st, nil
+}
+
+// dropHead gives back the memory budget's share for st's prefetched head,
+// a state the caller discards.
+func dropHead(st *op.ObjectState) {
+	if st.HeadRelease != nil {
+		st.HeadRelease()
+	}
 }
 
 // followHead is get_olh_target_state
@@ -99,21 +108,26 @@ func (s *Store) followHead(ctx context.Context, rec *op.BucketRecord, head *op.O
 			found = fresh
 			return errNotOLH
 		}
+		dropHead(h)
 		*h = *fresh
 		return nil
 	}
 	target, deleteMarker, err := s.followOLH(ctx, head, update)
 	switch {
 	case errors.Is(err, errNotOLH):
+		dropHead(head)
 		return found, nil
 	case errors.Is(err, radosclient.ErrNotFound):
+		dropHead(head)
 		return &op.ObjectState{Bucket: rec, Key: head.Key, DeleteMarker: deleteMarker}, nil
 	case err != nil:
+		dropHead(head)
 		return nil, err
 	}
 	if target == head.Key {
 		return head, nil
 	}
+	dropHead(head)
 	return s.headState(ctx, rec, target, prefetch)
 }
 
@@ -229,7 +243,13 @@ func (s *Store) readOLHHead(ctx context.Context, rec *op.BucketRecord, key meta.
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L6120-L6297 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6874-L7051 at v20.2.4):
 // one RADOS op that reads the head's version, every xattr, the stat and,
-// with prefetch, its first rgw_max_chunk_size bytes.
+// with prefetch, its first rgw_max_chunk_size bytes. A prefetch reads only
+// while the memory budget has room for it now; without room the state has no
+// Head, as a stat's has not, and a read takes the head's bytes with its data.
+// The copy of the bytes keeps its share of the budget for as long as the
+// request may hold the state, which it does to its end: until ctx ends, or
+// until the driver discards the state (st.HeadRelease). Writing the head to
+// the client gives nothing back, since the copy stays live.
 func (s *Store) statHead(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, prefetch bool) (*op.ObjectState, error) {
 	ref, err := s.headRef(ctx, rec, key)
 	if errors.Is(err, radosclient.ErrNotFound) {
@@ -249,13 +269,18 @@ func (s *Store) statHead(ctx context.Context, rec *op.BucketRecord, key meta.Obj
 	xattrs := rop.GetXattrs()
 	stat := rop.Stat()
 	var (
-		buf *[]byte
-		rd  *radosclient.ReadResult
+		buf   *[]byte
+		rd    *radosclient.ReadResult
+		share int64
 	)
 	if prefetch {
-		buf = s.headBuf()
-		rd = rop.ReadInto(0, *buf)
+		var ok bool
+		if share, ok = s.mem.tryPrefetch(s.readCfg.chunk); ok {
+			buf = s.headBuf()
+			rd = rop.ReadInto(0, *buf)
+		}
 	}
+	defer func() { s.mem.release(memPrefetch, share) }()
 	ver, err := ref.pool.Read(ctx, ref.oid, rop, radosclient.OpFlagNone)
 	if buf != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		// An op abandoned to its context may still fill the buffer, so only
@@ -282,8 +307,12 @@ func (s *Store) statHead(ctx context.Context, rec *op.BucketRecord, key meta.Obj
 	st.Attrs = filterAttrs(xattrs.Xattrs)
 	if rd != nil {
 		st.Head = slices.Clone(rd.Data[:rd.N])
+		kept := min(share, int64(len(st.Head)))
+		st.HeadRelease = s.mem.prefetchRelease(ctx, kept)
+		share -= kept
 	}
 	if err := decodeState(ctx, st); err != nil {
+		dropHead(st)
 		return nil, err
 	}
 	return st, nil

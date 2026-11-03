@@ -24,8 +24,16 @@ type Options struct {
 	Release *denc.Release
 	// MaxConcurrentRequests is the cap on the requests the gateway admits at
 	// once, rgw_max_concurrent_requests as the gateway reads it; 0 or less
-	// is no cap. The body budget keeps a piece for each request it admits.
+	// is no cap.
 	MaxConcurrentRequests int64
+	// MemoryLimit is the Go memory limit the memory budget is sized from,
+	// math.MaxInt64 when none is in force, which sizes it from physical
+	// memory. 0 or less leaves the data path without a budget, for specs
+	// only: serve takes a limit of 0 or less as none (cli.DriverOptions).
+	MemoryLimit int64
+	// MemoryBudgetRatio is the share of MemoryLimit the budget takes, in
+	// (0, 1]; 0 is DefaultMemoryBudgetRatio.
+	MemoryBudgetRatio float64
 }
 
 // Store is the RADOS driver: one type implementing every store interface in
@@ -46,8 +54,10 @@ type Store struct {
 	sysobj  *sysobjs
 	readCfg readConfig
 	w       *writer
-	mp      mpOptions
-	lc      lcIndex
+	// mem is the memory budget every buffer of object data draws on.
+	mem *memBudget
+	mp  mpOptions
+	lc  lcIndex
 	// condSleep, when set, is how a conditional link waits out a backoff
 	// (waitOLHPending); sleepCtx when nil.
 	condSleep func(ctx context.Context, d time.Duration) error
@@ -152,6 +162,7 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 	s := &Store{
 		cluster: cluster, conf: conf, opts: opts, release: release, zone: zc, names: names, roots: roots, pools: pools, sysobj: sys, readCfg: readCfg,
 		mp: mp, lc: newLCIndex(), newTicker: newTimeTicker, tailBufs: new(sync.Pool),
+		mem: newMemBudget(memoryBudgetSize(ctx, o.MemoryLimit, o.MemoryBudgetRatio, memBudgetFloor(readCfg, wopts), physicalMemory), memStartWait),
 	}
 	s.heads = unfollowedHeads{s}
 	s.bgAIO = semaphore.NewWeighted(int64(opts.bucketIndexMaxAIO))
@@ -183,7 +194,7 @@ func openZone(ctx context.Context, conf *cephconf.Options, pools *poolCache, nam
 }
 
 // MaxConcurrentRequests is the cap on the requests the gateway admits that
-// Open was given, which the body budget keeps a piece for each of.
+// Open was given.
 func (s *Store) MaxConcurrentRequests() int64 { return s.w.opts.maxRequests }
 
 // Close cancels the stats caches' refreshes under way and waits for them,

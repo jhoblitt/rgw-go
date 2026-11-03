@@ -506,6 +506,86 @@ var _ = Describe("Complete", func() {
 		}
 	})
 
+	Describe("under a spent memory budget", func() {
+		// spend takes all the room s's memory budget has, whose starting
+		// draws wait 50 ms, until the spec ends or release gives it back.
+		var release func()
+		spend := func() {
+			release = s.FillMemoryBudgetForTest()
+			DeferCleanup(func() { release() })
+		}
+		// unmoved checks that nothing drew on the budget since spend: it
+		// holds what spend took, never held more, and no draw waited.
+		unmoved := func() {
+			GinkgoHelper()
+			b := s.MemoryBudgetForTest()
+			Expect(b.Held).To(Equal(b.Size))
+			Expect(b.Peak).To(Equal(b.Size), "nothing taken past the budget")
+			Expect(s.MemoryBudgetStats().PieceWaits).To(BeZero())
+		}
+		BeforeEach(func() { s.SetMemoryBudgetForTest(64<<20, 50*time.Millisecond) })
+
+		It("finds an upload and lists its parts without drawing on the budget", func(ctx SpecContext) {
+			up, _ := uploadWithParts(ctx, 5<<20, 5<<20)
+			spend()
+			got, err := s.GetUpload(ctx, rec, key, up.ID)
+			Expect(err).NotTo(HaveOccurred())
+			res, err := s.ListParts(ctx, got, 0, 1000)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.Parts).To(HaveLen(2))
+			unmoved()
+		})
+
+		It("aborts an upload without drawing on the budget", func(ctx SpecContext) {
+			up, _ := uploadWithParts(ctx, 5<<20)
+			spend()
+			Expect(s.Abort(ctx, up)).To(Succeed())
+			Expect(c.Object(extraPoolName, "", metaOID(rec, "k", up.ID))).To(BeNil())
+			unmoved()
+		})
+
+		It("completes an upload without drawing on the budget", func(ctx SpecContext) {
+			up, etags := uploadWithParts(ctx, 5<<20, 5<<20)
+			spend()
+			res, err := s.Complete(ctx, up, completeParts(etags))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.Size).To(BeEquivalentTo(10 << 20))
+			Expect(c.Object(extraPoolName, "", metaOID(rec, "k", up.ID))).To(BeNil())
+			unmoved()
+		})
+
+		It("retries the meta object's removal after a racing part without drawing on the budget", func(ctx SpecContext) {
+			up, etags := uploadWithParts(ctx, 5<<20, 5<<20)
+			mOID := metaOID(rec, "k", up.ID)
+			raced := false
+			cl, st, head := c, s, headOID
+			cl.BeforeWrite(extraPoolName, "", mOID, func(*fakerados.Object) {
+				if !raced && cl.Object(testDataPool, "", head) != nil {
+					raced = true
+					// The racing part has room of its own, and the budget is
+					// spent again before the retry reads the meta object.
+					release()
+					_, err := st.PutPart(ctx, up, 3, bytes.NewReader(bytes.Repeat([]byte("z"), 5<<20)), op.PutParams{Attrs: partAttrs(), Size: 5 << 20})
+					Expect(err).NotTo(HaveOccurred())
+					release = st.FillMemoryBudgetForTest()
+				}
+			})
+			spend()
+			_, err := s.Complete(ctx, up, completeParts(etags))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(raced).To(BeTrue())
+			Expect(c.Object(extraPoolName, "", mOID)).To(BeNil(), "the second removal succeeded")
+			unmoved()
+		})
+
+		It("makes a part upload wait, and answers it SlowDown", func(ctx SpecContext) {
+			up, _ := uploadWithParts(ctx, 5<<20)
+			spend()
+			_, err := s.PutPart(ctx, up, 2, bytes.NewReader(bytes.Repeat([]byte("z"), 5<<20)), op.PutParams{Attrs: partAttrs(), Size: 5 << 20})
+			Expect(err).To(MatchError(op.ErrSlowDown))
+		})
+	})
+
 	Describe("conditions and refused head writes", func() {
 		It("refuses If-None-Match: * over an existing key before writing, leaving every part and its history in place", func(ctx SpecContext) {
 			_, err := s.PutObject(ctx, rec, key, strings.NewReader("old"), op.PutParams{Attrs: attrsWithACL(alice), Size: 3, Tag: "t"})

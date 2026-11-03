@@ -163,6 +163,8 @@ type tailWriter struct {
 	chunk uint64
 	sem   *semaphore.Weighted // the put window, in bytes
 	wg    sync.WaitGroup
+	// mem is the memory budget stage the writer's pieces draw on.
+	mem *memStage
 
 	// namer names stripe n; nil is m.TailObj. A part writer names stripe 0
 	// the part head, "<prefix>.<part>", and the rest its shadow stripes,
@@ -198,6 +200,7 @@ func (s *Store) newTailWriter(m *meta.Manifest, l layout) *tailWriter {
 	return &tailWriter{
 		s: s, m: m, pool: l.tailPool, chunk: l.chunk,
 		sem: semaphore.NewWeighted(int64(s.w.opts.putWindow)), //nolint:gosec // rgw_put_obj_min_window_size is a size, far below 2^63
+		mem: s.mem.newStage(),
 	}
 }
 
@@ -211,10 +214,10 @@ func (s *Store) newPartWriter(m *meta.Manifest, l layout, n uint32) *tailWriter 
 	return t
 }
 
-// buf takes a buffer of one chunk once its share of the body budget is
+// buf takes a buffer of one chunk once its share of the memory budget is
 // taken, waiting on ctx.
 func (t *tailWriter) buf(ctx context.Context) (*[]byte, error) {
-	if _, err := t.s.w.body.acquire(ctx, t.chunk); err != nil {
+	if _, err := t.mem.piece(ctx, t.chunk); err != nil {
 		return nil, err
 	}
 	p := t.tailBuf(t.chunk)
@@ -246,7 +249,7 @@ func (t *tailWriter) tailBuf(n uint64) *[]byte {
 }
 
 // hold counts p among the buffers the writer holds. Every one of them
-// carries its share of the body budget, taken before it was read into, which
+// carries its share of the memory budget, taken before it was read into, which
 // release gives back.
 func (t *tailWriter) hold(p *[]byte) {
 	t.mu.Lock()
@@ -255,7 +258,7 @@ func (t *tailWriter) hold(p *[]byte) {
 	t.peak = max(t.peak, t.held)
 }
 
-// release hands p back for the next piece, and its share of the body budget;
+// release hands p back for the next piece, and its share of the memory budget;
 // pool is false for a buffer that is dropped instead: one an abandoned write
 // may still read, one a panicking write or body reader left, and a piece
 // stream gives up after a read error or EntityTooLarge, whose one deferred
@@ -269,7 +272,7 @@ func (t *tailWriter) release(p *[]byte, pool bool) {
 	t.mu.Lock()
 	t.held -= uint64(cap(*p))
 	t.mu.Unlock()
-	t.s.w.body.release(t.s.w.body.share(uint64(cap(*p))))
+	t.mem.give(t.mem.b.share(memPiece, uint64(cap(*p))))
 	if pool && uint64(cap(*p)) == t.chunk {
 		t.s.tailBufs.Put(p)
 	}
@@ -463,22 +466,25 @@ func (t *tailWriter) consume(ctx context.Context, r io.Reader, declared int64) (
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L476-L478 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L510-L512 at v20.2.4),
 // until it is whole or the body ends, then hands it to process_first_chunk.
-// The stripe takes its room in the put window and its share of the body
-// budget before it is read, and is read into a buffer sized as readHead sizes
-// the head, so a small part costs no whole stripe and no part holds more than
-// the window and one byte.
+// The stripe takes its share of the memory budget before it is read, and its
+// room in the put window once it is read, the order every write takes them
+// in; it is read into a buffer sized as readHead sizes the head, so a small
+// part costs no whole stripe and no part holds more than the window and one
+// byte.
 func (t *tailWriter) consumeFirst(ctx context.Context, r io.Reader, declared int64) (uint64, error) {
 	window := t.s.w.opts.putWindow
 	limit := min(t.m.Rules[0].StripeMaxSize, window+1)
-	// Nothing was issued before this stripe, so the window is empty.
-	weight := int64(min(limit, window)) //nolint:gosec // rgw_put_obj_min_window_size is a size, far below 2^63
-	if err := t.sem.Acquire(ctx, weight); err != nil {
+	f, err := t.readFirst(ctx, r, declared, limit)
+	if err != nil {
 		return 0, err
 	}
-	f, err := t.readFirst(ctx, r, declared, limit)
-	if err == nil {
-		err = t.writeFirst(f)
+	// Nothing was issued before this stripe, so the window is empty.
+	weight := int64(min(limit, window)) //nolint:gosec // rgw_put_obj_min_window_size is a size, far below 2^63
+	if err = t.sem.Acquire(ctx, weight); err != nil {
+		t.release(f.p, true)
+		return 0, err
 	}
+	err = t.writeFirst(f)
 	t.sem.Release(weight)
 	if err != nil {
 		return 0, err
@@ -493,17 +499,16 @@ func (t *tailWriter) consumeFirst(ctx context.Context, r io.Reader, declared int
 // cannot pass BlockingAioThrottle::get, which fails it with EDEADLK
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_aio_throttle.cc#L40-L42 at v19.2.6
 // and v20.2.4), answered 500 UnknownError by set_req_state_err; reading one
-// byte past the window is enough to know. The share of the body budget taken
-// first is limit's, the most the buffer can grow to; what the buffer does
-// not weigh goes back once it is read, and all of it if the body reader
+// byte past the window is enough to know. The share of the memory budget
+// taken first is limit's, the most the buffer can grow to; what the buffer
+// does not weigh goes back once it is read, and all of it if the body reader
 // panics.
 func (t *tailWriter) readFirst(ctx context.Context, r io.Reader, declared int64, limit uint64) (*firstPiece, error) {
-	body := t.s.w.body
-	reserved, err := body.acquire(ctx, limit)
+	reserved, err := t.mem.piece(ctx, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { body.release(reserved) }()
+	defer func() { t.mem.give(reserved) }()
 	n := limit
 	if declared >= 0 && uint64(declared) < n {
 		n = uint64(declared)
@@ -526,7 +531,7 @@ func (t *tailWriter) readFirst(ctx context.Context, r io.Reader, declared int64,
 		}
 	}
 	t.hold(p)
-	reserved -= body.share(uint64(cap(*p)))
+	reserved -= t.mem.b.share(memPiece, uint64(cap(*p)))
 	switch {
 	case err != nil:
 		t.release(p, true)
@@ -586,7 +591,7 @@ func (t *tailWriter) writeFirst(f *firstPiece) error {
 	settled := false
 	defer func() {
 		// A panic in the write, which the request's recovery survives,
-		// must not keep the stripe's share of the body budget.
+		// must not keep the stripe's share of the memory budget.
 		if !settled {
 			t.release(f.p, false)
 		}
@@ -615,7 +620,7 @@ func (t *tailWriter) stream(ctx context.Context, r io.Reader, size uint64, done 
 	stripeMax := t.m.Rules[0].StripeMaxSize
 	// p is the piece being read until write takes it; whatever ends stream
 	// before then, a body reader's panic included, hands it back with its
-	// share of the body budget.
+	// share of the memory budget.
 	var p *[]byte
 	defer func() {
 		if p != nil {
