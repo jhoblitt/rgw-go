@@ -501,6 +501,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's sync stores a peer's null delete marker as a numbered one once the destination sees versioning enabled](#radosgws-sync-stores-a-peers-null-delete-marker-as-a-numbered-one-once-the-destination-sees-versioning-enabled) | [#73540](https://tracker.ceph.com/issues/73540) (Resolved; this case remains) | none; [ceph/ceph#65948](https://github.com/ceph/ceph/pull/65948) fixed #73540 and leaves this case |  |
 | [A Squid or Tentacle zone lists none of the versions it syncs from a v21 zone](#a-squid-or-tentacle-zone-lists-none-of-the-versions-it-syncs-from-a-v21-zone) | [#82574](https://tracker.ceph.com/issues/82574), [#73058](https://tracker.ceph.com/issues/73058), [#73059](https://tracker.ceph.com/issues/73059) | [ceph/ceph#62469](https://github.com/ceph/ceph/pull/62469) (not backported) |  |
 | [radosgw from v21.0.0 deletes the current null version's data for a stale synced null delete marker](#radosgw-from-v2100-deletes-the-current-null-versions-data-for-a-stale-synced-null-delete-marker) | [#82573](https://tracker.ceph.com/issues/82573) | [ceph/ceph#72762](https://github.com/ceph/ceph/pull/72762) (open; stops the case observed) | ✓ |
+| [radosgw holds about 8 KiB of librados memory for each metadata header a PUT sends](#radosgw-holds-about-8-kib-of-librados-memory-for-each-metadata-header-a-put-sends) | none | none | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -31800,3 +31801,167 @@ Every new entry adds its row to this table, in document order.
   epoch](#cls_rgws-bucket_link_olh-unlinks-the-null-versions-list-entry-before-it-checks-the-epoch)";
   reproduced on v21.1.2 by the rgw-bug-reproduction session, 2026-11-02;
   the mechanism checked in the source by task MSREG the same day.
+
+## radosgw holds about 8 KiB of librados memory for each metadata header a PUT sends
+
+- **Kind:** defect, security (possible): denial of service, by memory. Each
+  metadata header a PUT sends, however short, becomes an attr whose value
+  and whose head write step each take a 4 KiB buffer, about 8 KiB of C heap,
+  and nothing limits the attrs' number by default. So the 16 KiB of headers
+  beast takes would hold about 7 MiB while the head write is in flight, and
+  the 1024 requests radosgw serves at once about 7 GiB. Any key allowed to
+  write a bucket, its own included, can send them. Both releases.
+  Unreproduced on radosgw: derived from the source, with librados's cost per
+  attr measured outside radosgw; the totals are inferred.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `req_info::init_meta_info` files every `x-amz-` header in `x_meta_map`,
+    joining a repeated name's values with a comma
+    ([rgw_common.cc:422-460](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L422-L460),
+    [rgw_common.cc:435-473](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L435-L473)),
+    so a repeated name makes one attr. PutObject's `execute` calls
+    `rgw_get_request_metadata`
+    ([rgw_op.cc:4526](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4526),
+    [rgw_op.cc:4794](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4794)),
+    which gives each entry outside its blocklist an attr of its own: it
+    emplaces an empty bufferlist and appends the value and its NUL
+    (`attrs.emplace`, `bl.append`,
+    [rgw_op.h:2227-2232](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2227-L2232),
+    [rgw_op.h:2398-2403](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2398-L2403)).
+  - That first append to an empty bufferlist allocates a buffer of its own:
+    `refill_append_space` rounds the length, with the `raw_combined` control
+    block, up to `CEPH_BUFFER_ALLOC_UNIT`, 4096 bytes
+    ([buffer.cc:48](https://github.com/ceph/ceph/blob/v19.2.7/src/common/buffer.cc#L48),
+    [buffer.cc:52](https://github.com/ceph/ceph/blob/v20.2.4/src/common/buffer.cc#L52);
+    [buffer.cc:1269-1316](https://github.com/ceph/ceph/blob/v19.2.7/src/common/buffer.cc#L1269-L1316),
+    [buffer.cc:1318-1373](https://github.com/ceph/ceph/blob/v20.2.4/src/common/buffer.cc#L1318-L1373)),
+    so a value of two bytes takes a 4096-byte allocation.
+  - The limits are checked only when set: a name longer than
+    `rgw_max_attr_name_len`, a value longer than `rgw_max_attr_size`, and an
+    attr past `rgw_max_attrs_num_in_req`
+    ([rgw_op.h:2207-2225](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2207-L2225),
+    [rgw_op.h:2378-2396](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2378-L2396)),
+    and all three default to 0
+    ([rgw.yaml.in:146-169](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L146-L169),
+    [rgw.yaml.in:152-175](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L152-L175)).
+  - The head write gives each non-empty attr its own setxattr step
+    (`_do_write_meta`,
+    [rgw_rados.cc:3265-3279](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3265-L3279),
+    [rgw_rados.cc:3362-3376](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3362-L3376)).
+    `ObjectWriteOperation::setxattr` hands it to `ObjectOperation::setxattr`
+    ([librados_cxx.cc:528-533](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/librados_cxx.cc#L528-L533),
+    [librados_cxx.cc:528-533](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/librados_cxx.cc#L528-L533);
+    [Objecter.h:909-911](https://github.com/ceph/ceph/blob/v19.2.7/src/osdc/Objecter.h#L909-L911),
+    [Objecter.h:907-909](https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.h#L907-L909)),
+    whose `add_xattr` adds the step and appends the name to the step's empty
+    `indata`, a second fresh buffer, then the value, whose buffer `indata`
+    shares rather than copies
+    ([Objecter.h:192-199](https://github.com/ceph/ceph/blob/v19.2.7/src/osdc/Objecter.h#L192-L199),
+    [Objecter.h:190-197](https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.h#L190-L197);
+    `buffer::list::append`,
+    [buffer.cc:1377-1384](https://github.com/ceph/ceph/blob/v19.2.7/src/common/buffer.cc#L1377-L1384),
+    [buffer.cc:1434-1441](https://github.com/ceph/ceph/blob/v20.2.4/src/common/buffer.cc#L1434-L1441)).
+  - The op is built before the bucket index prepare and sent after it
+    (`index_op->prepare`, then `rgw_rados_operate`,
+    [rgw_rados.cc:3321-3332](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3321-L3332),
+    [rgw_rados.cc:3442-3453](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3442-L3453)),
+    so the steps' buffers live across both round trips, and the values'
+    buffers from `rgw_get_request_metadata` on.
+  - librados's own throttle does not see the buffers. `calc_op_budget`
+    charges a write step its `indata`'s length, the bytes of the name and
+    the value
+    ([Objecter.cc:3338-3354](https://github.com/ceph/ceph/blob/v19.2.7/src/osdc/Objecter.cc#L3338-L3354),
+    [Objecter.cc:3502-3518](https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.cc#L3502-L3518)),
+    against `op_throttle_bytes`
+    ([Objecter.h:2695-2697](https://github.com/ceph/ceph/blob/v19.2.7/src/osdc/Objecter.h#L2695-L2697),
+    [Objecter.h:2664-2666](https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.h#L2664-L2666)),
+    which `objecter_inflight_op_bytes` sizes, 100 MiB by default
+    ([global.yaml.in:2378-2383](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/global.yaml.in#L2378-L2383),
+    [global.yaml.in:2423-2428](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/global.yaml.in#L2423-L2428)),
+    so a head write of 900 such attrs is charged about 22 KB. radosgw raises
+    `objecter_inflight_ops` to 24576
+    ([rgw_main.cc:83](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_main.cc#L83),
+    [rgw_main.cc:83](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_main.cc#L83)).
+  - Measured outside radosgw, with no cluster: a C program linked against
+    librados 20.2.4's el9 build (20.2.4-0.el9) built a `rados_write_op_t`
+    and read glibc's `mallinfo2`, `uordblks` plus `hblkhd`, before and
+    after, while the op was alive. `rados_write_op_setxattr` builds the
+    value's bufferlist as `rgw_get_request_metadata` does
+    ([librados_c.cc:3733-3744](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/librados_c.cc#L3733-L3744),
+    [librados_c.cc:3733-3744](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/librados_c.cc#L3733-L3744)),
+    so its step holds the same two buffers. One setxattr of a 23-byte name,
+    `user.rgw.x-amz-meta-000`, and a 2-byte value held 8,448 bytes, and 900
+    of them 7,621,040, 8,468 a step; for scale, one 4 MiB `write_full` held
+    4,202,496.
+  - beast's `header_limit` is 16384 bytes
+    ([rgw_asio_frontend.cc:403](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L403),
+    [rgw_asio_frontend.cc:414](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L414))
+    unless `max_header_size` sets it, at most to its parse buffer's size
+    ([rgw_asio_frontend.cc:594-608](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L594-L608),
+    [rgw_asio_frontend.cc:595-609](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L595-L609)).
+    A line such as `x-amz-meta-ab: b` is 18 bytes with its CRLF, so about
+    900 fit beside the few other headers of a SigV2 or anonymous request.
+    SigV4 must also name each `x-amz-` header among its signed headers
+    ([rgw_auth_s3.cc:819-841](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L819-L841),
+    [rgw_auth_s3.cc:780-796](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L780-L796)),
+    about 14 bytes more apiece, so about 500 fit there.
+  - The default scheduler, `throttler`
+    ([rgw.yaml.in:3499](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L3499),
+    [rgw.yaml.in:3678](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L3678)),
+    is a `SimpleThrottler`
+    ([rgw_asio_frontend.cc:472-473](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L472-L473),
+    [rgw_asio_frontend.cc:473-474](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L473-L474)),
+    which serves `rgw_max_concurrent_requests` requests at once and refuses
+    the rest
+    ([rgw_dmclock_async_scheduler.h:159-213](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_dmclock_async_scheduler.h#L159-L213),
+    [rgw_dmclock_async_scheduler.h:159-214](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_dmclock_async_scheduler.h#L159-L214));
+    `rgw_max_concurrent_requests` defaults to 1024
+    ([rgw.yaml.in:3471-3483](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L3471-L3483),
+    [rgw.yaml.in:3650-3662](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L3650-L3662)).
+- **Trigger:** zero-byte PUTs, each with as many distinctly named short
+  `x-amz-meta-` headers as the header limit holds, about 900, sent 1024 at a
+  time by any key allowed to write a bucket, its own included, or
+  anonymously to a bucket whose policy lets anyone write.
+- **Impact:** inferred from the mechanism and the measurement, not measured
+  on radosgw. A PUT of 900 such headers would hold about 7 MiB, 900 times
+  the 8,468 bytes a step cost, from its attrs' creation until its head write
+  is answered, and 1024 at once about 7 GiB, against the 16 MiB of headers
+  they send, about 465 times. The window is two OSD round trips, the index
+  prepare and the head write: short on a healthy cluster, so the attacker
+  keeps it full by sending the next request as each one ends, and longer
+  behind a slow index shard or OSD. Not traced: whether the messenger copies
+  these buffers again when it sends the op, what radosgw's own allocator
+  rounds them to, and how much of the heap the process gives back
+  afterwards.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** affected the same way. `doWriteMeta` gives each non-empty attr
+  its own setxattr step (`internal/driver/headwrite.go:335-347`), which
+  go-ceph's `WriteOp.SetXattr` sends through `rados_write_op_setxattr`, the
+  measured call. `requestAttrs` applies the three limits only when they are
+  set, and none is by default (`internal/s3/requestattrs.go:257-276`). Its
+  frontend takes beast's 16384-byte header limit
+  (`internal/frontend/spec.go:23`), which net/http enforces with 4096 bytes
+  of slack (`docs/exclusions.md`, "Header limit and malformed requests"), so
+  about 200 more headers fit; and its in-flight byte limit does not count
+  these steps (`internal/radosclient/goceph/limiter.go:149-174`).
+- **Upstream:** none found. A prior-art search on 2026-11-03 found no issue
+  or fix PR, each search first checked against a known match. It covered
+  tracker.ceph.com's full-text issue search for `rgw_max_attrs_num_in_req`,
+  `rgw_max_attr_size` and `rgw_max_attr_name_len`; `max_header_size` alone
+  and with memory, attrs or metadata; `add_xattr` alone and with memory;
+  xattr, attr and metadata amplification; `rgw_get_request_metadata`;
+  `calc_op_budget`; `CEPH_BUFFER_ALLOC_UNIT`; `refill_append_space`; and
+  x-amz-meta, setxattr, xattr rgw and metadata headers, each with memory. It
+  covered GitHub pull requests on ceph/ceph, where issues are disabled, for
+  the same identifiers; `max_header_size` with memory or attrs, and
+  `add_xattr` with memory; xattr amplification; setxattr, x-amz-meta,
+  metadata headers and rgw attrs, each with memory; x-amz-meta denial of
+  service; and metadata headers limit rgw. Related but distinct:
+  [#65460](https://tracker.ceph.com/issues/65460), which asks that
+  `rgw_get_request_metadata` stop storing headers it need not, and
+  [ceph/ceph#72837](https://github.com/ceph/ceph/pull/72837), open, which
+  makes `ObjectOperation::setxattrs` pass `add_xattr` its encoded attributes
+  rather than their length. The rgw-bug-reproduction session has it.
+- **Found:** the adversarial review of rgw-go's goceph limiter admission
+  change, 2026-11-03, which measured librados's cost per step; the
+  measurement run again and the source checked at both tags for this entry.
+  Derived from the source, not reproduced.
