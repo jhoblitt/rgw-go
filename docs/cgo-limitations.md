@@ -486,12 +486,34 @@ benchmark was re-run.
   while it runs, and an object listing one for the whole listing. Watch and
   notify register linger operations, which take none
   (`Objecter::take_linger_budget`), and mon traffic goes through the
-  MonClient. The byte margin absorbs what librados budgets
-  (`Objecter::calc_op_budget`) but the limiter's weight leaves out: xattr and
-  omap payloads and xattr comparisons. The weight is read lengths, write and
-  append data and exec inputs; librados budgets no class call at all. An
-  abandoned operation keeps its share until its completion fires, since
-  `rados_aio_cancel` is unbound.
+  MonClient.
+
+  The limiter weighs each operation at least what `calc_op_budget` charges
+  it
+  ([Objecter.cc:3338-3354](https://github.com/ceph/ceph/blob/v19.2.7/src/osdc/Objecter.cc#L3338-L3354)
+  at v19.2.7,
+  [:3502-3518](https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.cc#L3502-L3518)
+  at v20.2.4): a read its length; a write-mode step its input, which is a
+  write's or an append's data, a setxattr's name and value, an rmxattr's
+  name, or an omap set's or removal's encoded map or key set, count and
+  length prefixes included; and a compared xattr its name and value
+  lengths, as a read-mode step even in a write operation
+  (`internal/radosclient/goceph/limiter.go:148-267`). librados charges every
+  other step the seam has nothing, an omap comparison and a class call
+  included; the limiter weighs exec inputs anyway. The lock calls and
+  listings that pass around the limiter are a class call and a PG listing,
+  which librados budgets no bytes, so the byte margin is slack. An operation
+  librados charges more than `objecter_inflight_op_bytes` still blocks
+  threads: the limiter clamps its weight to its own budget
+  (`internal/radosclient/goceph/limiter.go:52-57`), but librados charges it
+  whole, and while librados's count is past its maximum,
+  `Throttle::_should_wait` holds every other submission, a zero-byte one
+  included
+  ([Throttle.h:47-54](https://github.com/ceph/ceph/blob/v19.2.7/src/common/Throttle.h#L47-L54)
+  at v19.2.7,
+  [:47-54](https://github.com/ceph/ceph/blob/v20.2.4/src/common/Throttle.h#L47-L54)
+  at v20.2.4). An abandoned operation keeps its share until its completion
+  fires, since `rados_aio_cancel` is unbound.
 - **Measure:** throttle waits and thread count under the seam
   microbenchmark, `BenchmarkSeam` in `test/bench/seam`; the head read's cost
   in its `shape=headread4k` cells, whose `budget_bytes` is the 4 MiB the head
@@ -646,20 +668,25 @@ benchmark was re-run.
   (`internal/radosclient/goceph/pool.go:333-350` and `:405-425`). An op
   waiting for admission therefore holds none. The limiter's byte budget is a
   sixteenth under `objecter_inflight_op_bytes` unless `MaxInflightBytes`
-  sets it. It weighs only read lengths, write data and exec inputs
-  (`internal/radosclient/goceph/limiter.go:147-174`), so the only copies it
-  bounds are those of write data and exec input, and even those have two
-  exceptions:
-  - A write or exec input larger than the whole budget takes all of it but
-    holds its whole copy (`internal/radosclient/goceph/limiter.go:52-57`).
+  sets it. It weighs the payloads librados's objecter budgets, and exec
+  inputs (`internal/radosclient/goceph/limiter.go:148-267`; see "The
+  objecter throttle blocks the submitting thread"). So the copies it bounds
+  are those of write data, of xattr names and values set, removed or
+  compared, of omap keys and values set or removed, and of exec input, and
+  even those have two exceptions:
+  - An op weighing more than the whole budget takes all of it but holds its
+    whole copy (`internal/radosclient/goceph/limiter.go:52-57`).
   - `objecter_inflight_op_bytes = 0` leaves the budget unbounded
-    (`internal/radosclient/goceph/limiter.go:123-129`).
+    (`internal/radosclient/goceph/limiter.go:124-130`).
 
-  Every other copy a step makes weighs 0, so only the operation count
-  bounds it: xattr names and values, compared values, omap keys and values,
-  and class and method names. The same holds for librados's own allocation
-  per step. A small append to an empty bufferlist takes a whole buffer,
-  because `refill_append_space` rounds the allocation up to
+  The copies it does not weigh are bounded only by the operation count: an
+  omap comparison's key and value, an omap read's keys and bounds, and class
+  and method names. librados's own allocation per step stays bounded only by
+  the operation count too, because librados does not budget it either, as
+  the registry entry
+  [radosgw holds about 8 KiB of librados memory for each metadata header a PUT sends](ceph-upstream-bugs.md#radosgw-holds-about-8-kib-of-librados-memory-for-each-metadata-header-a-put-sends)
+  finds in radosgw. A small append to an empty bufferlist takes a whole
+  buffer, because `refill_append_space` rounds the allocation up to
   `CEPH_BUFFER_ALLOC_UNIT`, 4096 bytes
   ([buffer.cc:52](https://github.com/ceph/ceph/blob/v20.2.4/src/common/buffer.cc#L52),
   [:1318-1338](https://github.com/ceph/ceph/blob/v20.2.4/src/common/buffer.cc#L1318-L1338),
@@ -690,13 +717,13 @@ benchmark was re-run.
   after building the op with the same sum before. One such step held 8448
   bytes, and 900 in one op held 7,621,040.
 - **Status:** open. rgw-go copies an op's payload into C memory only once
-  the in-flight limiter admits the op. So the copies of write data and exec
-  input alive at once are bounded by the limiter's byte budget, with the two
-  exceptions above. The unweighted copies and librados's per-step buffers
-  are bounded only by the operation count: `objecter_inflight_ops` less 16,
+  the in-flight limiter admits the op. So the copies it weighs alive at once
+  are bounded by the limiter's byte budget, with the two exceptions above.
+  The unweighted copies and librados's per-step buffers are bounded only by
+  the operation count: `objecter_inflight_ops` less 16,
   1008 by default, unless `MaxInflightOps` sets it. With
   `objecter_inflight_ops = 0` nothing bounds the count
-  (`internal/radosclient/goceph/limiter.go:115-122`). Earlier builds made every copy before parking
+  (`internal/radosclient/goceph/limiter.go:116-123`). Earlier builds made every copy before parking
   on the limiter, so every parked op held its copies. Every measurement in
   this entry predates the change, and its effect on glibc's heap is not
   measured. Two settings mitigate the arena growth, measured at 1-2 in

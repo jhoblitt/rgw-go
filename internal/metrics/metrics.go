@@ -141,7 +141,7 @@ var (
 		"RADOS read and write operations the in-flight limiter holds: submitted and not yet completed, abandoned ones included.",
 		[]string{"mode"}, nil)
 	radosBytesInFlight = prometheus.NewDesc("rgw_go_rados_bytes_in_flight",
-		"Payload bytes the in-flight limiter holds for read and write operations not yet completed; a read holds its requested length however small the object turns out to be, as librados's objecter throttle budgets it.",
+		"Bytes the in-flight limiter holds for read and write operations not yet completed: what librados's objecter throttle budgets each one, its xattr, omap and xattr comparison bytes as well as its data, and its class-method inputs; a read holds its requested length however small the object turns out to be.",
 		[]string{"mode"}, nil)
 	radosThrottleWaits = prometheus.NewDesc("rgw_go_rados_throttle_waits_total",
 		"RADOS read and write operations that parked on the in-flight limiter before submission.",

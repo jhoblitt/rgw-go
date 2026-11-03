@@ -223,12 +223,13 @@ var _ = Describe("an op the in-flight limiter has not admitted", func() {
 				op.SetStepFlags(0x80)
 			}),
 			[]string{"WriteFull payload", "Release with 7 bytes held"}),
+		// It weighs the exec's 5-byte input and the compared xattr's 14-byte name.
 		Entry("a read with an unknown comparison operator",
 			readWith(func(op *radosclient.ReadOp) {
 				op.Exec("rgw", "bucket_list", []byte("input"))
 				op.CmpXattr("user.rgw.idtag", radosclient.CmpOp(9), nil)
 			}),
-			[]string{"Exec rgw.bucket_list input", "Release with 5 bytes held"}),
+			[]string{"Exec rgw.bucket_list input", "Release with 19 bytes held"}),
 	)
 
 	DescribeTable("whose builder panics once admitted gives back its budget",

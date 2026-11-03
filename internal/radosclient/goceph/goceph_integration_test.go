@@ -650,6 +650,8 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 
 				w := radosclient.NewWriteOp()
 				w.WriteFull(make([]byte, 1000))
+				// The limiter weighs the xattr, but it is not payload.
+				w.SetXattr("user.rgw.counted", []byte("no"))
 				_, err = counted.Write(ctx, oid, w, radosclient.OpFlagNone)
 				Expect(err).NotTo(HaveOccurred())
 				DeferCleanup(removeObject, pool, oid)

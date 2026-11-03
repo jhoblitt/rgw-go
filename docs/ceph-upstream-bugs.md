@@ -31942,8 +31942,9 @@ Every new entry adds its row to this table, in document order.
   frontend takes beast's 16384-byte header limit
   (`internal/frontend/spec.go:23`), which net/http enforces with 4096 bytes
   of slack (`docs/exclusions.md`, "Header limit and malformed requests"), so
-  about 200 more headers fit; and its in-flight byte limit does not count
-  these steps (`internal/radosclient/goceph/limiter.go:149-174`).
+  about 200 more headers fit; and its in-flight byte limit weighs these
+  steps as librados budgets them, by their names' and values' bytes rather
+  than the buffers they hold (`internal/radosclient/goceph/limiter.go:148-267`).
 - **Upstream:** none found. A prior-art search on 2026-11-03 found no issue
   or fix PR, each search first checked against a known match. It covered
   tracker.ceph.com's full-text issue search for `rgw_max_attrs_num_in_req`,

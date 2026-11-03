@@ -42,9 +42,10 @@ type StatsReporter interface {
 }
 
 // InflightLimiter is satisfied by a Cluster whose in-flight limiter bounds
-// the payload bytes it submits; the driver sizes from it the byte budget that
-// bounds the tail bytes of PUT bodies, the head a PUT keeps for its head
-// write being outside it.
+// the bytes it submits, as librados's objecter throttle budgets them and with
+// class-method inputs; the driver sizes from it the byte budget that bounds
+// the tail bytes of PUT bodies, the head a PUT keeps for its head write being
+// outside it.
 type InflightLimiter interface {
 	// MaxInflightBytes is the limiter's byte bound, math.MaxInt64 when it
 	// has none.

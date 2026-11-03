@@ -122,8 +122,16 @@ func DeriveLimits(opts map[string]string) (ops int, bytes int64) {
 	})
 }
 
-// Weight exposes an op's payload weight.
+// Weight exposes the bytes an op takes from the in-flight limiter.
 var Weight = weight
+
+// CountedBytes counts one operation of steps as the Stats counters do and
+// returns the bytes they counted.
+func CountedBytes(steps []radosclient.Step) uint64 {
+	var c counter
+	c.add(steps)
+	return c.bytes.Load()
+}
 
 // Timespec exposes the conversion of a modification time for librados.
 var Timespec = timespec
