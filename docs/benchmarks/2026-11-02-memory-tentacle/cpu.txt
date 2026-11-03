@@ -1,0 +1,14 @@
+radosgw []: wall 17.1 s, cpu 5.13 s (user 3.43, system 1.70), VmRSS:	  342164 kB
+base []: wall 15.7 s, cpu 4.35 s (user 3.16, system 1.20), VmRSS:	  519900 kB
+arena2 [MALLOC_ARENA_MAX=2]: wall 15.6 s, cpu 4.29 s (user 3.13, system 1.16), VmRSS:	  283684 kB
+mmapthr [GLIBC_TUNABLES=glibc.malloc.mmap_threshold=1048576]: wall 15.4 s, cpu 5.66 s (user 3.14, system 2.52), VmRSS:	  335864 kB
+memlimit [GOMEMLIMIT=96MiB]: wall 16.4 s, cpu 4.54 s (user 3.22, system 1.32), VmRSS:	  319948 kB
+combo [GOMEMLIMIT=96MiB GLIBC_TUNABLES=glibc.malloc.mmap_threshold=1048576]: wall 16.6 s, cpu 5.80 s (user 3.19, system 2.61), VmRSS:	  134820 kB
+radosgw []: wall 17.9 s, cpu 5.37 s (user 3.52, system 1.85), VmRSS:	  339104 kB
+base []: wall 18.9 s, cpu 4.45 s (user 3.14, system 1.31), VmRSS:	  503912 kB
+arena2 [MALLOC_ARENA_MAX=2]: wall 16.0 s, cpu 4.29 s (user 3.09, system 1.20), VmRSS:	  327628 kB
+mmapthr [GLIBC_TUNABLES=glibc.malloc.mmap_threshold=1048576]: wall 16.0 s, cpu 5.69 s (user 3.18, system 2.52), VmRSS:	  281224 kB
+memlimit [GOMEMLIMIT=96MiB]: wall 15.9 s, cpu 4.36 s (user 3.17, system 1.19), VmRSS:	  319400 kB
+combo [GOMEMLIMIT=96MiB GLIBC_TUNABLES=glibc.malloc.mmap_threshold=1048576]: wall 14.2 s, cpu 5.64 s (user 3.18, system 2.47), VmRSS:	  132116 kB
+arena2-memlimit [MALLOC_ARENA_MAX=2 GOMEMLIMIT=96MiB]: wall 15.8 s, cpu 4.30 s (user 3.16, system 1.14), VmRSS:	  158704 kB
+arena2-memlimit [MALLOC_ARENA_MAX=2 GOMEMLIMIT=96MiB]: wall 15.6 s, cpu 4.28 s (user 3.15, system 1.13), VmRSS:	  158184 kB

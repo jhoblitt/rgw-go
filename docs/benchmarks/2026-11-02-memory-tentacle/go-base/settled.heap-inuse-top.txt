@@ -1,0 +1,16 @@
+       0.1 MiB
+      github.com/jhoblitt/rgw-go/internal/s3.parseDelete-range1+0x409 /home/jhoblitt/github/rgw-go/.claude/worktrees/agent-afcd56a79765766cb/internal/s3/deleteobjects.go:186
+      github.com/jhoblitt/rgw-go/internal/xmltext.(*Element).Find.func1+0x2cd /home/jhoblitt/github/rgw-go/.claude/worktrees/agent-afcd56a79765766cb/internal/xmltext/reader.go:57
+      github.com/jhoblitt/rgw-go/internal/s3.parseDelete+0x288 /home/jhoblitt/github/rgw-go/.claude/worktrees/agent-afcd56a79765766cb/internal/s3/deleteobjects.go:183
+      github.com/jhoblitt/rgw-go/internal/s3.deleteObjects.func2+0x24 /home/jhoblitt/github/rgw-go/.claude/worktrees/agent-afcd56a79765766cb/internal/s3/deleteobjects.go:63
+       0.0 MiB
+       0.0 MiB
+      syscall.init.func1+0x119 /home/jhoblitt/sdk/go1.27.3/src/syscall/env_unix.go:38
+      sync.OnceFunc.func1.1+0x4a /home/jhoblitt/sdk/go1.27.3/src/sync/oncefunc.go:33
+      sync.(*Once).doSlow+0xaa /home/jhoblitt/sdk/go1.27.3/src/sync/once.go:78
+      sync.(*Once).Do+0x18 /home/jhoblitt/sdk/go1.27.3/src/sync/once.go:69
+       0.0 MiB
+       0.0 MiB
+       0.0 MiB
+       0.0 MiB
+       0.0 MiB

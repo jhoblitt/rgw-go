@@ -1,0 +1,26 @@
+# runtime.MemStats
+# Alloc = 269823096
+# TotalAlloc = 581397008
+# Sys = 283515208
+# Lookups = 0
+# Mallocs = 288460
+# Frees = 179473
+# HeapAlloc = 269823096
+# HeapSys = 275578880
+# HeapIdle = 3588096
+# HeapInuse = 271990784
+# HeapReleased = 3276800
+# HeapObjects = 108987
+# Stack = 1245184 / 1245184
+# MSpan = 275840 / 277440
+# MCache = 9184 / 16072
+# BuckHashSys = 1459562
+# GCSys = 3928368
+# OtherSys = 1009702
+# NextGC = 329482050
+# LastGC = 1793675011808379763
+# NumGC = 14
+# NumForcedGC = 0
+# GCCPUFraction = 3.6884971809169156e-05
+# DebugGC = false
+# MaxRSS = 322166784

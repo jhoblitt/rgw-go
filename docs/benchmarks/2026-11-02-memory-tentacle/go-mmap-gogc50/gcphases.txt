@@ -1,0 +1,11 @@
+phase            GCs  start^MB   live^MB   goal^MB
+idle             391         2         1         2
+small           4263        38        33        38
+put-single        15        53        33        53
+put-mpu           16        34        25        34
+get-full           2        39        25        40
+get-range          1        38        26        39
+get-mpu            6        70        69        70
+put-single-x2      3       103        66       104
+get-full-x2        0         0         0         0
+settled          468        67        42        68

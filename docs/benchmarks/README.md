@@ -12,6 +12,7 @@ on.
 | 2026-10-15 | gateway | Tentacle, Ceph 20.2.4 | rgw-go 49c333f against radosgw 20.2.4 | [2026-10-15-gateway-tentacle](2026-10-15-gateway-tentacle/REPORT.md) |
 | 2026-10-15 | seam limiter | Squid, Ceph 19.2.7 | none: the seam microbenchmark at rgw-go 49c333f | [2026-10-15-seam-limiter-squid](2026-10-15-seam-limiter-squid/) |
 | 2026-10-15 | seam limiter | Tentacle, Ceph 20.2.4 | none: the seam microbenchmark at rgw-go 49c333f | [2026-10-15-seam-limiter-tentacle](2026-10-15-seam-limiter-tentacle/) |
+| 2026-11-02 | memory | Tentacle, Ceph 20.2.4 | rgw-go 5700129 against radosgw 20.2.4 | [2026-11-02-memory-tentacle](2026-11-02-memory-tentacle/REPORT.md) |
 
 The 2026-10-02 runs, measured on a quiet host, replace the preliminary
 2026-10-01 runs, measured on a busy one, which also predate the bracketed
@@ -68,6 +69,10 @@ The limiter cell's directories hold `overbudget-<mode>.jsonl`, `env.json`,
 bound at 100 MiB, 615 of the 640 writes parked on it in every mode on both
 releases. The process grew +35 and +37 threads in sync, +19 and +19 in
 callback and +22 and +20 in pipe (Squid, Tentacle), with no errors.
+
+The 2026-11-02 memory run's REPORT.md is written by hand, not rendered by
+`hack/bench/report`. Its directory holds a subdirectory per run with the
+summaries the report's tables are built from.
 
 A seam run is `make bench-seam RELEASE=<release>` (`hack/bench/seam`,
 described in `hack/rooket/README.md`). Its directory holds `env.json`, the
