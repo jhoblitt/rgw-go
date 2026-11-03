@@ -552,21 +552,49 @@ RGW_GO_IMAGE_TEST=1 make -s image RELEASE=tentacle   # and check what it built
 
 rgw-go is built with cgo in a builder made from the same Ceph image
 (`hack/image/Containerfile.builder`), so it links against the librados and
-glibc it runs with. `hack/image/cgo-build.sh` runs any `go` command in that
-builder for the Ceph tag in `RGW_GO_CEPH_TAG`, which a release's chart values
-must pin, since they name the image's repository too; it takes `GOOS`, `GOARCH`,
-`GOAMD64`, `CGO_ENABLED` and `GOFLAGS` from its environment as a goreleaser
-build's `tool` must. The first build of a release's builder pulls from
-quay.io and docker.io and installs `librados-devel` from download.ceph.com;
-the builder is then reused until `Containerfile.builder` or the release's Ceph
-image changes. `RGW_GO_ENGINE` picks the container engine, podman when
-installed, else docker; rootless Docker is not supported.
+glibc it runs with. `hack/image/builder.sh <release>` prints a release's
+builder, building it first when the engine lacks it; `--print` names it
+without building, by the hash of its base image's name and its Containerfile.
+The first build of a release's builder pulls from quay.io and docker.io and
+installs `librados-devel` from download.ceph.com; the builder is then reused
+until `Containerfile.builder` or the release's Ceph image changes.
+`RGW_GO_ENGINE` picks the container engine, podman when installed, else
+docker; rootless Docker is not supported.
+
+`hack/image/run.sh [engine run arguments...] -- <release> <command...>` runs
+any command in that builder, with the checkout mounted at its own path, the
+command in the caller's directory and as the caller, the host's module cache,
+and a Go build cache per builder, since Go's cache does not notice a change in
+the C headers cgo compiles against. Arguments before `--` go to the engine's
+`run`, as `--network=host` or a mount does. It takes `GOOS`, `GOARCH`,
+`GOAMD64`, `CGO_ENABLED` and `GOFLAGS` from its environment, and `GOMAXPROCS`,
+`GOLANGCI_LINT_CONCURRENCY` and `CITECHECK_CEPH` when they are set, and names
+the release's Ceph version in `RGW_GO_TEST_CEPH_VERSION`, which a goceph spec
+requires the librados it runs to be. `hack/image/cgo-build.sh` runs `go` there
+for the Ceph tag in `RGW_GO_CEPH_TAG`, which a release's chart values must
+pin, as a goreleaser build's `tool` must; releases build through it.
+
+`RGW_GO_STAGE=check` makes both use the release's check image instead
+(`hack/image/Containerfile.check`): the builder with golangci-lint at the
+Makefile's `GOLANGCI_LINT_VERSION`, checked against its release's checksums,
+and a golangci-lint cache per builder. The release builder itself carries no
+linter. `hack/image/check.sh [make targets...]` runs `make check`, or the
+targets given, in Tentacle's check image, with the ceph clone
+`citecheck-files-check` reads, `CITECHECK_CEPH` or citecheck's default,
+mounted read-only. A host's `GOFLAGS=-p=4 GOMAXPROCS=4` cap reaches the
+container too:
+
+```sh
+hack/image/check.sh                                  # make check with CI's librados, tcmalloc, Go and golangci-lint
+hack/image/run.sh -- squid go test -run '^$' ./...   # compile and link every test against Squid's librados
+```
 
 `RGW_GO_IMAGE_TEST=1` checks that rgw-go carries the checkout's version stamp,
 that `/usr/bin/radosgw` resolves to it, that every library it links is in the
 image, that `radosgw.ceph`, `ceph`, `radosgw-admin` and `rados` print the base
 image's versions, and that the image names its base. `hack/image/out/`,
-ignored by git, holds each release's binary and each builder's Go build cache.
+ignored by git, holds each release's binary and each builder's Go build and
+golangci-lint caches.
 
 ## s3-tests
 

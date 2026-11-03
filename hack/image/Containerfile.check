@@ -1,0 +1,21 @@
+# The check image: a release's builder with golangci-lint added, for make lint,
+# make fmt-check and make check, which lint with cgo and so against librados's
+# headers. builder.sh passes the builder and the Makefile's
+# GOLANGCI_LINT_VERSION, the version's one home; neither has a default, so a
+# build that omits one fails. The tarball is checked against the checksums its
+# release publishes. The release builder itself carries no golangci-lint, so
+# no lint download or pin bump reaches a release.
+ARG BUILDER
+FROM ${BUILDER}
+ARG GOLANGCI_LINT_VERSION
+RUN version=${GOLANGCI_LINT_VERSION#v} && \
+    name=golangci-lint-${version}-linux-amd64 && \
+    url=https://github.com/golangci/golangci-lint/releases/download/v${version} && \
+    cd "$(mktemp -d)" && \
+    curl -fsSLO "${url}/${name}.tar.gz" && \
+    curl -fsSLO "${url}/golangci-lint-${version}-checksums.txt" && \
+    grep -E "^[0-9a-f]{64}  ${name}\.tar\.gz\$" "golangci-lint-${version}-checksums.txt" | sha256sum -c - && \
+    tar -xzf "${name}.tar.gz" && \
+    install -m 0755 "${name}/golangci-lint" /usr/local/bin/golangci-lint && \
+    cd / && rm -rf "${OLDPWD}" && \
+    golangci-lint version
