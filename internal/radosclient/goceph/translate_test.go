@@ -3,10 +3,17 @@ package goceph_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"log"
 	"log/slog"
+	"maps"
+	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -16,6 +23,7 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/radosclient/goceph"
+	"github.com/jhoblitt/rgw-go/internal/testutil/budgetoracle"
 )
 
 // recorder records the go-ceph builder calls the translator makes, in order,
@@ -436,39 +444,280 @@ func writeSteps(build func(op *radosclient.WriteOp)) []radosclient.Step {
 	return op.Steps()
 }
 
-var _ = Describe("an op's payload weight", func() {
-	DescribeTable("is what the limiter takes in bytes, beside one operation",
-		func(ctx SpecContext, steps []radosclient.Step, want int64) {
-			Expect(goceph.Weight(steps)).To(Equal(want))
+// The weights below follow Objecter::calc_op_budget
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.cc#L3502-L3518,
+// the same at v19.2.7) over the steps librados's C op builders make: a
+// write-mode step is charged its indata, a read-mode step its extent length
+// or its xattr name and value lengths, and a class call nothing. No public
+// librados API reports an op's budget, so the table's oracle is these rules;
+// the specs after it also ask libceph-common's own calc_op_budget, through
+// budgetoracle.
+var _ = Describe("an op's weight", func() {
+	DescribeTable("is what librados's objecter budgets it, and its exec inputs, which the limiter takes beside one operation",
+		func(ctx SpecContext, steps []radosclient.Step, want, wantPayload int64) {
+			Expect(goceph.Weight(steps)).To(Equal(want), "weight")
+			Expect(goceph.CountedBytes(steps)).To(BeEquivalentTo(wantPayload), "the payload the Stats counters count")
 			l := goceph.NewLimiter(1, 1<<30)
 			Expect(l.Acquire(ctx, goceph.Weight(steps))).To(Succeed())
 			Expect(l.Stats()).To(Equal(radosclient.Stats{InflightOps: 1, InflightBytes: want}))
 		},
-		Entry("a read's length, and nothing for a stat",
+		Entry("a read's length, and nothing for a stat, an assertion, getxattrs or an omap read",
 			readSteps(func(op *radosclient.ReadOp) {
 				op.Read(0, 4<<20)
 				op.Stat()
-			}), int64(4<<20)),
+				op.AssertExists()
+				op.AssertVersion(7)
+				op.GetXattrs()
+				op.OmapGetVals("start", "prefix", 1000)
+				op.OmapGetValsByKeys([]string{"key-1", "key-2"})
+				op.OmapGetKeys("start", 1000)
+			}), int64(4<<20), int64(4<<20)),
 		Entry("the length of a caller's read buffer",
-			readSteps(func(op *radosclient.ReadOp) { op.ReadInto(8, make([]byte, 100)) }), int64(100)),
-		Entry("a read op's exec input",
-			readSteps(func(op *radosclient.ReadOp) { op.Exec("version", "read", []byte("1234567")) }), int64(7)),
+			readSteps(func(op *radosclient.ReadOp) { op.ReadInto(8, make([]byte, 100)) }), int64(100), int64(100)),
+		Entry("a read op's exec input, though librados budgets a class call nothing",
+			readSteps(func(op *radosclient.ReadOp) { op.Exec("version", "read", []byte("1234567")) }), int64(7), int64(7)),
 		Entry("write-full and append data and a write op's exec input",
 			writeSteps(func(op *radosclient.WriteOp) {
 				op.WriteFull([]byte("abc"))
 				op.Append([]byte("de"))
 				op.Exec("version", "set", []byte("12345"))
-			}), int64(10)),
+			}), int64(10), int64(10)),
 		Entry("the data of a write at an offset",
-			writeSteps(func(op *radosclient.WriteOp) { op.Write([]byte("abcd"), 1<<20) }), int64(4)),
-		Entry("nothing, for an op with no payload, which still counts one operation",
+			writeSteps(func(op *radosclient.WriteOp) { op.Write([]byte("abcd"), 1<<20) }), int64(4), int64(4)),
+		Entry("nothing for a remove, a create, a zero's length, a truncate, an omap clear or comparison, an allocation hint or an assertion, which still counts one operation",
 			writeSteps(func(op *radosclient.WriteOp) {
+				op.AssertExists()
+				op.AssertVersion(3)
 				op.Remove()
 				op.SetStepFlags(radosclient.StepFlagFailOK)
 				op.Create(false)
-			}), int64(0)),
+				op.Zero(0, 1<<20)
+				op.Truncate(0)
+				op.OmapClear()
+				op.OmapCmp("key", radosclient.CmpEQ, []byte("value"))
+				op.SetAllocHint(4<<20, 4<<20, 0)
+			}), int64(0), int64(0)),
+		Entry("a setxattr's name and value, its indata",
+			writeSteps(func(op *radosclient.WriteOp) { op.SetXattr("user.rgw.etag", []byte("abc")) }), int64(13+3), int64(0)),
+		Entry("an rmxattr's name, its indata",
+			writeSteps(func(op *radosclient.WriteOp) { op.RmXattr("user.rgw.x-amz-meta-a") }), int64(21), int64(0)),
+		Entry("a read op's cmpxattr name and value lengths",
+			readSteps(func(op *radosclient.ReadOp) { op.CmpXattr("user.rgw.idtag", radosclient.CmpEQ, []byte("tag-1")) }),
+			int64(14+5), int64(0)),
+		Entry("a write op's cmpxattr name and value lengths, a read-mode step there too, beside its data",
+			writeSteps(func(op *radosclient.WriteOp) {
+				op.CmpXattr("user.rgw.idtag", radosclient.CmpEQ, []byte("tag-1"))
+				op.WriteFull([]byte("abc"))
+			}), int64(14+5+3), int64(3)),
+		Entry("an omap set's encoded map: a count, then each key and value behind its length",
+			writeSteps(func(op *radosclient.WriteOp) { op.OmapSet(map[string][]byte{"a": []byte("xyz"), "bc": nil}) }),
+			int64(4+(4+1+4+3)+(4+2+4+0)), int64(0)),
+		Entry("an empty omap set's count",
+			writeSteps(func(op *radosclient.WriteOp) { op.OmapSet(map[string][]byte{}) }), int64(4), int64(0)),
+		Entry("an omap removal's encoded key set, which holds a repeated key once",
+			writeSteps(func(op *radosclient.WriteOp) { op.OmapRmKeys([]string{"a", "bc", "a"}) }),
+			int64(4+(4+1)+(4+2)), int64(0)),
+		Entry("every one of many setxattr steps, as a zero-byte PUT with 900 x-amz-meta-* headers makes",
+			writeSteps(func(op *radosclient.WriteOp) {
+				op.WriteFull(nil)
+				for i := range 900 {
+					op.SetXattr(fmt.Sprintf("user.rgw.x-amz-meta-%03d", i), []byte("v1"))
+				}
+			}), int64(900*(23+2)), int64(0)),
 	)
+
+	// A negative weight would give the limiter's semaphores back bytes no op
+	// took.
+	DescribeTable("saturates at math.MaxInt64 rather than wrapping negative",
+		func(steps []radosclient.Step) {
+			Expect(goceph.Weight(steps)).To(Equal(int64(math.MaxInt64)))
+		},
+		Entry("for a read longer than math.MaxInt64",
+			readSteps(func(op *radosclient.ReadOp) { op.Read(0, 1<<63) })),
+		Entry("for reads whose lengths add up past math.MaxInt64",
+			readSteps(func(op *radosclient.ReadOp) {
+				op.Read(0, math.MaxInt64)
+				op.Read(0, 1)
+			})),
+	)
+
+	It("knows every step kind the seam declares", func() {
+		kinds, byValue := seamStepKinds()
+		Expect(byValue).To(BeEmpty(), "Step's kinds are pointers, so isStep takes a pointer receiver")
+		Expect(kinds).To(ConsistOf(slices.Collect(maps.Keys(everyStepKind))),
+			"everyStepKind lists every type with radosclient's isStep method")
+		for name, s := range everyStepKind {
+			Expect(func() { goceph.Weight([]radosclient.Step{s}) }).NotTo(Panic(), "a %s step", name)
+		}
+	})
+
+	It("panics on a step kind it does not know, rather than weighing it 0", func() {
+		unknown := &struct{ radosclient.ExecStep }{}
+		Expect(func() { goceph.Weight([]radosclient.Step{unknown}) }).To(PanicWith(ContainSubstring("no weight for")))
+	})
+
+	Describe("against libceph-common's own calc_op_budget", func() {
+		// expect checks steps' weight against the budget librados reported
+		// for the go-ceph op translated from them.
+		expect := func(steps []radosclient.Step, budget int, err error) {
+			if budgetoracle.Skipped(err) {
+				Skip(budgetoracle.SkipEnv + "=skip, and libceph-common does not export Objecter::calc_op_budget")
+			}
+			Expect(err).NotTo(HaveOccurred())
+			Expect(goceph.Weight(steps)-execInput(steps)).To(BeEquivalentTo(budget),
+				"weight is librados's budget and the exec inputs it does not charge")
+		}
+
+		DescribeTable("is the budget of a write op, and its exec inputs",
+			func(build func(op *radosclient.WriteOp)) {
+				op := radosclient.NewWriteOp()
+				build(op)
+				wop := rados.CreateWriteOp()
+				DeferCleanup(wop.Release)
+				Expect(goceph.TranslateWrite(wop, op)).To(Succeed())
+				budget, err := budgetoracle.Budget(wop, osdOpsOf(op.Steps()))
+				expect(op.Steps(), budget, err)
+			},
+			Entry("of every write step kind", func(op *radosclient.WriteOp) {
+				op.AssertExists()
+				op.AssertVersion(1)
+				op.CmpXattr("user.rgw.idtag", radosclient.CmpEQ, []byte("tag-1"))
+				op.Create(false)
+				op.WriteFull([]byte("abc"))
+				op.SetStepFlags(radosclient.StepFlagFailOK)
+				op.Write([]byte("de"), 4)
+				op.Append([]byte("f"))
+				op.Zero(0, 1<<20)
+				op.Truncate(9)
+				op.SetXattr("user.rgw.etag", []byte("abc"))
+				op.RmXattr("user.rgw.x-amz-meta-a")
+				op.OmapSet(map[string][]byte{"a": []byte("xyz"), "bc": nil})
+				op.OmapRmKeys([]string{"a", "bc", "a"})
+				op.OmapClear()
+				op.OmapCmp("key", radosclient.CmpEQ, []byte("value"))
+				op.SetAllocHint(4<<20, 4<<20, 0)
+				op.Exec("version", "set", []byte("12345"))
+				op.Remove()
+			}),
+			Entry("of a zero-byte PUT's head write with 900 x-amz-meta-* headers", func(op *radosclient.WriteOp) {
+				op.WriteFull(nil)
+				for i := range 900 {
+					op.SetXattr(fmt.Sprintf("user.rgw.x-amz-meta-%03d", i), []byte("v1"))
+				}
+			}),
+		)
+
+		DescribeTable("is the budget of a read op, and its exec inputs",
+			func(build func(op *radosclient.ReadOp)) {
+				op := radosclient.NewReadOp()
+				build(op)
+				rop := rados.CreateReadOp()
+				DeferCleanup(rop.Release)
+				Expect(goceph.TranslateRead(rop, op)).To(Succeed())
+				budget, err := budgetoracle.Budget(rop, osdOpsOf(op.Steps()))
+				expect(op.Steps(), budget, err)
+			},
+			Entry("of every read step kind", func(op *radosclient.ReadOp) {
+				op.AssertExists()
+				op.AssertVersion(7)
+				op.CmpXattr("user.rgw.idtag", radosclient.CmpEQ, []byte("tag-1"))
+				op.Read(0, 4<<20)
+				op.ReadInto(8, make([]byte, 100))
+				op.Stat()
+				op.GetXattrs()
+				op.OmapGetVals("start", "prefix", 1000)
+				op.OmapGetValsByKeys([]string{"key-1", "key-2"})
+				op.OmapGetKeys("start", 1000)
+				op.Exec("version", "read", []byte("1234567"))
+			}),
+		)
+	})
 })
+
+// everyStepKind is a step of each kind radosclient declares, by its type's
+// name.
+var everyStepKind = map[string]radosclient.Step{
+	"ExecStep":              &radosclient.ExecStep{},
+	"ReadStep":              &radosclient.ReadStep{},
+	"StatStep":              &radosclient.StatStep{},
+	"GetXattrsStep":         &radosclient.GetXattrsStep{},
+	"CmpXattrStep":          &radosclient.CmpXattrStep{},
+	"AssertExistsStep":      &radosclient.AssertExistsStep{},
+	"AssertVersionStep":     &radosclient.AssertVersionStep{},
+	"OmapGetValsStep":       &radosclient.OmapGetValsStep{},
+	"OmapGetValsByKeysStep": &radosclient.OmapGetValsByKeysStep{},
+	"OmapGetKeysStep":       &radosclient.OmapGetKeysStep{},
+	"CreateStep":            &radosclient.CreateStep{},
+	"RemoveStep":            &radosclient.RemoveStep{},
+	"StepFlagsStep":         &radosclient.StepFlagsStep{},
+	"WriteFullStep":         &radosclient.WriteFullStep{},
+	"WriteStep":             &radosclient.WriteStep{},
+	"AppendStep":            &radosclient.AppendStep{},
+	"ZeroStep":              &radosclient.ZeroStep{},
+	"TruncateStep":          &radosclient.TruncateStep{},
+	"SetXattrStep":          &radosclient.SetXattrStep{},
+	"RmXattrStep":           &radosclient.RmXattrStep{},
+	"OmapSetStep":           &radosclient.OmapSetStep{},
+	"OmapRmKeysStep":        &radosclient.OmapRmKeysStep{},
+	"OmapClearStep":         &radosclient.OmapClearStep{},
+	"OmapCmpStep":           &radosclient.OmapCmpStep{},
+	"SetAllocHintStep":      &radosclient.SetAllocHintStep{},
+}
+
+// seamStepKinds reads radosclient's source for the types that implement
+// Step, each through its isStep method, and for any whose isStep takes a
+// value receiver.
+func seamStepKinds() (kinds, byValue []string) {
+	files, err := filepath.Glob(filepath.Join("..", "*.go"))
+	Expect(err).NotTo(HaveOccurred())
+	fset := token.NewFileSet()
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
+		Expect(err).NotTo(HaveOccurred())
+		for _, decl := range f.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || fd.Recv == nil || fd.Name.Name != "isStep" {
+				continue
+			}
+			recv := fd.Recv.List[0].Type
+			if star, ok := recv.(*ast.StarExpr); ok {
+				if id, ok := star.X.(*ast.Ident); ok {
+					kinds = append(kinds, id.Name)
+					continue
+				}
+			}
+			byValue = append(byValue, fset.Position(recv.Pos()).String())
+		}
+	}
+	return kinds, byValue
+}
+
+// execInput is what weight counts and librados does not: the op's exec
+// inputs.
+func execInput(steps []radosclient.Step) int64 {
+	var n int64
+	for _, s := range steps {
+		if e, ok := s.(*radosclient.ExecStep); ok {
+			n += int64(len(e.In))
+		}
+	}
+	return n
+}
+
+// osdOpsOf is how many OSD ops librados holds for steps: one each, but for
+// step flags, which set the flags of the op before them.
+func osdOpsOf(steps []radosclient.Step) int {
+	n := 0
+	for _, s := range steps {
+		if _, ok := s.(*radosclient.StepFlagsStep); !ok {
+			n++
+		}
+	}
+	return n
+}
 
 // unsetenv removes key from the environment until the spec ends.
 func unsetenv(key string) {

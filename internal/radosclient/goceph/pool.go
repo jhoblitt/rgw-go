@@ -355,7 +355,7 @@ func (p *pool) Read(ctx context.Context, oid string, op *radosclient.ReadOp, fla
 	if err != nil {
 		return 0, err
 	}
-	cl.reads.add(n)
+	cl.reads.add(op.Steps())
 
 	if cl.mode == ModeSync {
 		opErr := rop.Operate(h.ioctx, oid, rflags)
@@ -430,7 +430,7 @@ func (p *pool) Write(ctx context.Context, oid string, op *radosclient.WriteOp, f
 	if err != nil {
 		return 0, err
 	}
-	cl.writes.add(n)
+	cl.writes.add(op.Steps())
 
 	mtime, hasMtime := op.Mtime()
 	if cl.mode == ModeSync {

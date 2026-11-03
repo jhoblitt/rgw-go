@@ -28,7 +28,7 @@ const (
 const opsMargin = 16
 
 // limiter is the in-flight limiter: two weighted semaphores, operations and
-// payload bytes, sized under librados's objecter throttle so a submission
+// weight's bytes, sized under librados's objecter throttle so a submission
 // parks a goroutine here instead of an OS thread inside C. Once the objecter's
 // budget is spent, Objecter::_op_submit_with_budget blocks the submitting
 // thread in Throttle::get until another operation completes, and a blocked
@@ -98,12 +98,13 @@ func (l *limiter) stats() radosclient.Stats {
 }
 
 // deriveLimits sizes the limiter from librados's own throttle, less opsMargin
-// operations and one sixteenth of the bytes. The byte margin absorbs what
-// librados budgets and weight leaves out: xattr and omap payloads and xattr
-// comparisons (Objecter::calc_op_budget). An option librados cannot report
-// as a count falls back to its default, with one warning for both. A limit
-// of 0 turns librados's throttle off (Throttle::get admits everything under a
-// zero maximum), so it turns the limiter's off too.
+// operations and one sixteenth of the bytes. weight charges every op at least
+// what librados budgets it, and librados budgets no bytes to the calls that
+// pass around the limiter, a lock's class call and a listing's PGNLS, so the
+// byte margin is slack. An option librados cannot report as a count falls
+// back to its default, with one warning for both. A limit of 0 turns
+// librados's throttle off (Throttle::get admits everything under a zero
+// maximum), so it turns the limiter's off too.
 func deriveLimits(ctx context.Context, get func(string) (string, error)) (ops int, bytes int64) {
 	maxOps, opsErr := objecterLimit(get, "objecter_inflight_ops", objecterOpsDefault)
 	maxBytes, bytesErr := objecterLimit(get, "objecter_inflight_op_bytes", objecterBytesDefault)
@@ -144,27 +145,38 @@ func objecterLimit(get func(string) (string, error), name string, def uint64) (u
 	return n, nil
 }
 
-// weight is an op's payload: read lengths, write and append data, exec
-// inputs. It saturates rather than wrapping.
+// weight is the bytes an op takes from the limiter: what librados's
+// Objecter::calc_op_budget charges it, and its exec inputs. calc_op_budget
+// charges a write-mode step its indata, a read-mode step its extent's length
+// or, for an xattr step, its name and value lengths, and a class call nothing,
+// since ceph_osd_op_mode_read leaves CEPH_OSD_OP_CALL out of the read mode
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.cc#L3502-L3518,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/osdc/Objecter.cc#L3338-L3354).
+// Building an exec copies its input into librados's memory all the same, so
+// weight counts it, and the limiter's byte budget bounds those copies. It
+// saturates rather than wrapping.
 func weight(steps []radosclient.Step) int64 {
+	return sumSteps(steps, stepWeight)
+}
+
+// payload is the bytes the Stats counters count for an op: read lengths,
+// write and append data, exec inputs.
+func payload(steps []radosclient.Step) int64 {
+	return sumSteps(steps, func(s radosclient.Step) int64 {
+		switch s.(type) {
+		case *radosclient.ReadStep, *radosclient.WriteFullStep, *radosclient.WriteStep,
+			*radosclient.AppendStep, *radosclient.ExecStep:
+			return stepWeight(s)
+		}
+		return 0
+	})
+}
+
+// sumSteps adds f over steps, saturating rather than wrapping.
+func sumSteps(steps []radosclient.Step, f func(radosclient.Step) int64) int64 {
 	var total int64
 	for _, s := range steps {
-		var n int64
-		switch s := s.(type) {
-		case *radosclient.ReadStep:
-			if s.Length > math.MaxInt64 {
-				return math.MaxInt64
-			}
-			n = int64(s.Length)
-		case *radosclient.WriteFullStep:
-			n = int64(len(s.Data))
-		case *radosclient.WriteStep:
-			n = int64(len(s.Data))
-		case *radosclient.AppendStep:
-			n = int64(len(s.Data))
-		case *radosclient.ExecStep:
-			n = int64(len(s.In))
-		}
+		n := f(s)
 		if n > math.MaxInt64-total {
 			return math.MaxInt64
 		}
@@ -173,16 +185,99 @@ func weight(steps []radosclient.Step) int64 {
 	return total
 }
 
+// stepWeight is one step's share of weight, from what librados's C op
+// builders put in each kind's step through Objecter's add_data, add_xattr and
+// add_xattr_cmp
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.h#L176-L208,
+// the same code at v19.2.7). It panics on a kind it does not know, so that a
+// step kind added to the seam cannot weigh 0 unnoticed.
+func stepWeight(s radosclient.Step) int64 {
+	switch s := s.(type) {
+	case *radosclient.ReadStep:
+		// librados charges a length past math.MaxInt64, negative as an
+		// int64, nothing; readStep cannot make a buffer that long anyway.
+		if s.Length > math.MaxInt64 {
+			return math.MaxInt64
+		}
+		return int64(s.Length)
+	case *radosclient.WriteFullStep:
+		return int64(len(s.Data))
+	case *radosclient.WriteStep:
+		return int64(len(s.Data))
+	case *radosclient.AppendStep:
+		return int64(len(s.Data))
+	case *radosclient.ExecStep:
+		return int64(len(s.In))
+	case *radosclient.SetXattrStep:
+		// add_xattr's indata is the name, then the value.
+		return int64(len(s.Name)) + int64(len(s.Value))
+	case *radosclient.RmXattrStep:
+		return int64(len(s.Name))
+	case *radosclient.CmpXattrStep:
+		// CMPXATTR is a read-mode xattr step, in a write op too.
+		return int64(len(s.Name)) + int64(len(s.Value))
+	case *radosclient.OmapSetStep:
+		// omap_set's indata
+		// (https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.h#L1359-L1363)
+		// is a std::map<std::string, bufferlist> as container_base encodes it,
+		// a uint32 count and then each entry
+		// (https://github.com/ceph/ceph/blob/v20.2.4/src/include/denc.h#L969-L979).
+		// Each key and each value is a uint32 length and its bytes, as
+		// denc_traits encodes a std::basic_string
+		// (https://github.com/ceph/ceph/blob/v20.2.4/src/include/denc.h#L718-L737)
+		// and a ceph::buffer::list
+		// (https://github.com/ceph/ceph/blob/v20.2.4/src/include/denc.h#L826-L838).
+		// The code is the same at v19.2.7.
+		n := int64(4)
+		for k, v := range s.Values {
+			n += 4 + int64(len(k)) + 4 + int64(len(v))
+		}
+		return n
+	case *radosclient.OmapRmKeysStep:
+		// omap_rm_keys's indata is the encoded std::set<std::string>
+		// librados builds from the keys, which holds a repeated key once
+		// (https://github.com/ceph/ceph/blob/v20.2.4/src/librados/librados_c.cc#L3925-L3938,
+		// the same at v19.2.7).
+		n := int64(4)
+		seen := make(map[string]struct{}, len(s.Keys))
+		for _, k := range s.Keys {
+			if _, dup := seen[k]; dup {
+				continue
+			}
+			seen[k] = struct{}{}
+			n += 4 + int64(len(k))
+		}
+		return n
+	case *radosclient.CreateStep, *radosclient.RemoveStep, *radosclient.ZeroStep,
+		*radosclient.TruncateStep, *radosclient.OmapClearStep, *radosclient.SetAllocHintStep:
+		// Write-mode steps whose indata is empty; a zero's length is an
+		// extent, which calc_op_budget reads only in a read-mode step.
+		return 0
+	case *radosclient.StatStep, *radosclient.AssertExistsStep, *radosclient.AssertVersionStep,
+		*radosclient.GetXattrsStep, *radosclient.OmapGetValsStep, *radosclient.OmapGetValsByKeysStep,
+		*radosclient.OmapGetKeysStep, *radosclient.OmapCmpStep:
+		// Read-mode steps that are neither an extent nor an xattr with
+		// lengths.
+		return 0
+	case *radosclient.StepFlagsStep:
+		// It sets the flags of the step before it and adds none.
+		return 0
+	}
+	panic(fmt.Sprintf("goceph: no weight for a %T step", s))
+}
+
 // counter counts the operations submitted in one direction and their
 // payload bytes.
 type counter struct {
 	ops, bytes atomic.Uint64
 }
 
-// add counts one operation of n payload bytes.
-func (c *counter) add(n int64) {
+// add counts one operation of steps and its payload. It takes the steps
+// rather than a byte count so that the limiter's weight, which counts more,
+// cannot be passed for the payload.
+func (c *counter) add(steps []radosclient.Step) {
 	c.ops.Add(1)
-	if n > 0 {
+	if n := payload(steps); n > 0 {
 		c.bytes.Add(uint64(n))
 	}
 }
