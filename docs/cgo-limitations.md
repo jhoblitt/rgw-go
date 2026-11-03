@@ -612,8 +612,8 @@ benchmark was re-run.
   operation is built. Class-method output lands in C memory, and the fork copies
   it into Go. Reads land in pinned Go memory. goceph builds an operation only
   once the in-flight limiter admits it, so a write waiting for admission
-  holds its Go buffer and no copy (see "librados's buffers live in glibc's
-  heap, which keeps them after use").
+  holds its Go buffer and no copy (see "librados's buffers live in
+  tcmalloc's heap, as radosgw's do").
 - **Measure:** allocation and copy cost on large objects; CPU profile with the
   cgo boundary attributed, as the spec's phase 1 section asks.
 - **Measured (quiet host):** CPU per operation was 749 to 930 µs for
@@ -640,11 +640,11 @@ benchmark was re-run.
   section 4). That growth is RssAnon less Go's resident estimate, not
   `malloc_info`, and by the end of the run 98% of glibc's heap was free, so
   it shows what the copies leave in glibc's heap (see "librados's buffers
-  live in glibc's heap, which keeps them after use"), not the bytes a write
+  live in tcmalloc's heap, as radosgw's do"), not the bytes a write
   holds in flight. Neither those bytes, at 32 in flight, nor the copy's CPU
   is measured.
 
-### librados's buffers live in glibc's heap, which keeps them after use
+### librados's buffers live in tcmalloc's heap, as radosgw's do
 
 - **Evidence:** librados copies every write's data into a bufferlist of its
   own, with `bl.append(buffer, len)` in `rados_write_op_write` and
@@ -658,10 +658,19 @@ benchmark was re-run.
   tcmalloc when gperftools is found
   ([CMakeLists.txt:457-465](https://github.com/ceph/ceph/blob/v20.2.4/CMakeLists.txt#L457-L465),
   [src/rgw/CMakeLists.txt:495-500](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/CMakeLists.txt#L495-L500)).
-  So in rgw-go those 4 MiB copies come from glibc malloc. glibc gives a
-  contended thread its own arena, its dynamic mmap threshold (mallopt(3))
-  moves chunks of that size into the arenas, and it keeps the arenas' top
-  chunks.
+  rgw-go links the same full tcmalloc, `libtcmalloc.so.4`
+  (`internal/radosclient/goceph/tcmalloc.go:13`), into the own DT_NEEDED of
+  every binary and test that links librados. gcc's driver puts libc after
+  every library the link names, so in the loader's global scope tcmalloc's
+  `malloc` and `free` come before libc's, and librados's, go-ceph's and
+  libc's own calls bind to them. A goceph spec fails when the process's
+  `malloc` is not the full tcmalloc's, or when its libunwind is mapped from
+  another directory than tcmalloc
+  (`internal/radosclient/goceph/tcmalloc_test.go:12-14`).
+  Until 2026-11-03 rgw-go linked no allocator, so those 4 MiB copies came
+  from glibc malloc. glibc gives a contended thread its own arena, its
+  dynamic mmap threshold (mallopt(3)) moves chunks of that size into the
+  arenas, and it keeps the arenas' top chunks.
 
   goceph builds a Read's or a Write's go-ceph op, and so makes its copies,
   only once the in-flight limiter admits the op
@@ -716,34 +725,47 @@ benchmark was re-run.
   value. It then compares glibc's `mallinfo2` `uordblks` plus `hblkhd`
   after building the op with the same sum before. One such step held 8448
   bytes, and 900 in one op held 7,621,040.
-- **Status:** open. rgw-go copies an op's payload into C memory only once
+- **Status:** mitigated. rgw-go copies an op's payload into C memory only once
   the in-flight limiter admits the op. So the copies it weighs alive at once
   are bounded by the limiter's byte budget, with the two exceptions above.
   The unweighted copies and librados's per-step buffers are bounded only by
-  the operation count: `objecter_inflight_ops` less 16,
-  1008 by default, unless `MaxInflightOps` sets it. With
-  `objecter_inflight_ops = 0` nothing bounds the count
-  (`internal/radosclient/goceph/limiter.go:116-123`). Earlier builds made every copy before parking
-  on the limiter, so every parked op held its copies. Every measurement in
-  this entry predates the change, and its effect on glibc's heap is not
-  measured. Two settings mitigate the arena growth, measured at 1-2 in
-  flight
+  the operation count: `objecter_inflight_ops` less 16, 1008 by default,
+  unless `MaxInflightOps` sets it. With `objecter_inflight_ops = 0` nothing
+  bounds the count (`internal/radosclient/goceph/limiter.go:116-123`).
+  Earlier builds made every copy before parking on the limiter, so every
+  parked op held its copies. What the C heap keeps after use is the
+  allocator's: glibc's defaults kept what its arenas once held and grew with
+  every load, where tcmalloc held the heap near what librados had in flight
+  at no measurable CPU cost (the measurements below). So rgw-go links
+  tcmalloc, as radosgw does. Under glibc, two settings mitigated the arena
+  growth, measured at 1-2 in flight
   ([2026-11-02-memory-tentacle](benchmarks/2026-11-02-memory-tentacle/REPORT.md),
   section 6). `MALLOC_ARENA_MAX=2` left 2 arenas holding 50.0 MiB and cut
-  the end-of-run VmRSS from 238 to 107 MiB, at no measured CPU cost; its
-  cost at 32 in flight is unmeasured.
+  the end-of-run VmRSS from 238 to 107 MiB, at no measured CPU cost.
   `GLIBC_TUNABLES=glibc.malloc.mmap_threshold=1048576` left 18.5 MiB and an
   end-of-run VmRSS of 77 MiB, for 29% more gateway CPU on 256 MiB objects,
-  all of it system time. Nothing sets either today.
-- **Measure:** arena count, `malloc_info`'s free bytes and VmRSS after a
-  large-object profile, per setting, and the arena-lock contention
-  `MALLOC_ARENA_MAX` costs at 32 in flight; the C heap's peak at 32
-  concurrent large PUTs now that only admitted writes hold a copy. Squid was
-  not measured.
-- **Measured (Tentacle):** after 256 MiB PUTs and GETs at 1-2 in flight,
-  rgw-go's 41 arenas held 192.4 MiB, 98% of it free (`malloc_info`), and
-  `malloc_trim(0)` returned 6.4 MiB of it
+  all of it system time. Neither applies to tcmalloc, and nothing sets them.
+- **Measure:** the C heap under the linked tcmalloc in the derived image,
+  whose glibc is 2.34 to the build host's 2.42, and under a pod's
+  `memory.max`; Squid. The tcmalloc figures below preloaded the image's
+  gperftools 2.9.1 into an rgw-go running on the host rather than linking
+  it.
+- **Measured (Tentacle, glibc):** after 256 MiB PUTs and GETs at 1-2 in
+  flight, rgw-go's 41 arenas held 192.4 MiB, 98% of it free (`malloc_info`),
+  and `malloc_trim(0)` returned 6.4 MiB of it
   ([2026-11-02-memory-tentacle](benchmarks/2026-11-02-memory-tentacle/REPORT.md)).
+- **Measured (Tentacle, glibc against tcmalloc):** tcmalloc cost no
+  measurable CPU on any load and held the C heap to what librados had in
+  flight: 28 MiB after a sustained 256 MiB load against glibc's 181, and
+  521 MiB after 32 concurrent 64 MiB PUTs against glibc's 869-895 MiB
+  ([2026-11-03-allocator-tentacle](benchmarks/2026-11-03-allocator-tentacle/REPORT.md),
+  section 1). That ran before the limiter admitted ops ahead of their
+  copies. After it, at rgw-go 10b0eae on 2026-11-03, tcmalloc's heap
+  peaked at 104 MiB at 32 concurrent 64 MiB PUTs and 105 MiB at 64, near
+  the 92 MiB the limiter admitted, and six loads in a row on one process
+  held it at 104-120 MiB. glibc's peaked at up to 483 and 697 MiB after one
+  load and grew with every load: six took it from 499 to 1064 MiB at 32
+  PUTs and from 720 to 1238 at 64, still growing.
 - **Note:** a pure-Go client removes it: it would leave no C heap.
 
 ### A read needs its buffer sized up front
@@ -829,9 +851,24 @@ benchmark was re-run.
   linux/amd64 alone: no darwin or windows archive, and each archive names the
   Ceph release whose librados it links. CI builds and tests in that builder
   too, and installs no librados ("CI depended on the runner OS's Ceph
-  packages" below). Local
-  sandboxed builds need `CCACHE_DISABLE=1`. Building the derived image adds
-  two more costs:
+  packages" below). Every build that links librados also links gperftools's
+  full tcmalloc, `libtcmalloc.so.4`, as radosgw does (see "librados's
+  buffers live in tcmalloc's heap, as radosgw's do"), so it needs that
+  library too, though no gperftools headers. A builder links the Ceph
+  image's own, gperftools 2.9.1 in both releases' images, which radosgw
+  already NEEDs, so CI's tests run the tcmalloc the derived image ships and
+  the image adds nothing. A local build links a copy of the image's, with
+  the image's libunwind, libstdc++ and libgcc_s beside it, through its
+  directory in `-L` and in the executable's DT_RPATH; beside a private
+  librados set, `CGO_LDFLAGS='-L<librados dir> -L<tcmalloc dir>
+  -Wl,--disable-new-dtags,-rpath,<librados dir>,-rpath,<tcmalloc dir>'`.
+  The copies carry no RUNPATH, so only a DT_RPATH finds their own
+  dependencies beside them. A plain `-Wl,-rpath` becomes a DT_RUNPATH where
+  the toolchain defaults to new dtags, as this build host's gcc does, and a
+  DT_RUNPATH reaches only the executable's own NEEDED: the process then maps
+  the copy and the host's libunwind, libstdc++ and libgcc_s, which the
+  goceph spec refuses. Local sandboxed builds need `CCACHE_DISABLE=1`.
+  Building the derived image adds two more costs:
   - A builder image per Ceph release (`hack/image/Containerfile.builder`),
     because the binary must link against the librados and glibc of the Ceph
     image it runs in: that image plus the `librados-devel` build matching the
