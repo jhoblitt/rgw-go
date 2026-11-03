@@ -112,6 +112,12 @@ var _ = Describe("limiter", func() {
 		Expect(bytes).To(BeEquivalentTo(math.MaxInt64))
 	})
 
+	It("takes a limit too large to count as no limit", func() {
+		ops, bytes := goceph.DeriveLimits(map[string]string{"objecter_inflight_ops": "3000000000", "objecter_inflight_op_bytes": "18446744073709551615"})
+		Expect(ops).To(Equal(math.MaxInt))
+		Expect(bytes).To(BeEquivalentTo(math.MaxInt64))
+	})
+
 	It("keeps one operation and every byte when librados's limits are within the margin", func() {
 		ops, bytes := goceph.DeriveLimits(map[string]string{"objecter_inflight_ops": "16", "objecter_inflight_op_bytes": "15"})
 		Expect(ops).To(Equal(1))

@@ -113,18 +113,14 @@ func deriveLimits(ctx context.Context, get func(string) (string, error)) (ops in
 			slog.Any("error", err))
 	}
 
-	switch {
-	case maxOps == 0 || maxOps > math.MaxInt:
-		ops = math.MaxInt
-	case maxOps <= opsMargin:
-		ops = 1
-	default:
-		ops = int(maxOps) - opsMargin
+	// A count past what an int holds on every platform is no limit in
+	// practice, so it is taken as none.
+	ops = math.MaxInt
+	if maxOps != 0 && maxOps <= math.MaxInt32 {
+		ops = max(int(maxOps)-opsMargin, 1)
 	}
-	switch {
-	case maxBytes == 0 || maxBytes > math.MaxInt64:
-		bytes = math.MaxInt64
-	default:
+	bytes = math.MaxInt64
+	if maxBytes != 0 && maxBytes <= math.MaxInt64 {
 		bytes = int64(maxBytes)
 		bytes -= bytes / 16
 	}
