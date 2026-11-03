@@ -1,0 +1,25 @@
+# go test -tags=ceph_preview -race -count=1 ./internal/driver/..., per variant
+
+## nopool
+
+ok  	github.com/jhoblitt/rgw-go/internal/driver	401.323s
+?   	github.com/jhoblitt/rgw-go/internal/driver/driverfakes	[no test files]
+exit 0 after 444 s
+
+## syncpool
+
+ok  	github.com/jhoblitt/rgw-go/internal/driver	391.805s
+?   	github.com/jhoblitt/rgw-go/internal/driver/driverfakes	[no test files]
+exit 0 after 421 s
+
+## freelist-small
+
+ok  	github.com/jhoblitt/rgw-go/internal/driver	393.806s
+?   	github.com/jhoblitt/rgw-go/internal/driver/driverfakes	[no test files]
+exit 0 after 810 s
+
+## freelist-large
+
+ok  	github.com/jhoblitt/rgw-go/internal/driver	394.951s
+?   	github.com/jhoblitt/rgw-go/internal/driver/driverfakes	[no test files]
+exit 0 after 429 s

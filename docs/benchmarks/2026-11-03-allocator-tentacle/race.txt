@@ -1,0 +1,64 @@
+# go test -race of ./internal/radosclient/goceph, glibc against tcmalloc preloaded
+
+Extracted from the race check's logs, which were not kept: each run's outcome lines,
+and the dynamic linker's malloc bindings of the test binary under the preload.
+
+## unit-glibc (unit specs)
+
+Ran 127 of 127 Specs in 0.330 seconds
+SUCCESS! -- 127 Passed | 0 Failed | 0 Pending | 0 Skipped
+ok  	github.com/jhoblitt/rgw-go/internal/radosclient/goceph	1.367s
+DATA RACE reports: 0
+
+## unit-tcm (unit specs)
+
+Ran 127 of 127 Specs in 0.319 seconds
+SUCCESS! -- 127 Passed | 0 Failed | 0 Pending | 0 Skipped
+ok  	github.com/jhoblitt/rgw-go/internal/radosclient/goceph	2.444s
+DATA RACE reports: 0
+
+## integration-glibc (integration specs, first attempt, without manifest.json)
+
+Ran 118 of 246 Specs in 5.476 seconds
+FAIL! -- 113 Passed | 5 Failed | 0 Pending | 128 Skipped
+--- FAIL: TestGoceph (5.49s)
+FAIL
+FAIL	github.com/jhoblitt/rgw-go/internal/radosclient/goceph	5.534s
+FAIL
+DATA RACE reports: 0
+
+## integration-tcm (integration specs, first attempt, without manifest.json)
+
+Ran 118 of 246 Specs in 5.432 seconds
+FAIL! -- 113 Passed | 5 Failed | 0 Pending | 128 Skipped
+--- FAIL: TestGoceph (5.44s)
+FAIL
+FAIL	github.com/jhoblitt/rgw-go/internal/radosclient/goceph	6.586s
+FAIL
+DATA RACE reports: 0
+
+## integration-glibc (integration specs, with the cluster's manifest.json)
+
+Ran 118 of 246 Specs in 5.623 seconds
+SUCCESS! -- 118 Passed | 0 Failed | 0 Pending | 128 Skipped
+ok  	github.com/jhoblitt/rgw-go/internal/radosclient/goceph	6.679s
+DATA RACE reports: 0
+
+## integration-tcm (integration specs, with the cluster's manifest.json)
+
+Ran 118 of 246 Specs in 5.656 seconds
+SUCCESS! -- 118 Passed | 0 Failed | 0 Pending | 128 Skipped
+ok  	github.com/jhoblitt/rgw-go/internal/radosclient/goceph	7.800s
+DATA RACE reports: 0
+
+## unit-tcm-exec (malloc bindings of goceph.test under the preload)
+
+malloc bindings to libtcmalloc: 40
+malloc bindings to libc.so.6:   0
+librados malloc binding: 	binding file /home/jhoblitt/.local/lib/rgw-go-20.2.4/librados.so.2 [0] to /home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1/libtcmalloc.so.4.5.9 [0]: normal symbol `malloc' [GLIBC_2.2.5]
+
+## integration-tcm-exec (malloc bindings of goceph.test under the preload)
+
+malloc bindings to libtcmalloc: 40
+malloc bindings to libc.so.6:   0
+librados malloc binding: 	binding file /home/jhoblitt/.local/lib/rgw-go-20.2.4/librados.so.2 [0] to /home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1/libtcmalloc.so.4.5.9 [0]: normal symbol `malloc' [GLIBC_2.2.5]
