@@ -478,7 +478,10 @@ benchmark was re-run.
 - **Status:** mitigated. goceph parks every Read and Write on the Cluster's
   in-flight limiter in Go, sized 16 operations and one sixteenth of the bytes
   below librados's own limits, which it reads through `rados_conf_get` after
-  connect. The operation margin is for the calls that take the objecter's
+  connect. It parks them before building their go-ceph operation, so a
+  parked operation holds no copy of its payload in librados's memory
+  (`internal/radosclient/goceph/pool.go:333-350` and `:405-425`). The
+  operation margin is for the calls that take the objecter's
   budget without passing the limiter: each lock call holds one operation
   while it runs, and an object listing one for the whole listing. Watch and
   notify register linger operations, which take none
@@ -585,7 +588,10 @@ benchmark was re-run.
 
 - **Evidence:** librados copies write payloads into its own buffers when the
   operation is built. Class-method output lands in C memory, and the fork copies
-  it into Go. Reads land in pinned Go memory.
+  it into Go. Reads land in pinned Go memory. goceph builds an operation only
+  once the in-flight limiter admits it, so a write waiting for admission
+  holds its Go buffer and no copy (see "librados's buffers live in glibc's
+  heap, which keeps them after use").
 - **Measure:** allocation and copy cost on large objects; CPU profile with the
   cgo boundary attributed, as the spec's phase 1 section asks.
 - **Measured (quiet host):** CPU per operation was 749 to 930 µs for
@@ -634,7 +640,67 @@ benchmark was re-run.
   contended thread its own arena, its dynamic mmap threshold (mallopt(3))
   moves chunks of that size into the arenas, and it keeps the arenas' top
   chunks.
-- **Status:** open. Two settings mitigate it, measured at 1-2 in flight
+
+  goceph builds a Read's or a Write's go-ceph op, and so makes its copies,
+  only once the in-flight limiter admits the op
+  (`internal/radosclient/goceph/pool.go:333-350` and `:405-425`). An op
+  waiting for admission therefore holds none. The limiter's byte budget is a
+  sixteenth under `objecter_inflight_op_bytes` unless `MaxInflightBytes`
+  sets it. It weighs only read lengths, write data and exec inputs
+  (`internal/radosclient/goceph/limiter.go:147-174`), so the only copies it
+  bounds are those of write data and exec input, and even those have two
+  exceptions:
+  - A write or exec input larger than the whole budget takes all of it but
+    holds its whole copy (`internal/radosclient/goceph/limiter.go:52-57`).
+  - `objecter_inflight_op_bytes = 0` leaves the budget unbounded
+    (`internal/radosclient/goceph/limiter.go:123-129`).
+
+  Every other copy a step makes weighs 0, so only the operation count
+  bounds it: xattr names and values, compared values, omap keys and values,
+  and class and method names. The same holds for librados's own allocation
+  per step. A small append to an empty bufferlist takes a whole buffer,
+  because `refill_append_space` rounds the allocation up to
+  `CEPH_BUFFER_ALLOC_UNIT`, 4096 bytes
+  ([buffer.cc:52](https://github.com/ceph/ceph/blob/v20.2.4/src/common/buffer.cc#L52),
+  [:1318-1338](https://github.com/ceph/ceph/blob/v20.2.4/src/common/buffer.cc#L1318-L1338),
+  [:1348-1373](https://github.com/ceph/ceph/blob/v20.2.4/src/common/buffer.cc#L1348-L1373)
+  at v20.2.4;
+  [:48](https://github.com/ceph/ceph/blob/v19.2.7/src/common/buffer.cc#L48),
+  [:1269-1289](https://github.com/ceph/ceph/blob/v19.2.7/src/common/buffer.cc#L1269-L1289),
+  [:1291-1316](https://github.com/ceph/ceph/blob/v19.2.7/src/common/buffer.cc#L1291-L1316)
+  at v19.2.7). A setxattr step with a non-empty value makes two such
+  appends; an empty value appends nothing:
+  - its value, into a list of its own
+    ([librados_c.cc:3733-3745](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/librados_c.cc#L3733-L3745),
+    the same lines at v19.2.7);
+  - its name, into the step's `indata`
+    ([Objecter.h:190-197](https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.h#L190-L197)
+    at v20.2.4,
+    [:192-199](https://github.com/ceph/ceph/blob/v19.2.7/src/osdc/Objecter.h#L192-L199)
+    at v19.2.7).
+
+  An exec appends its class and method names the same way
+  ([Objecter.h:227-243](https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.h#L227-L243)
+  at v20.2.4,
+  [:229-245](https://github.com/ceph/ceph/blob/v19.2.7/src/osdc/Objecter.h#L229-L245)
+  at v19.2.7). This was measured against librados 20.2.4 with a scratch C
+  program, not kept. It links librados, which `rados_create_write_op` needs
+  no connection for, and adds `rados_write_op_setxattr` steps with a 2-byte
+  value. It then compares glibc's `mallinfo2` `uordblks` plus `hblkhd`
+  after building the op with the same sum before. One such step held 8448
+  bytes, and 900 in one op held 7,621,040.
+- **Status:** open. rgw-go copies an op's payload into C memory only once
+  the in-flight limiter admits the op. So the copies of write data and exec
+  input alive at once are bounded by the limiter's byte budget, with the two
+  exceptions above. The unweighted copies and librados's per-step buffers
+  are bounded only by the operation count: `objecter_inflight_ops` less 16,
+  1008 by default, unless `MaxInflightOps` sets it. With
+  `objecter_inflight_ops = 0` nothing bounds the count
+  (`internal/radosclient/goceph/limiter.go:115-122`). Earlier builds made every copy before parking
+  on the limiter, so every parked op held its copies. Every measurement in
+  this entry predates the change, and its effect on glibc's heap is not
+  measured. Two settings mitigate the arena growth, measured at 1-2 in
+  flight
   ([2026-11-02-memory-tentacle](benchmarks/2026-11-02-memory-tentacle/REPORT.md),
   section 6). `MALLOC_ARENA_MAX=2` left 2 arenas holding 50.0 MiB and cut
   the end-of-run VmRSS from 238 to 107 MiB, at no measured CPU cost; its
@@ -644,7 +710,9 @@ benchmark was re-run.
   all of it system time. Nothing sets either today.
 - **Measure:** arena count, `malloc_info`'s free bytes and VmRSS after a
   large-object profile, per setting, and the arena-lock contention
-  `MALLOC_ARENA_MAX` costs at 32 in flight. Squid was not measured.
+  `MALLOC_ARENA_MAX` costs at 32 in flight; the C heap's peak at 32
+  concurrent large PUTs now that only admitted writes hold a copy. Squid was
+  not measured.
 - **Measured (Tentacle):** after 256 MiB PUTs and GETs at 1-2 in flight,
   rgw-go's 41 arenas held 192.4 MiB, 98% of it free (`malloc_info`), and
   `malloc_trim(0)` returned 6.4 MiB of it
