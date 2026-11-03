@@ -50,12 +50,14 @@ jobs:
           persist-credentials: false
 
       # The S3 path: every internal package can change what it answers, so
-      # only docs and records skip the run. Three dots count the pull
-      # request's own changes only; --no-renames counts a file moved out of
-      # the path by its old name too; -z gives each name as it is, where git
-      # would otherwise quote one holding a non-ASCII or control character and
-      # no pattern would match it; and %q keeps a name from writing a line of
-      # its own to the log, where a workflow command could start.
+      # only docs and records skip the run, and hack/image and the builder
+      # action make the derived image parity runs rgw-go from. Three dots
+      # count the pull request's own changes only; --no-renames counts a file
+      # moved out of the path by its old name too; -z gives each name as it
+      # is, where git would otherwise quote one holding a non-ASCII or control
+      # character and no pattern would match it; and %q keeps a name from
+      # writing a line of its own to the log, where a workflow command could
+      # start.
       - name: Decide whether the pull request touches the S3 path
         id: filter
         env:
@@ -74,7 +76,8 @@ jobs:
           while IFS= read -r -d '' path; do
             case "$path" in
               internal/* | cmd/* | go.mod | go.sum | hack/s3tests/* | hack/internal/* | hack/rooket/* | hack/parity/* | \
-                test/s3tests/* | .github/workflows/s3tests.yml | .github/actions/rooket-cluster/*)
+                hack/image/* | test/s3tests/* | .github/workflows/s3tests.yml | .github/actions/rooket-cluster/* | \
+                .github/actions/builder/*)
                 printf 'on the S3 path: %q\n' "$path"
                 run=true
                 ;;
@@ -88,13 +91,32 @@ jobs:
     if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # rgw-go runs from the release's derived image, so that it runs the
+    # release's own librados and tcmalloc on a runner that holds no librados
+    # (hack/rooket/README.md, "Running in the builder").
     env:
       RELEASE: ${{ inputs.release || 'squid' }}
+      RGW_GO_ENGINE: docker
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # Before the cluster, so that a builder this run builds is saved, and
+      # its archive gone, before the cluster takes the runner's disk.
+      - name: Load the release's builder
+        uses: ./.github/actions/builder
+        with:
+          release: ${{ env.RELEASE }}
+          gocache: s3tests
+
+      - name: Build and check the derived image
+        env:
+          RGW_GO_IMAGE_TEST: "1"
+        run: |
+          image=$(make -s image "RELEASE=${RELEASE}")
+          echo "RGW_GO_IMAGE=${image}" >>"$GITHUB_ENV"
 
       - name: Start and populate the cluster
         uses: ./.github/actions/rooket-cluster

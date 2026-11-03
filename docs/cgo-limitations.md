@@ -816,8 +816,10 @@ benchmark was re-run.
   refuses a pre-Squid library up front and otherwise uses the release only to
   explain a failed connect. If the symbol disappears, both are skipped with a
   warning; the connect itself is unaffected.
-- **Status:** accepted; the integration workflow installs librados 20.2.4
-  from download.ceph.com.
+- **Status:** accepted. CI runs each cluster's specs in that release's
+  builder and rgw-go from its derived image, so the Squid cluster's run
+  librados 19.2.7 and Tentacle's 20.2.4, each at its release's floor or
+  above.
 
 ### Build and deployment cost
 
@@ -825,7 +827,9 @@ benchmark was re-run.
   `CGO_ENABLED=0` and cross-compilation are impossible, so a release builds
   rgw-go once per Ceph release, in that release's builder (below), for
   linux/amd64 alone: no darwin or windows archive, and each archive names the
-  Ceph release whose librados it links. CI installs librados-dev. Local
+  Ceph release whose librados it links. CI builds and tests in that builder
+  too, and installs no librados ("CI depended on the runner OS's Ceph
+  packages" below). Local
   sandboxed builds need `CCACHE_DISABLE=1`. Building the derived image adds
   two more costs:
   - A builder image per Ceph release (`hack/image/Containerfile.builder`),
@@ -841,11 +845,38 @@ benchmark was re-run.
     floor images carry the same gcc, 11.5.0-15.el9, so a cache shared by
     builds against Squid's and Tentacle's librados could hand one release
     go-ceph objects compiled against the other's headers.
-    `hack/image/cgo-build.sh` keeps one cache per builder.
+    `hack/image/run.sh`, which `cgo-build.sh` and CI run through, keeps one
+    cache per builder.
 - **Note:** a pure-Go client removes both: one `CGO_ENABLED=0` binary, built
   on any host with an ordinary build cache, would serve every release. The
   derived image stays one per release, because under Rook it is the Ceph
   image every daemon runs.
+
+### CI depended on the runner OS's Ceph packages
+
+- **Evidence:** until 2026-11-03 every CI job that linked librados
+  installed it on the runner with apt: the unit jobs Ubuntu's own
+  `librados-dev`, noble's 19.2.3 (run 41677861071), and the cluster jobs
+  download.ceph.com's 20.2.4 noble packages, which served both clusters.
+  - On 2026-11-03 GitHub's `ubuntu-latest` became ubuntu-26.04, resolute.
+    The cluster jobs' install failed there: `librados2 20.2.4-1noble`
+    depends on `libthrift-0.19.0t64`, which resolute does not have (run
+    41703346092). Every integration and s3-tests run failed, so every pull
+    request that touched code was red.
+  - The unit jobs kept passing, on resolute's librados 20.2.0, which no
+    release ships, and in #554's run on the runner image's gperftools 2.18.1
+    (run 41703345976).
+  - Neither set was the images': rgw-go ships with librados 19.2.7 or
+    20.2.4 and gperftools 2.9.1, and the Squid cluster ran a Tentacle
+    client.
+- **Note:** a pure-Go client removes it. A `CGO_ENABLED=0` binary needs no
+  librados on any host, so CI could build and test on any runner.
+- **Status:** worked around. Every CI job that compiles, tests, lints,
+  analyzes or runs rgw-go against librados runs in the release's builder,
+  and rgw-go runs from the release's derived image, so each runs the librados
+  and tcmalloc the release ships. No runner installs a Ceph package
+  (`hack/rooket/README.md`, "Running in the builder"). The builders come
+  from the Actions cache or are built: about 435 MiB each as zstd.
 
 ### A private librados's RUNPATH overrides the executable's rpath
 

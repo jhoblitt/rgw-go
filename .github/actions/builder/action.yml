@@ -1,0 +1,120 @@
+# Loads one release's rgw-go builder (hack/image/Containerfile.builder), the
+# release's Ceph image with librados's headers and the Go toolchain, into the
+# runner's docker, so that hack/image/run.sh runs the job's commands with that
+# image's librados, tcmalloc, glibc and Go. The builder comes from the Actions
+# cache when it holds the builder's tag, and is otherwise built and saved there
+# for the runs after it; the key is the tag hack/image/builder.sh --print names,
+# the hash cgo-build.sh builds under, so a change to Containerfile.builder or a
+# release's Ceph image is a new key. Run it after the caller's checkout, which
+# would otherwise clean what it restores, and with RGW_GO_ENGINE=docker in the
+# job's environment. With gocache set, it also restores the builder's Go build
+# cache, and the job saves it at its end, from a push run only: pull requests
+# read main's caches and write none, and a cluster job, which never runs on
+# push, falls back to the newest entry of the same builder. The release
+# workflow does not use it: a release builds its builders from the commit it
+# tags.
+name: builder
+description: Load one release's rgw-go builder into docker, from the Actions cache or by building it
+
+inputs:
+  release:
+    description: The Ceph release, squid or tentacle
+    required: true
+  gocache:
+    description: The job's name for its Go build cache, empty for none
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Name the builder
+      id: name
+      shell: bash
+      env:
+        RELEASE: ${{ inputs.release }}
+      run: |
+        image=$(hack/image/builder.sh --print "${RELEASE}")
+        echo "image=${image}" >>"$GITHUB_OUTPUT"
+        echo "tag=${image##*:}" >>"$GITHUB_OUTPUT"
+
+    - name: Restore the builder
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/rgw-go-builder.tar
+        key: rgw-go-builder-${{ steps.name.outputs.tag }}
+
+    - name: Load the restored builder
+      if: steps.restore.outputs.cache-hit == 'true'
+      shell: bash
+      env:
+        ARCHIVE: ${{ runner.temp }}/rgw-go-builder.tar
+      run: |
+        docker load -i "${ARCHIVE}"
+        rm -f "${ARCHIVE}"
+
+    # Every job that misses builds; the first to finish saves, and the save of
+    # each other warns and goes on.
+    - name: Build the builder
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        RELEASE: ${{ inputs.release }}
+        ARCHIVE: ${{ runner.temp }}/rgw-go-builder.tar
+      run: |
+        image=$(hack/image/builder.sh "${RELEASE}")
+        docker save -o "${ARCHIVE}" "${image}"
+
+    - name: Save the builder
+      if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/rgw-go-builder.tar
+        key: rgw-go-builder-${{ steps.name.outputs.tag }}
+
+    - name: Remove the saved builder's archive
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        ARCHIVE: ${{ runner.temp }}/rgw-go-builder.tar
+      run: rm -f "${ARCHIVE}"
+
+    # The proof that the job's commands get the release's own libraries: the
+    # librados2 the builder holds is the release's pinned version, which
+    # run.sh passes as RGW_GO_TEST_CEPH_VERSION, and tcmalloc is radosgw's
+    # gperftools 2.9.1.
+    - name: Check the builder's librados and tcmalloc
+      shell: bash
+      env:
+        RELEASE: ${{ inputs.release }}
+      run: |
+        # shellcheck disable=SC2016 # the builder's shell expands them
+        hack/image/run.sh -- "${RELEASE}" sh -c '
+          rpm -q librados2 librados-devel gperftools-libs &&
+          test "$(rpm -q --queryformat "%{VERSION}" librados2)" = "${RGW_GO_TEST_CEPH_VERSION}" &&
+          test "$(rpm -q --queryformat "%{VERSION}" gperftools-libs)" = 2.9.1'
+
+    - name: Restore and, on push, save the Go build cache
+      if: inputs.gocache != '' && github.event_name == 'push'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          hack/image/out/gocache/${{ steps.name.outputs.tag }}
+          hack/image/out/lintcache/${{ steps.name.outputs.tag }}
+        key: rgw-go-gocache-${{ steps.name.outputs.tag }}-${{ inputs.gocache }}-${{ hashFiles('go.sum') }}
+        restore-keys: |
+          rgw-go-gocache-${{ steps.name.outputs.tag }}-${{ inputs.gocache }}-
+          rgw-go-gocache-${{ steps.name.outputs.tag }}-
+
+    - name: Restore the Go build cache
+      if: inputs.gocache != '' && github.event_name != 'push'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          hack/image/out/gocache/${{ steps.name.outputs.tag }}
+          hack/image/out/lintcache/${{ steps.name.outputs.tag }}
+        key: rgw-go-gocache-${{ steps.name.outputs.tag }}-${{ inputs.gocache }}-${{ hashFiles('go.sum') }}
+        restore-keys: |
+          rgw-go-gocache-${{ steps.name.outputs.tag }}-${{ inputs.gocache }}-
+          rgw-go-gocache-${{ steps.name.outputs.tag }}-

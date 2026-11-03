@@ -39,13 +39,8 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # The stamp assertion's build links go-ceph, so it needs librados's
-      # headers and library; it never connects to a cluster.
-      - name: Install librados headers
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends librados-dev
-
+      # goreleaser reads the module through the runner's go, and the stamp
+      # assertion reads the binary's stamp with it; neither links librados.
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -57,13 +52,18 @@ jobs:
 
       # The binary carries no -X ldflags: go build stamps the module version
       # from the tag. Prove the checkout produces that stamp before releasing.
+      # It builds as goreleaser's builds do, in Tentacle's builder through
+      # run.sh, which cgo-build.sh runs, and which builds the builder from
+      # this commit and no cache. The output is under hack/image/out/, which
+      # git ignores, so the tree goreleaser finds stays clean.
       - name: Assert the tag is the version the binary reports
         env:
           TAG: ${{ github.ref_name }}
           CGO_ENABLED: "1"
         run: |
-          go build "-tags=$(make -s print-go-tags)" -o "$RUNNER_TEMP/rgw-go" ./cmd/rgw-go
-          stamped=$(go version -m "$RUNNER_TEMP/rgw-go" | awk '$1 == "mod" { print $3 }')
+          bin=hack/image/out/rgw-go-stamp
+          hack/image/run.sh -- tentacle go build "-tags=$(make -s print-go-tags)" -o "${bin}" ./cmd/rgw-go
+          stamped=$(go version -m "${bin}" | awk '$1 == "mod" { print $3 }')
           [ "$stamped" = "$TAG" ] || { echo "binary stamped '$stamped', want '$TAG'"; exit 1; }
 
       - name: Install cosign

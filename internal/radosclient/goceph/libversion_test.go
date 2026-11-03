@@ -1,6 +1,7 @@
 package goceph_test
 
 import (
+	"os"
 	"syscall"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -79,4 +80,19 @@ var _ = Describe("the librados version", func() {
 	It("reads the Ceph version of the librados the process runs", func() {
 		Expect(goceph.LibradosVersion()).To(MatchRegexp(`^\d+\.\d+\.\d+`))
 	})
+
+	It("is the Ceph version of the release whose builder runs the specs", expectBuilderLibrados)
 })
+
+// expectBuilderLibrados requires the process to run the librados of the
+// release whose builder hack/image/run.sh runs it in, which names that
+// release's Ceph version in RGW_GO_TEST_CEPH_VERSION, and skips outside one.
+// CI runs every spec in a builder, so there it proves a test process loaded
+// the Ceph image's own librados and no other.
+func expectBuilderLibrados() {
+	want := os.Getenv("RGW_GO_TEST_CEPH_VERSION")
+	if want == "" {
+		Skip("RGW_GO_TEST_CEPH_VERSION is unset, so the specs run outside hack/image/run.sh's builder")
+	}
+	Expect(goceph.LibradosVersion()).To(Equal(want))
+}

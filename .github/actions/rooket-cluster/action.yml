@@ -46,26 +46,25 @@ runs:
         rooket-version: v0.1.0
         rooket-sha256: f528fd390223bfcf12b10227c8be5851a9c5048ae45f2df41e0b3a6951d56e17
 
-    # Ceph 19.2.7 and 20.2.4 create AES256KRB5 cephx keys, which noble's
-    # librados 19.2.3 cannot parse, so librados comes from download.ceph.com.
-    # Squid 19.2.7 has no noble build; a Tentacle client serves both clusters.
-    # The image's AWS CLI v2 serves populate.sh; noble has no awscli package.
-    # After rooket-action, whose own apt-get update would otherwise fetch
-    # download.ceph.com's index a second time.
-    - name: Install librados headers and jq
+    # The runner holds no Ceph library: every command that links librados
+    # runs in the release's builder and rgw-go in its derived image
+    # (hack/rooket/README.md, "Running in the builder"), so a librados that a
+    # runner image or an install brought in could only let a host build pass
+    # for the wrong reason. The runner image's own gperftools (2.18.1 on
+    # ubuntu-26.04) is left alone: nothing that runs on the host links it.
+    # jq and the AWS CLI v2, which populate.sh, the harness scripts and the
+    # workflows' scrub steps use, come with the runner image.
+    - name: Check the runner's tools and that it holds no Ceph library
       shell: bash
-      env:
-        CEPH_KEY_FPR: 08B73419AC32B4E966C1A330E84AC2C0460F3994
       run: |
-        curl -fsSL https://download.ceph.com/keys/release.asc | gpg --dearmor >ceph.gpg
-        gpg --show-keys --with-colons ceph.gpg | grep -qx "fpr:::::::::${CEPH_KEY_FPR}:"
-        sudo install -m 0644 ceph.gpg /usr/share/keyrings/ceph.gpg && rm ceph.gpg
-        echo "deb [signed-by=/usr/share/keyrings/ceph.gpg] https://download.ceph.com/debian-20.2.4 noble main" |
-          sudo tee /etc/apt/sources.list.d/ceph.list >/dev/null
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends librados-dev jq
-        dpkg-query -W librados2
+        jq --version
         aws --version
+        # dpkg-query fails when a pattern matches no package, which pipefail
+        # would let hide another pattern's match.
+        if { dpkg-query -W -f '${db:Status-Abbrev} ${Package} ${Version}\n' 'librados*' 'libceph*' 2>/dev/null || true; } | grep '^ii'; then
+          echo "::error::the runner holds a Ceph library"
+          exit 1
+        fi
 
     - name: Start the cluster
       shell: bash

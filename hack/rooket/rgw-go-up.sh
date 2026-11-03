@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds rgw-go and runs it on the host against one release's populated
+# Starts rgw-go through rgw-go-start.sh, built on the host or from the derived
+# image RGW_GO_IMAGE names, against one release's populated
 # cluster, beside the cluster's radosgw and on the same site, with radosgw's
 # command-line options after rgw-go's own. It runs as its own cephx entity,
 # client.rgw.rgw-go, with radosgw's caps under Rook, and both gateways' config
@@ -19,7 +20,10 @@
 #   RGW_GO_LC_THREADS    rgw-go's rgw_enable_lc_threads, true or false; false,
 #                        the parity options' value, unless make lc-mode runs
 #                        rgw-go's lifecycle worker
-#   GO_TAGS              the build tags (ceph_preview); CGO_* come from the environment
+#   RGW_GO_IMAGE         a derived image (make image) to run rgw-go from, instead
+#                        of building it on the host (rgw-go-start.sh)
+#   GO_TAGS              the host build's tags (ceph_preview); CGO_* come from
+#                        the environment
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -29,8 +33,6 @@ readonly script=rgw-go-up.sh
 source "${here}/lib.sh"
 use_release "${1:-}"
 shift
-repo=$(cd "${here}/../.." && pwd)
-readonly repo
 
 # Each release has its own ports, so both clusters can have an rgw-go at once.
 case "${release}" in
@@ -56,8 +58,6 @@ fi
 # port while rgw-go fails to bind it.
 ! curl -sS --max-time 5 -o /dev/null "${endpoint}/" 2>/dev/null ||
 	die "something already answers at ${endpoint}; set RGW_GO_PORT to a free port"
-
-(cd "${repo}" && go build "-tags=${GO_TAGS:-ceph_preview}" -o bin/rgw-go ./cmd/rgw-go)
 
 use_site
 radosgw_entity=$(rgw_entity "${rgw}")
@@ -166,12 +166,10 @@ rm -f "${out}/rgw-go.endpoint" "${out}/rgw-go.metrics"
 # make lc-mode restarts rgw-go with the serve flags it was started with,
 # which this records, one a line.
 if (($#)); then printf '%s\n' "$@" >"${flagsfile}"; else : >"${flagsfile}"; fi
-RGW_GO_LOG_FORMAT=json nohup "${repo}/bin/rgw-go" serve "--metrics-addr=127.0.0.1:${metrics_port}" "$@" -- \
+pid=$("${here}/rgw-go-start.sh" "${release}" "${log}" serve "--metrics-addr=127.0.0.1:${metrics_port}" "$@" -- \
 	--id rgw.rgw-go --keyring "${keyring}" -c "${conf}" \
 	--rgw-realm="${realm}" --rgw-zonegroup="${zonegroup}" --rgw-zone="${zone}" \
-	--rgw-frontends="beast endpoint=127.0.0.1:${port}" \
-	>"${log}" 2>&1 &
-pid=$!
+	--rgw-frontends="beast endpoint=127.0.0.1:${port}")
 echo "${pid}" >"${pidfile}"
 
 # radosgw answers an anonymous GET on the root with 200, which is Rook's probe.

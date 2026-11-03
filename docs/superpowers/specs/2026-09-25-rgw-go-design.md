@@ -428,7 +428,7 @@ encrypted is stored in the clear and no ciphertext is served.
 
 | Layer | Needs | Covers | Runs |
 |---|---|---|---|
-| Unit specs, Ginkgo and Gomega | librados-dev, no cluster | `denc`, `meta`, class marshalling, auth, policy, ACL, the dispatcher, every op against counterfeiter fakes, the frontend in-process | `make test`, every PR |
+| Unit specs, Ginkgo and Gomega | Tentacle's builder, no cluster | `denc`, `meta`, class marshalling, auth, policy, ACL, the dispatcher, every op against counterfeiter fakes, the frontend in-process | `make test`, every PR |
 | Corpus and vector goldens | nothing at run time | every encoding in scope: each corpus object decodes to the JSON ceph-dencoder dumps and re-encodes to the bytes ceph-dencoder produces; generated vectors for types the corpus lacks and for Squid-version encodings; nondeterministic types compare decoded values | `make test`, every PR |
 | Integration specs, `//go:build integration` | a disposable cluster | the seam in all three modes, the driver's layout and protocols, the live oracle matrix against radosgw, the admin API through go-ceph's rgw/admin client | both releases on every PR unless every file it changes is one no step reads, docs, records, the other workflows' files and other tools' config; on demand and at gates |
 | s3-tests parity | a disposable cluster, radosgw's recorded baseline | the phase's s3-tests set against rgw-go, diffed with radosgw's outcomes | Squid on every PR touching the S3 path; Tentacle at gates and on demand |
@@ -487,9 +487,11 @@ Go canon's Makefile, CI, lint config, cobra root, version package and
 CLAUDE.md block. go-ceph is consumed through a `replace` to the fork at a
 pinned commit until the bindings are upstream, bumped by hand.
 
-CI adds an install of librados-dev, Squid or newer, to the template's test,
-lint and checks jobs; those jobs build and run unit specs and never connect
-to a cluster, so the headers alone matter there. Three added workflows.
+CI runs the template's test, lint, checks and govulncheck jobs, and CodeQL,
+in Tentacle's builder, the Ceph image with librados's headers and the Go
+toolchain, and adds a job that compiles and links everything in Squid's;
+those jobs never connect to a cluster. No runner installs a Ceph package.
+Three added workflows.
 An integration workflow, on pull requests and on demand, brings up the
 disposable Rook clusters on the runner with a pinned rooket, one job per
 release, and runs the integration specs, the oracle matrix and the phase 0
@@ -582,8 +584,12 @@ data from a modifying class method through the return-vector flag.
 - The base OS of each Ceph release image, which fixes the builder stage.
 - The librados version the CI distribution ships. Realized: Ubuntu noble's
   librados is below the supported floor in section 12, so the integration
-  workflow takes librados from download.ceph.com, while the jobs that never
-  connect keep noble's headers.
+  workflow took librados from download.ceph.com, while the jobs that never
+  connect kept noble's headers. When `ubuntu-latest` moved to 26.04, where
+  download.ceph.com's noble packages do not install, CI moved into the
+  release builders instead: every job that links librados runs the
+  release's own, and the integration workflow runs rgw-go from the derived
+  image.
 - The librados floor in section 12 couples rgw-go to the cephx key types
   Ceph issues. Only a pure-Go RADOS client that implements the AES256KRB5
   cipher (RFC 8009 AES256-CTS-HMAC-SHA384-192) removes the coupling. Under

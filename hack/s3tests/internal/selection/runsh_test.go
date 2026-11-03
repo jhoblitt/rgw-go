@@ -93,7 +93,10 @@ var _ = Describe("run.sh", func() {
 
 		It("rebuilds a command older than the tree's sources", func(ctx SpecContext) {
 			root := runShTree(true, lists0239625)
-			stale, err := exec.LookPath("true")
+			// The spec binary, an object file that go build will replace. It
+			// refuses to replace one that is not, and in el9's coreutils-single,
+			// as in the release builders, true is a shebang script.
+			stale, err := os.Executable()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(os.MkdirAll(filepath.Join(root, "bin"), 0o750)).To(Succeed())
 			Expect(os.WriteFile(filepath.Join(root, "bin/s3tests"), []byte(readFile(stale)), 0o700)).To(Succeed()) //nolint:gosec // the stale command must be executable

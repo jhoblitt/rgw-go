@@ -91,6 +91,7 @@ Each fix below that is not this document lands on main before phase 2's tasks st
 | PP-45 | A wait loop matched its own command line and never ended | Minor | subagent-driven-development's scripts | open |
 | PP-46 | Scratch in /tmp exhausted the build host's per-user quota | Minor | the dispatch environment; the controller's build wrapper | open |
 | PP-47 | A general standing instruction could not stand in for a workflow acknowledgement | Major | the owner; the merge gate's acknowledgement check; subagent-driven-development | open |
+| PP-48 | An unpinned runner label moved and broke CI for every code PR | Major | go-conventions' ci.md (cgo); github-conventions' workflows.md | open |
 
 ## PP-1: Plan code treated as binding mandated a data-loss race
 
@@ -750,3 +751,19 @@ Each fix below that is not this document lands on main before phase 2's tasks st
   - The owner acknowledges each workflow PR by its number, and the controller asks for every pending acknowledgement in one message as the PRs open.
   - The owner writes the `pr-acks.tsv` line, or grants the write in the settings permission rules. As in PP-28, text the agent writes cannot grant it.
 - **Candidate home:** the owner; the merge gate's acknowledgement check; subagent-driven-development (how a controller asks for acknowledgements).
+
+## PP-48: An unpinned runner label moved and broke CI for every code PR
+
+- **Severity:** Major. **Status:** open.
+- **Observed:**
+  - Every CI job ran on `ubuntu-latest`, a label GitHub moves without a pull request. Every job that linked librados installed it from that OS's apt: Ubuntu's own `librados-dev` for the unit jobs, and download.ceph.com's noble packages for the cluster jobs.
+  - On 2026-11-03 the label moved from ubuntu-24.04 to ubuntu-26.04. Run 41677861085 at 16:48 UTC still ran on 24.04, and run 41703346092 at 19:27 UTC on 26.04. There the cluster action's install failed: `librados2 20.2.4-1noble` depends on `libthrift-0.19.0t64`, which resolute does not have. Every integration and s3-tests run failed with it, on every pull request that touched code, #554 among them.
+  - The unit jobs stayed green, but silently changed libraries: to resolute's librados 20.2.0, from noble's 19.2.3, and for #554 to the runner image's gperftools 2.18.1. None of them were the libraries the images ship.
+- **Cost:**
+  - The required `integration` and `s3-tests` checks red for every code pull request until CI changed. #554 could not pass them.
+  - The owner's decision, a design note with a ruling round, and a CI change across five workflows, two actions and the Dependabot config.
+- **Fix:** every CI job that compiles, tests, lints, analyzes or runs rgw-go against librados runs in the release's builder, and rgw-go runs from the release's derived image (`hack/image/run.sh`; `hack/rooket/README.md`, "Running in the builder"). No runner installs a Ceph package, so the label no longer matters to those jobs. The owner rejected pinning `ubuntu-24.04` instead, which would have kept CI on the runner's packages, and different libraries from the images'.
+- **Improvement:**
+  - Whatever CI installs from the runner's OS is a dependency the repository does not pin, and its version moves with the label. A cgo project's CI builds and tests in the image it ships in, so the runner contributes only a container engine.
+  - A label that moves without a pull request is an input like any unpinned version, and a workflow that depends on its packages says so.
+- **Candidate home:** go-conventions' `references/ci.md` (CI for a cgo project); github-conventions' `references/workflows.md` (runner labels).
