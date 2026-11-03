@@ -19,8 +19,8 @@ import (
 
 // DefaultRatio is the share of the cgroup's memory limit the Go runtime is
 // given by default. The rest is for the memory the runtime does not count:
-// glibc's heap, which holds librados's buffers, and the binary and its
-// libraries.
+// the C heap, tcmalloc's, which holds librados's buffers, and the binary and
+// its libraries.
 const DefaultRatio = 0.8
 
 var (

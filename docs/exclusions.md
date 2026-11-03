@@ -3152,11 +3152,11 @@ checked against the v19.2.6 and v20.2.4 tags, rgw-go does the following.
   - With the limit set, the Go collector runs before the runtime's memory
     reaches it; with none, `GOGC`'s default lets the heap grow to twice the
     live heap whatever the pod allows. The rest of the cgroup's limit is
-    left for what the Go runtime does not count: glibc's heap, which holds
-    librados's buffers, and the binary and its libraries. Near the limit the
-    collector runs more often, and with a live heap above it the runtime
-    holds the collector to about half the CPU (`runtime/mgclimit.go:9-18`
-    at go1.27.3).
+    left for what the Go runtime does not count: the C heap, tcmalloc's,
+    which holds librados's buffers, and the binary and its libraries. Near
+    the limit the collector runs more often, and with a live heap above it
+    the runtime holds the collector to about half the CPU
+    (`runtime/mgclimit.go:9-18` at go1.27.3).
   - rgw-go sets no limit, and logs why, when `GOMEMLIMIT` holds anything
     but the empty string, which the runtime applies itself and which
     stands; at a ratio of 0; on cgroup v1, or a hybrid hierarchy whose

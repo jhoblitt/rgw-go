@@ -76,6 +76,14 @@ var ExplainConnect = explainConnect
 // LibradosVersion reports the version of the librados the process runs.
 func LibradosVersion() string { return libradosVersion() }
 
+// CheckTcmalloc exposes the check that the process allocates through the
+// full tcmalloc.
+var CheckTcmalloc = checkTcmalloc
+
+// TcmallocDepsBeside exposes the check that a /proc/self/maps text maps
+// tcmalloc's libunwind from tcmalloc's own directory.
+var TcmallocDepsBeside = tcmallocDepsBeside
+
 // SetLibradosVersion makes Connect see v as the librados version until the
 // returned restore runs.
 func SetLibradosVersion(v string) (restore func()) {

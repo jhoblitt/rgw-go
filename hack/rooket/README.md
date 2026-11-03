@@ -94,6 +94,25 @@ writes the same data and manifest again.
   every command that links librados in the release's builder and rgw-go
   from its derived image ("Running in the builder" below), so a host needs
   only a container engine for them.
+- gperftools's full tcmalloc, `libtcmalloc.so.4`, which every build that
+  links librados links, as radosgw does; no gperftools headers. A builder
+  links its Ceph image's own, gperftools 2.9.1 in both releases' images. A
+  copy outside the linker's default directories, such as one taken from the
+  release's Ceph image with its libunwind, libstdc++ and libgcc_s, needs its
+  directory in `-L` and in the executable's DT_RPATH, which
+  `-Wl,--disable-new-dtags` makes the rpath be; beside a private librados
+  set:
+
+  ```sh
+  CGO_LDFLAGS='-L<librados dir> -L<tcmalloc dir> -Wl,--disable-new-dtags,-rpath,<librados dir>,-rpath,<tcmalloc dir>'
+  ```
+
+  The image's files carry no RUNPATH, so only a DT_RPATH finds their own
+  dependencies beside them. A plain `-Wl,-rpath` is a DT_RUNPATH where the
+  toolchain defaults to new dtags, as Fedora's gcc does; a DT_RUNPATH
+  reaches only the executable's own NEEDED, so the process loads the host's
+  libunwind, libstdc++ and libgcc_s beside the copy, and goceph's tcmalloc
+  spec fails.
 
 ## Layout
 
