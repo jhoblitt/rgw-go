@@ -75,7 +75,7 @@ var _ = Describe("rgw-go's serve flags, which make lc-mode restarts it with", fu
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(data)).To(MatchRegexp(
 			`(?m)^if \(\(\$#\)\); then printf '%s\\n' "\$@" >"\$\{flagsfile\}"; else : >"\$\{flagsfile\}"; fi\n` +
-				`RGW_GO_LOG_FORMAT=json nohup "\$\{repo\}/bin/rgw-go" serve "--metrics-addr=127.0.0.1:\$\{metrics_port\}" "\$@"`))
+				`pid=\$\("\$\{here\}/rgw-go-start.sh" "\$\{release\}" "\$\{log\}" serve "--metrics-addr=127.0.0.1:\$\{metrics_port\}" "\$@"`))
 	})
 
 	It("rgw-go-down.sh removes the serve flags with the pid", func(ctx SpecContext) {

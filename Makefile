@@ -207,6 +207,12 @@ RELEASE ?=
 ROOKET ?= rooket
 ROOKET_BIN = $(if $(findstring /,$(ROOKET)),$(abspath $(ROOKET)),$(ROOKET))
 CLUSTER_OUT = $(CURDIR)/hack/rooket/out/$(RELEASE)
+# What runs the commands of these targets that link librados, given the
+# release first: empty runs them on this host, and CI names
+# hack/rooket/in-builder.sh, which runs them in the RELEASE's builder beside
+# its cluster. Their variables go through env, so that a builder gets them too.
+CGO_RUN ?=
+CGO_RUN_RELEASE = $(if $(CGO_RUN),$(CGO_RUN) $(RELEASE))
 
 .PHONY: need-release
 need-release:
@@ -244,9 +250,9 @@ integration: need-release ## Run the integration specs against the RELEASE clust
 	pkgs=$$(grep -rl --include='*_test.go' 'Label("integration"' cmd hack internal | sed -e 's|/[^/]*$$||' -e 's|^|./|' | sort -u); \
 	[ -n "$$pkgs" ] || { echo "no package outside test/ holds an integration spec" >&2; exit 1; }; \
 	status=0; \
-	RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf \
+	$(CGO_RUN_RELEASE) env RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf \
 	  go test "-tags=$$tags" -race -count=1 $$pkgs -ginkgo.label-filter=integration -ginkgo.fail-on-empty || status=1; \
-	RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf \
+	$(CGO_RUN_RELEASE) env RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf \
 	  go test "-tags=$$tags" -race -count=1 ./test/integration '-ginkgo.label-filter=integration && !rgw-go' -ginkgo.fail-on-empty || status=1; \
 	exit $$status
 
@@ -257,14 +263,14 @@ integration: need-release ## Run the integration specs against the RELEASE clust
 .PHONY: admin-gate
 admin-gate: need-release ## Compare the admin API of the rgw-go rgw-go-up started with the RELEASE cluster's radosgw
 	trap 'ROOKET=$(ROOKET_BIN) hack/admin/remove-user.sh $(RELEASE) rgwgo-admin || echo "could not remove the user rgwgo-admin" >&2' EXIT; \
-	RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf RGW_GO_TEST_ROOKET=$(ROOKET_BIN) \
+	$(CGO_RUN_RELEASE) env RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf RGW_GO_TEST_ROOKET=$(ROOKET_BIN) \
 	  go test "-tags=$(GO_TAGS),integration" -race -count=1 ./test/integration -ginkgo.label-filter=rgw-go -ginkgo.fail-on-empty
 
 # The gate's read specs need an rgw-go beside the radosgw, which make
 # read-gate starts; make gate leaves them out.
 .PHONY: gate
 gate: need-release ## Run the phase 0 gate against the populated RELEASE cluster
-	RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf \
+	$(CGO_RUN_RELEASE) env RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf \
 	RGW_GO_TEST_MANIFEST=$(CLUSTER_OUT)/manifest.json \
 	RGW_GO_TEST_ROOKET=$(ROOKET_BIN) \
 	  go test "-tags=$(GO_TAGS),integration" -race -count=1 -v ./test/gate/... -args -ginkgo.v '-ginkgo.label-filter=!read'
@@ -307,7 +313,7 @@ s3tests: need-release ## Run the s3-tests SET (pr|gate), or the TESTS file's tes
 .PHONY: admin-suite
 admin-suite: need-release ## Run go-ceph's rgw/admin suite at its pinned tag against GATEWAY on the RELEASE cluster in the parity mode; go test -json under hack/admin/_out/
 	$(MAKE) lc-mode RELEASE=$(RELEASE) LC=off
-	ROOKET=$(ROOKET_BIN) hack/admin/run.sh $(RELEASE) $(GATEWAY) $(RUN)
+	$(CGO_RUN_RELEASE) env ROOKET=$(ROOKET_BIN) hack/admin/run.sh $(RELEASE) $(GATEWAY) $(RUN)
 
 # hack/parity's package doc owns the ledger, the result file and the
 # comparison rules. A record that appends to a ledger takes the reasons for

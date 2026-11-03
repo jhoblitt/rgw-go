@@ -90,7 +90,10 @@ writes the same data and manifest again.
 - `git`, `curl`, `jq` and Go with cgo and the librados headers below, with
   access to GitHub and the Go module proxy, for `hack/admin/run.sh`.
 - librados 19.2.6 or later with its headers: both releases' admin keys are
-  AES256KRB5, which older librados cannot parse.
+  AES256KRB5, which older librados cannot parse. CI installs none: it runs
+  every command that links librados in the release's builder and rgw-go
+  from its derived image ("Running in the builder" below), so a host needs
+  only a container engine for them.
 
 ## Layout
 
@@ -102,7 +105,10 @@ writes the same data and manifest again.
 | `down.sh` | stops the release's rgw-go, then `rooket down --delete-disks`, and removes `out/<release>/`, even when rooket fails |
 | `diag.sh` | collects pod logs, Rook status and Ceph's view for CI, with no admin keyring or S3 secret key, each call bounded by a timeout |
 | `admin.sh`, `endpoint.sh` | `admin.sh <release> <args...>` runs `radosgw-admin` in the toolbox on the site `manifest.json` records and `endpoint.sh <release>` prints the radosgw's URL, for the integration specs (`internal/testutil/cephtest`) |
-| `rgw-go-up.sh`, `rgw-go-down.sh` | build rgw-go, set the parity options for both gateways and run rgw-go on the host against the cluster; stop it |
+| `rgw-go-up.sh`, `rgw-go-down.sh` | set the parity options for both gateways and run rgw-go against the cluster, built on the host or from a derived image; stop it |
+| `rgw-go-start.sh` | starts rgw-go-up.sh's rgw-go, a host build under `nohup` or `RGW_GO_IMAGE`'s in a container on the host's network, and prints its pid |
+| `in-builder.sh` | runs a command in the release's builder beside its cluster, on the host's network with `builder-rooket.sh`, kubectl and the cluster's kubeconfig mounted; the Makefile's `CGO_RUN` |
+| `builder-rooket.sh` | stands in for rooket inside a builder, which has no container engine for rooket to probe: does what `rooket kubectl` does, alone |
 | `read-gate.sh` | `make read-gate`: starts rgw-go, runs the gate's read specs against it and the radosgw, and stops it |
 | `lib.sh` | the Rook release, cluster naming, toolbox and radosgw lookup helpers, and the parity options, that the scripts share |
 | `parity-options-check.sh` | `make parity-options-check`: fails when a release's chart values give the radosgw other options than `parity_options` |
@@ -234,10 +240,13 @@ make s3tests RELEASE=squid GATEWAY=rgw-go RUN=try1
 make rgw-go-down RELEASE=squid
 ```
 
-`rgw-go-up.sh <release> [flags...]` builds `bin/rgw-go` with cgo, taking
-`CGO_CFLAGS` and `CGO_LDFLAGS` from the environment, and runs it on the host,
+`rgw-go-up.sh <release> [flags...]` starts rgw-go through `rgw-go-start.sh`,
 beside the cluster's radosgw and on the site that radosgw serves, as
 `rgw-go serve --metrics-addr=127.0.0.1:9481 [flags...] -- <radosgw's options>`.
+By default it builds `bin/rgw-go` with cgo, taking `CGO_CFLAGS` and
+`CGO_LDFLAGS` from the environment, and runs it on the host; with
+`RGW_GO_IMAGE` naming a derived image (`make image`) it runs that image's
+rgw-go instead, as "Running in the builder" below describes.
 radosgw's options name rgw-go's entity, keyring and `ceph.conf`, the realm,
 zonegroup and zone, and `--rgw-frontends="beast endpoint=127.0.0.1:7481"`,
 so that rgw-go listens on the loopback address only. Each release has its
@@ -307,6 +316,48 @@ radosgw does, waits up to 30 s for it to exit and kills it after that, and
 fails when rgw-go was killed or ended with an error. It keeps `rgw-go.log`,
 which `diag.sh` collects with the rest of `out/<release>/`. `make
 cluster-down` runs it first, and goes on when no rgw-go is running.
+
+### Running in the builder
+
+CI installs no Ceph package on its runners. Every command that links
+librados runs in the release's builder, and rgw-go runs from the release's
+derived image, so each cluster's specs and gateway run that release's own
+librados and tcmalloc, Squid's 19.2.7 on the Squid cluster:
+
+```sh
+export RGW_GO_ENGINE=docker CGO_RUN=hack/rooket/in-builder.sh
+RGW_GO_IMAGE=$(RGW_GO_IMAGE_TEST=1 make -s image RELEASE=squid)
+export RGW_GO_IMAGE
+make integration RELEASE=squid      # the go tests in Squid's builder
+make rgw-go-up RELEASE=squid        # rgw-go from the derived image
+make admin-parity RELEASE=squid
+```
+
+`CGO_RUN` names what the Makefile runs a librados-linking command through,
+given the release first: the go tests of `make integration`, `make gate` and
+`make admin-gate`, and `hack/admin/run.sh`, whose go test builds go-ceph's
+suite. `hack/rooket/in-builder.sh` runs it in the release's builder
+(`hack/image/run.sh`) on the host's network, which reaches the cluster's
+daemons at its node's address and its API server on loopback. rooket itself
+cannot run in a builder: every rooket command first probes for rootful podman
+or a running docker, and a builder has neither. Everything run there uses
+only `rooket kubectl`, so `builder-rooket.sh`, which runs kubectl with
+`KUBECONFIG` at the kubeconfig of the cluster `ROOKET_NAME` names, as `rooket
+kubectl` does, is mounted read-only as `rooket` on the container's `PATH`,
+and at `ROOKET`'s path when that names one. The host's kubectl is mounted on
+`PATH`, and the cluster's rooket state, which holds its kubeconfig, under the
+container's `HOME`, both read-only. The cluster lifecycle, `make lc-mode`,
+the s3-tests venv and the pure-Go harness commands stay on the host.
+
+With `RGW_GO_IMAGE` set, `rgw-go-start.sh` starts the image's
+`/usr/bin/rgw-go` in a detached container, removed when rgw-go exits, on the
+host's network, where it binds `127.0.0.1:<port>` as the host binary would. It
+runs as the caller, with the checkout mounted at its own path for its log, its
+keyring and the conf, and the caller's `RGW_GO_*` settings and `GODEBUG`.
+`rgw-go.pid` holds that rgw-go's host pid, so `rgw-go-down.sh`, `make
+lc-mode` and the gateway comparison see it as they see a host binary. Every
+parity guarantee above holds unchanged: the scripts set the same options on
+the same entities and pass rgw-go the same command line.
 
 ### By hand
 
