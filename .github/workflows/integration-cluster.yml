@@ -4,7 +4,12 @@
 # release's disposable one-worker Rook cluster on kind (hack/rooket/). Its
 # jobs run in the calling run, which integration.yml's concurrency group
 # cancels. The fork guard sits on integration.yml's calling jobs, so that a
-# fork's skip is the calling job's own result, which the judge sees.
+# fork's skip is the calling job's own result, which the judge sees. The
+# runner holds no Ceph package: every go test that links librados runs in
+# the release's builder beside the cluster (CGO_RUN, hack/rooket/in-builder.sh),
+# and rgw-go runs from the release's derived image (RGW_GO_IMAGE), so each
+# cluster's specs and gateway run that release's own librados and tcmalloc
+# (hack/rooket/README.md, "Running in the builder").
 name: integration-cluster
 
 on:
@@ -30,11 +35,33 @@ jobs:
       passed: ${{ steps.passed.outputs.passed }}
     env:
       RELEASE: ${{ inputs.release }}
+      RGW_GO_ENGINE: docker
+      CGO_RUN: hack/rooket/in-builder.sh
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # Before the cluster, so that a builder this run builds is saved, and
+      # its archive gone, before the cluster takes the runner's disk. The
+      # integration specs' Go build cache falls back to the newest of the
+      # builder's, which ci.yml's push runs save.
+      - name: Load the release's builder
+        uses: ./.github/actions/builder
+        with:
+          release: ${{ inputs.release }}
+          gocache: integration
+
+      # build.sh's check: the version stamp, /usr/bin/radosgw resolving to
+      # rgw-go, every library it links in the image, and the base's Ceph tools.
+      - name: Build and check the derived image
+        id: image
+        env:
+          RGW_GO_IMAGE_TEST: "1"
+        run: |
+          image=$(make -s image "RELEASE=${RELEASE}")
+          echo "RGW_GO_IMAGE=${image}" >>"$GITHUB_ENV"
 
       # rooket's pin lives in the action, which s3tests.yml shares, and kind's,
       # kubectl's and helm's in the jhoblitt/rooket-action it runs.
@@ -64,7 +91,7 @@ jobs:
       # admin-record).
       - name: Start rgw-go
         id: rgw-go
-        if: ${{ !cancelled() && steps.cluster.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.cluster.outcome == 'success' && steps.image.outcome == 'success' }}
         run: make rgw-go-up "RELEASE=${RELEASE}"
 
       # radosgw's own rgw/admin baseline, the ledger in test/admin/baseline/.

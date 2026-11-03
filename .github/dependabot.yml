@@ -7,6 +7,7 @@ updates:
     # composite action's pins need its own directory listed.
     directories:
       - /
+      - /.github/actions/builder
       - /.github/actions/rooket-cluster
     schedule:
       interval: weekly

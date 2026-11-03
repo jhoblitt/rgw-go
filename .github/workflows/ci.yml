@@ -1,5 +1,14 @@
 # Managed by go-conventions (references/ci.md owns the Go jobs; the workflow
 # hygiene this complies with is github-conventions' references/workflows.md).
+# Every job compiles go-ceph, so each runs its commands in a release's builder
+# (hack/image/run.sh): the Ceph image's own librados, tcmalloc, glibc and Go,
+# whatever the runner's OS ships. Of the runner they take only docker and the
+# shell tools that start them, so no job installs Go or a Ceph package. That
+# is also why the lint and govulncheck jobs run their tools in the builder
+# rather than through golangci-lint-action and govulncheck-action, which run
+# on the runner. Tentacle's builder serves every job but build-squid, which
+# compiles and links everything against Squid's librados, as the Squid
+# release does.
 name: ci
 
 on:
@@ -14,6 +23,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
+# The builder action and run.sh use docker, the image store the cache loads.
+env:
+  RGW_GO_ENGINE: docker
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -24,20 +37,17 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install librados headers
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends librados-dev
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - name: Load Tentacle's builder
+        uses: ./.github/actions/builder
         with:
-          go-version-file: go.mod
-          check-latest: true
+          release: tentacle
+          gocache: test
 
       # The Makefile is the one home of the build tags.
-      - name: Test with race detector and coverage
-        run: go test "-tags=$(make -s print-go-tags)" -race -count=1 -timeout=25m -covermode=atomic -coverprofile=coverage.out ./...
+      - name: Test with race detector and coverage, in Tentacle's builder
+        run: |
+          hack/image/run.sh -- tentacle go test "-tags=$(make -s print-go-tags)" -race -count=1 -timeout=25m \
+            -covermode=atomic -coverprofile=coverage.out ./...
 
       - name: Upload coverage profile
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -46,80 +56,87 @@ jobs:
           path: coverage.out
           retention-days: 14
 
+  # The check image is Tentacle's builder with golangci-lint at the Makefile's
+  # pin, the version's one home (hack/image/Containerfile.check).
   lint:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Install librados headers
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends librados-dev
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - name: Load Tentacle's builder
+        uses: ./.github/actions/builder
         with:
-          go-version-file: go.mod
-          check-latest: true
+          release: tentacle
+          gocache: lint
 
-      # The Makefile is the one home of the golangci-lint version.
-      - name: Read the pinned golangci-lint version
-        run: echo "GOLANGCI_LINT_VERSION=$(make -s print-golangci-version)" >> "$GITHUB_ENV"
-
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
-        with:
-          version: ${{ env.GOLANGCI_LINT_VERSION }}
+      - name: golangci-lint, in Tentacle's check image
+        env:
+          RGW_GO_STAGE: check
+        run: hack/image/run.sh -- tentacle make lint
 
   checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Install librados headers
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends librados-dev
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - name: Load Tentacle's builder
+        uses: ./.github/actions/builder
         with:
-          go-version-file: go.mod
-          check-latest: true
+          release: tentacle
+          gocache: checks
 
       - name: go vet, go fix, go mod tidy, go generate leave no diff; release pins and parity options match; bench datasets fit; ledgers valid; Ceph citations in markdown and Go comments are links
-        run: make vet fix-check tidy-check generate-check release-pins-check parity-options-check bench-plan-check ledger-check citation-form-check citation-go-check
+        run: |
+          hack/image/run.sh -- tentacle make vet fix-check tidy-check generate-check release-pins-check \
+            parity-options-check bench-plan-check ledger-check citation-form-check citation-go-check
 
+  # govulncheck at latest, as govulncheck-action installs it.
   govulncheck:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Install librados headers
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends librados-dev
-
-      # The action takes no build tags; go/packages reads them from GOFLAGS,
-      # and the Makefile is the one home of the tags.
-      - name: Read the build tags
-        run: echo "GOFLAGS=-tags=$(make -s print-go-tags)" >> "$GITHUB_ENV"
-
-      - name: govulncheck
-        uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
+      - name: Load Tentacle's builder
+        uses: ./.github/actions/builder
         with:
-          go-version-file: go.mod
-          go-package: ./...
-          repo-checkout: false
+          release: tentacle
+          gocache: govulncheck
+
+      - name: govulncheck, in Tentacle's builder
+        run: hack/image/run.sh -- tentacle go run golang.org/x/vuln/cmd/govulncheck@latest "-tags=$(make -s print-go-tags)" ./...
+
+  # Nothing else compiles against Squid's librados before a release does. The
+  # race build matches Squid's integration job, whose Go build cache falls
+  # back to this one's.
+  build-squid:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load Squid's builder
+        uses: ./.github/actions/builder
+        with:
+          release: squid
+          gocache: build-squid
+
+      - name: Build every package and link every test against Squid's librados, running none
+        run: |
+          tags=$(make -s print-go-tags)
+          hack/image/run.sh -- squid go build "-tags=${tags}" ./...
+          hack/image/run.sh -- squid go test "-tags=${tags}" -race -count=1 -run '^$' ./...
