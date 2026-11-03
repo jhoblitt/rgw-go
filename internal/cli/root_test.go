@@ -6,15 +6,18 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/cli"
+	"github.com/jhoblitt/rgw-go/internal/memlimit"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/version"
@@ -41,6 +44,38 @@ func unsetenv(key string) {
 		DeferCleanup(os.Setenv, key, v)
 	}
 }
+
+// emptyCgroup is a proc filesystem and a cgroup mount, both empty, in a
+// directory of the spec's own.
+func emptyCgroup() memlimit.Cgroup {
+	root := GinkgoT().TempDir()
+	return memlimit.Cgroup{Proc: filepath.Join(root, "proc"), Mount: filepath.Join(root, "cgroup")}
+}
+
+// recordLimits makes serve size the Go memory limit from cg, with no
+// GOMEMLIMIT in its view of the environment, and returns the limits it sets,
+// which it only records.
+func recordLimits(cg memlimit.Cgroup) *[]int64 {
+	var limits []int64
+	DeferCleanup(cli.SetMemorySizer(memlimit.Sizer{
+		Cgroup:    cg,
+		LookupEnv: func(string) (string, bool) { return "", false },
+		SetLimit: func(n int64) int64 {
+			if n >= 0 {
+				limits = append(limits, n)
+			}
+			return math.MaxInt64
+		},
+	}))
+	return &limits
+}
+
+// No spec sets the test binary's own Go memory limit: each runs serve with a
+// sizer that only records, over an empty cgroup tree unless it installs
+// another.
+var _ = BeforeEach(func() {
+	recordLimits(emptyCgroup())
+})
 
 var _ = Describe("Run", func() {
 	It("prints the version", func() {
@@ -91,7 +126,7 @@ var _ = Describe("serve", func() {
 	var missing string
 
 	BeforeEach(func() {
-		for _, key := range []string{"CEPH_ARGS", "CEPH_CONF", "RGW_GO_METRICS_ADDR", "RGW_GO_RADOS_COMPLETIONS"} {
+		for _, key := range []string{"CEPH_ARGS", "CEPH_CONF", "RGW_GO_METRICS_ADDR", "RGW_GO_RADOS_COMPLETIONS", "RGW_GO_MEMORY_LIMIT_RATIO"} {
 			unsetenv(key)
 		}
 		missing = filepath.Join(GinkgoT().TempDir(), "missing.conf")
@@ -125,7 +160,8 @@ var _ = Describe("serve", func() {
 		GinkgoT().Setenv("RGW_GO_METRICS_ADDR", "127.0.0.1:9283")
 		_, logs, err := run(ctx, "--log-level=debug", "serve", "--", "-c", missing, "-v")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(logs).To(ContainSubstring(`"msg":"serve settings","metrics_addr":"127.0.0.1:9283","rados_completions":"callback"`))
+		Expect(logs).To(ContainSubstring(`"msg":"serve settings","metrics_addr":"127.0.0.1:9283","rados_completions":"callback",` +
+			`"memory_limit_ratio":"` + strconv.FormatFloat(memlimit.DefaultRatio, 'g', -1, 64) + `"`))
 	})
 
 	It("takes --metrics-addr over RGW_GO_METRICS_ADDR", func(ctx SpecContext) {
@@ -134,6 +170,42 @@ var _ = Describe("serve", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(logs).To(ContainSubstring(`"metrics_addr":":9100"`))
 	})
+
+	It("refuses a memory limit ratio outside 0 to 1 before reading any configuration", func(ctx SpecContext) {
+		_, _, err := run(ctx, "serve", "--memory-limit-ratio=1.5", "--", "-c", missing, "--id=x")
+		Expect(err).To(MatchError(`--memory-limit-ratio "1.5" is outside 0 to 1`))
+	})
+
+	It("refuses a memory limit ratio from RGW_GO_MEMORY_LIMIT_RATIO that is not a number", func(ctx SpecContext) {
+		GinkgoT().Setenv("RGW_GO_MEMORY_LIMIT_RATIO", "most")
+		_, _, err := run(ctx, "serve", "--", "-c", missing, "--id=x")
+		Expect(err).To(MatchError(`--memory-limit-ratio "most" is not a number`))
+	})
+
+	DescribeTable("sizes the Go memory limit from a 1000-byte cgroup before reading the configuration",
+		func(ctx SpecContext, env string, flags []string, want []int64) {
+			cg := emptyCgroup()
+			for name, content := range map[string]string{
+				filepath.Join(cg.Proc, "self", "cgroup"):      "0::/\n",
+				filepath.Join(cg.Mount, "cgroup.controllers"): "memory\n",
+				filepath.Join(cg.Mount, "memory.max"):         "1000\n",
+			} {
+				Expect(os.MkdirAll(filepath.Dir(name), 0o750)).To(Succeed())
+				Expect(os.WriteFile(name, []byte(content), 0o600)).To(Succeed())
+			}
+			limits := recordLimits(cg)
+			if env != "" {
+				GinkgoT().Setenv("RGW_GO_MEMORY_LIMIT_RATIO", env)
+			}
+			_, _, err := run(ctx, slices.Concat([]string{"serve"}, flags, []string{"--", "-c", missing, "--id=x"})...)
+			Expect(err).To(MatchError(HavePrefix("reading the ceph configuration: ")))
+			Expect(*limits).To(Equal(want), "limits set")
+		},
+		Entry("at the default ratio", "", nil, []int64{int64(memlimit.DefaultRatio * 1000)}),
+		Entry("at RGW_GO_MEMORY_LIMIT_RATIO's", "0.5", nil, []int64{500}),
+		Entry("at --memory-limit-ratio's over RGW_GO_MEMORY_LIMIT_RATIO's", "0.5", []string{"--memory-limit-ratio=0.25"}, []int64{250}),
+		Entry("at none for a ratio of 0", "0", nil, []int64(nil)),
+	)
 
 	It("exits 1 on an empty command line, as radosgw does", func(ctx SpecContext) {
 		for _, args := range [][]string{{"serve"}, {"serve", "--"}, cli.Argv([]string{"radosgw"})} {
@@ -155,6 +227,8 @@ var _ = Describe("serve", func() {
 			Expect(out).To(HavePrefix("usage: radosgw [options...]\noptions:\n"))
 			Expect(out).To(ContainSubstring("  --setgroup GROUP  set gid to group or gid\n"))
 			Expect(out).To(ContainSubstring("  RGW_GO_METRICS_ADDR "))
+			Expect(out).To(ContainSubstring("  RGW_GO_MEMORY_LIMIT_RATIO "))
+			Expect(out).To(ContainSubstring("(default " + strconv.FormatFloat(memlimit.DefaultRatio, 'g', -1, 64) + ")"))
 		},
 		Entry("-h", []string{"-h"}),
 		Entry("--help ahead of other arguments", []string{"--help", "--id=x"}),

@@ -12,6 +12,7 @@ import (
 	"net/http/pprof" //nolint:gosec // its handlers are registered on the --metrics-addr listener's own mux; nothing serves http.DefaultServeMux
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/frontend"
+	"github.com/jhoblitt/rgw-go/internal/memlimit"
 	"github.com/jhoblitt/rgw-go/internal/metrics"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
@@ -48,6 +50,9 @@ func newServeCmd(v *viper.Viper) *cobra.Command {
 	f.String("metrics-addr", "", "HOST:PORT serving /metrics and /debug/pprof/, empty for none (RGW_GO_METRICS_ADDR)")
 	f.String("rados-completions", string(goceph.ModeCallback),
 		"how a RADOS completion wakes its request: sync, callback, or pipe (RGW_GO_RADOS_COMPLETIONS)")
+	f.Float64("memory-limit-ratio", memlimit.DefaultRatio,
+		"share of the cgroup v2 memory limit to set the Go runtime's soft memory limit to, 0 for none; "+
+			"a GOMEMLIMIT in the environment is used instead (RGW_GO_MEMORY_LIMIT_RATIO)")
 	return cmd
 }
 
@@ -55,15 +60,31 @@ func newServeCmd(v *viper.Viper) *cobra.Command {
 type serveSettings struct {
 	metricsAddr string
 	mode        goceph.Mode
+	// memoryLimitArg is --memory-limit-ratio as viper's string, which
+	// validate parses into memoryLimitRatio: viper's GetFloat64 reads a value
+	// that is not a number as 0, which would turn the limit off unannounced.
+	memoryLimitArg   string
+	memoryLimitRatio float64
 }
 
-func (s serveSettings) validate() error {
+// validate checks s and returns it with its memory limit ratio parsed.
+func (s serveSettings) validate() (serveSettings, error) {
 	switch s.mode {
 	case goceph.ModeSync, goceph.ModeCallback, goceph.ModePipe:
-		return nil
+	default:
+		return s, fmt.Errorf("--rados-completions %q is not sync, callback or pipe", s.mode)
 	}
-	return fmt.Errorf("--rados-completions %q is not sync, callback or pipe", s.mode)
+	r, err := memlimit.ParseRatio(s.memoryLimitArg)
+	if err != nil {
+		return s, fmt.Errorf("--memory-limit-ratio %w", err)
+	}
+	s.memoryLimitRatio = r
+	return s, nil
 }
+
+// processSizer sizes the running process's Go memory limit; specs replace it
+// so that none sets the test binary's own.
+var processSizer = memlimit.ForProcess
 
 // errNoArguments is radosgw's refusal of an empty command line, on which it
 // exits 1
@@ -77,9 +98,14 @@ var errNoArguments = errors.New("-h or --help for usage")
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/global/global_init.cc#L110-L114),
 // which may print the version and exit, then the gateway.
 func serve(ctx context.Context, v *viper.Viper, stdout io.Writer, args []string) error {
-	s := serveSettings{metricsAddr: v.GetString("metrics-addr"), mode: goceph.Mode(v.GetString("rados-completions"))}
+	s := serveSettings{
+		metricsAddr:    v.GetString("metrics-addr"),
+		mode:           goceph.Mode(v.GetString("rados-completions")),
+		memoryLimitArg: v.GetString("memory-limit-ratio"),
+	}
 	slog.DebugContext(ctx, "serve settings",
-		slog.String("metrics_addr", s.metricsAddr), slog.String("rados_completions", string(s.mode)))
+		slog.String("metrics_addr", s.metricsAddr), slog.String("rados_completions", string(s.mode)),
+		slog.String("memory_limit_ratio", s.memoryLimitArg))
 	if len(args) == 0 {
 		return errNoArguments
 	}
@@ -98,7 +124,7 @@ func serve(ctx context.Context, v *viper.Viper, stdout io.Writer, args []string)
 		fmt.Fprintln(stdout, version.String())
 		return nil
 	}
-	if err := s.validate(); err != nil {
+	if s, err = s.validate(); err != nil {
 		return err
 	}
 	return s.run(ctx, early)
@@ -119,7 +145,7 @@ func needUsage(args []string) bool {
 // https://github.com/ceph/ceph/blob/v19.2.6/src/common/ceph_argparse.cc#L550-L573 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/common/ceph_argparse.cc#L554-L577 at v20.2.4),
 // then rgw-go's own settings.
-const usage = `usage: radosgw [options...]
+var usage = `usage: radosgw [options...]
 options:
   --rgw-region=<region>     region in which radosgw runs
   --rgw-zone=<zone>         zone in which radosgw runs
@@ -142,10 +168,13 @@ options:
   --debug_ms N      set message debug level (e.g. 1)
 
 rgw-go logs to stderr and takes its own settings from the environment:
-  RGW_GO_LOG_LEVEL          debug, info, warn or error (default info)
-  RGW_GO_LOG_FORMAT         json or text (default json)
-  RGW_GO_METRICS_ADDR       HOST:PORT serving /metrics and /debug/pprof/ (default none)
-  RGW_GO_RADOS_COMPLETIONS  sync, callback or pipe (default callback)
+  RGW_GO_LOG_LEVEL           debug, info, warn or error (default info)
+  RGW_GO_LOG_FORMAT          json or text (default json)
+  RGW_GO_METRICS_ADDR        HOST:PORT serving /metrics and /debug/pprof/ (default none)
+  RGW_GO_RADOS_COMPLETIONS   sync, callback or pipe (default callback)
+  RGW_GO_MEMORY_LIMIT_RATIO  Go memory limit as a share of the cgroup's, 0 for none
+                             (default ` + strconv.FormatFloat(memlimit.DefaultRatio, 'g', -1, 64) +
+	`); a set GOMEMLIMIT is used instead
 `
 
 // envToVec is ceph's env_to_vec for a set CEPH_ARGS
@@ -202,8 +231,11 @@ var privilegeOptions = []string{"setuser", "setgroup", "setuser_match_path"}
 
 // run starts the gateway in radosgw's order: connect to RADOS as the
 // launching user, open the store, bind every listener, then drop
-// privileges and serve until ctx ends.
+// privileges and serve until ctx ends. It sizes the Go runtime's memory
+// limit first, so that the limit holds for everything the gateway
+// allocates.
 func (s serveSettings) run(ctx context.Context, early cephconf.EarlyArgs) (err error) {
+	processSizer().Size(ctx, s.memoryLimitRatio)
 	cfg := goceph.Config{
 		Cluster:      early.Cluster,
 		Name:         early.Name,

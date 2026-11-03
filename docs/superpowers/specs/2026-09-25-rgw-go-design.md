@@ -163,14 +163,14 @@ connect, so options Rook set centrally are readable afterwards.
 
 Ceph config is the single source for everything radosgw configures.
 rgw-go's own flags cover only what has no ceph option: `--log-level`,
-`--log-format`, `--metrics-addr`, `--rados-completions`, and viper's
-`--config`. The frontend parses the beast spec keys `port`, `ssl_port`,
-`endpoint`, `ssl_endpoint`, `ssl_certificate`, `ssl_private_key`,
-`ssl_options`, `ssl_ciphers`, `tcp_nodelay`, `request_timeout_ms`,
-`max_connection_backlog` and `max_header_size`; unknown keys log and are
-ignored. `rgw_enable_apis` is honored; swift and swift_auth are ignored
-with one log line. Logging is slog, JSON to stderr, as radosgw in Rook logs
-to stderr.
+`--log-format`, `--metrics-addr`, `--rados-completions`,
+`--memory-limit-ratio`, and viper's `--config`. The frontend parses the
+beast spec keys `port`, `ssl_port`, `endpoint`, `ssl_endpoint`,
+`ssl_certificate`, `ssl_private_key`, `ssl_options`, `ssl_ciphers`,
+`tcp_nodelay`, `request_timeout_ms`, `max_connection_backlog` and
+`max_header_size`; unknown keys log and are ignored. `rgw_enable_apis` is
+honored; swift and swift_auth are ignored with one log line. Logging is
+slog, JSON to stderr, as radosgw in Rook logs to stderr.
 
 ## 6. Data path
 
