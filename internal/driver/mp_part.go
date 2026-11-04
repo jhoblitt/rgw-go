@@ -111,8 +111,9 @@ type partResult struct {
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4757-L4790 at v20.2.4),
 // and the drain that MultipartObjectProcessor::complete starts with. It
 // returns with every stripe drained, or with what it wrote removed, as
-// ~RadosWriter removes it.
-func (s *Store) streamPart(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, uploadID string, n uint32, body io.Reader, pl partLayout, size int64, contentMD5 []byte, ck *checksumSink) (partResult, error) {
+// ~RadosWriter removes it. The part's writes draw on mem, whose hold, its
+// first draw, is a compressor's block buffers when the part compresses.
+func (s *Store) streamPart(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, uploadID string, n uint32, body io.Reader, pl partLayout, size int64, contentMD5 []byte, ck *checksumSink, mem *memStage) (partResult, error) {
 	target := meta.Obj{Bucket: rec.Info.Bucket, Key: key}
 	h := md5.New() //nolint:gosec // an S3 ETag is the MD5 of the data
 	sinks := []io.Writer{h}
@@ -121,12 +122,19 @@ func (s *Store) streamPart(ctx context.Context, rec *op.BucketRecord, key meta.O
 	}
 	plain := newPlaintext(body, s.w.opts.maxPutSize, s.w.opts.chunkSize, sinks...)
 	stored := s.storeFor(ctx, plain, size, pl.compression, false)
+	if stored.comp != nil {
+		if err := mem.hold(ctx, compressorHold(s.w.opts.chunkSize)); err != nil {
+			return partResult{}, err
+		}
+	}
 	m := meta.NewPartManifest(target, pl.headRule, pl.tailRule, meta.MultipartPrefix(key.Name, uploadID), n, pl.stripe)
 	tw := s.partWriter(&m, pl, n, stored.incompressible)
+	tw.mem = mem
 	_, got, err := tw.consume(ctx, stored, size)
 	if errors.Is(err, radosclient.ErrExists) && tw.first != nil {
 		m = meta.NewPartManifest(target, pl.headRule, pl.tailRule, meta.MultipartPrefix(key.Name, s.w.rand(32)), n, pl.stripe)
 		retry := s.partWriter(&m, pl, n, stored.incompressible)
+		retry.mem = mem
 		got, err = retry.resume(ctx, tw, stored)
 		tw = retry
 	}
@@ -335,6 +343,12 @@ func (s *Store) removePartHead(ctx context.Context, rec *op.BucketRecord, key me
 // and a type rgw-go does not compute is refused before anything is read
 // (newChecksumSink).
 func (s *Store) PutPart(ctx context.Context, up *op.Upload, n int, body io.Reader, p op.PutParams) (*op.PartResult, error) {
+	return s.putPart(ctx, up, n, body, p, s.mem.newStage())
+}
+
+// putPart is PutPart with the part's writes drawing on mem.
+func (s *Store) putPart(ctx context.Context, up *op.Upload, n int, body io.Reader, p op.PutParams, mem *memStage) (*op.PartResult, error) {
+	defer mem.done()
 	rec, key := up.Bucket, up.Key
 	ck, err := newChecksumSink(p.Checksum, p.Size)
 	if err != nil {
@@ -350,7 +364,7 @@ func (s *Store) PutPart(ctx context.Context, up *op.Upload, n int, body io.Reade
 	}
 	// part_num is an int, which the manifest and the part key print as one.
 	num := uint32(n) //nolint:gosec // the low 32 bits, as radosgw's int keeps them
-	pr, err := s.streamPart(ctx, rec, key, up.ID, num, body, pl, p.Size, p.ContentMD5, ck)
+	pr, err := s.streamPart(ctx, rec, key, up.ID, num, body, pl, p.Size, p.ContentMD5, ck, mem)
 	if err != nil {
 		return nil, err
 	}
@@ -378,6 +392,12 @@ func (s *Store) PutPart(ctx context.Context, up *op.Upload, n int, body io.Reade
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.cc#L40-L72 at v20.2.4),
 // and UploadPartCopy has no checksum request header; a type rgw-go does not
 // compute is NotImplemented before anything is read or written.
+//
+// The copy's first draw on the memory budget is one hold for both its
+// sides: the read window, a compressed source's decoder blocks and the
+// part's compressor buffers. The read side then draws nothing, so its
+// results, which wait in the pipe for the part's pieces, never hold a share
+// the part's pieces wait for.
 func (s *Store) CopyPart(ctx context.Context, up *op.Upload, n int, src *op.ObjectState, rng op.ByteRange) (*op.PartResult, error) {
 	var req *op.ChecksumRequest
 	if t := up.Checksum.Type; t != cksum.None {
@@ -387,8 +407,17 @@ func (s *Store) CopyPart(ctx context.Context, up *op.Upload, n int, src *op.Obje
 		}
 		req = &op.ChecksumRequest{Type: t, Flags: up.Checksum.Flags}
 	}
-	cs := &copySource{read: func(w io.Writer) error { return s.ReadObject(ctx, src, rng, w) }}
-	res, err := s.PutPart(ctx, up, n, cs, op.PutParams{Attrs: up.Attrs, Size: int64(rng.Length), Checksum: req}) //nolint:gosec // a range length is far below 2^63
+	mem := s.mem.newStage()
+	defer mem.done()
+	hold := satAdd(s.readCfg.window, decoderHold(src, rng))
+	if s.compresses(s.compressionType(up.Placement), false) {
+		hold = satAdd(hold, compressorHold(s.w.opts.chunkSize))
+	}
+	if err := mem.hold(ctx, hold); err != nil {
+		return nil, err
+	}
+	cs := &copySource{read: func(w io.Writer) error { return s.readObject(ctx, src, rng, w, s.mem.coveredStage(true)) }}
+	res, err := s.putPart(ctx, up, n, cs, op.PutParams{Attrs: up.Attrs, Size: int64(rng.Length), Checksum: req}, s.mem.coveredStage(false)) //nolint:gosec // a range length is far below 2^63
 	cs.stop()
 	return res, err
 }

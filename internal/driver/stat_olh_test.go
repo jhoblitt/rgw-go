@@ -148,6 +148,21 @@ var _ = Describe("StatObject and PrefetchObject of a versioned key", func() {
 			Expect(c.Reads(testDataPool, "", olhHeadOID(version("")))).To(Equal(1), "read once")
 		})
 
+		DescribeTable("keeps the memory budget's prefetch share of the head it answers alone, past the null version's bytes the OLH head holds",
+			func(ctx SpecContext, pendingLink bool) {
+				Expect(s.SetOLHForTest(ctx, rec, write(ctx, ""), driver.OLHLink{})).To(Succeed())
+				Expect(s.SetOLHForTest(ctx, rec, write(ctx, "v2"), driver.OLHLink{SkipUpdate: pendingLink})).To(Succeed())
+				st, err := s.PrefetchObject(ctx, rec, version(""))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(st.Key).To(Equal(version("v2")))
+				Expect(st.Head).To(Equal([]byte("data-v2")))
+				Expect(s.MemoryBudgetStats().PrefetchHeld).To(BeEquivalentTo(len("data-v2")),
+					"each read of the OLH head's bytes went back when the follow left it")
+			},
+			Entry("following the OLH", false),
+			Entry("reading the OLH head again after the update a pending link runs", true),
+		)
+
 		It("answers a current delete marker as not existing, with DeleteMarker set", func(ctx SpecContext) {
 			put(ctx, "v1")
 			marker(ctx, "dm")

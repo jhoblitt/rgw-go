@@ -167,7 +167,6 @@ type writer struct {
 	gcShards    []string
 	reshardWait time.Duration
 	completions *completionManager
-	body        *bodyBudget
 	rand        func(n int) string
 	newEncoder  func(codec string, o compression.EncoderOptions) (compression.Encoder, error)
 	// unloadable holds each compression type a write met with no encoder,
@@ -185,7 +184,6 @@ func newWriter(ctx context.Context, s *Store, opts writeOptions) *writer {
 		shortZoneID: s.Period().PeriodMap.ShortZoneIDs[zone.ID],
 		logData:     zone.LogData,
 		reshardWait: reshardWait,
-		body:        newBodyBudget(bodyBudgetSize(s.cluster, opts)),
 		rand:        randAlnum,
 		newEncoder:  compression.NewEncoder,
 	}

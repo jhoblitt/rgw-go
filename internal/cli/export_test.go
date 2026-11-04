@@ -19,6 +19,7 @@ var (
 	ServeMetrics    = serveMetrics
 	ServeAndRun     = serveAndRun
 	WatchRADOS      = watchRADOS
+	WatchStore      = watchStore
 	ErrNoStats      = errNoStats
 	WatchSignals    = watchSignals
 )

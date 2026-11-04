@@ -50,6 +50,10 @@ type ObjectState struct {
 	// Head is the first bytes of the head object, rgw_max_chunk_size or the
 	// whole head when shorter, filled by PrefetchObject; nil after StatObject.
 	Head []byte
+	// HeadRelease gives back the store's memory budget share for Head, at
+	// most once however many copies of the state call it; nil when Head
+	// holds none.
+	HeadRelease func()
 	// Version is the head's cls_version, read in the same op as the stat, as
 	// RGWObjVersionTracker::prepare_op_for_read composes cls_version_read
 	// into every raw_obj_stat

@@ -164,13 +164,14 @@ connect, so options Rook set centrally are readable afterwards.
 Ceph config is the single source for everything radosgw configures.
 rgw-go's own flags cover only what has no ceph option: `--log-level`,
 `--log-format`, `--metrics-addr`, `--rados-completions`,
-`--memory-limit-ratio`, and viper's `--config`. The frontend parses the
-beast spec keys `port`, `ssl_port`, `endpoint`, `ssl_endpoint`,
-`ssl_certificate`, `ssl_private_key`, `ssl_options`, `ssl_ciphers`,
-`tcp_nodelay`, `request_timeout_ms`, `max_connection_backlog` and
-`max_header_size`; unknown keys log and are ignored. `rgw_enable_apis` is
-honored; swift and swift_auth are ignored with one log line. Logging is
-slog, JSON to stderr, as radosgw in Rook logs to stderr.
+`--memory-limit-ratio`, `--memory-budget-ratio`, and viper's `--config`.
+The frontend parses the beast spec keys `port`, `ssl_port`, `endpoint`,
+`ssl_endpoint`, `ssl_certificate`, `ssl_private_key`, `ssl_options`,
+`ssl_ciphers`, `tcp_nodelay`, `request_timeout_ms`,
+`max_connection_backlog` and `max_header_size`; unknown keys log and are
+ignored. `rgw_enable_apis` is honored; swift and swift_auth are ignored
+with one log line. Logging is slog, JSON to stderr, as radosgw in Rook
+logs to stderr.
 
 ## 6. Data path
 
@@ -217,9 +218,12 @@ reconciliation.
 - **Submission never blocks an OS thread.** librados's objecter throttle,
   1024 operations or 100 MiB, blocks the submitting thread inside C.
   rgw-go keeps its own in-flight limiter under those limits so waiting
-  happens parked in Go, honors `rgw_max_concurrent_requests`, default
-  1024, as a hard cap, and bounds the memory PUT bodies hold: a byte
-  budget covers their tails, and that cap bounds the heads they keep.
+  happens parked in Go, and honors `rgw_max_concurrent_requests`, default
+  1024, as a hard cap. One memory budget, half the Go memory limit by
+  default, bounds the buffers of object data every GET, PUT and copy
+  holds; a request that finds it spent waits (`docs/exclusions.md`,
+  "Object data buffers share one memory budget, sized from the Go memory
+  limit").
 - **Cancellation.** A client disconnect cancels the request context and
   every wait selects on it. librados can only abandon an in-flight
   operation on the client side (`rados_aio_cancel`, not yet bound in the

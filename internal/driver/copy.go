@@ -224,8 +224,11 @@ func (s *Store) copyAttrs(src *op.ObjectState, req map[string][]byte, replace bo
 // a reference under tag on every tail stripe of the source, unless the copy
 // is onto itself; the head's bytes when the source's head holds data; then
 // the head, written under tag with the source's manifest placed at the
-// destination. Once the references are taken the copy runs to its end
-// whether or not its client stays, as radosgw's does.
+// destination. Until the head's bytes are read, the client leaving stops
+// the copy, which drops the references it took; from the head write on the
+// copy runs to its end whether or not its client stays. radosgw's runs to
+// its end from the start (docs/exclusions.md, "A client that went away gets
+// nothing more").
 func (s *Store) shareTails(ctx context.Context, src *op.ObjectState, dst *op.BucketRecord, dstKey meta.ObjKey, attrs map[string][]byte, tag string, mtime time.Time, copyFirst bool) (*op.PutResult, error) {
 	// rgw_obj's ==: rgw_bucket's and rgw_obj_key's, which compares the name
 	// and instance only
@@ -240,6 +243,15 @@ func (s *Store) shareTails(ctx context.Context, src *op.ObjectState, dst *op.Buc
 	// "radosgw's copy onto its own key in a suspended bucket shares the
 	// current version's tails without references").
 	itself := sameBucketID(src.Bucket.Info.Bucket, dst.Info.Bucket) && src.Key.Name == dstKey.Name && src.Key.Instance == dstKey.Instance
+	// The head's bytes the prefetch lacks are the copy's memory budget hold,
+	// its first draw.
+	mem := s.mem.newStage()
+	defer mem.done()
+	if n := src.Manifest.HeadSize; copyFirst && uint64(len(src.Head)) < n {
+		if err := mem.hold(ctx, n); err != nil {
+			return nil, err
+		}
+	}
 	m := cloneManifest(src.Manifest)
 	var refs []objRef
 	if !itself {
@@ -252,15 +264,17 @@ func (s *Store) shareTails(ctx context.Context, src *op.ObjectState, dst *op.Buc
 			return nil, err
 		}
 	}
-	ctx = context.WithoutCancel(ctx)
+	// The head's read waits for the memory budget's pieces, under the
+	// client's context so that a copy whose client left stops waiting.
 	data := []byte{}
 	if copyFirst {
 		var err error
-		if data, err = s.headData(ctx, src); err != nil {
+		if data, err = s.headData(ctx, src, mem); err != nil {
 			s.unrefTails(refs, tag)
 			return nil, err
 		}
 	}
+	ctx = context.WithoutCancel(ctx)
 	setHead(&m, dst.Info.PlacementRule, meta.Obj{Bucket: dst.Info.Bucket, Key: dstKey}, uint64(len(data)))
 	accounted := src.Size
 	if c := src.Compression; c != nil && c.Type != compression.None {
@@ -324,15 +338,16 @@ func cloneManifest(m *meta.Manifest) meta.Manifest {
 // Read::read serves them from the prefetch and reads only what it lacks
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L7283-L7312),
 // and they are the stored bytes, compressed where the source is, as are
-// the tails the copy shares.
-func (s *Store) headData(ctx context.Context, src *op.ObjectState) ([]byte, error) {
+// the tails the copy shares. The read draws on mem, whose hold covers the
+// buffer.
+func (s *Store) headData(ctx context.Context, src *op.ObjectState, mem *memStage) ([]byte, error) {
 	n := src.Manifest.HeadSize
 	if uint64(len(src.Head)) >= n {
 		return src.Head[:n], nil
 	}
 	var buf bytes.Buffer
 	buf.Grow(int(n)) //nolint:gosec // at most one chunk
-	if err := s.readStored(ctx, src, 0, n, &buf); err != nil {
+	if err := s.readStored(ctx, src, 0, n, &buf, mem); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -528,6 +543,11 @@ func (s *Store) unrefTails(refs []objRef, tag string) {
 // (docs/exclusions.md, "A copy that streams a compressed source copies its
 // stored bytes"); and a checksum record the copy cannot carry is dropped
 // (droppedChecksum).
+//
+// The copy's first draw on the memory budget is one hold for both its
+// sides: the read window and the destination's head and compressor. The
+// read side then draws nothing, so its results, which wait in the pipe for
+// the write side's pieces, never hold a share those pieces wait for.
 func (s *Store) copyData(ctx context.Context, src *op.ObjectState, dst *op.BucketRecord, dstKey meta.ObjKey, storageClass string, attrs map[string][]byte, mtime time.Time, epoch uint64, raw bool) (*op.PutResult, error) {
 	l, err := s.planPut(ctx, dst, dstKey, storageClass)
 	if err != nil {
@@ -557,13 +577,20 @@ func (s *Store) copyData(ctx context.Context, src *op.ObjectState, dst *op.Bucke
 			w.incompressible = s.release >= denc.Tentacle && s.codecLoads(typ)
 		}
 	}
+	mem := s.mem.newStage()
+	defer mem.done()
+	hold := satAdd(s.readCfg.window, s.putHold(l, w.size, s.compresses(w.compression, w.encrypted)))
+	if herr := mem.hold(ctx, hold); herr != nil {
+		return nil, herr
+	}
+	w.mem = s.mem.coveredStage(false)
 	pr, pw := io.Pipe()
 	read := make(chan struct{})
 	go func() {
 		defer close(read)
 		// An error closes the pipe with it, which consume returns as the
 		// body's error, so the tails already written are deleted.
-		pw.CloseWithError(s.readStored(ctx, src, 0, src.Size, pw))
+		pw.CloseWithError(s.readStored(ctx, src, 0, src.Size, pw, s.mem.coveredStage(true)))
 	}()
 	res, err := s.putStream(ctx, dst, dstKey, pr, l, w)
 	pr.CloseWithError(errCopyStreamDone)

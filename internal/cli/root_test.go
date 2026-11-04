@@ -17,6 +17,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/cli"
+	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/memlimit"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
@@ -126,7 +127,7 @@ var _ = Describe("serve", func() {
 	var missing string
 
 	BeforeEach(func() {
-		for _, key := range []string{"CEPH_ARGS", "CEPH_CONF", "RGW_GO_METRICS_ADDR", "RGW_GO_RADOS_COMPLETIONS", "RGW_GO_MEMORY_LIMIT_RATIO"} {
+		for _, key := range []string{"CEPH_ARGS", "CEPH_CONF", "RGW_GO_METRICS_ADDR", "RGW_GO_RADOS_COMPLETIONS", "RGW_GO_MEMORY_LIMIT_RATIO", "RGW_GO_MEMORY_BUDGET_RATIO"} {
 			unsetenv(key)
 		}
 		missing = filepath.Join(GinkgoT().TempDir(), "missing.conf")
@@ -161,7 +162,8 @@ var _ = Describe("serve", func() {
 		_, logs, err := run(ctx, "--log-level=debug", "serve", "--", "-c", missing, "-v")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(logs).To(ContainSubstring(`"msg":"serve settings","metrics_addr":"127.0.0.1:9283","rados_completions":"callback",` +
-			`"memory_limit_ratio":"` + strconv.FormatFloat(memlimit.DefaultRatio, 'g', -1, 64) + `"`))
+			`"memory_limit_ratio":"` + strconv.FormatFloat(memlimit.DefaultRatio, 'g', -1, 64) + `",` +
+			`"memory_budget_ratio":"` + strconv.FormatFloat(driver.DefaultMemoryBudgetRatio, 'g', -1, 64) + `"`))
 	})
 
 	It("takes --metrics-addr over RGW_GO_METRICS_ADDR", func(ctx SpecContext) {
@@ -180,6 +182,27 @@ var _ = Describe("serve", func() {
 		GinkgoT().Setenv("RGW_GO_MEMORY_LIMIT_RATIO", "most")
 		_, _, err := run(ctx, "serve", "--", "-c", missing, "--id=x")
 		Expect(err).To(MatchError(`--memory-limit-ratio "most" is not a number`))
+	})
+
+	DescribeTable("refuses a memory budget ratio that is not above 0 and at most 1 before reading any configuration",
+		func(ctx SpecContext, env string, flags []string, want string) {
+			if env != "" {
+				GinkgoT().Setenv("RGW_GO_MEMORY_BUDGET_RATIO", env)
+			}
+			_, _, err := run(ctx, slices.Concat([]string{"serve"}, flags, []string{"--", "-c", missing, "--id=x"})...)
+			Expect(err).To(MatchError(want))
+		},
+		Entry("0, which would leave the buffers unbounded", "", []string{"--memory-budget-ratio=0"},
+			`--memory-budget-ratio "0" would leave the buffers unbounded; it takes a number above 0 and at most 1`),
+		Entry("one past 1", "", []string{"--memory-budget-ratio=1.5"}, `--memory-budget-ratio "1.5" is outside 0 to 1`),
+		Entry("one from RGW_GO_MEMORY_BUDGET_RATIO that is not a number", "half", nil, `--memory-budget-ratio "half" is not a number`),
+	)
+
+	It("takes a memory budget ratio from RGW_GO_MEMORY_BUDGET_RATIO", func(ctx SpecContext) {
+		GinkgoT().Setenv("RGW_GO_MEMORY_BUDGET_RATIO", "0.25")
+		_, logs, err := run(ctx, "--log-level=debug", "serve", "--", "-c", missing, "-v")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(logs).To(ContainSubstring(`"memory_budget_ratio":"0.25"`))
 	})
 
 	DescribeTable("sizes the Go memory limit from a 1000-byte cgroup before reading the configuration",
@@ -228,6 +251,7 @@ var _ = Describe("serve", func() {
 			Expect(out).To(ContainSubstring("  --setgroup GROUP  set gid to group or gid\n"))
 			Expect(out).To(ContainSubstring("  RGW_GO_METRICS_ADDR "))
 			Expect(out).To(ContainSubstring("  RGW_GO_MEMORY_LIMIT_RATIO "))
+			Expect(out).To(ContainSubstring("  RGW_GO_MEMORY_BUDGET_RATIO "))
 			Expect(out).To(ContainSubstring("(default " + strconv.FormatFloat(memlimit.DefaultRatio, 'g', -1, 64) + ")"))
 		},
 		Entry("-h", []string{"-h"}),

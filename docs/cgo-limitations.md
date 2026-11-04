@@ -809,6 +809,29 @@ benchmark was re-run.
   drops that buffer rather than return it to the pool, where the next PUT
   would overwrite bytes librados may yet send.
 
+### An abandoned read's buffer is uncounted until librados completes it
+
+- **Evidence:** a Read whose context ends returns at once, while librados
+  may still write the read's pinned Go buffer until its completion fires
+  (`radosclient.Pool.Read`, `internal/radosclient/cluster.go`); goceph keeps
+  the op's in-flight limiter share until the reaper sees the completion
+  (`internal/radosclient/goceph/pool.go:375-386`). The seam surfaces no
+  completion to its caller, so the driver gives a read buffer's share of
+  the memory budget back once the Read returns, and drops the buffer
+  rather than pool it (`recycle`, `internal/driver/read.go`); a prefetch
+  gives its share back the same way (`statHead`,
+  `internal/driver/stat.go`). Until librados completes the op, that buffer
+  is live and the budget does not count it.
+- **Cost:** bounded by the in-flight limiter: an abandoned op keeps its
+  limiter share, so the uncounted buffers never pass the limiter's byte
+  bound, a sixteenth under `objecter_inflight_op_bytes`.
+- **Note:** a pure-Go client owns its buffers and can drop a canceled read's
+  reply, so it would count every buffer it holds.
+- **Status:** accepted; found in the memory budget's design.
+- **Measure:** uncounted bytes after cancellations under load, against the
+  budget's held bytes.
+- **Measured:** not yet.
+
 ### The librados at run time sets which cephx keys authenticate
 
 - **Evidence:** Ceph 19.2.6 and 20.2.4 are the first releases whose cephx

@@ -4413,6 +4413,11 @@ does the following.
   the window. So rgw-go has fewer reads in flight for pieces of just over
   half a request, and while a slow read or a slow client holds a GET back;
   in exchange the buffers a GET holds stay within the window.
+- **A GET's buffers also wait on the memory budget.** The window above
+  bounds what one GET holds; every GET's read buffers, prefetched head and
+  decoder blocks also draw on the gateway's one memory budget, where radosgw
+  allocates them (Object write differences, "Object data buffers share one
+  memory budget, sized from the Go memory limit").
 - **A pre-v12 zone whose old tier config holds a value json_spirit reads
   past what rgw-go transcribes does not decode.** A zone stored before
   version 12 kept its tier config as a string map, which radosgw's
@@ -4577,6 +4582,15 @@ v20.2.4 tags, rgw-go does the following.
     leaves while its head is still being read removes nothing, as that read
     runs under the request's context, though once its removal starts it runs
     to its end (`readHead` and `removeHead`, `internal/driver/delete.go`).
+    A CopyObject that shares its source's tails copies nothing when its
+    client leaves while it takes its references on them or reads the
+    source head's bytes, a read that may wait for the memory budget, and
+    drops the references it took; once its head write starts it runs to
+    its end (`shareTails`, `internal/driver/copy.go`). radosgw's `copy_obj`
+    takes every reference, reads the head and writes it without looking at
+    its client
+    ([rgw_rados.cc:4951-5015](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4951-L5015),
+    [rgw_rados.cc:5179-5243](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5179-L5243)).
     PutObject is not one: once its body is read, its write and its second
     quota check go on under a context detached from the request's
     (`internal/driver/put.go`), and the multipart writes detach the same way.
@@ -10189,42 +10203,113 @@ does the following.
   class](ceph-upstream-bugs.md#squid-labels-a-copy-to-another-storage-class-with-its-sources-class)").
   On a Squid cluster rgw-go reports STANDARD for such a copy where
   radosgw reports the source's class.
-- **Body tails share one byte budget.** radosgw reads a PUT's body chunk
-  by chunk (`get_data`, `rgw_op.cc:4391` at v19.2.6, `:4623` at v20.2.4)
-  and bounds only each writer's writes in flight, by
-  `rgw_put_obj_min_window_size` (`RadosStore::get_atomic_writer` and
-  `RadosMultipartUpload::get_writer`,
-  `driver/rados/rgw_sal_rados.cc:2284` and `:3730` at v19.2.6, `:2770` and
-  `:4593` at v20.2.4), so the body bytes it holds grow with the PUTs it
-  serves. rgw-go also bounds the tail pieces of every PUT, part upload and
-  streamed copy at once by one byte budget: its in-flight limiter's byte
-  bound, fifteen sixteenths of `objecter_inflight_op_bytes`, raised to one
-  piece for each request `rgw_max_concurrent_requests` admits, 4 GiB at
-  the defaults. There is no bound without a cap, nor with
-  `objecter_inflight_op_bytes` at 0, which turns librados's throttle and
-  the limiter off. A piece takes its share before
-  it is read and gives it back when its write ends, and a piece larger
-  than the whole budget takes all of it. So under load a PUT can wait for
-  the budget, with fewer pieces in flight, where radosgw would allocate. A
-  client that sends its body slowly holds its piece's share as long as it
-  does, since `request_timeout_ms` bounds each read and not the piece, as
-  beast's timer does (`StreamIO::recv_body`, `rgw_asio_frontend.cc:152-175`
-  at both tags); but the budget keeps a piece for every other request the
-  cap admits, so slow clients slow other PUTs and cannot stop them, as
-  radosgw's, which read a chunk before its throttle, stop others only by
-  filling that cap. The head a PUT keeps for its head write, at most
-  `rgw_max_chunk_size`, is outside the budget. A piece is sized from
-  `rgw_max_chunk_size` and `rgw_obj_stripe_size` as configured, not as a
-  pool's alignment raises them. Only an erasure-coded pool without
-  `allow_ec_overwrites` has an alignment, its stripe width
-  (`pg_pool_t::requires_aligned_append`, `osd_types.h:1754-1757` at
-  v19.2.6, `:1791-1794` at v20.2.4; `RGWRados::get_required_alignment`,
-  `driver/rados/rgw_rados.cc:659-693` and `:694-728`). On such a pool with
-  a stripe width over 4 MiB a slow client holds more than a piece's room
-  and slow clients can stop other PUTs, and a head, one aligned chunk,
-  exceeds `rgw_max_chunk_size`. A compressing write's two block buffers, one
-  block of plaintext and its encoded form, are outside the budget too, held
-  until the body is read.
+- **Object data buffers share one memory budget, sized from the Go memory
+  limit.** radosgw bounds no buffers of object data across requests. A PUT
+  reads its body a chunk of `rgw_max_chunk_size` at a time into a buffer it
+  allocates before the read (`RGWPutObj_ObjStore::get_data`,
+  [rgw_rest.cc:1073-1106](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1073-L1106),
+  [rgw_rest.cc:1073-1106](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1073-L1106)),
+  keeps its first chunk as its head until the write completes
+  (`AtomicObjectProcessor::process_first_chunk`,
+  [rgw_putobj_processor.cc:260-266](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L260-L266),
+  [rgw_putobj_processor.cc:288-294](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L288-L294)),
+  and bounds only its own writes in flight, by `rgw_put_obj_min_window_size`
+  ([rgw_sal_rados.cc:2285](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2285)
+  and [rgw_sal_rados.cc:3734](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3734),
+  [rgw_sal_rados.cc:2770](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2770)
+  and [rgw_sal_rados.cc:4593](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4593)).
+  A GET keeps the head its stat prefetched
+  ([rgw_rados.cc:9048-9050](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9048-L9050),
+  [rgw_rados.cc:9796-9798](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9796-L9798))
+  and reads within `rgw_get_obj_window_size`
+  ([rgw_rados.cc:7636-7656](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7636-L7656),
+  [rgw_rados.cc:8295-8319](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8295-L8319)).
+  Its buffer memory therefore grows with the transfers it serves, up to
+  `rgw_max_concurrent_requests` of them, until the process runs out of
+  memory. rgw-go draws every buffer of object data from one budget: half
+  the Go memory limit (`--memory-budget-ratio`, `RGW_GO_MEMORY_BUDGET_RATIO`,
+  above 0 and at most 1), or half of 80% of physical memory when no limit is
+  in force or the limit read is 0 or less, and never less than the largest
+  single transfer needs, 68 MiB at the defaults. A GET's read buffers and a
+  PUT's or part's tail pieces and first stripe take shares while they are
+  read and then written or sent. A PUT's head, a compressing write's block
+  buffers, a compressed read's decoder blocks, and a copy's read window with
+  its destination's head and compressor are held for the whole transfer, all
+  of them together in at most half the budget; a copy's read side then
+  draws nothing more, so it never holds what its write side waits for. A GET
+  keeps its prefetched head only while a quarter of the budget has room for
+  it at once and no other draw waits, and its share then lasts as long as
+  the request does, which keeps the copy; otherwise its stat reads no data
+  and the GET reads the head's bytes with the rest of its data, as a GET
+  with a Range header does, with one more RADOS read. A multipart upload's
+  meta object is metadata, which draws nothing: rgw-go reads it into a
+  4 KiB buffer of its own where radosgw's `raw_obj_stat` reads
+  `rgw_max_chunk_size`
+  ([rgw_rados.cc:9048-9050](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9048-L9050),
+  [rgw_rados.cc:9796-9798](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9796-L9798)),
+  so ListParts, AbortMultipartUpload and CompleteMultipartUpload do not
+  wait for the budget. The exception is a meta object longer than 4 KiB,
+  which only a placement and storage class whose names together pass about
+  4000 bytes make, since radosgw bounds neither name: it is read again by
+  the same op, up to `rgw_max_chunk_size`, into a buffer that waits as a
+  transfer's first does. A request that needs a
+  buffer when the budget is spent waits for one, where radosgw would
+  allocate it:
+  - The first buffer of a transfer waits at most 5 seconds. A request still
+    waiting then is answered 503 SlowDown, radosgw's answer when its
+    scheduler refuses a request
+    ([rgw_process.cc:330-338](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L330-L338),
+    [rgw_process.cc:332-340](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L332-L340);
+    [rgw_common.cc:135](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L135),
+    [rgw_common.cc:136](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L136)),
+    before any byte of its response and, for a PUT, before its body is
+    read. The wait is a fixed 5 seconds, not `request_timeout_ms`: at the
+    rates the benchmark cluster measured, about 600 MiB/s of 64 MiB
+    transfers (`docs/benchmarks/2026-11-03-buffers-tentacle/REPORT.md`,
+    load 2), a 2 GiB pod's 819 MiB budget turns over in about a second and
+    a half, so 5 seconds absorbs ordinary contention and a longer wait is
+    overload; a wait of `request_timeout_ms`, 65 seconds, would let the
+    waiters, each keeping its `rgw_max_concurrent_requests` slot, fill that
+    cap and refuse every request.
+  - A transfer already under way waits for its next buffer as long as its
+    client stays, and the budget never fails it.
+
+  A client that sends a body slowly, or takes a response slowly, holds its
+  shares as long as it does, since `request_timeout_ms` bounds each read and
+  each write and not the transfer, as beast's timers do
+  ([rgw_asio_frontend.cc:131-174](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L131-L174),
+  [rgw_asio_frontend.cc:132-175](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L132-L175)).
+  At the defaults in a 2 GiB pod, about a hundred PUTs stalled in their
+  first 4 MiB, or about thirty to a compressing storage class, whose
+  stalled PUT holds 14 MiB, fill the holds' half of the budget. Every
+  request whose first draw is a hold then waits and fails with SlowDown:
+  PUTs that keep data in their head object or compress, compressing part
+  uploads, copies that stream their data (to another storage class or
+  pool, or of an object without tails), part copies, tail-sharing copies
+  whose source head's bytes the stat did not keep, and compressed GETs.
+  Other GETs and uncompressed part uploads go on, without prefetched heads
+  while any draw waits. About forty slow readers, each holding a read
+  window and a prefetched head, make every transfer wait. radosgw's would
+  run the pod out of memory. The budget is no defence against slow clients;
+  a minimum transfer rate is.
+
+  A pool's alignment, the stripe width of an erasure-coded pool without
+  `allow_ec_overwrites`
+  ([osd_types.h:1754-1757](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/osd_types.h#L1754-L1757),
+  [osd_types.h:1791-1794](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/osd_types.h#L1791-L1794);
+  `RGWRados::get_required_alignment`,
+  [rgw_rados.cc:659-693](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L659-L693),
+  [rgw_rados.cc:694-728](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L694-L728)),
+  raises a chunk, and so a head and a piece, above `rgw_max_chunk_size`.
+  The budget's floor is sized from `rgw_max_chunk_size` as configured, so
+  on a small budget over such a pool a buffer larger than its class can
+  hold takes all of that class and proceeds alone, and the budget counts
+  less than the buffer holds. Outside the budget are librados's own copies
+  of data in flight, which the in-flight limiter bounds; the buffers of
+  reads abandoned to a canceled request, until librados completes them
+  (`docs/cgo-limitations.md`, "An abandoned read's buffer is uncounted until
+  librados completes it"); bodies read whole, which grow only as their bytes
+  arrive; and the zstd encoder's state.
 - **A multipart upload's combined CRC follows its checksum type.** rgw-go's
   completion stores the combination `cksum.NewCombiner` makes
   (`internal/cksum/combine.go`, called from `internal/driver/mp_cksum.go`;

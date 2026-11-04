@@ -5,7 +5,9 @@ import (
 	"hash"
 	"io"
 	"log/slog"
+	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/semaphore"
@@ -80,6 +82,7 @@ func NewStoreForTest(cluster radosclient.Cluster, zone ZoneForTest, cfg ReadConf
 		zone:    &zoneConfig{Params: zone.Params, ZoneGroup: zone.ZoneGroup},
 		pools:   newPoolCache(cluster),
 		readCfg: readConfig{chunk: cfg.Chunk, maxReq: cfg.MaxReq, window: cfg.Window},
+		mem:     newMemBudget(math.MaxInt64, memStartWait),
 		quota:   newStatsCaches(options{bucketQuotaCacheSize: 10000, bucketQuotaTTL: 600 * time.Second}, time.Now),
 	}
 	s.heads = unfollowedHeads{s}
@@ -169,7 +172,7 @@ func (s *Store) SetTailBufsForTest(p BufPool) { s.tailBufs = p }
 
 // ReadStoredForTest is readStored for the external specs.
 func (s *Store) ReadStoredForTest(ctx context.Context, st *op.ObjectState, ofs, n uint64, w io.Writer) error {
-	return s.readStored(ctx, st, ofs, n, w)
+	return s.readStored(ctx, st, ofs, n, w, s.mem.newStage())
 }
 
 // SetClock makes now the clock s stamps its metadata and cls_user writes
@@ -405,20 +408,40 @@ func (t *TailWriter) Buffered() uint64 {
 	return t.tw.held
 }
 
-// BodyBudget is the byte budget PUT bodies share: its size, the shares
-// taken and not given back, and the most taken at once.
-type BodyBudget struct{ Size, Held, Peak int64 }
+// MemoryBudget is the memory budget's size, the shares taken and not given
+// back, and the most taken at once, every class together.
+type MemoryBudget struct{ Size, Held, Peak int64 }
 
-// BodyBudgetForTest reports s's body byte budget.
-func (s *Store) BodyBudgetForTest() BodyBudget {
-	b := s.w.body
+// MemoryBudgetForTest reports s's memory budget.
+func (s *Store) MemoryBudgetForTest() MemoryBudget {
+	b := s.mem
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return BodyBudget{Size: b.size, Held: b.held, Peak: b.peak}
+	return MemoryBudget{Size: b.size, Held: b.total, Peak: b.peak}
 }
 
-// SetBodyBudgetForTest gives s a body byte budget of n bytes.
-func (s *Store) SetBodyBudgetForTest(n int64) { s.w.body = newBodyBudget(n) }
+// SetMemoryBudgetForTest gives s a memory budget of n bytes whose starting
+// draws wait at most wait, 0 for as long as their context lives.
+func (s *Store) SetMemoryBudgetForTest(n int64, wait time.Duration) { s.mem = newMemBudget(n, wait) }
+
+// MemoryBudgetFloorForTest is the least budget s's options let every request
+// run in.
+func (s *Store) MemoryBudgetFloorForTest() int64 { return memBudgetFloor(s.readCfg, s.w.opts) }
+
+// MemoryStartWaitForTest is how long a starting draw on s's memory budget
+// waits.
+func (s *Store) MemoryStartWaitForTest() time.Duration { return s.mem.startWait }
+
+// FillMemoryBudgetForTest takes all the room s's memory budget has left, so
+// that every draw that waits does, until release gives it back.
+func (s *Store) FillMemoryBudgetForTest() (release func()) {
+	b := s.mem
+	b.mu.Lock()
+	w := b.size - b.total
+	b.takeLocked(memPiece, w)
+	b.mu.Unlock()
+	return sync.OnceFunc(func() { b.release(memPiece, w) })
+}
 
 // Tails returns the oids of the tails the writer issued, in issue order.
 func (t *TailWriter) Tails() []string {

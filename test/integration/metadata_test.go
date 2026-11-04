@@ -30,6 +30,7 @@ import (
 	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/driver"
+	"github.com/jhoblitt/rgw-go/internal/memlimit"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/op/conformance"
@@ -73,7 +74,7 @@ func connect(ctx context.Context, args ...string) radosclient.Cluster {
 func open(ctx context.Context, c radosclient.Cluster) *driver.Store {
 	GinkgoHelper()
 	options := cephconf.NewOptions(c)
-	dopts, err := cli.DriverOptions(options)
+	dopts, err := cli.DriverOptions(ctx, options, memlimit.Result{Limit: math.MaxInt64}, driver.DefaultMemoryBudgetRatio)
 	Expect(err).NotTo(HaveOccurred())
 	s, err := driver.Open(ctx, c, options, dopts)
 	Expect(err).NotTo(HaveOccurred())

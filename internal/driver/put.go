@@ -111,6 +111,10 @@ type streamWrite struct {
 	expect *op.ObjectState
 	// keepLock keeps the version's lock state (headWrite.keepLock).
 	keepLock bool
+	// mem is the memory budget stage of a write within a copy, whose hold
+	// covers the head and the compressor; nil for a write that takes its
+	// own (putHold).
+	mem *memStage
 }
 
 // putStream writes body as AtomicObjectProcessor does, after its prepare,
@@ -156,6 +160,14 @@ func (s *Store) putStream(ctx context.Context, rec *op.BucketRecord, key meta.Ob
 	stored := s.storeFor(ctx, plain, w.size, w.compression, w.encrypted)
 	incompressible := stored.incompressible || w.incompressible
 	tw.incompressible = incompressible
+	if w.mem == nil {
+		w.mem = s.mem.newStage()
+	}
+	defer w.mem.done()
+	if herr := w.mem.hold(ctx, s.putHold(l, w.size, stored.comp != nil)); herr != nil {
+		return nil, herr
+	}
+	tw.mem = w.mem
 	data, size, err := tw.consume(ctx, stored, w.size)
 	// radosgw finishes a PUT whose body it holds whether or not its client
 	// stays: nothing after get_data's loop watches the client, the second
@@ -229,6 +241,21 @@ func (s *Store) putStream(ctx context.Context, rec *op.BucketRecord, key meta.Ob
 		tw.discard()
 	}
 	return &op.PutResult{ETag: etag, Size: size, Mtime: res.mtime, Epoch: res.epoch, Checksum: sum.cksum}, nil
+}
+
+// putHold is the memory budget hold of a write laid out as l of a body of
+// size bytes, -1 when unknown: the head it keeps for its head write, sized as
+// readHead sizes it, and a compressor's two block buffers when compresses.
+// The hold is the write's first draw, so it waits holding nothing.
+func (s *Store) putHold(l layout, size int64, compresses bool) uint64 {
+	head := l.maxHead
+	if size >= 0 && uint64(size) < head {
+		head = uint64(size)
+	}
+	if compresses {
+		head = satAdd(head, compressorHold(s.w.opts.chunkSize))
+	}
+	return head
 }
 
 // checksumSink is RGWPutObj_Cksum
@@ -469,10 +496,7 @@ func (s *Store) compressionType(rule meta.PlacementRule) string {
 // keeps the hint. declared is the plaintext's declared length, -1 when
 // unknown.
 func (s *Store) storeFor(ctx context.Context, plain *plaintext, declared int64, typ string, encrypted bool) storedStage {
-	if typ == "" || typ == compression.None {
-		return storeAsIs(plain)
-	}
-	if encrypted && !slices.Contains(s.zone.ZoneGroup.EnabledFeatures, featureCompressEncrypted) {
+	if !s.compresses(typ, encrypted) {
 		return storeAsIs(plain)
 	}
 	enc, err := s.w.newEncoder(typ, s.w.opts.codec)
@@ -490,6 +514,16 @@ func (s *Store) storeFor(ctx context.Context, plain *plaintext, declared int64, 
 	}
 	c := &compressor{plain: plain, enc: enc, typ: typ, chunk: s.w.opts.chunkSize, declared: declared}
 	return storedStage{Reader: c, incompressible: true, comp: c}
+}
+
+// compresses reports whether storeFor gives a write into a placement of
+// compression type typ a compressor, as far as the type and the write's
+// encryption decide it: a type it has no encoder for stores as it is too.
+func (s *Store) compresses(typ string, encrypted bool) bool {
+	if typ == "" || typ == compression.None {
+		return false
+	}
+	return !encrypted || slices.Contains(s.zone.ZoneGroup.EnabledFeatures, featureCompressEncrypted)
 }
 
 // refusingEncoder is the encoder of options its codec refuses: every block
@@ -510,8 +544,8 @@ func (r refusingEncoder) Encode(_, _ []byte) (block []byte, message *int32, err 
 // its stored length. A first block that fails to encode has the whole
 // plaintext stored as it is; a later one fails the write with UnknownError,
 // radosgw's -EIO. Its two block buffers, one of plaintext and one encoded,
-// are held until the plaintext ends and take no share of the body budget, as
-// the head takes none.
+// are held until the plaintext ends, under the write's memory budget hold
+// (putHold).
 type compressor struct {
 	plain    *plaintext
 	enc      compression.Encoder
