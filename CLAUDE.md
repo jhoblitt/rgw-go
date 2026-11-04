@@ -45,8 +45,9 @@ before writing Go here.
   or update an entry, with evidence at a named release tag, whenever work meets one, and share
   it with rgw-rs. Every entry's **Upstream** line links its tracker.ceph.com issues and
   upstream PRs; update it in the same change that files, finds or closes one.
-- Every behaviour that differs from radosgw is recorded in `docs/exclusions.md` in the same
-  change that introduces it.
+- Every behaviour that differs from radosgw is recorded in `docs/differences.md` in the same
+  change that introduces it; a feature rgw-go will not implement is recorded in
+  `docs/exclusions.md`.
 - `docs/porting-process.md` is the registry of planning and orchestration problems in the port;
   add or update an entry whenever planning or managing the work costs rework, stalls, or needs the
   owner. A process and planning review reads it at the end of each phase, before the next phase's
@@ -56,8 +57,8 @@ before writing Go here.
   with `ROOKET_NAME=rgw-go-<release>`.
 - Implementation tasks go to Opus 5.5 code-workers in worktrees; judgment stays on the
   session model.
-- `docs/exclusions.md` is canonical for rgw-rs too: announce every material change to the
-  rgw-rs Claude session.
+- `docs/exclusions.md` and `docs/differences.md` are canonical for rgw-rs too: announce every
+  material change to either to the rgw-rs Claude session.
 - Design: docs/superpowers/specs/2026-09-25-rgw-go-design.md. Plans: docs/superpowers/plans/.
 
 ## Working rules (end-of-phase-1 review, docs/porting-process.md)
