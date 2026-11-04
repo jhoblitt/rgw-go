@@ -13,13 +13,17 @@ before writing Go here.
 
 ## rgw-go facts
 
-- cgo: every build and test compiles go-ceph against librados 20.2.4, CI's client. Never use
-  the system packages or Ceph v19.2.6. On this machine the headers are Ceph v20.2.4's
-  `src/include` under `/home/jhoblitt/.local/share/rgw-go/ceph-v20.2.4/`, and the library set,
-  copied from the pinned Tentacle image, is `/home/jhoblitt/.local/lib/rgw-go-20.2.4/`.
-  `gobuild.sh` sets `CGO_CFLAGS` and `CGO_LDFLAGS`; the latter's rpath is load-bearing, since
-  without it a binary runs the system librados. CI installs `librados-dev` 20.2.4 from
-  download.ceph.com.
+- cgo: every local build and test compiles go-ceph against librados 20.2.4 and links
+  gperftools 2.9.1's tcmalloc, as radosgw does. Never use the system packages or Ceph v19.2.6.
+  On this machine the headers are Ceph v20.2.4's `src/include` under
+  `$HOME/.local/share/rgw-go/ceph-v20.2.4/`, and the library sets, copied from the
+  pinned Tentacle image, are `$HOME/.local/lib/rgw-go-20.2.4/` and
+  `$HOME/.local/lib/rgw-go-tcmalloc-2.9.1/`. `gobuild.sh` sets `CGO_CFLAGS` and
+  `CGO_LDFLAGS`; the latter's rpath is load-bearing, since without it a binary runs the system
+  libraries, and it must be a DT_RPATH (`-Wl,--disable-new-dtags`), since a DT_RUNPATH does
+  not reach the copies' own dependencies. CI installs neither: it runs every librados job in
+  the release's builder, built from that release's Ceph image (`hack/image/builder.sh`,
+  `run.sh`), and `hack/image/check.sh` runs `make check` in Tentacle's check image on any host.
 - Host load: every go, make and golangci-lint command on this host, the agents' and the
   controller's, runs through `.claude/worktrees/phase-1-exec/.superpowers/tools/ctrl/gobuild.sh`,
   one host-wide flock with `GOFLAGS=-p=4 GOMAXPROCS=4`, so only one build or test runs at a
