@@ -27,12 +27,14 @@
 // as examples, under --form-only. The files command and its targets keep the
 // list of ceph's files, as The list of ceph's files below says.
 //
-// --ceph names the clone, /home/jhoblitt/github/ceph by default; it can also
-// come from CITECHECK_CEPH, or from the config file --config (CITECHECK_CONFIG)
+// --ceph names the clone, $HOME/github/ceph by default; it can also come
+// from CITECHECK_CEPH, or from the config file --config (CITECHECK_CONFIG)
 // names, under the key ceph. The command line wins over the environment, and
-// the environment over the file. --fix (CITECHECK_FIX; make citecheck-fix)
-// rewrites code span citations into links, as Rewriting below says, and
-// plain citations in Go comments, as Go comments says. --form-only
+// the environment over the file. With no home directory there is no default,
+// and a run that needs the clone exits 2 until one is named. --fix
+// (CITECHECK_FIX; make citecheck-fix) rewrites code span citations into
+// links, as Rewriting below says, and plain citations in Go comments, as Go
+// comments says. --form-only
 // (CITECHECK_FORM_ONLY; make citecheck-links) checks only what needs no
 // clone, so that CI can run it; it cannot be combined with --fix. Every run
 // but --content checks the registries' claims about ceph main, as Claims

@@ -11,7 +11,7 @@
 # belongs to another repository.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-CORPUS=${CORPUS:-/home/jhoblitt/github/ceph/ceph-object-corpus/archive}
+CORPUS=${CORPUS:-${HOME}/github/ceph/ceph-object-corpus/archive}
 IMAGE=${IMAGE:-quay.io/ceph/ceph:v19.2.7}
 TYPES=${1:-hack/goldens/types.txt}
 while read -r typ pkgdir; do
