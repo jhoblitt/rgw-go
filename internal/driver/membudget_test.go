@@ -675,6 +675,7 @@ var _ = Describe("the memory budget", func() {
 			sink := fail(reqCtx, cancel)
 			check(func() error { return s.ReadObject(reqCtx, st, op.ByteRange{Length: st.Size}, sink) })
 			Expect(s.MemoryBudgetStats().PieceHeld).To(BeZero(), "no share kept by the results still queued")
+			Expect(s.LentBufBytesForTest()).To(BeZero(), "no buffer of theirs still counted as lent by the free list")
 		},
 		Entry("its client's connection fails", func(context.Context, context.CancelFunc) io.Writer {
 			return &failingSink{fail: func([]byte) (int, error) { return 0, errors.New("connection reset") }}
@@ -706,6 +707,7 @@ var _ = Describe("the memory budget", func() {
 		c.FailNextRead(testDataPool, "", tails[2], syscall.EIO)
 		Expect(s.ReadObject(ctx, st, op.ByteRange{Length: st.Size}, io.Discard)).To(HaveOccurred())
 		Expect(s.MemoryBudgetStats().PieceHeld).To(BeZero())
+		Expect(s.LentBufBytesForTest()).To(BeZero())
 	})
 })
 

@@ -376,6 +376,53 @@ var _ = Describe("StatObject and PrefetchObject", func() {
 		Expect(err).To(MatchError(op.ErrAccessDenied))
 	})
 
+	Describe("the prefetch's head buffer", func() {
+		It("does not go back to the free list when its read is abandoned to the context, and no later get is lent it", func(ctx SpecContext) {
+			var head []byte
+			pool := &radosclientfakes.FakePool{}
+			pool.WithLocatorReturns(pool)
+			pool.ReadStub = func(ctx context.Context, _ string, rop *radosclient.ReadOp, _ radosclient.OpFlags) (uint64, error) {
+				for _, step := range rop.Steps() {
+					if rd, ok := step.(*radosclient.ReadStep); ok {
+						head = rd.Buf
+					}
+				}
+				<-ctx.Done()
+				return 0, ctx.Err()
+			}
+			s2 := driver.NewStoreForTest(fakeClusterWith(pool), testZone(), testReadConfig())
+			rctx, cancel := context.WithCancel(ctx)
+			done := make(chan error, 1)
+			go func() {
+				_, err := s2.PrefetchObject(rctx, plain, meta.ObjKey{Name: "k"})
+				done <- err
+			}()
+			Eventually(pool.ReadCallCount).Should(Equal(1), "the prefetch's read is in flight")
+			cancel()
+			Eventually(done).Should(Receive(HaveOccurred()))
+			Expect(head).To(HaveLen(4<<20), "the read went into a head buffer of rgw_max_chunk_size")
+			Expect(s2.IdleBufsForTest(4<<20)).To(BeZero(), "the abandoned op may still fill the buffer, so it did not go back")
+			Expect(s2.LentBufBytesForTest()).To(BeZero(), "and it is not counted as lent")
+			next := s2.GetBufForTest(4 << 20)
+			Expect(&(*next)[0]).NotTo(BeIdenticalTo(&head[0]), "a later get of 4 MiB is not lent the abandoned op's buffer")
+		})
+
+		It("is not counted as lent after its read panics, which the request's recovery survives", func(ctx SpecContext) {
+			pool := &radosclientfakes.FakePool{}
+			pool.WithLocatorReturns(pool)
+			pool.ReadStub = func(context.Context, string, *radosclient.ReadOp, radosclient.OpFlags) (uint64, error) {
+				panic("read")
+			}
+			s2 := driver.NewStoreForTest(fakeClusterWith(pool), testZone(), testReadConfig())
+			Expect(func() {
+				_, err := s2.PrefetchObject(ctx, plain, meta.ObjKey{Name: "k"})
+				Expect(err).NotTo(HaveOccurred())
+			}).To(PanicWith("read"))
+			Expect(s2.LentBufBytesForTest()).To(BeZero())
+			Expect(s2.IdleBufsForTest(4<<20)).To(BeZero(), "a buffer the panicking read may still fill does not go back")
+		})
+	})
+
 	Describe("dataPool", func() {
 		DescribeTable("resolves the head pool with radosgw's fallbacks",
 			func(rule, explicit, want string) {

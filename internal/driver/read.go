@@ -337,8 +337,8 @@ type result struct {
 	p    piece
 	data []byte
 	err  error
-	// buf is the pooled buffer the read went into, nil for a piece served
-	// from the prefetch or read into a buffer of its own.
+	// buf is the free list's buffer the read went into, nil for a piece
+	// served from the prefetch or read into a buffer of its own.
 	buf *[]byte
 	// window is the piece's share of the window, its buffer's size, held
 	// until it is written, and share its share of the memory budget, held as
@@ -386,10 +386,12 @@ func (s *Store) stream(ctx context.Context, st *op.ObjectState, ofs, n uint64, w
 		cancel()
 		if cur != nil {
 			mem.give(cur.share)
+			s.dropBuf(cur)
 		}
 		for r := range results {
 			<-r.done
 			mem.give(r.share)
+			s.dropBuf(r)
 		}
 	}()
 	var failed error
@@ -507,9 +509,9 @@ func deliver(st *op.ObjectState, r *result, w io.Writer) error {
 	return nil
 }
 
-// pooledRead reports whether a read of n bytes takes a pooled buffer of
-// rgw_get_obj_max_req_size: one of more than half that does, a smaller one a
-// buffer of its own.
+// pooledRead reports whether a read of n bytes takes a buffer of
+// rgw_get_obj_max_req_size from the free list: one of more than half that
+// does, a smaller one a buffer of its own.
 func (s *Store) pooledRead(n uint64) bool { return n > s.readCfg.maxReq/2 }
 
 // readBufLen is the size of the buffer a read of n bytes goes into.
@@ -521,27 +523,35 @@ func (s *Store) readBufLen(n uint64) uint64 {
 }
 
 // readBuf returns a buffer of n bytes for a read, cut from one of
-// readBufLen(n), and that buffer when it is pooled.
+// readBufLen(n), and that buffer when it comes from the free list.
 func (s *Store) readBuf(n uint64) (pooled *[]byte, buf []byte) {
 	if !s.pooledRead(n) {
 		return nil, make([]byte, n)
 	}
-	if b, ok := s.readBufs.Get().(*[]byte); ok {
-		s.pooledReadBufs.Add(-1)
-		return b, (*b)[:n]
-	}
-	b := make([]byte, s.readCfg.maxReq)
-	return &b, b[:n]
+	b := s.bufs.get(s.readCfg.maxReq)
+	return b, (*b)[:n]
 }
 
-// recycle hands r's pooled buffer back, unless its read ended with a context
-// error: the abandoned op may still write into it.
+// recycle hands r's buffer back to the free list, unless its read ended with
+// a context error: the abandoned op may still write into it.
 func (s *Store) recycle(r *result) {
-	if r.buf == nil || errors.Is(r.err, context.Canceled) || errors.Is(r.err, context.DeadlineExceeded) {
+	if r.buf == nil {
+		return
+	}
+	if errors.Is(r.err, context.Canceled) || errors.Is(r.err, context.DeadlineExceeded) {
+		s.dropBuf(r)
 		return
 	}
 	s.pooledReadBufs.Add(1)
-	s.readBufs.Put(r.buf)
+	s.bufs.put(r.buf)
+}
+
+// dropBuf tells the free list that r's buffer, if it lent one, is not coming
+// back.
+func (s *Store) dropBuf(r *result) {
+	if r.buf != nil {
+		s.bufs.forget(r.buf)
+	}
 }
 
 // manifestErr is a manifest a read cannot walk. radosgw has no answer of its

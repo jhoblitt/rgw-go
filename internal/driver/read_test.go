@@ -490,7 +490,7 @@ var _ = Describe("ReadObject", func() {
 		Expect(out.Bytes()).To(Equal(data))
 		Expect(started.Load()).To(BeEquivalentTo(6))
 		Expect(peak.Load()).To(BeNumerically("<=", 4))
-		Expect(s2.PooledBuffersForTest()).To(BeNumerically(">", 0), "buffers of reads that ended went back to the pool")
+		Expect(s2.PooledBuffersForTest()).To(BeNumerically(">", 0), "buffers of reads that ended went back to the free list")
 	})
 
 	It("holds a piece's share of the window while the sink takes its bytes, so a slow client starts no more reads", func(ctx SpecContext) {
@@ -602,7 +602,8 @@ var _ = Describe("ReadObject", func() {
 			Expect(sink.writes).To(Equal(2), "the head, then tail 1")
 			Expect(active.Load()).To(BeZero(), "every read had returned before ReadObject did")
 			Expect(canceled.Load()).To(BeEquivalentTo(3), "the failure canceled tails 2-4")
-			Expect(s2.PooledBuffersForTest()).To(BeEquivalentTo(1), "tail 1's buffer went back to the pool; the abandoned reads' did not")
+			Expect(s2.PooledBuffersForTest()).To(BeEquivalentTo(1), "tail 1's buffer went back to the free list; the abandoned reads' did not")
+			Expect(s2.LentBufBytesForTest()).To(BeZero(), "the abandoned reads' buffers left the lent bytes")
 		},
 		Entry("an error", func([]byte) (int, error) { return 0, errSinkGone }, errSinkGone),
 		Entry("a short write", func(p []byte) (int, error) { return len(p) / 2, nil }, io.ErrShortWrite),
@@ -666,7 +667,8 @@ var _ = Describe("ReadObject", func() {
 		Eventually(pool.ReadCallCount).Should(BeNumerically(">=", 2))
 		cancel()
 		Eventually(done).Should(Receive(MatchError(context.Canceled)))
-		Expect(s2.PooledBuffersForTest()).To(BeZero(), "no buffer of an abandoned read went back to the pool")
+		Expect(s2.PooledBuffersForTest()).To(BeZero(), "no buffer of an abandoned read went back to the free list")
+		Expect(s2.LentBufBytesForTest()).To(BeZero(), "the abandoned reads' buffers left the lent bytes")
 		close(block)
 	})
 

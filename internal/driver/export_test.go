@@ -8,6 +8,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/semaphore"
@@ -83,6 +84,7 @@ func NewStoreForTest(cluster radosclient.Cluster, zone ZoneForTest, cfg ReadConf
 		pools:   newPoolCache(cluster),
 		readCfg: readConfig{chunk: cfg.Chunk, maxReq: cfg.MaxReq, window: cfg.Window},
 		mem:     newMemBudget(math.MaxInt64, memStartWait),
+		bufs:    newBufLists(math.MaxInt64),
 		quota:   newStatsCaches(options{bucketQuotaCacheSize: 10000, bucketQuotaTTL: 600 * time.Second}, time.Now),
 	}
 	s.heads = unfollowedHeads{s}
@@ -159,16 +161,58 @@ func ReadEntryPoint(s *Store, ctx context.Context, tenant, name string) (meta.Bu
 	return e.ep, e.attrs, e.v.read, nil
 }
 
-// PooledBuffersForTest is the number of read buffers handed back to the pool
-// and not taken out again; the pool may have dropped some of them since.
+// PooledBuffersForTest is the number of read buffers handed back to the free
+// list. The list is shared with the head and tail buffers, so this counts
+// hand-backs alone, not the read buffers the list holds.
 func (s *Store) PooledBuffersForTest() int64 { return s.pooledReadBufs.Load() }
 
-// BufPool is bufPool for the external specs' fakes.
-type BufPool = bufPool
+// IdleBufsForTest is the blocks of n bytes s's free list holds.
+func (s *Store) IdleBufsForTest(n uint64) int {
+	l := s.bufs
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if bl := l.lists[n]; bl != nil {
+		return len(bl.blocks)
+	}
+	return 0
+}
 
-// SetTailBufsForTest makes p the pool s's PUTs draw their tail buffers from
-// and hand them back to.
-func (s *Store) SetTailBufsForTest(p BufPool) { s.tailBufs = p }
+// PutBufForTest hands p to s's free list as a buffer it lent that went
+// back.
+func (s *Store) PutBufForTest(p *[]byte) {
+	l := s.bufs
+	l.mu.Lock()
+	l.lent += toInt64(uint64(cap(*p)))
+	l.mu.Unlock()
+	l.put(p)
+}
+
+// GetBufForTest takes a block of n bytes from s's free list, as a buffer
+// drawn for a read or a write.
+func (s *Store) GetBufForTest(n uint64) *[]byte { return s.bufs.get(n) }
+
+// LentBufBytesForTest is the bytes s's free list has lent and not been told
+// the fate of.
+func (s *Store) LentBufBytesForTest() int64 {
+	l := s.bufs
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.lent
+}
+
+// CountDrawsForTest counts the times s's free list hands out p from then on.
+func (s *Store) CountDrawsForTest(p *[]byte) (draws func() int) {
+	var n atomic.Int64
+	l := s.bufs
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.onDraw = func(q *[]byte) {
+		if q == p {
+			n.Add(1)
+		}
+	}
+	return func() int { return int(n.Load()) }
+}
 
 // ReadStoredForTest is readStored for the external specs.
 func (s *Store) ReadStoredForTest(ctx context.Context, st *op.ObjectState, ofs, n uint64, w io.Writer) error {
@@ -260,6 +304,10 @@ func (s *Store) SetRandForTest(f func(int) string) { s.w.rand = f }
 // SetReshardWaitForTest sets the pause between two reads of a resharding
 // shard's status.
 func (s *Store) SetReshardWaitForTest(d time.Duration) { s.w.reshardWait = d }
+
+// EndLifetimeForTest ends the driver's lifetime context, which tail writes
+// and discards run under, as Run's stop does.
+func (s *Store) EndLifetimeForTest() { s.w.completions.cancel() }
 
 // PendingCompletionsForTest is the number of bucket index completions
 // submitted or queued and not yet done.
@@ -421,8 +469,12 @@ func (s *Store) MemoryBudgetForTest() MemoryBudget {
 }
 
 // SetMemoryBudgetForTest gives s a memory budget of n bytes whose starting
-// draws wait at most wait, 0 for as long as their context lives.
-func (s *Store) SetMemoryBudgetForTest(n int64, wait time.Duration) { s.mem = newMemBudget(n, wait) }
+// draws wait at most wait, 0 for as long as their context lives, and a free
+// list it caps.
+func (s *Store) SetMemoryBudgetForTest(n int64, wait time.Duration) {
+	s.mem = newMemBudget(n, wait)
+	s.bufs = newBufLists(n)
+}
 
 // MemoryBudgetFloorForTest is the least budget s's options let every request
 // run in.

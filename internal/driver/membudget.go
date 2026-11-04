@@ -330,6 +330,9 @@ type MemoryBudgetStats struct {
 	// PrefetchSkipped counts the prefetches refused, for want of room or
 	// because another draw waited.
 	PrefetchSkipped uint64
+	// FreeListIdle is the bytes of buffers the free list keeps for reuse, at
+	// most Size.
+	FreeListIdle int64
 }
 
 func (b *memBudget) stats() MemoryBudgetStats {
@@ -346,9 +349,13 @@ func (b *memBudget) stats() MemoryBudgetStats {
 	}
 }
 
-// MemoryBudgetStats reports the memory budget; the metrics package reads it
-// on every scrape.
-func (s *Store) MemoryBudgetStats() MemoryBudgetStats { return s.mem.stats() }
+// MemoryBudgetStats reports the memory budget and the free list it caps; the
+// metrics package reads it on every scrape.
+func (s *Store) MemoryBudgetStats() MemoryBudgetStats {
+	st := s.mem.stats()
+	st.FreeListIdle = s.bufs.idleBytes()
+	return st
+}
 
 // memStage is one driver entry's draws on the budget: a PUT, a part, a
 // read, a copy. Its first draw is a starting one; its hold, if it takes

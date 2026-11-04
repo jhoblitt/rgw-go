@@ -4,11 +4,13 @@ version: "2"
 
 run:
   timeout: 5m
-  # Integration specs sit behind a build tag, and the go-ceph APIs rgw-go uses
-  # behind ceph_preview; the analyzers must see both.
+  # Integration specs sit behind a build tag, the free list's measurement
+  # behind measure, and the go-ceph APIs rgw-go uses behind ceph_preview; the
+  # analyzers must see all three.
   build-tags:
     - integration
     - ceph_preview
+    - measure
 
 formatters:
   enable:
