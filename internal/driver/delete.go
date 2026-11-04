@@ -30,7 +30,7 @@ import (
 // synchronous as send_split_chain is
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_gc.cc#L68-L118),
 // and the quota adjustment. The conditions are v20.2.4's on both releases,
-// and the guard is v19.2.6's on both (docs/exclusions.md, "Delete conditions
+// and the guard is v19.2.6's on both (docs/differences.md, "Delete conditions
 // are Tentacle's, and a delete is guarded, on both releases"). A missing key
 // is ErrNoSuchKey; a lost race is ErrConcurrentModification, which the op
 // answers 204 as radosgw does
@@ -115,7 +115,7 @@ type headRemoval struct {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6410-L6415 at v20.2.4),
 // and none for a version's own head, which no OLH lives on: obj_remove keeps
 // nothing then, where radosgw's keeps OLH attrs a copy of a null version left
-// on it and the head stays behind as an empty version (docs/exclusions.md,
+// on it and the head stays behind as an empty version (docs/differences.md,
 // "A version's head is removed whole").
 func headKeptAttrs(key meta.ObjKey) []string {
 	if key.Instance == "" || key.Instance == meta.NullInstance {

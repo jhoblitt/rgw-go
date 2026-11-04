@@ -220,7 +220,7 @@ rounds:
 			// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L2003-L2009),
 			// so it also refuses a class common-prefix entry whose name the
 			// filter refuses; a refused name is skipped here only where it
-			// would be listed (docs/exclusions.md, "ListMultipartUploads keeps
+			// would be listed (docs/differences.md, "ListMultipartUploads keeps
 			// the common prefixes radosgw drops").
 			if p.NameFilter != nil && !p.NameFilter(key.Name) {
 				continue
@@ -271,14 +271,14 @@ type listPos struct {
 // instance or the instance null:
 //   - With no instance the listing starts past every version of the name,
 //     where the class starts after the name's plain key and lists them again
-//     (docs/exclusions.md, "A versions listing starts after every version
+//     (docs/differences.md, "A versions listing starts after every version
 //     of a key-marker given alone"), unless p.RelistMarker asks for the
 //     class's start.
 //   - With null it starts after the null version getInstanceEntry finds, in
 //     read_key_entry's order. The class looks for it at the null data key
 //     alone, which a null delete marker does not have, and starts past every
 //     version of the name, or after an older null version the marker's link
-//     left for its writer to remove (docs/exclusions.md, "A versions listing
+//     left for its writer to remove (docs/differences.md, "A versions listing
 //     resumes after the null delete marker its version-id-marker names").
 //     Finding no null version, or an unversioned object's entry, it starts
 //     past every version of the name, where the class would too but for an
@@ -320,7 +320,7 @@ func (s *Store) markerStart(ctx context.Context, rec *op.BucketRecord, p op.List
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10856-L10859 at v20.2.4),
 // but in a versions listing for the null version. Its key has no instance,
 // so the class would start after the name's plain key and list the name's
-// newer versions again (docs/exclusions.md, "A versions listing resumes
+// newer versions again (docs/differences.md, "A versions listing resumes
 // after the null version it last visited"). Its list key k ends in NUL "i",
 // so a delimiter that ends so would make the class start past every version
 // of k's epoch
@@ -361,7 +361,7 @@ func nextInstance(e *rgwcls.DirEntry) string {
 // and returns it when its current index generation names other shards than
 // rec's, as a reshard that removed one of rec's leaves it; nil when it names
 // the same shards, or the bucket is gone, so that the ENOENT a shard answered
-// is the listing's (docs/exclusions.md, "An ordered listing reads the shards
+// is the listing's (docs/differences.md, "An ordered listing reads the shards
 // the bucket names after a reshard removes its own").
 func (s *Store) reshardedRecord(ctx context.Context, rec *op.BucketRecord) (*op.BucketRecord, error) {
 	o := s.instanceObj(rec.Info.Bucket)
@@ -633,7 +633,7 @@ func (s *Store) indexShards(ctx context.Context, rec *op.BucketRecord) (radoscli
 // https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_client.cc#L161-L166 at v19.2.7;
 // ListReader,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bi_rados.cc#L948-L968 at v20.2.4).
-// The unordered listing does too, where radosgw's fails (docs/exclusions.md,
+// The unordered listing does too, where radosgw's fails (docs/differences.md,
 // "An unordered listing lists a shard that answers advance-and-retry again
 // from its marker"). A marker past a name's versions, the name and 0x01,
 // is listed again from past the name's versions instead (retryAfter). A
@@ -693,13 +693,13 @@ func retryAfter(m rgwcls.ObjKey) rgwcls.ObjKey {
 // that fails fails the listing, but one the object store cannot make yet
 // keeps the entry as it is with no suggestion. A multipart upload's meta
 // entry is kept as it is too: radosgw checks it in the data-extra pool,
-// which the object store does not read (docs/exclusions.md, "A pending
+// which the object store does not read (docs/differences.md, "A pending
 // multipart upload's index entry is not reconciled by a listing"). radosgw
 // picks that pool for every raw name MultipartMetaFilter accepts
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L10341-L10344),
 // a plain object named like "a.b.meta" too, which it then fails to find;
 // rgw-go checks a plain object in the data pool whatever its name
-// (docs/exclusions.md, "A plain object whose name ends in .meta is checked
+// (docs/differences.md, "A plain object whose name ends in .meta is checked
 // where it is stored").
 //
 // dir_suggest_changes applies a change under encode_obj_index_key
@@ -712,7 +712,7 @@ func retryAfter(m rgwcls.ObjKey) rgwcls.ObjKey {
 // name's plain key, the version marker, which an update overwrites and a
 // removal removes (docs/ceph-upstream-bugs.md, "radosgw's listing repair of a
 // null version's list entry overwrites or removes the key's version
-// marker"): for it rgw-go sends nothing (docs/exclusions.md, "A listing sends
+// marker"): for it rgw-go sends nothing (docs/differences.md, "A listing sends
 // no repair for the null version's list entry").
 func (s *Store) checkDiskState(ctx context.Context, rec *op.BucketRecord, indexVer rgwcls.EntryVer, ent *rgwcls.DirEntry,
 	updates map[string][]rgwcls.Suggestion, oid string,

@@ -59,7 +59,7 @@ func (o *CheckBucketIndex) VerifyPermission(_ context.Context, r *Request) error
 // multipart check, the object check when CheckObjects, and the header check,
 // in radosgw's order. A failure after the bucket loads answers its error,
 // where radosgw, its body started, answers 200 with the body cut short
-// (docs/exclusions.md, "Admin responses carry a Content-Type on every
+// (docs/differences.md, "Admin responses carry a Content-Type on every
 // body"). check-objects without fix is check_object_index's EINVAL, which
 // radosgw reaches after a multipart check that, without fix, removes
 // nothing.
@@ -237,7 +237,7 @@ func badMultipartByShard(keys []meta.ObjKey, numShards uint32) []meta.ObjKey {
 // after the check's own finds a meta entry of it: an upload's meta entry is
 // written before its parts' and stays until the upload ends, so that
 // listing finds the meta entry of every upload one of whose entries the
-// check listed and that has not ended since (docs/exclusions.md, "The admin
+// check listed and that has not ended since (docs/differences.md, "The admin
 // index check's fix keeps the entries of an object with an upload in
 // flight").
 func removeOrphanParts(ctx context.Context, env *Env, rec *BucketRecord, invalid []meta.ObjKey) error {
@@ -281,7 +281,7 @@ func removeOrphanParts(ctx context.Context, env *Env, rec *BucketRecord, invalid
 // the plain namespace without versions, a page at a time, each entry's name.
 // A listing radosgw meets as -ENOENT ends it. radosgw lists with a filter
 // that reads the head of every entry and repairs the index from it, which no
-// rgw-go listing does (docs/exclusions.md, "The admin index check does not
+// rgw-go listing does (docs/differences.md, "The admin index check does not
 // re-read every object's head"). After any other listing failure radosgw
 // lists the same page again, its marker and truncated flag left as they were
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L897-L901 at v19.2.6,

@@ -122,7 +122,7 @@ and BC-34.
 | `internal/meta/{bucket_info,bucket_json,dump_bucket}.go` | BC-9 | L1 leaves them unedited | single owner |
 | `internal/auth/{sigv4,sigv2,verifier}.go`; `internal/s3/auth.go` | BC-5; BC-13c (`sigv2.go`'s canonical resource); BC-31 (the interface, and a new `browserupload.go`) | WP-3 (`chunked.go`, `payload.go`) | one owner each at a time; `sigv2.go` has two owners in order, BC-5 (merged), then BC-13c |
 | `hack/s3tests` lists, ledgers, known-differences files | BC-8, BC-22, BC-27, BC-28f, BC-34 | every unit's recording; WP-22, WP-23 | one at a time through the controller; after WP-22 each edits only its own lines in the Go selection's lists |
-| `docs/exclusions.md`, `docs/ceph-upstream-bugs.md` | nearly every task | every unit | the controller's merge order |
+| `docs/differences.md`, `docs/ceph-upstream-bugs.md` | nearly every task | every unit | the controller's merge order |
 
 ## Tasks
 
@@ -471,7 +471,7 @@ relies on fakerados behaviour beyond what it serves today.
      - it sends no x-amz-request-charged, whatever the identity, an anonymous one included: on a
        forged preflight the header would say whether the key's user owns the bucket, and
        sending it to an anonymous preflight alone would tell a forged one from an anonymous one
-       (docs/exclusions.md, "A preflight's answer says nothing of its key's user"). radosgw
+       (docs/differences.md, "A preflight's answer says nothing of its key's user"). radosgw
        sends it to every non-owner
        ([rgw_rest.cc:597-601](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L597-L601),
        [rgw_rest.cc:602-606](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L602-L606)).
@@ -1864,7 +1864,7 @@ BC-29's and BC-32's specs.
 
 ### Task BC-35: Retitle the re-authorized-retries exclusion
 
-- **Layer:** docs. **Files:** modify `docs/exclusions.md`, `docs/ceph-upstream-bugs.md` and
+- **Layer:** docs. **Files:** modify `docs/differences.md`, `docs/ceph-upstream-bugs.md` and
   this file. **Cluster:** no.
 - **Behaviour:**
   1. Retitle "A PutBucketAcl that loses a race is retried, and every retried ACL, policy or
@@ -1876,7 +1876,7 @@ BC-29's and BC-32's specs.
      lines in this file, and `docs/ceph-upstream-bugs.md`'s entries "radosgw's PutBucketAcl
      answers success when its write loses a race" and "radosgw's retried bucket writes are not
      authorized again". The short form "A PutBucketAcl that loses a race is retried" in
-     `docs/exclusions.md`'s "A retried bucket write stops when the name names another bucket"
+     `docs/differences.md`'s "A retried bucket write stops when the name names another bucket"
      still holds under the new title.
   3. Announce the rename to the rgw-rs session.
 - **Specs:** none. `make citecheck` on the changed files; a search for the old title finds it

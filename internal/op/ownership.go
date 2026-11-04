@@ -13,7 +13,7 @@ import (
 // The ownership controls ops of this file are v21.1.2's
 // RGWGetBucketOwnershipControls, RGWPutBucketOwnershipControls and
 // RGWDeleteBucketOwnershipControls, which neither floor has; rgw-go serves
-// them on both releases (docs/exclusions.md, "rgw-go stores and enforces
+// them on both releases (docs/differences.md, "rgw-go stores and enforces
 // ownership controls a floor radosgw ignores"). Each loads the bucket in
 // Init, so a missing bucket is NoSuchBucket before the permission check, and
 // authorizes its action against the bucket without the bucket's tags, as none
@@ -35,7 +35,7 @@ import (
 // (https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_iam_policy.h#L314-L315 and
 // https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_iam_policy.h#L338-L339 at v21.1.2),
 // where Amazon S3 maps those ACL permissions to s3:GetBucketAcl and
-// s3:PutBucketAcl alone (docs/exclusions.md, "rgw-go stores and enforces
+// s3:PutBucketAcl alone (docs/differences.md, "rgw-go stores and enforces
 // ownership controls a floor radosgw ignores").
 func verifyOwnershipAction(ctx context.Context, r *Request, o Op) error {
 	a := o.Action()
@@ -141,7 +141,7 @@ func (o *PutBucketOwnershipControls) VerifyPermission(ctx context.Context, r *Re
 // retryBucketWrite, which authorizes each retry again and stops when the name
 // names another bucket; v21.1.2's retries authorize nothing
 // (https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L10277-L10304 at v21.1.2;
-// docs/exclusions.md, "A PutBucketAcl that loses a race is retried, and every
+// docs/differences.md, "A PutBucketAcl that loses a race is retried, and every
 // retried bucket write is authorized again"). Each try of BucketOwnerEnforced
 // first holds the ACL that try read to the default private one
 // (privateBucketACL).

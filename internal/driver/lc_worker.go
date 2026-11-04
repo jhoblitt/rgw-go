@@ -27,7 +27,7 @@ import (
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1994-L2465 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2051-L2532 at v20.2.4).
 // It runs radosgw's protocol, so radosgw's workers and rgw-go's may share a
-// zone, but where docs/exclusions.md, "rgw-go's lifecycle worker departs
+// zone, but where docs/differences.md, "rgw-go's lifecycle worker departs
 // from radosgw's shard protocol in three places", says it departs: an entry
 // the bucket pass may not claim keeps the shard's head (lcShard.walkPast), a
 // claim no longer the worker's gets no post-state (lcWorker.claimHeld), and

@@ -33,7 +33,7 @@ type MFAVerifier interface {
 // system request's rgwx-uid names. radosgw takes the verified code of any
 // requester its permissions let act, the requester's own device
 // (docs/ceph-upstream-bugs.md, "radosgw lets a requester's own MFA device
-// satisfy another owner's MFA delete"; docs/exclusions.md, "Only the bucket
+// satisfy another owner's MFA delete"; docs/differences.md, "Only the bucket
 // owner's x-amz-mfa satisfies MFA delete").
 func OwnerMFAVerified(r *Request) bool {
 	if !r.MFAVerified || r.BucketRec == nil || r.Identity.User == nil {

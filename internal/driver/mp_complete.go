@@ -100,7 +100,7 @@ type assembly struct {
 // a manifest. Each is appended to the object's manifest, its head's index
 // entry, "<prefix>.<n>" in the multipart namespace, is to be retired, and so
 // is its history (retirePart). A part whose manifest radosgw would append as
-// an explicit one is ErrInvalidPart (docs/exclusions.md, "An explicit part
+// an explicit one is ErrInvalidPart (docs/differences.md, "An explicit part
 // manifest is not appended"). Once every part matched, the stored records
 // are the assembly's parts.
 func (s *Store) assemble(key meta.ObjKey, uploadID string, stored []meta.UploadPartInfo, parts []op.CompletePart) (*assembly, error) {
@@ -172,7 +172,7 @@ func (s *Store) assemblePart(a *assembly, key meta.ObjKey, uploadID string, st m
 // stripe, and answers ErrInvalidPart when one is missing: its data was
 // removed, as a GC pass removes the parts of a completed object that was
 // overwritten or deleted, and a head naming it would read as NoSuchKey.
-// radosgw checks only the part infos (docs/exclusions.md,
+// radosgw checks only the part infos (docs/differences.md,
 // "CompleteMultipartUpload checks the part heads and keeps the parts until
 // its head is written").
 func (s *Store) checkPartHeads(ctx context.Context, parts []meta.UploadPartInfo) error {
@@ -326,7 +326,7 @@ func sameCompletion(st *op.ObjectState, a *assembly) bool {
 // A completion refused before its head write leaves the upload whole: its
 // parts' entries are not sent with the head write's index change, whose
 // cancel would apply them (tracker #80907), and their history is queued
-// for the GC only after the head is written (docs/exclusions.md,
+// for the GC only after the head is written (docs/differences.md,
 // "CompleteMultipartUpload checks the part heads and keeps the parts until
 // its head is written"). The lock is released on every path that leaves
 // the meta object. Once the lock is taken the completion runs to its end
@@ -541,7 +541,7 @@ const (
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7559 at v20.2.4;
 	// SetObjectAttrs), so the tags of a version linked before such a change
 	// differ. An earlier null version with the same ETag and size passes for
-	// the version (docs/exclusions.md, "CompleteMultipartUpload finishes an
+	// the version (docs/differences.md, "CompleteMultipartUpload finishes an
 	// earlier completion of its upload instead of writing it again").
 	byData
 )
@@ -605,7 +605,7 @@ func (s *Store) recordedLinkState(ctx context.Context, rec *op.BucketRecord, cur
 // a link that does not land, cannot be established safely: InternalError,
 // with the meta object kept for a later retry or an abort, which removes the
 // version (Store.Abort); a condition that no longer holds answers as a
-// completion's would (docs/exclusions.md, "A CompleteMultipartUpload records
+// completion's would (docs/differences.md, "A CompleteMultipartUpload records
 // itself on the meta object before its head write").
 func (s *Store) linkRecorded(ctx context.Context, up *op.Upload, cur *op.ObjectState, tag []byte, by linkedBy) error {
 	rec := up.Bucket

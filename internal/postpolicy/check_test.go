@@ -222,7 +222,7 @@ var _ = Describe("Check", func() {
 			Entry("x-ignore- in any case", "X-Ignore-Foo"),
 			Entry("x-ignore- alone", "x-ignore-"),
 			// Tentacle's exception, on both releases: Squid's radosgw refuses
-			// these (docs/exclusions.md, "A POST policy needs no condition for a
+			// these (docs/differences.md, "A POST policy needs no condition for a
 			// checksum field").
 			Entry("x-amz-checksum-algorithm", "x-amz-checksum-algorithm"),
 			Entry("CRC32", "x-amz-checksum-crc32"),

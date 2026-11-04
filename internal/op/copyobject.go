@@ -91,7 +91,7 @@ func (o *CopyObject) OpMask() uint32 { return OpTypeWrite }
 // authorized, so that a refused requester learns nothing of the destination
 // or the source: VerifyPermission checks the storage class and reads the
 // source once the destination and the op mask allow the request, and
-// Execute checks the rest (docs/exclusions.md).
+// Execute checks the rest (docs/differences.md).
 func (o *CopyObject) Init(ctx context.Context, r *Request) error {
 	if err := loadBucket(ctx, r); err != nil {
 		return err
@@ -131,7 +131,7 @@ func (o *CopyObject) Init(ctx context.Context, r *Request) error {
 // "radosgw checks a CopyObject source against its bucket's ACL, not the
 // object's"). rgw-go needs READ on both: the bucket check, then the object
 // check, each with the source bucket's policy and the identity's, which
-// decide before either ACL (docs/exclusions.md). A source naming a delete
+// decide before either ACL (docs/differences.md). A source naming a delete
 // marker's version is refused ahead of the missing source's rule
 // (copySourceMarker).
 func (o *CopyObject) VerifyPermission(ctx context.Context, r *Request) error {
@@ -215,7 +215,7 @@ func (o *CopyObject) checkStorageClass(r *Request) error {
 // before it copies under the request id as its tag, to VersionForWrite's
 // instance. First Authorized runs, and a public destination policy under the
 // destination's block of public ACLs is refused, as PutObject refuses one,
-// where radosgw makes no such check for a copy (docs/exclusions.md). Then a
+// where radosgw makes no such check for a copy (docs/differences.md). Then a
 // destination with object lock is refused (objectLockUnserved).
 func (o *CopyObject) Execute(ctx context.Context, r *Request) error {
 	if o.Authorized != nil {

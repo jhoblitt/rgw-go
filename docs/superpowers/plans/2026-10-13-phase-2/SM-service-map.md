@@ -23,7 +23,7 @@ its frontends run, as daemon `<global id>` of service `rgw`
 [rgw_appmain.cc:524-529](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_appmain.cc#L524-L529)).
 rgw-go registers nothing, so the dashboard's Object Gateway pages, `ceph -s`, `ceph versions`, the
 prometheus module's `ceph_rgw_metadata`, telemetry and `ceph config show client.rgw.<id>` do not see
-it (`docs/exclusions.md`, "rgw-go does not register in the manager's service map").
+it (`docs/differences.md`, "rgw-go does not register in the manager's service map").
 
 | Item | Tasks |
 |---|---|
@@ -45,7 +45,7 @@ Not in this unit:
 | Id | Decision | Reason | Tasks |
 |---|---|---|---|
 | SM-D1 | Register, rather than record an exclusion. | In production rgw-go replaces radosgw in the derived image, and the dashboard finds gateways only in the map: with none it says "No RGW service is running." ([rgw_client.py:74-98](https://github.com/ceph/ceph/blob/v19.2.7/src/pybind/mgr/dashboard/services/rgw_client.py#L74-L98), [rgw_client.py:82-106](https://github.com/ceph/ceph/blob/v20.2.4/src/pybind/mgr/dashboard/services/rgw_client.py#L82-L106)), which breaks `docs/exclusions.md`'s promise of the dashboard's admin endpoints. librados does the rest: beacons, failover, its system metadata, the config report and the unregistering close. | SM1 to SM5 |
-| SM-D2 | The harness's host rgw-go does not register. An rgw-go-only serve flag, `--service-map` (`RGW_GO_SERVICE_MAP`), defaults to true; every rgw-go the harness starts on the host runs with `RGW_GO_SERVICE_MAP=false`, which the Makefile exports to every target that runs one, each language's one start sets again, and a guard over every reference to the binary holds to those starts (SM4); SM5 alone turns it on, for its own short run. The flag is a Command-line difference in `docs/exclusions.md`. | librados writes `ceph_version` from the library the process links before the caller's keys, and `insert` keeps it ([RadosClient.cc:1089-1095](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/RadosClient.cc#L1089-L1095), [RadosClient.cc:1091-1097](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/RadosClient.cc#L1091-L1097)). The host links Fedora's 19.2.6 locally and download.ceph.com's 20.2.4 in CI for both releases, so a registering host rgw-go adds a second build to `ceph versions` on both clusters locally and on Squid's at least in CI. Rook then takes its upgrade path on every CephCluster reconcile and fails it while health is not OK (pkg/operator/ceph/cluster/version.go:80-91, :178-210), and the harness's one-build checks fail (`hack/rooket/up.sh:42-47`, `test/gate/phase0_test.go`'s `expectSameBuild`). Building against the cluster's librados, as `hack/image/cgo-build.sh` does, is not enough alone: the binary must also run in that image, which moves every harness rgw-go into a container, a larger change than this unit. | SM4, SM5 |
+| SM-D2 | The harness's host rgw-go does not register. An rgw-go-only serve flag, `--service-map` (`RGW_GO_SERVICE_MAP`), defaults to true; every rgw-go the harness starts on the host runs with `RGW_GO_SERVICE_MAP=false`, which the Makefile exports to every target that runs one, each language's one start sets again, and a guard over every reference to the binary holds to those starts (SM4); SM5 alone turns it on, for its own short run. The flag is a Command-line difference in `docs/differences.md`. | librados writes `ceph_version` from the library the process links before the caller's keys, and `insert` keeps it ([RadosClient.cc:1089-1095](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/RadosClient.cc#L1089-L1095), [RadosClient.cc:1091-1097](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/RadosClient.cc#L1091-L1097)). The host links Fedora's 19.2.6 locally and download.ceph.com's 20.2.4 in CI for both releases, so a registering host rgw-go adds a second build to `ceph versions` on both clusters locally and on Squid's at least in CI. Rook then takes its upgrade path on every CephCluster reconcile and fails it while health is not OK (pkg/operator/ceph/cluster/version.go:80-91, :178-210), and the harness's one-build checks fail (`hack/rooket/up.sh:42-47`, `test/gate/phase0_test.go`'s `expectSameBuild`). Building against the cluster's librados, as `hack/image/cgo-build.sh` does, is not enough alone: the binary must also run in that image, which moves every harness rgw-go into a container, a larger change than this unit. | SM4, SM5 |
 | SM-D3 | The harness's radosgw entries are the rgw entries whose metadata carries `pod_name`. | Rook sets `POD_NAME` on every daemon it runs (pkg/operator/k8sutil/pod.go:223-228, the rgw container at pkg/operator/ceph/object/spec.go:466) and librados reports it ([util.cc:288-291](https://github.com/ceph/ceph/blob/v19.2.7/src/common/util.cc#L288-L291), [util.cc:288-291](https://github.com/ceph/ceph/blob/v20.2.4/src/common/util.cc#L288-L291)); every rgw-go the harness starts runs on the host. The `id` does not tell them apart: the harness runs rgw-go as `client.rgw.rgw-go` (`hack/rooket/rgw-go-up.sh`) and as `client.admin` (`test/integration/phase2_website_test.go`, `internal/cli/serve_integration_test.go:192`). A key of rgw-go's own would make its entry differ from radosgw's. The decision assumes that no rgw-go the harness reads the map beside runs in a pod: at origin/main no tracked file sets `POD_NAME` for one, and the only pod-run rgw-go, `.github/workflows/rook.yml`'s, reads no map through the harness. A task that runs rgw-go in a rooket pod revisits the discriminator. | SM2, SM5 |
 | SM-D4 | rgw-go registers radosgw's keys and values, and adds none. | The dashboard and telemetry index the keys without a default, and the manager's `config show` reads `id` unchecked (Threat model). | SM4 |
 | SM-D5 | rgw-go registers once, after its listeners are bound and its privileges dropped and before it serves, and logs a failure at error level and serves on. | radosgw registers after `init_storage` and after every frontend runs, and ignores a failure (Scope's appmain links). rgw-go has no realm reload, after which radosgw registers again. | SM4 |
@@ -99,7 +99,7 @@ type ServiceRegistrar interface {
 | `hack/rooket/rgw-go-up.sh` (the serve line) | SM4 | none open | single owner here |
 | `internal/cli/serve.go` | SM4 | any task wiring serve | SM4 adds a flag, a call and a goroutine; the index's hot-file rule |
 | `Makefile` | SM4 (one target-specific export) | any task adding a cluster target | a target that runs a host rgw-go joins the export's list in the same change |
-| `docs/exclusions.md` | SM4 | most tasks | SM4 edits only "Manager differences" and its Command-line bullet; announced to rgw-rs |
+| `docs/differences.md` | SM4 | most tasks | SM4 edits only "Manager differences" and its Command-line bullet; announced to rgw-rs |
 | `docs/cgo-limitations.md` | SM1 | any binding task | SM1 edits only its Binding row |
 
 ## Tasks
@@ -206,7 +206,7 @@ type ServiceRegistrar interface {
   the `Makefile`'s export, `hack/rooket/rgw-go-up.sh` and `hack/rooket/lib_test.go`'s serve-line
   spec, `hack/rooket/README.md`, a start helper and its guard spec in
   `internal/testutil/cephtest`, `test/integration/phase2_website_test.go` (`startWebsiteRGWGo`)
-  and `internal/cli/serve_integration_test.go` (its `start`); `docs/exclusions.md`.
+  and `internal/cli/serve_integration_test.go` (its `start`); `docs/differences.md`.
 - **Consumes:** SM3's `ServiceRegistrar`; SM2 landed.
 - **Behaviour:**
   1. **The metadata** (SM-D4) is a pure function of the entity name, `service_unique_id`, the zone,
@@ -343,7 +343,7 @@ type ServiceRegistrar interface {
       rgw-go-up.sh's build left behind;
     - a `go build -o x ./cmd/rgw-go` in a script under `hack/`;
     - an allow-listed name used from a file that is not on the list.
-- **Exclusions and registry:** in `docs/exclusions.md`, "rgw-go does not register in the
+- **Exclusions and registry:** in `docs/differences.md`, "rgw-go does not register in the
   manager's service map" goes, the Command-line differences gain the flag ("no Ceph option turns
   radosgw's registration off", Scope's appmain links), and "The manager gets none of radosgw's
   rgw perf counters from rgw-go" says that the report now carries librados's own counters.

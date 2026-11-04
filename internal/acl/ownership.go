@@ -150,7 +150,7 @@ var ownershipPath = [...]string{"OwnershipControls", "Rule", "ObjectOwnership"}
 // attribute other than xmlns naming S3's namespace or none; text other than
 // XML whitespace outside ObjectOwnership; and a body longer than
 // MaxOwnershipXML. Names are read as written, as radosgw reads them.
-// docs/exclusions.md, "A PutBucketOwnershipControls document is held to S3's
+// docs/differences.md, "A PutBucketOwnershipControls document is held to S3's
 // schema", lists each case.
 //
 // The body is refused at the first token that breaks one of those rules, so

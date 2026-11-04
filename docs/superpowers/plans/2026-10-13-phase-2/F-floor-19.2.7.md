@@ -90,7 +90,7 @@ The unit carries the owner's decision P5. The unit's own decisions are FD-1 to F
 | File | Tasks | Rule |
 |---|---|---|
 | `docs/ceph-upstream-bugs.md` | F2, F4, F5, F6, F7, F8, F9 | F2 first, every fact; then each task only its entry's "rgw-go:" paragraph (FD-2). Shared with rgw-rs. |
-| `docs/exclusions.md` | F3, F4, F7, F8, F9 | F3 first, every fact; then each task only its own bullet. Announced to the rgw-rs session. |
+| `docs/differences.md` | F3, F4, F7, F8, F9 | F3 first, every fact; then each task only its own bullet. Announced to the rgw-rs session. |
 | `test/s3tests/known-differences-squid.txt` | F3 (comments, if a heading changes), F4, F11 | F4 adds three lines; F11 removes them with the eight condition lines. |
 | `test/s3tests/known-differences-tentacle.txt` | F4 | single owner here; F4's three lines stay. |
 | `test/integration/write_test.go` | F7 (:403-412), F11 (:273-291) | separate hunks; F7 first. |
@@ -149,7 +149,7 @@ The unit carries the owner's decision P5. The unit's own decisions are FD-1 to F
        ([rgw.yaml.in:1713-1714](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L1713-L1714),
        [rgw.yaml.in:1795-1796](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L1795-L1796)). #75958 is not asserted closed.
   2. **Carried by v19.2.7 too**, retitled away from "Tentacle's", with their index rows and the
-     anchors `docs/exclusions.md` and the known-differences comments use:
+     anchors `docs/differences.md` and the known-differences comments use:
      - "Tentacle's DeleteObject removes the head without checking its write tag" (:7067):
        Releases v19.2.7, v20.2.4 and main
        ([rgw_rados.cc:6049-6057](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6049-L6057)).
@@ -179,7 +179,7 @@ The unit carries the owner's decision P5. The unit's own decisions are FD-1 to F
        #76960), waits for F11 and is added only if the re-record shows a flip it explains.
   5. "rgw-go:" lines are left to F4 to F9, each of which owns its entry's.
 - **Specs:** citecheck over the file with 0 failures; a grep for every changed title in
-  `docs/exclusions.md`, the known-differences files and the registry index.
+  `docs/differences.md`, the known-differences files and the registry index.
 - **Exclusions and registry:** this task is the registry's facts.
 - **Depends on:** nothing. **PR:** its own; shared with the rgw-rs session. **Brief:** about
   120 lines.
@@ -187,7 +187,7 @@ The unit carries the owner's decision P5. The unit's own decisions are FD-1 to F
 ### Task F3: docs, the exclusions at v19.2.7
 
 - **Layer:** docs. **Cluster:** no.
-- **Files:** modify docs/exclusions.md; `test/s3tests/known-differences-squid.txt`'s comments
+- **Files:** modify docs/differences.md; `test/s3tests/known-differences-squid.txt`'s comments
   only if a heading they name changes.
 - **Behaviour** (report §4's rows marked F3; no rgw-go behaviour changes):
   1. "Write conditions are Tentacle's on Squid too" (:4225-4256) shrinks to its
@@ -540,7 +540,7 @@ Found by F3's task review (Important 1), and numbered here before F3 merged (PP-
 Found in F4's work, and numbered here before F4 merged (PP-12).
 
 - **Layer:** auth. **Cluster:** no; its s3-test runs in CI.
-- **Files:** modify internal/auth/sigv4.go (`canonicalHeadersV4`) and its specs; docs/exclusions.md;
+- **Files:** modify internal/auth/sigv4.go (`canonicalHeadersV4`) and its specs; docs/differences.md;
   docs/ceph-upstream-bugs.md (the entry's "rgw-go:" line).
 - **Behaviour:**
   1. radosgw's CVE-2026-54330 check refuses an unsigned header only under `HTTP_X_AMZ_`
@@ -591,7 +591,7 @@ Found by F12's task review (Important 1), and numbered here before F12 merged (P
   501 and leave the upload listable; one without `versionId` completes as before.
 - **s3-tests:** none. The 501 is phase 1's refusal, which V11 replaces with D3, and V11's s3-tests
   cover D3.
-- **Exclusions and registry:** the registry entry's text and "rgw-go:" line; exclusions.md's
+- **Exclusions and registry:** the registry entry's text and "rgw-go:" line; differences.md's
   versioned-write refusal already says rgw-go answers 501, which F14 makes true for the completion.
 - **Depends on:** nothing. **PR:** its own. **Brief:** about 35 lines.
 
@@ -600,7 +600,7 @@ Found by F12's task review (Important 1), and numbered here before F12 merged (P
 Found by F13's adversarial review (Minor 5), and numbered here before F13 merged (PP-12).
 
 - **Layer:** auth. **Cluster:** no.
-- **Files:** modify internal/auth/sigv2.go and its specs; docs/exclusions.md; the "rgw-go:" line of
+- **Files:** modify internal/auth/sigv2.go and its specs; docs/differences.md; the "rgw-go:" line of
   F13's registry entry for the SigV2 relabelling.
 - **Behaviour:**
   1. SigV2's string to sign builds its canonical amz headers from `x_meta_map`
@@ -636,7 +636,7 @@ Found by F15's work (its report's concern 5), and numbered here before F15 merge
 
 - **Layer:** auth, op. **Cluster:** no.
 - **Files:** modify internal/auth/sigv2.go and its specs, and the read sites the task finds;
-  docs/ceph-upstream-bugs.md (a new entry); docs/exclusions.md.
+  docs/ceph-upstream-bugs.md (a new entry); docs/differences.md.
 - **Behaviour:**
   1. On the presigned route, SigV2's string to sign is the canonical header map followed by the
      canonical query map with nothing between them
@@ -659,7 +659,7 @@ Found by F15's work (its report's concern 5), and numbered here before F15 merge
      headers, and an STS client's token in the query. On the SigV2 presigned route every read of an
      `x-amz-meta-*` name or the session token sees the header and query forms as one set, and a name
      on both sides is refused with AccessDenied. Each difference this makes from radosgw goes into
-     docs/exclusions.md.
+     docs/differences.md.
 - **Specs:** the header, query and split forms of the same metadata store the same attributes on
   PutObject and CopyObject; the token in the query or the header gives the same
   `sts:authentication`; a name on both sides refused; SigV4 and the SigV2 header route unchanged.
@@ -675,7 +675,7 @@ six other header prefixes onto `x-amz-`.
 - **Layer:** auth, authz, s3. **Cluster:** for the s3-tests run only.
 - **Files:** internal/auth (request.go, sigv2.go, sigv4.go, the verifier, their specs, the v2
   vectors, rawdirectives_test.go), internal/authz/env.go and internal/s3/requestattrs.go, with their
-  specs; docs/exclusions.md; the "rgw-go:" lines of docs/ceph-upstream-bugs.md; F13's s3-test on
+  specs; docs/differences.md; the "rgw-go:" lines of docs/ceph-upstream-bugs.md; F13's s3-test on
   jhoblitt/ceph's `rgw-go-s3tests`.
 - **Behaviour:**
   1. radosgw's `init_meta_info` files every header under `X-Amz-`, `X-Goog-`, `X-Dho-`, `X-Rgw-`,
@@ -736,7 +736,7 @@ Found in F17's work (its report's concern 2), and numbered here before F17 merge
 - **Layer:** auth, authz, s3. **Cluster:** for the s3-tests run only.
 - **Files:** internal/s3/requestattrs.go, internal/authz/env.go (`cryptAttr`'s query read), the auth
   result they read, and their specs; docs/ceph-upstream-bugs.md (a new entry, F17-2);
-  docs/exclusions.md.
+  docs/differences.md.
 - **Behaviour:**
   1. radosgw's PutObject merges the query's `x-amz-meta-*` into `x_meta_map`, and its
      `x-amz-server-side-encryption*` into the encryption settings, overwriting a header's
@@ -757,7 +757,7 @@ Found in F17's work (its report's concern 2), and numbered here before F17 merge
      nothing a request's signature does not cover. SigV4, the SigV2 presigned route and anonymous
      requests are unchanged, since an anonymous request signs nothing and may send the same names as
      headers.
-  3. Each difference from radosgw goes into docs/exclusions.md. The registry gains the F17-2 entry,
+  3. Each difference from radosgw goes into docs/differences.md. The registry gains the F17-2 entry,
      with evidence at both tags, and the Upstream line in the registry's "pending:
      rgw-bug-reproduction ..." form; it went there on 2026-10-14.
 - **Specs:**
@@ -774,7 +774,7 @@ Found in F17's work (its report's concern 2), and numbered here before F17 merge
 Found in F17's work (its report's second round), and numbered here before F17 merged (PP-12).
 
 - **Layer:** s3. **Cluster:** for the s3-tests run only.
-- **Files:** modify internal/s3/putobject.go and its specs; docs/exclusions.md, if any difference
+- **Files:** modify internal/s3/putobject.go and its specs; docs/differences.md, if any difference
   stays.
 - **Behaviour:**
   1. radosgw's PutObject reads `partNumber` whenever the query carries one. It answers EINVAL to one

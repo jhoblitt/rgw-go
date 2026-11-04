@@ -78,13 +78,13 @@ func listRealms(ctx context.Context, w http.ResponseWriter, r *op.Request, q Req
 // the period in a "period" section
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rest_realm.cc#L34-L52).
 // A period whose zonegroup holds sync policy groups fails the dump, which
-// is answered NotImplemented (docs/exclusions.md).
+// is answered NotImplemented (docs/differences.md).
 //
 // The document masks each cloud tier's S3 secret, which
 // RGWZoneGroupPlacementTierS3::dump writes in the clear
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_zone.cc#L966-L979 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L1006-L1019 at v20.2.4;
-// docs/exclusions.md), but for a system user. A period pull stores the
+// docs/differences.md), but for a system user. A period pull stores the
 // document it reads and sends nothing that marks it as a pull, but signs
 // with the zone's system key: pull_period
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_period_puller.cc#L27-L63 at v19.2.7,

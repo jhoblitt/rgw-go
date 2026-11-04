@@ -223,7 +223,7 @@ var _ = Describe("DeleteObject", func() {
 			o.Data = []byte("replacement")
 		})
 		_, err := s.DeleteObject(ctx, rec, key, op.DeleteParams{IfMatch: `"` + md5hex(body) + `"`})
-		Expect(err).To(MatchError(op.ErrConcurrentModification), "v20.2.4 sends no guard and would remove the replacement (docs/exclusions.md)")
+		Expect(err).To(MatchError(op.ErrConcurrentModification), "v20.2.4 sends no guard and would remove the replacement (docs/differences.md)")
 		Expect(c.Object(testDataPool, "", headOID).Data).To(Equal([]byte("replacement")))
 		writes := indexWrites()
 		Expect(writes).To(HaveLen(2))
@@ -322,7 +322,7 @@ var _ = Describe("DeleteObject", func() {
 			Expect(execIn(w, 1, "obj_check_mtime", rgwcls.DecodeCheckMtimeOp)).To(Equal(rgwcls.CheckMtimeOp{Mtime: p.IfMatchLastModified, Type: rgwcls.MtimeEQ}),
 				"cls_obj_check_mtime EQ for last-modified-match, rgw_rados.cc:6665-6668 at v20.2.4")
 			Expect(w.Steps()[2]).To(Equal(&radosclient.CmpXattrStep{Name: "user.rgw.idtag", Op: radosclient.CmpEQ, Value: []byte("tx-put\x00")}),
-				"Squid's guard, kept on Tentacle (docs/exclusions.md)")
+				"Squid's guard, kept on Tentacle (docs/differences.md)")
 			execIn(w, 3, "obj_remove", rgwcls.DecodeObjRemoveOp)
 			Expect(c.Object(testDataPool, "", headOID)).To(BeNil())
 		},

@@ -319,7 +319,7 @@ func quotedETag(etag string) xmltext.Text {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L1916-L1966).
 // Under encoding-type=url it also encodes Marker with its slash, as
 // NextMarker, which botocore decodes and radosgw writes as sent; Prefix,
-// which botocore never decodes, is written as sent (docs/exclusions.md,
+// which botocore never decodes, is written as sent (docs/differences.md,
 // "ListObjects, ListObjectsV2 and ListMultipartUploads URL-encode the
 // elements S3 encodes").
 func (l listing) v1() listBucketResult {
@@ -346,7 +346,7 @@ func (l listing) v1() listBucketResult {
 // The tokens are written as sent, never URL-encoded. Under encoding-type=url
 // it also encodes Prefix, keeping its slash as the common prefixes do, and
 // StartAfter with its slash, as a Key, which S3 encodes and radosgw writes as
-// sent (docs/exclusions.md, "ListObjects, ListObjectsV2 and
+// sent (docs/differences.md, "ListObjects, ListObjectsV2 and
 // ListMultipartUploads URL-encode the elements S3 encodes").
 func (l listing) v2() listBucketV2Result {
 	o, r := l.o, l.r
@@ -414,7 +414,7 @@ func (l listing) versionEntries(v2 bool) []listVersion {
 // Under encoding-type=url it also encodes Prefix and Delimiter, keeping
 // their slashes as the common prefixes do, and KeyMarker with its slash, as
 // NextKeyMarker, which S3 encodes and radosgw writes as sent
-// (docs/exclusions.md, "ListObjectVersions URL-encodes KeyMarker, Prefix and
+// (docs/differences.md, "ListObjectVersions URL-encodes KeyMarker, Prefix and
 // Delimiter"). VersionIdMarker is written as sent, and NextVersionIdMarker
 // is the next marker's instance, or "null" for an unversioned object or a
 // common prefix, which have none.

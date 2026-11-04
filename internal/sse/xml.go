@@ -374,7 +374,7 @@ func (c BucketEncryptionConfig) Validate() error {
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L463-L472 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L463-L472 at v20.2.4),
 // which botocore reads as false; rgw-go writes true, as AWS does
-// (docs/exclusions.md, "GetBucketEncryption writes BucketKeyEnabled as
+// (docs/differences.md, "GetBucketEncryption writes BucketKeyEnabled as
 // true").
 func (c BucketEncryptionConfig) MarshalS3XML() []byte {
 	var b bytes.Buffer

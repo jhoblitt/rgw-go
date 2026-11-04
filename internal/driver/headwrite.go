@@ -77,12 +77,12 @@ type headWrite struct {
 	// an existing version, which no failure of its completion or link
 	// removes (linkVersion). A copy onto itself and a lifecycle transition's
 	// raw copy make such writes, where radosgw guards on a head it may read
-	// again (docs/exclusions.md, "Object write differences" and "A lifecycle
+	// again (docs/differences.md, "Object write differences" and "A lifecycle
 	// transition lands only on the version it read").
 	expect *op.ObjectState
 	// keepLock marks a write that keeps the version's lock state as it is,
 	// a lifecycle transition's: no default retention is added
-	// (finalizeHeadAttrs; docs/exclusions.md, "A lifecycle transition adds no
+	// (finalizeHeadAttrs; docs/differences.md, "A lifecycle transition adds no
 	// default retention").
 	keepLock bool
 	// incompressible marks data radosgw's compressor made: its write_full is
@@ -153,7 +153,7 @@ func rgwBlStr(b []byte) string { return strings.TrimRight(string(b), "\x00") }
 // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6672-L6714 at v19.2.7),
 // which both releases apply to a PutObject alike. A
 // CompleteMultipartUpload's conditions reach it on Squid too, where v19.2.7
-// reads none (docs/exclusions.md, "Write conditions are Tentacle's on Squid
+// reads none (docs/differences.md, "Write conditions are Tentacle's on Squid
 // too"). A condition is unquoted with rgw_string_unquote and matches when it
 // begins with the stored ETag, compared over the ETag's length
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7299,
@@ -216,7 +216,7 @@ func (s *Store) writeMeta(ctx context.Context, hw *headWrite, x *indexOp) (headR
 		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L515-L529 at v19.2.6).
 		// Tentacle's complete passes UploadPart's
 		// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L563-L564 at v20.2.4),
-		// which rgw-go ignores (docs/exclusions.md, "UploadPart ignores
+		// which rgw-go ignores (docs/differences.md, "UploadPart ignores
 		// If-Match and If-None-Match"), so a caller that passes them asks
 		// for a write rgw-go never makes.
 		return headResult{}, fmt.Errorf("%w: a non-atomic head write of %s carries write conditions", op.ErrInternalError, hw.key.Name)

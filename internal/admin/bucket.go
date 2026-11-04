@@ -227,7 +227,7 @@ func unlinkBucket(ctx context.Context, w http.ResponseWriter, r *op.Request, q R
 // which sends no body. purge-objects and bypass-gc delete, so a value
 // get_bool cannot parse, which radosgw takes as false, and an empty one,
 // which it takes as true, are refused after the cap check
-// (docs/exclusions.md, "The admin bucket routes refuse a boolean argument
+// (docs/differences.md, "The admin bucket routes refuse a boolean argument
 // they cannot parse").
 func removeBucket(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	a := q.Args

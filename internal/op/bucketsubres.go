@@ -92,7 +92,7 @@ func verifyBucketAction(ctx context.Context, r *Request, o Op) error {
 // each retry runs o's VerifyPermission, the check Run made, again against
 // the ACL, policy and public-access block of the bucket
 // RetryRacedBucketWrite has just read, so that a retry writes nothing for a
-// requester the write it lost to refused (docs/exclusions.md).
+// requester the write it lost to refused (docs/differences.md).
 func retryBucketWrite(ctx context.Context, r *Request, o Op, f func() error) error {
 	return RetryRacedWriteReauthorized(ctx, r, nil, func() error { return o.VerifyPermission(ctx, r) }, f)
 }
@@ -176,7 +176,7 @@ func (o *PutBucketACL) VerifyPermission(ctx context.Context, r *Request) error {
 // and a public policy under a block of public ACLs, or a block that does not
 // decode
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5905-L5910;
-// docs/exclusions.md). radosgw answers a lost race with success and leaves
+// docs/differences.md). radosgw answers a lost race with success and leaves
 // the ACL unwritten
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5925-L5927;
 // docs/ceph-upstream-bugs.md, "radosgw's PutBucketAcl answers success when
@@ -184,7 +184,7 @@ func (o *PutBucketACL) VerifyPermission(ctx context.Context, r *Request) error {
 // makes both checks again against the bucket as each try reads it, so a retry
 // never puts back an owner a concurrent change replaced; a retry that passes
 // them and finds the requested ACL in place writes nothing and succeeds
-// (docs/exclusions.md). A bucket whose ownership setting is
+// (docs/differences.md). A bucket whose ownership setting is
 // BucketOwnerEnforced refuses the write before Build reads the body, and so
 // does each try against the setting it read (aclsDisabled).
 func (o *PutBucketACL) Execute(ctx context.Context, r *Request) error {
@@ -304,7 +304,7 @@ func (*GetBucketPolicy) Init(ctx context.Context, r *Request) error { return loa
 
 // VerifyPermission is RGWGetBucketPolicy::verify_permission, without
 // Tentacle's pass for the root of the bucket owner's account
-// (docs/exclusions.md).
+// (docs/differences.md).
 func (o *GetBucketPolicy) VerifyPermission(ctx context.Context, r *Request) error {
 	return verifyBucketAction(ctx, r, o)
 }
@@ -351,7 +351,7 @@ func (*PutBucketPolicy) Init(ctx context.Context, r *Request) error { return loa
 
 // VerifyPermission is RGWPutBucketPolicy::verify_permission, without
 // Tentacle's pass for the root of the bucket owner's account
-// (docs/exclusions.md).
+// (docs/differences.md).
 func (o *PutBucketPolicy) VerifyPermission(ctx context.Context, r *Request) error {
 	return verifyBucketAction(ctx, r, o)
 }
@@ -362,7 +362,7 @@ func (o *PutBucketPolicy) VerifyPermission(ctx context.Context, r *Request) erro
 // public policy under the block of the bucket as that try read it, a block
 // that does not decode blocking, and sets the policy over that bucket.
 // radosgw's tries merge the attrs the request started with, so a retry
-// writes back what the write it lost to had changed (docs/exclusions.md).
+// writes back what the write it lost to had changed (docs/differences.md).
 func (o *PutBucketPolicy) Execute(ctx context.Context, r *Request) error {
 	if o.Params != nil {
 		if err := o.Params(ctx, o); err != nil {
@@ -384,7 +384,7 @@ func (o *PutBucketPolicy) Execute(ctx context.Context, r *Request) error {
 
 // blocksPublicPolicy reports whether rec's public-access block sets
 // BlockPublicPolicy. A block that does not decode blocks, as blockPublicACLs
-// takes one (docs/exclusions.md).
+// takes one (docs/differences.md).
 func blocksPublicPolicy(rec *BucketRecord) bool {
 	b, ok := rec.Attrs[AttrPublicAccess]
 	if !ok {
@@ -419,7 +419,7 @@ func (*DeleteBucketPolicy) Init(ctx context.Context, r *Request) error { return 
 
 // VerifyPermission is RGWDeleteBucketPolicy::verify_permission, without
 // Tentacle's pass for the root of the bucket owner's account
-// (docs/exclusions.md).
+// (docs/differences.md).
 func (o *DeleteBucketPolicy) VerifyPermission(ctx context.Context, r *Request) error {
 	return verifyBucketAction(ctx, r, o)
 }
@@ -473,7 +473,7 @@ func (o *GetBucketTagging) VerifyPermission(ctx context.Context, r *Request) err
 // Execute is RGWGetBucketTags::execute: no tag attr is NoSuchTagSet. A tag
 // set that decodes neither as RGWObjTags nor as the text older buckets store
 // is -EIO, which radosgw meets after it has sent its 200 and rgw-go answers
-// as UnknownError (docs/exclusions.md).
+// as UnknownError (docs/differences.md).
 func (o *GetBucketTagging) Execute(_ context.Context, r *Request) error {
 	b, ok := r.BucketRec.Attrs[tags.Attr]
 	if !ok {

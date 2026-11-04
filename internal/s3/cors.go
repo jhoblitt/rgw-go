@@ -117,7 +117,7 @@ func deleteBucketCORS(ctx context.Context, w http.ResponseWriter, r *op.Request)
 // A signed preflight's identity is its key's user on the key's id alone, so
 // nothing here reads r.Identity: the op reads none of it, and
 // SetCommonHeaders adds no x-amz-request-charged to an OPTIONS response
-// (docs/exclusions.md, "A preflight's answer says nothing of its key's
+// (docs/differences.md, "A preflight's answer says nothing of its key's
 // user"). At object scope the op reads the bucket alone, as radosgw's
 // read_permissions does for OP_OPTIONS
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1930-L1932 at v19.2.7,

@@ -94,7 +94,7 @@ func newGCWorker(s *Store) *gcWorker {
 // rgw_gc_processor_period less the whole seconds the pass took, none when it
 // took the period or longer, until ctx ends. A period that is not positive is
 // waited as one second, where radosgw would run its passes without pause
-// (docs/exclusions.md).
+// (docs/differences.md).
 func (g *gcWorker) run(ctx context.Context) error {
 	period := g.s.w.opts.gcProcessorPeriod
 	if period <= 0 {

@@ -2,7 +2,7 @@
 
 This registry collects changes to the RADOS objects radosgw stores that would make an S3 gateway faster or cheaper while it still serves S3 correctly. That covers object heads and tails, head xattrs, bucket index entries and their omap, metadata objects, and the log, GC and usage objects.
 
-rgw-go does not implement these changes. Its design keeps every on-disk structure byte-identical to what radosgw writes at the cluster's release, so the two gateways can share a zone (the design spec's version rule; the coexistence obligations in `docs/exclusions.md`). An entry here is an observation and a proposal. Adopting one needs a decision that relaxes that rule for some deployment: a zone only rgw-go serves, a feature flag both gateways honour, or an upstream change to Ceph.
+rgw-go does not implement these changes. Its design keeps every on-disk structure byte-identical to what radosgw writes at the cluster's release, so the two gateways can share a zone (the design spec's version rule; the coexistence obligations in `docs/differences.md`). An entry here is an observation and a proposal. Adopting one needs a decision that relaxes that rule for some deployment: a zone only rgw-go serves, a feature flag both gateways honour, or an upstream change to Ceph.
 
 Add an entry whenever work meets a format cost, and update it when a measurement, an upstream change or a decision bears on it. Recording an entry never blocks a task.
 

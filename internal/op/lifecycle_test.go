@@ -318,7 +318,7 @@ var _ = Describe("bucket lifecycle ops", func() {
 			Expect(bucket(ctx).Attrs).NotTo(HaveKey(op.AttrLC))
 			Expect(lc.SetEntryCallCount()).To(BeZero())
 		},
-		Entry("Squid, whose radosgw stores it (docs/exclusions.md)", denc.Squid),
+		Entry("Squid, whose radosgw stores it (docs/differences.md)", denc.Squid),
 		Entry("Tentacle", denc.Tentacle),
 	)
 
@@ -368,7 +368,7 @@ var _ = Describe("bucket lifecycle ops", func() {
 			func(ctx SpecContext) {
 				f.setBucketAttrs(ctx, map[string][]byte{op.AttrLC: lcAttr(lifecycle.Configuration{})})
 				_, err := run(ctx)
-				Expect(err).To(MatchError(op.ErrNoSuchLifecycleConfiguration), "docs/exclusions.md")
+				Expect(err).To(MatchError(op.ErrNoSuchLifecycleConfiguration), "docs/differences.md")
 				Expect(op.AsError(err)).To(Equal(op.ErrNoSuchLifecycleConfiguration))
 			})
 		It("finds nothing after a PUT whose root is not LifecycleConfiguration, which stores nothing", func(ctx SpecContext) {
@@ -570,7 +570,7 @@ var _ = Describe("bucket lifecycle ops", func() {
 			buckets.PutBucketAttrsReturns(op.ErrConcurrentModification)
 			f.env.Buckets = buckets
 			Expect(put(ctx, putReq(lcExpireDoc))).To(MatchError(op.ErrConcurrentModification))
-			Expect(buckets.PutBucketAttrsCallCount()).To(Equal(16), "where radosgw makes one attempt (docs/exclusions.md)")
+			Expect(buckets.PutBucketAttrsCallCount()).To(Equal(16), "where radosgw makes one attempt (docs/differences.md)")
 			Expect(buckets.GetBucketCallCount()).To(Equal(16), "the load, then one read before each retry")
 			_, _, set, rm := buckets.PutBucketAttrsArgsForCall(15)
 			Expect(set).To(Equal(map[string][]byte{op.AttrLC: lcAttr(lcExpireConfig())}), "the body read once, its configuration alone on each try")

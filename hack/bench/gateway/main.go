@@ -55,7 +55,7 @@
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L643-L647,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L1083 at v20.2.4),
 // which the chart values give it, and rgw-go keeps Go's unless its frontend
-// sets tcp_nodelay to anything else (docs/exclusions.md, "TCP options").
+// sets tcp_nodelay to anything else (docs/differences.md, "TCP options").
 // env.json records the gateway's frontends and the TCP_NODELAY they give.
 //
 // elbencho signs as the user bench, whose keys are fixed, so that every run

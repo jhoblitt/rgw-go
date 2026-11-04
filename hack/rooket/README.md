@@ -540,7 +540,7 @@ frontend `beast port=80`, and beast turns TCP_NODELAY on only for
 `tcp_nodelay=1`; the chart values' `rgwCommandFlags` give the radosgw `beast
 port=80 tcp_nodelay=1`, which Rook passes after its own frontend, so the
 radosgw keeps it. rgw-go keeps Go's TCP_NODELAY unless its frontend sets
-`tcp_nodelay` to anything else (`docs/exclusions.md`, "TCP options"). A run
+`tcp_nodelay` to anything else (`docs/differences.md`, "TCP options"). A run
 refuses a gateway that answers with it off and records the gateway's
 frontends and their TCP_NODELAY in `env.json`; `report gateway` names them
 in its header and refuses to compare runs that differ in it, or in their
@@ -1138,7 +1138,7 @@ itself exits 2 for either status.
 The comparison skips the tests `test/s3tests/known-differences-<release>.txt`
 lists: one regular expression per line over `hack/parity`'s test ids
 (`s3tests.functional.test_s3::<test>`), each under a comment naming the
-`docs/exclusions.md` entry that decides the difference. It fails on a line
+`docs/differences.md` entry that decides the difference. It fails on a line
 that matches no test, and on one whose test no longer differs, so the list
 cannot outlive its differences; a pr set's comparison takes a line that
 matches only a ledger test outside the run's selection, a gate-only or a
@@ -1379,8 +1379,8 @@ the write caps the trim, index check and metadata requests need, and they:
   the request and host ids, and for the fixtures each gateway creates their
   ids, markers, versions, tags, times and keys. Each request also checks
   `Content-Length`, `Content-Type` and `Accept-Ranges` on both gateways as
-  `docs/exclusions.md`, "Admin responses carry a Content-Type on every body",
-  says. A request whose answer a `docs/exclusions.md` entry records as
+  `docs/differences.md`, "Admin responses carry a Content-Type on every body",
+  says. A request whose answer a `docs/differences.md` entry records as
   different names that entry and must differ;
 - page a metadata listing through rgw-go to the keys radosgw lists whole;
 - read a write rgw-go logged back from its usage log and trim it within 5 s;

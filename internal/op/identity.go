@@ -44,7 +44,7 @@ type Identity struct {
 	// preflight. Its sender has shown nothing of the key's secret, so nothing
 	// the request causes may be charged to the key's user or account, or
 	// depend on them, but for the tenant its bucket resolves under, which is
-	// radosgw's reason for looking the key up at all (docs/exclusions.md, "A
+	// radosgw's reason for looking the key up at all (docs/differences.md, "A
 	// preflight's answer says nothing of its key's user"). RefuseUnverified
 	// keeps such an identity to the preflight: Run calls it for every op and
 	// the S3 handler for every route it dispatches; the admin handler, which
@@ -119,7 +119,7 @@ type AuthResult struct {
 	// query's lines on from the headers', so a name can move between the two
 	// with the signature kept; the protocol handler moves these into the
 	// request's headers and out of its query, so that every read takes the
-	// two as one set (docs/exclusions.md). Empty for every other request.
+	// two as one set (docs/differences.md). Empty for every other request.
 	QueryMeta map[string]string
 	// Route is the route the request authenticated on, which says what of
 	// its query its signature covers. An authenticator sets it on every
@@ -193,7 +193,7 @@ const (
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2589-L2603 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2742-L2756 at v20.2.4):
 // the routes that sign them, and an anonymous request. SigV2's header
-// route signs none of them (docs/exclusions.md), and any other route reads
+// route signs none of them (docs/differences.md), and any other route reads
 // none.
 func (rt AuthRoute) ReadsQueryMeta() bool {
 	switch rt {
@@ -208,7 +208,7 @@ func (rt AuthRoute) ReadsQueryMeta() bool {
 // encryption settings from its query's x-amz-server-side-encryption*
 // parameters, which map_qs_metadata sets over the headers' on every route:
 // SigV4, which signs them, and an anonymous request. Neither SigV2 route
-// signs them (docs/exclusions.md), and any other route reads none.
+// signs them (docs/differences.md), and any other route reads none.
 func (rt AuthRoute) ReadsQueryEncryption() bool {
 	switch rt {
 	case RouteAnonymous, RouteSigV4Header, RouteSigV4Query:

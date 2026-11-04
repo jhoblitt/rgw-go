@@ -56,7 +56,7 @@ func mayReadMarker(ctx context.Context, r *Request, bucket *BucketRecord, key me
 // where radosgw finds no head for the marker and answers it as a missing
 // version, 404 to an admin or to a requester allowed s3:ListBucket and 403 to
 // any other (docs/ceph-upstream-bugs.md, "radosgw answers a read naming a
-// delete marker's version 404 NoSuchKey"; docs/exclusions.md, "A read naming
+// delete marker's version 404 NoSuchKey"; docs/differences.md, "A read naming
 // a delete marker's version answers 405 MethodNotAllowed"). A requester who
 // holds none keeps radosgw's answer, and learns no more of a marker than of
 // a missing version. With lastModified the answer carries the marker's
@@ -87,7 +87,7 @@ const copyMarkerMsg = "The copy source names a version that is a delete marker."
 // (https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPartCopy.html,
 // x-amz-copy-source). radosgw answers it as a missing source, 404 or 403
 // (docs/ceph-upstream-bugs.md, "radosgw answers a copy source naming a
-// delete marker's version 404 NoSuchKey"; docs/exclusions.md, "A copy source
+// delete marker's version 404 NoSuchKey"; docs/differences.md, "A copy source
 // naming a delete marker's version answers 400 InvalidRequest"). Any other
 // source, and a requester who does not hold a, gets nil, and the missing
 // source's answer.

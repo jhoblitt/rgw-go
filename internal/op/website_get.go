@@ -71,7 +71,7 @@ func (e *WebsiteRedirectError) Unwrap() error { return ErrWebsiteRedirect }
 // Host header as sent, HTTP_HOST; for a request with none, radosgw writes
 // a Location of "http:///" and the key, which RFC 9110 section 4.2.1 forbids
 // a sender to generate and a WHATWG URL parser reads with the key's first
-// segment for its host, so rgw-go refuses it (docs/exclusions.md, "A
+// segment for its host, so rgw-go refuses it (docs/differences.md, "A
 // website redirect to the request's host is refused for a request with no
 // Host"). The omission is the client's, so the refusal, which matches
 // website.ErrUnsafeRedirect, is 400 InvalidRequest to AsError: the row
@@ -165,7 +165,7 @@ func (o *GetObject) retarget(ctx context.Context, r *Request) error {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5876-L5896 at v20.2.4):
 // that the key names an object, a stat whose failure is no file. web_dir
 // stats the key url_decode makes of the already decoded name; rgw-go stats
-// the key itself (docs/exclusions.md, "A website request's file test reads
+// the key itself (docs/differences.md, "A website request's file test reads
 // its key decoded once"). get_effective_key reads the answer only under an
 // index suffix and for a key that is not empty and does not end in "/", so
 // the stat, and the trailing "/" web_dir drops, are left out for the rest.
@@ -198,10 +198,10 @@ func (o *GetObject) isFile(ctx context.Context, r *Request, conf meta.WebsiteCon
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2460-L2461 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2692-L2693 at v20.2.4).
 // So prepare passes this the conditionals' result err, which it replaces
-// whatever it is, and a part refusal before them stands (docs/exclusions.md,
+// whatever it is, and a part refusal before them stands (docs/differences.md,
 // "A website GET of a part the object has not is InvalidPart under any
 // policy"). radosgw sends a GET with data to read the redirect twice;
-// rgw-go answers once, before anything is sent (docs/exclusions.md, "An
+// rgw-go answers once, before anything is sent (docs/differences.md, "An
 // object's website redirect is answered once"). The Location is the attr up
 // to its first NUL, as radosgw's c_str() copy reads it.
 func (o *GetObject) websiteObjectRedirect(r *Request, err error) error {

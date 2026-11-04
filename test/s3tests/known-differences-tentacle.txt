@@ -1,5 +1,5 @@
 # Tests whose outcome is expected to differ from radosgw's on this release,
-# each by a decided difference that docs/exclusions.md records: one regular
+# each by a decided difference that docs/differences.md records: one regular
 # expression per line over hack/parity's test ids, under a comment giving
 # the reason. A test that needs a later phase's feature is not listed here;
 # hack/s3tests/deselect-phase<N>.txt removes it on both gateways.
@@ -10,39 +10,39 @@
 # it differs or agrees. Either kind fails the comparison when it matches no
 # test.
 
-# An unsigned Content-Type or x-amz-content-sha256, accepted as v19.2.7 accepts them; Tentacle's radosgw refuses them (exclusions: "SigV4 accepts an unsigned Content-Type and x-amz-content-sha256 on Tentacle too")
+# An unsigned Content-Type or x-amz-content-sha256, accepted as v19.2.7 accepts them; Tentacle's radosgw refuses them (differences: "SigV4 accepts an unsigned Content-Type and x-amz-content-sha256 on Tentacle too")
 ^s3tests\.functional\.test_headers::test_sigv4_contenttype_unsigned$
 ^s3tests\.functional\.test_headers::test_sigv4_presigned_contenttype_unsigned$
 ^s3tests\.functional\.test_headers::test_sigv4_without_signed_content_sha256$
 
-# An X-Goog- header read as an ordinary header: rgw-go refuses a signed SigV2 copy source moved under it and stores no metadata from an unsigned one; radosgw files both under their x-amz- names (exclusions: "The S3 API reads X-Amz- headers only")
+# An X-Goog- header read as an ordinary header: rgw-go refuses a signed SigV2 copy source moved under it and stores no metadata from an unsigned one; radosgw files both under their x-amz- names (differences: "The S3 API reads X-Amz- headers only")
 ^s3tests\.functional\.test_headers::test_sigv2_signed_copy_source_moved_to_xgoog$
 ^s3tests\.functional\.test_headers::test_sigv4_presigned_put_xgoog_meta_unsigned$
 
-# A presigned SigV2 request's meta signed in its query, stored by a CreateMultipartUpload and a REPLACE CopyObject; radosgw stores the headers' meta alone (exclusions: "A presigned SigV2 request's signed meta and session token mean the same in its headers and its query")
+# A presigned SigV2 request's meta signed in its query, stored by a CreateMultipartUpload and a REPLACE CopyObject; radosgw stores the headers' meta alone (differences: "A presigned SigV2 request's signed meta and session token mean the same in its headers and its query")
 ^s3tests\.functional\.test_headers::test_sigv2_presigned_multipart_meta_moved_to_query$
 ^s3tests\.functional\.test_headers::test_sigv2_presigned_copy_replace_meta_in_query$
 
-# A presigned SigV2 query meta value holding a line break, refused; radosgw stores one attr where two were signed (exclusions: "A presigned SigV2 request is refused when its query meta or session token holds a line break")
+# A presigned SigV2 query meta value holding a line break, refused; radosgw stores one attr where two were signed (differences: "A presigned SigV2 request is refused when its query meta or session token holds a line break")
 ^s3tests\.functional\.test_headers::test_sigv2_presigned_meta_lines_packed_into_one_query_value$
 
-# A presigned SigV2 Expires holding a line break, refused; radosgw serves the CopyObject it hides as a PutObject (exclusions: "A presigned SigV2 request is refused when its Expires holds a line break")
+# A presigned SigV2 Expires holding a line break, refused; radosgw serves the CopyObject it hides as a PutObject (differences: "A presigned SigV2 request is refused when its Expires holds a line break")
 ^s3tests\.functional\.test_headers::test_sigv2_presigned_copy_source_moved_to_expires$
 
-# A presigned SigV2 query meta name holding a colon, refused; radosgw stores it under another name (exclusions: "A presigned SigV2 request is refused when a query meta name holds a colon")
+# A presigned SigV2 query meta name holding a colon, refused; radosgw stores it under another name (differences: "A presigned SigV2 request is refused when a query meta name holds a colon")
 ^s3tests\.functional\.test_headers::test_sigv2_presigned_meta_name_with_colon$
 
-# A header-signed SigV2 PutObject's unsigned query meta, not stored; radosgw stores it beside the signed meta (exclusions: "A SigV2 request's unsigned query meta and encryption settings are not read")
+# A header-signed SigV2 PutObject's unsigned query meta, not stored; radosgw stores it beside the signed meta (differences: "A SigV2 request's unsigned query meta and encryption settings are not read")
 ^s3tests\.functional\.test_headers::test_sigv2_header_put_unsigned_meta_in_query$
 
-# A PutBucketVersioning Status or MfaDelete outside S3's values, answered 400 MalformedXML; radosgw answers 400 InvalidArgument (exclusions: "PutBucketVersioning answers MalformedXML for a document that does not parse")
+# A PutBucketVersioning Status or MfaDelete outside S3's values, answered 400 MalformedXML; radosgw answers 400 InvalidArgument (differences: "PutBucketVersioning answers MalformedXML for a document that does not parse")
 ^s3tests\.functional\.test_s3::test_versioning_bucket_invalid_status$
 ^s3tests\.functional\.test_s3::test_versioning_bucket_invalid_mfa_delete$
 
-# DeleteBucketOwnershipControls answered 501, the bucket kept; radosgw serves it as DeleteBucket and deletes the empty bucket (exclusions: "ownershipControls requests are served as v21 serves them")
+# DeleteBucketOwnershipControls answered 501, the bucket kept; radosgw serves it as DeleteBucket and deletes the empty bucket (differences: "ownershipControls requests are served as v21 serves them")
 ^s3tests\.functional\.test_s3::test_bucket_delete_ownership_controls_keeps_bucket$
 
-# A DELETE of a bucket's analytics, intelligent-tiering, inventory, metrics, metadata or metadata table configuration, answered 501 with the bucket kept; radosgw serves it as DeleteBucket and deletes the empty bucket (exclusions: "A bucket or object request radosgw has no op for answers 501")
+# A DELETE of a bucket's analytics, intelligent-tiering, inventory, metrics, metadata or metadata table configuration, answered 501 with the bucket kept; radosgw serves it as DeleteBucket and deletes the empty bucket (differences: "A bucket or object request radosgw has no op for answers 501")
 ^s3tests\.functional\.test_s3::test_bucket_delete_analytics_configuration_keeps_bucket$
 ^s3tests\.functional\.test_s3::test_bucket_delete_intelligent_tiering_configuration_keeps_bucket$
 ^s3tests\.functional\.test_s3::test_bucket_delete_inventory_configuration_keeps_bucket$
@@ -50,19 +50,19 @@
 ^s3tests\.functional\.test_s3::test_bucket_delete_metadata_configuration_keeps_bucket$
 ^s3tests\.functional\.test_s3::test_bucket_delete_metadata_table_configuration_keeps_bucket$
 
-# PutObjectAnnotation, DeleteObjectAnnotation, RenameObject and UpdateObjectEncryption, answered 501 with the object kept; radosgw serves them as PutObject or DeleteObject and replaces or deletes the object (exclusions: "A bucket or object request radosgw has no op for answers 501")
+# PutObjectAnnotation, DeleteObjectAnnotation, RenameObject and UpdateObjectEncryption, answered 501 with the object kept; radosgw serves them as PutObject or DeleteObject and replaces or deletes the object (differences: "A bucket or object request radosgw has no op for answers 501")
 ^s3tests\.functional\.test_s3::test_object_put_annotation_keeps_object$
 ^s3tests\.functional\.test_s3::test_object_delete_annotation_keeps_object$
 ^s3tests\.functional\.test_s3::test_object_rename_missing_source_keeps_object$
 ^s3tests\.functional\.test_s3::test_object_update_encryption_keeps_object$
 
-# ListObjectVersions' KeyMarker, Prefix and Delimiter, URL-encoded under encoding-type=url; radosgw writes them as sent (exclusions: "ListObjectVersions URL-encodes KeyMarker, Prefix and Delimiter")
+# ListObjectVersions' KeyMarker, Prefix and Delimiter, URL-encoded under encoding-type=url; radosgw writes them as sent (differences: "ListObjectVersions URL-encodes KeyMarker, Prefix and Delimiter")
 ^s3tests\.functional\.test_s3::test_bucket_list_versions_encoding_echo$
 
-# ListObjectsV2's Prefix and StartAfter, ListObjects' Marker, and ListMultipartUploads' markers, Prefix, Delimiter and EncodingType, URL-encoded under encoding-type=url; radosgw writes them as sent and writes no EncodingType for ListMultipartUploads (exclusions: "ListObjects, ListObjectsV2 and ListMultipartUploads URL-encode the elements S3 encodes")
+# ListObjectsV2's Prefix and StartAfter, ListObjects' Marker, and ListMultipartUploads' markers, Prefix, Delimiter and EncodingType, URL-encoded under encoding-type=url; radosgw writes them as sent and writes no EncodingType for ListMultipartUploads (differences: "ListObjects, ListObjectsV2 and ListMultipartUploads URL-encode the elements S3 encodes")
 ^s3tests\.functional\.test_s3::test_bucket_listv2_encoding_echo$
 ^s3tests\.functional\.test_s3::test_bucket_list_encoding_marker_echo$
 ^s3tests\.functional\.test_s3::test_list_multipart_upload_encoding_echo$
 
-# A used MFA code refused in the later steps of its window too; radosgw's cls_otp verifies it again in the next step (exclusions: "An MFA code the device may have accepted before does not verify")
+# A used MFA code refused in the later steps of its window too; radosgw's cls_otp verifies it again in the next step (differences: "An MFA code the device may have accepted before does not verify")
 ^s3tests\.functional\.test_s3::test_versioning_mfa_delete_code_used_once$

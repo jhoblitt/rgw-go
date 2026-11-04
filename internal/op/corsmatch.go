@@ -20,7 +20,7 @@ import (
 // does not decode is read_bucket_cors's 500, which main's check ignores to
 // match against whatever the decode left. The read of a website's error
 // document passes, as serve_errordoc makes no such check. Neither floor
-// refuses at all (docs/exclusions.md, "A request whose Origin no CORS rule
+// refuses at all (docs/differences.md, "A request whose Origin no CORS rule
 // allows is refused").
 func verifyCORSMatch(o Op, r *Request) error {
 	if r.WebsiteErrorDoc || o.Name() == OptionsCORSName {

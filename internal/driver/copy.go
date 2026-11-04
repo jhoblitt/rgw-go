@@ -67,7 +67,7 @@ var (
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4990-L5031),
 // except where its head write timed out and may yet land on the shared
 // tails, or landed, and it also drops them when its head write loses a race,
-// which radosgw answers as success without dropping them (docs/exclusions.md,
+// which radosgw answers as success without dropping them (docs/differences.md,
 // "Object write differences").
 func (s *Store) CopyObject(ctx context.Context, src *op.ObjectState, dst *op.BucketRecord, dstKey meta.ObjKey, p op.CopyParams) (*op.PutResult, error) {
 	if !src.Exists {
@@ -154,7 +154,7 @@ func (s *Store) CopyObject(ctx context.Context, src *op.ObjectState, dst *op.Buc
 // whose versioning is enabled, on a version's own head
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4809-L4813 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5022-L5026 at v20.2.4;
-// docs/exclusions.md, "A copy carries none of its source's OLH attrs").
+// docs/differences.md, "A copy carries none of its source's OLH attrs").
 //
 // The storage class is dropped on both releases, as v20.2.4 drops it
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5028),
@@ -227,7 +227,7 @@ func (s *Store) copyAttrs(src *op.ObjectState, req map[string][]byte, replace bo
 // destination. Until the head's bytes are read, the client leaving stops
 // the copy, which drops the references it took; from the head write on the
 // copy runs to its end whether or not its client stays. radosgw's runs to
-// its end from the start (docs/exclusions.md, "A client that went away gets
+// its end from the start (docs/differences.md, "A client that went away gets
 // nothing more").
 func (s *Store) shareTails(ctx context.Context, src *op.ObjectState, dst *op.BucketRecord, dstKey meta.ObjKey, attrs map[string][]byte, tag string, mtime time.Time, copyFirst bool) (*op.PutResult, error) {
 	// rgw_obj's ==: rgw_bucket's and rgw_obj_key's, which compares the name
@@ -527,10 +527,10 @@ func (s *Store) unrefTails(refs []objRef, tag string) {
 // a write to the head since that read, a PUT during the stream or an attr
 // write, fails it with ConcurrentModification, a removal with NoSuchKey,
 // and putStream deletes the tails it wrote. radosgw guards no key with an
-// instance (docs/exclusions.md, "A lifecycle transition lands only on the
+// instance (docs/differences.md, "A lifecycle transition lands only on the
 // version it read"). Once the head write lands, the version names the new
 // tails, so a completion or a link that then fails keeps the version and
-// them (linkVersion; docs/exclusions.md, "A lifecycle transition whose index
+// them (linkVersion; docs/differences.md, "A lifecycle transition whose index
 // completion or link fails keeps the version"), and the version's lock
 // state is kept as read, with no default retention added (headWrite.keepLock).
 // Without it the copy is
@@ -540,7 +540,7 @@ func (s *Store) unrefTails(refs []objRef, tag string) {
 // compression type says, as a PUT is, on Squid too, where radosgw stores it
 // as it is; a compressed source is still copied raw, where Tentacle's
 // radosgw decodes it and encodes the copy as the destination says
-// (docs/exclusions.md, "A copy that streams a compressed source copies its
+// (docs/differences.md, "A copy that streams a compressed source copies its
 // stored bytes"); and a checksum record the copy cannot carry is dropped
 // (droppedChecksum).
 //

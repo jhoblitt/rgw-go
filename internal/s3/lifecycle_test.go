@@ -107,7 +107,7 @@ var _ = Describe("bucket lifecycle routes", func() {
 			expectDocument(w.send(w.alice, http.MethodGet, target, ""), lcDocument(
 				`<Rule><ID>rule1</ID><Prefix>test1/</Prefix><Status>Enabled</Status><Expiration><Days>1</Days></Expiration></Rule>`))
 		})
-		It("is 404 NoSuchLifecycleConfiguration for a stored configuration without rules, which radosgw renders with none (docs/exclusions.md)",
+		It("is 404 NoSuchLifecycleConfiguration for a stored configuration without rules, which radosgw renders with none (docs/differences.md)",
 			func(ctx SpecContext) {
 				w.setBucketAttrs(ctx, map[string][]byte{op.AttrLC: lcEncoded(lifecycle.Configuration{})})
 				expectLCError(w.send(w.alice, http.MethodGet, target, ""), http.StatusNotFound, "NoSuchLifecycleConfiguration", "")
@@ -243,7 +243,7 @@ var _ = Describe("bucket lifecycle routes", func() {
 			expectLCError(resp, http.StatusMethodNotAllowed, "MethodNotAllowed", "Indexless buckets do not support lifecycle policy")
 			unchanged(ctx, before)
 		},
-		Entry("Squid, whose radosgw stores the configuration (docs/exclusions.md)", denc.Squid),
+		Entry("Squid, whose radosgw stores the configuration (docs/differences.md)", denc.Squid),
 		Entry("Tentacle, rgw_op.cc:6594-6599 at v20.2.4", denc.Tentacle),
 	)
 

@@ -397,7 +397,7 @@ func (s *Store) followOLH(ctx context.Context, head *op.ObjectState, update func
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1947-L1951 and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2117-L2118 at v20.2.4),
 // and that link's write has put its own data in the head the two share,
-// where radosgw's replay removes it (docs/exclusions.md, "A replay keeps the
+// where radosgw's replay removes it (docs/differences.md, "A replay keeps the
 // null data a later null link names"). After the head op, finishOLHLog
 // clears the OLH marked for removal, and otherwise trims the log to the last
 // epoch. It returns the last epoch whenever the head op landed, and 0 when

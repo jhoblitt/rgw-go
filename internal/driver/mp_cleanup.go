@@ -128,7 +128,7 @@ func (s *Store) lockMeta(ctx context.Context, ref mpRef, cookie string) error {
 // head write: the ID tag the completion's head carries, NUL included, and
 // the version instance of that head (recordedInstance), "null" for the key's
 // own head. A later completion or abort that finds them checks whether that
-// head still carries the tag before it touches the parts (docs/exclusions.md,
+// head still carries the tag before it touches the parts (docs/differences.md,
 // "A CompleteMultipartUpload records itself on the meta object before its
 // head write").
 const (
@@ -400,7 +400,7 @@ const versionScanSkew = 15 * time.Minute
 // its metadata. A version a later write made noncurrent still names its
 // parts, which an abort must not queue for the GC and a completion must not
 // write a second version over; one written before the bound is not found
-// (docs/exclusions.md, "CompleteMultipartUpload finishes an earlier
+// (docs/differences.md, "CompleteMultipartUpload finishes an earlier
 // completion of its upload instead of writing it again").
 func (s *Store) uploadVersion(ctx context.Context, up *op.Upload, ref mpRef, parts []meta.UploadPartInfo) (*op.ObjectState, error) {
 	prefixes := uploadPrefixes(up.Key.Name, up.ID, parts)

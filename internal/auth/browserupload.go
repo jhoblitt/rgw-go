@@ -27,7 +27,7 @@ import (
 // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6157-L6212 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6687-L6742 at v20.2.4).
 // A credential with no '/' is refused, where radosgw takes it whole as both
-// the key id and the scope (docs/exclusions.md). An empty key id or
+// the key id and the scope (docs/differences.md). An empty key id or
 // signature is refused, as AWSEngine::authenticate refuses it
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L6220-L6221 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6750-L6751 at v20.2.4),
@@ -40,7 +40,7 @@ import (
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L504-L570 at v20.2.4),
 // but for a system user's rgwx-uid: the form's signature covers nothing of
 // the request's query, so the identity takes none, where radosgw's
-// SysReqApplier reads it from the query (docs/exclusions.md). The local
+// SysReqApplier reads it from the query (docs/differences.md). The local
 // engine ignores a session token, as on the header path.
 // rgw_s3_auth_disable_signature_url does not apply: radosgw reads it in
 // AWSGeneralAbstractor alone

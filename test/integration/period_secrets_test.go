@@ -14,7 +14,7 @@ var setTierSecret = regexp.MustCompile(`"secret":"(?:[^"\\]|\\.)+"|<secret>[^<]+
 
 // maskTierSecrets writes each set tier secret in radosgw's period as rgw-go's
 // period getter masks it for a caller that is not a system user
-// (docs/exclusions.md, "The period getter masks a cloud tier's S3 secret").
+// (docs/differences.md, "The period getter masks a cloud tier's S3 secret").
 func maskTierSecrets(b []byte) []byte {
 	return setTierSecret.ReplaceAllFunc(b, func(m []byte) []byte {
 		if m[0] == '"' {

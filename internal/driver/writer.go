@@ -38,7 +38,7 @@ const gcDueSkew = 24 * 60 * 60
 // https://github.com/ceph/ceph/blob/v20.2.4/src/include/encoding.h#L347-L355 at v20.2.4),
 // less gcDueSkew. radosgw narrows the wait to the uint32_t every gc call
 // takes and lets the sum wrap, which makes the tails due at once
-// (docs/exclusions.md, "A negative or overlong gc object wait").
+// (docs/differences.md, "A negative or overlong gc object wait").
 func gcExpiration(wait int64, now time.Time) uint32 {
 	limit := max(int64(math.MaxUint32)-now.Unix()-gcDueSkew, 0)
 	return uint32(min(wait, limit)) //nolint:gosec // within [0, MaxUint32]
@@ -83,10 +83,10 @@ type writeOptions struct {
 // class's 32-bit due time is logged too and saturated at each enqueue
 // (gcExpiration): radosgw narrows it to a uint32_t expiration whose due
 // time wraps into the past, which frees an overwritten object's tails at
-// the next gc pass, under readers still fetching them (docs/exclusions.md,
+// the next gc pass, under readers still fetching them (docs/differences.md,
 // "A negative or overlong gc object wait"). A zero
 // stripe size, or a write window smaller
-// than one chunk, refuses to start (docs/exclusions.md, "Write sizes that
+// than one chunk, refuses to start (docs/differences.md, "Write sizes that
 // cannot write"). A compressor_zlib_level or compressor_zlib_winsize zlib
 // refuses is logged at error level and kept: radosgw's zlib compress then
 // fails for every object, which RGWPutObj_Compress stores uncompressed

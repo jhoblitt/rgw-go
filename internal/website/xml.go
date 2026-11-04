@@ -15,7 +15,7 @@ var (
 	// ErrMalformedXML is 400 MalformedXML: a PutBucketWebsite body that does
 	// not parse, has no WebsiteConfiguration root, or does not fit S3's
 	// schema. radosgw answers InvalidArgument for the first two and reads the
-	// third; docs/exclusions.md, "PutBucketWebsite answers MalformedXML for a
+	// third; docs/differences.md, "PutBucketWebsite answers MalformedXML for a
 	// document that does not parse or fit S3's schema", lists each case.
 	ErrMalformedXML = errors.New("website: malformed xml")
 	// ErrInvalidArgument is radosgw's -EINVAL, 400 InvalidArgument.

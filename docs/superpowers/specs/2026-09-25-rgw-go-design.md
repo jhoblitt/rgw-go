@@ -1,12 +1,12 @@
 # rgw-go design
 
 Status: design approved section by section on 2026-09-25; this document
-consolidates it for review before planning. Companion: `docs/exclusions.md`,
-the canonical excluded-features list shared with rgw-rs, which also holds
-the coexistence obligations and the benchmark parity settings. Claims about
-C++ RGW, Rook and go-ceph behavior in both documents were checked against
-ceph/ceph main at e234256339f and the v19.2.3 tag, Rook main at d364b1e8a,
-and go-ceph v0.39.0.
+consolidates it for review before planning. Companions: `docs/exclusions.md`,
+the canonical excluded-features list shared with rgw-rs, and
+`docs/differences.md`, which holds the coexistence obligations and the
+benchmark parity settings. Claims about C++ RGW, Rook and go-ceph behavior
+in all three documents were checked against ceph/ceph main at e234256339f
+and the v19.2.3 tag, Rook main at d364b1e8a, and go-ceph v0.39.0.
 
 ## 1. Goal
 
@@ -221,7 +221,7 @@ reconciliation.
   happens parked in Go, and honors `rgw_max_concurrent_requests`, default
   1024, as a hard cap. One memory budget, half the Go memory limit by
   default, bounds the buffers of object data every GET, PUT and copy
-  holds; a request that finds it spent waits (`docs/exclusions.md`,
+  holds; a request that finds it spent waits (`docs/differences.md`,
   "Object data buffers share one memory budget, sized from the Go memory
   limit").
 - **Cancellation.** A client disconnect cancels the request context and
@@ -282,7 +282,7 @@ notification objects. The spec states these as constraints proven by the
 oracle, not as string formats. The coexistence obligations that hold
 regardless of any exclusion, cache invalidation, GC formats, the reshard
 guard, OLH epochs, compression codecs, user statistics, lock names and
-radosgw's signature quirks, are in `docs/exclusions.md` and are
+radosgw's signature quirks, are in `docs/differences.md` and are
 requirements of this design.
 
 Compatibility means RADOS state, in both directions. rgw-go serves whatever
@@ -355,7 +355,7 @@ rgw-go fails where radosgw passes or passes where radosgw fails, because
 the gate is an equal pass and fail set. Tests the baseline marks unstable
 are not compared, so any unexpected difference means any difference outside
 that set. A difference the release's
-known-differences file lists, each entry backed by a `docs/exclusions.md`
+known-differences file lists, each entry backed by a `docs/differences.md`
 entry, does not fail it. There is no s3-tests nightly. Tentacle parity is
 not in the per-pull-request check: it stays the local gate run plus a
 manual run in CI, a default the owner may still change. The check is
@@ -466,7 +466,7 @@ the cgo question. A pipeline baseline, a no-op handler and a
 one-round-trip handler under the real load, answers how much of a request
 is ours. The gateway comparison, radosgw, rgw-go and rgw-rs one at a time
 on the same disposable Rook cluster through the derived image under the
-parity settings in `docs/exclusions.md`, answers the project's question:
+parity settings in `docs/differences.md`, answers the project's question:
 small-object PUT and GET at rising concurrency for latency percentiles,
 large-object throughput, and listing at scale.
 
@@ -567,7 +567,8 @@ the release job asserts the stamp equals the tag.
 
 The repository CLAUDE.md carries: cgo and librados-dev, the go-ceph replace,
 never the ambient cluster, Opus workers for implementation, and the
-obligation to notify the rgw-rs session when `docs/exclusions.md` changes.
+obligation to notify the rgw-rs session when `docs/exclusions.md` or
+`docs/differences.md` changes.
 
 ## 13. go-ceph fork work
 

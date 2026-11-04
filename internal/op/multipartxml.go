@@ -76,7 +76,7 @@ func atoi(s string) int {
 // reads it as a suffix (docs/ceph-upstream-bugs.md, "radosgw holds a
 // copy-source range's bounds in an off_t, so a bound past 2^63 reads as a
 // suffix"); rgw-go refuses it with ErrInvalidRange, as a range that starts
-// past any object (docs/exclusions.md, "A copy-source range past 2^63 answers
+// past any object (docs/differences.md, "A copy-source range past 2^63 answers
 // 416").
 func ParseCopySourceRange(v string) (first, last uint64, err error) {
 	rest, ok := strings.CutPrefix(rgwtext.CString(v), "bytes=")

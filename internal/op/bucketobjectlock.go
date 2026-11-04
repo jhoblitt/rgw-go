@@ -61,7 +61,7 @@ func (o *GetObjectLockConfiguration) VerifyPermission(ctx context.Context, r *Re
 // enabled with no rule. A configuration whose encoding does not decode is
 // -EIO, 500 UnknownError, which radosgw answers when it loads the bucket,
 // before the permission check, since it decodes the whole instance then
-// (docs/exclusions.md, "Some bucket sub-records are carried opaque in phase
+// (docs/differences.md, "Some bucket sub-records are carried opaque in phase
 // 0").
 func (o *GetObjectLockConfiguration) Execute(_ context.Context, r *Request) error {
 	info := r.BucketRec.Info
@@ -119,14 +119,14 @@ func (o *PutObjectLockConfiguration) VerifyPermission(ctx context.Context, r *Re
 // rule whose period is not exactly one positive Days or Years is 400
 // InvalidRetentionPeriod, and so is one whose period from now runs past
 // meta.MaxRealTime, which radosgw stores and then wraps on every write it
-// locks, often to a date already past (docs/exclusions.md, "A date
+// locks, often to a date already past (docs/differences.md, "A date
 // real_time cannot hold is refused"). Then, through retryBucketWrite: a
 // bucket without the object-lock flag must still have versioning enabled,
 // and gets the flag; the parsed configuration replaces the stored one; and
 // PutBucketInfo writes the instance with the attrs that try read. radosgw's
 // retry_raced_bucket_write authorizes no retry and writes into a bucket
 // re-created under the name; rgw-go's authorizes each retry again and stops
-// there (docs/exclusions.md, "A PutBucketAcl that loses a race is retried,
+// there (docs/differences.md, "A PutBucketAcl that loses a race is retried,
 // and every retried bucket write is authorized again" and "A retried bucket
 // write stops when the name names another bucket").
 func (o *PutObjectLockConfiguration) Execute(ctx context.Context, r *Request) error {

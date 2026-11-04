@@ -21,12 +21,12 @@ import (
 // NoSuchKey execute finds comes after read_permissions.
 //
 // rgw-go sends true for a key named without a version whose current
-// version is a delete marker on Squid too (docs/exclusions.md, "A key whose
+// version is a delete marker on Squid too (docs/differences.md, "A key whose
 // current version is a delete marker answers its 404 with
 // x-amz-delete-marker: true on Squid too"), and true with the 405 a read
 // naming a delete marker's own version answers, with the marker's
 // Last-Modified when the op's answer carries it (op.MarkerVersionError;
-// docs/exclusions.md, "A read naming a delete marker's version answers 405
+// docs/differences.md, "A read naming a delete marker's version answers 405
 // MethodNotAllowed"). Tentacle's false stays for every other missing object,
 // a version named by a requester who may not read it among them, delete
 // marker or not: radosgw follows no olh for a key that names an instance.

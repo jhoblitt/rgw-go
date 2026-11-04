@@ -39,7 +39,7 @@ type Identity interface {
 // from a request that leaves the header out. Every unauthenticated request
 // runs as the anonymous user, so its grants and ownership are everyone's.
 // radosgw reads the referer grants, the anonymous user's grants and its
-// ownership whatever IgnorePublicAcls says (docs/exclusions.md).
+// ownership whatever IgnorePublicAcls says (docs/differences.md).
 func (p Policy) Perm(id Identity, mask Permission, referer string, ignorePublicACLs bool) Permission {
 	users := p.ACL.UserMap
 	if ignorePublicACLs {
@@ -91,7 +91,7 @@ func (p Policy) Verify(id Identity, userPermMask, perm Permission, referer strin
 // IgnorePublicAcls leaves as it is. The exception is a policy ForOwnWrite
 // marks, whose writer's own rights do not count. radosgw counts only the S3
 // flags of the two groups, and so calls a Swift container opened with .r:*
-// or to the user anonymous private (docs/exclusions.md); an ACL an S3
+// or to the user anonymous private (docs/differences.md); an ACL an S3
 // request builds for anyone but the anonymous user holds none of the rest,
 // and the two agree on it.
 func (p Policy) IsPublic() bool {

@@ -21,14 +21,14 @@ import (
 //     WriteError never adds it, end_header's !is_err());
 //   - once r.BucketRec is loaded, the CORS headers corsHeaders derives,
 //     which radosgw's end_header adds only when it is given the op
-//     (docs/exclusions.md, "Every S3 response carries CORS headers once its
+//     (docs/differences.md, "Every S3 response carries CORS headers once its
 //     bucket is loaded").
 //
 // An OPTIONS request gets x-amz-request-id alone, on success and on every
 // error status alike. Dispatch sends one to the CORS preflight and nothing
 // else, whose Access-Control headers are SetPreflightHeaders' alone, and a
 // preflight granted on its key's id alone must answer as an anonymous one
-// does (docs/exclusions.md, "A preflight's answer says nothing of its key's
+// does (docs/differences.md, "A preflight's answer says nothing of its key's
 // user"): x-amz-request-charged, which radosgw sends to every requester that
 // does not own the bucket, would say whether the key's user owns it.
 // radosgw's abort_early also sends the CORS headers end_header derives for
@@ -71,7 +71,7 @@ func SetCommonHeaders(w http.ResponseWriter, r *op.Request) {
 //   - the rule is the one cors.Configuration.Match finds for the Origin and
 //     the method, Access-Control-Request-Method when r sends one and else
 //     r's own. Access-Control-Request-Headers chooses no rule, as Amazon S3
-//     matches it for a preflight alone (docs/exclusions.md, "CORS rules are
+//     matches it for a preflight alone (docs/differences.md, "CORS rules are
 //     matched as Amazon S3 matches them"); the rule then allows those of its
 //     names it covers;
 //   - Access-Control-Allow-Origin is * for a rule that allows every origin

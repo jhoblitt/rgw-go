@@ -175,7 +175,7 @@ var nameArgs = []string{
 // RESTArgs::get_string keeps the NUL
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L854-L871 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L859-L876 at v20.2.4),
-// and librados's C++ API takes the name whole (docs/exclusions.md).
+// and librados's C++ API takes the name whole (docs/differences.md).
 func (a Args) RefuseNUL() error {
 	for _, name := range nameArgs {
 		if v, _ := a.String(name, ""); strings.IndexByte(v, 0) >= 0 {

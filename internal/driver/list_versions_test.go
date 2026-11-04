@@ -147,7 +147,7 @@ var _ = Describe("ListObjects with versions", func() {
 				}
 			},
 			// radosgw starts after the plain key and lists them again
-			// (docs/exclusions.md, "A versions listing starts after every
+			// (docs/differences.md, "A versions listing starts after every
 			// version of a key-marker given alone").
 			Entry("without an instance it starts after every version of the key, as S3 does", "", false, []string{"z@z1"}),
 			Entry("without an instance but relisting it starts at the key's first version, as the class does", "", true,
@@ -216,7 +216,7 @@ var _ = Describe("ListObjects with versions", func() {
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L416-L431 at v20.2.4),
 	// which a null delete marker does not have: it starts past every version
 	// of the key, or after the old null version a marker's link left behind
-	// (docs/exclusions.md, "A versions listing resumes after the null delete
+	// (docs/differences.md, "A versions listing resumes after the null delete
 	// marker its version-id-marker names").
 	DescribeTable("resumes a page that ended on a null delete marker at the key's next version",
 		func(ctx SpecContext, setup func(context.Context), page1, rest []string) {
@@ -312,7 +312,7 @@ var _ = Describe("ListObjects with versions", func() {
 			// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bi_rados.cc#L948-L968 at v20.2.4
 			Entry("ordered, as radosgw lists the shard again", false),
 			// radosgw's unordered listing fails with the class's -EFBIG
-			// (docs/exclusions.md, "An unordered listing lists a shard that
+			// (docs/differences.md, "An unordered listing lists a shard that
 			// answers advance-and-retry again from its marker").
 			Entry("unordered", true),
 		)
@@ -549,7 +549,7 @@ var _ = Describe("ListObjects with versions", func() {
 				stale := rec
 				reshardTo(3)
 				res, err := s.ListObjects(ctx, stale, op.ListObjectsParams{MaxKeys: 20, ListVersions: true})
-				Expect(err).NotTo(HaveOccurred(), "docs/exclusions.md, \"An ordered listing reads the shards the bucket names after a reshard removes its own\"")
+				Expect(err).NotTo(HaveOccurred(), "docs/differences.md, \"An ordered listing reads the shards the bucket names after a reshard removes its own\"")
 				Expect(versionIDs(res.Entries)).To(Equal(want))
 			})
 			// The unordered listing's marker names a shard of the layout it was
@@ -625,7 +625,7 @@ var _ = Describe("ListObjects with versions", func() {
 			Expect(key).To(Equal(meta.ObjKey{Name: "k"}), "check_disk_state reads the null version's head, its key without an instance")
 			Consistently(func() int { return c.Writes(rookIndexPool, "", oid) }).
 				WithTimeout(50*time.Millisecond).WithPolling(5*time.Millisecond).Should(Equal(writes),
-				"docs/exclusions.md, \"A listing sends no repair for the null version's list entry\"")
+				"docs/differences.md, \"A listing sends no repair for the null version's list entry\"")
 			Expect(c.Object(rookIndexPool, "", oid).Omap).To(HaveKey("k"), "the version marker stays")
 		})
 		// The null version's head is the name's plain object, the OLH head,

@@ -81,7 +81,7 @@ func (p *lcPass) claimable(ctx context.Context, _ *lcWorker, key string) (bool, 
 // when it may. A rule that transitions to a storage class the zonegroup's
 // placement tiers to a cloud is never applied: its claim, or a head moved
 // past it, would hide it from radosgw's worker, which transitions it, for
-// the day (docs/exclusions.md, "An rgw-go-only zone never processes a bucket
+// the day (docs/differences.md, "An rgw-go-only zone never processes a bucket
 // whose rules transition to a cloud tier"). Only the rules the zone runs
 // count, as is_valid_op and zone_check choose them (lifecycle.Op.Applies).
 func (p *lcPass) refusal(rec *op.BucketRecord, conf lifecycle.Configuration) (reason, rule string) {
@@ -227,7 +227,7 @@ var errLCChanged = errors.New("bucket changed during its lifecycle pass")
 // taken as an unversioned removal, or a delete marker written as the null
 // one, unguarded.
 // Any other error is the read's own. radosgw acts on the record it loaded at
-// the pass's start until the pass ends (docs/exclusions.md, "Lifecycle stops
+// the pass's start until the pass ends (docs/differences.md, "Lifecycle stops
 // a bucket's pass when the bucket changes under it").
 func (b *lcBucket) current(ctx context.Context) (*op.BucketRecord, error) {
 	rec, err := b.p.s.lcLoadBucket(ctx, b.c.entry.Bucket)

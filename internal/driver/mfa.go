@@ -223,7 +223,7 @@ func otpInstanceIn(res *radosclient.OmapResult, key string) (otp.Instance, []byt
 // step. So a fresh code found behind at or below the last success is
 // refused too, such as each code of an authenticator a fraction of a step
 // behind used at a cadence of two steps or less, which radosgw verifies and radosgw-admin
-// mfa resync, fitting whole steps, does not cure (docs/exclusions.md, "An
+// mfa resync, fitting whole steps, does not cure (docs/differences.md, "An
 // MFA code the device may have accepted before does not verify").
 //
 // All of it holds while 0 <= secs - time_ofs < 2^32, where the class's

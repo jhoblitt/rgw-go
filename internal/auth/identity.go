@@ -28,7 +28,7 @@ import (
 // (SysReqApplier::load_acct_info,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth_filters.h#L282-L317 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_filters.h#L304-L345 at v20.2.4;
-// docs/exclusions.md has Tentacle's user record). A failure is logged by its
+// docs/differences.md has Tentacle's user record). A failure is logged by its
 // code alone, without the rgwx-uid. An rgwx-uid holding a NUL is EACCES
 // without a lookup, as go-ceph would hand librados the owner's object name
 // as a C string that ends at the NUL.

@@ -184,12 +184,12 @@ type readCase struct {
 	rules headerRules
 	// mask names the values beyond the request's own that differ between
 	// the two gateways' answers to it: rgw-go's listing markers are its
-	// own (docs/exclusions.md, "Admin listing markers are rgw-go's own").
+	// own (docs/differences.md, "Admin listing markers are rgw-go's own").
 	mask []string
-	// exclusion is the docs/exclusions.md entry that records how rgw-go's
-	// answer differs, "" when it must not. Its difference is applied to
-	// radosgw's answer, by strip or by oracle, and rgw-go's must then equal
-	// the result.
+	// exclusion is the entry that records how rgw-go's answer differs, as
+	// its document and title, "" when it must not. Its difference is applied
+	// to radosgw's answer, by strip or by oracle, and rgw-go's must then
+	// equal the result.
 	exclusion string
 	// strip removes from radosgw's body only what the exclusion says rgw-go
 	// leaves out, or masks only what it says rgw-go masks; it fails when it
@@ -510,7 +510,7 @@ var _ = Describe("the admin gate", Ordered, ContinueOnFailure, Label("integratio
 			{what: "user info with stats", path: "/admin/user?uid=" + gateUser + "&stats=true"},
 			{
 				what: "user info without keys", path: "/admin/user?uid=" + gateUser, key: &gateReadKey,
-				exclusion: "The admin user document withholds the Swift TempURL keys with the other keys",
+				exclusion: `docs/differences.md, "The admin user document withholds the Swift TempURL keys with the other keys"`,
 				strip:     stripTempURLKeys,
 			},
 			{what: "user info by access key", path: "/admin/user?access-key=" + gateUserKey.access},
@@ -531,7 +531,7 @@ var _ = Describe("the admin gate", Ordered, ContinueOnFailure, Label("integratio
 			{what: "metadata get bucket instance", path: "/admin/metadata/bucket.instance?key=" + b1Instance},
 			{
 				what: "metadata sections", path: "/admin/metadata",
-				exclusion: "The admin metadata API serves four sections, and differs from radosgw's in five more ways",
+				exclusion: `docs/differences.md, "The admin metadata API serves four sections, and differs from radosgw's in five more ways"`,
 				strip:     stripUnservedSections,
 			},
 			{what: "metadata list users", path: "/admin/metadata/user"},
@@ -546,7 +546,7 @@ var _ = Describe("the admin gate", Ordered, ContinueOnFailure, Label("integratio
 			{
 				// populate.sh gives the zonegroup a cloud-s3 tier with a secret.
 				what: "period", path: "/admin/realm/period", rules: headerRules{jsonType: true, getter: true},
-				exclusion: "The period getter masks a cloud tier's S3 secret",
+				exclusion: `docs/differences.md, "The period getter masks a cloud tier's S3 secret"`,
 				strip:     maskTierSecrets,
 			},
 			{what: "bucket ratelimit", path: "/admin/ratelimit?ratelimit-scope=bucket&bucket=" + gateBucket},
@@ -567,7 +567,7 @@ var _ = Describe("the admin gate", Ordered, ContinueOnFailure, Label("integratio
 				// which no strip turns into rgw-go's 405; rgw-go answers as
 				// radosgw answers any route it has no op for.
 				what: "405 on bucket sync", method: http.MethodPut, path: "/admin/bucket?sync&bucket=" + gateBucket,
-				exclusion: "Multisite: the admin Sync_Bucket op", emptyOnRadosgw: true,
+				exclusion: `docs/exclusions.md, "Multisite"`, emptyOnRadosgw: true,
 				oracle: &oracleRequest{method: http.MethodPost, path: "/admin/info"},
 			},
 			{
@@ -753,12 +753,12 @@ func expectSameAnswer(ctx context.Context, check func(func()), radosgw, rgwgo ad
 	case c.strip != nil:
 		check(func() {
 			stripped := c.strip(rgw.body)
-			Expect(stripped).NotTo(Equal(rgw.body), "%s: radosgw's body no longer holds what docs/exclusions.md %q says rgw-go leaves out", what, c.exclusion)
+			Expect(stripped).NotTo(Equal(rgw.body), "%s: radosgw's body no longer holds what %s says rgw-go leaves out", what, c.exclusion)
 			oracle = adminResponse{status: rgw.status, header: rgw.header, body: stripped}
 		})
 	}
 	if c.exclusion != "" {
-		AddReportEntry(what, fmt.Sprintf("compared with radosgw's answer as docs/exclusions.md %q records the difference", c.exclusion))
+		AddReportEntry(what, fmt.Sprintf("compared with radosgw's answer as %s records the difference", c.exclusion))
 	}
 	headers := rgw
 	if c.oracle != nil {

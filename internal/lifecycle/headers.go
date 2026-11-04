@@ -35,7 +35,7 @@ const expiryDateLayout = "Mon, 02 Jan 2006 15:04:05 GMT"
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2817-L2952 at v20.2.4)
 // gives a request that names a version a header, and takes the date of a key
 // with an instance, a current version's among them, from the rule's
-// NoncurrentVersionExpiration (docs/exclusions.md, "x-amz-expiration names
+// NoncurrentVersionExpiration (docs/differences.md, "x-amz-expiration names
 // the Expiration rule alone on Tentacle").
 func ExpirationHeader(c Configuration, name, versionID string, objTags tags.Set, mtime time.Time) string {
 	if versionID != "" {
@@ -113,12 +113,12 @@ func (r Rule) matches(name string) bool {
 // `mtime + (days × 86400 - to_time_t(mtime) % 86400 + 86400)` seconds, the
 // midnight that begins mtime's day plus days and one, which names the day
 // after the worker acts for an mtime in a day's first second
-// (docs/exclusions.md, "Lifecycle headers name the midnight the worker acts
+// (docs/differences.md, "Lifecycle headers name the midnight the worker acts
 // at"). radosgw computes it in a double for x-amz-expiration and in an int
 // for x-amz-abort-date, so Days past 106751 overflow the one's nanoseconds
 // and DaysAfterInitiation past 24855 the other, and a date past real_time's
 // last instant wraps; rgw-go gives the date the days name
-// (docs/exclusions.md, "Lifecycle header dates past 24855 days or real_time
+// (docs/differences.md, "Lifecycle header dates past 24855 days or real_time
 // are not wrapped").
 func dayAfter(mtime time.Time, days int) time.Time {
 	sec := realSecond(mtime) + int64(days)*secondsPerDay

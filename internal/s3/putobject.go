@@ -38,7 +38,7 @@ import (
 // reads the request's parameters through putObjectParams once the bucket is
 // loaded, as init_processing reads them, and makes the checks of stored
 // state through putObjectChecks once the requester is authorized, so that a
-// refused requester learns nothing the store holds (docs/exclusions.md). The
+// refused requester learns nothing the store holds (docs/differences.md). The
 // success is send_response's: the ETag, the Content-Length of 0 with
 // Accept-Ranges that dump_content_length sends
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2747,
@@ -88,7 +88,7 @@ func (wr *objectWrites) putObject(ctx context.Context, w http.ResponseWriter, r 
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4184-L4198 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4393-L4407 at v20.2.4);
 // and the attrs are requestAttrs'. radosgw checks the last two after
-// authorizing, and the attrs once the body is stored (docs/exclusions.md).
+// authorizing, and the attrs once the body is stored (docs/differences.md).
 func (wr *objectWrites) putObjectParams(r *op.Request, o *op.PutObject) error {
 	if r.ContentLength == 0 && r.Header.Get("Content-Length") == "" {
 		return op.ErrMissingContentLength
@@ -178,7 +178,7 @@ func appendPosition(r *op.Request) error {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2912,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4609 and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3846-L3886 at v20.2.4;
-// docs/exclusions.md, "Writes name the null version's id and a copy's two
+// docs/differences.md, "Writes name the null version's id and a copy's two
 // versions").
 func setVersionHeaders(h http.Header, written, source string) {
 	if written != "" {
@@ -197,7 +197,7 @@ func setVersionHeaders(h http.Header, written, source string) {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2779-L2781);
 // then a retention or a legal hold on a bucket without object lock is
 // refused (objectLock). radosgw makes both before verify_permission
-// (docs/exclusions.md).
+// (docs/differences.md).
 func putObjectChecks(ctx context.Context, r *op.Request, o *op.PutObject) error {
 	p, err := newObjectACL(ctx, r)
 	if err != nil {
@@ -262,7 +262,7 @@ func refuseEncryption(r *op.Request, query bool) error {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2830-L2834),
 // which a copy makes too, where radosgw stores them on such a bucket
 // (docs/ceph-upstream-bugs.md, "radosgw's CopyObject stores an object lock
-// on a bucket without object lock"; docs/exclusions.md). The callers make it
+// on a bucket without object lock"; docs/differences.md). The callers make it
 // once the requester is authorized, so that a refused requester learns
 // nothing of the bucket's configuration. On a bucket with object lock a
 // PutObject or CopyObject answers NotImplemented, and a multipart write

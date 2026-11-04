@@ -19,7 +19,7 @@ import (
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4609 at v20.2.4):
 // the instance it generates on a bucket whose versioning is enabled, or a
 // system request's rgwx-version-id, which rgw-go does not read
-// (docs/exclusions.md).
+// (docs/differences.md).
 var _ = Describe("x-amz-version-id on CompleteMultipartUpload", func() {
 	DescribeTable("is not sent for a completion on an unversioned bucket",
 		func(ctx SpecContext, rel denc.Release) {

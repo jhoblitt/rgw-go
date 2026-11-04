@@ -295,7 +295,7 @@ suspended) or a system marker id is given ([rgw_rados.cc:5774](https://github.co
 - Both then add a datalog entry only when the zone logs data ([rgw_rados.cc:5837-5840](https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5837-L5840)), which a single
   zone never does.
 
-**Both floors** register the `bi_get` method the S3 delete uses (§2.2); `docs/exclusions.md`'s
+**Both floors** register the `bi_get` method the S3 delete uses (§2.2); `docs/differences.md`'s
 "the `bi_*` index-entry methods … are out on both sides unless an index-repair path in scope
 turns out to need them" needs amending: the versioned delete needs `bi_get` of one instance
 entry (§8, Q9).
@@ -782,7 +782,7 @@ not touch except `internal/s3/handler.go`, `internal/s3/request.go`,
   `hack/s3tests/deselect-phase2.txt:11-12` names `test_versioning_obj_create_read_remove` and `_head`.
   `hack/admin/deselect-phase2.txt:10`: `enable_versioning`. `test/s3tests/baseline/*.json` and
   `test/admin/baseline/*.json`: no versioning outcome recorded.
-- `docs/exclusions.md`: the entries to retire ("PutBucketVersioning answers 501", "Writes to a
+- `docs/differences.md`: the entries to retire ("PutBucketVersioning answers 501", "Writes to a
   versioned or object-lock bucket answer 501", "The versions of a bucket whose versioning was
   ever enabled are not listed", "Deletes that need MFA are refused", "A purging bucket removal
   refuses…", "The admin object removal refuses…", "CompleteMultipartUpload sends no
@@ -1163,7 +1163,7 @@ once as in phase 1.
 | `internal/op/request.go`, `env.go` | V13 (`MFAVerified`, `Env.MFA`), lock-lifecycle (`Env.ObjectLock`) | one-line additions; V13 first |
 | `internal/cls/otp` | V13, writepath (admin otp) | V13 owns the package and types; writepath adds its ops in new files |
 | `hack/s3tests/run.sh` `EXCLUDED_MARKERS`, `deselect-phase2.txt` | V15, lock-lifecycle's gate, bucketconfig's gate | one gate task per area edits its own lines; the plan orders the three gates |
-| `docs/exclusions.md`, `docs/ceph-upstream-bugs.md` | every task | the process review's structural fix (per-entry files or append regions); until then each task's PR edits only its own entries |
+| `docs/differences.md`, `docs/ceph-upstream-bugs.md` | every task | the process review's structural fix (per-entry files or append regions); until then each task's PR edits only its own entries |
 | `internal/s3/handler.go` routes | none | per-op `Register`; no hot file |
 
 **Interfaces lock-lifecycle and bucketconfig need from these tasks.**
@@ -1211,7 +1211,7 @@ Each with the recommended answer and its reason; all are the owner's or the spec
 - **Q8. The `list-type=2&versions` document: keep radosgw's malformed rendering (phase 1) or
   render a correct document?** Recommend keep: no S3 client sends the form, the registry entry
   explains it, and a flip costs more than it buys; revisit if a client appears.
-- **Q9. `docs/exclusions.md` says the `bi_*` methods are out on both sides; the S3 versioned
+- **Q9. `docs/differences.md` says the `bi_*` methods are out on both sides; the S3 versioned
   delete needs `bi_get` of one instance entry (§2.4), and Q2 adds a second use.** Recommend amend
   the entry (shared with rgw-rs: tell the rgw-rs session) to "out except `bi_get` of an instance
   entry on the versioned delete"; `bi_put`/`bi_list` and the repair paths stay out.

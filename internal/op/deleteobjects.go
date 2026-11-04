@@ -224,7 +224,7 @@ func (o *DeleteObjects) Complete(context.Context, *Request) {}
 // device of the bucket's owner (OwnerMFAVerified), the check radosgw made
 // at v19.2.6 and makes on main. v19.2.7 and v20.2.4 invert it: they refuse a
 // request with a key naming no version and pass one whose every key names a
-// version (docs/exclusions.md, "DeleteObjects asks for MFA for the keys that
+// version (docs/differences.md, "DeleteObjects asks for MFA for the keys that
 // name a version"). A request whose x-amz-mfa is present and does not verify
 // the owner's device is refused whatever its keys name, as S3's
 // DeleteObjects reference says: "If you provide an invalid token, whether

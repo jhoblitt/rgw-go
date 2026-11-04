@@ -277,7 +277,7 @@ var _ = Describe("put_obj", func() {
 			Entry("the second after the clock's", "2025-09-27T08:34:59Z", "InvalidRequest"),
 			Entry("real_time's last nanosecond", "2554-07-21T23:34:33.709551615Z", "InvalidRequest"),
 			// radosgw wraps these two to a later date and takes them;
-			// docs/exclusions.md, "A date real_time cannot hold is refused".
+			// docs/differences.md, "A date real_time cannot hold is refused".
 			Entry("a date past real_time's range, which radosgw wraps to a later one", "3000-01-01T00:00:00Z", "InvalidArgument"),
 			Entry("day 00 of 1970, before the epoch, which radosgw wraps to 2554", "1970-01-00", "InvalidArgument"),
 			Entry("an hour without Z", "2030-06-15T12", "InvalidArgument"),

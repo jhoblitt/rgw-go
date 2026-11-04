@@ -115,7 +115,7 @@ func (o *PutBucketVersioning) VerifyPermission(ctx context.Context, r *Request) 
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2847 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3079 at v20.2.4).
 // rgw-go makes both checks on every try against the bucket that try read, and
-// writes that bucket's own attrs (docs/exclusions.md, "A retried
+// writes that bucket's own attrs (docs/differences.md, "A retried
 // PutBucketVersioning checks object lock and MFA delete again").
 func (o *PutBucketVersioning) Execute(ctx context.Context, r *Request) error {
 	if o.Params != nil {

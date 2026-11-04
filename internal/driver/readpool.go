@@ -77,7 +77,7 @@ func (s *Store) dataPool(rule meta.PlacementRule, bucket meta.BucketID) (pool me
 // and v20.2.4): the storage class's data pool, or STANDARD's for a class the
 // placement does not list, so an object of a since-removed class still reads.
 // A listed class without a data pool also takes STANDARD's, where radosgw
-// takes an empty pool (docs/exclusions.md).
+// takes an empty pool (docs/differences.md).
 func classPool(pi meta.ZonePlacementInfo, class string) meta.Pool {
 	if c, ok := pi.StorageClasses[class]; ok && c.DataPool != nil {
 		return *c.DataPool

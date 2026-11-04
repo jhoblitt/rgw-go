@@ -123,7 +123,7 @@ func (v *Verifier) Authenticate(ctx context.Context, req *http.Request, payloads
 	}
 	// A system user's rgwx-uid is taken only where the signature covers it,
 	// in SigV4's canonical query; radosgw takes it on every route
-	// (docs/exclusions.md). A preflight's would have its answer say whether
+	// (docs/differences.md). A preflight's would have its answer say whether
 	// the user or account it names loads, and so that the key is a system
 	// user's, to anyone holding the key's id. SigV2 signs no rgwx- parameter
 	// (signedSubresourcesV2, qsMetaV2), so a SigV2 one would let whoever
@@ -153,7 +153,7 @@ func (v *Verifier) Authenticate(ctx context.Context, req *http.Request, payloads
 			// s3.ApplyAuth has folded it into the headers. An engine that
 			// reads a presigned request's session token, an STS engine
 			// among them, must take it from the set as well, never from
-			// the query or the headers alone (docs/exclusions.md). Such an
+			// the query or the headers alone (docs/differences.md). Such an
 			// engine must also set its result's Route, which an unset one
 			// leaves RouteUnknown, reading nothing of the query a signature
 			// may leave out.
@@ -280,7 +280,7 @@ func (v *Verifier) parseAuthData(rv *requestView, ver version, rt route, payload
 // Neither its errors nor its log name the access key, which is the request's.
 // A key holding a NUL fails without a lookup, as go-ceph would hand librados
 // the key's index object name as a C string that ends at the NUL; radosgw
-// looks the whole key up and finds none (docs/exclusions.md).
+// looks the whole key up and finds none (docs/differences.md).
 func (v *Verifier) lookup(ctx context.Context, accessKey string) (*op.UserRecord, meta.AccessKey, *meta.AccountInfo, error) {
 	if strings.IndexByte(accessKey, 0) >= 0 {
 		return nil, meta.AccessKey{}, nil, fmt.Errorf("%w: the request's access key holds a NUL byte", op.ErrInvalidAccessKeyID)

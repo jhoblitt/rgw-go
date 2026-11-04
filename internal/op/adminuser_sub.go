@@ -131,7 +131,7 @@ func addKey(ctx context.Context, env *Env, info *meta.UserInfo, p UserKeyParams)
 // request, which generate_key checks and then replaces, goes unchecked, and
 // "<uid>:<subuser>" is checked by PutUser. The key records the subuser named. A
 // request that names active=false gets an inactive key; radosgw's generate_key
-// never reads access_key_active and makes it active (docs/exclusions.md).
+// never reads access_key_active and makes it active (docs/differences.md).
 func generateKey(ctx context.Context, env *Env, info *meta.UserInfo, p UserKeyParams, typ KeyType) error {
 	var id string
 	if !p.genAccess() {
@@ -876,7 +876,7 @@ func (o *SetUserQuota) setOne(q meta.Quota) {
 // validSizeLimit reports whether n may be stored as a maximum size: not
 // negative, or -1, the "no limit" radosgw writes. radosgw stores any value,
 // so a negative size from a wrapped product or a stray sign would lift the
-// limit (docs/exclusions.md).
+// limit (docs/differences.md).
 func validSizeLimit(n int64) bool { return n >= 0 || n == -1 }
 
 // apply is the arguments over RGWQuotaInfo's defaults, each absent one

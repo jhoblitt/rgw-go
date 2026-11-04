@@ -87,7 +87,7 @@ func Parse(doc []byte) (*Element, error) { return ParseFunc(doc, nil) }
 // instructions outside the root, an XML declaration only at the very start
 // and well-formed, a processing-instruction target followed by whitespace or
 // "?>", and one DOCTYPE, before the root. A leading UTF-8 byte order mark is
-// skipped, as expat skips it. docs/exclusions.md records where it still
+// skipped, as expat skips it. docs/differences.md records where it still
 // differs. Go refuses an XML version other than 1.0, an encoding other than
 // UTF-8, a name with two colons, and entities a DTD declares. It reads what
 // expat refuses: attributes not separated by whitespace, a malformed DOCTYPE,

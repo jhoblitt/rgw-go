@@ -29,7 +29,7 @@ const AttrBucketEncryption = meta.AttrPrefix + "sse-s3.policy"
 // and which rgw-go cannot apply until phase 2 encrypts. It runs once the
 // requester is authorized, where radosgw's refusal for want of a key
 // server comes, so a refused requester learns nothing of the bucket's
-// configuration (docs/exclusions.md).
+// configuration (docs/differences.md).
 func bucketEncryptionUnserved(rec *BucketRecord) error {
 	if _, ok := rec.Attrs[AttrBucketEncryption]; ok {
 		return fmt.Errorf("%w: the bucket's default encryption is not served yet", ErrNotImplemented)
@@ -121,7 +121,7 @@ func (o *PutObject) OpMask() uint32 { return OpTypeWrite }
 // then Params. The checks of what the bucket holds that radosgw makes there
 // and in init_processing wait for the requester to be authorized, so that a
 // refused requester learns nothing of the bucket (Execute;
-// docs/exclusions.md).
+// docs/differences.md).
 func (o *PutObject) Init(ctx context.Context, r *Request) error {
 	if err := loadBucket(ctx, r); err != nil {
 		return err
@@ -149,7 +149,7 @@ func (o *PutObject) VerifyPermission(ctx context.Context, r *Request) error {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3903-L3909,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4112-L4118);
 // then Authorized runs, and a public policy it built from the grant headers
-// is refused too, which radosgw stores (docs/exclusions.md). Then come
+// is refused too, which radosgw stores (docs/differences.md). Then come
 // RGWPutObj_ObjStore::verify_params
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L1049-L1059 at v19.2.6
 // and v20.2.4) and RGWPutObj::execute in its order
@@ -238,7 +238,7 @@ func (o *PutObject) Execute(ctx context.Context, r *Request) error {
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4268-L4272 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4481-L4485 at v20.2.4),
 // and otherwise with 501 NotImplemented, where radosgw appends
-// (docs/exclusions.md, "Appends and a PUT that names a copy source but is
+// (docs/differences.md, "Appends and a PUT that names a copy source but is
 // no copy are not served").
 func appendUnserved(rec *BucketRecord) error {
 	if rec.Info.Versioned() {
@@ -269,7 +269,7 @@ func checkDestPlacement(r *Request, storageClass string) error {
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L340-L355 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L370-L385 at v20.2.4),
 // which would let a public ACL through a block its owner set
-// (docs/exclusions.md).
+// (docs/differences.md).
 func blockPublicACLs(rec *BucketRecord) bool {
 	b, ok := rec.Attrs[AttrPublicAccess]
 	if !ok {

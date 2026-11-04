@@ -859,7 +859,7 @@ func sameConfig(a, b *op.BucketRecord) bool {
 // mark, and one that marks it first fails this rewrite. Then the instance
 // the entry point names must not exist, and the entry point is removed
 // under the version read, which a rename claiming the name after the read
-// fails. radosgw frees no such name (docs/exclusions.md, "Bucket link and
+// fails. radosgw frees no such name (docs/differences.md, "Bucket link and
 // unlink write differently from radosgw").
 func (s *Store) RemoveDanglingEntryPoint(ctx context.Context, tenant, name string) error {
 	e, err := s.readEntryPoint(ctx, tenant, name)

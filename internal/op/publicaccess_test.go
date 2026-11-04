@@ -454,7 +454,7 @@ var _ = Describe("public access block ops", func() {
 		})
 		// Amazon S3 judges a grant to everyone over TLS public, and one from
 		// 1.1.1.1/32 not, where radosgw's is_public judges both the other way
-		// (docs/exclusions.md, "A bucket policy is public as Amazon S3 judges
+		// (docs/differences.md, "A bucket policy is public as Amazon S3 judges
 		// it").
 		DescribeTable("judges PutBucketPolicy under BlockPublicPolicy by Amazon S3's IsPublic",
 			func(ctx SpecContext, doc string, want error) {
@@ -488,7 +488,7 @@ var _ = Describe("public access block ops", func() {
 		// 1.1.1.1/32 alone public, and v20.2.4 refuses a non-owner it under
 		// RestrictPublicBuckets
 		// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1929-L1953 at v20.2.4);
-		// Amazon S3 calls it not public (docs/exclusions.md, "A bucket policy is
+		// Amazon S3 calls it not public (docs/differences.md, "A bucket policy is
 		// public as Amazon S3 judges it").
 		It("admits a non-owner under RestrictPublicBuckets through a grant Amazon S3 calls not public and radosgw public", func(ctx SpecContext) {
 			f.setBucketAttrs(ctx, map[string][]byte{op.AttrIAMPolicy: []byte(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow",` +

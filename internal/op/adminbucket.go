@@ -130,7 +130,7 @@ func loadInitUser(ctx context.Context, env *Env, uid meta.UserID) (*UserRecord, 
 // under the new key. radosgw neither writes nor reads it. While it is live,
 // rgw-go refuses every link, unlink and chown of the bucket but a retry of
 // that rename, which completes it; it is live while the new name has no
-// entry point or one naming the bucket's id (docs/exclusions.md, "Bucket
+// entry point or one naming the bucket's id (docs/differences.md, "Bucket
 // link and unlink write differently from radosgw").
 const RenameIntentAttr = meta.AttrPrefix + "rgw-go-rename"
 
@@ -286,7 +286,7 @@ const bucketMetadataPage = 1000
 // Its stats are read from the bucket the name loaded, "tenant/name" split.
 // radosgw's bucket_stats looks the unsplit name up again under the uid's
 // tenant, which finds the same bucket unless the uid names a tenant, and
-// then answers with nothing (docs/exclusions.md, "The admin bucket info
+// then answers with nothing (docs/differences.md, "The admin bucket info
 // reports a bucket named tenant/name whatever the uid's tenant"). A listing
 // with stats skips a bucket it cannot read, as radosgw ignores
 // bucket_stats' return there.
@@ -342,7 +342,7 @@ func (o *BucketInfo) add(ctx context.Context, env *Env, b meta.BucketID, key str
 // larger than what MaxEntries leaves, until a page is the last or
 // MaxEntries are listed. A uid naming no user is load_user's -ENOENT,
 // NoSuchKey, which radosgw sends as a 200 with no document
-// (docs/exclusions.md, "Admin responses carry a Content-Type on every
+// (docs/differences.md, "Admin responses carry a Content-Type on every
 // body").
 func (o *BucketInfo) listOwner(ctx context.Context, env *Env) error {
 	u, err := env.Users.GetUser(ctx, o.UID)
@@ -708,7 +708,7 @@ func (o *RemoveBucketAdmin) Execute(ctx context.Context, r *Request) error {
 // (BucketAdminStore.RemoveDanglingEntryPoint); one without an entry point
 // is NoSuchBucket, as radosgw answers it. radosgw answers both NoSuchBucket
 // and frees neither, so a name an unfinished rename reserved would stay
-// taken (docs/exclusions.md, "Bucket link and unlink write differently
+// taken (docs/differences.md, "Bucket link and unlink write differently
 // from radosgw").
 func (o *RemoveBucketAdmin) freeDanglingName(ctx context.Context, env *Env) error {
 	err := env.BucketAdmin.RemoveDanglingEntryPoint(ctx, o.Tenant, o.Bucket)
@@ -903,7 +903,7 @@ func (o *RemoveObjectAdmin) VerifyPermission(_ context.Context, r *Request) erro
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L275-L290 at v20.2.4;
 // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2928-L2949,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3766-L3787;
-// docs/exclusions.md, "Admin removals ignore object lock"). So on a bucket
+// docs/differences.md, "Admin removals ignore object lock"). So on a bucket
 // whose flags hold BUCKET_VERSIONED the store writes a delete marker with
 // no owner, whether or not the object exists
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5850-L5869 at v19.2.7,
@@ -914,7 +914,7 @@ func (o *RemoveObjectAdmin) VerifyPermission(_ context.Context, r *Request) erro
 // read gives it on an unversioned bucket, though radosgw hands a name of
 // over about 2000 bytes to RADOS, which refuses it as too long; on a
 // versioned bucket radosgw writes a delete marker under any name RADOS
-// takes (docs/exclusions.md).
+// takes (docs/differences.md).
 func (o *RemoveObjectAdmin) Execute(ctx context.Context, r *Request) error {
 	rec, err := loadAdminBucket(ctx, r.Env, meta.UserID{}, o.Bucket)
 	if err != nil {

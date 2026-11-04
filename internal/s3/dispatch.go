@@ -121,7 +121,7 @@ func (m method) walk(q url.Values, rel denc.Release) (string, bool) {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L918-L976 at v19.2.6),
 // so ?encryption reaches its own branch. is_notification_op is false unless
 // rgw_enable_apis names notifications or pubsub, as its default does; the
-// table routes ?notification regardless (docs/exclusions.md). The website
+// table routes ?notification regardless (docs/differences.md). The website
 // branches (both releases) return nullptr when rgw_enable_static_website is
 // off, which Dispatch applies after the walk. The mdsearch ones (v20.2.4
 // only) return nullptr when rgw_enable_mdsearch is off, and PUT ?replication
@@ -130,7 +130,7 @@ func (m method) walk(q url.Values, rel denc.Release) (string, bool) {
 //
 // The ownershipControls rows are v21.1.2's on both releases. Neither v19.2.7
 // nor v20.2.4 has the branch, so there the key selects nothing and DELETE
-// ?ownershipControls deletes an empty bucket (docs/exclusions.md). v21.1.2's
+// ?ownershipControls deletes an empty bucket (docs/differences.md). v21.1.2's
 // is_bucket_ownership_op tests the key's presence
 // (https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.h#L772-L774 at v21.1.2),
 // after the is_bucket_encryption_op branch
@@ -146,7 +146,7 @@ func (m method) walk(q url.Values, rel denc.Release) (string, bool) {
 // object's annotations, and RenameObject and UpdateObjectEncryption, as
 // ListObjects, CreateBucket or DeleteBucket, or as GetObject, PutObject or
 // DeleteObject: it deletes an empty bucket, or overwrites or deletes the
-// object (docs/exclusions.md).
+// object (docs/differences.md).
 var table = map[methodKey]method{
 	{op.ScopeService, http.MethodGet}: {
 		rows: []row{{key: "usage", name: "get_usage"}},

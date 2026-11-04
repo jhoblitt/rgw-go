@@ -419,7 +419,7 @@ const maxRemoveRetries = 20
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3968-L3992
 // and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L161-L169).
-// rgw-go forwards nothing (docs/exclusions.md). For a bucket of this
+// rgw-go forwards nothing (docs/differences.md). For a bucket of this
 // zonegroup it syncs the owner's stats, logging a failure, refuses a bucket
 // with objects, and aborts the bucket's multipart uploads (abortMultiparts,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L395-L400;
@@ -577,7 +577,7 @@ const maxUnlinkRetries = 5
 // (cls_user_remove_bucket,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/cls/user/cls_user.cc#L239-L276 at both tags).
 // An entry that keeps changing is left after maxUnlinkRetries reads, with a
-// warning (docs/exclusions.md).
+// warning (docs/differences.md).
 func (s *Store) unlinkInstance(ctx context.Context, owner meta.Owner, b meta.BucketID) error {
 	return s.unlinkEntry(ctx, owner, b, false)
 }

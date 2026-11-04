@@ -145,14 +145,14 @@ func (o *PutObjectRetention) VerifyPermission(ctx context.Context, r *Request) e
 // objectlock.ParseRetention refuses, an empty one included, is 400
 // MalformedXML. A retain-until date whose whole second is before the clock
 // is 400 InvalidArgument, compared exactly where radosgw reads the clock as
-// a double (docs/exclusions.md, "A retain-until second is compared with the
+// a double (docs/differences.md, "A retain-until second is compared with the
 // clock exactly"). A version that does not exist is NoSuchKey. An existing
 // retention objectlock.DecodeRetention refuses, bytes past its encoding
-// included, is radosgw's -EIO, 500 UnknownError (docs/exclusions.md, "An
+// included, is radosgw's -EIO, 500 UnknownError (docs/differences.md, "An
 // object-lock attr with bytes past its encoding does not decode"). The
 // change from it is objectlock.RetentionChange's, with the bypass both the
 // header and the permission, its refusals 403 AccessDenied with radosgw's
-// messages; a lapsed retention binds none of them (docs/exclusions.md, "A
+// messages; a lapsed retention binds none of them (docs/differences.md, "A
 // lapsed retention binds no retention change"). The retention is written in
 // RGWObjectRetention's version 2, its nanoseconds kept, by
 // modify_obj_attrs

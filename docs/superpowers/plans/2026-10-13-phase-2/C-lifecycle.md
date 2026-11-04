@@ -27,7 +27,7 @@ workers. In this unit that is:
   sub-test, recorded on both releases (C12), and the cross-gateway gates (C13).
 
 Not in this unit: cloud-s3 transition, restore, and v20.2.4's restore expirer, which
-`docs/exclusions.md` keeps out ("Storage-class transitions inside the cluster are not
+`docs/differences.md` keeps out ("Storage-class transitions inside the cluster are not
 excluded"); the s3-tests harness and selection, which the T unit owns; no admin REST route
 reads or writes lifecycle at either tag, so no admin op is added.
 
@@ -140,7 +140,7 @@ the controller's ruling that splits C10 (C-D16).
 | `internal/s3/getobject.go`, `putobject.go`, `multipart.go` | V, WP-7, WP-13, L5b, C8 | each task adds its headers in its own helper, one call line per site; whichever lands first, the later rebases |
 | `internal/driver/run.go` or the worker setup | C9 | one `AddWorker` call |
 | the s3-tests selection, `hack/s3tests/deselect-phase2.txt`, `hack/admin/deselect-phase2.txt`, the ledgers | WP-22, every area's recording task | each area edits only its own lines; the controller lands recordings one at a time |
-| `docs/exclusions.md`, `docs/ceph-upstream-bugs.md` | every task | each PR edits only its own entries |
+| `docs/differences.md`, `docs/ceph-upstream-bugs.md` | every task | each PR edits only its own entries |
 
 ## Tasks
 
@@ -275,7 +275,7 @@ the controller's ruling that splits C10 (C-D16).
      [rgw_lc.cc:524-552](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L524-L552)), through C1's
      `Op.SizeMatches`, which reads a stored negative size by its sign: an ObjectSizeLessThan of 0
      or less matches no object and a negative ObjectSizeGreaterThan every object, where
-     radosgw's stoull reads -1 as 2^64 - 1 (`docs/exclusions.md`, "The lifecycle prefix map
+     radosgw's stoull reads -1 as 2^64 - 1 (`docs/differences.md`, "The lifecycle prefix map
      reads a stored negative object size by its sign, and no Date past real_time"). A nil date,
      which C1's prefix map holds where `from_iso_8601` refuses the stored text or real_time
      cannot hold it, never counts as now or as the zero time: current expiration with
@@ -684,7 +684,7 @@ the controller's ruling that splits C10 (C-D16).
   - **Review Focus 3, a stalled worker:** A stalls past its session and B reclaims. When A
     resumes, its claim re-read fails, so it stops and writes no post-state.
 - **Exclusions and registry:** C-D11's exclusion (the deployment's time zone); the pair-form
-  rewrite's exclusion in `docs/exclusions.md`, and the registry entry's rgw-go line updated to
+  rewrite's exclusion in `docs/differences.md`, and the registry entry's rgw-go line updated to
   it. The reproduced-alike behaviours stay without entries: an entry left processing for two
   days after a failed re-lock, and the local day boundary.
 - **Depends on:** C5. **PR:** one. **Brief:** about 250 lines.

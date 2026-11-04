@@ -15,7 +15,7 @@ import (
 // missing bucket is NoSuchBucket before the permission check, and authorizes
 // its action against the bucket, whose tags the authorizer adds for a policy
 // that needs them, with no ACL grant consulted
-// (VerifyBucketPermissionOwnerOrPolicy; docs/exclusions.md, "No ACL grant
+// (VerifyBucketPermissionOwnerOrPolicy; docs/differences.md, "No ACL grant
 // authorizes the public access block's ops"). The block is the bucket attr
 // user.rgw.public-access, which the two writes set or remove alone over the
 // bucket as each try read it. A stored block reaches every later check
@@ -64,7 +64,7 @@ func (o *GetPublicAccessBlock) VerifyPermission(ctx context.Context, r *Request)
 // attr is NoSuchPublicAccessBlockConfiguration with radosgw's message, and an
 // attr that does not decode is radosgw's -EIO, which the S3 error table lacks,
 // so 500 UnknownError. The authorizer refuses such an attr to everyone but an
-// admin before the op runs (docs/exclusions.md, "A public-access block that
+// admin before the op runs (docs/differences.md, "A public-access block that
 // does not decode refuses the request").
 func (o *GetPublicAccessBlock) Execute(_ context.Context, r *Request) error {
 	b, ok := r.BucketRec.Attrs[AttrPublicAccess]
@@ -122,7 +122,7 @@ func (o *PutPublicAccessBlock) VerifyPermission(ctx context.Context, r *Request)
 // had changed
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8669-L8673 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9637-L9641 at v20.2.4;
-// docs/exclusions.md, "A retried PutBucketPolicy keeps what the write it lost
+// docs/differences.md, "A retried PutBucketPolicy keeps what the write it lost
 // to changed").
 func (o *PutPublicAccessBlock) Execute(ctx context.Context, r *Request) error {
 	if o.Params != nil {

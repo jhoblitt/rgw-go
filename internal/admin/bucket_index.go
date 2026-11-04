@@ -18,7 +18,7 @@ func newBucketIndexHandlers() map[string]HandlerFunc {
 // and v20.2.4): bucket, fix and check-objects. fix removes index entries and
 // rewrites the shard headers, so a value get_bool cannot parse, which
 // radosgw takes as false, and an empty one, which it takes as true, are
-// refused after the cap check (docs/exclusions.md, "The admin bucket routes
+// refused after the cap check (docs/differences.md, "The admin bucket routes
 // refuse a boolean argument they cannot parse"); check-objects is read as
 // radosgw reads it. The body is check_index's, its flusher started
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_bucket.cc#L1255-L1256 at v19.2.6,

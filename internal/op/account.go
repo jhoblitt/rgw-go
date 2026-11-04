@@ -48,7 +48,7 @@ type AccountStore interface {
 	//     none, and refuses the name and email rec holds, changed or not, when
 	//     another holds them; it claims them before it writes the account, and a
 	//     create first writes the account with neither, which it removes on a
-	//     refused claim (docs/exclusions.md);
+	//     refused claim (docs/differences.md);
 	//   - Exclusive over a stored id is ErrAccountAlreadyExists;
 	//   - a non-zero rec.Version that differs from the stored version is
 	//     ErrConcurrentModification; a zero one is not checked by the

@@ -69,7 +69,7 @@ const xmlnsS3 = "http://s3.amazonaws.com/doc/2006-03-01/"
 // The refusals and their order are radosgw's, but for what S3's model
 // refuses and radosgw takes: a root other than LifecycleConfiguration, and a
 // value outside the type and range the model gives it, which radosgw stores
-// with another meaning than its sender's (docs/exclusions.md,
+// with another meaning than its sender's (docs/differences.md,
 // "PutBucketLifecycleConfiguration refuses a document whose root is not
 // LifecycleConfiguration", "... holds a rule's numbers to S3's types" and
 // "... holds a Date and ExpiredObjectDeleteMarker to S3's types"). A number

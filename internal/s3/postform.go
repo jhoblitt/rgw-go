@@ -17,7 +17,7 @@ import (
 
 // formFieldsAllowance is what the parts before a POST form's file part may
 // take of the body beyond maxLine: room for one field of radosgw's largest
-// beside the rest of a form (docs/exclusions.md, "A POST form's fields before
+// beside the rest of a form (docs/differences.md, "A POST form's fields before
 // its file are bounded").
 const formFieldsAllowance = 1 << 20
 
@@ -53,14 +53,14 @@ var (
 )
 
 // errFormFieldName refuses a part name radosgw would keep whole, a control
-// byte included (docs/exclusions.md, "A POST form field's name holds no
+// byte included (docs/differences.md, "A POST form field's name holds no
 // control byte").
 var errFormFieldName = op.ErrInvalidArgument.WithMessage("A form field name holds a control character")
 
 // errFormTooLarge carries the description Amazon S3's error list gives its
 // MaxPostPreDataLengthExceededError
 // (https://docs.aws.amazon.com/AmazonS3/latest/API/ErrorResponses.html), under
-// the InvalidArgument of radosgw's other form refusals (docs/exclusions.md,
+// the InvalidArgument of radosgw's other form refusals (docs/differences.md,
 // "A POST form's fields before its file are bounded").
 var errFormTooLarge = op.ErrInvalidArgument.WithMessage("Your POST request fields preceding the upload file were too large.")
 
@@ -70,7 +70,7 @@ var errFormTooLarge = op.ErrInvalidArgument.WithMessage("Your POST request field
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1112-L1476 at v20.2.4):
 // the fields before the part named file, then the file's data as a stream,
 // then the parts after it, read and dropped. It differs from radosgw where
-// docs/exclusions.md says, under "A POST form part ends only at a delimiter
+// docs/differences.md says, under "A POST form part ends only at a delimiter
 // line", "A POST form that ends before its file part's delimiter is
 // refused", "A POST form field's name holds no control byte", "A POST form's
 // fields before its file are bounded" and "A quoted POST form parameter keeps
@@ -137,7 +137,7 @@ func newFormReader(body io.Reader, contentType string, maxLine int) (*formReader
 // first part's header lines"). A form that closes before
 // its file part is 400 "Malformed request" wherever it closes, where radosgw
 // stores what follows the close as the object when it ends a field's data
-// (docs/exclusions.md, "A POST form that ends before its file part's
+// (docs/differences.md, "A POST form that ends before its file part's
 // delimiter is refused"). Each field's data is at most maxLine bytes, as
 // read_data reads it, else 400 "Couldn't find boundary", and the parts before
 // the file data take at most maxLine and formFieldsAllowance bytes of the
@@ -220,7 +220,7 @@ func (fr *formReader) drain() error {
 // and its data, which Read streams through the reader's buffer alone and ends
 // with io.EOF at the part's delimiter. A body that ends before that delimiter
 // is 400 "Couldn't find boundary", where radosgw stores the data up to the
-// body's end (docs/exclusions.md, "A POST form that ends before its file
+// body's end (docs/differences.md, "A POST form that ends before its file
 // part's delimiter is refused").
 type formFile struct {
 	Filename string
@@ -586,7 +586,7 @@ func (fr *formReader) delimiterAt(b, prefix []byte) (n int, final bool, kind del
 // "--" whatever follows it
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1279-L1283 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1279-L1283 at v20.2.4)
-// (docs/exclusions.md, "A POST form part ends only at a delimiter line"). radosgw
+// (docs/differences.md, "A POST form part ends only at a delimiter line"). radosgw
 // ends the part at the boundary whatever follows it (index_of,
 // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1201-L1216 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1201-L1216 at v20.2.4),
@@ -688,7 +688,7 @@ func (fr *formReader) more() error {
 // its name trimmed and its value unquoted, a later one replacing an earlier
 // of the same name, and one with no "=" taken with the empty value. radosgw
 // ends a parameter at every ";", where a value that opens with a double quote
-// here runs to its closing quote, a ";" inside it included (docs/exclusions.md,
+// here runs to its closing quote, a ";" inside it included (docs/differences.md,
 // "A quoted POST form parameter keeps its semicolons"). Only the parameters
 // keep names are kept, so a line of many parameters costs no more than the
 // line: radosgw keeps every one, a map node each, for the whole request

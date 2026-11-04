@@ -20,7 +20,7 @@ import (
 // the version's head at its instance's oid, or for the null version the
 // key's own head, its index entry, then its link under the key's OLH. rgw-go
 // awaits the entry's completion before the link, and a conditional write
-// holds its condition through the link (docs/exclusions.md, "A versioned
+// holds its condition through the link (docs/differences.md, "A versioned
 // write awaits its index completion" and "A conditional write to a versioned
 // bucket commits only if its condition held when it linked").
 
@@ -205,7 +205,7 @@ func (in *nullInit) inited() *olhInited {
 // landed, its pending attr left to expire. A completion that fails cancels
 // the modification (linkVersion). A head that is no OLH head when the
 // attempt has followed it takes the unversioned write's path. What the
-// guards leave unheld is in docs/exclusions.md, "A conditional write to a
+// guards leave unheld is in docs/differences.md, "A conditional write to a
 // versioned bucket commits only if its condition held when it linked".
 func (s *Store) writeNullVersion(ctx context.Context, hw *headWrite, x *indexOp, head *op.ObjectState, mtime time.Time) (headResult, error) {
 	idx := s.newOLHIndex(hw.rec, hw.key)

@@ -22,7 +22,7 @@ import (
 // marks with op.BeforeVerify. The policy language follows the configured
 // release; the checks outside it, the admin bypasses,
 // x-amz-expected-bucket-owner and RestrictPublicBuckets, are v20.2.4's on
-// both releases (docs/exclusions.md).
+// both releases (docs/differences.md).
 type Evaluator struct {
 	cfg         Config
 	sem         policy.Semantics
@@ -62,7 +62,7 @@ func (e *Evaluator) deniedAsGroupMember(ctx context.Context, id *op.Identity) er
 // s3:CreateBucket for a bucket created with object lock, an ACL other than
 // private or an x-amz-object-ownership, which op.CreateBucket authorizes
 // through VerifyUser on the new bucket. radosgw authorizes s3:CreateBucket
-// alone (docs/exclusions.md, "CreateBucket with object lock is authorized as
+// alone (docs/differences.md, "CreateBucket with object lock is authorized as
 // s3:PutBucketObjectLockConfiguration and s3:PutBucketVersioning too",
 // "CreateBucket with an ACL other than private is authorized as
 // s3:PutBucketAcl too" and "CreateBucket with x-amz-object-ownership is
@@ -151,7 +151,7 @@ func (e *Evaluator) VerifyBucket(ctx context.Context, r *op.Request, a policy.Ac
 // where Amazon S3 maps those ACL permissions to s3:PutBucketAcl and
 // s3:GetBucketAcl alone
 // (https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html#acl-access-policy-permission-mapping;
-// docs/exclusions.md, "No ACL grant authorizes the public access block's
+// docs/differences.md, "No ACL grant authorizes the public access block's
 // ops"). Every other step is VerifyBucket's.
 func (e *Evaluator) VerifyBucketOwnerOrPolicy(ctx context.Context, r *op.Request, a policy.Action, perm acl.Permission) error {
 	return e.verifyRequestBucket(ctx, r, a, perm, true)
@@ -402,7 +402,7 @@ func suspended(rec *op.BucketRecord) bool { return rec.Info.Flags&meta.BucketSus
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L598-L615 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L628-L645 at v20.2.4);
 // a public-access block that does not decode is refused the same way
-// (docs/exclusions.md). For an admin the failed policy or block is none. A
+// (docs/differences.md). For an admin the failed policy or block is none. A
 // suspended bucket refuses all but an admin (read_bucket_policy,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L366-L370 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L396-L400 at v20.2.4).
@@ -806,7 +806,7 @@ func bucketOwner(id identity, c *check) (ok bool, rule string) {
 // swift_perm, leaves it off
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1598-L1599 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1655-L1656 at v20.2.4;
-// docs/exclusions.md).
+// docs/differences.md).
 //
 // WRITE, which op_to_perm gives the object-scope writes of an object's
 // retention, legal hold, governance bypass, tags and restore, is granted to
@@ -814,7 +814,7 @@ func bucketOwner(id identity, c *check) (ok bool, rule string) {
 // object ACL's WRITE is "not applicable"
 // (https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html#acl-access-policy-permission-mapping),
 // where radosgw lets any grantee of it through, AllUsers' included
-// (docs/exclusions.md, "An object ACL's WRITE grant authorizes nothing but
+// (docs/differences.md, "An object ACL's WRITE grant authorizes nothing but
 // its owner's own requests"). The owner still needs the ACL's grant.
 func (e *Evaluator) objectACL(r *op.Request, id identity, c *check) (ok bool, rule string) {
 	if c.perm&acl.PermWrite != 0 && (id.IsAnonymous() || !id.IsOwnerOf(c.object.Owner.ID)) {

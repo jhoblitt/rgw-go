@@ -47,7 +47,7 @@ var _ = Describe("Parse", func() {
 		Entry("a conversion glibc does not know either", "1", "%q"),
 		Entry("a format ending in %", "1", "%H%"),
 	)
-	// docs/exclusions.md, "A date whose time names a conversion rgw-go does
+	// docs/differences.md, "A date whose time names a conversion rgw-go does
 	// not run is refused": glibc reads these.
 	DescribeTable("refuses a conversion outside its set, which glibc runs",
 		func(in, format string) {

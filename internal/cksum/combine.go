@@ -31,7 +31,7 @@ type Combiner interface {
 // V2|COMBINED|COMPOSITE. radosgw's CombinerFactory ignores the flags, and
 // its CRCCombiner keeps a single part's own flags, which lack V2
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.cc#L121-L155 at v20.2.4;
-// docs/exclusions.md).
+// docs/differences.md).
 //
 // Callers check t.Writable() first: an upload whose stored type rgw-go
 // cannot compute answers 501, while a part of another type answers 400, and

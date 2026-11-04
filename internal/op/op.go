@@ -65,7 +65,7 @@ type Op interface {
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L228-L239 at v20.2.4).
 // radosgw at v19.2.6 lets an admin through any error
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L228-L236);
-// docs/exclusions.md records the difference. Before any of it, Run refuses an
+// docs/differences.md records the difference. Before any of it, Run refuses an
 // Unverified identity unless o is the CORS preflight (RefuseUnverified).
 func Run(ctx context.Context, o Op, r *Request) error {
 	if err := RefuseUnverified(r.Identity, o.Name()); err != nil {

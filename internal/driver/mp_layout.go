@@ -139,7 +139,7 @@ const metaReadSize = 4 << 10
 // that, which only placement and storage-class names together past about
 // 4000 bytes make, is read again by the same op, up to
 // rgw_max_chunk_size as raw_obj_stat reads it, into a buffer that waits for
-// the budget as a transfer's first draw does (docs/exclusions.md, "Object
+// the budget as a transfer's first draw does (docs/differences.md, "Object
 // data buffers share one memory budget, sized from the Go memory limit").
 func (s *Store) readMeta(ctx context.Context, ref mpRef) (*metaState, error) {
 	st, data, err := s.readMetaOp(ctx, ref, metaReadSize)
@@ -194,7 +194,7 @@ func (s *Store) readMetaOp(ctx context.Context, ref mpRef, n uint64) (*metaState
 // upload was initiated; the destination placement it stores; its attrs. The
 // owner is decoded alone, as entryOwner decodes it; radosgw's ListParts
 // decodes the whole policy and answers -EIO for one that does not decode
-// (docs/exclusions.md, "ListParts names the owner of an ACL whose grants do
+// (docs/differences.md, "ListParts names the owner of an ACL whose grants do
 // not decode").
 func uploadFromMeta(rec *op.BucketRecord, key meta.ObjKey, uploadID string, st *metaState) *op.Upload {
 	ownerID, display := entryOwner(st.attrs)

@@ -207,7 +207,7 @@ func (s *Store) partWriter(m *meta.Manifest, pl partLayout, n uint32, incompress
 //
 // Unlike radosgw, which registers the part and then removes its objects
 // when the head write lost a race, rgw-go removes them and registers
-// nothing (docs/exclusions.md, "A part whose head write lost a race").
+// nothing (docs/differences.md, "A part whose head write lost a race").
 func (s *Store) registerPart(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, uploadID string, ref mpRef, n uint32, pr partResult, attrs map[string][]byte, mtime time.Time, pl partLayout) (time.Time, error) {
 	headObj := pr.m.StripeObj(n, 0)
 	stripe := meta.Stripe{Obj: headObj}
@@ -275,7 +275,7 @@ func (s *Store) registerPart(ctx context.Context, rec *op.BucketRecord, key meta
 // as the request spelled it
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_putobj_processor.cc#L534-L543),
 // which reaches the driver as an int and is printed in its canonical form
-// (docs/exclusions.md, "An upload without a v2 id keys a part by its
+// (docs/differences.md, "An upload without a v2 id keys a part by its
 // canonical number").
 func partKey(uploadID string, n uint32) string {
 	if meta.IsV2UploadID(uploadID) {
@@ -338,7 +338,7 @@ func (s *Store) removePartHead(ctx context.Context, rec *op.BucketRecord, key me
 // head's attrs; p.Mtime its mtime, zero for now. A part takes no write
 // conditions: Squid's MultipartObjectProcessor sets none, while Tentacle's
 // checks them against the part head the request has just created
-// (docs/exclusions.md, "UploadPart ignores If-Match and If-None-Match").
+// (docs/differences.md, "UploadPart ignores If-Match and If-None-Match").
 // p.Checksum is computed with its flags, which the op takes from the upload,
 // and a type rgw-go does not compute is refused before anything is read
 // (newChecksumSink).
@@ -384,7 +384,7 @@ func (s *Store) putPart(ctx context.Context, up *op.Upload, n int, body io.Reade
 // upload the caller read before the source, as get_info runs first. The
 // source is read from the one state src holds, where
 // radosgw prepares a read of the source again for each rgw_max_chunk_size
-// of the range (docs/exclusions.md, "UploadPartCopy reads one version of
+// of the range (docs/differences.md, "UploadPartCopy reads one version of
 // its source"). The decoded bytes take the upload's checksum type and
 // flags, as RGWPutObj::execute's filter takes them for a part whose request
 // names no algorithm

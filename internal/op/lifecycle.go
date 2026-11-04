@@ -81,7 +81,7 @@ func (o *GetBucketLifecycle) VerifyPermission(ctx context.Context, r *Request) e
 // An attr that decodes to no rule, which radosgw's PUT stores for a body
 // whose root is not LifecycleConfiguration, is 404
 // NoSuchLifecycleConfiguration too: radosgw answers it 200 with a
-// configuration holding no Rule, which S3 never holds (docs/exclusions.md).
+// configuration holding no Rule, which S3 never holds (docs/differences.md).
 func (o *GetBucketLifecycle) Execute(_ context.Context, r *Request) error {
 	b, ok := r.BucketRec.Attrs[AttrLC]
 	if !ok {
@@ -137,11 +137,11 @@ func (o *PutBucketLifecycle) VerifyPermission(ctx context.Context, r *Request) e
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2703-L2733 at v20.2.4),
 // in its order:
 //   - an indexless bucket is 405 MethodNotAllowed, as Tentacle refuses it;
-//     Squid stores a configuration its worker cannot list (docs/exclusions.md);
+//     Squid stores a configuration its worker cannot list (docs/differences.md);
 //   - a Content-MD5 that does not decode, or decodes to other than an MD5's
 //     16 bytes, is InvalidDigest, S3's answer and radosgw's PutObject's,
 //     where radosgw's PutBucketLifecycle answers BadDigest and compares 16
-//     bytes of whatever length it decodes to (docs/exclusions.md);
+//     bytes of whatever length it decodes to (docs/differences.md);
 //   - the body, as ReadParamBody reads it, then BadDigest for a body whose
 //     MD5 is not the Content-MD5;
 //   - lifecycle.Parse under rgw_lc_max_rules, its refusals 400
@@ -150,7 +150,7 @@ func (o *PutBucketLifecycle) VerifyPermission(ctx context.Context, r *Request) e
 //   - the configuration's encoding set over the bucket as the attr alone
 //     through retryBucketWrite, which authorizes each retry again, where
 //     radosgw makes one attempt and fails the request on a lost race
-//     (docs/exclusions.md);
+//     (docs/differences.md);
 //   - the bucket's lifecycle entry, set under its shard's lock. When the
 //     lock cannot be taken the attr stays, as in radosgw, and the request
 //     fails with the lock's error: 503 ServiceUnavailable for EBUSY.

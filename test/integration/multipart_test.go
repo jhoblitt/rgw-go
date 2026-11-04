@@ -620,7 +620,7 @@ var _ = Describe("the multipart oracle against radosgw and radosgw-admin", Order
 			// An upload a Tentacle radosgw began with a checksum algorithm
 			// keeps it through rgw-go, whose completion combines the parts'
 			// checksums into the object's as radosgw's does
-			// (docs/exclusions.md, "Client checksums are ignored until phase
+			// (docs/differences.md, "Client checksums are ignored until phase
 			// 2" and "A multipart upload's combined CRC follows its checksum
 			// type"), so the object's record is the one radosgw stores when it
 			// completes a twin of the same parts itself. rgw-go's S3 handler

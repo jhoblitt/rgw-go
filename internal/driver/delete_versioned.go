@@ -64,7 +64,7 @@ func (s *Store) deleteVersioned(ctx context.Context, rec *op.BucketRecord, key m
 // read without following it, the OLH head object, as radosgw's are
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5882-L5897 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6494-L6509 at v20.2.4;
-// docs/exclusions.md, "A conditional delete marker is checked against the
+// docs/differences.md, "A conditional delete marker is checked against the
 // version current when it links").
 //
 // On a suspended bucket p.Expect is the null version the null marker
@@ -230,7 +230,7 @@ func headNullData(head *op.ObjectState, p op.DeleteParams) bool {
 // (getInstanceEntry), so for "null" on a converted key the conditions and the
 // result's DeleteMarker are the null version's, its data or its delete
 // marker. radosgw's bi_get_instance reads the plain key alone, there the
-// version marker, whose meta is empty (docs/exclusions.md, "A versioned
+// version marker, whose meta is empty (docs/differences.md, "A versioned
 // delete of versionId=null checks the null version itself").
 //
 // p.Expect is the version as its caller read it (expectRemoval), checked

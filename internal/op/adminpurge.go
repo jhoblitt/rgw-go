@@ -41,7 +41,7 @@ func PurgeBucket(ctx context.Context, env *Env, rec *BucketRecord) error {
 // delete no object-lock check
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L148-L161 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L149-L162 at v20.2.4;
-// docs/exclusions.md, "Admin removals ignore object lock").
+// docs/differences.md, "Admin removals ignore object lock").
 //
 // On a bucket whose flags hold BUCKET_VERSIONED each entry is deleted by
 // its exact version, so the pass writes no delete marker: an entry listed
@@ -57,7 +57,7 @@ func PurgeBucket(ctx context.Context, env *Env, rec *BucketRecord) error {
 // the page deleted last, and a marker whose version is gone starts past the
 // rest of its name (ListObjectsResult.NextMarkerInstance), so paging by it
 // would leave those versions behind, as radosgw's purge does
-// (docs/exclusions.md, "A purging removal resumes each page of a versioned
+// (docs/differences.md, "A purging removal resumes each page of a versioned
 // bucket at its last key's remaining versions"). Two pages in a row that
 // delete nothing and start at the same entry are a key holding more
 // versions the pass cannot remove than a page, and the next page starts
@@ -154,7 +154,7 @@ func RemoveBucketBypassGC(ctx context.Context, env *Env, rec *BucketRecord) erro
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L366-L369 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L383-L386 at v20.2.4);
 // rgw-go knows no other zonegroup to leave them to, and the RADOS store
-// refuses the removal (docs/exclusions.md).
+// refuses the removal (docs/differences.md).
 func refuseForeignPurge(env *Env, rec *BucketRecord) error {
 	if env.Zone.ZoneGroup().Equals(rec.Info.Zonegroup) {
 		return nil

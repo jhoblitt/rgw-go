@@ -64,7 +64,7 @@ func identityPolicies(id *op.Identity, r denc.Release) ([]*policy.Policy, error)
 // policy does not parse
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L598-L615 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L628-L645 at v20.2.4;
-// docs/exclusions.md).
+// docs/differences.md).
 func publicAccess(rec *op.BucketRecord) (*acl.PublicAccessBlock, error) {
 	if rec == nil {
 		return nil, nil

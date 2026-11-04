@@ -10,7 +10,7 @@ import (
 // mark RGWPolicy's checked_vars keeps for each field a condition, or the
 // caller, has checked. Names match in any ASCII case, as radosgw's
 // ltstr_nocase maps match them, but over all their bytes, where strcasecmp
-// ends a name at a NUL (docs/exclusions.md, "POST policy names are compared
+// ends a name at a NUL (docs/differences.md, "POST policy names are compared
 // over all their bytes"). The zero Env is empty and ready to use.
 type Env struct {
 	vars    map[string]*envVar
@@ -97,7 +97,7 @@ func (e *Env) unchecked() (string, bool) {
 // checksumField is rgw::cksum::is_checksum_hdr
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L318-L334 at v20.2.4),
 // whose fields Tentacle's match_policy_vars excepts and rgw-go excepts on
-// both releases (docs/exclusions.md, "A POST policy needs no condition for a
+// both releases (docs/differences.md, "A POST policy needs no condition for a
 // checksum field"): x-amz-checksum-algorithm, or x-amz-checksum- followed
 // by an algorithm's name in any case, each prefix in lower case as Tentacle
 // matches it. The names are cksum.ParseName's, Tentacle's and main's

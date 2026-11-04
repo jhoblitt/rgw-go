@@ -114,7 +114,7 @@ func lookupFailed(lookup string, err error) error {
 // acl.ErrTooManyGrants in an *acl.ParseError carrying radosgw's message; a
 // public policy on a bucket whose public-access block sets BlockPublicAcls
 // is op.ErrAccessDenied. A block that does not decode blocks, where radosgw
-// takes it for none (docs/exclusions.md). Its errors are returned as acl
+// takes it for none (docs/differences.md). Its errors are returned as acl
 // makes them, some holding a request header's text, so a caller maps them
 // through ErrorFor before rendering.
 func (e *Evaluator) BuildACL(ctx context.Context, r *op.Request, res acl.Resolver, existing acl.Policy, body []byte, object bool) (acl.Policy, error) {
