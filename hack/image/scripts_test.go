@@ -304,6 +304,45 @@ var _ = Describe("the builder scripts", func() {
 		))
 	})
 
+	DescribeTable("check.sh mounts the ceph clone read-only at its path and names it to the check",
+		func(ctx SpecContext, named bool) {
+			home := GinkgoT().TempDir()
+			ceph := filepath.Join(home, "github", "ceph")
+			Expect(os.MkdirAll(ceph, 0o750)).To(Succeed())
+			env := []string{"HOME=" + home}
+			if named {
+				ceph = GinkgoT().TempDir()
+				env = append(env, "CITECHECK_CEPH="+ceph)
+			}
+			ceph, err := filepath.EvalSymlinks(ceph)
+			Expect(err).NotTo(HaveOccurred())
+			w.have(builderRef("tentacle"))
+			_, stderr, err := w.run(ctx, checkout(), env, "check.sh", "lint")
+			Expect(err).NotTo(HaveOccurred(), stderr)
+			Expect(w.runCall()).To(ContainElements(ceph+":"+ceph+":ro", "CITECHECK_CEPH="+ceph))
+		},
+		Entry("$HOME/github/ceph when CITECHECK_CEPH is unset", false),
+		Entry("CITECHECK_CEPH's over $HOME/github/ceph", true),
+	)
+
+	DescribeTable("check.sh mounts and names no clone when CITECHECK_CEPH is unset and",
+		func(ctx SpecContext, hasHome bool) {
+			w.env = slices.DeleteFunc(w.env, func(e string) bool { return strings.HasPrefix(e, "HOME=") })
+			if hasHome {
+				w.env = append(w.env, "HOME="+GinkgoT().TempDir())
+			}
+			w.have(builderRef("tentacle"))
+			_, stderr, err := w.run(ctx, checkout(), nil, "check.sh", "lint")
+			Expect(err).NotTo(HaveOccurred(), stderr)
+			Expect(w.runCall()).To(SatisfyAll(
+				Not(ContainElement(HaveSuffix(":ro"))),
+				Not(ContainElement(HavePrefix("CITECHECK_CEPH="))),
+			))
+		},
+		Entry("HOME is unset", false),
+		Entry("$HOME/github/ceph does not exist", true),
+	)
+
 	It("run.sh refuses to run from outside the checkout before it touches the engine", func(ctx SpecContext) {
 		_, stderr, err := w.run(ctx, w.dir, nil, "run.sh", "--", "tentacle", "true")
 		Expect(err).To(HaveOccurred())

@@ -112,6 +112,55 @@ var _ = Describe("Run", func() {
 		Expect(run(ctx, "--config", cfg, markdown("plan.md", holding))).To(Equal(0))
 	})
 
+	It("reads the clone from $HOME/github/ceph when nothing names one", func(ctx SpecContext) {
+		home := GinkgoT().TempDir()
+		Expect(os.Mkdir(filepath.Join(home, "github"), 0o750)).To(Succeed())
+		Expect(os.Symlink(ceph.dir, filepath.Join(home, "github", "ceph"))).To(Succeed())
+		GinkgoT().Setenv("HOME", home)
+		GinkgoT().Setenv("CITECHECK_CEPH", "")
+		Expect(run(ctx, markdown("plan.md", holding))).To(Equal(0))
+		Expect(stdout.String()).To(Equal("citations checked: 2, failed: 0\n"))
+	})
+
+	Describe("with no home directory, and so no default clone", func() {
+		const noCeph = "no clone of ceph/ceph is named: name one with --ceph or CITECHECK_CEPH; " +
+			"the default, $HOME/github/ceph, needs a home directory"
+
+		BeforeEach(func() {
+			GinkgoT().Setenv("HOME", "")
+			GinkgoT().Setenv("CITECHECK_CEPH", "")
+		})
+
+		DescribeTable("refuses a run that needs the clone, with status 2, before it prints anything",
+			func(ctx SpecContext, args ...string) {
+				err := citecheck.Run(ctx, append(args, markdown("plan.md", holding)), nil, stdout, stderr)
+				Expect(citecheck.ExitStatus(err)).To(Equal(2))
+				Expect(err).To(MatchError(noCeph))
+				Expect(stdout.String()).To(BeEmpty())
+			},
+			Entry("a check"),
+			Entry("--fix", "--fix"),
+			Entry("--content", "--content"),
+		)
+
+		It("refuses the files command, with status 2", func(ctx SpecContext) {
+			out := filepath.Join(GinkgoT().TempDir(), "cephfiles.txt")
+			err := citecheck.Run(ctx, []string{"files", "--out", out, "v1.0.0"}, nil, stdout, stderr)
+			Expect(citecheck.ExitStatus(err)).To(Equal(2))
+			Expect(err).To(MatchError(noCeph))
+			Expect(out).NotTo(BeAnExistingFile())
+		})
+
+		It("runs --form-only, which needs no clone", func(ctx SpecContext) {
+			Expect(run(ctx, "--form-only", markdown("plan.md", holding))).To(Equal(0))
+			Expect(stdout.String()).To(Equal("citations checked: 2, failed: 0\n"))
+		})
+
+		It("reads the clone --ceph names", func(ctx SpecContext) {
+			Expect(run(ctx, "--ceph", ceph.dir, markdown("plan.md", holding))).To(Equal(0))
+		})
+	})
+
 	It("reads none of the RGW_GO_ settings meant for rgw-go", func(ctx SpecContext) {
 		GinkgoT().Setenv("CITECHECK_CEPH", ceph.dir)
 		GinkgoT().Setenv("RGW_GO_CEPH_SRC", GinkgoT().TempDir())

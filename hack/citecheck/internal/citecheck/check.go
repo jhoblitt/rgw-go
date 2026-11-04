@@ -45,8 +45,12 @@ type object struct {
 
 // NewChecker returns a Checker reading the git repository dir, which must be
 // one, and not a partial clone: git cat-file fetches an object a partial
-// clone lacks from its promisor remote and writes it into the clone.
+// clone lacks from its promisor remote and writes it into the clone. An empty
+// dir is refused, since git -C "" reads the working directory's repository.
 func NewChecker(ctx context.Context, dir string) (*Checker, error) {
+	if dir == "" {
+		return nil, errNoCeph
+	}
 	if _, err := git(ctx, dir, nil, "rev-parse", "--git-dir"); err != nil {
 		return nil, fmt.Errorf("%s is not a git repository: %w", dir, err)
 	}

@@ -12,7 +12,7 @@ set -euo pipefail
 image_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 readonly image_dir
 
-ceph=${CITECHECK_CEPH:-/home/jhoblitt/github/ceph}
+ceph=${CITECHECK_CEPH:-${HOME:+${HOME}/github/ceph}}
 mounts=()
 if [[ -d "${ceph}" ]]; then
 	ceph=$(cd "${ceph}" && pwd -P)

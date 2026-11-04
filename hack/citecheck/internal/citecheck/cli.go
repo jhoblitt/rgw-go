@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -17,9 +18,21 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/version"
 )
 
-// defaultCeph is the clone of ceph/ceph citations are checked against when
-// neither --ceph, CITECHECK_CEPH nor the config file names one.
-const defaultCeph = "/home/jhoblitt/github/ceph"
+// defaultCeph returns the clone of ceph/ceph citations are checked against
+// when neither --ceph, CITECHECK_CEPH nor the config file names one,
+// $HOME/github/ceph, or "" when there is no home directory, so that a run
+// that needs the clone is refused until one is named.
+func defaultCeph() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, "github", "ceph")
+}
+
+// errNoCeph is NewChecker's error when it is named no clone.
+var errNoCeph = errors.New("no clone of ceph/ceph is named: name one with --ceph or CITECHECK_CEPH; " +
+	"the default, $HOME/github/ceph, needs a home directory")
 
 // errFailed is Run's error when a citation does not hold, errClaimsFailed
 // when a registry's claim about ceph main names no main commit,
@@ -115,7 +128,7 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	pf.String("log-level", "info", "log level: debug, info, warn, or error (CITECHECK_LOG_LEVEL)")
 	pf.String("log-format", "json", "log format: json or text (CITECHECK_LOG_FORMAT)")
 	f := cmd.Flags()
-	f.String("ceph", defaultCeph, "the clone of ceph/ceph to check against (CITECHECK_CEPH)")
+	f.String("ceph", defaultCeph(), "the clone of ceph/ceph to check against (CITECHECK_CEPH)")
 	f.Bool("fix", false, "rewrite each code span citation that holds, and each plain citation in a Go comment that resolves, "+
 		"into a link, in place (CITECHECK_FIX)")
 	f.Bool("form-only", false, "check only the citations' form, without a clone (CITECHECK_FORM_ONLY)")
@@ -147,7 +160,7 @@ func newFilesCmd(v *viper.Viper) *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.String("ceph", defaultCeph, "the clone of ceph/ceph to list (CITECHECK_CEPH)")
+	f.String("ceph", defaultCeph(), "the clone of ceph/ceph to list (CITECHECK_CEPH)")
 	f.String("out", "", "the file to write the list into")
 	f.String("check", "", "the list to check against the clone, which is left as it is")
 	cmd.MarkFlagsMutuallyExclusive("out", "check")
