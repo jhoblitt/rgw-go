@@ -1,30 +1,22 @@
-# Excluded features
+# Differences from radosgw
 
-Status: draft, 2026-09-25, revised the same day after review by the rgw-rs
-session and further decisions (D3N excluded; bucket notifications kept
-with Kafka and AMQP delivery excluded, sized against Rook's integration
-tests). Companion to the design spec, which is not yet written. Everything
-under "Excluded" was decided in the rgw-go design session. Every claim
-about C++ behavior below was checked against ceph/ceph main at
-e234256339f, and its claims about main again at 8aa24c51928 (2026-10-30),
-and, where a release is named, against the v19.2.3 tag.
+This document records every behaviour in which rgw-go answers or acts
+differently from radosgw within a feature it implements, each with its
+evidence, and the obligations that sharing a zone with radosgw and
+radosgw-admin places on every feature in scope. A feature rgw-go will
+not implement at all is in [docs/exclusions.md](exclusions.md), and an
+entry here that depends on one of those exclusions names it there.
 
-Since 2026-09-25 this document is also the canonical feature set for
-rgw-rs, which tracks it instead of keeping its own list. A material change
+It was split out of docs/exclusions.md on 2026-11-04, and its claims
+about C++ behavior were checked as that document's status line says.
+Like docs/exclusions.md, it is canonical for rgw-rs: a material change
 here is announced to the rgw-rs session when it is made.
 
-## The goal this list serves
+## The feature level
 
-rgw-go is a Go reimplementation of Ceph RGW. Its goal is to be a drop-in
-replacement for C++ RGW in a Rook cluster running Squid or Tentacle:
-bit-compatible with RGW's RADOS layout, able to coexist with radosgw on the
-same zone during a rolling replacement or rollback, administered by the
-unmodified radosgw-admin, and benchmarked against C++ RGW and rgw-rs.
-Priorities, in order: performance, then scalability, then a compact and
-maintainable code base. The Ceph version floor is Squid 19.2.7 or Tentacle
-20.2.4 for every daemon, OSDs and any radosgw on the zone included; data
-written by any earlier release is still decoded (design spec, section 3).
-The feature level is Tentacle radosgw wherever a feature is gateway-side.
+rgw-go's goal is set out in docs/exclusions.md, "The goal this list serves",
+and with it the feature level: Tentacle radosgw wherever a feature is
+gateway-side.
 That principle has a precise form, decided 2026-09-25 and refined the same
 day with the rgw-rs session, which splits by layer:
 
@@ -79,440 +71,12 @@ when its persistent form is a separate attribute, as S3 checksums are,
 and unavailable when it is a field of a struct that the cluster's radosgw
 would re-encode without it, as bucket logging is.
 
-The acceptance criterion for "drop-in" is explicit: rgw-go, installed in
-the derived Ceph image, passes Rook's object integration suite,
-`TestCephObjectSuite`, in both of its passes, with and without TLS,
-against the current Rook main. That suite runs one shared store of Rook's
-"zoned" shape, a single zone declared through CephObjectRealm,
-CephObjectZoneGroup and CephObjectZone resources with shared pools mapped
-as RADOS namespaces, plus one classic store for the dependents test. Its
-packages are: bucket lifecycle, owner, policy, quota and read-write
-through ObjectBucketClaims; COSI provisioning; store deletion blocked by
-dependents; bucket notifications to an HTTP endpoint; Kafka topic
-configuration; user capabilities, keys and op mask; and the zone-pool
-canary. Excluded from the criterion: any multi-zone sync test, of which
-the current suite has none, and the keystone suite, since Keystone is
-excluded. The helm and upgrade suites test Rook rather than the gateway
-and are not part of the gate.
-
-## How an exclusion is decided
-
-Three tests, applied in order. A feature is excluded when it passes the
-first two and the third can be satisfied.
-
-1. It is off the hot path and does not change what the benchmark measures.
-2. It either has a supported external substitute, or it is an integration
-   with an external system that brings its own client library and auth
-   model.
-3. Its absence is safe on a shared zone. Every exclusion below carries a
-   "Still required" line: what rgw-go must do so that data radosgw wrote
-   using the feature is never misread, served incorrectly, or corrupted.
-
-Multisite, the drivers, Swift and Lua were excluded in the project brief.
-The rest were proposed during design and approved.
-
-## Excluded
-
-### Multisite
-
-What: zone-to-zone sync, the sync coroutine framework, sync modules
-(elasticsearch metasearch, cloud sync, archive), realm and period push,
-`/admin/log`, `/admin/realm` period POST, the admin Sync_Bucket op, and the
-S3 bucket replication configuration.
-
-Why: it needs two or more zones; rgw-rs's findings sized it at roughly
-41k lines across the RGW root and the RADOS driver and identified it as
-the one part of RGW whose async model does not map onto a straightforward
-port. It has no effect on a single-zone data path.
-
-Still required: read the realm, zonegroup, zone and period metadata,
-because Rook creates all of them for every object store, and serve a
-single zone that Rook declared through its realm, zonegroup and zone
-resources exactly as one it declared in the store spec, since the
-integration suite's shared store has that shape; honor
-`rgw_run_sync_thread`, which Rook sets to true by default and to false
-only when the store sets `disableMultisiteSyncTraffic` (rook config.go:256-258),
-though a single zone has nothing to sync either way; serve the read-only realm
-and period getters and `/admin/config?type=zone`, because the Ceph
-dashboard calls them; write none of the sync logs. That last point is
-safe because radosgw itself does not write them in a Rook cluster: the
-data and bucket-index logs are gated on the zone's `log_data` flag, which
-zone creation sets only when the zonegroup has more than one zone, and
-the metadata log is gated on being the metadata master with bucket
-metadata sync enabled. The replication subresource answers with the
-not-found error radosgw returns when no configuration exists, and rejects
-writes. Adding a second zone to a cluster served by rgw-go is unsupported.
-So rgw-go's lifecycle transition does not reproduce radosgw's choice to
-keep a transition out of the bucket-index log where every zone of the
-zonegroup runs lifecycle itself, `zonegroup_lc_check`
-([rgw_lc.cc:579-599](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L579-L599),
-[rgw_lc.cc:587-606](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L587-L606)),
-which decides its `FLAG_LOG_OP`
-([rgw_lc.cc:1513-1514](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1513-L1514),
-[rgw_lc.cc:1559-1560](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1559-L1560)):
-its index change is logged as any write's is, which in a single zone is not
-at all.
-
-radosgw also keeps an in-memory tombstone cache of deleted objects' mtimes,
-zone short ids and placement group versions (`rgw_obj_tombstone_cache_size`)
-for multi-zone data sync, which reads it through the state
-`get_obj_state_impl` gives a missing object
-(`driver/rados/rgw_rados.cc:6153-6165` at v19.2.6, `:6911` at v20.2.4), and
-builds it only when another zone syncs from its zone (`driver/rados/rgw_rados.cc:1343-1346` at v19.2.6,
-`:1332-1335` at v20.2.4). rgw-go
-never builds it, which is what radosgw does on every single-zone
-deployment.
-
-### Every storage driver except RADOS
-
-What: D4N, POSIX, and by extension dbstore, DAOS and Motr.
-
-Why: the goal is bit-compatibility with RGW's RADOS layout, which is one
-driver. A storage abstraction exists only so the op layer can be tested
-without a cluster.
-
-Still required: nothing; no data is affected.
-
-### Swift API and Swift authentication
-
-What: the Swift protocol, Swift auth, and the Swift entries in
-`rgw_enable_apis`.
-
-Why: a separate protocol, sized at 5.7k lines by rgw-rs, off the S3 path.
-Rook's probes are HTTP requests to the S3 endpoint root whenever S3 is
-enabled and do not depend on it.
-
-Still required: accept `rgw_enable_apis` values containing swift and
-swift_auth -- radosgw's own default enables them, and Rook writes the
-option only when the store sets `protocols.enableAPIs` or disables S3
-(rook spec.go:1162-1183) -- and ignore them with one log
-line at startup. Subusers and their Swift keys remain in the user model
-and the admin API because they are part of the user metadata, not
-because any Swift request is served. One piece of Swift state outlives
-the API: objects written through Swift with `X-Delete-At` carry a
-delete-at xattr that only the Swift path sets, and radosgw's object
-expirer worker deletes them on schedule from hint shards in the log pool.
-rgw-go does not run that worker. It would need the timeindex object
-class, which nothing else in scope uses, and the pass has an external
-substitute in `radosgw-admin objects expire`. rgw-go treats the delete-at
-xattr as opaque metadata: preserved on copy, never acted on.
-
-Objects written through Swift as dynamic or static large objects carry
-`user.rgw.user_manifest` or `user.rgw.slo_manifest`, and radosgw composes
-them from their segments even on an S3 GET or HEAD. rgw-go does not: it
-answers 501 NotImplemented on GET and HEAD rather than serve the manifest
-object itself as the data. Such objects exist only where a client wrote
-them through Swift.
-
-### Lua scripting
-
-What: request and background Lua scripts.
-
-Why: excluded in the brief; a bounded addition later if ever wanted.
-
-Still required: nothing.
-
-### S3 Select
-
-What: the `?select` object subresource and the SQL engine behind it.
-
-Why: a SQL query engine maintained as its own component; off the data
-path; large.
-
-Still required: return the error radosgw returns when the feature is
-disabled.
-
-### S3 Vectors and object dedup
-
-What: the S3 Vectors API and the dedup subsystem with `/admin/dedup`.
-
-Why: both are newer than Squid, experimental, and S3 Vectors is Rust in
-the Ceph tree.
-
-Still required: nothing on Squid. On Tentacle, dedup-managed objects are
-ordinary RADOS objects with shared tails; the refcount protocol already
-required for copy handles them.
-
-### Cloud transition and restore
-
-What: lifecycle transitions to a cloud tier, RestoreObject,
-`/admin/restore`, and the expiry of restored copies that v20.2.4's
-lifecycle worker runs after each pass
-([rgw_lc.cc:2079-2083](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2079-L2083)).
-
-Why: needs a remote cloud endpoint. Storage-class transitions inside the
-cluster are not excluded.
-
-Still required: an object whose manifest says its data lives in a cloud
-tier must be reported as such and never served as if it were local.
-
-rgw-go does so as radosgw does: a cloud-tiered object answers 403
-InvalidObjectState on GET, with the headers alone on HEAD, and on Tentacle
-a restored copy is served and a restore in progress answers 400
-RequestTimeout. One case differs: where a Tentacle tier allows
-read-through, radosgw starts a restore from the cloud and answers 400
-RequestTimeout ("restore is still in progress"), while rgw-go, which runs
-no restore, answers the 403 ("Object read differences", "Cloud
-read-through").
-
-### Keystone and LDAP authentication
-
-What: the Keystone and LDAP auth engines, and by extension the STS Lite
-variants of GetSessionToken that rely on them.
-
-Why: external identity systems with their own clients and token caches.
-
-Still required: nothing; local users, accounts, roles and OIDC providers
-are in scope.
-
-### Key management: SSE-KMS and SSE-S3 with every backend
-
-What: SSE-KMS and SSE-S3 with the Vault, Barbican, KMIP and testing
-backends, and the `rgw_crypt_default_encryption_key` option.
-
-Why: every backend is an external key server. In RGW, SSE-S3 is not a
-local mode: the code requires the SSE-S3 backend to be Vault, so excluding
-key servers necessarily excludes SSE-S3. The encryption that is on the hot
-path, AES-256-CBC in RGW's chunked format, stays with SSE-C.
-
-Still required, and these three hold the exclusion together:
-
-1. SSE-C is implemented in phase 4, byte-compatible with RGW's scheme,
-   so that objects radosgw wrote with a customer key decrypt. Until then
-   rgw-go answers SSE-C reads and writes with 501, so it neither stores in
-   the clear what a client asked to have encrypted nor serves ciphertext.
-2. The three bucket-encryption configuration ops behave as a radosgw
-   with no backend configured, and any use of `aws:kms` or `AES256`
-   fails with radosgw's error. A configuration is stored in radosgw's
-   `RGWBucketEncryptionConfig` bytes, and one radosgw stored is read as
-   stored, but not every document round-trips: PutBucketEncryption
-   refuses with 400 MalformedXML a document outside S3's schema, an
-   `SSEAlgorithm` outside AWS's list, and a `KMSMasterKeyID` beside an
-   algorithm other than `aws:kms` or `aws:kms:dsse`, all of which
-   radosgw stores ("A PutBucketEncryption document is held to S3's
-   schema and AWS's values"), and GetBucketEncryption writes a bucket
-   key as `true` where radosgw writes `True` ("GetBucketEncryption
-   writes BucketKeyEnabled as true").
-3. Objects radosgw encrypted with a key server carry a crypt-mode xattr.
-   rgw-go reads it and refuses with the error radosgw gives when its
-   backend is unavailable. Ciphertext is never served as plaintext.
-
-Costs accepted: the s3-tests encryption groups that use the testing
-backend are skipped, and Rook's `security.kms` and `security.s3` object
-store settings have no effect.
-
-### Dynamic resharding worker
-
-What: the background worker that scans bucket stats, decides a bucket
-needs resharding, and executes the reshard.
-
-Why: off the hot path; roughly 1.4k lines in Squid and 2k in main at
-8aa24c51928; fully substitutable by `radosgw-admin bucket reshard` and
-`radosgw-admin reshard process`, which Rook's toolbox already ships.
-
-Still required, and this is not optional: the reshard protocol on the
-data path. The OSD does not enforce it by itself on Squid. radosgw
-prepends a guard call to bucket_prepare_op and bucket_complete_op,
-including the index completion manager's retry of a failed completion,
-and to the OLH ops link_olh, unlink_instance, trim_olh_log and clear_olh,
-on every release. A Tentacle radosgw also guards the dir_suggest_changes
-it sends while listing; a Squid radosgw sends that op unguarded. No
-release guards bucket_set_tag_timeout, index init, or index check and
-rebuild. On Squid the guard fails with the busy-resharding error whenever
-the shard header's reshard status is anything other than not-resharding.
-rgw-go prepends the guard exactly where radosgw of the same release does,
-and on the busy-resharding error re-reads the bucket instance's index
-layout and retries. From v20.2.0 the object class additionally enforces
-the guard on its own index writes and can answer busy-resharding even
-when the client sends no guard op; rgw-go still sends the guard and
-decodes the added log-record status value and the header's log-entry
-count. Squid's
-class lacks the newer index methods that main's radosgw (8aa24c51928)
-probes for (`bucket_init_index2`, `bucket_refresh_instance`,
-`bi_put_entries`, `reshard_log_trim`), so rgw-go uses the original index-init method and
-never calls the other three on Squid. rgw-go logs a warning at startup
-when dynamic resharding is enabled in config.
-
-When an interrupted reshard has left a bucket index flagged as resharding,
-radosgw's write path takes the bucket's reshard lock and, finding no
-reshard running, clears the flag itself. rgw-go does not take that lock:
-its writes wait and retry, and answer 500 once their retries run out,
-until an operator runs `radosgw-admin reshard cancel`. While it waits,
-radosgw also reads the bucket again after each failed attempt on that lock
-and polls the shard the bucket then names; rgw-go polls the shard that
-refused the write until that shard is gone or no longer reads as
-resharding. A Tentacle radosgw also runs that recovery from a guarded
-index write while a reshard is in its log-record phase, once the bucket
-layout's `judge_reshard_lock_time` is older than
-`rgw_reshard_progress_judge_interval`, an interval it stretches at random
-by up to `rgw_reshard_progress_judge_ratio`
-(`check_reshard_logrecord_status`, `driver/rados/rgw_rados.cc:8631-8655`
-at v20.2.4); rgw-go does not, so such a bucket's writes go on until its
-reshard log reaches `rgw_reshardlog_threshold` and then wait as above.
-
-An index write that a reshard keeps refusing is bounded in rgw-go: it sends
-the bucket-index prepare or completion at most ten times while the shard
-refuses it as resharding, and starts that count over only when the bucket,
-read again after a wait, names another shard object. When one shard refuses
-the operation ten times although its reshard status reads as finished after
-each refusal, rgw-go answers 500 UnknownError. A Squid radosgw starts the
-count over after each such wait and re-sends with no bound
-(`docs/ceph-upstream-bugs.md`, "Squid's cls_rgw reshard guard and Squid's
-radosgw reshard wait disagree, so guard_reshard spins without waiting").
-
-An index call that finds its shard gone, because a reshard committed after
-the shard was found and removed the old index, is retried on both releases.
-rgw-go reads the bucket instance again and, when the instance now puts the
-object on another shard, sends the call there within the same ten calls,
-without starting the count over. A v19.2.7 radosgw retries that ENOENT too,
-but sends the call again whatever shard the instance names, up to ten times
-([rgw_rados.cc:7225-7230](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7225-L7230),
-[rgw_rados.cc:7929-7933](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7929-L7933), the bound at
-[rgw_rados.cc:7216](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7216)); rgw-go answers the
-ENOENT at once when the instance names the same shard, so such a write
-answers 404 NoSuchKey after one call where v19.2.7's answers it after ten.
-A v20.2.4 radosgw does not retry, and the write answers 404 NoSuchKey
-([rgw_rados.cc:7888-7891](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7888-L7891);
-`docs/ceph-upstream-bugs.md`, "radosgw fails a write whose bucket was
-resharded since the request read it"); on Tentacle rgw-go takes v19.2.7's
-fix all the same (decided 2026-10-13). The retry covers the prepare and the
-completion worker's re-send of a completion or cancel that a reshard
-refused, as v19.2.7's does. The first send of a completion or cancel, which
-the write does not wait for, is dropped when it meets a missing shard, as
-radosgw of either release drops it
-([rgw_rados.cc:1011-1017](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L1011-L1017),
-[rgw_rados.cc:1052-1058](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1052-L1058)), and its pending
-entry is left for listing to reconcile. rgw-go reads the instance again
-from RADOS, past its metadata cache, after a missing shard and after a
-reshard wait alike, where radosgw answers the read from its bucket info
-cache when that holds the instance
-([svc_bucket_sobj.cc:281-299](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_bucket_sobj.cc#L281-L299),
-[svc_bucket_sobj.cc:232-250](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bucket_sobj.cc#L232-L250)), which the
-reshard's notify may not have reached.
-
-After a reshard wait rgw-go reads the bucket instance again by its id, where
-radosgw reads the bucket again by tenant and name. A bucket removed while the
-write waits is 404 NoSuchKey from both. When a bucket of the same name is
-created in that time, rgw-go answers 404 NoSuchKey, since the old instance is
-gone, and radosgw writes into the new bucket's index
-(`docs/ceph-upstream-bugs.md`, "radosgw re-reads a resharding bucket by name,
-so a write can land in a bucket recreated under that name").
-
-radosgw's quota sync threads also check each bucket whose stats they write
-to its owner, and with `rgw_dynamic_resharding` set queue one past the
-per-shard threshold for resharding (`check_bucket_shards`,
-`rgw_quota.cc:596` at v19.2.6 and `:617` at v20.2.4, `rgw_user.cc:44` at
-both; `driver/rados/rgw_rados.cc:10523-10582` at v19.2.6). rgw-go's sync
-workers write the same stats and check nothing, so a bucket that only
-rgw-go writes to is queued by a coexisting radosgw's checks or an
-operator's `radosgw-admin bucket reshard`.
-
-Cost accepted: buckets that grow past the per-shard threshold list more
-slowly until an operator reshards them.
-
-### librgw, NFS and SMB
-
-What: the library form of RGW and the file gateways built on it.
-
-Why: not the S3 daemon.
-
-Still required: nothing.
-
-### QAT and UADK hardware offload
-
-What: compression and crypto offload plugins.
-
-Why: hardware-specific; the software codecs and crypto are in scope.
-
-Still required: nothing; on-disk formats do not depend on the accelerator.
-
-### D3N local read cache
-
-What: the per-gateway cache of RADOS reads on local storage.
-
-Why: a cache between the gateway and RADOS changes what the benchmark
-measures unless it is disabled on both sides, and upstream marks it
-experimental. It carries no on-disk state.
-
-Still required: nothing. Benchmarks run radosgw with
-`rgw_d3n_l1_local_datacache_enabled = false`.
-
-### Kafka and AMQP delivery
-
-What: delivering notification events to Kafka and AMQP endpoints. The
-rest of the notification subsystem is in scope; see "Explicitly not
-excluded".
-
-Why: external message brokers with their own client libraries and auth
-models, the same test as key servers, and roughly 2.1k lines of C++
-between them. Rook's own Kafka integration test stops at the RGW
-boundary: it configures topics with a Kafka URI and basic-auth
-attributes, reads them back, updates and deletes them, and never runs a
-broker.
-
-Still required: topics with Kafka and AMQP endpoint URIs are accepted,
-validated and stored exactly as radosgw stores them, with their endpoint
-attributes, so that CreateTopic, GetTopicAttributes, SetTopicAttributes
-and DeleteTopic round-trip and radosgw-admin's topic commands read them.
-Non-persistent Kafka and AMQP topics drop their events with a log line,
-which is radosgw's behavior when delivery fails. Persistent Kafka and
-AMQP topics are created and enqueued exactly as any other persistent
-topic, so that radosgw's deliverer and radosgw-admin's topic removal treat
-the queue as theirs. The queue object is named
-`<account or tenant>:<topic>` in the zone's notification pool, created
-exclusively and initialized through the 2pc queue class at radosgw's
-fixed capacity of 128 MB, and registered as an omap key on the queue
-registry object; removal deletes both. On releases whose topic record
-carries a shard count, radosgw creates one queue object per shard, the
-first named as above and the rest with a numeric suffix, each initialized
-and registered, with the count taken at creation from
-`rgw_bucket_persistent_notif_num_shards`, default 11 in main at
-8aa24c51928, and each event routed to the shard radosgw's hash of bucket
-and key selects; a topic record without the field has one shard. rgw-go follows the same
-contract by reading the count from the same option through librados and
-from the topic record. A topic named like the registry object is
-rejected. rgw-go runs no deliverer for these queues, but it does run the
-stale-reservation expiry for every persistent queue whether or not it
-delivers to it, without taking the queue lock: radosgw runs expiry only
-from the deliverer that owns the lock, asserting the lock rather than
-taking it, so a foreign gateway that took the lock would block that
-deliverer, and the expiry call is a single atomic class operation that is
-safe to run unlocked.
-
-Two hazards rgw-go cannot fix, only avoid triggering. A Squid radosgw,
-19.2.7 included (Tentacle fixed it in 20.2.3), lists the queue registry
-without ever advancing its paging marker, so a registry holding more than
-1024 queue objects hangs that radosgw, which a newer release's sharding can
-reach from roughly a hundred topics on a shared registry. And OSDs below
-the floor, Squid before 19.2.4 and Tentacle before 20.2.3, added a ten-byte
-overhead per entry to reserved capacity on every reserve but took it back
-on no commit, abort or expiry, so a 128 MB queue reached permanent SlowDown
-after roughly 12.8 million events. OSDs at the floor no longer add the
-overhead, but drift accrued before an upgrade can survive it, and the
-reserved size is not exact even at the floor; see "Queue initialization and
-reservation accounting" below.
-
-Costs accepted: Rook CephBucketTopic resources with Kafka or AMQP
-endpoints reconcile, but rgw-go delivers nothing to them. On a zone
-rgw-go serves alone, a persistent Kafka or AMQP topic's queue fills, and
-once reservation fails radosgw's own behavior applies: writes to buckets
-notifying that topic fail with SlowDown, which is also what radosgw does
-when its broker is unreachable long enough. Entries sit in the queue until
-an operator removes the topic or a radosgw returns; nothing corrupts.
-
-### The radosgw-admin CLI
-
-Not an excluded feature but a scope statement: rgw-go does not
-reimplement radosgw-admin. Bit-compatibility means the C++ tool already
-administers every piece of rgw-go's metadata. rgw-go ships one binary
-with `serve` and `version`.
-
-## Coexistence obligations independent of any exclusion
+## Coexistence obligations
 
 These are not tied to a single exclusion. They are what sharing a zone
 with radosgw and radosgw-admin demands of every feature that is in scope,
-and they belong here because a reviewer of the exclusions needs to see
-them next to the "Still required" lines. Most were raised by the rgw-rs
+and a reviewer of the exclusions reads them beside the "Still required"
+lines of docs/exclusions.md. Most were raised by the rgw-rs
 review and verified against the tree.
 
 - **Metadata cache invalidation, both directions.** radosgw and
@@ -793,7 +357,7 @@ review and verified against the tree.
   ("AbortMultipartUpload leaves a completed upload's parts alone"). The
   one exception is an unlinked null version, which keeps
   its parts and its data under its key's OLH head, the abort removing the
-  meta object alone, as that exclusion states. The PR's replay answers 200
+  meta object alone, as that entry states. The PR's replay answers 200
   with the recorded instance
   without reading its link (`driver/rados/rgw_sal_rados.cc:4632-4664` at
   2c1db8239cc), so a version whose link never landed is answered as
@@ -2380,7 +1944,8 @@ review and verified against the tree.
 - **Zonegroup and period JSON with sync policy groups is not rendered.** The
   zonegroup's and period's sync policy is also kept opaque, and rgw-go
   refuses to render their JSON when a sync policy holds groups. Rook creates
-  no sync policies on a single-site store, and multisite is excluded, so a
+  no sync policies on a single-site store, and multisite is excluded
+  (docs/exclusions.md, "Multisite"), so a
   Rook-managed cluster is not affected; an operator who ran
   `radosgw-admin sync group create` would be. The admin API's
   `GET /admin/realm/period` answers 501 NotImplemented for such a period,
@@ -2689,10 +2254,10 @@ review and verified against the tree.
     sends.
   - A `period pull --url` signed with a key that is not a system user's,
     such as a `zone=read` user's, stores `******` as the tier's secret. That
-    is the cost: multisite is excluded ("Multisite"), and such a key is the
+    is the cost: multisite is excluded (docs/exclusions.md, "Multisite"), and such a key is the
     defect's exposure.
   - The admin gate's `period` case (`test/integration/admin_test.go`) names
-    this exclusion and applies the mask to radosgw's answer before it
+    this entry and applies the mask to radosgw's answer before it
     compares, since `hack/rooket/populate.sh` gives the zonegroup a cloud-s3
     tier with a secret and the gate's admin is not a system user. No s3-tests
     test reads the admin API.
@@ -2904,7 +2469,7 @@ review and verified against the tree.
   ([rgw_op.cc:5791-5804](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5791-L5804),
   [rgw_op.cc:5846-5865](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5846-L5865)),
   which needs SSE-C decryption, which phase 4 adds, or a key server, which
-  is excluded.
+  is excluded (docs/exclusions.md, "Key management: SSE-KMS and SSE-S3 with every backend").
 - **CreateBucket with object lock is authorized as
   s3:PutBucketObjectLockConfiguration and s3:PutBucketVersioning too.**
   radosgw's CreateBucket authorizes s3:CreateBucket alone on the new bucket,
@@ -4032,7 +3597,7 @@ rgw-go does the following.
     and [rgw_client.py:82-106](https://github.com/ceph/ceph/blob/v20.2.4/src/pybind/mgr/dashboard/services/rgw_client.py#L82-L106)),
     and with a radosgw anywhere in the cluster it manages the zones through
     the radosgws alone.
-    "Explicitly not excluded" keeps every admin endpoint the dashboard
+    docs/exclusions.md, "Explicitly not excluded", keeps every admin endpoint the dashboard
     calls, but that does not make the dashboard work for rgw-go while
     rgw-go is absent from the map: the dashboard then calls none of them
     on rgw-go.
@@ -4066,8 +3631,8 @@ rgw-go does the following.
   leaves the perf counters to ceph-exporter
   ([module.py:649-656](https://github.com/ceph/ceph/blob/v19.2.7/src/pybind/mgr/prometheus/module.py#L649-L656),
   [module.py:738-745](https://github.com/ceph/ceph/blob/v20.2.4/src/pybind/mgr/prometheus/module.py#L738-L745)),
-  which reads each daemon's admin socket, not the manager; "Explicitly not
-  excluded" keeps rgw-go's admin-socket counters in its format.
+  which reads each daemon's admin socket, not the manager; docs/exclusions.md,
+  "Explicitly not excluded", keeps rgw-go's admin-socket counters in its format.
 
 ### Zone and placement differences
 
@@ -5375,7 +4940,8 @@ does the following.
   `rgwx-bucket-instance` on no request. A suspended user's own preflight
   therefore passes where radosgw refuses it; the request it precedes is
   still refused. Only radosgw's own multisite connection sends `rgwx-`
-  parameters, and multisite is excluded, so no client rgw-go serves loses
+  parameters, and multisite is excluded (docs/exclusions.md, "Multisite"),
+  so no client rgw-go serves loses
   one. The S3 handler routes the preflight to its op, `op.OptionsCORS`
   (`internal/op/cors.go`), through `optionsCORS` (`internal/s3/cors.go`),
   which reads nothing of the identity, and the answer depends on no key:
@@ -5540,7 +5106,8 @@ does the following.
   impersonation therefore never applies, and both releases and rgw-go serve
   such a request as the system user (`docs/ceph-upstream-bugs.md`,
   "Tentacle's radosgw never applies rgwx-perm-check-uid, so a user-mode sync
-  pipe's source read goes unchecked"). Multisite is excluded, so a
+  pipe's source read goes unchecked"). Multisite is excluded
+  (docs/exclusions.md, "Multisite"), so a
   single-zone rgw-go receives neither parameter from radosgw.
 - **A body read whole is checked against its signed hash.** radosgw reads
   the body of CreateBucket, the ACL, policy and tagging PUTs,
@@ -5983,7 +5550,8 @@ does the following.
   [rgw.yaml.in:1926-1931](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L1926-L1931) at v20.2.4).
   A peer set so would have its forwarded and fetch requests run on rgw-go
   as the system user, a forwarded CreateBucket owned by it for one.
-  Multisite is excluded, so nothing rgw-go serves today breaks; the gap is
+  Multisite is excluded (docs/exclusions.md, "Multisite"), so nothing
+  rgw-go serves today breaks; the gap is
   the multisite unit's to close.
 - **A browser upload's identity takes nothing from the query.** radosgw
   authenticates a POST object form's credentials inside the op, through
@@ -6238,7 +5806,7 @@ rgw-go does the following.
   `s3:x-amz-server-side-encryption-aws-kms-key-id` carry the bucket's
   default in the policy environment. rgw-go adds those keys from the
   request's headers and query string alone. A bucket default names SSE-S3
-  or SSE-KMS, which rgw-go refuses ("Key management: SSE-KMS and SSE-S3
+  or SSE-KMS, which rgw-go refuses (docs/exclusions.md, "Key management: SSE-KMS and SSE-S3
   with every backend"), so such a write fails in rgw-go either way; a
   policy condition on these keys can make it fail with 403 AccessDenied
   where radosgw's refusal, if it has no key server, comes from encryption.
@@ -6687,7 +6255,7 @@ rgw-go does the following.
   account's own users are decided by policy alone in both gateways, and an
   admin is let through as after any access denial. So every grantee above
   is refused where radosgw serves it. Beyond the policy judgments other
-  exclusions record, the one request rgw-go serves that radosgw refuses is
+  entries record, the one request rgw-go serves that radosgw refuses is
   the owner's under such a referer grant. One such judgment reaches these
   ops too: on Tentacle, under RestrictPublicBuckets, rgw-go serves a
   non-owner through a policy Amazon S3 calls not public and radosgw's
@@ -7980,7 +7548,8 @@ does the following.
   object carrying `user.rgw.user_manifest` or `user.rgw.slo_manifest`
   answers 501 NotImplemented, where radosgw composes the object from its
   segments (`rgw_op.cc:2373-2394` at v19.2.6, `:2606-2627` at v20.2.4).
-  Only radosgw's Swift API, which is excluded, writes such objects.
+  Only radosgw's Swift API, which is excluded (docs/exclusions.md, "Swift
+  API and Swift authentication"), writes such objects.
 - **Cloud read-through.** On Tentacle, a GET of an object transitioned to a
   cloud tier that allows read-through answers 403 InvalidObjectState,
   "This object was transitioned to cloud-s3", and logs an error. radosgw
@@ -7991,7 +7560,7 @@ does the following.
   radosgw's.
 - **SSE-C reads.** A GET or HEAD of an SSE-C object whose customer-key
   headers pass every check radosgw makes answers 501 NotImplemented until
-  rgw-go decrypts SSE-C in phase 4, as "Key management" above requires;
+  rgw-go decrypts SSE-C in phase 4, as docs/exclusions.md, "Key management", requires;
   radosgw decrypts it. GetObjectAttributes, which makes GetObject's checks,
   answers the same 501, where radosgw makes them without setting up a
   decryption, because it reads no data, and answers the attributes
@@ -9099,7 +8668,7 @@ does the following.
   [rgw_op.h:2288-2297](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2288-L2297) and
   [rgw_common.cc:62](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L62) at v20.2.4),
   where rgw-go serves it. No radosgw component sends either parameter at
-  either release; they belong to multisite, which is excluded.
+  either release; they belong to multisite, which is excluded (docs/exclusions.md, "Multisite").
 - **Writes name the null version's id and a copy's two versions.**
   PutObject and CompleteMultipartUpload send `x-amz-version-id` with the
   id of the version written: its instance on a bucket whose versioning is
@@ -9145,7 +8714,7 @@ does the following.
   (`get_encryption_defaults`, `rgw_rest_s3.cc:146-264` at v19.2.6,
   `:151-269` at v20.2.4). rgw-go encrypts nothing on the write path in phase
   1, so it answers 501 NotImplemented, rather than store in the clear what
-  a client asked to have encrypted ("Key management: SSE-KMS and SSE-S3 with
+  a client asked to have encrypted (docs/exclusions.md, "Key management: SSE-KMS and SSE-S3 with
   every backend"). Phase 2 answers a request for SSE-S3 or SSE-KMS, and a
   write into a bucket with a default encryption, with radosgw's failure
   without a key server (item 2 there); an SSE-C write keeps the 501 until
@@ -9541,7 +9110,7 @@ does the following.
   (`driver/rados/rgw_rados.cc:6593-6757` at v19.2.6, `:7393-7593` at
   v20.2.4), except that a change setting the Swift delete-at attr adds no
   object expirer hint, where radosgw adds one (`:6643-6655` at v19.2.6,
-  `:7443-7455` at v20.2.4). rgw-go runs no expirer ("Swift API and Swift
+  `:7443-7455` at v20.2.4). rgw-go runs no expirer (docs/exclusions.md, "Swift API and Swift
   authentication").
 - **A failed part upload does not shrink the quota cache.** When an
   UploadPart fails after its part head was created, rgw-go removes the
@@ -10512,7 +10081,7 @@ does the following.
   proves no link of it landed: the class's or the OSD's, the reshard
   guard's, the write's condition, or every one of radosgw's 100 attempts
   lost to another writer; the awaited completion before the link fails it
-  the same way (exclusion "A versioned write awaits its index completion").
+  the same way (entry "A versioned write awaits its index completion").
   So does any failure of an attempt before its init, in its read of the OLH
   head or in what it checks before the init, a timeout and a context that
   ended included: every earlier attempt ended before its link or on the
@@ -10670,7 +10239,7 @@ does the following.
   rgw-go makes them the marker link's condition (`writeDeleteMarker`,
   `internal/driver/delete_versioned.go`), checked as every conditional
   versioned write's is (`prepareOLHAttempt` and `checkOLHLink`,
-  `internal/driver/olh_cond.go`), by the rules exclusion "A conditional
+  `internal/driver/olh_cond.go`), by the rules entry "A conditional
   write to a versioned bucket commits only if its condition held when it
   linked" states for the check at each attempt, the guard on the attempt's
   init and its wait, and the check after the link. On an enabled bucket the
@@ -10694,7 +10263,7 @@ does the following.
   init and its link stays under the marker, as through radosgw. For the
   same reason no link of the null version is checked after it; what the
   null version's data adds, its head write carrying its init before its
-  link, is in exclusion "A conditional write to a versioned bucket commits
+  link, is in entry "A conditional write to a versioned bucket commits
   only if its condition held when it linked".
 
   When no version is current, a delete marker being current or no link
@@ -10739,12 +10308,12 @@ does the following.
   write or an attr write that landed before the init answers 409
   ConcurrentModification with no marker linked, and the delete's own
   replay removes the null data only while the head carries it. A removal
-  that replay refuses is answered as the exclusion "A refused versioned
+  that replay refuses is answered as the entry "A refused versioned
   removal re-links the version, unless a newer null write owns the null
   key" says. The delete runs its own replay even when told to skip it,
   since the guard is in that replay. On a bucket whose versioning is
   enabled the marker removes nothing and `Expect` is not read. The
-  windows that exclusion names stay. The object store's delete does this;
+  windows that entry names stay. The object store's delete does this;
   the S3 deletes pass no `Expect`.
 - **A refused versioned removal re-links the version, unless a newer null
   write owns the null key.** A versioned delete removes a version in two
@@ -10822,7 +10391,7 @@ does the following.
     included, refuses it, and the next round reads again. While another
     writer's modification is pending, a round first waits for it as
     rgw-go's conditional writers do, 318 to 635 ms in all, with no wait on a
-    pending attr already older than 318 ms when first read (exclusion "A
+    pending attr already older than 318 ms when first read (entry "A
     conditional write to a versioned bucket commits only if its condition
     held when it linked"). Past the wait, pending attrs no longer refuse the
     link, which is then guarded on `olh.info` and `olh.ver` alone. So a
@@ -10945,7 +10514,7 @@ does the following.
     checks the condition on the version current on that head, a current
     delete marker counting as no object. That is the version current after
     the replay, where radosgw checks the one current before it and, when its
-    replay is refused, none (exclusion "A read that replays a pending
+    replay is refused, none (entry "A read that replays a pending
     modification answers the version current after it"). A condition that
     no longer holds answers 412 PreconditionFailed, or 404 NoSuchKey for an
     If-Match with no current version, and removes the version the write
@@ -11012,19 +10581,19 @@ does the following.
   when the writer stops between its link and its check, nor when its void
   unlink is not sent: the key's next replay commits the link. After a
   restarted log, a failed `clear_olh` head removal followed by radosgw's
-  replay (exclusion "apply_olh_log's olh.ver guard is EQ on the bytes read,
+  replay (entry "apply_olh_log's olh.ver guard is EQ on the bytes read,
   retried from a fresh read"), the head's `olh.ver` can exceed the OLH
   entry's epoch, so another writer's link at a lower epoch escapes the epoch
   rule.
 
   The null version is covered only up to its head write. No link of the
-  null version is checked after it (exclusion "A conditional delete marker
+  null version is checked after it (entry "A conditional delete marker
   is checked against the version current when it links"). The null
   version's data is written over the key's OLH head before its link, so
   that link carries no condition, the head then holding the write's own
   data. Its condition is checked before the head write instead, as a
   conditional link's attempt checks it, on the version current on the
-  followed head (exclusion "A suspended bucket's conditional write is
+  followed head (entry "A suspended bucket's conditional write is
   checked against the current version"), and the head write's own op, not
   the link, inits the write's pending modification (`writeNullVersion`,
   `internal/driver/put_versioned.go`). Ahead of every other step the op
@@ -11135,7 +10704,7 @@ does the following.
   version the first made current; past the bound, or beside a pending attr
   the write does not wait on, both can answer 200 where radosgw at both
   floors answers the second 412, and nothing holds the condition from the
-  head write to the link (exclusion "A conditional write to a versioned
+  head write to the link (entry "A conditional write to a versioned
   bucket commits only if its condition held when it linked"). s3-tests'
   `test_put_object_suspended_if_match` expects the answers rgw-go's
   PutObject gives.
@@ -11159,7 +10728,7 @@ does the following.
   Once the head is written its tails stay whatever the completion or the
   link answers, and a removal of the version, after a completion or a link
   refused or a link voided, sends them to the GC as the unversioned delete
-  does (`putStream`, `internal/driver/put.go`; exclusion "rgw-go removes the
+  does (`putStream`, `internal/driver/put.go`; entry "rgw-go removes the
   instance a failed versioned write made"). The same holds for what the
   other versioned writes leave:
   - a CopyObject that shares its source's tails keeps the references it
@@ -11186,7 +10755,7 @@ does the following.
   completion and its link (`doWriteMeta`, `internal/driver/headwrite.go`),
   since every removal of the version takes them back: the removal after a
   completion or a link refused, and the unlink of a link its condition
-  voided (exclusion "rgw-go removes the instance a failed versioned write
+  voided (entry "rgw-go removes the instance a failed versioned write
   made"). radosgw's order would have such a removal take back what was never
   added. A version that stays after its completion or its link failed, the
   outcome unknown, stays counted, as its index entry may land.
@@ -11596,7 +11165,7 @@ does the following.
   set back the mtime of a null write landing after their
   read](ceph-upstream-bugs.md#radosgws-olh-init-replay-and-repair-set-back-the-mtime-of-a-null-write-landing-after-their-read)").
   rgw-go's three writes send the zero mtime, as its removals of pending
-  attrs do (the exclusion above), so the head keeps the mtime it holds when
+  attrs do (the entry above), so the head keeps the mtime it holds when
   the write lands, the null write's own included (`keepHeadMtime`,
   `internal/driver/olh_head.go`). With nothing landing in between, the
   mtime kept is the one radosgw sends, but after a replay whose removal
@@ -11762,7 +11331,7 @@ rgw-go does the following.
   old shard, answers ENOENT; and rgw-go never takes a removed shard's
   ENOENT for an absent OLH entry, which would settle a refused version
   removal as final while its log entries sit on the new shard (the
-  exclusion "A replay passes over a version removal that the writer's
+  entry "A replay passes over a version removal that the writer's
   expected write tag refuses"). rgw-go resolves a version's entry the
   same way: its one to three reads, in the class's `read_key_entry` order,
   start again from the plain key on the shard the bucket now names
@@ -12102,7 +11671,8 @@ following.
   `HTTP_RGWX_SHARD_ID` header, and can list a single index shard
   (`rgw_rest_s3.cc:1724-1737`, `:1838-1845` and `:1947-1949` at v19.2.6,
   `:1835-1848`, `:1949-1956` and `:2058-2060` at v20.2.4). These serve
-  multisite sync, which rgw-go excludes, and rgw-go renders a system
+  multisite sync, which rgw-go excludes (docs/exclusions.md, "Multisite"),
+  and rgw-go renders a system
   user's listing as any other user's.
 - **rgw-go creates no realm, zonegroup or zone, and writes none back.**
   radosgw resolves its zone at startup in `rgw::SiteConfig::load`, which on
@@ -12542,7 +12112,7 @@ the correct S3 result, in RADOS state radosgw reads as its own.
   ([rgw_lc.cc:1479-1488](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1479-L1488),
   [rgw_lc.cc:1525-1534](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1525-L1534);
   [rgw_zone_types.h:659-662](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone_types.h#L659-L662)),
-  which rgw-go does not serve ("Cloud transition and restore"). rgw-go
+  which rgw-go does not serve (docs/exclusions.md, "Cloud transition and restore"). rgw-go
   never claims a bucket with a rule the zone runs that transitions, current
   or noncurrent versions, to a tier of either type, on either release, and
   leaves the shard's head at its entry, so radosgw's worker processes the
@@ -12914,14 +12484,6 @@ the correct S3 result, in RADOS state radosgw reads as its own.
   once per day of each: duplicate passes, not corruption. Rook sets no `TZ`
   on its gateways (rook v1.21.1 names none under `pkg/`).
 
-## Pending
-
-None. D3N was excluded on 2026-09-25. Bucket notifications were first
-excluded the same day, then sized against Rook's integration tests and
-kept at the scope described under "Explicitly not excluded", with only
-Kafka and AMQP delivery excluded. That is the shape the rgw-rs review
-recommended.
-
 ## Benchmark parity with radosgw and rgw-rs
 
 Facts from the rgw-rs session on 2026-09-25: rgw-rs is also targeting
@@ -12931,7 +12493,7 @@ layout and differ in transport. Since this document became canonical for
 both, the surfaces match: rgw-rs has added the lock, 2pc queue and OTP
 classes to its roadmap, so persistent notifications and MFA are in scope
 on both sides. The bucket-index log and the reshard queue are out on both
-sides through the multisite and dynamic-resharding entries. The `bi_*`
+sides through docs/exclusions.md's multisite and dynamic-resharding entries. The `bi_*`
 index-entry methods back resharding and index repair, and the S3
 versioning path needs one of them, `bi_get`: radosgw's versioned delete
 reads one version's index entry with it, and `repair_olh` a name's OLH
@@ -12974,35 +12536,8 @@ confirmed on 2026-09-25 that rgw-rs shares tails through the refcount
 class the same way, including the NUL-terminated reference tags radosgw
 writes, so CopyObject parity holds across all three gateways.
 
-
-## Explicitly not excluded
-
-To prevent this list being read too broadly: IAM and STS with local
-users, roles, groups and OIDC providers; bucket notifications in full
-except Kafka and AMQP delivery, meaning the topic actions, the bucket
-notification subresource with its filter grammar, event generation on
-the data path, synchronous HTTP and HTTPS delivery, and persistent topics
-over the 2pc queue class with an HTTP deliverer, sized at roughly four
-thousand lines of Go and gated in phase 3 by Rook's notification and
-Kafka integration tests; bucket logging; versioning, object lock,
-lifecycle, static website, CORS; the four compression codecs; SSE-C; MFA;
-accounts; tenants; quotas; the usage log; the GC and lifecycle workers;
-the ops log to a file, which Rook's sidecar tails; admin-socket counters
-in the format ceph-exporter scrapes; and every admin endpoint the Rook
-operator and the Ceph dashboard call.
-
 ## Costs accepted, collected
 
-- s3-tests groups skipped: SSE-KMS and SSE-S3 encryption, S3 Select,
-  replication, and anything requiring Keystone or LDAP.
-- Rook CephObjectStore fields with no effect: `security.kms`,
-  `security.s3`, `auth.keystone`, `protocols.swift`, and `zone`. Rook
-  CephBucketTopic resources with Kafka or AMQP endpoints reconcile but
-  receive no events from rgw-go.
-- The Ceph dashboard's bucket replication tab errors.
-- Large-bucket listing degrades until an operator reshards.
-- Objects given a Swift delete-at time before the switch are not expired
-  by rgw-go; `radosgw-admin objects expire` does it on demand.
 - A go-ceph fork item beyond the planned bindings: an exec step that
   returns data from a modifying class method.
 - Part lookups in an object whose manifest lays out more than 2^26
