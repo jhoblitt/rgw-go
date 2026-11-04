@@ -339,7 +339,7 @@ var _ = Describe("multipart listings", func() {
 			Expect(res.CommonPrefixes).To(Equal([]string{"a/x.", "a/y."}))
 			Expect(res.Truncated).To(BeTrue())
 			Expect([]string{res.NextKeyMarker, res.NextUploadIDMarker}).To(Equal([]string{"a/y.", ""}),
-				"radosgw drops its common prefixes and so never ends a page on one (docs/exclusions.md)")
+				"radosgw drops its common prefixes and so never ends a page on one (docs/differences.md)")
 			res, err = s.ListUploads(ctx, rec, op.ListUploadsParams{Delimiter: ".", KeyMarker: res.NextKeyMarker, MaxUploads: 2})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(res.CommonPrefixes).To(Equal([]string{"b."}), "the marker a/y...meta falls inside a/y., which the listing skips")

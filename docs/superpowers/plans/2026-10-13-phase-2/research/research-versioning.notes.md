@@ -26,7 +26,7 @@ no failure.
   deleteobject.go, deleteobjects.go, listobjects.go, internal/s3/listobjects.go,
   internal/testutil/fakerados/cls_rgw.go, internal/cls/rgw/*; it does touch internal/s3/handler.go,
   internal/s3/request.go, internal/driver/mp_complete.go, hack/s3tests/deselect-phase2.txt,
-  hack/admin/deselect-phase2.txt, docs/exclusions.md, docs/ceph-upstream-bugs.md.
+  hack/admin/deselect-phase2.txt, docs/differences.md, docs/ceph-upstream-bugs.md.
 - N2. PP-12 (fix findings in their PR; zero open findings at the gate) and PP-13 (one PR per
   independent change; a task states its PR split): `docs/porting-process.md:151-177`.
 

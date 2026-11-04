@@ -93,7 +93,7 @@ func (g *websiteGet) serve(ctx context.Context, w http.ResponseWriter, r *op.Req
 // empty, as dump_redirect skips one
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L440-L443 at v19.2.7 and v20.2.4).
 // net/http writes a CR or LF the stored Location holds as a space
-// (docs/exclusions.md, "A stored header value's CR and LF go out as
+// (docs/differences.md, "A stored header value's CR and LF go out as
 // spaces").
 func writeObjectRedirect(w http.ResponseWriter, r *op.Request) {
 	SetCommonHeaders(w, r)
@@ -128,14 +128,14 @@ func writeObjectRedirect(w http.ResponseWriter, r *op.Request) {
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5571-L5579 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6097-L6105 at v20.2.4);
 // rgw-go serves it for 400-499 only, as Amazon S3 does
-// (docs/exclusions.md, "A website error document is served for a 4XX error
+// (docs/differences.md, "A website error document is served for a 4XX error
 // only").
 //
 // A redirect rgw-go declines to build, of a stored host or protocol or to
 // the Host of a request that sent none (website.ErrUnsafeRedirect), is
 // answered with its own status, 500 InternalError or 400 InvalidRequest,
 // and meets no rule and no error document, so it fails closed
-// (docs/exclusions.md, "A website redirect is refused for a host holding a
+// (docs/differences.md, "A website redirect is refused for a host holding a
 // control byte or a protocol other than http or https", and "A website
 // redirect to the request's host is refused for a request with no Host").
 func (g *websiteGet) errorHandler(ctx context.Context, w http.ResponseWriter, r *op.Request, originalKey string, err error) error {
@@ -233,7 +233,7 @@ func writeWebsiteRedirect(w http.ResponseWriter, r *op.Request, code int, cause 
 // net/http panics at a status outside 100-999, writes 100-199 other than 101
 // as an informational response that does not end the response, and 101 as
 // a protocol switch (net/http/server.go:1166-1180 and :1223-1227 at Go
-// 1.27.1), so rgw-go answers those 301 as well (docs/exclusions.md, "A
+// 1.27.1), so rgw-go answers those 301 as well (docs/differences.md, "A
 // website redirect's code below 200 or above 999 is answered 301").
 func redirectStatus(code int) int {
 	if code <= http.StatusOK || code > 999 {
@@ -254,7 +254,7 @@ func redirectStatus(code int) int {
 // read is the website GetObject's
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5450-L5464 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5976-L5990 at v20.2.4),
-// once (docs/exclusions.md, "An object's website redirect is answered
+// once (docs/differences.md, "An object's website redirect is answered
 // once").
 //
 // serve_errordoc clears the read's Range and conditionals, but execute's
@@ -266,7 +266,7 @@ func redirectStatus(code int) int {
 // rgw-go reads the document whole and unconditionally, the read
 // serve_errordoc sets up, with the request's SSE-C headers and response-*
 // overrides, which radosgw takes from the request outside get_params; a
-// HEAD gets the document's headers and no body (docs/exclusions.md, "A
+// HEAD gets the document's headers and no body (docs/differences.md, "A
 // website error document is read whole and unconditionally" and "A website
 // HEAD's error document has no body").
 func (g *websiteGet) serveErrorDoc(ctx context.Context, w http.ResponseWriter, r *op.Request, key string, status int) bool {

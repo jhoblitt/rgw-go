@@ -21,7 +21,7 @@ import (
 // never enabled, the null version on a suspended one. The request's
 // versionId plays no part, as S3 has no such parameter on these writes,
 // where radosgw keeps it as the instance on a bucket whose versioning is
-// not enabled (docs/exclusions.md, "A write's versionId is ignored").
+// not enabled (docs/differences.md, "A write's versionId is ignored").
 func VersionForWrite(r *Request) string {
 	if r.BucketRec.Info.VersioningEnabled() {
 		return meta.NewInstance()
@@ -42,7 +42,7 @@ func writeKey(r *Request) meta.ObjKey {
 // an empty instance or "null", S3's id "null" on a bucket whose versioning
 // was ever enabled and none on one whose versioning never was, where an
 // object has no version. radosgw sends only a non-empty instance, so no id
-// for the null version (docs/exclusions.md, "Writes name the null version's
+// for the null version (docs/differences.md, "Writes name the null version's
 // id and a copy's two versions").
 func ResponseVersionID(rec *BucketRecord, instance string) string {
 	switch {
@@ -65,7 +65,7 @@ func ResponseVersionID(rec *BucketRecord, instance string) string {
 // takes its upload's lock and the bucket's default retention, and the
 // upload's writes refuse lock headers; it is refused too only so that the
 // three head writes are served on such a bucket together, once the ops
-// store those headers (docs/exclusions.md, "PutObject, CopyObject and
+// store those headers (docs/differences.md, "PutObject, CopyObject and
 // CompleteMultipartUpload answer 501 on an object-lock bucket").
 func objectLockUnserved(rec *BucketRecord) error {
 	if rec.Info.ObjLockEnabled() {

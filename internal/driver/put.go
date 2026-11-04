@@ -489,7 +489,7 @@ func (s *Store) compressionType(rule meta.PlacementRule) string {
 // the zonegroup supports compress-encrypted. A type rgw-go has no encoder for,
 // random among them, is stored as it is too and logged the first time,
 // where radosgw compresses with the plugin it loads or, for random, picks
-// (docs/exclusions.md, "random and a codec rgw-go has no encoder for store
+// (docs/differences.md, "random and a codec rgw-go has no encoder for store
 // the object uncompressed"). Any other type compresses, its data hinted
 // incompressible from the start, as set_compressed marks the object when the
 // plugin loads: an object whose first block fails and is stored as it is

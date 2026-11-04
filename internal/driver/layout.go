@@ -24,7 +24,7 @@ import (
 // store's release dumps it, and every stripe from obj_begin to obj_end, its
 // size cut at the end of the object. A cloud tier's S3 secret in the
 // manifest is masked, where radosgw writes it to any holder of admin=read
-// (docs/exclusions.md, "?layout masks a cloud tier's S3 secret").
+// (docs/differences.md, "?layout masks a cloud tier's S3 secret").
 //
 // ObjectLayout renders the document once to measure it, which is where it
 // fails, and WriteTo renders it again as it writes, so a request holds one
@@ -36,7 +36,7 @@ import (
 // a null manifest"). The walk fails with denc.ErrMalformed at a step that
 // does not move forward and with meta.ErrTooManyStripes past meta.MaxStripes
 // stripes, both as UnknownError, where radosgw's loop never ends or renders
-// any size (docs/exclusions.md, "A manifest walk that stops moving, or runs
+// any size (docs/differences.md, "A manifest walk that stops moving, or runs
 // past its stripe bound, fails").
 func (s *Store) ObjectLayout(ctx context.Context, st *op.ObjectState) (op.LayoutDocument, error) {
 	d, err := s.layout(ctx, st, meta.MaxStripes)

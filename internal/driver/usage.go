@@ -27,7 +27,7 @@ const usageObjPrefix = "usage."
 // usageFinalFlushTimeout is how long the usage worker goes on flushing once
 // its context has ended: radosgw's ~UsageLogger waits for a flush without
 // bound (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_log.cc#L128-L133),
-// which would hold rgw-go's shutdown on a stuck write (docs/exclusions.md).
+// which would hold rgw-go's shutdown on a stuck write (docs/differences.md).
 const usageFinalFlushTimeout = 10 * time.Second
 
 // ticker is the part of a time.Ticker a worker uses, so that a spec can

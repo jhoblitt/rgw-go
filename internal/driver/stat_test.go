@@ -389,7 +389,7 @@ var _ = Describe("StatObject and PrefetchObject", func() {
 			Entry("an explicit placement wins", "default-placement", "legacy.pool", "legacy.pool"),
 			Entry("a class with its own pool", "default-placement/COLD", "", "cold.data"),
 			Entry("a class the zone no longer has falls back to STANDARD's pool", "default-placement/GONE", "", testDataPool),
-			Entry("a class without a pool takes STANDARD's (docs/exclusions.md)", "default-placement/NO_POOL", "", testDataPool),
+			Entry("a class without a pool takes STANDARD's (docs/differences.md)", "default-placement/NO_POOL", "", testDataPool),
 			Entry("an empty rule falls back to the zonegroup default placement", "", "", testDataPool),
 			Entry("a rule naming no placement of the zone falls back to the default", "nope/COLD", "", testDataPool),
 		)

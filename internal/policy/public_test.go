@@ -233,7 +233,7 @@ var _ = Describe("Policy.IsPublic", func() {
 			), true),
 		Entry("every principal, naming no Effect, which radosgw takes for Deny",
 			statements(`{"Principal": "*", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::b/*"}`), false),
-		// docs/exclusions.md, "BitTorrent files are not served".
+		// docs/differences.md, "BitTorrent files are not served".
 		Entry("every principal an action rgw-go does not serve",
 			statements(`{"Effect": "Allow", "Principal": "*", "Action": "s3:GetObjectTorrent", "Resource": "arn:aws:s3:::b/*"}`), true),
 		Entry("every principal every action but one, in another bucket",

@@ -166,7 +166,7 @@ func (o *GetObject) Init(ctx context.Context, r *Request) error {
 // It is the key's instance, null when the request named the null version,
 // and for an empty instance ResponseVersionID's: null on a bucket whose
 // versioning was ever enabled, where radosgw names none
-// (docs/exclusions.md, "GET, HEAD and GetObjectAttributes name the version
+// (docs/differences.md, "GET, HEAD and GetObjectAttributes name the version
 // they read, null for the null version").
 func readVersionID(rec *BucketRecord, key meta.ObjKey) string {
 	if key.Instance != "" {
@@ -276,7 +276,7 @@ func (o *GetObject) serve(ctx context.Context, r *Request, in commonInputs) erro
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L548-L586 at v20.2.4):
 // a partNumber read's part head's (partReadChecksum), else the object's
 // (objectReadChecksum). Squid's radosgw shows none, and rgw-go shows what it
-// stores there too (docs/exclusions.md, "Squid clusters show the checksums
+// stores there too (docs/differences.md, "Squid clusters show the checksums
 // they store").
 func (o *GetObject) readChecksum(r *Request) (*ReadChecksum, error) {
 	if o.Range != "" || !checksumModeEnabled(o.ChecksumMode) {
@@ -503,7 +503,7 @@ func (o *GetObject) prepare(ctx context.Context, r *Request, since, unmodSince *
 // instance of the part head's key, which the part's UploadPart request named
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7076-L7105 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7738-L7767 at v20.2.4;
-// docs/exclusions.md, "GET, HEAD and GetObjectAttributes name the version
+// docs/differences.md, "GET, HEAD and GetObjectAttributes name the version
 // they read, null for the null version").
 func (o *GetObject) redirectToPart(ctx context.Context, r *Request) (int, error) {
 	head, n := o.CondState, *o.PartNumber
@@ -656,7 +656,7 @@ func (o *GetObject) checkConditions(r *Request, since, unmodSince *time.Time) er
 // torrent is execute's ?torrent branch
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L2275-L2299 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2511-L2535 at v20.2.4).
-// rgw-go serves no torrent (docs/exclusions.md).
+// rgw-go serves no torrent (docs/differences.md).
 func (o *GetObject) torrent(ctx context.Context, r *Request) error {
 	if string(o.State.Attrs[meta.AttrCryptMode]) == "SSE-C-AES256" {
 		return fmt.Errorf("%w: no torrent of %s, which is encrypted with SSE-C", ErrInvalidArgument, r.Object.Name)
@@ -848,7 +848,7 @@ func (o *GetObject) checkSSEC(ctx context.Context, r *Request) error {
 // none from an anonymous request, and no value with a byte iscntrl takes.
 // radosgw tests each char, signed, so a byte above 0x7f passes. radosgw
 // makes the check while it writes the headers and mishandles its refusal;
-// rgw-go answers it with a plain 400 (docs/exclusions.md).
+// rgw-go answers it with a plain 400 (docs/differences.md).
 func (o *GetObject) checkOverrides(r *Request) error {
 	if len(o.ResponseOverrides) == 0 {
 		return nil

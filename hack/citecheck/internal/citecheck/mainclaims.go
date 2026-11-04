@@ -12,7 +12,7 @@ import (
 
 // registryDocs are the registries, by their paths from rgw-go's root, whose
 // claims about ceph main must each name the main commit they were checked at.
-var registryDocs = []string{"docs/ceph-upstream-bugs.md", "docs/exclusions.md"}
+var registryDocs = []string{"docs/ceph-upstream-bugs.md", "docs/differences.md", "docs/exclusions.md"}
 
 // isRegistry reports whether a file named on the command line is one of
 // registryDocs: its cleaned path is one, or ends in "/" and one.

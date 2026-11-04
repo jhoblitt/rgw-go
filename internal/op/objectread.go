@@ -88,7 +88,7 @@ func (o *GetObjectTagging) VerifyPermission(ctx context.Context, r *Request) err
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L829-L856 at v20.2.4),
 // where a tag set that decodes neither as RGWObjTags nor as the text older
 // objects store is -EIO, which rgw-go answers as UnknownError
-// (docs/exclusions.md).
+// (docs/differences.md).
 func (o *GetObjectTagging) Execute(_ context.Context, r *Request) error {
 	st := r.ObjState
 	if st == nil || !st.Exists {

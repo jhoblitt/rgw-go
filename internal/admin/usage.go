@@ -40,7 +40,7 @@ func usageArgs(a Args) (uid, bucket, tenant string) {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_usage.cc#L28-L70),
 // whose get_epoch and get_bool returns go unchecked: a boolean get_bool
 // cannot parse is its default, and so, in rgw-go, is a date get_epoch
-// cannot parse (docs/exclusions.md, "The admin usage routes give a date
+// cannot parse (docs/differences.md, "The admin usage routes give a date
 // they cannot parse a value of their own"). The categories split on
 // get_str_list's delimiters.
 func getUsage(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
@@ -76,7 +76,7 @@ func epochArg(a Args, name string, def uint64) uint64 {
 // trimUsage is RGWOp_Usage_Delete::execute's argument handling
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_usage.cc#L85-L121)
 // and its empty 200. A date get_epoch cannot parse is InvalidArgument,
-// after the cap check (docs/exclusions.md); the unchecked get_bool reads
+// after the cap check (docs/differences.md); the unchecked get_bool reads
 // remove-all as false when it cannot parse it.
 func trimUsage(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	a := q.Args

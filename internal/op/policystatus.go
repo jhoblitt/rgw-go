@@ -46,7 +46,7 @@ func (o *GetBucketPolicyStatus) VerifyPermission(ctx context.Context, r *Request
 // public when the bucket's policy is or its ACL is, whatever its
 // public-access block sets. The policy is judged as Amazon S3 judges one, the
 // same on both releases, where radosgw's is_public differs from that and
-// between the releases (docs/exclusions.md, "A bucket policy is public as
+// between the releases (docs/differences.md, "A bucket policy is public as
 // Amazon S3 judges it").
 func (o *GetBucketPolicyStatus) Execute(ctx context.Context, r *Request) error {
 	bacl, err := BucketACLFor(ctx, r.BucketRec)

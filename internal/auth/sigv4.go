@@ -315,7 +315,7 @@ func canonicalQueryV4(rawQuery string, presigned bool) string {
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L819-L841 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L780-L796 at v20.2.4).
 // No other header need be: one under the six other meta prefixes
-// init_meta_info renames to x-amz- is never read (docs/exclusions.md).
+// init_meta_info renames to x-amz- is never read (docs/differences.md).
 // payloadHashHeader is exempt: the canonical request ends with its value as
 // the payload hash, which the body is then held to, so the signature fixes
 // it whether it is signed or not. That holds only while rgw-go routes no op
@@ -327,7 +327,7 @@ func canonicalQueryV4(rawQuery string, presigned bool) string {
 // Content-Type need not be signed. v20.2.4 also refuses an unsigned
 // Content-Type or payloadHashHeader
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L765-L797);
-// rgw-go takes v19.2.7's rule on Tentacle too (docs/exclusions.md). Every
+// rgw-go takes v19.2.7's rule on Tentacle too (docs/differences.md). Every
 // refusal is EPERM.
 func canonicalHeadersV4(rv *requestView, signedHeaders string, insecure bool, hostPort string) (string, error) {
 	m := map[string]string{}
@@ -418,7 +418,7 @@ func parseCredScope(scope string) (date, region, service string) {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L986-L1010 at v20.2.4).
 // transform_secret_key re-encodes each secret byte as a UTF-8 code point,
 // which leaves ASCII as it is and is undefined above 0x7f; the secret's own
-// bytes key the HMAC here, as AWS clients key it (docs/exclusions.md).
+// bytes key the HMAC here, as AWS clients key it (docs/differences.md).
 func signingKeyV4(secret, scope string) []byte {
 	date, region, service := parseCredScope(scope)
 	k := hmacSHA256([]byte("AWS4"+secret), []byte(date))

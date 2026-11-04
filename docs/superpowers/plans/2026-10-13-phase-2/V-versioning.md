@@ -49,7 +49,7 @@ their default.
 | D5 | A versioned write awaits its index ADD completion before its link. Unversioned writes keep the unawaited completion. | rgw-go's completions run unordered (`docs/cgo-limitations.md:320-345`); a link that reaches the shard first corrupts the version (§2.3). The round trip is measured in the gateway comparison before any per-shard queue. | V5a, V7a |
 | D6 | The 404 of a GET or HEAD whose current version is a delete marker carries `x-amz-delete-marker: true` on Squid too. | Tentacle feature level, and S3 sends it (defect 7). | V14a |
 | D7 | The `list-type=2&versions` document stays as phase 1 renders it. | No S3 client sends it; the registry explains it. | V14b |
-| D8 | `docs/exclusions.md`'s two `bi_*` sentences are amended: `bi_get` is in scope for one version's index entry, on the versioned delete and on D2's 404: one read for a named instance, and up to three for `null` (the plain key, then the null delete marker's key, then the null data key, in the class's `read_key_entry` order). `bi_put`, `bi_list` and the repair paths stay out. rgw-rs is told. | The S3 versioned delete needs it at both floors (§2.4), and a converted key's `null` lies behind its version marker (review F4). | V5a, V8a |
+| D8 | `docs/differences.md`'s two `bi_*` sentences are amended: `bi_get` is in scope for one version's index entry, on the versioned delete and on D2's 404: one read for a named instance, and up to three for `null` (the plain key, then the null delete marker's key, then the null data key, in the class's `read_key_entry` order). `bi_put`, `bi_list` and the repair paths stay out. rgw-rs is told. | The S3 versioned delete needs it at both floors (§2.4), and a converted key's `null` lies behind its version marker (review F4). | V5a, V8a |
 | D9 | No upstream u64-mode cmpxattr request now; the C API's missing mode is a `docs/cgo-limitations.md` entry. | VD-1's guard is correct and compatible. | V4 |
 | P2 | (the owner, 2026-10-13) The admin object removal and the purges ignore object lock, as radosgw does, with an exclusion. | Rook's bucket deletion relies on the purge; refusing strands lock buckets. | V8b, V12b |
 | P3 | (the owner, 2026-10-13) V5b gets a Fable review after its task review, and V5c, split from it for size and carrying D1's races, shares that review; the other OLH tasks get the standard Opus review. | A wrong OLH step corrupts state both gateways share, and V5b and V5c hold the races. | V5b, V5c |
@@ -124,7 +124,7 @@ their default.
 | `internal/op/deleteobject.go`, `deleteobjects.go`, `internal/s3/deleteobject.go`, `deleteobjects.go` | V12a, then L4 | L4 after V12a. |
 | `internal/s3/putobject.go`, `copyobject.go`, `multipart.go`, `getobject.go`, `getobjattrs.go` | V11, V14a; WP-7, WP-13, L5b, C8 | No fixed order: each adds its headers in its own helper, one call line per site, and the later one rebases. |
 | `internal/op/putobject.go`, `copyobject.go`, `completemultipart.go` | V11; WP-6, BC-26 | the controller merges them one after the other, never in parallel on one op. |
-| `docs/exclusions.md`, `docs/ceph-upstream-bugs.md`, `docs/cgo-limitations.md` | most tasks | append-only per PP-5; each PR edits only its own entries. |
+| `docs/differences.md`, `docs/ceph-upstream-bugs.md`, `docs/cgo-limitations.md` | most tasks | append-only per PP-5; each PR edits only its own entries. |
 | `hack/s3tests/deselect-phase2.txt`, `hack/admin/deselect-phase2.txt`, the ledgers | V10, V15a; L, C, B, WP | each area edits its own lines; recordings land one at a time through the controller. |
 
 ## Tasks
@@ -337,7 +337,7 @@ their default.
 ### Task V4: driver, the OLH head operations
 
 - **Layer:** driver. **Files:** create `internal/driver/olh_head.go` and specs; append to
-  `docs/cgo-limitations.md` and `docs/exclusions.md`. **Cluster:** no.
+  `docs/cgo-limitations.md` and `docs/differences.md`. **Cluster:** no.
 - **Review:** task review.
 - **Consumes:** V1 (requests), V2 (`OLHInfo`, `OLHPendingInfo`, tags), V3b (the emulated methods),
   phase 1's `readHead` and write ops. **Produces** (driver-internal): `olhInitModification`,
@@ -416,11 +416,11 @@ their default.
 - **Exclusions and registry:**
   - `docs/cgo-limitations.md`, "librados' C API has no u64-mode cmpxattr" (D9, a limitation,
     Q10's not-now ruling).
-  - `docs/exclusions.md`, "apply_olh_log's olh.ver guard is EQ on the bytes read, retried from a
+  - `docs/differences.md`, "apply_olh_log's olh.ver guard is EQ on the bytes read, retried from a
     fresh read" (VD-1; the state written is radosgw's but in the same-epoch window, where a retry
     from a fresh `olh.ver` keeps the class's current version and radosgw writes the link logged
     last).
-  - `docs/exclusions.md`, "A replay passes over a version removal that the writer's expected
+  - `docs/differences.md`, "A replay passes over a version removal that the writer's expected
     write tag refuses": the replay lands, trims the log when another writer refused its clear,
     and reports the refusal; only a refusal returned without an error is final.
   - `docs/ceph-upstream-bugs.md`, five entries: "radosgw's apply_olh_log applies a same-epoch
@@ -434,7 +434,7 @@ their default.
 ### Task V5a: driver, the OLH index operations and the awaited completion
 
 - **Layer:** driver. **Files:** modify `internal/driver/indexop.go`; create
-  `internal/driver/olh_index.go` and specs; edit `docs/exclusions.md`. **Cluster:** no.
+  `internal/driver/olh_index.go` and specs; edit `docs/differences.md`. **Cluster:** no.
 - **Review:** task review.
 - **Consumes:** V1, V3a, V3b, V4's `olhIndex`. **Produces:**
   - `func (x *indexOp) guardedWrite(ctx context.Context, call func(w *radosclient.WriteOp)) error`
@@ -503,7 +503,7 @@ their default.
 
 - **Layer:** driver. **Files:** create `internal/driver/olh.go` and specs; modify
   `internal/driver/stat.go` (the unfollowed head read, behaviour 8),
-  `internal/driver/export_integration.go` (a fault point) and `docs/exclusions.md`.
+  `internal/driver/export_integration.go` (a fault point) and `docs/differences.md`.
   **Cluster:** no.
 - **Review:** task review, then a Fable review (P3, the owner, 2026-10-13).
 - **Consumes:** V4, V5a, phase 1's `readHead` and `removeHead`. **Produces:**
@@ -766,7 +766,7 @@ their default.
 ### Task V6: driver, reads follow the OLH; attrs on a version
 
 - **Layer:** driver. **Files:** modify `internal/driver/stat.go`, `read.go`, `attrs.go` and
-  `internal/op/object.go` (`ObjectState`); specs; edit `docs/exclusions.md`. **Cluster:** no.
+  `internal/op/object.go` (`ObjectState`); specs; edit `docs/differences.md`. **Cluster:** no.
 - **Consumes:** V4's `followOLH`, V5a's `getInstanceEntry`, V5b's `updateOLH`. **Produces:**
   `ObjectState.DeleteMarker bool`; after a follow `ObjectState.Key` is the resolved version's
   key, so `Key.Instance` is the version id (the report's `ObjectState.Instance`, N20).
@@ -812,7 +812,7 @@ their default.
 ### Task V7a: driver, versioned PutObject
 
 - **Layer:** driver. **Files:** modify `internal/driver/put.go`, `headwrite.go`; create
-  `internal/driver/put_versioned.go` and specs; edit `docs/exclusions.md` and
+  `internal/driver/put_versioned.go` and specs; edit `docs/differences.md` and
   `docs/ceph-upstream-bugs.md`. **Cluster:** no.
 - **Review:** task review.
 - **Consumes:** V2, V5a's `completeSync`, V5b's `setOLH`, V5c's condition rules, V6's follow (the
@@ -920,7 +920,7 @@ their default.
 - **Layer:** driver. **Files:** modify `internal/driver/delete.go`, `internal/op/object.go`
   (the `DeleteObject` signature, `DeleteParams`, `DeleteResult`), memstore's delete, and the
   regenerated `opfakes` and `driverfakes`; create `internal/driver/delete_versioned.go` and specs;
-  edit `docs/exclusions.md` and `docs/ceph-upstream-bugs.md`. **Cluster:** no.
+  edit `docs/differences.md` and `docs/ceph-upstream-bugs.md`. **Cluster:** no.
 - **Consumes:** V2, V5a's `getInstanceEntry`, V5b's `setOLH` and `unlinkObjInstance`, V5c's
   condition rules, V6. **Produces:** the Seams table's `DeleteObject`, `DeleteResult` and
   `DeleteParams` fields (`MarkerOwner`, `SkipOLHUpdate`, and the `Expect` field, whose behaviour
@@ -975,9 +975,9 @@ their default.
     `DeleteMarker` true;
   - a conditional marker with a radosgw-shaped writer linking between its init and its link
     (V5c): 412 and no marker.
-- **Exclusions and registry:** D8's amendment of both `bi_*` sentences in `docs/exclusions.md`
+- **Exclusions and registry:** D8's amendment of both `bi_*` sentences in `docs/differences.md`
   (N11 of the notes), with D8's widened wording; the rgw-rs session is told, as
-  `docs/exclusions.md` requires. A registry entry for defect 16 (S3-correctness, both floors,
+  `docs/differences.md` requires. A registry entry for defect 16 (S3-correctness, both floors,
   unreproduced) and an exclusion, "A versioned delete of versionId=null checks the null version
   itself".
 - **Depends on:** V5c, V6. **PR split:** one. **Brief:** about 220 lines.
@@ -985,7 +985,7 @@ their default.
 ### Task V8c: driver, `DeleteParams.Expect`
 
 - **Layer:** driver. **Files:** modify `internal/driver/delete_versioned.go` and specs; edit
-  `docs/exclusions.md`. **Cluster:** no.
+  `docs/differences.md`. **Cluster:** no.
 - **Consumes:** V8a, V5b's `errRemovalRefused` and its old-epoch link, V5c's `ExpectTag`.
   **Produces:** `Expect`'s behaviour as the Seams table gives it, consumed by L4 and C10b.
 - **Behaviour:**
@@ -1141,7 +1141,7 @@ their default.
 ### Task V9: driver, listings with versions
 
 - **Layer:** driver. **Files:** modify `internal/driver/list.go`, `internal/op/bucket.go` and
-  specs; edit `docs/exclusions.md`. **Cluster:** no.
+  specs; edit `docs/differences.md`. **Cluster:** no.
 - **Consumes:** V0's `Reply`, V3a's emulated list, V5a's `getInstanceEntry`. **Produces:**
   `ListObjectsParams.MarkerInstance`, `ListObjectsResult.NextMarkerInstance`,
   `ObjectEntry.VersionedEpoch`, `ObjectEntry.Category`.
@@ -1211,7 +1211,7 @@ their default.
 - **Layer:** op and handler. **Files:** create `internal/op/bucketversioning.go`,
   `internal/s3/bucketversioning.go` and specs; bind the two routes in S2's versioning route-set
   file; add `Request.MFAVerified bool` to `internal/op/request.go` (false until V13d sets it);
-  edit `docs/exclusions.md`; then `hack/admin/deselect-phase2.txt` and the admin ledgers.
+  edit `docs/differences.md`; then `hack/admin/deselect-phase2.txt` and the admin ledgers.
   **Cluster:** yes, for the recording PR only.
 - **Security boundary:** the document parser and the MFA rules face clients; adversarial review
   applies to them (PP-14).
@@ -1267,7 +1267,7 @@ their default.
 
 - **Layer:** op and handler. **Files:** modify `internal/op/putobject.go`, `copyobject.go`,
   `completemultipart.go`, the append op; create `internal/op/version.go`; modify
-  `internal/s3/putobject.go`, `copyobject.go`, `multipart.go` and specs; edit `docs/exclusions.md`
+  `internal/s3/putobject.go`, `copyobject.go`, `multipart.go` and specs; edit `docs/differences.md`
   and `docs/ceph-upstream-bugs.md`. **Cluster:** no.
 - **Consumes:** V7a, V7b, V2. **Produces:** `func VersionForWrite(r *Request) string`.
 - **Behaviour:**
@@ -1306,7 +1306,7 @@ their default.
 ### Task V12a: op and s3, versioned DeleteObject and DeleteObjects
 
 - **Layer:** op and handler. **Files:** modify `internal/op/deleteobject.go`, `deleteobjects.go`,
-  `internal/s3/deleteobject.go`, `deleteobjects.go` and specs; edit `docs/exclusions.md`.
+  `internal/s3/deleteobject.go`, `deleteobjects.go` and specs; edit `docs/differences.md`.
   **Cluster:** no.
 - **Security boundary:** the MFA checks are authorization; adversarial review applies (PP-14).
 - **Consumes:** V8a, V10's `Request.MFAVerified`, V13d (which sets it), V11's narrowed gate.
@@ -1347,7 +1347,7 @@ their default.
 ### Task V12b: admin, the object removal and the purges on versioned buckets
 
 - **Layer:** admin. **Files:** modify `internal/op/adminbucket.go` (`RemoveObjectAdmin`),
-  `adminpurge.go` (`refuseVersionedPurge`) and specs; edit `docs/exclusions.md`. **Cluster:** no.
+  `adminpurge.go` (`refuseVersionedPurge`) and specs; edit `docs/differences.md`. **Cluster:** no.
 - **Consumes:** V8b.
 - **Behaviour:** `DELETE /admin/bucket?object`, `DELETE /admin/bucket` with `purge-objects` or
   `bypass-gc` and `DELETE /admin/user` with `purge-data` reach V8b's driver halves on every bucket;
@@ -1564,7 +1564,7 @@ their default.
 - **Layer:** op and handler. **Files:** modify `internal/op/getobject.go`, `objectread.go`,
   `objectattrs.go`, the object ACL and tagging ops, UploadPartCopy's source check,
   `internal/s3/getobject.go`, `getobjattrs.go`, `deletemarker.go` and specs; edit
-  `docs/exclusions.md` and `docs/ceph-upstream-bugs.md`. **Cluster:** no.
+  `docs/differences.md` and `docs/ceph-upstream-bugs.md`. **Cluster:** no.
 - **Consumes:** V6, V11's narrowed gate.
 - **Behaviour:**
   1. GET and HEAD send `x-amz-version-id` from the resolved key, `null` for an empty instance on
@@ -1600,7 +1600,7 @@ their default.
 ### Task V14b: op and s3, ListObjectVersions
 
 - **Layer:** op and handler. **Files:** modify `internal/op/listobjects.go`,
-  `internal/s3/listobjects.go` and specs; edit `docs/exclusions.md`. **Cluster:** no.
+  `internal/s3/listobjects.go` and specs; edit `docs/differences.md`. **Cluster:** no.
 - **Consumes:** V9.
 - **Behaviour:**
   1. The parameters ([rgw_rest_s3.cc:1718-1762](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1718-L1762),

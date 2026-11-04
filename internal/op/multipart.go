@@ -34,7 +34,7 @@ type Upload struct {
 	// IfMatch and IfNoneMatch are CompleteMultipartUpload's conditional
 	// headers, which v20.2.4 honors
 	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4572-L4573 at v20.2.4)
-	// and rgw-go honors on both releases (docs/exclusions.md, "Write
+	// and rgw-go honors on both releases (docs/differences.md, "Write
 	// conditions are Tentacle's on Squid too"); empty means unset.
 	IfMatch, IfNoneMatch string
 	// Checksum is the upload's checksum type and flags, zero when it has
@@ -156,7 +156,7 @@ func UploadListing(p ListUploadsParams) ListObjectsParams {
 // inside the prefix, which the next page's listing skips past. radosgw lists
 // a common prefix only when its name passes MultipartMetaFilter, as a whole
 // meta name does under a delimiter that is a suffix of ".meta", and ends
-// such a page with the last upload's markers or none (docs/exclusions.md,
+// such a page with the last upload's markers or none (docs/differences.md,
 // "ListMultipartUploads keeps the common prefixes radosgw drops").
 // lr.NextMarker plays no part: a listing round that stops half full leaves
 // it on whatever name it read last, a refused part head as well.

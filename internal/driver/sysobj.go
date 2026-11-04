@@ -55,7 +55,7 @@ type sysobjs struct {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_notify.cc#L162-L224 at v20.2.4),
 // whose failure fails radosgw's start. The cache stays disabled until every
 // control watch is registered, and for good when rgw_cache_enabled is
-// false, while the notifier still watches and sends (docs/exclusions.md).
+// false, while the notifier still watches and sends (docs/differences.md).
 func openSysObj(ctx context.Context, pools *poolCache, params meta.ZoneParams, o options, r denc.Release) (*sysobjs, error) {
 	hidden := newHiddenPools(params)
 	cache := newObjectCache(o.cacheLRUSize, o.cacheExpiry, params.DomainRoot, time.Now)

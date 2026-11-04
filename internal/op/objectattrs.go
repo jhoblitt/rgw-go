@@ -77,7 +77,7 @@ func (o *PutObjectACL) VerifyPermission(ctx context.Context, r *Request) error {
 // replaced, nor writes for a requester a concurrent change refused. A retry
 // that passes them and finds the requested ACL in place writes nothing and
 // succeeds; once the retries are spent it answers ConcurrentModification
-// (docs/exclusions.md). An object in a bucket whose ownership setting is
+// (docs/differences.md). An object in a bucket whose ownership setting is
 // BucketOwnerEnforced refuses the write first, before Build reads the body,
 // and so does each try against the bucket it read (aclsDisabled).
 func (o *PutObjectACL) Execute(ctx context.Context, r *Request) error {
@@ -138,7 +138,7 @@ func (o *PutObjectACL) Execute(ctx context.Context, r *Request) error {
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.h#L183-L196 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L197-L210 at v20.2.4),
 // so a retry can write for a requester whom the change it lost to refused;
-// rgw-go writes nothing for them (docs/exclusions.md).
+// rgw-go writes nothing for them (docs/differences.md).
 func RetryRacedWriteReauthorized(ctx context.Context, r *Request, reread, verify, f func() error) error {
 	retry := false
 	return RetryRacedBucketWrite(ctx, r, func() error {
@@ -278,14 +278,14 @@ func (o *DeleteObjectTagging) VerifyPermission(ctx context.Context, r *Request) 
 // v19.2.6 skips the load and stamps the object with the epoch plus a
 // nanosecond (docs/ceph-upstream-bugs.md, "Squid's DeleteObjectTagging
 // stamps the object with the epoch plus one nanosecond";
-// docs/exclusions.md). The state is the version Init resolved, for a key
+// docs/differences.md). The state is the version Init resolved, for a key
 // named without a version the current one, where delete_obj_attrs writes
 // the key as named, on a versioned key its OLH head
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2422-L2430 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3014-L3022 at v20.2.4;
 // docs/ceph-upstream-bugs.md, "radosgw's DeleteObjectTagging naming no
 // version writes the key's OLH head, not its current version";
-// docs/exclusions.md, "DeleteObjectTagging naming no version removes the
+// docs/differences.md, "DeleteObjectTagging naming no version removes the
 // current version's tags").
 func (o *DeleteObjectTagging) Execute(ctx context.Context, r *Request) error {
 	if r.ObjState == nil || !r.ObjState.Exists {

@@ -152,7 +152,7 @@ func SuppliedForComplete(in ChecksumInput) (*ChecksumRequest, error)
 | `internal/testutil/fakerados/cls_otp*.go` | WP-17 | V13b | WP-17 owns `cls_otp.go`; V13b writes only `cls_otp_check.go` |
 | `internal/auth/chunked.go`, `payload.go`, `internal/op/identity.go` | WP-3 | BC-31 adds a new file and edits none of these | single owner |
 | the T unit's s3-tests lists, the ledgers and known-differences files | WP-14 | every unit's recording | after WP-22, WP-14 edits only its own lines; recordings land one at a time through the controller |
-| `docs/exclusions.md`, `docs/ceph-upstream-bugs.md`, `docs/cgo-limitations.md` | most tasks | every unit | append-only per PP-5; each PR edits only its own entries |
+| `docs/differences.md`, `docs/ceph-upstream-bugs.md`, `docs/cgo-limitations.md` | most tasks | every unit | append-only per PP-5; each PR edits only its own entries |
 
 ## Tasks
 
@@ -445,7 +445,7 @@ client's `otp_check`.
     WD-3; D22's Squid limits; CreateMultipartUpload's refused algorithm; UploadPartCopy's
     checksum request headers ignored (rule 1);
   - new: the plain `STREAMING-AWS4-HMAC-SHA256-PAYLOAD` sent with `x-amz-trailer` keeps no
-    trailers (WP-3; `docs/exclusions.md`, "aws-chunked trailer sections are read line by line").
+    trailers (WP-3; `docs/differences.md`, "aws-chunked trailer sections are read line by line").
     A Tentacle radosgw verifies the checksum an algorithm header, or a part's upload type, names
     against such a trailer:
     - the filter `RGWPutObj_Cksum::Factory` builds

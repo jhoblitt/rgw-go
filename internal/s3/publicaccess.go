@@ -31,7 +31,7 @@ func publicAccessRoutes(*op.Env) []routeSet {
 // so once end_header has sent the error document and its Content-Length
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L620-L625 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L625-L630 at v20.2.4),
-// a block follows it past that length (docs/exclusions.md, "A
+// a block follows it past that length (docs/differences.md, "A
 // GetPublicAccessBlock error is its error document alone"). After the 404
 // every setting is false. After the 500 for a block that does not decode,
 // which radosgw answers whoever verify_permission admits, as its authorizer

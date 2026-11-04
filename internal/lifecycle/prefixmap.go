@@ -37,7 +37,7 @@ type TransitionAction struct {
 // SizeGT and SizeLT keep the sign a stored size was written with, and
 // SizeMatches compares them signed. radosgw's stoull reads -n as 2^64 - n,
 // so its LT -1 matches every object and its GT -1 none, the opposite of the
-// sender's meaning (docs/exclusions.md, "The lifecycle prefix map reads a
+// sender's meaning (docs/differences.md, "The lifecycle prefix map reads a
 // stored negative object size by its sign, and no Date past real_time"). A
 // size stoull reads above math.MaxInt64 is held as math.MaxInt64, which no
 // object reaches.

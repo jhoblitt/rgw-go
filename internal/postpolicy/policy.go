@@ -103,7 +103,7 @@ func denied(msg string) *Error { return &Error{Err: ErrAccessDenied, Message: ms
 // text for it is as long as the document and the NUL, which only a real can
 // be, with white space or unread text beside it, and then finds no
 // expiration in it; a document JSONParser refuses is "Malformed JSON", as is
-// one jsonspirit.Parse refuses where JSONParser reads it (docs/exclusions.md,
+// one jsonspirit.Parse refuses where JSONParser reads it (docs/differences.md,
 // "A POST policy with a `\x` or `\X` escape, a number json_spirit takes from
 // the host's libm, or nesting past 10000 is refused"). The top-level
 // object's first expiration and first conditions are read, then each child
@@ -189,7 +189,7 @@ func (p *Policy) addCondition(op, first, second string) error {
 // every field must have been checked (Env). Each refusal is an *Error naming
 // ErrAccessDenied. Check marks in env each field it reads. An expiration
 // before 1970 has passed, where radosgw's unsigned comparison never finds
-// it passed (docs/exclusions.md, "A POST policy whose expiration is before
+// it passed (docs/differences.md, "A POST policy whose expiration is before
 // 1970 has expired").
 func (p *Policy) Check(env *Env, now time.Time) error {
 	if p.expires <= now.Unix() {

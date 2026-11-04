@@ -343,7 +343,7 @@ benchmark was re-run.
   write's link reads the instance entry its ADD completion writes,
   and a link that reached the shard first would list the version without
   its size or ETag, so the write waits for its completion before it links
-  (`indexOp.completeSync`, `internal/driver/indexop.go`; `docs/exclusions.md`,
+  (`indexOp.completeSync`, `internal/driver/indexop.go`; `docs/differences.md`,
   "A versioned write awaits its index completion"), where radosgw sends both
   without waiting. An OLH replay removes each version and then, on the same
   shard, trims the log or clears the OLH. The clear removes the version
@@ -358,7 +358,7 @@ benchmark was re-run.
   versioning was enabled, and not overwritten since, clears the OLH so.
   The replay waits for each removal's completion before its head op
   (`indexOp.completeDelSync`, `internal/driver/indexop.go`;
-  `docs/exclusions.md`, "An OLH replay awaits the index completion of each
+  `docs/differences.md`, "An OLH replay awaits the index completion of each
   version it removes"), where radosgw sends it without waiting. A suspended
   bucket's write of a key with no OLH links nothing, but the key's next
   delete links the null delete marker, which takes the pending op of the
@@ -1057,7 +1057,7 @@ benchmark was re-run.
     attr name, user id, email, account id, which names the account's
     object, and access or Swift key id (400 InvalidArgument;
     `op.RefuseNULKey` and `op.RefuseNUL`,
-    `internal/op/metadata.go`; docs/exclusions.md, "The metadata sections
+    `internal/op/metadata.go`; docs/differences.md, "The metadata sections
     write only what keeps a user or bucket whole").
   - Where radosgw keeps a NUL, every other request argument that becomes
     part of such a name is refused with one before authentication, which
@@ -1072,7 +1072,7 @@ benchmark was re-run.
     `internal/admin/request.go`); and a query's access key (403
     InvalidAccessKeyId) and a system user's `rgwx-uid` (403 AccessDenied),
     `internal/auth`. A list prefix or marker reaches the bucket index only
-    inside an encoded class call, which keeps its NUL. docs/exclusions.md,
+    inside an encoded class call, which keeps its NUL. docs/differences.md,
     "A NUL in a request argument that names a RADOS object is refused",
     records the difference from radosgw.
   - Beneath every check, goceph refuses an oid, a locator, an xattr name or
@@ -1118,7 +1118,7 @@ benchmark was re-run.
 - **Status:** worked around. `applyOLHLog` (`internal/driver/olh_head.go`)
   guards on `cmpxattr(olh.ver, EQ, <the bytes it read>)` in string mode,
   which refuses an apply whenever another writer moved `olh.ver` since the
-  head was read; docs/exclusions.md, "apply_olh_log's olh.ver guard is EQ
+  head was read; docs/differences.md, "apply_olh_log's olh.ver guard is EQ
   on the bytes read, retried from a fresh read", records the difference.
   `clearOLHHead` compares the decimal `ver`, the bytes an apply writes,
   which the u64 EQ matches too. The state written is radosgw's.
@@ -1146,7 +1146,7 @@ benchmark was re-run.
   and rgw-go, which counts its requests in Go, cannot add them to the
   report.
 - **Class:** inherent in the C API.
-- **Status:** accepted. `docs/exclusions.md`, "The manager gets none of
+- **Status:** accepted. `docs/differences.md`, "The manager gets none of
   radosgw's rgw perf counters from rgw-go", records the difference. rgw-go
   serves its own counters on its `--metrics-addr` listener, and
   ceph-exporter, which the prometheus module leaves the perf counters to by

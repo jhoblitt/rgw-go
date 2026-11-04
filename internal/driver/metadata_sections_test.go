@@ -78,7 +78,7 @@ var _ = Describe("the metadata section table", func() {
 			}
 		})
 		// The sections radosgw serves and the driver does not
-		// (docs/exclusions.md, "The admin metadata API serves four
+		// (docs/differences.md, "The admin metadata API serves four
 		// sections"): a put rule for one would let its put past the gate.
 		It("refuses a put to a section of radosgw's it does not serve before reading the body, as none has a put rule", func(ctx SpecContext) {
 			unserved := slices.DeleteFunc([]string{"account", "group", "otp", "roles", "topic"}, func(section string) bool {

@@ -780,7 +780,7 @@ failed re-lock; LC's day boundary in local time.
 
 Prefixes: **L** for object lock, **C** for lifecycle, **T0** for the shared prerequisites this
 area proposes to the plan index; the index assigns T0's owner. "Cluster" marks a task that
-needs a disposable rooket cluster. Every task records its differences in `docs/exclusions.md`
+needs a disposable rooket cluster. Every task records its differences in `docs/differences.md`
 and its defects in `docs/ceph-upstream-bugs.md` in the same PR.
 
 ### Seams with the other areas
@@ -840,7 +840,7 @@ filled by notifications.
 | `internal/op/bucketsubres.go` (holds `GetBucketLifecycle`) | bucketconfig, C6 | C6 moves the lifecycle op to `op/lifecycle.go` |
 | `internal/driver/options.go` | C5, writepath | line-local additions |
 | `hack/s3tests/run.sh` (`EXCLUDED_MARKERS`), `deselect-phase2.txt` | every area's last task | line-local; each area deletes only its own lines |
-| `docs/exclusions.md`, `docs/ceph-upstream-bugs.md` | every task | the plan index's PP-5 ruling (per-entry fragments or an append-only region) |
+| `docs/differences.md`, `docs/ceph-upstream-bugs.md` | every task | the plan index's PP-5 ruling (per-entry fragments or an append-only region) |
 
 ### Tasks, in order
 

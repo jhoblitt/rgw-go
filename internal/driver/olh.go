@@ -34,7 +34,7 @@ const (
 	// from a fresh head after another writer's guard refused its apply, and
 	// a tail run again after its head op landed. radosgw's replay needs
 	// none, its u64-mode olh.ver compare letting a later epoch through
-	// (docs/exclusions.md, "apply_olh_log's olh.ver guard is EQ on the bytes
+	// (docs/differences.md, "apply_olh_log's olh.ver guard is EQ on the bytes
 	// read, retried from a fresh read").
 	olhReplayRetries = 10
 )
@@ -203,14 +203,14 @@ func (s *Store) stopsAfterLink() bool { return olhStopAfterLink != nil && olhSto
 //     head its read found, which set_olh answers ENOENT
 //     (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8699-L8706 at v19.2.7,
 //     https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9445-L9452 at v20.2.4;
-//     docs/exclusions.md, "A versioned write retries when the key's OLH
+//     docs/differences.md, "A versioned write retries when the key's OLH
 //     head goes between its read and its init").
 //   - A link that fails cancels the modification, unless its outcome is
 //     unknown (outcomeUnknown), when its pending attr stays: set_olh cancels
 //     it then too
 //     (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8715-L8717 at v19.2.7,
 //     https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9461-L9463 at v20.2.4;
-//     docs/exclusions.md, "A versioned link or unlink whose outcome is
+//     docs/differences.md, "A versioned link or unlink whose outcome is
 //     unknown keeps its pending attr"). One the index refused for the head's
 //     OLH tag repairs the head from the index's OLH entry and tries again;
 //     any other runs a best-effort update unless p.SkipUpdate, and is
@@ -797,7 +797,7 @@ func versionName(rec *op.BucketRecord, key meta.ObjKey) string {
 // the unversioned delete of key, a version of the name, without conditions.
 // Its head is read without following, as the null version's is the OLH head,
 // and the removal is guarded on the write tag that read found, or on
-// expectTag when it is not nil, on both releases (docs/exclusions.md,
+// expectTag when it is not nil, on both releases (docs/differences.md,
 // "Delete conditions are Tentacle's, and a delete is guarded, on both
 // releases"); removeHead then keeps the head's OLH attrs. Its index calls
 // carry the bilog flags apply_olh_log's delete_obj gives them, VERSIONED_OP,
@@ -857,7 +857,7 @@ func (b *bucketOLHIndex) removeInstance(ctx context.Context, key meta.ObjKey, ex
 // nothing: a version linked after its removal would be listed with no head.
 // The null version is left, its head being the name's OLH head, and so is a
 // version whose removal fails, as radosgw leaves every such version for
-// bucket check (docs/exclusions.md, "rgw-go removes the instance a failed
+// bucket check (docs/differences.md, "rgw-go removes the instance a failed
 // versioned write made").
 func (s *Store) removeFailedVersion(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, cause error) {
 	if outcomeUnknown(cause) {

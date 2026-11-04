@@ -68,7 +68,7 @@ type Lister struct {
 // next_key_name gives it, on both releases. v19.2.7 gives it none, so a
 // current delete marker there looks to have no older version and is
 // removed, though its older versions start the next page, and the newest of
-// them becomes current again (docs/exclusions.md, "A current delete marker
+// them becomes current again (docs/differences.md, "A current delete marker
 // at the end of a listing page is kept on Squid").
 func (l *Lister) Page(page []Entry, truncated bool) []State {
 	states := make([]State, len(page))
@@ -244,7 +244,7 @@ func actions(op *Op) []action {
 // answers at most once per entry, where radosgw stats the object in every
 // check that has a size filter, due or not; the decisions are the same.
 // They differ from radosgw's where
-// docs/exclusions.md says so: "Lifecycle expiration on a versioning-
+// docs/differences.md says so: "Lifecycle expiration on a versioning-
 // suspended bucket writes the null delete marker", "Every permanent removal
 // by lifecycle runs the object-lock check", "Lifecycle selection takes an
 // action due at the epoch", "The lifecycle size filter reads a version's
@@ -342,7 +342,7 @@ func (ev *evaluation) check(ctx context.Context, a action) (Decision, time.Time,
 // bucket never versioned removes the object. radosgw removes the current
 // version of a suspended bucket permanently, so an older version becomes
 // current again, where S3 writes the null delete marker, which radosgw's
-// own DeleteObject writes there too (docs/exclusions.md, "Lifecycle
+// own DeleteObject writes there too (docs/differences.md, "Lifecycle
 // expiration on a versioning-suspended bucket writes the null delete
 // marker").
 func (ev *evaluation) expiration() (Decision, time.Time, bool) {
@@ -448,7 +448,7 @@ func (ev *evaluation) transition(a action) (Decision, time.Time, bool) {
 // version's size for a noncurrent one. The same follow reads the current
 // version's size for a noncurrent null version, and radosgw compares the
 // size stored, which for a compressed object is its compressed size
-// (docs/exclusions.md, "The lifecycle size filter reads a version's own,
+// (docs/differences.md, "The lifecycle size filter reads a version's own,
 // uncompressed size").
 func (ev *evaluation) sizeFits(ctx context.Context) (bool, error) {
 	if ev.op.SizeGT == nil && ev.op.SizeLT == nil {
@@ -471,7 +471,7 @@ func (ev *evaluation) sizeFits(ctx context.Context) (bool, error) {
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L304-L349 at v19.2.7 and v20.2.4),
 // which passes a bucket without object lock unread. radosgw runs it for a
 // noncurrent version alone, so its current expiration removes a retained or
-// held object (docs/exclusions.md, "Every permanent removal by lifecycle
+// held object (docs/differences.md, "Every permanent removal by lifecycle
 // runs the object-lock check"). A delete marker over a locked version is no
 // removal, nor is the null delete marker over a version that is not null,
 // and a delete marker holds no lock.
@@ -516,7 +516,7 @@ func (ev *evaluation) tagsMatch(ctx context.Context) (bool, error) {
 // counts the object's tags that match one of the rule's, so a repeated key
 // counts twice and can stand in for a tag the object lacks, and
 // s3_expiration_header reads only the first value of a repeated key
-// (docs/exclusions.md, "The lifecycle tag filter needs each of a rule's tags
+// (docs/differences.md, "The lifecycle tag filter needs each of a rule's tags
 // among the object's").
 func hasAllTags(rule, obj tags.Set) bool {
 	for _, t := range rule.Tags {

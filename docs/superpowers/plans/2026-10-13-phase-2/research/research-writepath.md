@@ -505,7 +505,7 @@ What both gateways must read and write alike, beyond phase 1's obligations.
   message and block map.
 - Each block is one compressor call on at most `rgw_max_chunk_size` plaintext bytes, never
   more. A block larger than a coexisting radosgw's `rgw_max_chunk_size` exposes that radosgw
-  to its ranged-GET loop (`docs/exclusions.md`, "A ranged GET of a compressed object does not
+  to its ranged-GET loop (`docs/differences.md`, "A ranged GET of a compressed object does not
   spin").
 - Each block's bytes are the codec's Ceph framing (§2.2), so the other gateway decodes them.
 - zlib's `compressor_message` must state the window and wrapper rgw-go actually used. Go's
@@ -718,7 +718,7 @@ Not defects, recorded so no task re-derives them:
 ## 7. Proposed tasks
 
 Twenty-four tasks, WP-1 to WP-24. Each task's brief cites the §2 lines it reproduces, and
-writes its own `docs/exclusions.md` and `docs/ceph-upstream-bugs.md` entries (the standing
+writes its own `docs/differences.md` and `docs/ceph-upstream-bugs.md` entries (the standing
 rule). "Cluster" marks the tasks that need a disposable cluster; every other task runs on
 unit specs, fakerados, memstore and counterfeiter fakes. Brief lengths are estimates in lines.
 

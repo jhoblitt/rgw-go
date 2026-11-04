@@ -228,11 +228,11 @@ func checkOwnerMaxBuckets(ctx context.Context, r *Request) error {
 // bucket-owner-read, which Amazon S3 ignores on a bucket it creates: a new
 // bucket gets the private ACL for either, and a re-create compares either as
 // radosgw builds it. v21.1.2 creates a bucket beside any ACL
-// (docs/exclusions.md, "CreateBucket with x-amz-object-ownership is
+// (docs/differences.md, "CreateBucket with x-amz-object-ownership is
 // authorized as s3:PutBucketOwnershipControls too").
 // A requested index is NotImplemented, for a bucket that does not exist,
 // after every check radosgw makes before it creates one
-// (docs/exclusions.md). The location constraint picks the bucket's
+// (docs/differences.md). The location constraint picks the bucket's
 // zonegroup, the placement is selected, and a bucket of the name that exists
 // must match the request's zonegroup, placement and ACL. The bucket is then
 // created for the ACL's owner with the ACL as its user.rgw.acl, the
@@ -242,7 +242,7 @@ func checkOwnerMaxBuckets(ctx context.Context, r *Request) error {
 // the owner's is Existed, whatever object lock or ownership setting it has;
 // one that is another owner's is BucketAlreadyExists, which radosgw answers
 // as created when that owner's create lands during this one
-// (docs/exclusions.md).
+// (docs/differences.md).
 //
 // r.BucketRec carries the usage log's owner and payer, radosgw's
 // s->bucket_owner and s->bucket: none before the existing bucket is read,
@@ -372,7 +372,7 @@ func (o *CreateBucket) enforcedOverCanned() bool {
 // and v21.1.2's ownership check reads the header's value before get_params
 // sets it, so it never refuses
 // (https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L3754-L3759 at v21.1.2;
-// docs/exclusions.md, "CreateBucket with an ACL other than private is
+// docs/differences.md, "CreateBucket with an ACL other than private is
 // authorized as s3:PutBucketAcl too", "CreateBucket with object lock is
 // authorized as s3:PutBucketObjectLockConfiguration and s3:PutBucketVersioning
 // too" and "CreateBucket with x-amz-object-ownership is authorized as
@@ -552,7 +552,7 @@ func (o *DeleteBucket) VerifyPermission(ctx context.Context, r *Request) error {
 // bucket, which stays, and ErrRenamePending are the 409s they are. A
 // bucket an unfinished admin rename marks is refused with
 // ConcurrentModification first, as its other name shares the index
-// (docs/exclusions.md, "Bucket link and unlink write differently from
+// (docs/differences.md, "Bucket link and unlink write differently from
 // radosgw").
 func (*DeleteBucket) Execute(ctx context.Context, r *Request) error {
 	if err := refuseUnfinishedRename(ctx, r.Env, r.BucketRec); err != nil {

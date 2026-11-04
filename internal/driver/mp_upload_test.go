@@ -271,7 +271,7 @@ var _ = Describe("CreateUpload and GetUpload", func() {
 	It("answers NoSuchUpload, naming the pool, when the data-extra pool is missing, which it does not create", func(ctx SpecContext) {
 		c.FailPool(extraPoolName)
 		_, err := s.CreateUpload(ctx, rec, key, op.UploadParams{Owner: initiator, Attrs: attrsWithACL(initiator)})
-		Expect(err).To(MatchError(op.ErrNoSuchUpload), "docs/exclusions.md, \"No bootstrap\": radosgw creates the pool and the upload")
+		Expect(err).To(MatchError(op.ErrNoSuchUpload), "docs/differences.md, \"No bootstrap\": radosgw creates the pool and the upload")
 		Expect(err.Error()).To(ContainSubstring(extraPoolName))
 		Expect(c.Writes(rookIndexPool, "", shard)).To(BeZero())
 	})

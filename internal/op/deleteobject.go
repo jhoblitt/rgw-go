@@ -108,7 +108,7 @@ func (o *DeleteObject) Init(ctx context.Context, r *Request) error {
 // delete that names a version, "null" included, in a bucket with MFA delete,
 // ERR_MFA_REQUIRED, 403 AccessDenied, unless the request's x-amz-mfa verified
 // a device of the bucket's owner (OwnerMFAVerified), where radosgw takes any
-// requester's verified code (docs/exclusions.md, "Only the bucket owner's
+// requester's verified code (docs/differences.md, "Only the bucket owner's
 // x-amz-mfa satisfies MFA delete"). A refusal of the permission that op.Run
 // never overrides goes before the MFA check, as radosgw's refusal does. One
 // that op.Run's admin override passes still meets the check, so an admin
@@ -178,7 +178,7 @@ func (o *DeleteObject) Complete(context.Context, *Request) {}
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5576-L5611 and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7782-L7806 at v20.2.4),
 // which rgw-go's deletes do not, so they refuse every delete there, a delete
-// marker's included, before they touch the store (docs/exclusions.md,
+// marker's included, before they touch the store (docs/differences.md,
 // "DeleteObject and DeleteObjects answer 501 on an object-lock bucket").
 func deleteLockUnserved(rec *BucketRecord) error {
 	if rec.Info.ObjLockEnabled() {
@@ -245,7 +245,7 @@ func parseDate(date string) (time.Time, bool) {
 // terminating NUL one byte past the format's end
 // (docs/ceph-upstream-bugs.md); the format here has room for it. rgw-go
 // refuses a "%" of p's that reaches the format, which radosgw's strptime
-// would take for a conversion (docs/exclusions.md).
+// would take for a conversion (docs/differences.md).
 func parseDateClock(p string) (clock strptime.Tm, gmtoff int64, nsec uint64, ok bool) {
 	var f [33]byte
 	copy(f[:31], p)

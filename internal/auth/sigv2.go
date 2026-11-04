@@ -102,7 +102,7 @@ func authDataV2(rv *requestView, cfg *Config, now time.Time) (*authData, error) 
 // so a preflight's missing method is refused before the caller's skew check.
 // v19.2.7 signs a SigV2 preflight over OPTIONS and refuses no method
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L256 at v19.2.7);
-// rgw-go takes Tentacle's rule on both releases (docs/exclusions.md). The
+// rgw-go takes Tentacle's rule on both releases (docs/differences.md). The
 // method's refusal is EINVAL, every other EPERM.
 func canonicalStringV2(rv *requestView, presigned bool, hostNames vhost.Names) (sts string, headerTime time.Time, err error) {
 	md5, _ := rv.header("content-md5")
@@ -152,7 +152,7 @@ func canonicalStringV2(rv *requestView, presigned bool, hostNames vhost.Names) (
 // before 1970 refused as strptime read it, before second 60 or a zone offset
 // moves the instant across the year's edge. The instant is kept whole where
 // radosgw keeps 32 bits of its seconds, so a Date far in the future is skewed
-// here (docs/exclusions.md).
+// here (docs/differences.md).
 func v2RequestTime(date string) (time.Time, error) {
 	t, year, ok := rfc2616Date(date)
 	if !ok {
@@ -189,7 +189,7 @@ func writeCanonAmz(b *strings.Builder, m map[string]string) {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_client.cc#L36-L66 at v19.2.6
 // and v20.2.4). init_meta_info files a header under six other meta prefixes
 // there too, under its x-amz- name; rgw-go's S3 API reads none of them, so
-// none is signed (docs/exclusions.md). The value is the header's last, the one
+// none is signed (docs/differences.md). The value is the header's last, the one
 // RGWEnv::set keeps. beast files spellings of one name under one HTTP_ name,
 // where the last set wins; of spellings the header map keeps apart, which
 // net/http's server does not as it canonicalizes each name, the last in byte
@@ -241,7 +241,7 @@ func qsMetaV2(rv *requestView) map[string]string {
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L904-L909 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L939-L944 at v20.2.4),
 // so the two forms mean different things (docs/ceph-upstream-bugs.md). rgw-go has
-// every read take them as one set, on both releases (docs/exclusions.md), and refuses
+// every read take them as one set, on both releases (docs/differences.md), and refuses
 // what does not make one: a name the string to sign carries from both sides, and an
 // empty session token, in the headers or under a query name in any case, where
 // authDataV2 refuses only the query's x-amz-security-token spelt so. It also refuses

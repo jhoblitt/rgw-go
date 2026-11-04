@@ -106,7 +106,7 @@ var _ = Describe("the head write's guard", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(c.LastWrite(testDataPool, "", headOID).Steps()[0]).To(Equal(&radosclient.CreateStep{Exclusive: false}), "a fake tag is never compared")
 		},
-		Entry("on Squid, which v20.2.4's check governs too (docs/exclusions.md)", denc.Squid),
+		Entry("on Squid, which v20.2.4's check governs too (docs/differences.md)", denc.Squid),
 		Entry("on Tentacle", denc.Tentacle),
 	)
 

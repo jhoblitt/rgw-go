@@ -18,7 +18,7 @@ import (
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L426-L433 at v20.2.4),
 // the environment name prefix of the headers that become x_meta_map entries.
 // rgw-go's S3 API reads no header under the other six, so none is stored
-// (docs/exclusions.md).
+// (docs/differences.md).
 const amzEnvPrefix = "HTTP_X_AMZ_"
 
 // metaBlocklist is the x_meta_map entries rgw_get_request_metadata does not
@@ -31,7 +31,7 @@ const amzEnvPrefix = "HTTP_X_AMZ_"
 // store. v19.2.6 stores a CopyObject's copy-source SSE-C key in the clear,
 // and both store a request's session token (docs/ceph-upstream-bugs.md,
 // "radosgw stores request credentials as object attrs";
-// docs/exclusions.md).
+// docs/differences.md).
 var metaBlocklist = map[string]bool{
 	"x-amz-server-side-encryption-customer-algorithm":             true,
 	"x-amz-server-side-encryption-customer-key":                   true,
@@ -222,7 +222,7 @@ func isCryptName(name string) bool {
 // which PutObject calls and CopyObject does not. radosgw adds the query's on
 // every route; rgw-go adds them only where the route reads them
 // (op.AuthRoute.ReadsQueryMeta): an anonymous request's, and a signed one's
-// whose signature covers them (docs/exclusions.md):
+// whose signature covers them (docs/differences.md):
 //   - each generic header present, an empty one included, is its attr;
 //   - each X-Amz- header is its name, lowercased, and so is each
 //     x-amz-meta-* query parameter; a name reached twice joins its values

@@ -86,7 +86,7 @@ const maxVersioningDepth = 2
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.h#L179-L182 at v20.2.4),
 // untrimmed and compared case for case. radosgw answers every refusal here
 // -EINVAL, 400 InvalidArgument, a missing Status included; rgw-go answers
-// AWS's 400 MalformedXML (docs/exclusions.md, "PutBucketVersioning answers
+// AWS's 400 MalformedXML (docs/differences.md, "PutBucketVersioning answers
 // MalformedXML for a document that does not parse").
 //
 // Before it builds any tree, scanVersioningConfiguration refuses what

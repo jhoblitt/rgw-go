@@ -116,7 +116,7 @@ func (o *UploadPart) OpMask() uint32 { return OpTypeWrite }
 // upload or the source: VerifyPermission checks a copy's storage class and
 // reads its source once the destination and the op mask allow the request,
 // and Execute checks the storage class of a part with a body and the block
-// of public ACLs (docs/exclusions.md).
+// of public ACLs (docs/differences.md).
 func (o *UploadPart) Init(ctx context.Context, r *Request) error {
 	err := loadBucket(ctx, r)
 	if err != nil {
@@ -166,7 +166,7 @@ func (o *UploadPart) Init(ctx context.Context, r *Request) error {
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L1560-L1608 at v19.2.6).
 // rgw-go needs READ on both, the bucket check then the object check, each
 // with the source bucket's policy and the identity's, which decide before
-// either ACL, as for CopyObject (docs/exclusions.md). A source naming a
+// either ACL, as for CopyObject (docs/differences.md). A source naming a
 // delete marker's version is refused ahead of the missing source's rule
 // (copySourceMarker).
 func (o *UploadPart) VerifyPermission(ctx context.Context, r *Request) error {
@@ -242,7 +242,7 @@ func (o *UploadPart) VerifyPermission(ctx context.Context, r *Request) error {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4112-L4118 at v20.2.4);
 // then Authorized runs, and a public ACL it built from the grant headers is
 // refused too, as PutObject refuses one, where radosgw stores it
-// (docs/exclusions.md).
+// (docs/differences.md).
 func (o *UploadPart) Execute(ctx context.Context, r *Request) error {
 	if !o.CopySource {
 		if err := checkDestPlacement(r, o.StorageClass); err != nil {
@@ -333,7 +333,7 @@ func (o *UploadPart) putPart(ctx context.Context, r *Request, up *Upload) (*Part
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3791-L3794 at v20.2.4).
 // rgw-go refuses a cloud-tiered source with a range too, and checks the
 // conditions as CopyObject does, against the state the store copies, which
-// reads that state's bytes or fails (docs/exclusions.md).
+// reads that state's bytes or fails (docs/differences.md).
 func (o *UploadPart) copyPart(ctx context.Context, r *Request, up *Upload) (*PartResult, error) {
 	conds, perr := parseReadConds(o.IfModifiedSince, o.IfUnmodifiedSince, o.IfMatch, o.IfNoneMatch)
 	if perr != nil {
@@ -425,7 +425,7 @@ func (o *UploadPart) Complete(context.Context, *Request) {}
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4125-L4127 at v20.2.4;
 // https://github.com/ceph/ceph/blob/v19.2.6/src/common/random_string.cc#L48),
 // and rgw-go's the same. Each op answers it where a missing upload would be
-// answered (docs/exclusions.md).
+// answered (docs/differences.md).
 func aliasedUpload(id string) error {
 	if !strings.Contains(id, ".") {
 		return nil

@@ -25,7 +25,7 @@ func utf16Doc(s string) string {
 var _ = Describe("Parse", func() {
 	// The verdicts are radosgw's, from libexpat 2.8.3 driven as RGWXMLParser
 	// drives it, except where an entry names a difference that
-	// docs/exclusions.md records.
+	// docs/differences.md records.
 	DescribeTable("reads a document expat reads",
 		func(doc string) {
 			_, err := xmltext.Parse([]byte(doc))
@@ -53,7 +53,7 @@ var _ = Describe("Parse", func() {
 		Entry("one local name under two prefixes", `<a xmlns:p="u" p:x="1" x="2"/>`),
 		Entry("an undeclared prefix", `<p:a q:x="1"/>`),
 		Entry("CDATA and references inside the root", `<a><![CDATA[ ]]>&#32;&amp;</a>`),
-		// expat refuses these; docs/exclusions.md records that rgw-go reads them.
+		// expat refuses these; docs/differences.md records that rgw-go reads them.
 		Entry("attributes without whitespace between them (a recorded difference)", `<a x='1'y='2'/>`),
 		Entry("a malformed DTD internal subset (a recorded difference)", `<!DOCTYPE a [ garbage ]><a/>`),
 		Entry("trailing garbage in a DOCTYPE (a recorded difference)", `<!DOCTYPE a SYSTEM "x.dtd" garbage><a/>`),
@@ -116,7 +116,7 @@ var _ = Describe("Parse", func() {
 		Entry("invalid UTF-8", "<a>\xff</a>"),
 	)
 
-	// expat reads these; docs/exclusions.md records that rgw-go refuses them.
+	// expat reads these; docs/differences.md records that rgw-go refuses them.
 	DescribeTable("refuses a document expat reads, as recorded",
 		func(doc string) {
 			_, err := xmltext.Parse([]byte(doc))

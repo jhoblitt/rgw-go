@@ -229,7 +229,7 @@ func maxPutParamSize(r *op.Request) uint64 {
 // parseCreateBucketConfiguration reads body as RGWCreateBucketParser does,
 // returning the LocationConstraint's text and whether a valid BucketIndex
 // asks for an index, which the op refuses as NotImplemented: rgw-go does
-// not yet create a bucket with a requested index (docs/exclusions.md). A
+// not yet create a bucket with a requested index (docs/differences.md). A
 // body radosgw's XML parser refuses is InvalidArgument. On Squid the root
 // must be CreateBucketConfiguration holding a LocationConstraint
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2500-L2520);

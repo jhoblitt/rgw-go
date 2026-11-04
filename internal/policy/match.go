@@ -411,7 +411,7 @@ func isCType(name string, b byte) (member, known bool) {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L2178-L2179 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2241-L2242 at v20.2.4),
 // comparing each component after the first together with the text after it.
-// The two agree on action names, which have one colon; docs/exclusions.md
+// The two agree on action names, which have one colon; docs/differences.md
 // records where they differ for ARNs.
 func MatchPolicy(pattern, input string, action bool) bool {
 	for {

@@ -38,7 +38,7 @@ import (
 // meta object, rgw-go queues them only once the meta object is gone, so an
 // abort that fails or is canceled leaves an upload that can still be
 // completed or aborted over intact parts, and a crash between the two leaks
-// the parts instead (docs/exclusions.md, "AbortMultipartUpload removes the
+// the parts instead (docs/differences.md, "AbortMultipartUpload removes the
 // upload before it frees the parts"). Once the lock is taken the abort runs
 // to its end whatever the client does.
 func (s *Store) Abort(ctx context.Context, up *op.Upload) error {
@@ -316,7 +316,7 @@ var errNotRemovable = errors.New("the version cannot be removed safely")
 //     https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1201-L1208 at v20.2.4);
 //   - only then the head (removeUnindexedHead).
 //
-// radosgw's delete_obj removes the head before the entry (docs/exclusions.md,
+// radosgw's delete_obj removes the head before the entry (docs/differences.md,
 // "AbortMultipartUpload leaves a completed upload's parts alone"). A refusal
 // before the entry's removal cancels the prepare and wraps errNotRemovable,
 // with nothing removed. An abort that stops between the entry's removal and
@@ -674,7 +674,7 @@ const abortMultipartsPage = 1000
 // page's uploads again on each later page (docs/ceph-upstream-bugs.md,
 // "radosgw's bucket delete aborts each page of multipart uploads again on
 // every later page"), and under the RGWCompleteMultipart lock, which
-// abort_multiparts does not take (docs/exclusions.md, "A bucket delete aborts
+// abort_multiparts does not take (docs/differences.md, "A bucket delete aborts
 // its multipart uploads under their completion lock").
 func (s *Store) abortMultiparts(ctx context.Context, rec *op.BucketRecord) (aborted int, err error) {
 	var marker string

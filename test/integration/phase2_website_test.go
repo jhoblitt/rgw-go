@@ -140,7 +140,7 @@ type webAnswer struct {
 
 // webClient sends each request on a connection of its own and never
 // follows a redirect: radosgw writes a website error page one byte past its
-// Content-Length (docs/exclusions.md, "A website error page ends at its
+// Content-Length (docs/differences.md, "A website error page ends at its
 // Content-Length"), which a reused connection would read as the start of
 // its next response.
 var webClient = &http.Client{

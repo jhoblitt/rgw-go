@@ -282,11 +282,11 @@ func (b *lcBucket) keepCurrent(ctx context.Context, rec *op.BucketRecord, key me
 //   - without the OLH attrs, which a null version's head as read carries as
 //     its key's OLH head and the head write's reset keeps as they are on
 //     disk, where radosgw writes back the ones it read, undoing a link
-//     applied since (docs/exclusions.md, "A lifecycle transition writes none
+//     applied since (docs/differences.md, "A lifecycle transition writes none
 //     of the OLH attrs it read");
 //   - without a composite checksum, which the rewritten object, without
 //     parts, would misreport as its whole body's, as a streamed copy drops it
-//     (compositeChecksum), where radosgw keeps it (docs/exclusions.md, "A
+//     (compositeChecksum), where radosgw keeps it (docs/differences.md, "A
 //     copy that streams its data drops a composite checksum").
 func transitionAttrs(st *op.ObjectState) (map[string][]byte, error) {
 	attrs := maps.Clone(st.Attrs)

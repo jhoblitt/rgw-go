@@ -1116,7 +1116,7 @@ var _ = Describe("Evaluator", func() {
 				It("give the anonymous user no object WRITE through a Swift write item, where radosgw's fallback does", func() {
 					for _, a := range []policy.Action{policy.S3PutObjectTagging, policy.S3DeleteObjectTagging} {
 						Expect(objectAs("anonw", "o", a, acl.PermWrite)).To(MatchError(op.ErrAccessDenied),
-							"%s: docs/exclusions.md, \"An object ACL's WRITE grant authorizes nothing but its owner's own requests\"", a)
+							"%s: docs/differences.md, \"An object ACL's WRITE grant authorizes nothing but its owner's own requests\"", a)
 					}
 				})
 

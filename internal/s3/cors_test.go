@@ -158,7 +158,7 @@ var _ = Describe("bucket CORS configuration routes", func() {
 			"Access-Control-Allow-Origin":  {"https://other.example"},
 			"Vary":                         {"Origin"},
 			"Access-Control-Allow-Methods": {"PUT"},
-		}), `docs/exclusions.md, "Every S3 response carries CORS headers once its bucket is loaded"`)
+		}), `docs/differences.md, "Every S3 response carries CORS headers once its bucket is loaded"`)
 	})
 
 	DescribeTable("PUT answers a body it cannot store with its S3 error and radosgw's message, writing nothing",
@@ -228,7 +228,7 @@ var _ = Describe("bucket CORS configuration routes", func() {
 		setAttr(ctx, []byte{0xff})
 		Expect(send(w.alice, http.MethodGet, nil, -1).Code).To(Equal(http.StatusInternalServerError), "read_bucket_cors' -EIO")
 		rec := send(w.alice, http.MethodDelete, nil, -1)
-		Expect(rec.Code).To(Equal(http.StatusNoContent), `docs/exclusions.md, "DeleteBucketCors removes a CORS configuration that does not decode": %s`, rec.Body.String())
+		Expect(rec.Code).To(Equal(http.StatusNoContent), `docs/differences.md, "DeleteBucketCors removes a CORS configuration that does not decode": %s`, rec.Body.String())
 		Expect(bucket(ctx).Attrs).NotTo(HaveKey(op.AttrCORS))
 	})
 

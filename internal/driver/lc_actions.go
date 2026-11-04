@@ -104,7 +104,7 @@ func (b *lcBucket) entry(ctx context.Context, rec *op.BucketRecord, rule *lifecy
 // Then the notification of radosgw's ObjectExpirationCurrent and
 // LifecycleExpirationDelete. radosgw sends only UnmodifiedSince, compared in
 // whole seconds, and checks no lock on a current object
-// (docs/exclusions.md, "Lifecycle removes an object only as it was
+// (docs/differences.md, "Lifecycle removes an object only as it was
 // listed" and "Every permanent removal by lifecycle runs the object-lock
 // check").
 func (b *lcBucket) expireCurrent(ctx context.Context, rec *op.BucketRecord, probe *lcProbe, key meta.ObjKey, e op.ObjectEntry) {
@@ -236,7 +236,7 @@ const (
 //     failed condition or Expect, or a version gone, is a skip.
 //
 // Then the notification of radosgw's ObjectExpirationCurrent and
-// LifecycleExpirationDelete (docs/exclusions.md, "Lifecycle removes an object
+// LifecycleExpirationDelete (docs/differences.md, "Lifecycle removes an object
 // only as it was listed" and "Lifecycle expiration on a versioning-suspended
 // bucket writes the null delete marker").
 func (b *lcBucket) markCurrent(ctx context.Context, rec *op.BucketRecord, probe *lcProbe, e op.ObjectEntry, null bool) {
@@ -454,10 +454,10 @@ func (b *lcBucket) removalEvents(a lifecycle.Action) []lifecycle.Event {
 // DaysAfterInitiation old, as obj_has_expired counts it, is aborted as
 // AbortMultipartUpload aborts one, through GetUpload and Abort, so under its
 // RGWCompleteMultipart lock, which radosgw's worker does not take
-// (docs/exclusions.md, "Lifecycle aborts an expired multipart upload under
+// (docs/differences.md, "Lifecycle aborts an expired multipart upload under
 // its completion lock"). An upload already gone is NoSuchUpload, logged as
 // radosgw logs ERR_NO_SUCH_UPLOAD, and so is one whose parts back its
-// object, which Abort leaves (docs/exclusions.md, "AbortMultipartUpload
+// object, which Abort leaves (docs/differences.md, "AbortMultipartUpload
 // leaves a completed upload's parts alone"). Then the notification of
 // radosgw's ObjectExpirationAbortMPU.
 func (b *lcBucket) abortUpload(ctx context.Context, rec *op.BucketRecord, rule *lifecycle.Op, e op.ObjectEntry) {

@@ -590,7 +590,7 @@ and touch disjoint code, so they can run in parallel. F9 follows F8. F11 follows
 F10. F5 through F9 do not change any outcome F11 records, so they do not block it.
 
 **Hot files** (PP-5) and how each is kept from serializing the work:
-- docs/ceph-upstream-bugs.md (F2, F4, F5, F7, F8, F9) and docs/exclusions.md (F3, F4, F7, F8, F9):
+- docs/ceph-upstream-bugs.md (F2, F4, F5, F7, F8, F9) and docs/differences.md (F3, F4, F7, F8, F9):
   F2 and F3 make every fact edit and land first. After them, each task edits only its own entry's
   "rgw-go:" paragraph or exclusion bullet, so rebases are trivial.
 - test/s3tests/known-differences-squid.txt (F4, F11): F4 adds three lines, and F11 removes them
@@ -628,7 +628,7 @@ F10. F5 through F9 do not change any outcome F11 records, so they do not block i
 ### F3 docs: the exclusions at v19.2.7
 
 - **Layer:** docs.
-- **Files:** docs/exclusions.md, plus test/s3tests/known-differences-squid.txt's comments if a
+- **Files:** docs/differences.md, plus test/s3tests/known-differences-squid.txt's comments if a
   heading they name changes.
 - **Behaviour:** section 4's exclusion edits marked F3. They describe v19.2.7 as the Squid floor,
   with no rgw-go behaviour change. The anchors follow F2's retitles.

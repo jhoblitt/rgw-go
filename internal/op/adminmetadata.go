@@ -374,7 +374,7 @@ func realTime(t time.Time) int64 {
 // ErrInvalidArgument, the manager's -EINVAL. Absent members are zero, as
 // JSONDecoder::decode_json resets them. The members are read as the
 // section decoders read theirs ("The metadata sections write only what
-// keeps a user or bucket whole", docs/exclusions.md): what decode_json
+// keeps a user or bucket whole", docs/differences.md): what decode_json
 // takes but cannot mean is refused, a "ver" that is no object, a tag that
 // is null, an object or an array, and an mtime in neither form a get
 // writes.

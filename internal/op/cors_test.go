@@ -505,7 +505,7 @@ var _ = Describe("bucket CORS ops", func() {
 		It("removes a configuration that does not decode, where radosgw answers 500 and keeps it", func(ctx SpecContext) {
 			f.setBucketAttrs(ctx, map[string][]byte{op.AttrCORS: {0xff}})
 			Expect(op.Run(ctx, &op.DeleteBucketCORS{}, f.req(http.MethodDelete, "plain", ""))).To(Succeed(),
-				`read_bucket_cors's -EIO, rgw_op.cc:6134-6136 at v19.2.7; docs/exclusions.md, "DeleteBucketCors removes a CORS configuration that does not decode"`)
+				`read_bucket_cors's -EIO, rgw_op.cc:6134-6136 at v19.2.7; docs/differences.md, "DeleteBucketCors removes a CORS configuration that does not decode"`)
 			Expect(bucket(ctx).Attrs).NotTo(HaveKey(op.AttrCORS))
 			Expect(op.Run(ctx, &op.GetBucketCORS{}, f.req(http.MethodGet, "plain", ""))).To(MatchError(op.ErrNoCORSFound))
 		})
@@ -685,7 +685,7 @@ var _ = Describe("bucket CORS ops", func() {
 		It("takes a later rule that allows the method where the first rule for the origin does not, as Amazon S3 does", func(ctx SpecContext) {
 			o := &op.OptionsCORS{}
 			Expect(op.Run(ctx, o, preflight("Origin", "https://app.example", "Access-Control-Request-Method", "DELETE"))).To(Succeed(),
-				`docs/exclusions.md, "CORS rules are matched as Amazon S3 matches them"`)
+				`docs/differences.md, "CORS rules are matched as Amazon S3 matches them"`)
 			Expect(o.Rule.ID).To(Equal("app-delete"))
 		})
 		It("refuses with 403 a request one of whose headers the rule does not allow", func(ctx SpecContext) {

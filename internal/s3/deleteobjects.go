@@ -29,7 +29,7 @@ var errBadDeleteObject = errors.New("s3: an Object element radosgw refuses")
 //     frontend completes such a response
 //     (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_client_io_filters.h#L221-L253 at v19.2.6
 //     and v20.2.4). It carries the CORS headers, which radosgw leaves out
-//     with the rest (docs/exclusions.md, "Every S3 response carries CORS
+//     with the rest (docs/differences.md, "Every S3 response carries CORS
 //     headers once its bucket is loaded");
 //   - otherwise begin_response
 //     (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4257-L4271)
@@ -154,7 +154,7 @@ func deleteResultElement(res op.DeleteResult, quiet bool) string {
 // wherever it sits, must hold a non-empty Key, and its ETag,
 // LastModifiedTime and Size must read as v20.2.4 reads them (deleteEntry);
 // rgw-go reads them on both releases, as it checks them on both
-// (docs/exclusions.md). A document that fails is InvalidArgument on Squid,
+// (docs/differences.md). A document that fails is InvalidArgument on Squid,
 // -EINVAL, and MalformedXML with radosgw's message on Tentacle; so is a root
 // other than Delete.
 func parseDelete(body []byte, rel denc.Release) (entries []op.DeleteObjectsEntry, quiet bool, err error) {

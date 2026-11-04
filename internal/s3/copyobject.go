@@ -26,7 +26,7 @@ import (
 // request alone runs through copyObjectParams once the destination bucket is
 // loaded, and the checks of stored state through copyObjectChecks once the
 // destination and the source allow the request, so that a refused requester
-// learns nothing the store holds (docs/exclusions.md).
+// learns nothing the store holds (docs/differences.md).
 //
 // The success is framed as radosgw frames it, with the two version headers
 // radosgw does not send (setVersionHeaders): send_partial_response(0)
@@ -85,7 +85,7 @@ func (wr *objectWrites) copyObject(ctx context.Context, w http.ResponseWriter, r
 
 // copyObjectParams is the part of get_params that reads the request alone,
 // in its order, then init_common's attrs, which radosgw builds after
-// authorizing (docs/exclusions.md): the object-lock headers' values
+// authorizing (docs/differences.md): the object-lock headers' values
 // (objectLockHeaders, with the messages a copy sets);
 // x-amz-metadata-directive, COPY or REPLACE in any case and anything else
 // InvalidArgument, "Unknown metadata directive."; the storage-class check of

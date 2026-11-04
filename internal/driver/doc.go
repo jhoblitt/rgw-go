@@ -22,8 +22,8 @@
 // no pool create, so here a missing pool is a configuration error.
 //
 // The driver shares its zone with radosgw and radosgw-admin, and carries
-// the obligations that sharing makes (docs/exclusions.md, "Coexistence
-// obligations independent of any exclusion"):
+// the obligations that sharing makes (docs/differences.md, "Coexistence
+// obligations"):
 //
 //   - The metadata cache is invalidated both ways. The control watches
 //     take every notify on the notify.N objects for an invalidation of the

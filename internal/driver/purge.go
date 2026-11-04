@@ -39,7 +39,7 @@ const purgeListPage = 1000
 // bypass-gc bucket removal fails once a tail stripe is gone"); and an
 // object's head goes only once all its tails are released, so a failed
 // release leaves the object for a retry instead of orphaning its tails
-// (docs/exclusions.md, "The admin bucket removal with bypass-gc").
+// (docs/differences.md, "The admin bucket removal with bypass-gc").
 func (s *Store) PurgeBypassGC(ctx context.Context, rec *op.BucketRecord) error {
 	// read_stats over the current index
 	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L487-L490).
@@ -178,7 +178,7 @@ func (p *bypassPurge) stop(err error) error {
 // the null version's data and the key's OLH, is skipped, so the ordinary
 // purge removes the null version and queues its tails for the garbage
 // collector, where radosgw releases them and removes the OLH head object
-// whole (docs/exclusions.md, "The admin bucket removal with bypass-gc
+// whole (docs/differences.md, "The admin bucket removal with bypass-gc
 // leaves a versioned key's OLH head to the ordinary purge").
 func (p *bypassPurge) object(ctx context.Context, key meta.ObjKey) error {
 	st, err := p.s.readOLHHead(ctx, p.rec, key)

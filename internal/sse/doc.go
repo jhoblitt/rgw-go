@@ -5,6 +5,6 @@
 // v19.2.7 and v20.2.4, whose src/rgw/rgw_bucket_encryption.{h,cc} are
 // identical. The document is read as Amazon S3 reads it, held to S3's schema
 // and AWS's values, where radosgw reads it leniently and checks no value
-// (docs/exclusions.md, "A PutBucketEncryption document is held to S3's schema
+// (docs/differences.md, "A PutBucketEncryption document is held to S3's schema
 // and AWS's values").
 package sse

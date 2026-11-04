@@ -26,7 +26,7 @@ var ErrMalformedXML = errors.New("tags: malformed xml")
 //
 // The document is read with xmltext.Parse, the reader every S3 XML request
 // body shares. It reads as radosgw's expat-based RGWXMLParser does where Go's
-// decoder allows, and docs/exclusions.md records the bodies the two read
+// decoder allows, and docs/differences.md records the bodies the two read
 // differently. Element names are matched as written, prefix included, because
 // expat runs without namespace processing, so the xmlns attribute plays no
 // part. Of repeated elements only the first TagSet, Key and Value count. An

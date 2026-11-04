@@ -471,7 +471,7 @@ var _ = Describe("object retention and legal hold ops", func() {
 			DescribeTable("binds no change to a lapsed retention, whose second is not after the clock's",
 				func(ctx SpecContext, old meta.ObjectRetention, proposed string) {
 					got, err := change(ctx, old, proposed, false, false)
-					Expect(err).NotTo(HaveOccurred(), "docs/exclusions.md, \"A lapsed retention binds no retention change\"")
+					Expect(err).NotTo(HaveOccurred(), "docs/differences.md, \"A lapsed retention binds no retention change\"")
 					Expect(got.Mode).To(Equal("GOVERNANCE"))
 				},
 				Entry("COMPLIANCE, lapsed a second ago, to GOVERNANCE",

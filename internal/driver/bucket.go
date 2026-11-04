@@ -240,7 +240,7 @@ func (s *Store) PutBucketInfo(ctx context.Context, rec *op.BucketRecord) error {
 // radosgw has not set has_instance_obj since Octopus, so no bucket created
 // since carries it. A PutBucketAttrs that sets attrs reads the entry point
 // too, so it fails as that read fails, and refuses a bucket that needs the
-// conversion (docs/exclusions.md, "An entry point from before version 8 is
+// conversion (docs/differences.md, "An entry point from before version 8 is
 // not converted"); one that only removes them reads none, as put_info reads
 // none.
 func (s *Store) PutBucketAttrs(ctx context.Context, rec *op.BucketRecord, set map[string][]byte, rm []string) error {

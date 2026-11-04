@@ -425,7 +425,7 @@ func (h *Handler) serve(ctx context.Context, w *responseWriter, req *http.Reques
 	// An unverified identity's request, a preflight, proves only that its
 	// sender knows the key's id, so refusing a suspended user's would tell
 	// that sender the user is suspended; radosgw refuses it
-	// (docs/exclusions.md).
+	// (docs/differences.md).
 	if u := r.Identity.User; u != nil && u.Suspended != 0 && !r.Identity.Unverified {
 		WriteError(ctx, w, r, op.ErrUserSuspended)
 		return

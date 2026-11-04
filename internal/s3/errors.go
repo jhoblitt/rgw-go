@@ -53,7 +53,7 @@ func WriteError(ctx context.Context, w http.ResponseWriter, r *op.Request, err e
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5290-L5294 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5820-L5824 at v20.2.4),
 // whatever the request's format parameter and Accept header ask for
-// (docs/exclusions.md, "Every document is XML, and every website error page
+// (docs/differences.md, "Every document is XML, and every website error page
 // HTML").
 func writeErrorDocument(w http.ResponseWriter, r *op.Request, e *op.Error) {
 	switch {

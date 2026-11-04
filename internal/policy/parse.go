@@ -451,7 +451,7 @@ func (p *parser) str(s string) bool {
 	default:
 		// v20.2.4 asserts a statement exists before this branch and aborts
 		// on a string under Statement; rgw-go refuses it as v19.2.6 does
-		// (docs/exclusions.md).
+		// (docs/differences.md).
 		return p.refuse("`" + s + "` is not valid in the context of `" + st.w.name + "`.")
 	}
 

@@ -82,7 +82,7 @@ func (o *GetObjectLayout) VerifyPermission(ctx context.Context, r *Request) erro
 // Execute lays out the object Init read, before anything is sent, so that
 // a layout that fails is the request's error. radosgw's execute does
 // nothing, and its send_response sends 200 before dump_obj_layout runs and
-// ignores its error (docs/exclusions.md, "?layout answers a layout that
+// ignores its error (docs/differences.md, "?layout answers a layout that
 // fails with its error").
 func (o *GetObjectLayout) Execute(ctx context.Context, r *Request) error {
 	doc, err := r.Env.Layout.ObjectLayout(ctx, r.ObjState)

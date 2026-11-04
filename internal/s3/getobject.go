@@ -305,9 +305,9 @@ func (s *getObjectSink) Flush() error { return s.w.Flush() }
 // tagging count, then response_attrs, the response-* overrides and the
 // mapped attrs in its std::map's order, and last end_header's content type.
 // net/http writes the lines sorted by name ("Header lines go out sorted by
-// name", docs/exclusions.md), so only the values under one name keep
+// name", docs/differences.md), so only the values under one name keep
 // radosgw's order. A mapped attr never sets the response's framing headers
-// (docs/exclusions.md).
+// (docs/differences.md).
 func (s *getObjectSink) headers() http.Header {
 	o, r, st := s.o, s.r, s.o.State
 	h := http.Header{}

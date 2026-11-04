@@ -77,7 +77,7 @@ func (s *Store) listedPartChecksum(ctx context.Context, part meta.UploadPartInfo
 // radosgw accepts for minio's clients, and of the upload's type; any other,
 // the empty value included, is ErrBadDigest. radosgw compares only a
 // non-empty value, of any type but crc64nvme, and accepts one that starts
-// with the armor (docs/exclusions.md, "CompleteMultipartUpload combines the
+// with the armor (docs/differences.md, "CompleteMultipartUpload combines the
 // parts it completes and compares the whole supplied checksum").
 func combineChecksums(uc op.UploadChecksum, named []meta.UploadPartInfo, supplied *op.ChecksumRequest) (*cksum.Cksum, error) {
 	if uc.Type == cksum.None {

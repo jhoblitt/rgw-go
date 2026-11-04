@@ -133,7 +133,7 @@ type copyPartResult struct {
 // before the permission check, as init_processing calls get_params; the
 // rest, and the checks radosgw makes in execute, run through
 // uploadPartChecks once the requester is authorized, so that a refused
-// requester learns nothing the store holds (docs/exclusions.md).
+// requester learns nothing the store holds (docs/differences.md).
 //
 // The success is send_response's
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2730-L2782,
@@ -244,7 +244,7 @@ func uploadPartParams(r *op.Request, o *op.UploadPart) (*tags.Set, error) {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4799).
 // radosgw builds the ACL and checks the object lock in get_params, before
 // verify_permission, and the attrs once the part is stored
-// (docs/exclusions.md).
+// (docs/differences.md).
 func (wr *objectWrites) uploadPartChecks(ctx context.Context, r *op.Request, o *op.UploadPart, set *tags.Set) error {
 	p, aclErr := newObjectACL(ctx, r)
 	if aclErr != nil {
@@ -315,7 +315,7 @@ func partCopySource(v, defaultTenant string) (tenant, bucket string, key meta.Ob
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4502-L4505);
 // on one with it NotImplemented, as radosgw keeps them on the upload and
 // the parts' heads and rgw-go serves no object lock yet
-// (docs/exclusions.md). The callers make it once the requester is
+// (docs/differences.md). The callers make it once the requester is
 // authorized, so that a refused requester learns nothing of the bucket's
 // configuration.
 func multipartObjectLock(r *op.Request) error {
@@ -349,7 +349,7 @@ type completeMultipartUploadResult struct {
 // and If-None-Match are their headers' last values, nil when absent, which
 // v20.2.4 reads
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4572-L4573)
-// and rgw-go applies on both releases (docs/exclusions.md). The success is
+// and rgw-go applies on both releases (docs/differences.md). The success is
 // send_response's
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4076-L4108,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4604-L4644):
@@ -590,7 +590,7 @@ type listMultipartUploadsResult struct {
 // under encoding-type=url each upload's key and each common prefix is url_encode'd
 // keeping the slash. Prefix, KeyMarker, NextKeyMarker and Delimiter are too, as
 // S3 encodes them where radosgw writes them as sent, and EncodingType is written
-// (docs/exclusions.md, "ListObjects, ListObjectsV2 and ListMultipartUploads
+// (docs/differences.md, "ListObjects, ListObjectsV2 and ListMultipartUploads
 // URL-encode the elements S3 encodes"); the upload id markers never are.
 // Initiated is rgw_to_iso8601's milliseconds on both releases.
 func listMultipartUploads(ctx context.Context, w http.ResponseWriter, r *op.Request) error {

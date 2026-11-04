@@ -134,7 +134,7 @@ func maxRoutingRules(r *op.Request) int {
 
 // websiteError is the S3 error for a website.ParseXML refusal, with the
 // message get_params sets and none of the body's text: MalformedXML
-// (docs/exclusions.md, "PutBucketWebsite answers MalformedXML for a document
+// (docs/differences.md, "PutBucketWebsite answers MalformedXML for a document
 // that does not parse or fit S3's schema"), InvalidArgument, or 400
 // InvalidRequest for too many routing rules,
 // -ERR_INVALID_WEBSITE_ROUTING_RULES_ERROR

@@ -75,7 +75,7 @@ func ParseRequest(req *http.Request, cfg Config, now time.Time) (Parsed, error) 
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2193-L2198);
 	// v19.2.7 flags only one with a Host
 	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2150-L2156),
-	// and rgw-go takes v20.2.4's rule on both releases (docs/exclusions.md,
+	// and rgw-go takes v20.2.4's rule on both releases (docs/differences.md,
 	// "On Squid, a request with no Host is a website request when s3website
 	// outranks s3").
 	website := target.Website || cfg.Website && cfg.WebsiteFirst
@@ -162,7 +162,7 @@ func DecodedURI(req *http.Request, names vhost.Names) string {
 // hex digit url_decode would empty the whole URI, the Host's bucket
 // included, while SigV4 signs that bucket in the Host and the path as "/",
 // the bucket's root; a malformed escape in the bucket itself serves another
-// bucket or none (docs/exclusions.md).
+// bucket or none (docs/differences.md).
 func MalformedPath(req *http.Request, names vhost.Names) bool {
 	_, err := url.PathUnescape(hostedURI(req, names))
 	return err != nil
@@ -285,7 +285,7 @@ func PostAuthInit(ctx context.Context, p Parsed) error {
 // (op.Identity.Unverified). Its sender has shown nothing of the key's
 // secret, yet each check counts against the key user's device, which takes
 // five in a step before it refuses every code, and uses up a good code;
-// radosgw checks it (docs/exclusions.md, "A preflight's x-amz-mfa is not
+// radosgw checks it (docs/differences.md, "A preflight's x-amz-mfa is not
 // checked").
 //
 // Nothing holding the value is logged: its code verifies until a check
@@ -385,7 +385,7 @@ var nameArgs = []string{"versionId", "uploadId"}
 // names an xattr; nameArgs' values; and the tenant, bucket, key or versionId
 // of the copy source the ops read, as either parser reads it. radosgw checks
 // only the path for a NUL and keeps one anywhere else in the name, which
-// librados's C++ API takes whole (docs/exclusions.md).
+// librados's C++ API takes whole (docs/differences.md).
 func refuseNUL(r *op.Request) error {
 	for name := range r.Query {
 		if strings.IndexByte(name, 0) >= 0 {

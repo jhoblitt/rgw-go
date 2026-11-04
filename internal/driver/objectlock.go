@@ -22,7 +22,7 @@ var headAttrsSeen func(s *Store, rec *op.BucketRecord, mtime time.Time, create b
 //
 // A lock configuration that does not decode fails a create with
 // UnknownError, the -EIO radosgw fails every load of such a bucket with
-// (docs/exclusions.md, "Some bucket sub-records are carried opaque in phase
+// (docs/differences.md, "Some bucket sub-records are carried opaque in phase
 // 0"), before the head write's index op is prepared.
 func (s *Store) finalizeHeadAttrs(rec *op.BucketRecord, mtime time.Time, create bool, attrs map[string][]byte) (map[string][]byte, error) {
 	if headAttrsSeen != nil {

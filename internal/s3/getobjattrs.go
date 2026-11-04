@@ -76,7 +76,7 @@ func objectAttrsInput(r *op.Request, o *op.GetObjectAttributes) error {
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4017-L4133),
 // with no namespace: the requested attributes in its order. The ETag is the
 // stored attr, unquoted; the Checksum is empty, rgw-go storing none
-// (docs/exclusions.md); ObjectParts appears for a multipart object only.
+// (docs/differences.md); ObjectParts appears for a multipart object only.
 // Every string goes through the formatter's escaping and every number is
 // written bare.
 func objectAttrsDocument(o *op.GetObjectAttributes) string {

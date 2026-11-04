@@ -249,7 +249,7 @@ func (s *Store) evalOLHCond(ctx context.Context, idx *bucketOLHIndex, head *op.O
 // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3190-L3191 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9733-L9741 and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3287-L3288 at v20.2.4).
-// rgw-go answers as its reads do (docs/exclusions.md, "A read that replays a
+// rgw-go answers as its reads do (docs/differences.md, "A read that replays a
 // pending modification answers the version current after it";
 // docs/ceph-upstream-bugs.md, "radosgw's follow_olh answers the version that
 // was current before the replay it runs").

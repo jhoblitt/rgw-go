@@ -54,7 +54,7 @@ func getZoneConfig(ctx context.Context, w http.ResponseWriter, r *op.Request, q 
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_zone.cc#L337 at v20.2.4),
 	// its endpoints' credentials with it; they are masked but for a system
 	// user, whom every check lets through, as it does the zone's own key
-	// (docs/exclusions.md).
+	// (docs/differences.md).
 	params := o.Params
 	if !r.Identity.System {
 		params = meta.MaskZoneSecrets(params)

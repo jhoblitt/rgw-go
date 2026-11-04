@@ -125,7 +125,7 @@ var _ = Describe("GetBucketPolicyStatus", func() {
 	)
 
 	// radosgw's is_public calls each of these ACLs private on both releases
-	// (docs/exclusions.md, "IgnorePublicAcls sets aside a Swift container's
+	// (docs/differences.md, "IgnorePublicAcls sets aside a Swift container's
 	// grants to everyone, and an ACL holding them is public" and
 	// "BlockPublicAcls counts grants to the user anonymous and its ownership,
 	// but for an anonymous writer's own").

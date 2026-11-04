@@ -326,8 +326,8 @@ and gate-only lines, an optional TESTS subset, and the set, `pr` or `gate`.
        spec §9, so its markers, `s3website`, `s3website_routing_rules` and
        `s3website_redirect_location`, are among them; (a) deletes those. Each remaining line
        sits under its exclusion's comment or a later phase's.
-     - Every material change to `docs/exclusions.md` in phase 2 was announced to the rgw-rs
-       session.
+     - Every material change to `docs/exclusions.md` or `docs/differences.md` in phase 2 was
+       announced to the rgw-rs session.
   2. **s3-tests parity:** `make s3tests-parity SET=gate LC=rgw-go` on each release: phase 1's
      set, the tests phase 2 freed, the include list and P1's time-driven tests. It is compared
      with the committed ledgers and each release's known-differences file, with no unexpected

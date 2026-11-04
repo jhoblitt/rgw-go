@@ -100,7 +100,7 @@ func (d OTPDocument) MarshalJSON() ([]byte, error) {
 //   - a document that is not JSON, devices that are not an array, null
 //     included, and a device that is no object, as the sections' documents
 //     are refused ("The metadata sections write only what keeps a user or
-//     bucket whole", docs/exclusions.md);
+//     bucket whole", docs/differences.md);
 //   - a device OTPInfo's UnmarshalJSON refuses, a string member given null,
 //     an object or an array among them;
 //   - a device without an id, or whose seed the class would parse into an

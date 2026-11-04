@@ -179,7 +179,7 @@ var _ = Describe("bucket public access block routes", func() {
 				Expect(rec.Body.String()).To(Equal(errorDocument(rec, "MalformedXML", "")))
 				expectUnwritten(ctx, before)
 			},
-			Entry("a misspelled setting, which radosgw stores false (docs/exclusions.md)",
+			Entry("a misspelled setting, which radosgw stores false (docs/differences.md)",
 				`<PublicAccessBlockConfiguration><BlockPublicACLs>true</BlockPublicACLs></PublicAccessBlockConfiguration>`),
 			Entry("an empty body, which expat refuses", ``),
 		)

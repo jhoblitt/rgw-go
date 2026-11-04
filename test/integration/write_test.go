@@ -49,7 +49,7 @@ var perRequest = []string{meta.AttrIDTag, meta.AttrTailTag, meta.AttrPGVer, meta
 
 // squidStoredHeaders are the request headers a v19.2.7 radosgw stores as
 // attrs and rgw-go never does, since it applies v20.2.4's blocklist on both
-// releases (docs/exclusions.md, "Request headers stored as attrs follow
+// releases (docs/differences.md, "Request headers stored as attrs follow
 // Tentacle's blocklist").
 var squidStoredHeaders = []string{"user.rgw.x-amz-content-sha256", "user.rgw.x-amz-date"}
 
@@ -549,7 +549,7 @@ var _ = Describe("the write path against radosgw-admin and the coexisting radosg
 			// a v19.2.7 radosgw keeps the source's label on a head in
 			// STANDARD (docs/ceph-upstream-bugs.md, "Squid labels a copy to
 			// another storage class with its source's class"); rgw-go labels
-			// the copy by its destination, as v20.2.4 does (docs/exclusions.md,
+			// the copy by its destination, as v20.2.4 does (docs/differences.md,
 			// "A copy is labeled with its destination's storage class on both
 			// releases").
 			_, err = store.CopyObject(ctx, src, rec, meta.ObjKey{Name: "cd-rgwgo"}, op.CopyParams{Attrs: map[string][]byte{meta.AttrACL: aliceACL()}})

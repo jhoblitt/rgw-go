@@ -29,7 +29,7 @@ import (
 // placement the zone lacks is radosgw's -EINVAL. The lookup reads the map
 // Placement reads, without Placement's default for an empty name, which
 // takes the default's class too. radosgw creates an index pool it finds
-// missing; rgw-go fails naming it (docs/exclusions.md, "A missing index
+// missing; rgw-go fails naming it (docs/differences.md, "A missing index
 // pool is not created").
 func (s *Store) indexPool(ctx context.Context, info *meta.BucketInfo) (radosclient.Pool, error) {
 	if p := info.Bucket.ExplicitPlacement.IndexPool; p.Name != "" {
@@ -79,7 +79,7 @@ func shardOIDs(info *meta.BucketInfo, gen meta.IndexLayoutGen) []string {
 // CLSRGWConcurrentIO stops issuing them, and its error, naming the shard,
 // is the one returned. Tentacle's radosgw reads the omap headers directly
 // instead, and answers -EIO where this answers a missing shard's ENOENT or
-// a header-less shard's zero header (docs/exclusions.md, "Index shard
+// a header-less shard's zero header (docs/differences.md, "Index shard
 // headers are read as Squid reads them").
 func (s *Store) readShardHeaders(ctx context.Context, info *meta.BucketInfo) ([]rgwcls.DirHeader, error) {
 	pool, err := s.indexPool(ctx, info)

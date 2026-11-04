@@ -20,7 +20,7 @@ import (
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L381-L404 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L394-L417 at v20.2.4).
 // radosgw sends one more line break after the page, past its Content-Length;
-// the page ends where the length does (docs/exclusions.md, "A website error
+// the page ends where the length does (docs/differences.md, "A website error
 // page ends at its Content-Length").
 func htmlErrorPage(r *op.Request, status int, code, message string) []byte {
 	f := formatter.NewHTML(true)

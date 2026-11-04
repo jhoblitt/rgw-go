@@ -712,12 +712,12 @@
 //
 // # Claims about ceph main
 //
-// In the registries, docs/ceph-upstream-bugs.md and docs/exclusions.md, a
-// FILE whose path is one of them or ends in "/" and one, each claim about
-// ceph main must name, in its own sentence or its own list item, the main
-// commit it was checked at, so that "on main" never means "on main whenever
-// this was written". make citation-form-check, which make check and CI run,
-// checks it under --form-only.
+// In the registries, docs/ceph-upstream-bugs.md, docs/differences.md and
+// docs/exclusions.md, a FILE whose path is one of them or ends in "/" and
+// one, each claim about ceph main must name, in its own sentence or its own
+// list item, the main commit it was checked at, so that "on main" never
+// means "on main whenever this was written". make citation-form-check,
+// which make check and CI run, checks it under --form-only.
 //
 // A claim is the word main, in any case, outside a code span, a link's
 // destination, a bare URL and a fenced code block, unless it is one of these,

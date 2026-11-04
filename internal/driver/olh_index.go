@@ -235,7 +235,7 @@ func (b *bucketOLHIndex) getOLH(ctx context.Context, head *op.ObjectState) (rgw.
 // null data entry. The last read's ENOENT, radosclient.ErrNotFound, is the
 // answer once the bucket, read again, names the shard that gave it; on a
 // shard a reshard moved the name to, the resolution starts again from the
-// plain key (docs/exclusions.md, "An index read of a versioned key that finds
+// plain key (docs/differences.md, "An index read of a versioned key that finds
 // its shard gone reads the shard the bucket now names"). radosgw's
 // bi_get_instance reads the plain key alone, which on a converted key is the
 // version marker, and reads once through its caller's bucket info. An entry

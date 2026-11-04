@@ -61,7 +61,7 @@ func (s *Store) SetObjectAttrs(ctx context.Context, st *op.ObjectState, set map[
 	// read, under a write tag the OLH protocol's head ops never change, which
 	// undoes a link applied since the read (docs/ceph-upstream-bugs.md,
 	// "radosgw's attr writes put a null-current OLH head's OLH attrs back,
-	// reverting a link that lands in between"; docs/exclusions.md, "An attr
+	// reverting a link that lands in between"; docs/differences.md, "An attr
 	// write leaves the OLH attrs as they are on disk").
 	for _, name := range slices.Compact(slices.Sorted(slices.Values(rm))) {
 		if !strings.HasPrefix(name, meta.AttrOLHPrefix) {

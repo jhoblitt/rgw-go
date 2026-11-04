@@ -46,10 +46,10 @@ type ListObjectsParams struct {
 	// MarkerInstance is the version of Marker to start after, a
 	// version-id-marker as sent. In a versions listing with a Marker, ""
 	// starts past every version of Marker, as S3 does for a key-marker
-	// alone, where radosgw lists them again (docs/exclusions.md, "A versions
+	// alone, where radosgw lists them again (docs/differences.md, "A versions
 	// listing starts after every version of a key-marker given alone");
 	// "null" starts after the null version, a null delete marker included
-	// (docs/exclusions.md, "A versions listing resumes after the null delete
+	// (docs/differences.md, "A versions listing resumes after the null delete
 	// marker its version-id-marker names"), or past every version when there
 	// is none; an instance starts after that version, or past every version
 	// of Marker when it is gone, as cls_rgw resolves its start key
@@ -85,7 +85,7 @@ type ListObjectsParams struct {
 	// and
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2400-L2406 at v20.2.4).
 	// A name the delimiter rolls into a common prefix still forms it, where
-	// radosgw refuses the prefix itself (docs/exclusions.md,
+	// radosgw refuses the prefix itself (docs/differences.md,
 	// "ListMultipartUploads keeps the common prefixes radosgw drops").
 	// ListUploads passes meta.IsMultipartMeta, radosgw's MultipartMetaFilter.
 	NameFilter func(name string) bool

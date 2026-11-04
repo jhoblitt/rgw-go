@@ -132,7 +132,7 @@ Versioning's ids are V-versioning.md's.
 | the object-lock route-set file | S2, L2, L3 | S2 stubs it; L2 then L3 add line-local entries |
 | `internal/op/deleteobject.go`, `deleteobjects.go`, `internal/s3/deleteobject.go`, `deleteobjects.go` | V12a, L4 | V12a first; L4 then adds the check between its state read and its delete |
 | `internal/op/bucketops.go`, `internal/s3/bucket.go` (CreateBucket) | L2 (b), BC tasks | L2 (b) edits only the object-lock branch |
-| `docs/exclusions.md`, `docs/ceph-upstream-bugs.md` | every task | each PR edits only its own entries |
+| `docs/differences.md`, `docs/ceph-upstream-bugs.md` | every task | each PR edits only its own entries |
 
 ## Tasks
 

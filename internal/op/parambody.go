@@ -29,7 +29,7 @@ const (
 // read fills while the bytes asked for so far exceed maxLen. Either way the body is read through what
 // authentication left in r.Body to its final Read, whose error is returned,
 // the payload's verdict among them: radosgw drops that verdict
-// (docs/exclusions.md, "A body read whole is checked against its signed
+// (docs/differences.md, "A body read whole is checked against its signed
 // hash"). A body that ends short of its length is RequestTimeout.
 func ReadParamBody(r *Request, maxLen uint64) ([]byte, error) {
 	src := r.Body

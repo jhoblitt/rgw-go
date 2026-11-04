@@ -91,14 +91,14 @@ func Match(conf meta.WebsiteConf, key string, status int) (meta.RoutingRule, boo
 // so Apply cuts the prefix by its length alone, as apply_rule does.
 // apply_rule writes the new key raw, so a key's CR and LF reach the header,
 // and its ?, # and % reshape the URL; rgw-go encodes it as urlEncode does
-// (docs/exclusions.md, "A website redirect's Location carries the new key
+// (docs/differences.md, "A website redirect's Location carries the new key
 // percent-encoded").
 //
 // apply_rule writes the protocol and the host raw too
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_website.cc#L45-L59 at v19.2.7 and v20.2.4).
 // A host holding a byte at or below 0x20, or 0x7F, or a protocol other than
 // http or https, is ErrUnsafeRedirect, as a configuration radosgw stored can
-// hold either (docs/exclusions.md, "A website redirect is refused for a host
+// hold either (docs/differences.md, "A website redirect is refused for a host
 // holding a control byte or a protocol other than http or https").
 func Apply(r meta.RoutingRule, proto, host, key string) (url string, code int, err error) {
 	ri := r.RedirectInfo

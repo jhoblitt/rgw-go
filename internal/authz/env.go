@@ -368,7 +368,7 @@ func hasACLHeader(h http.Header) bool {
 // and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2772 at v20.2.4).
 // get_params also fills in the bucket's default encryption, which rgw-go does
-// not apply (docs/exclusions.md).
+// not apply (docs/differences.md).
 func cryptKeys(cfg Config, r *op.Request, withQuery bool) []envPair {
 	names := []string{"server-side-encryption"}
 	if cfg.Release >= denc.Tentacle {
@@ -390,13 +390,13 @@ func cryptKeys(cfg Config, r *op.Request, withQuery bool) []envPair {
 // six other meta prefixes
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L413-L464 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L426-L477 at v20.2.4),
-// which rgw-go's S3 API does not read (docs/exclusions.md). The query's
+// which rgw-go's S3 API does not read (docs/differences.md). The query's
 // overwrites the header's on every route in radosgw
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2599-L2601 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2752-L2754 at v20.2.4);
 // rgw-go takes no query encryption parameter on either SigV2 route, neither
 // of which signs it, nor on a route a result does not name
-// (op.AuthRoute.ReadsQueryEncryption, docs/exclusions.md).
+// (op.AuthRoute.ReadsQueryEncryption, docs/differences.md).
 func cryptAttr(r *op.Request, name string, withQuery bool) (string, bool) {
 	val, found := op.HeaderValue(r.Header, "X-Amz-"+name)
 	if !withQuery || !r.AuthRoute.ReadsQueryEncryption() {

@@ -206,7 +206,7 @@ type headerRules struct {
 	getter bool
 	// untypedOnRadosgw is a success radosgw may answer with no
 	// Content-Type: a JSON body its flusher started, or the zone config
-	// (docs/exclusions.md, "Admin responses carry a Content-Type on every
+	// (docs/differences.md, "Admin responses carry a Content-Type on every
 	// body").
 	untypedOnRadosgw bool
 }

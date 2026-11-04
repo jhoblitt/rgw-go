@@ -79,7 +79,7 @@ func (o *ListParts) OpMask() uint32 { return OpTypeRead }
 // otherwise is answered only once the requester is authorized, the state
 // standing for an object whose policy is the bucket owner's default, so that
 // a refused requester gets 403 whatever the store holds, where radosgw
-// answers the failure (docs/exclusions.md).
+// answers the failure (docs/differences.md).
 func (o *ListParts) Init(ctx context.Context, r *Request) error {
 	err := loadBucket(ctx, r)
 	if err != nil {

@@ -20,7 +20,7 @@ const lcHashPrime = 7877
 
 // options are the rgw_* tunables the driver reads, once, at Open, so a
 // change made while the gateway runs takes effect at its next start
-// (docs/exclusions.md). The defaults in the comments are rgw.yaml.in's at
+// (docs/differences.md). The defaults in the comments are rgw.yaml.in's at
 // v19.2.6 and v20.2.4.
 type options struct {
 	cacheEnabled     bool          // rgw_cache_enabled, true

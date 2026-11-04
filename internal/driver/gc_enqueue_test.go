@@ -154,6 +154,6 @@ var _ = Describe("enqueueGC", func() {
 		for _, e := range entries {
 			sizes = append(sizes, len(e.Chain))
 		}
-		Expect(sizes).To(Equal([]int{1, 1, 1, 1}), "radosgw loops forever here (docs/exclusions.md)")
+		Expect(sizes).To(Equal([]int{1, 1, 1, 1}), "radosgw loops forever here (docs/differences.md)")
 	})
 })

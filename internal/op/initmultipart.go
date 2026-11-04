@@ -59,7 +59,7 @@ func (o *InitMultipart) OpMask() uint32 { return OpTypeWrite }
 // Init is init_permissions' load of the bucket, a missing one NoSuchBucket.
 // Its check of the destination placement waits for the requester to be
 // authorized, as nothing the bucket holds is checked before (Execute;
-// docs/exclusions.md).
+// docs/differences.md).
 func (o *InitMultipart) Init(ctx context.Context, r *Request) error { return loadBucket(ctx, r) }
 
 // VerifyPermission is RGWInitMultipart::verify_permission
@@ -83,7 +83,7 @@ func (o *InitMultipart) VerifyPermission(ctx context.Context, r *Request) error 
 // public ACL under the bucket's block of public ACLs is refused, as
 // PutObject refuses one, where radosgw checks no block for
 // CreateMultipartUpload, whose ACL the completed object takes
-// (docs/exclusions.md). The upload's attrs are the request's with the policy
+// (docs/differences.md). The upload's attrs are the request's with the policy
 // and, when the request tags the object with any tag, the tag set, and the
 // upload is created for the requester on the destination placement. radosgw
 // ends a request without a key there with success and no upload, where no S3

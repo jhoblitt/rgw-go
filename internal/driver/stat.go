@@ -91,7 +91,7 @@ func dropHead(st *op.ObjectState) {
 // When the follow runs the update for a pending modification, the head is
 // read again once the update has run and the version resolved from that
 // read, without a second update, where radosgw resolves it from the head as
-// read before the update (docs/exclusions.md, "A read that replays a
+// read before the update (docs/differences.md, "A read that replays a
 // pending modification answers the version current after it"). A head that
 // read finds gone, or no longer an OLH head, is the key's state as found.
 func (s *Store) followHead(ctx context.Context, rec *op.BucketRecord, head *op.ObjectState, prefetch bool) (*op.ObjectState, error) {
@@ -258,7 +258,7 @@ func (s *Store) statHead(ctx context.Context, rec *op.BucketRecord, key meta.Obj
 		// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_tools.cc#L107-L108 at v19.2.6,
 		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_tools.cc#L108-L109 at v20.2.4),
 		// and then finds no object in it. rgw-go creates no pool
-		// (docs/exclusions.md).
+		// (docs/differences.md).
 		return &op.ObjectState{Bucket: rec, Key: key}, nil
 	}
 	if err != nil {
@@ -391,7 +391,7 @@ func decodeState(ctx context.Context, st *op.ObjectState) error {
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2919-L2923 at v20.2.4).
 // An attr with bytes past its record is one cksum.DecodeAttr refuses, where
 // radosgw's checksum-mode GET aborts and its other readers take the record
-// (docs/exclusions.md, "A stored checksum rgw-go cannot read whole is not
+// (docs/differences.md, "A stored checksum rgw-go cannot read whole is not
 // shown").
 func storedChecksum(ctx context.Context, st *op.ObjectState) *cksum.Cksum {
 	b, ok := st.Attrs[meta.AttrCksum]

@@ -259,7 +259,7 @@ var _ = Describe("Parse", func() {
 		Entry("a statement given as a string", `{"Statement": "x"}`, denc.Squid,
 			"`x` is not valid in the context of `Statement`."),
 		// v20.2.4's do_string asserts that a statement exists first and
-		// aborts (docs/exclusions.md); rgw-go refuses it as v19.2.6 does.
+		// aborts (docs/differences.md); rgw-go refuses it as v19.2.6 does.
 		Entry("a statement given as a string on Tentacle", `{"Statement": ["x"]}`, denc.Tentacle,
 			"`x` is not valid in the context of `Statement`."),
 		Entry("a string under a condition operator", stmt(`"Condition": {"StringEquals": "x"}`), denc.Squid,

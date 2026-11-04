@@ -36,7 +36,7 @@ func LogUsage(ctx context.Context, r *Request, opName string) {
 	// a system user's is not left out. radosgw takes s->owner, and s->user as
 	// payer, from it like any other
 	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_log.cc#L197-L219 at v19.2.7
-	// and v20.2.4; docs/exclusions.md).
+	// and v20.2.4; docs/differences.md).
 	if id.Unverified {
 		id = Anonymous()
 	}

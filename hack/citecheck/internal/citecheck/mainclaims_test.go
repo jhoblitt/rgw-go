@@ -339,12 +339,16 @@ var _ = Describe("claims about ceph main", func() {
 		Expect(stdout.String()).To(Equal("citations checked: 0, failed: 0\n"))
 	})
 
-	It("reads docs/exclusions.md as a registry too", func(ctx SpecContext) {
-		md := registryAt("exclusions.md", "Main still sends it.\n")
-		Expect(citecheck.ExitStatus(formOnly(ctx, md))).To(Equal(1))
-		Expect(stdout.String()).To(Equal(md + ":1: Main still sends it.: " + unnamedInPara + "\n" +
-			"citations checked: 0, failed: 0\nmain claims checked: 1, failed: 1\n"))
-	})
+	DescribeTable("reads the other registries too",
+		func(ctx SpecContext, name string) {
+			md := registryAt(name, "Main still sends it.\n")
+			Expect(citecheck.ExitStatus(formOnly(ctx, md))).To(Equal(1))
+			Expect(stdout.String()).To(Equal(md + ":1: Main still sends it.: " + unnamedInPara + "\n" +
+				"citations checked: 0, failed: 0\nmain claims checked: 1, failed: 1\n"))
+		},
+		Entry("docs/differences.md", "differences.md"),
+		Entry("docs/exclusions.md", "exclusions.md"),
+	)
 
 	It("reports a failing citation and a claim that names no commit in line order, and fails on both",
 		func(ctx SpecContext) {

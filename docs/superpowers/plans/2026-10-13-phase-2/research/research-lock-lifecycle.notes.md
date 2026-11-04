@@ -175,7 +175,7 @@ Compatibility = RADOS state both ways, not bug-for-bug S3. Where radosgw's S3 be
 - cls/rgw has no lc_* methods; const.go is a shared method-name list (ops_mp.go keeps its own constant).
 - fakerados RGWClass is a switch + RGWWriteMethods list (testutil/fakerados/cls_rgw.go:25-110) — PP-5 hot spot; lock emulator with clock (cls_lock.go).
 - s3.fromISO8601 returns whole seconds only (s3/putobject.go:233+); policy.fromISO8601 has ws_terminates false (policy/convert.go:596).
-- bucket instance metadata put does not update the LC shard entry (exclusions: "The instance's lifecycle configuration and topic mappings, which radosgw updates after the write, are not kept by rgw-go yet").
+- bucket instance metadata put does not update the LC shard entry (differences: "The instance's lifecycle configuration and topic mappings, which radosgw updates after the write, are not kept by rgw-go yet").
 
 ## Misc verified
 

@@ -27,7 +27,7 @@ import (
 // bucket's placement lacks its class, through checkDestPlacement. The first
 // three ops make that check once the requester is authorized, as PutObject
 // does, so a refused requester learns nothing of the bucket's placement
-// (docs/exclusions.md); the preflight, which authorizes nobody, makes it
+// (docs/differences.md); the preflight, which authorizes nobody, makes it
 // where radosgw does.
 
 // AttrCORS is RGW_ATTR_CORS
@@ -148,7 +148,7 @@ func (o *PutBucketCORS) VerifyPermission(ctx context.Context, r *Request) error 
 // writes back what the write it lost to had changed, and authorize no retry
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6103-L6107 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6770-L6774 at v20.2.4;
-// docs/exclusions.md).
+// docs/differences.md).
 func (o *PutBucketCORS) Execute(ctx context.Context, r *Request) error {
 	if err := checkDestPlacement(r, o.StorageClass); err != nil {
 		return err
@@ -207,7 +207,7 @@ func (o *DeleteBucketCORS) VerifyPermission(ctx context.Context, r *Request) err
 // through retryBucketWrite, which authorizes each retry again and stops when
 // the name names another bucket. radosgw decodes the configuration first
 // and answers one that does not decode 500, removing nothing; rgw-go removes
-// it (docs/exclusions.md, "DeleteBucketCors removes a CORS configuration
+// it (docs/differences.md, "DeleteBucketCors removes a CORS configuration
 // that does not decode").
 func (o *DeleteBucketCORS) Execute(ctx context.Context, r *Request) error {
 	if err := checkDestPlacement(r, o.StorageClass); err != nil {
@@ -239,7 +239,7 @@ func (*DeleteBucketCORS) Complete(context.Context, *Request) {}
 // identity and its answer is the same for every key that resolves: it asks
 // for no op mask and checks no permission, its bucket loads as an anonymous
 // request's does, and LogUsage accounts it as an anonymous request
-// (docs/exclusions.md, "A preflight's answer says nothing of its key's
+// (docs/differences.md, "A preflight's answer says nothing of its key's
 // user"). What it does depend on is the bucket the request names, which the
 // handler resolves under the identity's tenant when the name names none, as
 // radosgw does.
@@ -267,7 +267,7 @@ func (*OptionsCORS) Action() policy.Action { return policy.ActionNone }
 
 // OpMask is none. radosgw's is RGW_OP_TYPE_READ, which verify_op_mask checks
 // against the key's user, so a forged preflight would tell its sender
-// whether that user may read (docs/exclusions.md).
+// whether that user may read (docs/differences.md).
 func (*OptionsCORS) OpMask() uint32 { return 0 }
 
 // Init is rgw_build_bucket_policies' load of the bucket
@@ -287,7 +287,7 @@ func (*OptionsCORS) OpMask() uint32 { return 0 }
 // refusals that radosgw lifts for a system key, or on Tentacle an admin's,
 // of a suspended bucket and of a policy that does not parse, rgw-go makes in
 // its authorizer, which the preflight never calls, and it loads no owner
-// for a quota (docs/exclusions.md).
+// for a quota (docs/differences.md).
 func (o *OptionsCORS) Init(ctx context.Context, r *Request) error {
 	rec, err := r.Env.Buckets.GetBucket(ctx, r.Tenant, r.Bucket)
 	if err != nil {

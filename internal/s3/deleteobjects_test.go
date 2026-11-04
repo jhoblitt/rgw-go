@@ -64,7 +64,7 @@ var _ = Describe("multi_object_delete", func() {
 				Expect(rec.Code).To(Equal(200))
 				Expect(rec.Body.String()).To(Equal(deleteResultOpen +
 					"<Error><Key>src</Key><VersionId></VersionId><Code>PreconditionFailed</Code><Message>PreconditionFailed</Message></Error></DeleteResult>"))
-				Expect(w.stat(ctx, "src").Exists).To(BeTrue(), "a key whose ETag condition fails is kept, on both releases (docs/exclusions.md)")
+				Expect(w.stat(ctx, "src").Exists).To(BeTrue(), "a key whose ETag condition fails is kept, on both releases (docs/differences.md)")
 				Expect(w.stat(ctx, "b&c").Exists).To(BeFalse())
 			})
 			It("deletes under an ETag naming the object's", func(ctx SpecContext) {

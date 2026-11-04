@@ -186,7 +186,7 @@ var _ = Describe("ListObjects", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(keys(res.Entries)).To(Equal([]string{"e.2~2.meta"}))
 			Expect(res.CommonPrefixes).To(Equal([]string{"d/", "f/"}),
-				"radosgw filters the class's common-prefix entries too, rgw_rados.cc:2003-2009 (docs/exclusions.md)")
+				"radosgw filters the class's common-prefix entries too, rgw_rados.cc:2003-2009 (docs/differences.md)")
 		})
 		It("filters an unordered listing after the namespace and before the prefix", func(ctx SpecContext) {
 			seedMultipart("a.2~1.1", "a.2~1.meta", "b.2~3.meta", "b.2~3.2")
@@ -292,7 +292,7 @@ var _ = Describe("ListObjects", func() {
 		res, err := s.ListObjects(ctx, rec, op.ListObjectsParams{NS: "multipart", MaxKeys: 10})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(keys(res.Entries)).To(Equal([]string{"up.2~x.meta"}))
-		Expect(stater.StatObjectCallCount()).To(BeZero(), "radosgw stats it in the data-extra pool, rgw_rados.cc:10341-10344 (docs/exclusions.md)")
+		Expect(stater.StatObjectCallCount()).To(BeZero(), "radosgw stats it in the data-extra pool, rgw_rados.cc:10341-10344 (docs/differences.md)")
 	})
 	DescribeTable("sends suggestions unguarded on Squid and guarded on Tentacle",
 		func(ctx SpecContext, release denc.Release, methods []string) {
@@ -361,7 +361,7 @@ var _ = Describe("ListObjects", func() {
 		Expect(stater.StatObjectCallCount()).To(Equal(1))
 		_, _, key := stater.StatObjectArgsForCall(0)
 		Expect(key).To(Equal(meta.ObjKey{Name: "a.b.meta"}),
-			"radosgw's MultipartMetaFilter sends it to the data-extra pool, rgw_rados.cc:10341-10344 (docs/exclusions.md)")
+			"radosgw's MultipartMetaFilter sends it to the data-extra pool, rgw_rados.cc:10341-10344 (docs/differences.md)")
 		Expect(res.Entries[0].Size).To(BeEquivalentTo(5))
 	})
 	It("drops the suggestions rather than wait when every slot is busy", func(ctx SpecContext) {

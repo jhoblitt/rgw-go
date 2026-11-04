@@ -437,7 +437,7 @@ func trailerStringToSign(date, scope, finalChunkSig, canonicalTrailers string) s
 // covers when the payload has one; every other line, and any bytes after the
 // last CRLF, are ignored.
 // radosgw instead finds the signature and each listed name anywhere in the
-// section (docs/exclusions.md, "aws-chunked trailer sections are read line by
+// section (docs/differences.md, "aws-chunked trailer sections are read line by
 // line"). For a payload that expects a trailer signature, a declared
 // signature that is missing or differs from the one computed over the
 // trailers is SignatureDoesNotMatch, and no trailer is returned. The checksum

@@ -6,6 +6,6 @@
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.cc#L31-L155 at v20.2.4).
 // Squid's radosgw has no checksum code, so v20.2.4 is the reference on both
 // releases: the record has one form, and the digests and combined values
-// are Tentacle radosgw's, apart from the differences docs/exclusions.md
+// are Tentacle radosgw's, apart from the differences docs/differences.md
 // records.
 package cksum

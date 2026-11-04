@@ -231,7 +231,7 @@ func (x *indexOp) guardedWrite(ctx context.Context, call func(w *radosclient.Wri
 // radosgw's unawaited completion reaches the shard first because librados
 // keeps one client's ops to one object in order, and rgw-go's completions
 // keep no order (docs/cgo-limitations.md, "Bucket index completions to one
-// shard can land out of order"; docs/exclusions.md, "A versioned write
+// shard can land out of order"; docs/differences.md, "A versioned write
 // awaits its index completion").
 func (x *indexOp) completeSync(ctx context.Context, ver rgw.EntryVer, m rgw.DirEntryMeta) error {
 	if x.blind {
@@ -250,7 +250,7 @@ func (x *indexOp) completeSync(ctx context.Context, ver rgw.EntryVer, m rgw.DirE
 // and radosgw's unawaited completion lands first only because librados
 // keeps one client's ops to one object in order (docs/cgo-limitations.md,
 // "Bucket index completions to one shard can land out of order";
-// docs/exclusions.md, "An OLH replay awaits the index completion of each
+// docs/differences.md, "An OLH replay awaits the index completion of each
 // version it removes").
 func (x *indexOp) completeDelSync(ctx context.Context, ver rgw.EntryVer, removedMtime time.Time) error {
 	if x.blind {
@@ -274,7 +274,7 @@ func (x *indexOp) completeDelSync(ctx context.Context, ver rgw.EntryVer, removed
 // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9490-L9495,
 // v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10239-L10244),
-// and neither reads again (docs/exclusions.md, "An index read of a versioned
+// and neither reads again (docs/differences.md, "An index read of a versioned
 // key that finds its shard gone reads the shard the bucket now names"). Each
 // read follows the completions submitted before it as a guardedWrite does.
 func (x *indexOp) readShard(ctx context.Context, read func(sh indexShard) error) error {

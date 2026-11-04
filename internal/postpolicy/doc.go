@@ -5,7 +5,7 @@
 // src/rgw/rgw_policy_s3.cc differ only in Tentacle's exception for checksum
 // fields, which rgw-go makes on both releases. The JSON is read as ceph's
 // JSONParser reads it, with json_spirit's grammar (internal/jsonspirit), but
-// for the forms that reader refuses (docs/exclusions.md, "A POST policy with
+// for the forms that reader refuses (docs/differences.md, "A POST policy with
 // a `\x` or `\X` escape, a number json_spirit takes from the host's libm, or
 // nesting past 10000 is refused").
 package postpolicy

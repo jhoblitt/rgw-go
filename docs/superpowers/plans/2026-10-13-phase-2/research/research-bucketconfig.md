@@ -199,7 +199,7 @@ argument at v20.2.4.
   ([rgw_rest_s3.cc:5876-6145](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5876-L6145)), not in behaviour.
 - **Phase 1 interaction.** Website GETs are ordinary authenticated or anonymous GetObjects for
   ACL and policy. CompleteMultipartUpload's Location and the CNAME fallback know no s3website
-  hostnames today (docs/exclusions.md entries named in §3).
+  hostnames today (docs/differences.md entries named in §3).
 
 ### 2.3 Encryption configuration, "as an unconfigured radosgw"
 
@@ -244,7 +244,7 @@ argument at v20.2.4.
   records it from a running radosgw before pinning it.
 - **Phase 1 interaction.** Phase 1 answers 501 to any write into a bucket holding the attr
   (`internal/op/putobject.go:21-33` @0239625) and leaves the default out of the policy
-  environment (docs/exclusions.md, "A PUT's encryption condition keys leave out the bucket's
+  environment (docs/differences.md, "A PUT's encryption condition keys leave out the bucket's
   default encryption").
 
 ### 2.4 Ownership controls
@@ -473,7 +473,8 @@ is verified over the method OPTIONS (`internal/auth/sigv4.go:404-406`,
 - No fakerados work: nothing in this area calls an object class beyond what PutObject and the
   bucket-instance writes already emulate.
 
-**Exclusions in force that phase 2 retires or rewrites** (docs/exclusions.md, by title):
+**Exclusions in force that phase 2 retires or rewrites** (docs/differences.md, by title, but
+for docs/exclusions.md's "Key management" entry):
 - "A signed OPTIONS request is verified over OPTIONS and answered 501 until CORS lands."
 - "Writes that ask for encryption answer 501, SSE-S3 and SSE-KMS until phase 2 and SSE-C until
   phase 4." (the SSE-S3/KMS half), and "A PUT's encryption condition keys leave out the
@@ -659,7 +660,7 @@ runs on unit specs and counterfeiter fakes.
 | `internal/meta/bucket_info.go` | BC-9 | lock-lifecycle (object-lock configuration) | each area changes only its own field's type and its decode/encode line, with the type in its own file (`meta/website.go`, `meta/objlock.go`) |
 | `internal/auth/verifier.go` | BC-5 | - | BC-31 adds a new file and does not edit this one |
 | `hack/s3tests/deselect-phase2.txt`, `test/s3tests/baseline/*.json`, `known-differences-*.txt` | BC-8, BC-22, BC-27, BC-28f, BC-34 | every area's recording | recording tasks land one at a time through the controller (the ledger is append-only JSON) |
-| `docs/exclusions.md`, `docs/ceph-upstream-bugs.md` | nearly every task | every area | PP-5's process fix (per-entry files or a controller merge); not this area's to solve |
+| `docs/differences.md`, `docs/ceph-upstream-bugs.md` | nearly every task | every area | PP-5's process fix (per-entry files or a controller merge); not this area's to solve |
 
 ### 7.2 Shared seam
 

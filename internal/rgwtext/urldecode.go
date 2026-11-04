@@ -9,7 +9,7 @@ import "strings"
 // a literal '?' switches on; an escaped '?' does not. A '%' with fewer than
 // two bytes after it ends the result there, and one followed by a byte that
 // is not a hex digit empties it. A byte above 0x7f is no hex digit here;
-// radosgw looks it up outside its hex table (docs/exclusions.md, "A byte
+// radosgw looks it up outside its hex table (docs/differences.md, "A byte
 // above 0x7f in a percent-escape is a bad hex digit").
 func URLDecode(s string, inQuery bool) string {
 	if strings.IndexByte(s, '%') < 0 && strings.IndexByte(s, '+') < 0 {

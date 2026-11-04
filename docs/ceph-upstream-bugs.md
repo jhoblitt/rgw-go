@@ -675,7 +675,7 @@ Every new entry adds its row to this table, in document order.
     versioned bucket the completions and cancels of one version's writes
     meet it: the null version's repeated writes, and attribute changes on a
     version, which radosgw completes on its instance key. Awaiting a versioned
-    write's completion (`docs/exclusions.md`, "A versioned write awaits its
+    write's completion (`docs/differences.md`, "A versioned write awaits its
     index completion") orders it before that writer's own link only, not
     against another writer's completion, so on either kind of entry the
     class decides and no client can work around it.
@@ -769,7 +769,7 @@ Every new entry adds its row to this table, in document order.
   radosgw's rounds remove, the payer's own records among them, and answers
   200 with the payer-keyed records left, where radosgw's request never
   answers. A cap of 10 times ceil(n/1000)+1 rounds, n counted by the first
-  read, backs the check up with a warning of its own (`docs/exclusions.md`,
+  read, backs the check up with a warning of its own (`docs/differences.md`,
   "The admin usage trim is bounded"). fakerados emulates the class's keys
   (`internal/testutil/fakerados/cls_rgw.go`).
 - **Upstream:** [#72593](https://tracker.ceph.com/issues/72593), fixed by
@@ -924,7 +924,7 @@ Every new entry adds its row to this table, in document order.
   1024 bytes, counted from the CRLF that ends the last data chunk
   (`internal/auth/chunked.go`, `finish`, `maxTrailerSection` = 1024), since
   the largest legitimate section, a signed SHA512 trailer, is 290 bytes.
-  `docs/exclusions.md` records the difference from radosgw.
+  `docs/differences.md` records the difference from radosgw.
 - **Upstream:** [#81122](https://tracker.ceph.com/issues/81122). The trailer
   code came with [ceph/ceph#54856](https://github.com/ceph/ceph/pull/54856),
   the fix for [#63153](https://tracker.ceph.com/issues/63153), and reached
@@ -1010,7 +1010,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** answers 400 InvalidArgument for a chunk size that is not one
   to sixteen hex digits, before any of the chunk is stored
   (`internal/auth/chunked.go`, `parseChunkSize`), and for chunk data not
-  followed by its CRLF (`nextHeader`). `docs/exclusions.md` records both
+  followed by its CRLF (`nextHeader`). `docs/differences.md` records both
   differences from radosgw.
 - **Upstream:** [#81123](https://tracker.ceph.com/issues/81123). The parse
   came with def8f6412a5, in
@@ -1072,11 +1072,11 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** the ACL documents (unit Z) escape the owner's and each
   grantee's ID and display name with `xmltext.Escape`, the escaping
   radosgw's formatter gives the text of its other documents (owner decision
-  12c). `docs/exclusions.md` records the difference. s3-tests' users have
+  12c). `docs/differences.md` records the difference. s3-tests' users have
   plain display names (`s3tests-main`, `s3tests-alt`, `s3tests-tenant`,
   `s3tests-iam` in `hack/s3tests/run.sh`'s conf), so its ACL tests cannot
   show the difference; on Squid rgw-go's outcomes for them equal radosgw's
-  but for the PutBucketAcl race `docs/exclusions.md` records (2026-10-08).
+  but for the PutBucketAcl race `docs/differences.md` records (2026-10-08).
 - **Upstream:** no tracker issue or pull request reports or fixes it
   (searched 2026-09-29). Each search was first run on a known match.
   - tracker.ceph.com, full text: every project's issues of every status
@@ -1180,7 +1180,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** phase 1 verifies the hash before it acts: every op that acts on
   a request body reads the body to its end first, and a mismatch is 400
   XAmzContentSHA256Mismatch with nothing changed (units M, W and P). That is
-  a difference from radosgw, which those units record in `docs/exclusions.md`.
+  a difference from radosgw, which those units record in `docs/differences.md`.
 - **Upstream:** we filed [#81230](https://tracker.ceph.com/issues/81230).
   The fix in review is
   [ceph/ceph#72263](https://github.com/ceph/ceph/pull/72263) (draft): both
@@ -1242,7 +1242,7 @@ Every new entry adds its row to this table, in document order.
   AccessDenied to an unsigned `host` or `x-amz-*` header other than
   x-amz-content-sha256, unless `rgw_sigv4_insecure`
   (`auth.Config.Insecure`) is set. On Tentacle that differs from v20.2.4,
-  which `docs/exclusions.md` records with why the relaxation is safe ("SigV4
+  which `docs/differences.md` records with why the relaxation is safe ("SigV4
   accepts an unsigned Content-Type and x-amz-content-sha256 on Tentacle
   too"). The vectors
   `internal/auth/testdata/v4/unsigned-content-type-accepted.json` and
@@ -1314,7 +1314,7 @@ Every new entry adds its row to this table, in document order.
   makes its value the canonical request's payload hash, and still answers
   AccessDenied to any other unsigned one unless `rgw_sigv4_insecure`
   (`auth.Config.Insecure`) is set. On Tentacle that differs from v20.2.4,
-  which `docs/exclusions.md` records with why the relaxation is safe ("SigV4
+  which `docs/differences.md` records with why the relaxation is safe ("SigV4
   accepts an unsigned Content-Type and x-amz-content-sha256 on Tentacle
   too"). The vectors
   `internal/auth/testdata/v4/unsigned-content-sha256-accepted.json` and
@@ -1404,7 +1404,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it, on both releases: its S3 API reads,
   signs and stores `X-Amz-` headers alone, so a header under the six other
   prefixes is an ordinary header, which stores nothing, sets no encryption
-  and need not be signed (`docs/exclusions.md`, "The S3 API reads X-Amz-
+  and need not be signed (`docs/differences.md`, "The S3 API reads X-Amz-
   headers only"). `canonicalHeadersV4` (`internal/auth/sigv4.go`) keeps
   radosgw's rule: unless `rgw_sigv4_insecure` is set, every `x-amz-*`
   header but `x-amz-content-sha256` must be signed. `headerMeta`
@@ -1581,7 +1581,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it, on both releases: SigV2's string to
   sign names the `x-amz-` headers alone (`amzHeadersV2`,
   `internal/auth/sigv2.go`), and nothing reads a header under the six
-  other prefixes (`docs/exclusions.md`, "The S3 API reads X-Amz- headers
+  other prefixes (`docs/differences.md`, "The S3 API reads X-Amz- headers
   only"). A signed header moved between `X-Amz-` and another prefix, either
   way, changes the string to sign and fails with 403 SignatureDoesNotMatch,
   and so does each request of the `X-Account-` swap; CreateBucket's object
@@ -1679,7 +1679,7 @@ Every new entry adds its row to this table, in document order.
     request whose token is in the headers alone was not traced.
 - **Releases:** v19.2.7 and v20.2.4, by source reading and, for the meta,
   on running clusters; earlier releases were not checked.
-- **rgw-go:** works around it, on both releases (`docs/exclusions.md`, "A
+- **rgw-go:** works around it, on both releases (`docs/differences.md`, "A
   presigned SigV2 request's signed meta and session token mean the same in
   its headers and its query"). `amzHeadersV2` and `qsMetaV2`
   (`internal/auth/sigv2.go`) build radosgw's string to sign. Once a
@@ -1778,7 +1778,7 @@ Every new entry adds its row to this table, in document order.
     map was not checked.
 - **Releases:** v19.2.7 and v20.2.4, by source reading and, for the packed
   meta, on running clusters; earlier releases were not checked.
-- **rgw-go:** refuses it, on both releases (`docs/exclusions.md`, "A
+- **rgw-go:** refuses it, on both releases (`docs/differences.md`, "A
   presigned SigV2 request is refused when its query meta or session token
   holds a line break"). Once a presigned SigV2 request has authenticated,
   `queryMetaV2` (`internal/auth/sigv2.go`) refuses with 403 AccessDenied a
@@ -1842,7 +1842,7 @@ Every new entry adds its row to this table, in document order.
   by another way in, which a refusal of the renamed header does not see.
 - **Releases:** v19.2.7 and v20.2.4, by source reading and on running
   clusters; earlier releases were not checked.
-- **rgw-go:** refuses it, on both releases (`docs/exclusions.md`, "A
+- **rgw-go:** refuses it, on both releases (`docs/differences.md`, "A
   presigned SigV2 request is refused when its Expires holds a line break").
   Once a presigned SigV2 request has authenticated, `expiresLineBreak`
   (`internal/auth/sigv2.go`) refuses with 403 AccessDenied an `Expires`
@@ -1892,7 +1892,7 @@ Every new entry adds its row to this table, in document order.
   client sends such a name as a header.
 - **Releases:** v19.2.7 and v20.2.4, by source reading and on running
   clusters; earlier releases were not checked.
-- **rgw-go:** refuses it, on both releases (`docs/exclusions.md`, "A
+- **rgw-go:** refuses it, on both releases (`docs/differences.md`, "A
   presigned SigV2 request is refused when a query meta name holds a
   colon"). Once a presigned SigV2 request has authenticated, `queryMetaV2`
   (`internal/auth/sigv2.go`) refuses with 403 AccessDenied a query
@@ -1949,7 +1949,7 @@ Every new entry adds its row to this table, in document order.
   send.
 - **Releases:** v19.2.7 and v20.2.4, by source reading; earlier releases
   were not checked.
-- **rgw-go:** refuses it, on both releases (`docs/exclusions.md`, "A SigV2
+- **rgw-go:** refuses it, on both releases (`docs/differences.md`, "A SigV2
   request is refused when a signed sub-resource's value spells a later
   one"). Once a SigV2 request has authenticated, on either route,
   `packedSubresourceV2` (`internal/auth/sigv2.go`) refuses with 403
@@ -2048,7 +2048,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.7 and v20.2.4, by source reading and, for the
   header route's metadata, on running clusters; earlier releases were not
   checked.
-- **rgw-go:** works around it, on both releases (`docs/exclusions.md`, "A
+- **rgw-go:** works around it, on both releases (`docs/differences.md`, "A
   SigV2 request's unsigned query meta and encryption settings are not
   read"). The verifier names the route a request authenticated on,
   `op.AuthResult.Route` (`internal/auth/verifier.go`), and `s3.ApplyAuth`
@@ -2128,7 +2128,7 @@ Every new entry adds its row to this table, in document order.
   checked.
 - **rgw-go:** derives the signing key from the secret's own bytes
   (`signingKeyV4`, `internal/auth/sigv4.go`), as AWS clients do, so such a
-  secret signs and verifies. `docs/exclusions.md` records the difference
+  secret signs and verifies. `docs/differences.md` records the difference
   ("A secret key signs with its own bytes").
 - **Upstream:** none for this site. A prior-art search on 2026-10-02 found no
   issue or fix PR; it is unfiled while filing is paused. It is the same
@@ -2213,7 +2213,7 @@ Every new entry adds its row to this table, in document order.
   tenant; and its public-access block applies in addition to the
   destination's. The destination supplies only requester pays and the
   `x-amz-expected-bucket-owner` comparison. That is a difference from
-  radosgw, which unit Z records in `docs/exclusions.md`.
+  radosgw, which unit Z records in `docs/differences.md`.
 - **Upstream:** we filed [#81248](https://tracker.ceph.com/issues/81248).
   The fix in review is
   [ceph/ceph#72270](https://github.com/ceph/ceph/pull/72270) (draft): the
@@ -2334,7 +2334,7 @@ Every new entry adds its row to this table, in document order.
   request included. DeleteObjects checks each key as it checks a copy
   source and parses the policy again, so an admin's DeleteObjects on such a
   bucket is refused for every key. That is a difference from radosgw,
-  which unit Z records in `docs/exclusions.md`.
+  which unit Z records in `docs/differences.md`.
 - **Upstream:** we filed [#81253](https://tracker.ceph.com/issues/81253).
   The fix in review is
   [ceph/ceph#72271](https://github.com/ceph/ceph/pull/72271) (draft): it
@@ -2403,7 +2403,7 @@ Every new entry adds its row to this table, in document order.
   `VerifyObjectPermissionIn` against the object's
   (`internal/op/copyobject.go`). It so refuses the copies the regression
   lets a bucket grantee make, allows none radosgw refuses, and refuses an
-  object-only grantee as radosgw does. `docs/exclusions.md` records the
+  object-only grantee as radosgw does. `docs/differences.md` records the
   difference ("A copy source needs READ in its bucket's ACL and in its
   own"). If upstream returns to the object's ACL, rgw-go may relax to the
   object's alone.
@@ -2434,7 +2434,7 @@ Every new entry adds its row to this table, in document order.
   v20.1.0, checked at v20.2.4.
 - **rgw-go:** phase 1 (unit Z) enforces it on both releases, as v20.2.4's
   radosgw does. That is a difference from Squid's radosgw, which unit Z
-  records in `docs/exclusions.md`.
+  records in `docs/differences.md`.
 - **Upstream:** [#65741](https://tracker.ceph.com/issues/65741), fixed by
   [ceph/ceph#57206](https://github.com/ceph/ceph/pull/57206). Its squid
   backport, [#70860](https://tracker.ceph.com/issues/70860), is New with no
@@ -2484,7 +2484,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** phase 1 (unit M) answers 409 BucketAlreadyExists whenever
   another owner holds the name, whether it is found at the read or at the
   create. That is a difference from radosgw, which unit M records in
-  `docs/exclusions.md`.
+  `docs/differences.md`.
 - **Upstream:** [#76398](https://tracker.ceph.com/issues/76398) (Fix Under
   Review), on CreateBucket's error codes for an existing bucket, and its open
   fix [ceph/ceph#68722](https://github.com/ceph/ceph/pull/68722) were both
@@ -2551,7 +2551,7 @@ Every new entry adds its row to this table, in document order.
   `rgw_gc_max_concurrent_io` deletes in flight, counts a missing stripe as
   deleted and sends the tail deletes with `pool_full_try`, as the GC worker
   does (`rgw_gc.cc:371`, `:413-415`, `:677`). N's purge task records the
-  difference in `docs/exclusions.md`. rgw-go's `PurgeBypassGC`
+  difference in `docs/differences.md`. rgw-go's `PurgeBypassGC`
   (`internal/driver/purge.go`) implements it.
 - **Upstream:** we filed [#81304](https://tracker.ceph.com/issues/81304).
   The fix in review is
@@ -2628,7 +2628,7 @@ Every new entry adds its row to this table, in document order.
   nautilus v14.2.4.
 - **rgw-go:** phase 1's purge (unit N) counts a missing tail stripe as
   deleted, as the GC worker does, so a removal that meets one completes. N's
-  purge task records the difference in `docs/exclusions.md`. rgw-go's
+  purge task records the difference in `docs/differences.md`. rgw-go's
   `PurgeBypassGC` (`internal/driver/purge.go`) implements it.
 - **Upstream:** [#24789](https://tracker.ceph.com/issues/24789), open since
   2018 with no pull request. [#40587](https://tracker.ceph.com/issues/40587)
@@ -2684,7 +2684,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6 and v20.2.4.
 - **rgw-go:** reproduces it. `PurgeBypassGC` (`internal/driver/purge.go`)
   removes the head as `delete_obj_aio` does, unguarded, and a write racing
-  the purge leaks its tails the same way (`docs/exclusions.md`, "The admin
+  the purge leaks its tails the same way (`docs/differences.md`, "The admin
   bucket removal with bypass-gc deletes every tail, and with a bound").
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
   (non-security).
@@ -2706,7 +2706,7 @@ Every new entry adds its row to this table, in document order.
   - The fix's one-time recompute can be skipped; see the next entry.
 - **Releases:** v19.2.3 and earlier, v20.2.2 and earlier. Drift accrued
   before an upgrade can outlive it.
-- **rgw-go:** never assumes `reserved_size` is exact. `docs/exclusions.md`
+- **rgw-go:** never assumes `reserved_size` is exact. `docs/differences.md`
   records the accounting per release.
 - **Upstream:** fixed by the commits above; no tracker issue.
 - **Found:** reported by rgw-rs; verified against the tags in the phase 0
@@ -2730,7 +2730,7 @@ Every new entry adds its row to this table, in document order.
   on a queue that drifted under an earlier release.
 - **rgw-go:** has no 2pc queue client yet. Phase 3 runs the stale-reservation
   expiry on every persistent queue, which is one of the writes that keeps a
-  drift, and must not assume `reserved_size` is exact (`docs/exclusions.md`).
+  drift, and must not assume `reserved_size` is exact (`docs/differences.md`).
 - **Upstream:** [#80994](https://tracker.ceph.com/issues/80994). A
   maintainer's comment there calls it a duplicate of the drift fix for
   [#74713](https://tracker.ceph.com/issues/74713), but that fix is what added
@@ -2943,7 +2943,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** phase 1's cache-notify handling (unit M) must treat a control
   notify as an invalidate-and-reread and never apply the notify payload as
   truth, and must keep its cephx caps on the control pool narrow.
-  `docs/exclusions.md` records cache invalidation as a coexistence obligation.
+  `docs/differences.md` records cache invalidation as a coexistence obligation.
   Realized in `internal/driver` (`cache.go`'s `onNotify`).
 - **Upstream:** not filed; the behaviour is radosgw's design.
 - **Found:** reported by rgw-rs (rados-rs CEPH-BUG-017); verified 2026-09-27.
@@ -3043,7 +3043,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** when a registration fails with ENOENT, the driver creates that
   control object again with startup's `create(false)` and keeps
   re-registering with its backoff (`internal/driver/notify.go`'s
-  `watchLoop`), so its watch comes back. `docs/exclusions.md` records the
+  `watchLoop`), so its watch comes back. `docs/differences.md` records the
   difference.
 - **Upstream:** pending: sent to rgw-bug-reproduction, which decides
   whether to reopen #59217 or file the regression new.
@@ -3265,7 +3265,7 @@ Every new entry adds its row to this table, in document order.
   `get_referer_perm` does, and the spec "lets a matching referer grant
   replace even the owner's own grant, as radosgw does"
   (`internal/acl/eval_test.go`) pins it. Under IgnorePublicAcls rgw-go reads
-  no referer grant, so none replaces anything there (`docs/exclusions.md`,
+  no referer grant, so none replaces anything there (`docs/differences.md`,
   "IgnorePublicAcls sets aside a Swift container's grants to everyone, and
   an ACL holding them is public").
 - **Upstream:** intended behaviour, so there is nothing to file.
@@ -3381,7 +3381,7 @@ Every new entry adds its row to this table, in document order.
   that reads one gets EIO as from the OSD. radosgw's one ephemeral lock, the
   bucket reshard lock (`rgw_reshard.cc:734`), is never read with either
   method; rgw-go must do the same if it takes that lock.
-  `docs/exclusions.md` records the failure mode.
+  `docs/differences.md` records the failure mode.
 - **Upstream:** [#80993](https://tracker.ceph.com/issues/80993). Upstream QA
   logged the failure in 2022 as
   [#56575](https://tracker.ceph.com/issues/56575), which was resolved by a
@@ -3427,10 +3427,10 @@ Every new entry adds its row to this table, in document order.
   for a device of step 0, which it does not verify, so no rgw-go request
   faults the OSD (`internal/driver/mfa.go`; spec "is not verified, the class
   not called, for a device of step 0, where a good code faults the OSD",
-  `internal/driver/mfa_test.go`; `docs/exclusions.md`, "A stored MFA device outside the otp put's bounds does not verify"). Its otp metadata put refuses a device of
+  `internal/driver/mfa_test.go`; `docs/differences.md`, "A stored MFA device outside the otp put's bounds does not verify"). Its otp metadata put refuses a device of
   step 0, or of a step over 3600 seconds, with 400 InvalidArgument before
   it writes, so no rgw-go write stores one (`op.DecodeOTPDocument`,
-  `internal/op/metadata_otp.go`; `docs/exclusions.md`, "The admin metadata
+  `internal/op/metadata_otp.go`; `docs/differences.md`, "The admin metadata
   API serves four sections"). A device of step 0 radosgw stored still reads
   back.
 - **Upstream:** [#80948](https://tracker.ceph.com/issues/80948). Its fix,
@@ -3532,7 +3532,7 @@ Every new entry adds its row to this table, in document order.
   it, and repeats liboath's walk over the device's seed to learn on which
   side of the check's step the class found the code and how far. A code
   found behind whose step is at or below the last success the record held
-  is refused (`internal/driver/mfa.go`; `docs/exclusions.md`, "An MFA code
+  is refused (`internal/driver/mfa.go`; `docs/differences.md`, "An MFA code
   the device may have accepted before does not verify"). That refuses every
   reuse through rgw-go, and some fresh codes radosgw verifies, which the
   exclusion lists; radosgw on the same zone still verifies the reuse.
@@ -3556,7 +3556,7 @@ Every new entry adds its row to this table, in document order.
     `time_ofs` as the document gives them, within its bounds of 1024 steps
     and 3600 seconds and refusing a step of 0, and keeps the `last_success`
     of each device the document keeps, as radosgw's put does
-    (`internal/driver/metadata_otp.go`; `docs/exclusions.md`, "The admin
+    (`internal/driver/metadata_otp.go`; `docs/differences.md`, "The admin
     metadata API serves four sections"). So the class stores the same index
     for a device rgw-go wrote, and the replay stands as for one radosgw
     wrote.
@@ -3729,7 +3729,7 @@ Every new entry adds its row to this table, in document order.
   backport, and has never checked the port's error.
 - **rgw-go:** refuses an IPv6 endpoint whose port does not parse, as
   radosgw refuses an IPv4 one (`parseEndpoint`,
-  `internal/frontend/spec.go`); `docs/exclusions.md` records the
+  `internal/frontend/spec.go`); `docs/differences.md` records the
   difference.
 - **Upstream:** we filed [#81305](https://tracker.ceph.com/issues/81305).
   The fix in review is
@@ -3784,7 +3784,7 @@ Every new entry adds its row to this table, in document order.
   takes the zonegroup and zone from SiteConfig
   (`services/svc_zone.cc:98-103` at v20.2.4).
 - **rgw-go:** searches no realm. Without a readable period it takes the
-  local zonegroup and starts, as Tentacle does (`docs/exclusions.md`,
+  local zonegroup and starts, as Tentacle does (`docs/differences.md`,
   "Zone and placement differences").
 - **Upstream:** fixed on main by
   [ceph/ceph#63266](https://github.com/ceph/ceph/pull/63266) (merge
@@ -3965,7 +3965,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6 and v20.2.4. Main is fixed at 8aa24c51928, and the
   development tag v22.0.0 is the first tag with the fix.
 - **rgw-go:** takes such a byte as no hex digit, so the result is empty,
-  as for any other bad digit; `docs/exclusions.md` records the
+  as for any other bad digit; `docs/differences.md` records the
   difference.
 - **Upstream:** we filed [#81267](https://tracker.ceph.com/issues/81267),
   which cites #4755, rather than comment on a resolved issue from 2013. The
@@ -4049,7 +4049,7 @@ Every new entry adds its row to this table, in document order.
   not check: to a path radosgw takes from an absolute-form target's query,
   to a target of another scheme that it keeps whole, and to the bucket a
   Host names. So no request that reuses a signature this way reaches a
-  handler. `docs/exclusions.md` records the difference under "Frontend
+  handler. `docs/differences.md` records the difference under "Frontend
   differences".
 - **Upstream:** we filed [#81301](https://tracker.ceph.com/issues/81301),
   which cites #71458 and ceph/ceph#63521, rather than comment on the
@@ -4121,7 +4121,7 @@ Every new entry adds its row to this table, in document order.
   never finish it.
 - **rgw-go:** reads the option once at startup and uses a zero as 1, with an
   error-level log line naming the option, so the driver's bucket-index
-  fan-out always has a window. `docs/exclusions.md` records the difference.
+  fan-out always has a window. `docs/differences.md` records the difference.
 - **Upstream:** we filed [#81302](https://tracker.ceph.com/issues/81302).
   The fix in review is
   [ceph/ceph#72302](https://github.com/ceph/ceph/pull/72302) (draft), which
@@ -4257,7 +4257,7 @@ Every new entry adds its row to this table, in document order.
   about 9.2e9 s as the longest Duration, about 292 years
   (`internal/driver/options.go`), so it never wraps. The metadata cache
   (`internal/driver/cache.go`) expires its entries after it, and
-  `docs/exclusions.md` records the difference ("A cache expiry interval too
+  `docs/differences.md` records the difference ("A cache expiry interval too
   large for radosgw's clock").
 - **Upstream:** [#81218](https://tracker.ceph.com/issues/81218), which we
   filed. Its fix, [ceph/ceph#72255](https://github.com/ceph/ceph/pull/72255),
@@ -4346,16 +4346,16 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** reads each option once at startup, keeping a negative value
   (`internal/driver/options.go`). Its usage log flushes every second when
   `rgw_usage_log_tick_interval` is not positive, logging an error
-  (`internal/driver/usage.go`; `docs/exclusions.md`, "A usage-log tick
+  (`internal/driver/usage.go`; `docs/differences.md`, "A usage-log tick
   interval that is not positive"). With `rgw_enable_quota_threads` set, its
   quota bucket-sync and owner-sync workers likewise run every second when
   their interval is not positive, logging an error
-  (`internal/driver/stats.go`; `docs/exclusions.md`, "Quota sync intervals
+  (`internal/driver/stats.go`; `docs/differences.md`, "Quota sync intervals
   that are not positive"). A TTL or sync wait that is not positive acts as it
   does in radosgw: every quota check reads the stats from RADOS, and every
   owner the pass does not skip as idle gets a full sync on every pass. Only
   a TTL below the current Unix time's negative differs, which rgw-go never
-  pins in 2106 (`docs/exclusions.md`, "A quota stats TTL below about
+  pins in 2106 (`docs/differences.md`, "A quota stats TTL below about
   -1.79e9 seconds").
 - **Upstream:** [#81226](https://tracker.ceph.com/issues/81226), which we
   filed. Its fix, [ceph/ceph#72261](https://github.com/ceph/ceph/pull/72261),
@@ -4425,7 +4425,7 @@ Every new entry adds its row to this table, in document order.
   reef.
 - **rgw-go:** does not reproduce it. Its ARN conditions match each
   component on its own with `MatchWildcards` (`policy.MatchPolicy`), and
-  `docs/exclusions.md` records the difference.
+  `docs/differences.md` records the difference.
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-05; awaiting response. No report or fix is known. Searched
   2026-09-30; each search was first run on a known match:
@@ -4551,7 +4551,7 @@ Every new entry adds its row to this table, in document order.
   shared zone alike: `tags.ParseXML` reads a root other than `Tagging` as
   the empty set, and the spec "reads a document whose root is not Tagging as
   the empty set" (`internal/tags/xml_test.go`) pins it. Because rgw-go
-  behaves as radosgw does, `docs/exclusions.md` has no entry for it.
+  behaves as radosgw does, `docs/differences.md` has no entry for it.
 - **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
   no issue or fix PR for the silent clearing; it is unfiled while filing is
   paused. Related, and to be cited when it is filed:
@@ -4626,7 +4626,7 @@ Every new entry adds its row to this table, in document order.
   (`internal/compression/codec_test.go`) pins it. Its own writes under the
   option at 8 read back on both gateways: it deflates with a 32 KiB window
   and stores 15 as the message (`internal/compression/encode.go`,
-  `newZlibEncoder`; `docs/exclusions.md`, "zlib's compressor message states
+  `newZlibEncoder`; `docs/differences.md`, "zlib's compressor message states
   the window rgw-go deflates with"), which the spec "the zlib wrapper at 8,
   where radosgw states 8" (`internal/driver/put_test.go`) pins.
 - **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
@@ -4664,7 +4664,7 @@ Every new entry adds its row to this table, in document order.
   releases not checked.
 - **rgw-go:** refuses such a block with `ErrCorrupt`. The zstd decoder
   bounds the frame by the header's length and refuses any other length
-  (`internal/compression/zstd.go`). `docs/exclusions.md` records the
+  (`internal/compression/zstd.go`). `docs/differences.md` records the
   difference.
 - **Upstream:** [#77334](https://tracker.ceph.com/issues/77334)
   (2026-06-11), with an open fix,
@@ -4703,7 +4703,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6, v20.2.4 and main (8aa24c51928, 2026-10-30); older
   releases not checked.
 - **rgw-go:** refuses such a block with `ErrCorrupt`. Go's inflaters report
-  the truncation (`internal/compression/zlib.go`). `docs/exclusions.md`
+  the truncation (`internal/compression/zlib.go`). `docs/differences.md`
   records the difference.
 - **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
   no issue or fix PR; it is unfiled while filing is paused.
@@ -4784,12 +4784,12 @@ Every new entry adds its row to this table, in document order.
   409 EmailExists and writes nothing, whatever `rgw_user_unique_email`
   says, in the RADOS driver (`claimEmail`, `internal/driver/user.go`) and
   the memstore alike; a user's removal or change of email removes the
-  index only while it names that user (`releaseEmail`; `docs/exclusions.md`,
+  index only while it names that user (`releaseEmail`; `docs/differences.md`,
   "The admin user routes answer store failures, and keep the account users
   index clean where radosgw leaves entries behind"). The RADOS driver's
   account removal deletes the email entry only while it names the account,
   under the version it read, so a user radosgw gave the email keeps it
-  (`RemoveAccount`, `internal/driver/account.go`; `docs/exclusions.md`,
+  (`RemoveAccount`, `internal/driver/account.go`; `docs/differences.md`,
   "The admin account routes and the RADOS account store differ from
   radosgw"). The memstore's `RemoveAccount` deletes the account's email
   entry without reading it, but no user's write takes an account's entry
@@ -5000,7 +5000,7 @@ Every new entry adds its row to this table, in document order.
   `internal/driver/list.go`) stops there with a warning, where radosgw's
   `check_disk_state` walk never ends. `?layout`'s document
   (`driver.Store.ObjectLayout`, `internal/driver/layout.go`) fails at the
-  same step, before any of it is sent. `docs/exclusions.md` records the
+  same step, before any of it is sent. `docs/differences.md` records the
   difference.
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-05; awaiting response. A prior-art search on 2026-10-01 found no
@@ -5148,7 +5148,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** meets it as radosgw does. `GCSetEntry` and `GCDeferEntry`
   (`internal/cls/rgw/ops_gc.go`) call the same class methods, so the
   overwrite happens in the OSD whichever gateway wrote the entries. Because
-  rgw-go behaves as radosgw does, `docs/exclusions.md` has no entry for it.
+  rgw-go behaves as radosgw does, `docs/differences.md` has no entry for it.
 - **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
   no issue or fix PR; it is unfiled while filing is paused.
 - **Found:** phase 1 unit W, Task 2, 2026-10-01, adding cls_rgw's omap-era
@@ -5255,7 +5255,7 @@ Every new entry adds its row to this table, in document order.
   (`internal/meta/manifest_write_test.go`) pins it. The reader's seek
   computes the stripe's start as the C++ does. Go's int32 arithmetic wraps
   where the C++ increment is undefined. Because rgw-go behaves as radosgw
-  does, `docs/exclusions.md` has no entry for it.
+  does, `docs/differences.md` has no entry for it.
 - **Upstream:** none for this defect. A prior-art search on 2026-10-02 found
   no issue or fix PR; it is unfiled while filing is paused. The stripe
   counters are themselves `int` in both the iterator and the generator, so a
@@ -5356,7 +5356,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** the driver's pool resolution answers 500 UnknownError, naming
   the placement, as radosgw's head-object helpers do, for a multipart
   upload's meta object in the data-extra pool as for an object's head;
-  `docs/exclusions.md` records the difference from radosgw's stat, which
+  `docs/differences.md` records the difference from radosgw's stat, which
   `RadosMultipartUpload::get_info` reaches too
   (`driver/rados/rgw_sal_rados.cc:3672` at v19.2.6, `:4531` at v20.2.4).
 - **Upstream:** none for this defect. A prior-art search on 2026-10-02 found
@@ -5399,7 +5399,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_rados.cc:9100](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_rados.cc#L9100)
   and [rgw_rados.cc:9116](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_rados.cc#L9116)).
 - **rgw-go:** refuses to start on a zero `rgw_get_obj_max_req_size`, naming
-  the value; `docs/exclusions.md` records the difference.
+  the value; `docs/differences.md` records the difference.
 - **Upstream:** none for this defect. A prior-art search on 2026-10-02 found
   no issue or fix PR; it is unfiled while filing is paused.
 - **Found:** phase 1 unit R, Task 3, 2026-10-01, in review of the driver's
@@ -5638,7 +5638,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** `GetBucket` (`internal/driver/bucket.go`) loads a bucket as
   `load_bucket` does and answers NoSuchBucket the same way. `PutBucketAttrs`
   reads the entry point where `set_bucket_instance_attrs` does, and refuses
-  a bucket that needs the conversion (`docs/exclusions.md`, "An entry point
+  a bucket that needs the conversion (`docs/differences.md`, "An entry point
   from before version 8 is not converted").
 - **Upstream:** none. A prior-art search on 2026-10-02 found no issue or fix
   PR; it is unfiled while filing is paused. The regression came with
@@ -5814,7 +5814,7 @@ Every new entry adds its row to this table, in document order.
   execute still drops the return at
   [rgw_op.cc:3053-3060](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_op.cc#L3053-L3060)).
 - **rgw-go:** answers 400 InvalidRequest in every case;
-  `docs/exclusions.md` records the difference.
+  `docs/differences.md` records the difference.
 - **Upstream:** none. A prior-art search on 2026-10-02 found no issue or fix
   PR; it is unfiled while filing is paused. A fix would run the anonymous
   and control-character checks before `dump_errno` sends the status.
@@ -5874,7 +5874,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** not affected. `internal/compression`'s lz4 decoder checks the
   block's length against its count and pair table before it reads or
   allocates anything, and the driver fails the read with 500 UnknownError;
-  `docs/exclusions.md` records the difference.
+  `docs/differences.md` records the difference.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit R, Task 4, 2026-10-02, checking whether radosgw
   refuses the short lz4 blocks rgw-go's decoder specs refuse; derived from
@@ -5914,7 +5914,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v20.2.4; v19.2.6 reads through `bucket_list`.
 - **rgw-go:** the driver's `readShardHeaders` (`internal/driver/index.go`)
   reads the headers through `bucket_list`, as Squid does, on both releases
-  (`docs/exclusions.md`, "Index shard headers are read as Squid reads
+  (`docs/differences.md`, "Index shard headers are read as Squid reads
   them").
 - **Upstream:** none. A prior-art search on 2026-10-04 found no tracker
   issue, and no fix: `IndexHeadReader`'s history holds only the commit that
@@ -6116,7 +6116,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_iam_policy.h:516](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_iam_policy.h#L516));
   older releases not checked.
 - **rgw-go:** reproduces it, the undefined cast as radosgw's x86-64 build
-  computes it (`policy.AsDate`); `docs/exclusions.md` records that a build
+  computes it (`policy.AsDate`); `docs/differences.md` records that a build
   for another architecture may answer otherwise.
 - **Upstream:** none. A prior-art search on 2026-10-04 found no tracker
   issue; the nearest, [#56993](https://tracker.ceph.com/issues/56993), an
@@ -6176,7 +6176,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6, v20.2.4 and main (8aa24c51928, 2026-10-30); older
   releases not checked.
 - **rgw-go:** reproduces it: `internal/authz/env.go` sets both keys as
-  radosgw does, so `docs/exclusions.md` records no difference.
+  radosgw does, so `docs/differences.md` records no difference.
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-12; awaiting response.
 - **Found:** phase 1 planning of unit Z, recorded by unit Z's Task 12,
@@ -6295,7 +6295,7 @@ Every new entry adds its row to this table, in document order.
   `complete()` does, leaving the rest of the body unread. A Content-MD5 is
   the op's to compare, and phase 1 compares no trailing checksum. A
   payload short of its length is answered as radosgw answers it when the
-  op's read goes on (`docs/exclusions.md`, "aws-chunked framing is read
+  op's read goes on (`docs/differences.md`, "aws-chunked framing is read
   strictly").
 - **Upstream:** none. A prior-art search on 2026-10-04 found no report or
   fix PR. Related: [#81122](https://tracker.ceph.com/issues/81122) and
@@ -6351,7 +6351,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_rest_s3.cc:881](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L881)
   and [rgw_rest_s3.cc:973](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L973)).
 - **rgw-go:** `op.GetObjectTagging` and `op.GetBucketTagging` answer 500
-  UnknownError, the status radosgw's -EIO maps to; `docs/exclusions.md`
+  UnknownError, the status radosgw's -EIO maps to; `docs/differences.md`
   records the difference.
 - **Upstream:** none for this defect. A prior-art search on 2026-10-04
   found no report or fix of the response ordering. Its symptom was reported
@@ -6609,7 +6609,7 @@ Every new entry adds its row to this table, in document order.
   makes it non-public. PutBucketPolicy's BlockPublicPolicy refusal,
   RestrictPublicBuckets and GetBucketPolicyStatus's IsPublic
   (`op.GetBucketPolicyStatus`, `internal/op/policystatus.go`) take that
-  judgment (`docs/exclusions.md`, "A bucket policy is public as Amazon S3
+  judgment (`docs/differences.md`, "A bucket policy is public as Amazon S3
   judges it"), so GetBucketPolicyStatus reports the policy of
   `test_get_fixed_source_ip_bucket_policy_status` not public on both
   releases.
@@ -6657,7 +6657,7 @@ Every new entry adds its row to this table, in document order.
   whose seconds are a `__u32`
   ([utime.h:50](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/include/utime.h#L50)).
 - **rgw-go:** differs: it compares the full time and answers such a request
-  with 403 RequestTimeTooSkewed (`docs/exclusions.md`).
+  with 403 RequestTimeTooSkewed (`docs/differences.md`).
 - **Upstream:** none. rgw-bug-reproduction's prior-art search found no
   report or fix. The wrap is `utime_t`'s 32-bit seconds, as in "radosgw's
   parse_time wraps a date outside 1970 to 2106". It is unfiled while filing
@@ -6807,7 +6807,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** not affected. `trailers` (`internal/auth/chunked.go`) reads
   the section line by line, takes each listed name once and reads nothing
   past the section, and only for a payload whose `x-amz-content-sha256`
-  ends in `TRAILER`; `docs/exclusions.md` records the difference
+  ends in `TRAILER`; `docs/differences.md` records the difference
   ("aws-chunked trailer sections are read line by line").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit A, Task 7, 2026-10-04, reading `complete()`'s
@@ -6842,7 +6842,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_auth_s3.cc:1489-1499](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_auth_s3.cc#L1489-L1499)).
 - **rgw-go:** differs. `trailers` (`internal/auth/chunked.go`) splits a
   line at its first colon and takes the rest of it, untrimmed and possibly
-  empty, as the value; `docs/exclusions.md` records the difference
+  empty, as the value; `docs/differences.md` records the difference
   ("aws-chunked trailer sections are read line by line").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit A, Task 7, 2026-10-04, reading `split_header` to
@@ -6915,7 +6915,7 @@ Every new entry adds its row to this table, in document order.
   (`internal/op/readconds.go`), so an all-'=' SSE-C key or key-MD5 is 400
   InvalidArgument, not a crash, and an all-'=' admin metadata listing
   marker lists from the beginning (`ListMetadata`,
-  `internal/op/adminmetadata.go`); `docs/exclusions.md` records each
+  `internal/op/adminmetadata.go`); `docs/differences.md` records each
   difference.
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-05; awaiting response. A prior-art search found no report or fix;
@@ -6997,7 +6997,7 @@ Every new entry adds its row to this table, in document order.
   around the termination: for a last value shorter than three bytes it
   reads the empty key, which no request sets, so the string and ARN
   operators compare with no values (`policy.Condition.Eval`).
-  `docs/exclusions.md` records the difference.
+  `docs/differences.md` records the difference.
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-05; awaiting response. A prior-art search found no report or fix;
   it is distinct from the parse-time terminations
@@ -7080,7 +7080,7 @@ Every new entry adds its row to this table, in document order.
   `rgw_max_chunk_size` of plaintext, as radosgw does (`internal/driver`,
   `compressor`), so its objects expose a coexisting radosgw to this loop
   only where that radosgw's `rgw_max_chunk_size` is the smaller;
-  `docs/exclusions.md` records it.
+  `docs/differences.md` records it.
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-05; awaiting response. A prior-art search found no report or fix;
   [#74662](https://tracker.ceph.com/issues/74662) and
@@ -7134,7 +7134,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_sal_rados.cc:3127-3128](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_sal_rados.cc#L3127-L3128)
   and [rgw_sal_rados.cc:3167](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_sal_rados.cc#L3167)).
 - **rgw-go:** answers the request's part marker, 0 when absent, as
-  NextPartNumberMarker; `docs/exclusions.md` records the difference.
+  NextPartNumberMarker; `docs/differences.md` records the difference.
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-05; awaiting response.
 - **Found:** phase 1 unit R, Task 6, 2026-10-02, transcribing list_parts'
@@ -7174,7 +7174,7 @@ Every new entry adds its row to this table, in document order.
   of that part, which it stats, carries, and a part whose head has none, or
   one rgw-go cannot read, shows none (`listParts`,
   `internal/op/objectread.go`). Its S3 handler renders no part checksum yet
-  (`docs/exclusions.md`, "Stored checksums are not shown").
+  (`docs/differences.md`, "Stored checksums are not shown").
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-05
   and has not reported a prior-art result.
 - **Found:** review of phase 1 unit R, Task 6, 2026-10-04; derived from the
@@ -7263,7 +7263,7 @@ Every new entry adds its row to this table, in document order.
   authenticated denial of service.
 - **Releases:** v19.2.6, v20.2.4 and main 8aa24c51928.
 - **rgw-go:** requires the key `chunk-signature` and refuses any other with
-  400 InvalidArgument (`docs/exclusions.md`, "aws-chunked framing is read
+  400 InvalidArgument (`docs/differences.md`, "aws-chunked framing is read
   strictly").
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-05; awaiting response. A prior-art search found no report or fix
@@ -7311,7 +7311,7 @@ Every new entry adds its row to this table, in document order.
   compared, and before it the signature is compared, as `recv_chunk` does
   (`internal/auth/chunked.go`, `complete` and `nextChunk`). The final chunk
   line is parsed strictly, and a malformed one is refused with 400
-  InvalidArgument (`docs/exclusions.md`, "aws-chunked framing is read
+  InvalidArgument (`docs/differences.md`, "aws-chunked framing is read
   strictly").
 - **Upstream:** [#72253](https://tracker.ceph.com/issues/72253), the Java
   SDK "mcrc32" loose-parse symptom, is Fix Under Review, and
@@ -7361,7 +7361,7 @@ Every new entry adds its row to this table, in document order.
   expects a trailer signature once more data, or the end of the body,
   follows the chunk at the decoded length, so it never reads a signature
   from the window (`internal/auth/chunked.go`, `endAtLength`), and its own
-  trailer parse reads the section line by line (`docs/exclusions.md`,
+  trailer parse reads the section line by line (`docs/differences.md`,
   "aws-chunked trailer sections are read line by line").
 - **Upstream:** none. A prior-art search found no report or fix; it is
   distinct from [#81122](https://tracker.ceph.com/issues/81122) and
@@ -7546,7 +7546,7 @@ Every new entry adds its row to this table, in document order.
   no wildcard or policy variable, is not public, whatever its conditions.
   An Allow statement whose NotPrincipal names principals but not the
   wildcard, which only Squid parses, grants every other principal and is
-  public unless a condition limits it (`docs/exclusions.md`, "A bucket
+  public unless a condition limits it (`docs/differences.md`, "A bucket
   policy is public as Amazon S3 judges it"). GetBucketPolicyStatus's
   IsPublic takes that judgment (`internal/op/policystatus.go`), so it
   reports the policy of
@@ -7636,7 +7636,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it, on either release: `Policy.IsPublic`
   counts a principal that admits the anonymous requester as every
   principal (`admitsAnonymous`, `internal/policy/policy.go`;
-  `docs/exclusions.md`, "A bucket policy is public as Amazon S3 judges
+  `docs/differences.md`, "A bucket policy is public as Amazon S3 judges
   it").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** review of phase 2 task S3, 2026-10-15, in an adversarial pass
@@ -7810,7 +7810,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v20.2.4 and main 8aa24c51928; v19.2.6 refuses the document
   instead. The assertion was never backported to squid or reef.
 - **rgw-go:** differs on Tentacle: `policy.Parse` refuses the document with
-  v19.2.6's annotation on both releases (`docs/exclusions.md`).
+  v19.2.6's annotation on both releases (`docs/differences.md`).
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-05; awaiting response. rgw-bug-reproduction's prior-art search
   found no tracker issue and no fix. The cause is 04f26b29e0c, which came
@@ -7855,7 +7855,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: `policy.DecodeUserPolicies` and
   `policy.DecodeManagedPolicies` fail on bytes past the encoding, so the
   request is refused as for an attr that does not decode
-  (`docs/exclusions.md`).
+  (`docs/differences.md`).
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-05
   and has not reported a prior-art result.
 - **Found:** phase 1 unit Z, Task 5, 2026-10-04, transcribing
@@ -8163,7 +8163,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** checked at v19.2.6, v20.2.4 and main 8aa24c51928.
 - **rgw-go:** reproduces the repeated object, and queues an object too
   large for an entry in an entry of its own (`enqueueGC`,
-  `internal/driver/gc_enqueue.go`; `docs/exclusions.md`, "A GC chain object
+  `internal/driver/gc_enqueue.go`; `docs/differences.md`, "A GC chain object
   too large for one entry is queued alone").
 - **Upstream:** none. rgw-bug-reproduction's prior-art search found no
   tracker issue or fix PR; earlier work on GC chains concerns other
@@ -8220,7 +8220,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** puts each object's ref through its own pool and locator, as
   v19.2.6 does (`deleteInline`, `internal/driver/gc_enqueue.go`), which
   sends the same requests as v20.2.4 for every chain radosgw builds
-  (`docs/exclusions.md`, "Inline tail deletes run in parallel on Squid
+  (`docs/differences.md`, "Inline tail deletes run in parallel on Squid
   too").
 - **Upstream:** none reports it. The regression came with f39c5f50544, in
   [ceph/ceph#59864](https://github.com/ceph/ceph/pull/59864), to speed up
@@ -8456,7 +8456,7 @@ Every new entry adds its row to this table, in document order.
   at 8aa24c51928, 2026-10-30).
 - **rgw-go:** does not reproduce it: a block that does not decode refuses
   the request with AccessDenied (`publicAccess`, `internal/authz/load.go`;
-  `docs/exclusions.md`, "A public-access block that does not decode refuses
+  `docs/differences.md`, "A public-access block that does not decode refuses
   the request"). GetPublicAccessBlock, which on such a bucket only an admin
   reaches, answers it 500 UnknownError, radosgw's own answer: its execute
   fails the decode with -EIO, which the S3 error table lacks
@@ -8514,7 +8514,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it. The DeleteObjectTagging op hands the
   driver's `SetObjectAttrs` the state its Init read, as v20.2.4 loads the
   object first, on both releases (`internal/op/objectattrs.go`), so the
-  stored mtime is the one nudged. `docs/exclusions.md` records the
+  stored mtime is the one nudged. `docs/differences.md` records the
   difference from v19.2.6 ("DeleteObjectTagging keeps the object's mtime
   on Squid too").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
@@ -8626,7 +8626,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** not affected. The driver's `checkDiskState`
   (`internal/driver/list.go`) treats only entries in the `multipart`
   namespace as upload meta objects and checks every other entry in the
-  data pool (`docs/exclusions.md`, "A plain object whose name ends in .meta
+  data pool (`docs/differences.md`, "A plain object whose name ends in .meta
   is checked where it is stored").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit M, Task 8 review, 2026-10-05; derived from the
@@ -8822,7 +8822,7 @@ Every new entry adds its row to this table, in document order.
   brought it to squid after v19.2.6 (merge a742f50616e), and v19.2.7 is its
   first Squid tag. v19.2.6 is not affected.
 - **rgw-go:** unaffected: rgw-go keeps the guard on both releases
-  (`internal/driver/delete.go`; `docs/exclusions.md`, "Delete conditions
+  (`internal/driver/delete.go`; `docs/differences.md`, "Delete conditions
   are Tentacle's, and a delete is guarded, on both releases"), the replay's
   removal of a version included (`removeInstance`,
   `internal/driver/olh.go`).
@@ -8874,7 +8874,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** phase 1 (unit Z) refuses such a request with 500
   InternalError, which `op.Run` never overrides; a missing object still
   adds no tags. That is a difference from radosgw, which
-  `docs/exclusions.md` records.
+  `docs/differences.md` records.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit Z, Task 10 review, 2026-10-05; derived from the
   source, not reproduced.
@@ -8938,7 +8938,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it. It removes the part head through the
   index as radosgw does, but subtracts it from the quota cache only when
   the head's write_meta had added the part (`removePartHead`,
-  `internal/driver/mp_part.go`; `docs/exclusions.md`, "A failed part
+  `internal/driver/mp_part.go`; `docs/differences.md`, "A failed part
   upload does not shrink the quota cache").
 - **Upstream:** none. rgw-bug-reproduction's prior-art search found no
   report or fix. It is unfiled while filing is paused.
@@ -8985,7 +8985,7 @@ Every new entry adds its row to this table, in document order.
   ([rgw_putobj_processor.cc:519-529](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L519-L529)).
 - **rgw-go:** does not reproduce it: a part write takes no conditions on
   either release (`PutPart`, `internal/driver/mp_part.go`;
-  `docs/exclusions.md`, "UploadPart ignores If-Match and If-None-Match").
+  `docs/differences.md`, "UploadPart ignores If-Match and If-None-Match").
 - **Upstream:** the conditions reach the part head through the conditional-write
   fix for [#68183](https://tracker.ceph.com/issues/68183),
   [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348), with its backports
@@ -9037,12 +9037,12 @@ Every new entry adds its row to this table, in document order.
   the one state the op read, through the read path, whose head reads that
   state's write tag guards, so the part holds that version or the copy
   fails (`internal/driver/mp_part.go`;
-  `docs/exclusions.md`, "UploadPartCopy reads one version of its source").
+  `docs/differences.md`, "UploadPartCopy reads one version of its source").
   The UploadPartCopy op checks `x-amz-copy-source-if-match`,
   `-if-none-match`, `-if-modified-since` and `-if-unmodified-since` against
   that same state before it copies, as CopyObject checks them, so a client
   can pin the version it copies (`internal/op/uploadpart.go`;
-  `docs/exclusions.md`, "UploadPartCopy checks the copy-source
+  `docs/differences.md`, "UploadPartCopy checks the copy-source
   conditions").
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-07; awaiting response. rgw-bug-reproduction's prior-art search
@@ -9086,7 +9086,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6 and v20.2.4.
 - **rgw-go:** does not reproduce it: a canceled part head write removes
   the part's objects and fails the UploadPart without registering it
-  (`registerPart`, `internal/driver/mp_part.go`; `docs/exclusions.md`, "A
+  (`registerPart`, `internal/driver/mp_part.go`; `docs/differences.md`, "A
   part whose head write lost a race is not registered").
 - **Upstream:** none. rgw-bug-reproduction's prior-art search found no
   report or fix; it is distinct from #80896 to #80907. The fix would
@@ -9135,7 +9135,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** meets it as radosgw does, on purpose, since both gateways
   share one queue and its class's semantics: its gc worker sends the same
   listing and removal (`internal/driver/gc.go`), and a spec pins the
-  dropped entry. `docs/exclusions.md` has no entry for it.
+  dropped entry. `docs/differences.md` has no entry for it.
 - **Upstream:** none. rgw-bug-reproduction's prior-art search found no
   report or fix; the gc stall reports
   ([#77098](https://tracker.ceph.com/issues/77098) among them) are
@@ -9172,7 +9172,7 @@ Every new entry adds its row to this table, in document order.
   unchanged).
 - **rgw-go:** narrows both options as radosgw does, but waits a second
   after a pass when the period is not positive and logs an error naming the
-  option (`internal/driver/gc.go`; `docs/exclusions.md`, "A gc processor
+  option (`internal/driver/gc.go`; `docs/differences.md`, "A gc processor
   period that is not positive").
 - **Upstream:** none. rgw-bug-reproduction's prior-art search found no
   report or fix; the fix would clamp the period to a floor. Related:
@@ -9232,7 +9232,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** opens the pool of a page's first object, and of an object
   after a failed open, by its name, so the empty name fails as a missing
   pool does, on every page, and fails gracefully (`internal/driver/gc.go`;
-  `docs/exclusions.md`, "The gc worker opens a chain object's pool even
+  `docs/differences.md`, "The gc worker opens a chain object's pool even
   when it has none").
 - **Upstream:** none. rgw-bug-reproduction's prior-art search found no report or
   fix. It is distinct from [#68169](https://tracker.ceph.com/issues/68169), the
@@ -9287,7 +9287,7 @@ Every new entry adds its row to this table, in document order.
   succeeded, and a pool it cannot open, a deleted one included, a put it
   cannot schedule or one that fails ends the pass before the removal
   (`freeEntries` and `shardPass`, `internal/driver/gc.go`).
-  `docs/exclusions.md` has no entry for it.
+  `docs/differences.md` has no entry for it.
 - **Upstream:** [#68169](https://tracker.ceph.com/issues/68169)
   (Backporting) reports the deleted pool, and
   [#77098](https://tracker.ceph.com/issues/77098) the stall behind an entry
@@ -9389,7 +9389,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6, v20.2.4 and main (8aa24c51928, 2026-10-30,
   [encoding.h:396](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/include/encoding.h#L396),
   unchanged).
-- **rgw-go:** never sends a wait that wraps (`docs/exclusions.md`, "A
+- **rgw-go:** never sends a wait that wraps (`docs/differences.md`, "A
   negative or overlong gc object wait"). `readWriteOptions`
   (`internal/driver/writer.go`) uses the default, 7200 s, for a negative
   value and logs an error for either case; each enqueue sends the wait
@@ -9520,7 +9520,7 @@ Every new entry adds its row to this table, in document order.
   has neither the parameter nor the header.
 - **rgw-go:** unaffected. Multisite is excluded, so rgw-go never sends the
   parameter, and it serves a system request carrying it as the system user,
-  as Tentacle does in effect (`docs/exclusions.md`, "A system request's
+  as Tentacle does in effect (`docs/differences.md`, "A system request's
   rgwx-uid names its owner, not its user record").
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-05; awaiting response. rgw-bug-reproduction's prior-art search
@@ -9768,7 +9768,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_rest_s3.cc:6925-6931](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6925-L6931) at v20.2.4).
   - It signs a preflight over its Access-Control-Request-Method and refuses
     one that names no CORS method with 400 InvalidArgument before the key is
-    looked up, SigV2 on Squid included (`docs/exclusions.md`, "A SigV2
+    looked up, SigV2 on Squid included (`docs/differences.md`, "A SigV2
     preflight is signed over the method it asks for on Squid too").
   - Once the key resolves as `LocalEngine` resolves it, it grants the
     preflight without comparing its signature, SigV2 and SigV4 alike
@@ -9791,12 +9791,12 @@ Every new entry adds its row to this table, in document order.
     route reads nothing of the identity, and its answer carries no
     x-amz-request-charged, its 301 included (`op.OptionsCORS`,
     `internal/op/cors.go`; `optionsCORS`, `internal/s3/cors.go`;
-    `docs/exclusions.md`, "A preflight's answer says nothing of its key's
+    `docs/differences.md`, "A preflight's answer says nothing of its key's
     user").
   - Unlike radosgw, it accounts a preflight's usage as an anonymous
     request's, so a forged one files nothing under the key's user or account
     and charges that user nothing as payer (`internal/op/usagelog.go:32-42`;
-    `docs/exclusions.md`, "A preflight's usage is accounted as an anonymous
+    `docs/differences.md`, "A preflight's usage is accounted as an anonymous
     request's").
   - Only the preflight runs on such a request: the S3 handler dispatches an
     OPTIONS request on a bucket or an object to it and refuses any other
@@ -9891,7 +9891,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.1.0 on, with the preflight's signature skip; checked
   at v19.2.7 and v20.2.4.
 - **rgw-go:** differs: a preflight's identity takes no `rgwx-uid`
-  (`internal/auth/verifier.go:132-137`; `docs/exclusions.md`, "A
+  (`internal/auth/verifier.go:132-137`; `docs/differences.md`, "A
   preflight's answer says nothing of its key's user").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task BC-5, 2026-10-15, by the security review of its
@@ -9944,7 +9944,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: it keeps the references after a head write that
   timed out, a possible tail leak and never a premature free: a head that
   never lands leaks them (`shareTails`, `internal/driver/copy.go`;
-  `docs/exclusions.md`, "A copy keeps its tail references when its head
+  `docs/differences.md`, "A copy keeps its tail references when its head
   write timed out").
 - **Upstream:** the timeout edge of the public
   [#80899](https://tracker.ceph.com/issues/80899), the copy's tail references
@@ -9984,7 +9984,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** fixed: it answers success as radosgw does, a copy onto itself
   excepted, and rolls the references back when the write was canceled
   (`unrefTails`, from `shareTails`, `internal/driver/copy.go`), as `done_ret`
-  would and as ceph/ceph#72098 does (`docs/exclusions.md`, "A copy drops its
+  would and as ceph/ceph#72098 does (`docs/differences.md`, "A copy drops its
   tail references when its head write loses a race").
 - **Upstream:** [#80899](https://tracker.ceph.com/issues/80899) (Fix Under
   Review), which upstream's workunit `test_losing_copy` reproduces. The fix in
@@ -10045,7 +10045,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** works around it on Squid: it drops the source's attr on
   both releases, as v20.2.4 does, so a copy is labeled with its
   destination placement's class alone (`copyAttrs`,
-  `internal/driver/copy.go`; `docs/exclusions.md`, "A copy is labeled
+  `internal/driver/copy.go`; `docs/differences.md`, "A copy is labeled
   with its destination's storage class on both releases").
 - **Upstream:** fixed as a side effect of
   [#23264](https://tracker.ceph.com/issues/23264), server-side encryption
@@ -10100,7 +10100,7 @@ Every new entry adds its row to this table, in document order.
   exclusive create, and answers a lost race with 409
   ConcurrentModification or 404 NoSuchKey, leaving the newer object or the
   deletion (`shareTails`, `internal/driver/copy.go`, and `headWrite.expect`,
-  `internal/driver/headwrite.go`; `docs/exclusions.md`, "A copy onto
+  `internal/driver/headwrite.go`; `docs/differences.md`, "A copy onto
   itself is guarded on the head it read").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit W, Task 8 review, 2026-10-05, reading
@@ -10130,9 +10130,9 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** checked at v19.2.6 and v20.2.4.
 - **rgw-go:** uses a zero as 1 with an error-level log line, as it does a
   zero `rgw_bucket_index_max_aio` (`readWriteOptions`,
-  `internal/driver/writer.go`; `docs/exclusions.md`, "Shard counts and the
-  bucket-index AIO limit that are not positive"), and keeps a negative
-  value, which limits nothing, as radosgw does.
+  `internal/driver/writer.go`; `docs/differences.md`, "Shard counts, the
+  bucket-index AIO limit and the copy concurrency that are not positive"),
+  and keeps a negative value, which limits nothing, as radosgw does.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit W, Task 8, 2026-10-05, transcribing
   `copy_obj`'s refcount loop; derived from the source, not reproduced.
@@ -10175,7 +10175,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** removes an abandoned try's instance and index before the next
   try and gives each try a fresh layout: it builds a new bucket info on
   every try (`Store.CreateBucket` in `internal/driver/bucketops.go`;
-  `docs/exclusions.md`, "An abandoned bucket-creation try is removed").
+  `docs/differences.md`, "An abandoned bucket-creation try is removed").
 - **Upstream:** none. rgw-bug-reproduction's prior-art search found no
   report or fix.
 - **Found:** phase 1 unit M, Task 7, 2026-10-05, transcribing
@@ -10212,7 +10212,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** returns the link's failure after the same unlink, and, as
   radosgw does, leaves the instance and entry point for the owner's
   re-create (`Store.CreateBucket` in `internal/driver/bucketops.go`;
-  `docs/exclusions.md`, "A failed owner link fails the create").
+  `docs/differences.md`, "A failed owner link fails the create").
 - **Upstream:** none. rgw-bug-reproduction's prior-art search found no
   report or fix. The nearest is the inverse defect,
   [#69738](https://tracker.ceph.com/issues/69738), an owner's list still
@@ -10269,7 +10269,7 @@ Every new entry adds its row to this table, in document order.
   twenty lost removals it answers 500 InternalError, leaving what radosgw's
   204 leaves
   (`Store.DeleteBucket` in `internal/driver/bucketops.go`;
-  `docs/exclusions.md`, "A bucket delete retries an instance removal that
+  `docs/differences.md`, "A bucket delete retries an instance removal that
   lost to another write").
 - **Upstream:** prior art: [#69738](https://tracker.ceph.com/issues/69738)
   (Resolved) reported the ghost bucket, and
@@ -10316,7 +10316,7 @@ Every new entry adds its row to this table, in document order.
   being deleted: it compares the entry's decoded bucket id, and removes it
   under a comparison with the entry it read, retrying a lost comparison up
   to five times (`Store.unlinkInstance` in `internal/driver/bucketops.go`;
-  `docs/exclusions.md`, "An owner's entry naming another instance stays").
+  `docs/differences.md`, "An owner's entry naming another instance stays").
 - **Upstream:** none. rgw-bug-reproduction's prior-art search found no
   report or fix; [ceph/ceph#61684](https://github.com/ceph/ceph/pull/61684)
   fixed only the create side of
@@ -10368,7 +10368,7 @@ Every new entry adds its row to this table, in document order.
   a Squid-made indexless bucket's shard objects stay behind
   (`Store.checkBucketEmpty`, `Store.cleanIndex` and
   `Store.hasIndexObjects` in `internal/driver/bucketops.go`, with a spec
-  in `bucketops_test.go`; `docs/exclusions.md`, "An indexless bucket is
+  in `bucketops_test.go`; `docs/differences.md`, "An indexless bucket is
   deleted as each release deletes it"). Skipping the check could orphan
   objects.
 - **Upstream:** none. rgw-bug-reproduction's prior-art search found no
@@ -10400,7 +10400,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** mirrors it (`expectedPayloadHash`, `internal/auth/sigv4.go`).
   It is a hard requirement: go-ceph's rgw/admin client, which Rook runs,
   signs with the unsigned-payload hash and never sends the header
-  (`docs/exclusions.md`, "Signature quirks are radosgw's, not AWS's").
+  (`docs/differences.md`, "Signature quirks are radosgw's, not AWS's").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit A's plan, transcribing `get_v4_exp_payload_hash`;
   registered in unit A, Task 10, 2026-10-05. Derived from the source, not
@@ -10557,7 +10557,7 @@ Every new entry adds its row to this table, in document order.
   and a truncated page takes its next markers from its last counted item:
   an upload's key and id, or a common prefix as the key marker with no
   upload id marker (`op.UploadListing` and `op.UploadsFromListing` in
-  `internal/op/multipart.go`; `docs/exclusions.md`, "ListMultipartUploads
+  `internal/op/multipart.go`; `docs/differences.md`, "ListMultipartUploads
   keeps the common prefixes radosgw drops").
 - **Upstream:** none. rgw-bug-reproduction's prior-art search found no
   report or fix for the drop;
@@ -10662,7 +10662,7 @@ Every new entry adds its row to this table, in document order.
   it uses main's corrected check where v19.2.7 and v20.2.4 carry the
   inversion: a DeleteObjects naming a version on such a bucket needs a verified
   `x-amz-mfa`, the bucket owner's, and one naming none needs no MFA
-  (`checkRequest`, `internal/op/deleteobjects.go`; `docs/exclusions.md`,
+  (`checkRequest`, `internal/op/deleteobjects.go`; `docs/differences.md`,
   "DeleteObjects asks for MFA for the keys that name a version").
 - **Upstream:** [#77869](https://tracker.ceph.com/issues/77869), fixed on
   main by [ceph/ceph#69821](https://github.com/ceph/ceph/pull/69821)
@@ -10744,7 +10744,7 @@ Every new entry adds its row to this table, in document order.
   `internal/strptime`, for the admin API's dates, and `parseDate` in
   `internal/op/deleteobject.go` for DeleteObject's. Each refuses some `%`
   conversions of the value that radosgw's format would run
-  (`docs/exclusions.md`, "A date whose time names a conversion rgw-go does
+  (`docs/differences.md`, "A date whose time names a conversion rgw-go does
   not run is refused").
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-07; awaiting response. rgw-bug-reproduction's prior-art search
@@ -10842,7 +10842,7 @@ Every new entry adds its row to this table, in document order.
   CreateMultipartUpload and UploadPart refuse a public policy under the
   block, whatever headers set it (`internal/op/putobject.go`,
   `internal/op/copyobject.go`, `internal/op/initmultipart.go`,
-  `internal/op/uploadpart.go`; `docs/exclusions.md`, "A block of public
+  `internal/op/uploadpart.go`; `docs/differences.md`, "A block of public
   ACLs refuses a public ACL on PutObject, CopyObject, CreateMultipartUpload
   and UploadPart"). rgw-go serves no POST object yet; the phase 2 plan's
   POST object op judges the policy it builds from the form's `acl` field
@@ -10997,7 +10997,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** not reached yet: phase 1 has no STS and applies no role or
   session policy. The task that adds them must not reproduce the silent
   drop without an owner ruling, and records its choice in
-  `docs/exclusions.md`.
+  `docs/differences.md`.
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-05; awaiting response. rgw-bug-reproduction's prior-art search
   found no report or fix; [#78697](https://tracker.ceph.com/issues/78697),
@@ -11039,7 +11039,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it. It sends the parts' entries with the
   meta object's removal, after the head is written, not with the head's
   index change (`Store.Complete`, `internal/driver/mp_complete.go`;
-  `docs/exclusions.md`, "CompleteMultipartUpload checks the part heads and
+  `docs/differences.md`, "CompleteMultipartUpload checks the part heads and
   keeps the parts until its head is written").
 - **Upstream:** [#80907](https://tracker.ceph.com/issues/80907) (Fix Under
   Review); the tracker names
@@ -11112,7 +11112,7 @@ Every new entry adds its row to this table, in document order.
   the PR's replay answers the recorded instance without reading its link
   (`driver/rados/rgw_sal_rados.cc:4632-4664` at 2c1db8239cc;
   `replayRecorded` and `linkRecorded` in `internal/driver/mp_complete.go`;
-  `docs/exclusions.md`, "A CompleteMultipartUpload records itself on the
+  `docs/differences.md`, "A CompleteMultipartUpload records itself on the
   meta object before its head write"). As in the PR, a retry after a crash
   between the record and the head write, or after a head write that timed
   out and never landed, is refused, with 500 for a version, and the upload
@@ -11140,7 +11140,7 @@ Every new entry adds its row to this table, in document order.
   key, current or not, within the same bound, names an object of the
   upload, it answers 404
   NoSuchUpload and changes nothing (`Store.Abort`,
-  `internal/driver/mp_abort.go`; `docs/exclusions.md`,
+  `internal/driver/mp_abort.go`; `docs/differences.md`,
   "AbortMultipartUpload leaves a completed upload's parts alone"). The
   record's format is the PR's at its head; it is revisited when the PR
   merges.
@@ -11186,7 +11186,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_sal_rados.cc:3754-3764](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3754-L3764)).
 - **rgw-go:** renews the lock with `LOCK_FLAG_MUST_RENEW` just before the
   head write and answers the same 500 when it no longer holds it
-  (`Store.renewAndRecord`, `internal/driver/mp_cleanup.go`; `docs/exclusions.md`,
+  (`Store.renewAndRecord`, `internal/driver/mp_cleanup.go`; `docs/differences.md`,
   "CompleteMultipartUpload renews its lock before the head write").
 - **Upstream:** [#75375](https://tracker.ceph.com/issues/75375)
   (Backporting); fixed by
@@ -11428,7 +11428,7 @@ Every new entry adds its row to this table, in document order.
   v19.2.6 is not affected.
 - **rgw-go:** not affected. Its GET and HEAD handler decodes each attr
   before it writes the header and omits `x-amz-restore` for one that does
-  not decode (`internal/s3/getobject.go`; `docs/exclusions.md`, "A restore
+  not decode (`internal/s3/getobject.go`; `docs/differences.md`, "A restore
   attr that does not decode").
 - **Upstream:** none. rgw-bug-reproduction's prior-art search found no
   report or fix; only the PRs that built the restore feature touch this
@@ -11478,7 +11478,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** not affected: it writes no body for a HEAD
   (`writeDocument`, `internal/s3/objectdocs.go`). rgw-go answers HEAD ?acl
   with the GET's headers, whose `Content-Length` counts the XML
-  declaration as well (`docs/exclusions.md`, "HEAD ?acl").
+  declaration as well (`docs/differences.md`, "HEAD ?acl").
 - **Upstream:** none. rgw-bug-reproduction's prior-art search found no
   report or fix. The fix would guard `dump_body` on a HEAD, as
   `rgw_flush_formatter` already is.
@@ -11539,7 +11539,7 @@ Every new entry adds its row to this table, in document order.
   in a header value to a space and trims the value's ends
   (`net/http/header.go:139` and `:206-207` at Go 1.27.1). So a value that
   radosgw stored this way reaches the client as one header
-  (`docs/exclusions.md`, "A stored header value's CR and LF go out as
+  (`docs/differences.md`, "A stored header value's CR and LF go out as
   spaces").
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-07; awaiting response. rgw-bug-reproduction's prior-art search
@@ -11622,7 +11622,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** not affected. net/http drops a header whose name is not a
   valid field name (`net/http/header.go:198-203` at Go 1.27.1), so a GET
   or HEAD from rgw-go omits the metadata header that radosgw would send
-  (`docs/exclusions.md`, "A user metadata name that is not a valid field
+  (`docs/differences.md`, "A user metadata name that is not a valid field
   name is not sent", added by #202).
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-12; awaiting response. CVE-2020-1760 is the response-* parameter
@@ -11679,7 +11679,7 @@ Every new entry adds its row to this table, in document order.
   under a cookie of its own, took the lock since (`cls/lock/cls_lock.cc:174-178`,
   `:201-212` and `:507-519` at both tags); the abort then answers 503 and
   queues nothing (`Store.Abort`, `internal/driver/mp_abort.go`;
-  `docs/exclusions.md`, "AbortMultipartUpload removes the upload before it
+  `docs/differences.md`, "AbortMultipartUpload removes the upload before it
   frees the parts").
 - **Upstream:** [#80896](https://tracker.ceph.com/issues/80896) (Fix
   Under Review) covers it as one facet. Its fix,
@@ -11719,7 +11719,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6 and v20.2.4.
 - **rgw-go:** does not reproduce it. Its bucket delete aborts each listed
   upload once and counts it once (`abortMultiparts`,
-  `internal/driver/mp_abort.go`; `docs/exclusions.md`, "A bucket delete
+  `internal/driver/mp_abort.go`; `docs/differences.md`, "A bucket delete
   aborts its multipart uploads under their completion lock").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit P, Task 7, 2026-10-05, reading
@@ -11806,7 +11806,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it. `op.RetryRacedBucketWrite` reads the
   bucket by name, as radosgw does, and stops with 409 ConcurrentModification,
   writing nothing, when the name now names another instance
-  (`internal/op/bucketsubres.go`; `docs/exclusions.md`, "A retried bucket
+  (`internal/op/bucketsubres.go`; `docs/differences.md`, "A retried bucket
   write stops when the name names another bucket"). The block writes of
   `internal/op/publicaccess.go` and the ownership controls writes of
   `internal/op/ownership.go` retry through it.
@@ -11871,7 +11871,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6 and v20.2.4.
 - **rgw-go:** does not reproduce it. Each try sets only the policy attr over
   the bucket as last read (`op.PutBucketPolicy`,
-  `internal/op/bucketsubres.go`; `docs/exclusions.md`, "A retried
+  `internal/op/bucketsubres.go`; `docs/differences.md`, "A retried
   PutBucketPolicy keeps what the write it lost to changed"). Each try of
   PutPublicAccessBlock likewise sets only the block attr over the bucket as
   that try read it (`op.PutPublicAccessBlock`, `internal/op/publicaccess.go`).
@@ -11881,7 +11881,7 @@ Every new entry adds its row to this table, in document order.
   `op.DeleteBucketOwnershipControls`, `internal/op/ownership.go`).
   Each try of PutBucketVersioning writes the attrs that try read
   (`op.PutBucketVersioning`, `internal/op/bucketversioning.go`;
-  `docs/exclusions.md`, "A retried PutBucketVersioning checks object lock and
+  `docs/differences.md`, "A retried PutBucketVersioning checks object lock and
   MFA delete again").
 - **Upstream:** [#51572](https://tracker.ceph.com/issues/51572),
   "retry_raced_bucket_write() callers not handling attrs correctly", open
@@ -11935,7 +11935,7 @@ Every new entry adds its row to this table, in document order.
   again and authorizing the requester against it before each retry
   (`internal/op/objectattrs.go`). For either, a retry that passes those
   checks and finds the requested ACL already stored answers 200 without a
-  write (`docs/exclusions.md`, "A PutBucketAcl that loses a race is
+  write (`docs/differences.md`, "A PutBucketAcl that loses a race is
   retried, and every retried bucket write is authorized again").
 - **Upstream:** [#16930](https://tracker.ceph.com/issues/16930), fixed by
   6e9a915b565923081f609048072b8d75716a74ea, "rgw: don't fail if lost race
@@ -11974,7 +11974,7 @@ Every new entry adds its row to this table, in document order.
   not hold.
 - **Releases:** v20.2.4.
 - **rgw-go:** not affected, as it serves neither the root's pass nor the
-  header (`docs/exclusions.md`, "The account root's pass on the bucket
+  header (`docs/differences.md`, "The account root's pass on the bucket
   policy ops"). Its DeleteBucketPolicy removes the attr on Tentacle, as
   radosgw's does.
 - **Upstream:** none for this defect; rgw-bug-reproduction's triage found
@@ -12075,7 +12075,7 @@ Every new entry adds its row to this table, in document order.
   upload id holding a "." as a missing upload without reading the store
   (`aliasedUpload`, `internal/op/uploadpart.go`), and the driver's
   meta-object reference refuses one too (`metaRef`,
-  `internal/driver/mp_layout.go`; `docs/exclusions.md`, "An upload id
+  `internal/driver/mp_layout.go`; `docs/differences.md`, "An upload id
   holding a "." is NoSuchUpload").
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-07; awaiting response. The fix would check that an upload id is
@@ -12121,7 +12121,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6 and v20.2.4.
 - **rgw-go:** does not reproduce it: a first bound of 2^63 or more is 416
   InvalidRange before the op authorizes (`ParseCopySourceRange`,
-  `internal/op/multipartxml.go`; `docs/exclusions.md`, "A copy-source range
+  `internal/op/multipartxml.go`; `docs/differences.md`, "A copy-source range
   past 2^63 answers 416").
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-07; awaiting response. rgw-bug-reproduction's prior-art search
@@ -12230,7 +12230,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it. Removing an account user, the root
   included, removes its index entry, and a user whose entry is already
   gone is removed without error (`RemoveUser`, `internal/op/adminuser.go`;
-  `docs/exclusions.md`, "The admin user routes answer store failures, and
+  `docs/differences.md`, "The admin user routes answer store failures, and
   keep the account users index clean where radosgw leaves entries
   behind").
 - **Upstream:** none. rgw-bug-reproduction's prior-art search found no
@@ -12278,7 +12278,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6 and v20.2.4.
 - **rgw-go:** does not reproduce it. It takes a missing entry as removed
   and answers a lost race 409 ConcurrentModification, so a retry removes
-  the user (`RemoveUser`, `internal/op/adminuser.go`; `docs/exclusions.md`,
+  the user (`RemoveUser`, `internal/op/adminuser.go`; `docs/differences.md`,
   "The admin user routes answer store failures, and keep the account
   users index clean where radosgw leaves entries behind").
 - **Upstream:** none. rgw-bug-reproduction's triage found no report or fix
@@ -12329,7 +12329,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it. Its user document omits
   `temp_url_keys`, as it omits `keys` and `swift_keys`, when the caller may
   not see keys (`dumpUserInfo`, `internal/admin/user.go`;
-  `docs/exclusions.md`, "The admin user document withholds the Swift
+  `docs/differences.md`, "The admin user document withholds the Swift
   TempURL keys with the other keys").
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-07; awaiting response. rgw-bug-reproduction's prior-art search
@@ -12425,7 +12425,7 @@ Every new entry adds its row to this table, in document order.
   v19.2.6's ([rgw_op.h:2181-2186](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2181-L2186)).
 - **rgw-go:** does not reproduce it: it applies v20.2.4's blocklist on both
   releases and adds `x-amz-security-token` to it (`requestAttrs`,
-  `internal/s3/requestattrs.go`; `docs/exclusions.md`, "Request headers
+  `internal/s3/requestattrs.go`; `docs/differences.md`, "Request headers
   stored as attrs follow Tentacle's blocklist, and the session token is
   never stored").
 - **Upstream:** [#65460](https://tracker.ceph.com/issues/65460) for the
@@ -12473,7 +12473,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6 and v20.2.4.
 - **rgw-go:** does not reproduce it: CopyObject refuses such a request with
   400 InvalidRequest, as PutObject does (`objectLock`,
-  `internal/s3/putobject.go`; `docs/exclusions.md`, "CopyObject refuses an
+  `internal/s3/putobject.go`; `docs/differences.md`, "CopyObject refuses an
   object lock on a bucket without object lock").
 - **Upstream:** none. rgw-bug-reproduction's triage on 2026-10-07 found no
   report or fix. The fix would gate CopyObject's object-lock headers on
@@ -12544,7 +12544,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** not affected. It changes a key in place, keeping a
   deactivated key deactivated and its creation date, and refuses any
   change that would leave a key without a secret (`modifyKey`,
-  `internal/op/adminuser_sub.go`; `docs/exclusions.md`, "The admin key,
+  `internal/op/adminuser_sub.go`; `docs/differences.md`, "The admin key,
   subuser, caps and quota routes differ from radosgw in seven ways"). It
   serves no Swift authentication in phase 1 (`docs/exclusions.md`, "Swift
   API and Swift authentication"); a later phase that adds it must refuse
@@ -12596,7 +12596,7 @@ Every new entry adds its row to this table, in document order.
   overflowing one, on the arguments and in a body, and stores nothing
   (`setQuotaInfo`, `internal/admin/user_sub.go`; `SetUserQuota`,
   `internal/op/adminuser_sub.go`; `Quota.UnmarshalJSON`,
-  `internal/meta/quota_json.go`; `docs/exclusions.md`, "The admin key,
+  `internal/meta/quota_json.go`; `docs/differences.md`, "The admin key,
   subuser, caps and quota routes differ from radosgw in seven ways").
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-07
   (non-security, fail-open); no prior art.
@@ -12639,7 +12639,7 @@ Every new entry adds its row to this table, in document order.
     (`driver/rados/rgw_rest_bucket.cc:232-233` and `:319` at both tags).
     An unparsable value there keeps the bucket, but an empty or bare
     `purge-objects=` is true and purges it; rgw-go refuses both
-    (`removeBucket`, `internal/admin/bucket.go`; `docs/exclusions.md`,
+    (`removeBucket`, `internal/admin/bucket.go`; `docs/differences.md`,
     "The admin bucket routes refuse a boolean argument they cannot
     parse").
 - **Impact:** an operator's typo in an `active=false` revocation leaves
@@ -12651,7 +12651,7 @@ Every new entry adds its row to this table, in document order.
   check, and store nothing, on every flag, which is stricter than radosgw
   in both directions; an empty `active=` is refused the same way rather
   than read as true (`flags` and `runChecked`, `internal/admin/user.go`;
-  `createKey`, `internal/admin/user_sub.go`; `docs/exclusions.md`, "The
+  `createKey`, `internal/admin/user_sub.go`; `docs/differences.md`, "The
   admin user routes refuse a boolean argument they cannot parse").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** review of phase 1 unit N, Task 5, 2026-10-07, reading the key
@@ -12696,7 +12696,7 @@ Every new entry adds its row to this table, in document order.
   `internal/op/adminuser_sub.go`). A radosgw gateway never reads the index,
   so on a zone it shares with rgw-go it can give a held inactive id to a
   second user at any time, as it does without rgw-go, and writes no entry
-  for it (`docs/exclusions.md`, "The admin key, subuser, caps and quota
+  for it (`docs/differences.md`, "The admin key, subuser, caps and quota
   routes differ from radosgw in seven ways").
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-08
   (benign, non-security); no prior art.
@@ -12846,7 +12846,7 @@ Every new entry adds its row to this table, in document order.
   (`RetryRacedWriteReauthorized`, `internal/op/objectattrs.go`;
   `retryBucketWrite`, `internal/op/bucketsubres.go`, through which the
   website writes of `internal/op/website.go` and the block writes of
-  `internal/op/publicaccess.go` retry; `docs/exclusions.md`,
+  `internal/op/publicaccess.go` retry; `docs/differences.md`,
   "A PutBucketAcl that loses a race is retried, and every retried bucket
   write is authorized again"), since jhoblitt/rgw-go#184
   and #185. The identity's own policies are not read again: each check
@@ -12904,7 +12904,7 @@ Every new entry adds its row to this table, in document order.
   `bucket-id` alike, and the entry point is written under the version
   read or created exclusively, so a bucket created under the name after
   that check keeps it (`claimName` and `ChangeBucketOwner`,
-  `internal/driver/bucketadmin.go`; `docs/exclusions.md`, "Bucket link and
+  `internal/driver/bucketadmin.go`; `docs/differences.md`, "Bucket link and
   unlink write differently from radosgw").
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-12; awaiting response. rgw-bug-reproduction classified it on
@@ -12952,7 +12952,7 @@ Every new entry adds its row to this table, in document order.
   bucket's instances, refuses every other link, unlink, chown and bucket
   removal while that record is live, and completes on a retry by either
   name, so every name that loads the bucket names one owner at every step
-  (`renameBucket`, `internal/driver/bucketadmin.go`; `docs/exclusions.md`,
+  (`renameBucket`, `internal/driver/bucketadmin.go`; `docs/differences.md`,
   "Bucket link and unlink write differently from radosgw").
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-12 together with "[radosgw's bucket rename loses a bucket config
@@ -13034,7 +13034,7 @@ Every new entry adds its row to this table, in document order.
   the versions it read, so a write made through either name during the
   retry fails it rather than being overwritten (`retryable`, `markSource`,
   `writeCopy` and `dropSource`, `internal/driver/bucketadmin.go`;
-  `docs/exclusions.md`, "Bucket link and unlink write differently from
+  `docs/differences.md`, "Bucket link and unlink write differently from
   radosgw").
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-12 together with "[radosgw's failed bucket rename leaves the old
@@ -13072,7 +13072,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6 and v20.2.4.
 - **rgw-go:** does not reproduce it: a link to an account gives the bucket
   the account's tenant (`LinkBucket.Execute`, `internal/op/adminbucket.go`;
-  `docs/exclusions.md`, "Bucket link and unlink write differently from
+  `docs/differences.md`, "Bucket link and unlink write differently from
   radosgw").
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 6, 2026-10-08, reading the admin bucket
@@ -13102,7 +13102,7 @@ Every new entry adds its row to this table, in document order.
   tenanted uid gets a 200 with no body.
 - **Releases:** v19.2.6 and v20.2.4.
 - **rgw-go:** does not reproduce it: it reports the bucket the name loaded
-  (`BucketInfo.Execute`, `internal/op/adminbucket.go`; `docs/exclusions.md`,
+  (`BucketInfo.Execute`, `internal/op/adminbucket.go`; `docs/differences.md`,
   "The admin bucket info reports a bucket named tenant/name whatever the
   uid's tenant").
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
@@ -13132,7 +13132,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** unaffected: multisite is excluded, and rgw-go refuses
   another zonegroup's bucket whatever the request carries
   (`RemoveBucketAdmin.Execute`, `internal/op/adminbucket.go`;
-  `docs/exclusions.md`, "The other admin bucket routes differ from radosgw
+  `docs/differences.md`, "The other admin bucket routes differ from radosgw
   in three ways").
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 6, 2026-10-08, reading the admin bucket
@@ -13176,7 +13176,7 @@ Every new entry adds its row to this table, in document order.
   own name is read: one naming another bucket is 409 BucketAlreadyExists,
   one naming the instance is written under the version read, and a
   missing one is created exclusively (`claimName`,
-  `internal/driver/bucketadmin.go`; `docs/exclusions.md`, "Bucket link and
+  `internal/driver/bucketadmin.go`; `docs/differences.md`, "Bucket link and
   unlink write differently from radosgw").
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** review of phase 1 unit N, Task 6, 2026-10-08; derived from
@@ -13232,7 +13232,7 @@ Every new entry adds its row to this table, in document order.
   removes the instance object alone (`:2707-2724`), while at v20.2.4 the
   metadata removal leaves it (`:3062-3080`), so there the instance object
   is removed from the zone's domain root pool with `rados rm`
-  (`docs/exclusions.md`, "Bucket link and unlink write differently from
+  (`docs/differences.md`, "Bucket link and unlink write differently from
   radosgw").
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
   (non-security).
@@ -13284,7 +13284,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6 and v20.2.4.
 - **rgw-go:** does not reproduce it. net/http reports a body cut short as
   `io.ErrUnexpectedEOF`, which rgw-go answers 400 RequestTimeout
-  (`bodyErr`, `internal/driver/stripe.go`; `docs/exclusions.md`, "A body
+  (`bodyErr`, `internal/driver/stripe.go`; `docs/differences.md`, "A body
   cut short is 400 RequestTimeout").
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
   (non-security).
@@ -13328,7 +13328,7 @@ Every new entry adds its row to this table, in document order.
   groups' indexes, and refuses with radosgw's 409 BucketNotEmpty and "The
   account cannot be deleted until all topics are removed." while one
   remains (`accountResources`, `internal/driver/account.go`;
-  `docs/exclusions.md`, "The admin account routes and the RADOS account
+  `docs/differences.md`, "The admin account routes and the RADOS account
   store differ from radosgw"). It is stricter than radosgw there: a
   removal radosgw lets through answers 409.
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
@@ -13375,7 +13375,7 @@ Every new entry adds its row to this table, in document order.
   a `max-size` below -1, an unparsable `enabled`, and any `max-size-kb`,
   which the op does not read (`setAccountQuota`,
   `internal/admin/account.go`; `ModifyAccount`,
-  `internal/op/adminaccount.go`; `docs/exclusions.md`, "The admin account
+  `internal/op/adminaccount.go`; `docs/differences.md`, "The admin account
   routes and the RADOS account store differ from radosgw").
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 7, 2026-10-08, writing the Tentacle
@@ -13431,7 +13431,7 @@ Every new entry adds its row to this table, in document order.
   in flight then fails, and one that claims the redirect again meanwhile
   fails the removal, after which the takeover reads again (`PutAccount`,
   `claimRedirect` and `fenceStaleHolder`, `internal/driver/account.go`;
-  `docs/exclusions.md`, "The admin account routes and the RADOS account
+  `docs/differences.md`, "The admin account routes and the RADOS account
   store differ from radosgw"). What is left: a create that stops, or whose
   whole-account write a takeover fenced, leaves an account with no name
   or email. No lookup by name or email finds it; a read by id and
@@ -13487,7 +13487,7 @@ Every new entry adds its row to this table, in document order.
   rename that stopped finishes it unless another account claimed the name
   meanwhile, when the retry answers 409 AccountAlreadyExists and the
   account keeps its old name (`PutAccount`, `GetAccountByName`,
-  `GetAccountByEmail`, `internal/driver/account.go`; `docs/exclusions.md`,
+  `GetAccountByEmail`, `internal/driver/account.go`; `docs/differences.md`,
   "The admin account routes and the RADOS account store differ from
   radosgw").
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
@@ -13532,7 +13532,7 @@ Every new entry adds its row to this table, in document order.
   before it stores the user, on every write of an account member, and
   removes the old entry after, only when its key changed; a user removal
   removes the user before its entry (`writeUser` and `RemoveUser`,
-  `internal/op/adminuser.go`; `docs/exclusions.md`, "The admin user routes
+  `internal/op/adminuser.go`; `docs/differences.md`, "The admin user routes
   answer store failures, and keep the account users index clean where
   radosgw leaves entries behind"). A stop then leaves an entry naming a
   user that is gone, which every reader skips, or one naming a member
@@ -13577,7 +13577,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it. Create and modify answer 400
   InvalidArgument, after the cap check and storing nothing, for a limit
   that is empty, that `stringtol` refuses, or that int32 cannot hold
-  (`accountParams`, `internal/admin/account.go`; `docs/exclusions.md`,
+  (`accountParams`, `internal/admin/account.go`; `docs/differences.md`,
   "The admin account routes and the RADOS account store differ from
   radosgw").
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
@@ -13793,7 +13793,7 @@ Every new entry adds its row to this table, in document order.
   null one included, and write the instance the bucket's versioning gives:
   the plain object on a bucket never versioned, the null version on a
   suspended one and a new version on an enabled one (`VersionForWrite`,
-  `internal/op/version.go`; `docs/exclusions.md`, "A write's versionId is
+  `internal/op/version.go`; `docs/differences.md`, "A write's versionId is
   ignored"). Pinned in `internal/op/version_test.go` and
   `internal/s3/versionedwrite_test.go`. Before task F14 a completion
   naming it wrote the plain head and filed it under `{name, "null"}`
@@ -13847,7 +13847,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it. Every metadata put writes under the
   version it read, or creates the object exclusively
   (`putInstance`, `internal/driver/metadata_instance.go`;
-  `docs/exclusions.md`, "The metadata sections write only what keeps a
+  `docs/differences.md`, "The metadata sections write only what keeps a
   user or bucket whole").
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
   (non-security).
@@ -13918,14 +13918,14 @@ Every new entry adds its row to this table, in document order.
   document carries the object lock configuration as `obj_lock` in v19.2.7's
   form, on both releases, and a put's document is read for one while its
   flags enable object lock (`meta.BucketInfo`'s `MarshalJSON`, `Dump` and
-  `UnmarshalJSON`, `internal/meta/`; `docs/exclusions.md`, "The bucket
+  `UnmarshalJSON`, `internal/meta/`; `docs/differences.md`, "The bucket
   instance document carries `obj_lock` on Tentacle too"). A put stores the
   document's `obj_lock`, for a new instance and a stored one, on both
   releases. A put whose document carries none keeps a stored instance's
   configuration, where v19.2.7 and v20.2.4 reset it to the default, and
   gives a new instance the default, as both do (`keepInstance` and
   `newInstance`, `internal/driver/metadata_instance.go`;
-  `docs/exclusions.md`, "The metadata sections write only what keeps a
+  `docs/differences.md`, "The metadata sections write only what keeps a
   user or bucket whole"). A put that would turn a stored instance's
   object lock off answers 400 InvalidArgument (`keepInstance`).
 - **Upstream:** [#71157](https://tracker.ceph.com/issues/71157)
@@ -14008,7 +14008,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6 and v20.2.4.
 - **rgw-go:** does not reproduce it. A metadata put whose document names an
   attr outside `user.rgw.` answers 400 InvalidArgument and writes nothing
-  (`RefuseRawAttrs`, `internal/op/metadata.go`; `docs/exclusions.md`, "The
+  (`RefuseRawAttrs`, `internal/op/metadata.go`; `docs/differences.md`, "The
   metadata sections write only what keeps a user or bucket whole").
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
   (non-security).
@@ -14086,7 +14086,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** not affected. It refuses a NUL in every request argument that
   becomes part of an object name before authorizing it, serves no POST
   object, and its goceph seam refuses a name holding a NUL
-  (`docs/exclusions.md`, "A NUL in a request argument that names a RADOS
+  (`docs/differences.md`, "A NUL in a request argument that names a RADOS
   object is refused"). An object radosgw created under such a name on a
   shared zone is listed by rgw-go but cannot be addressed through it. Its
   matcher cuts both strings at the first NUL as `match_wildcards` does
@@ -14289,11 +14289,11 @@ Every new entry adds its row to this table, in document order.
   v19.2.6.
 - **rgw-go:** reproduces it for the `X-Amz-` headers, with v20.2.4's
   blocklist on both releases, and leaves out `x-amz-security-token` too
-  (`requestAttrs`, `internal/s3/requestattrs.go`; `docs/exclusions.md`,
+  (`requestAttrs`, `internal/s3/requestattrs.go`; `docs/differences.md`,
   "Request headers stored as attrs follow Tentacle's blocklist, and the
   session token is never stored"), so on a Squid zone rgw-go's heads lack
   the `x-amz-content-sha256` and `x-amz-date` attrs radosgw's carry. It
-  stores no header under the six other meta prefixes (`docs/exclusions.md`,
+  stores no header under the six other meta prefixes (`docs/differences.md`,
   "The S3 API reads X-Amz- headers only").
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit W, Task 11, writing `requestAttrs`; registered and
@@ -14496,7 +14496,7 @@ Every new entry adds its row to this table, in document order.
   either gateway's part as radosgw's does. Its fix keeps the entry, as it
   keeps every entry of an object with an upload in flight
   (`removeOrphanParts`, `internal/op/adminbucket_index.go`;
-  `docs/exclusions.md`, "The admin index check's fix keeps the entries of
+  `docs/differences.md`, "The admin index check's fix keeps the entries of
   an object with an upload in flight").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 1 unit P, Task 10, 2026-10-11, in the multipart oracle's
@@ -14544,7 +14544,7 @@ Every new entry adds its row to this table, in document order.
   honors the sync type.
 - **rgw-go:** does not reproduce it. A metadata put compares versions and
   mtimes as Squid's `check_versions` does, on both releases (`PutMetadata`,
-  `internal/op/adminmetadata.go`; `docs/exclusions.md`, "The admin metadata
+  `internal/op/adminmetadata.go`; `docs/differences.md`, "The admin metadata
   API serves four sections").
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
   (non-security).
@@ -14584,7 +14584,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6 and v20.2.4.
 - **rgw-go:** does not reproduce it. An unparsable `max-entries` reads as
   the default, 1000 (`listUser`, `internal/admin/user.go`;
-  `docs/exclusions.md`, "`GET /admin/user?list` reads an unparsable
+  `docs/differences.md`, "`GET /admin/user?list` reads an unparsable
   max-entries as 1000").
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 9 review, 2026-10-11, reading the user
@@ -14644,7 +14644,7 @@ Every new entry adds its row to this table, in document order.
   walks each shard's multipart entries as Tentacle does
   (`badMultipartByShard`, `internal/op/adminbucket_index.go`). Its fix
   keeps the entry, as it keeps every entry of an object with an upload in
-  flight (`removeOrphanParts`; `docs/exclusions.md`, "The admin index
+  flight (`removeOrphanParts`; `docs/differences.md`, "The admin index
   check's fix keeps the entries of an object with an upload in flight").
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 11, 2026-10-11, emulating Tentacle's
@@ -14687,7 +14687,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6 and v20.2.4.
 - **rgw-go:** does not reproduce it. A failed page of the object check's
   listing fails the request with its error (`listObjectNames`,
-  `internal/op/adminbucket_index.go`; `docs/exclusions.md`, "Admin
+  `internal/op/adminbucket_index.go`; `docs/differences.md`, "Admin
   responses carry a Content-Type on every body").
 - **Upstream:** pending: rgw-bug-reproduction will classify it.
 - **Found:** phase 1 unit N, Task 11 review, 2026-10-12, reading the
@@ -14729,7 +14729,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it. The usage show reads such a date as
   the argument's default, and the usage trim answers 400 InvalidArgument
   and trims nothing (`getUsage` and `trimUsage`,
-  `internal/admin/usage.go`; `docs/exclusions.md`, "The admin usage
+  `internal/admin/usage.go`; `docs/differences.md`, "The admin usage
   routes give a date they cannot parse a value of their own").
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-12
   (non-security).
@@ -14841,7 +14841,7 @@ Every new entry adds its row to this table, in document order.
   one.
 - **Releases:** v19.2.6 and v20.2.4.
 - **rgw-go:** masks the secret (exclusion: "The period getter masks a cloud
-  tier's S3 secret", `docs/exclusions.md`), since compatibility does not
+  tier's S3 secret", `docs/differences.md`), since compatibility does not
   mean reproducing radosgw's defects (spec §8). The period getter checks
   `zone=read` before any read and dumps the period through
   `meta.MaskPeriodTierSecrets` (`internal/meta/dump_period.go`,
@@ -15048,7 +15048,7 @@ Every new entry adds its row to this table, in document order.
   with objects with 409 BucketNotEmpty and aborts its uploads
   (`Store.DeleteBucket`, `internal/driver/bucketops.go`), and the user
   purge deletes its objects before it removes it (`PurgeBucket`,
-  `internal/op/adminpurge.go`; `docs/exclusions.md`, "A bucket of another
+  `internal/op/adminpurge.go`; `docs/differences.md`, "A bucket of another
   zonegroup is redirected as radosgw redirects it, and never removed").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** the follow-up to the phase 1 closing review's finding on
@@ -15180,7 +15180,7 @@ Every new entry adds its row to this table, in document order.
   and each round of `ChownBucket` skips one whose name now loads another
   instance or whose owner has changed since that load, and writes the
   entry point under the version the round read
-  (`internal/driver/bucketadmin.go`; `docs/exclusions.md`, "Bucket link
+  (`internal/driver/bucketadmin.go`; `docs/differences.md`, "Bucket link
   and unlink write differently from radosgw").
 - **Upstream:** none. A prior-art search on 2026-10-12 found no tracker
   issue or pull request that reports either operation acting on another
@@ -15255,10 +15255,10 @@ Every new entry adds its row to this table, in document order.
   date from the Expiration rule alone and gives none for a request with a
   versionId, which "gives none for a current object under a noncurrent-only
   rule" and "gives none for a request that names a version"
-  (`internal/lifecycle/headers_test.go`) pin (`docs/exclusions.md`,
+  (`internal/lifecycle/headers_test.go`) pin (`docs/differences.md`,
   "x-amz-expiration names the Expiration rule alone on Tentacle"). Until
   GET, HEAD and PutObject send it, rgw-go sends x-amz-expiration for no
-  object (`docs/exclusions.md`, "Object read differences", "No
+  object (`docs/differences.md`, "Object read differences", "No
   x-amz-expiration").
 - **Upstream:** [#77564](https://tracker.ceph.com/issues/77564), named by
   the fix commits' `Tracker:` trailer; the fix is
@@ -15532,7 +15532,7 @@ Every new entry adds its row to this table, in document order.
   BlockPublicAcls checks of S3 writes are unaffected.
 - **Releases:** checked at v19.2.7 and v20.2.4.
 - **rgw-go:** no longer reproduces it, in any of the three places
-  (`docs/exclusions.md`, "IgnorePublicAcls sets aside a Swift container's
+  (`docs/differences.md`, "IgnorePublicAcls sets aside a Swift container's
   grants to everyone, and an ACL holding them is public"):
   - `acl.Policy.Perm` reads no referer grant under IgnorePublicAcls
     (`internal/acl/eval.go`);
@@ -15722,7 +15722,7 @@ Every new entry adds its row to this table, in document order.
   XXHASH64 or XXHASH128, the types main stores at 8aa24c51928 as 9 to 11, with
   400 InvalidArgument before the body, once the S3 handler hands them the
   checksum headers (`internal/op/checksumreq.go`;
-  `docs/exclusions.md`, "A checksum algorithm rgw-go does not compute is
+  `docs/differences.md`, "A checksum algorithm rgw-go does not compute is
   refused at write").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** the phase 2 write-path research, 2026-10-13
@@ -15787,7 +15787,7 @@ Every new entry adds its row to this table, in document order.
   that does not decode does, and fails no read of the object: every read
   that shows a checksum shows none for it, where radosgw's iterator readers
   show the record (`internal/driver/stat.go`, `internal/cksum/record.go`;
-  `docs/exclusions.md`, "A stored checksum rgw-go cannot read whole is not
+  `docs/differences.md`, "A stored checksum rgw-go cannot read whole is not
   shown"). rgw-go writes each record it encodes whole, and a copy that
   streams its data drops a source's attr that `cksum.DecodeAttr`
   refuses (`droppedChecksum`, `internal/driver/copy.go`); a copy that shares
@@ -16693,7 +16693,7 @@ Every new entry adds its row to this table, in document order.
   COMPOSITE the composite, the same CRC over its parts' CRCs, big-endian and
   concatenated, stored with flags V2, COMBINED and COMPOSITE, which a
   Tentacle radosgw renders as `<crc>-<parts>` with COMPOSITE
-  (`internal/cksum/combine.go`; `docs/exclusions.md`, "A multipart upload's
+  (`internal/cksum/combine.go`; `docs/differences.md`, "A multipart upload's
   combined CRC follows its checksum type").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** the phase 2 write-path research, 2026-10-13
@@ -16763,7 +16763,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs. `cksum.NewCombiner` stores every full-object CRC with
   flags V2, COMBINED and FULL_OBJECT, a one-part upload's included, which a
   Tentacle radosgw renders as the bare CRC with FULL_OBJECT
-  (`internal/cksum/combine.go`; `docs/exclusions.md`, "A multipart upload's
+  (`internal/cksum/combine.go`; `docs/differences.md`, "A multipart upload's
   combined CRC follows its checksum type").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** the phase 2 write-path research, 2026-10-13
@@ -16984,7 +16984,7 @@ Every new entry adds its row to this table, in document order.
   log as `apply_olh_log` does, pinned in `internal/driver/olh_head_test.go`.
   A replay whose head op another writer's apply refused retries from the
   fresh `olh.ver`, and then keeps the version the class made current
-  (`docs/exclusions.md`, "apply_olh_log's olh.ver guard is EQ on the bytes
+  (`docs/differences.md`, "apply_olh_log's olh.ver guard is EQ on the bytes
   read, retried from a fresh read"). rgw-go serves no multisite, so only a
   link a radosgw synced can reach it.
 - **Upstream:** pending; prior art not searched.
@@ -17175,7 +17175,7 @@ Every new entry adds its row to this table, in document order.
   answers the assertion's ENOENT as radosgw's init does, pinned in
   `internal/driver/olh_head_test.go`, and `setOLH`
   (`internal/driver/olh.go`) retries it from a fresh read, which creates
-  the head and links (`docs/exclusions.md`, "A versioned write retries when
+  the head and links (`docs/differences.md`, "A versioned write retries when
   the key's OLH head goes between its read and its init"). The gateway
   links no versions yet.
 - **Upstream:** pending; prior art not searched.
@@ -17270,7 +17270,7 @@ Every new entry adds its row to this table, in document order.
   head as it was read" in `internal/driver/olh_head_test.go`. Its reads,
   `StatObject` and `PrefetchObject`, read the head again once the update
   has run and resolve the version from that read (`followHead`,
-  `internal/driver/stat.go`; `docs/exclusions.md`, "A read that replays a
+  `internal/driver/stat.go`; `docs/differences.md`, "A read that replays a
   pending modification answers the version current after it"), so they do
   not reproduce it: pinned by the spec "answers the next version when the
   replay it runs removes the current one" in
@@ -17351,7 +17351,7 @@ Every new entry adds its row to this table, in document order.
   than 1024 bytes, counted as the bytes of the decoded JSON string, with
   400 InvalidArgument once every device is checked and before it writes
   (`MaxOTPSeedLen`, `op.DecodeOTPDocument`, `internal/op/metadata_otp.go`;
-  `docs/exclusions.md`, "The admin metadata API serves four sections"). So
+  `docs/differences.md`, "The admin metadata API serves four sections"). So
   no rgw-go write hands `otp_set` a seed longer than the 1024 bytes
   upstream's fix keeps on the stack. Only writes are bounded: a longer seed
   radosgw stored still reads back, and rgw-go's MFA check sends no
@@ -17463,7 +17463,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** hints every write of a part it compresses INCOMPRESSIBLE, the
   part head's exclusive create and each shadow stripe, as both gateways
   hint a PUT's (`internal/driver/mp_part.go`, `partWriter`;
-  `docs/exclusions.md`, "A compressed part is hinted incompressible"). The
+  `docs/differences.md`, "A compressed part is hinted incompressible"). The
   spec "compresses the part on its own and records its cs_info, as
   MultipartObjectProcessor::complete does" (`internal/driver/mp_part_test.go`)
   pins it.
@@ -17525,7 +17525,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it. Each try makes the object-lock and MFA
   checks against the bucket that try read, and a refusal ends the write with
   nothing written (`op.PutBucketVersioning`, `internal/op/bucketversioning.go`;
-  `docs/exclusions.md`, "A retried PutBucketVersioning checks object lock and
+  `docs/differences.md`, "A retried PutBucketVersioning checks object lock and
   MFA delete again"). The specs "refuses the retry once the write it lost to
   enabled MFA delete" and "refuses the retry once the write it lost to
   enabled object lock" (`internal/op/bucketversioning_test.go`) pin it.
@@ -17646,7 +17646,7 @@ Every new entry adds its row to this table, in document order.
   unchanged on main at 8aa24c51928 (2026-10-30).
 - **rgw-go:** differs: `acl.ParsePublicAccessBlockXML`
   (`internal/acl/publicaccess.go`) answers each such document 400
-  MalformedXML (docs/exclusions.md, "A PutPublicAccessBlock document is
+  MalformedXML (docs/differences.md, "A PutPublicAccessBlock document is
   held to S3's schema").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task BC-17, 2026-10-15, reading `decode_xml` for
@@ -17776,10 +17776,10 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.7 and v20.2.4; on main at 8aa24c51928 (2026-10-30) `rgw_xml.cc`
   differs only in its editor mode lines.
 - **rgw-go:** unaffected. Go's `encoding/xml` expands no entity a DTD
-  declares and refuses a reference to one (docs/exclusions.md, "S3 XML
+  declares and refuses a reference to one (docs/differences.md, "S3 XML
   request bodies are read with Go's `encoding/xml`, not expat"), and
   `acl.ParsePublicAccessBlockXML` refuses a DTD outright
-  (docs/exclusions.md, "A PutPublicAccessBlock document is held to S3's
+  (docs/differences.md, "A PutPublicAccessBlock document is held to S3's
   schema").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task BC-17, 2026-10-15, recording what radosgw does
@@ -17881,7 +17881,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
 - **rgw-go:** differs: `sse.ParseXML` (`internal/sse/xml.go`) refuses such
   a document with 400 MalformedXML through
-  `sse.BucketEncryptionConfig.Validate` (docs/exclusions.md, "A
+  `sse.BucketEncryptionConfig.Validate` (docs/differences.md, "A
   PutBucketEncryption document is held to S3's schema and AWS's values").
   A configuration radosgw stored this way decodes and renders as stored.
 - **Upstream:** pending; prior art not searched.
@@ -17949,7 +17949,7 @@ Every new entry adds its row to this table, in document order.
   it cannot find" is the same lookup in another document.
 - **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
 - **rgw-go:** differs: `sse.ParseXML` (`internal/sse/xml.go`) answers each
-  such document 400 MalformedXML (docs/exclusions.md, "A
+  such document 400 MalformedXML (docs/differences.md, "A
   PutBucketEncryption document is held to S3's schema and AWS's values").
 - **Upstream:** pending: rgw-bug-reproduction recorded it as
   BC23-1-PUTBUCKETENCRYPTION-LENIENT-XML-200, open and security-relevant only
@@ -18021,7 +18021,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
 - **rgw-go:** differs: `sse.BucketEncryptionConfig.MarshalS3XML`
   (`internal/sse/xml.go`) writes `true`, as the SDKs write it
-  (docs/exclusions.md, "GetBucketEncryption writes BucketKeyEnabled as
+  (docs/differences.md, "GetBucketEncryption writes BucketKeyEnabled as
   true").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task BC-23, 2026-10-16, reading `dump_xml` for
@@ -18136,7 +18136,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it. `SetCommonHeaders`
   (`internal/s3/headers.go`) adds the CORS headers to every S3 response
   once the request's bucket record is loaded, both ops' 200, 204 and error
-  documents included (`docs/exclusions.md`, "Every S3 response carries CORS
+  documents included (`docs/differences.md`, "Every S3 response carries CORS
   headers once its bucket is loaded").
 - **Upstream:** pending; prior art not searched. The same sink, a
   `send_response` that ends the header without its op, leaves the headers
@@ -18241,7 +18241,7 @@ Every new entry adds its row to this table, in document order.
   `SetCommonHeaders` (`internal/s3/headers.go`) adds the headers to every S3
   response once the request's bucket record is loaded, and DeleteObjects'
   status line carries them too (`internal/s3/deleteobjects.go`;
-  `docs/exclusions.md`, "Every S3 response carries CORS headers once its
+  `docs/differences.md`, "Every S3 response carries CORS headers once its
   bucket is loaded"), GetBucketCors, PutBucketCors and DeleteBucketCors
   included (`internal/s3/cors.go`). It serves no notification,
   request-payment, retention, legal-hold or metadata-search route yet, and
@@ -18306,10 +18306,10 @@ Every new entry adds its row to this table, in document order.
   bucket is answered 500 UnknownError, `read_bucket_cors`'s -EIO, before
   its op runs, the answer GetBucketCors and the preflight give it on both
   floors (`verifyCORSMatch`, `internal/op/corsmatch.go`;
-  `docs/exclusions.md`, "A request whose Origin no CORS rule allows is
+  `docs/differences.md`, "A request whose Origin no CORS rule allows is
   refused"). A refusal made before that check keeps its own answer, with no
   CORS headers (`corsHeaders`, `internal/s3/headers.go`;
-  `docs/exclusions.md`, "Every S3 response carries CORS headers once its
+  `docs/differences.md`, "Every S3 response carries CORS headers once its
   bucket is loaded").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, Task BC-7, 2026-10-22, reading what
@@ -18371,7 +18371,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
 - **rgw-go:** answers 400 MalformedXML for each (`ParseXML`,
   `internal/website/xml.go`, its scan in `internal/website/scan.go`;
-  `docs/exclusions.md`, "PutBucketWebsite answers MalformedXML for a
+  `docs/differences.md`, "PutBucketWebsite answers MalformedXML for a
   document that does not parse or fit S3's schema").
 - **Upstream:** pending; prior art not searched.
 - **Found:** the phase 2 bucket-configuration research, 2026-10-13
@@ -18500,7 +18500,7 @@ Every new entry adds its row to this table, in document order.
   ([rgw_asio_client.cc:170-184](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_asio_client.cc#L170-L184)).
 - **rgw-go:** not affected by the encoding: `website.Apply` builds the new
   key as `apply_rule` does and percent-encodes it with the slash kept
-  (`internal/website/redirect.go`; `docs/exclusions.md`, "A website
+  (`internal/website/redirect.go`; `docs/differences.md`, "A website
   redirect's Location carries the new key percent-encoded"), so the
   Location carries no CR, LF, `?`, `#` or bare `%` from a key. Its frontend
   writes headers through net/http (`internal/frontend/server.go`), which
@@ -18508,7 +18508,7 @@ Every new entry adds its row to this table, in document order.
   (`net/http/header.go:139` and `:206-207` at Go 1.27.1). Not affected by
   the empty host: `op.WebsiteRedirect` declines a redirect to the request's
   host for a request that sent none, as `ErrUnsafeRedirect`
-  (`internal/op/website_get.go`; `docs/exclusions.md`, "A website redirect
+  (`internal/op/website_get.go`; `docs/differences.md`, "A website redirect
   to the request's host is refused for a request with no Host"). Not
   affected by the owner's
   host and protocol: `website.Apply` declines, as `ErrUnsafeRedirect`, a
@@ -18516,7 +18516,7 @@ Every new entry adds its row to this table, in document order.
   `http` or `https`, which covers a configuration radosgw stored, and the
   website endpoint answers that as an internal error;
   `website.ParseXML` refuses such
-  a `HostName` as InvalidArgument (`docs/exclusions.md`, "A website
+  a `HostName` as InvalidArgument (`docs/differences.md`, "A website
   redirect is refused for a host holding a control byte or a protocol
   other than http or https").
 - **Upstream:** pending: sent to rgw-bug-reproduction
@@ -18598,7 +18598,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: its rule selection, `cors.Configuration.Match`
   (`internal/cors/match.go`), is main's `match_rule` at 8aa24c51928, but it
   passes the requested headers for a preflight alone, as Amazon S3 documents
-  (`docs/exclusions.md`, "CORS rules are matched as Amazon S3 matches
+  (`docs/differences.md`, "CORS rules are matched as Amazon S3 matches
   them" and "Every S3 response carries CORS headers once its bucket is
   loaded").
 - **Upstream:** tracked as [#77575](https://tracker.ceph.com/issues/77575),
@@ -18687,7 +18687,7 @@ Every new entry adds its row to this table, in document order.
   own method, once the op mask has passed and before the permission verdict,
   but matches the Origin as its wildcards are written and answers a
   configuration that does not decode 500 (`verifyCORSMatch`,
-  `internal/op/corsmatch.go`; `docs/exclusions.md`, "A request whose
+  `internal/op/corsmatch.go`; `docs/differences.md`, "A request whose
   Origin no CORS rule allows is refused").
 - **Upstream:** fixed on main by
   [ceph/ceph#70697](https://github.com/ceph/ceph/pull/70697), "RGW: Verify
@@ -18766,7 +18766,7 @@ Every new entry adds its row to this table, in document order.
   that starts with what precedes the `*` and ends with what follows it, the
   two not overlapping, and a member with more than one `*` only exactly,
   for origins and headers alike (`inSet` and `requested.cover`,
-  `internal/cors/match.go`; `docs/exclusions.md`, "CORS rules are matched
+  `internal/cors/match.go`; `docs/differences.md`, "CORS rules are matched
   as Amazon S3 matches them").
 - **Upstream:** related:
   [ceph/ceph#56225](https://github.com/ceph/ceph/pull/56225), 64803e1ced5,
@@ -18854,7 +18854,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: `cors.Rule.ResponseHeaders` writes a carriage return
   as `\r` after it writes a line feed as `\n`, byte for byte what the fix's
   `format_exp_headers` writes, and every other control byte but a tab as
-  `\xHH` (`internal/cors/match.go`; `docs/exclusions.md`, "A CORS expose
+  `\xHH` (`internal/cors/match.go`; `docs/differences.md`, "A CORS expose
   header's control bytes are sent escaped"). Go's net/http, which writes
   rgw-go's responses, would in any case write a carriage return or line
   feed left in a header value as a space (`headerNewlineToSpace`,
@@ -19008,7 +19008,7 @@ Every new entry adds its row to this table, in document order.
   owner sets IgnorePublicAcls; BlockPublicAcls does not stop such a write,
   whose ACL `is_public` calls private.
 - **Releases:** checked at v19.2.7 and v20.2.4.
-- **rgw-go:** closes it (`docs/exclusions.md`, "IgnorePublicAcls sets aside
+- **rgw-go:** closes it (`docs/differences.md`, "IgnorePublicAcls sets aside
   grants to the user anonymous and its ownership" and "BlockPublicAcls counts
   grants to the user anonymous and its ownership, but for an anonymous
   writer's own"):
@@ -19126,7 +19126,7 @@ Every new entry adds its row to this table, in document order.
   and the Swift write list's `anonymous` under every block setting among
   them
   (`authz.Evaluator.VerifyBucketOwnerOrPolicy`, `internal/authz/evaluator.go`;
-  `internal/op/publicaccess.go`; `docs/exclusions.md`, "No ACL grant
+  `internal/op/publicaccess.go`; `docs/differences.md`, "No ACL grant
   authorizes the public access block's ops"). The S3 routes add no check
   of their own (`internal/s3/publicaccess.go`).
 - **Upstream:** pending: sent to rgw-bug-reproduction.
@@ -19365,7 +19365,7 @@ Every new entry adds its row to this table, in document order.
   radosgw's op and then writes the object's header itself, in the same op,
   holding exactly the document's ids, `otp_header` v1 in the class's bytes
   (`(*Store).putOTP`, `internal/driver/metadata_otp.go`; `otp.Header`,
-  `internal/cls/otp/types.go`; `docs/exclusions.md`, "An otp put's header
+  `internal/cls/otp/types.go`; `docs/differences.md`, "An otp put's header
   lists exactly the document's devices"). So a dropped device's id is not
   listed, and a remaining device keeps its replay state, as in radosgw's
   put. The driver's spec "keeps a remaining device's replay state, and
@@ -19443,7 +19443,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** affected the same way. `(*Store).VerifyMFA` checks on the
   local zone's otp object, as radosgw's check does
   (`internal/driver/mfa.go`), and its refusal of a code the device may have
-  accepted before reads that zone's last success alone (`docs/exclusions.md`,
+  accepted before reads that zone's last success alone (`docs/differences.md`,
   "An MFA code the device may have accepted before does not verify"). Its
   otp metadata section's document carries only the devices, without their
   replay state, as radosgw's does (`op.OTPDocument`,
@@ -19798,9 +19798,9 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it, under spec §8: compatibility "does not
   mean reproducing radosgw's defects". It routes `ownershipControls` to its
   ownership controls routes on both releases, as v21.1.2 routes it
-  (`docs/exclusions.md`, "ownershipControls requests are served as v21
+  (`docs/differences.md`, "ownershipControls requests are served as v21
   serves them"), and each of the other six keys, on GET, PUT and DELETE, to
-  a route of its own after every branch radosgw has (`docs/exclusions.md`,
+  a route of its own after every branch radosgw has (`docs/differences.md`,
   "A bucket or object request radosgw has no op for answers 501";
   `internal/s3/dispatch.go`). The six keys' routes answer 501
   NotImplemented for good, as rgw-go serves none of those configurations;
@@ -19888,7 +19888,7 @@ Every new entry adds its row to this table, in document order.
   GET, PUT and DELETE naming `annotation` to routes of their own after
   every branch radosgw has, which answer 501 NotImplemented, so it reads,
   overwrites and deletes nothing (`internal/s3/dispatch.go`;
-  `docs/exclusions.md`, "A bucket or object request radosgw has no op for
+  `docs/differences.md`, "A bucket or object request radosgw has no op for
   answers 501").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, BC-28b's review, 2026-10-20, from aws-sdk-go-v2's
@@ -19950,7 +19950,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it, under spec §8. It routes an object's
   PUT naming `renameObject` or `encryption` to a route of its own after
   every branch radosgw has, which answers 501 NotImplemented, so it
-  writes nothing (`internal/s3/dispatch.go`; `docs/exclusions.md`, "A
+  writes nothing (`internal/s3/dispatch.go`; `docs/differences.md`, "A
   bucket or object request radosgw has no op for answers 501").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, BC-28b's fix round, 2026-10-20, listing
@@ -20069,11 +20069,11 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** unaffected. Its form reader refuses a part name that holds a
   NUL, or any other control byte, with 400 InvalidArgument before the
   policy is read (`formReader.Fields`, `internal/s3/postform.go`;
-  docs/exclusions.md, "A POST form field's name holds no control byte").
+  docs/differences.md, "A POST form field's name holds no control byte").
   Were one to pass, `postpolicy.Env` excepts a checksum field only when its
   name starts with `x-amz-checksum-` and all the rest is an algorithm's
   name, and compares names over all their bytes, so the NUL-named field
-  would need a condition (docs/exclusions.md, "A POST policy needs no
+  would need a condition (docs/differences.md, "A POST policy needs no
   condition for a checksum field" and "POST policy names are compared over
   all their bytes").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
@@ -20138,7 +20138,7 @@ Every new entry adds its row to this table, in document order.
   Other callers of `JSONParser` on client input were not surveyed.
 - **rgw-go:** unaffected. `postpolicy.Parse` refuses nesting deeper than
   10,000 levels as "Malformed JSON", and goroutine stacks grow
-  (docs/exclusions.md, "A POST policy with a `\x` or `\X` escape, a
+  (docs/differences.md, "A POST policy with a `\x` or `\X` escape, a
   number json_spirit takes from the host's libm, or nesting past 10000 is
   refused").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
@@ -20173,7 +20173,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_policy_s3.cc:141-150](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_policy_s3.cc#L141-L150),
   [rgw_policy_s3.cc:198-205](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_policy_s3.cc#L198-L205)).
 - **rgw-go:** answers such a policy 403 AccessDenied, "Policy expired"
-  (docs/exclusions.md, "A POST policy whose expiration is before 1970 has
+  (docs/differences.md, "A POST policy whose expiration is before 1970 has
   expired").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task BC-30, 2026-10-19, transcribing the expiry
@@ -20341,7 +20341,7 @@ Every new entry adds its row to this table, in document order.
   (`internal/s3/postobject.go:10`), so the handler answers this request 501
   NotImplemented, as it answers every POST object that passes
   authentication, and reads no checksum field (`internal/s3/handler.go:426-430`;
-  `docs/exclusions.md`, "PutObject and CopyObject authorize a request before
+  `docs/differences.md`, "PutObject and CopyObject authorize a request before
   they read what the store holds for it").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** rgw-bug-reproduction's triage of phase 2 task BC-30,
@@ -20393,10 +20393,10 @@ Every new entry adds its row to this table, in document order.
   retried and re-authorized write the other bucket-config writes take, and
   succeeds, which its route answers 204; a bucket without the attr succeeds
   with nothing written, as radosgw's does (`internal/op/cors.go`,
-  `internal/s3/cors.go`; `docs/exclusions.md`, "DeleteBucketCors removes a
+  `internal/s3/cors.go`; `docs/differences.md`, "DeleteBucketCors removes a
   CORS configuration that does not decode"). A request that carries an
   Origin, a browser's among them, is answered 500 before the op runs, as
-  every request with an Origin on that bucket is (`docs/exclusions.md`, "A
+  every request with an Origin on that bucket is (`docs/differences.md`, "A
   request whose Origin no CORS rule allows is refused"), so it cannot clear
   the configuration either.
 - **Upstream:** none. rgw-bug-reproduction logged it as non-security; it is
@@ -20547,7 +20547,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** every Squid release, checked at v19.2.7; fixed from v20.0.0,
   checked at v20.2.4. The fix is in neither v19.2.7 nor origin/squid as
   fetched on 2026-10-20 (226f1401666), and it is on origin/tentacle.
-- **rgw-go:** applies Tentacle's rule on both releases (`docs/exclusions.md`,
+- **rgw-go:** applies Tentacle's rule on both releases (`docs/differences.md`,
   "On Squid, a request with no Host is a website request when s3website
   outranks s3"): `ParseRequest` flags every request as a website one when
   s3website is enabled and outranks s3, a request with no Host included
@@ -20591,7 +20591,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: it reads both sets of names once, at startup, and has
   no realm reload, so a period commit's hostnames, added or removed, take
   effect at its next restart (`s3Config`, `internal/cli/serve.go`;
-  `docs/exclusions.md`, "The hostnames are read at startup only").
+  `docs/differences.md`, "The hostnames are read at startup only").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, Task BC-13c's review, 2026-10-23, reading where
   the hostname sets are filled. Derived from the source, not reproduced.
@@ -20704,7 +20704,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: a GetPublicAccessBlock error is its error document
   alone, so the response ends at its Content-Length
   (`getPublicAccessBlock`, `internal/s3/publicaccess.go`;
-  `docs/exclusions.md`, "A GetPublicAccessBlock error is its error document
+  `docs/differences.md`, "A GetPublicAccessBlock error is its error document
   alone").
 - **Upstream:** pending: logged by rgw-bug-reproduction (BC19-1).
 - **Found:** phase 2 planning, 2026-10-13, reading
@@ -20777,7 +20777,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it. Its layout fails with InternalError
   for an object without a manifest (`driver.Store.ObjectLayout`,
   `internal/driver/layout.go`), and `?layout` answers that as an error
-  (`docs/exclusions.md`, "`?layout` of an object without a manifest fails").
+  (`docs/differences.md`, "`?layout` of an object without a manifest fails").
 - **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
   searched.
 - **Found:** phase 2 task WP-20, 2026-10-19, reading `dump_obj_layout` for
@@ -20860,7 +20860,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.7 and v20.2.4. Main's `RGWZoneGroupPlacementTierS3::dump`
   still writes the secret at 8aa24c51928 ([rgw_zone.cc:779-783](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_zone.cc#L779-L783)).
 - **rgw-go:** masks it (exclusion: "`?layout` masks a cloud tier's S3
-  secret", `docs/exclusions.md`). `?layout`'s document
+  secret", `docs/differences.md`). `?layout`'s document
   (`driver.Store.ObjectLayout`, `internal/driver/layout.go`) dumps the
   manifest through `meta.MaskTierSecrets` (`internal/meta/dump_manifest.go`),
   which writes a set secret as `******` and an empty one as empty, the form
@@ -20974,7 +20974,7 @@ Every new entry adds its row to this table, in document order.
   rewrites it with `lc_set_entry` as the entry {bucket, 0, status} under
   the shard lock, and goes on, leaving a pair that names another key as it
   is (`lcShard.headEntry` and `lcShard.nextEntry`,
-  `internal/driver/lc_worker.go`; docs/exclusions.md, "A lifecycle entry
+  `internal/driver/lc_worker.go`; docs/differences.md, "A lifecycle entry
   stored in its pair form is rewritten"), so radosgw's worker reads the
   shard afterwards.
 - **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
@@ -21103,7 +21103,7 @@ Every new entry adds its row to this table, in document order.
   the epoch or past the limit, in a header and in PutObjectRetention's body
   (`objectlock.ParseRetention`); `objectlock.LockUntil` clamps a default
   retention to the limit, and `objectlock.PeriodFits` tells a rule whose
-  period from now passes it (`docs/exclusions.md`, "A date real_time cannot
+  period from now passes it (`docs/differences.md`, "A date real_time cannot
   hold is refused").
 - **Upstream:** pending: sent to rgw-bug-reproduction (L1-1).
 - **Found:** phase 2 Task L1, 2026-10-20, transcribing `from_iso_8601` and
@@ -21139,7 +21139,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it. Its PutObjectRetention
   (`op.PutObjectRetention`) checks the change with
   `objectlock.RetentionChange`, which takes a retention whose retain-until
-  second is not after now's for none (`docs/exclusions.md`, "A lapsed
+  second is not after now's for none (`docs/differences.md`, "A lapsed
   retention binds no retention change").
 - **Upstream:** pending: sent to rgw-bug-reproduction (L1-2).
 - **Found:** phase 2 Task L1, 2026-10-20, transcribing
@@ -21223,7 +21223,7 @@ Every new entry adds its row to this table, in document order.
   does not decode, so `objectlock.VerifyDelete` refuses the delete as
   radosgw refuses one whose attr is too short; the lenient
   `objectlock.DecodeRetentionLenient` and `objectlock.DecodeLegalHoldLenient`
-  read it as the two Get ops do (`docs/exclusions.md`, "An object-lock attr
+  read it as the two Get ops do (`docs/differences.md`, "An object-lock attr
   with bytes past its encoding does not decode").
 - **Upstream:** pending: sent to rgw-bug-reproduction (L1-3).
 - **Found:** phase 2 Task L1, 2026-10-20, transcribing
@@ -21290,14 +21290,14 @@ Every new entry adds its row to this table, in document order.
   answers a root other than an unprefixed `LifecycleConfiguration` with 400
   MalformedXML, which the specs "a root other than LifecycleConfiguration,
   which radosgw reads as the empty configuration" and "a prefixed root"
-  (`internal/lifecycle/xml_test.go`) pin (`docs/exclusions.md`,
+  (`internal/lifecycle/xml_test.go`) pin (`docs/differences.md`,
   "PutBucketLifecycleConfiguration refuses a document whose root is not
   LifecycleConfiguration"). The prefix map of the empty configuration
   radosgw stores this way holds no rule, so the worker finds nothing to do.
   GetBucketLifecycleConfiguration answers it with 404
   NoSuchLifecycleConfiguration, as for a bucket with no configuration,
   where radosgw answers 200 with no Rule (`GetBucketLifecycle.Execute`,
-  `internal/op/lifecycle.go`; `docs/exclusions.md`,
+  `internal/op/lifecycle.go`; `docs/differences.md`,
   "GetBucketLifecycleConfiguration answers a stored configuration without
   rules with 404").
 - **Upstream:** pending; prior art not searched.
@@ -21438,7 +21438,7 @@ Every new entry adds its row to this table, in document order.
     MalformedXML, compares the sizes as numbers, so ObjectSizeGreaterThan
     9 with ObjectSizeLessThan 10 is taken, answers 400 InvalidArgument to a
     negative size and to a NewerNoncurrentVersions outside 1 to 100, and
-    stores each number in decimal (`docs/exclusions.md`,
+    stores each number in decimal (`docs/differences.md`,
     "PutBucketLifecycleConfiguration holds a rule's numbers to S3's
     types");
   - takes a Date only when it is written as a full date-time,
@@ -21446,7 +21446,7 @@ Every new entry adds its row to this table, in document order.
     midnight UTC on a calendar date that real_time holds, stored as
     written, so a bare date or a year, which radosgw stores and gives back
     in a form aws-sdk-go-v2 cannot read, is refused; and reads
-    ExpiredObjectDeleteMarker as an xs:boolean (`docs/exclusions.md`,
+    ExpiredObjectDeleteMarker as an xs:boolean (`docs/differences.md`,
     "PutBucketLifecycleConfiguration holds a Date and
     ExpiredObjectDeleteMarker to S3's types").
 
@@ -21454,7 +21454,7 @@ Every new entry adds its row to this table, in document order.
   radosgw's worker does, its numbers with atoi and stoull, a Date as
   `from_iso_8601` rolls it forward, a negative NewerNoncurrentVersions as
   one that never acts and one of 0 as one never set, but a negative size
-  by its sign (`docs/exclusions.md`, "The lifecycle prefix map reads a
+  by its sign (`docs/differences.md`, "The lifecycle prefix map reads a
   stored negative object size by its sign, and no Date past real_time"),
   and `Marshal`
   writes the text back as stored. The specs "refuses a number S3's schema
@@ -21545,21 +21545,21 @@ Every new entry adds its row to this table, in document order.
   real_time holds it, and answers this one with 400 MalformedXML, which
   the spec "an Expiration Date crafted so that from_iso_8601's wrap lands
   at midnight, which radosgw stores" (`internal/lifecycle/xml_test.go`)
-  pins (`docs/exclusions.md`, "PutBucketLifecycleConfiguration holds a
+  pins (`docs/differences.md`, "PutBucketLifecycleConfiguration holds a
   Date and ExpiredObjectDeleteMarker to S3's types"). For such a date
   radosgw stored, the prefix map holds no date, so it names no instant to
   act at, which "holds no date for a stored date from_iso_8601 refuses or
   real_time cannot hold" (`internal/lifecycle/prefixmap_test.go`) pins
-  (`docs/exclusions.md`, "The lifecycle prefix map reads a stored negative
+  (`docs/differences.md`, "The lifecycle prefix map reads a stored negative
   object size by its sign, and no Date past real_time"). Its worker's
   current expiration therefore keeps the objects of such a rule, which "keeps
   a stored Expiration Date past real_time, which radosgw wraps to
   2015-06-14 and expires at once" (`internal/driver/lc_bucket_test.go`)
-  pins (`docs/exclusions.md`, "Lifecycle current expiration never acts on a
+  pins (`docs/differences.md`, "Lifecycle current expiration never acts on a
   stored Date past real_time"), and its transition leaves them in their
   class, which "keeps an object under a stored Transition Date past
   real_time, which radosgw wraps to 2015-06-14 and transitions at once"
-  (`internal/driver/lc_transition_test.go`) pins (`docs/exclusions.md`, "A
+  (`internal/driver/lc_transition_test.go`) pins (`docs/differences.md`, "A
   lifecycle transition never acts on a stored Date past real_time"). Task
   C8 records the header's answer
   (`docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md`).
@@ -21675,11 +21675,11 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v20.2.4. Fixed on main 8aa24c51928 and from v21.0.0.
   v19.2.7 has no checksum code.
 - **rgw-go:** differs in its op layer, which the S3 handler does not reach
-  yet (`docs/exclusions.md`, "Client checksums are ignored until phase
+  yet (`docs/differences.md`, "Client checksums are ignored until phase
   2"). It takes the algorithm from the one value header or checksum
   trailer and verifies the value, and refuses two values, or one of
   another algorithm than the algorithm header's, with 400 InvalidRequest
-  before the body (`internal/op/checksumreq.go`; `docs/exclusions.md`, "A
+  before the body (`internal/op/checksumreq.go`; `docs/differences.md`, "A
   checksum value without an algorithm header names its algorithm and is
   verified").
 - **Upstream:** pending; prior art not searched.
@@ -21735,12 +21735,12 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v20.2.4. On main 8aa24c51928, and from v21.0.0, the
   inference reaches it first. v19.2.7 has no checksum code.
 - **rgw-go:** differs in its op layer, which the S3 handler does not reach
-  yet (`docs/exclusions.md`, "Client checksums are ignored until phase
+  yet (`docs/differences.md`, "Client checksums are ignored until phase
   2"). A part's lone value header or checksum trailer names its algorithm,
   which must be its upload's, and its value is compared for every type
   rgw-go computes, CRC64NVME included; rgw-go computes no xxh3 and answers
   a part of an xxh3 upload with 501 NotImplemented
-  (`internal/op/checksumreq.go`; `docs/exclusions.md`, "A checksum value
+  (`internal/op/checksumreq.go`; `docs/differences.md`, "A checksum value
   without an algorithm header names its algorithm and is verified" and "A
   checksum algorithm rgw-go does not compute is refused at write").
 - **Upstream:** pending; prior art not searched.
@@ -21786,7 +21786,7 @@ Every new entry adds its row to this table, in document order.
   (`internal/lifecycle/decide.go`) gives the last entry of a truncated page
   its own name, which "keeps a current delete marker at the end of a
   truncated page when older versions follow on the next, on either
-  release" (`internal/lifecycle/decide_test.go`) pins (`docs/exclusions.md`,
+  release" (`internal/lifecycle/decide_test.go`) pins (`docs/differences.md`,
   "A current delete marker at the end of a listing page is kept on
   Squid").
 - **Upstream:** [#73539](https://tracker.ceph.com/issues/73539), named by
@@ -21841,7 +21841,7 @@ Every new entry adds its row to this table, in document order.
   current version once the lock predicate passes" and "writes the null
   marker over a non-null current version on a Suspended bucket, which
   keeps it as noncurrent" (`internal/lifecycle/decide_test.go`) pin
-  (`docs/exclusions.md`, "Lifecycle expiration on a versioning-suspended
+  (`docs/differences.md`, "Lifecycle expiration on a versioning-suspended
   bucket writes the null delete marker"). Its worker writes it with the
   key's OLH head as read again as the delete's `Expect`
   (`lcBucket.markCurrent`, `internal/driver/lc_actions.go`), which "writes
@@ -21928,7 +21928,7 @@ Every new entry adds its row to this table, in document order.
   removal, which "keeps a retained current object on a lock bucket whose
   flags lack BUCKET_VERSIONED" and "keeps a locked null current version on
   a Suspended bucket" (`internal/lifecycle/decide_test.go`) pin
-  (`docs/exclusions.md`, "Every permanent removal by lifecycle runs the
+  (`docs/differences.md`, "Every permanent removal by lifecycle runs the
   object-lock check"), so a bucket in that state keeps its locked objects.
   Its worker's current expiration checks the lock again on the object as
   it reads it just before the removal (`lcBucket.expireCurrent`,
@@ -21980,7 +21980,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** selects the first action that holds and then any due
   strictly later, with no floor: "acts on a Date at the epoch, which
   radosgw's selection never picks" (`internal/lifecycle/decide_test.go`)
-  pins it (`docs/exclusions.md`, "Lifecycle selection takes an action due
+  pins it (`docs/differences.md`, "Lifecycle selection takes an action due
   at the epoch").
 - **Upstream:** pending; prior art not searched.
 - **Found:** task C2, 2026-10-20, reading both tags. Not reproduced on a
@@ -22045,7 +22045,7 @@ Every new entry adds its row to this table, in document order.
   uncompressed size is `Probe`'s contract, which the worker's `lcProbe`
   (`internal/driver/lc_actions.go`) meets with the head's
   `Compression.OrigSize` for a compressed object
-  (`docs/exclusions.md`, "The lifecycle size filter reads a version's own,
+  (`docs/differences.md`, "The lifecycle size filter reads a version's own,
   uncompressed size").
 - **Upstream:** pending; prior art not searched.
 - **Found:** task C2, 2026-10-20, reading both tags. Not reproduced on a
@@ -22085,7 +22085,7 @@ Every new entry adds its row to this table, in document order.
   "a repeated key standing in for a missing tag, which radosgw's count
   takes" and "a repeated key whose second value matches, which radosgw's
   first-value read refuses" (`internal/lifecycle/decide_test.go`,
-  `internal/lifecycle/headers_test.go`) pin it (`docs/exclusions.md`, "The
+  `internal/lifecycle/headers_test.go`) pin it (`docs/differences.md`, "The
   lifecycle tag filter needs each of a rule's tags among the object's").
 - **Upstream:** pending; prior art not searched.
 - **Found:** task C2, 2026-10-20, reading both tags. Not reproduced on a
@@ -22126,7 +22126,7 @@ Every new entry adds its row to this table, in document order.
   name: "gives the date past 24855 days, where radosgw's int product
   wraps" and "gives the date Days past real_time's range name, where
   radosgw's arithmetic wraps" (`internal/lifecycle/headers_test.go`) pin
-  it (`docs/exclusions.md`, "Lifecycle header dates past 24855 days or
+  it (`docs/differences.md`, "Lifecycle header dates past 24855 days or
   real_time are not wrapped").
 - **Upstream:** pending; prior art not searched.
 - **Found:** task C2, 2026-10-20, reading both tags. Not reproduced on a
@@ -22208,7 +22208,7 @@ Every new entry adds its row to this table, in document order.
   and `send_header`
   ([rgw_asio_client.cc:170-184](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_asio_client.cc#L170-L184)).
 - **rgw-go:** not affected once it sends these headers: net/http writes a
-  CR or LF in a header value as a space (`docs/exclusions.md`, "A stored
+  CR or LF in a header value as a space (`docs/differences.md`, "A stored
   header value's CR and LF go out as spaces"). `lifecycle.ExpirationHeader`
   (`internal/lifecycle/headers.go`) writes the ID as radosgw does.
 - **Upstream:** pending: sent to rgw-bug-reproduction, which takes it to
@@ -22447,7 +22447,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** names the first midnight UTC at least the days after the
   mtime's second, the day a worker on UTC acts: "names the day a UTC
   gateway's worker first finds the object due"
-  (`internal/lifecycle/headers_test.go`) pins it (`docs/exclusions.md`,
+  (`internal/lifecycle/headers_test.go`) pins it (`docs/differences.md`,
   "Lifecycle headers name the midnight the worker acts at").
 - **Upstream:** pending; prior art not searched.
 - **Found:** task C2's review, 2026-10-20. Not reproduced on a running
@@ -22497,9 +22497,9 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it: `roundToDay`
   (`internal/lifecycle/expire.go`) reads a skipped midnight at the offset
   now has, which is glibc's answer for every other skipped midnight the
-  scan finds (`docs/exclusions.md`, "A skipped local midnight is read at
+  scan finds (`docs/differences.md`, "A skipped local midnight is read at
   the offset now has"), and takes the later of a midnight that occurs
-  twice, glibc's answer in a fresh process (`docs/exclusions.md`, "A local
+  twice, glibc's answer in a fresh process (`docs/differences.md`, "A local
   midnight that occurs twice with the same DST flag is the later one").
 - **Upstream:** pending; prior art not searched.
 - **Found:** task C2's re-review of fix round 1, 2026-10-20; confirmed by
@@ -22672,7 +22672,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs on both: a system user's `rgwx-uid` is taken from a
   SigV4 request alone, whose canonical query signs it
   (`internal/auth/verifier.go:124-137`), and a POST object form's identity
-  takes nothing from the query (`docs/exclusions.md`, "A SigV2 request's
+  takes nothing from the query (`docs/differences.md`, "A SigV2 request's
   rgwx-uid is not read" and "A browser upload's identity takes nothing from
   the query"). A multisite peer signs SigV2 only when
   `rgw_s3_client_max_sig_ver` is set to 1, 2 or 3; such a peer's forwarded
@@ -22712,7 +22712,7 @@ Every new entry adds its row to this table, in document order.
   ([rgw_rest_s3.cc:7097-7102](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L7097-L7102),
   [rgw_auth_s3.cc:980-1000](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_auth_s3.cc#L980-L1000)).
 - **rgw-go:** differs: it refuses such a form with 403 AccessDenied
-  (`docs/exclusions.md`, "A SigV4 browser upload's credential must hold a
+  (`docs/differences.md`, "A SigV4 browser upload's credential must hold a
   slash").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task BC-31, 2026-10-20, transcribing the browser-upload
@@ -23034,7 +23034,7 @@ Every new entry adds its row to this table, in document order.
   request names, in number order, from the part records its assembly
   matched to them, once every named part has matched, so it answers a part
   fault before a checksum fault (`combineChecksums`,
-  `internal/driver/mp_cksum.go`; `docs/exclusions.md`,
+  `internal/driver/mp_cksum.go`; `docs/differences.md`,
   "CompleteMultipartUpload combines the parts it completes and compares the
   whole supplied checksum").
 - **Upstream:** pending; prior art not searched.
@@ -23092,7 +23092,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs. Its op layer takes the completion's one
   `x-amz-checksum-<alg>` header of every type, `crc64nvme` included
   (`internal/op/checksumreq.go`), and its completion compares it
-  (`combineChecksums`, `internal/driver/mp_cksum.go`; `docs/exclusions.md`,
+  (`combineChecksums`, `internal/driver/mp_cksum.go`; `docs/differences.md`,
   "CompleteMultipartUpload reads one checksum header, of any type").
 - **Upstream:** fixed on main by
   [ceph/ceph#71484](https://github.com/ceph/ceph/pull/71484) (ee6894210c6),
@@ -23137,7 +23137,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs. Its completion accepts the armored value, which ends
   in `-<parts>` for a composite, or a composite's armor alone, and answers
   400 BadDigest to any other value, the empty one included
-  (`combineChecksums`, `internal/driver/mp_cksum.go`; `docs/exclusions.md`,
+  (`combineChecksums`, `internal/driver/mp_cksum.go`; `docs/differences.md`,
   "CompleteMultipartUpload combines the parts it completes and compares the
   whole supplied checksum").
 - **Upstream:** pending; prior art not searched.
@@ -23223,7 +23223,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** unaffected: a copy of a compressed source copies its stored
   bytes with their compression info, and `putStream` accounts the info's
   original size (`copyData`, `internal/driver/copy.go`;
-  `docs/exclusions.md`, "A copy that streams a compressed source copies its
+  `docs/differences.md`, "A copy that streams a compressed source copies its
   stored bytes"). An entry a Tentacle radosgw wrote is read as it stands.
 - **Upstream:** [#75715](https://tracker.ceph.com/issues/75715) and
   [#75716](https://tracker.ceph.com/issues/75716), which 5addb80abac names,
@@ -23291,14 +23291,14 @@ Every new entry adds its row to this table, in document order.
   ([rgw_rest_s3.cc:575-580](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L575-L580),
   [rgw_cksum.h:398-415](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_cksum.h#L398-L415)).
 - **rgw-go:** a streamed CopyObject drops such a record (`compositeChecksum`
-  in `copyData`, `internal/driver/copy.go`; `docs/exclusions.md`, "A copy
+  in `copyData`, `internal/driver/copy.go`; `docs/differences.md`, "A copy
   that streams its data drops a composite checksum"), and so does its
   lifecycle transition, whose raw copy keeps every other attr
   (`transitionAttrs`, `internal/driver/lc_transition.go`), which "drops a
   composite checksum from a multipart object it rewrites without parts"
   (`internal/driver/lc_transition_test.go`) pins. rgw-go's reads show
   no composite on an object without parts (`objectReadChecksum`,
-  `internal/op/getobject.go`; `docs/exclusions.md`, "A composite checksum
+  `internal/op/getobject.go`; `docs/differences.md`, "A composite checksum
   on an object without parts is not shown"), though its S3 handler renders
   no stored checksum yet ("Stored checksums are not shown").
 - **Upstream:** pending; prior art not searched.
@@ -23346,7 +23346,7 @@ Every new entry adds its row to this table, in document order.
   `sscanf` reads it, text after the fourth number ignored. With the threads
   off it does not scan the option, as radosgw reads it only in the threads
   (`scanLCWorkTime`, `internal/driver/lc_options.go`;
-  `docs/exclusions.md`, "The lifecycle work window must scan as four
+  `docs/differences.md`, "The lifecycle work window must scan as four
   numbers").
 - **Upstream:** fixed on main before we met it by 25577cd3b0e, "rgw/lc:
   initialize variables passed to sscanf()", through
@@ -23417,7 +23417,7 @@ Every new entry adds its row to this table, in document order.
   error-level log line naming the option and the value read. With the
   threads off it settles neither, as radosgw reads them only to start the
   threads (`lcWorkerCounts`, `internal/driver/lc_options.go`;
-  `docs/exclusions.md`,
+  `docs/differences.md`,
   "Lifecycle worker counts that are not positive"). A workpool size above
   65535 is used as given.
 - **Upstream:** pending; prior art not searched.
@@ -23460,7 +23460,7 @@ Every new entry adds its row to this table, in document order.
   whose `guard_lc_modify` still unlocks after its loop whatever it ended with
   ([rgw_lc.cc:3178-3201](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_lc.cc#L3178-L3201)).
 - **rgw-go:** releases only a lock it took (`guardLCModify`,
-  `internal/driver/lc_shards.go`; `docs/exclusions.md`, "A lifecycle
+  `internal/driver/lc_shards.go`; `docs/differences.md`, "A lifecycle
   entry's write releases only a shard lock it took").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task C5, 2026-10-20, reading guard_lc_modify. Derived
@@ -23680,7 +23680,7 @@ Every new entry adds its row to this table, in document order.
   ([rgw_rados.cc:8904-8934](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8904-L8934),
   [rgw_rados.cc:9650-9680](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9650-L9680);
   `checkPendingOLHEntries`, `internal/driver/olh_head.go`), when the link
-  never landed (`docs/exclusions.md`, "A versioned link or unlink whose
+  never landed (`docs/differences.md`, "A versioned link or unlink whose
   outcome is unknown keeps its pending attr"). Pinned in
   `internal/driver/olh_test.go`.
 - **Upstream:** pending; prior art not searched.
@@ -23728,7 +23728,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** reads the null version itself, in `read_key_entry`'s order,
   and when it finds one starts right after that version's list key, and
   past every version of the key when it finds none (`markerStart`,
-  `internal/driver/list.go`; `docs/exclusions.md`, "A versions listing
+  `internal/driver/list.go`; `docs/differences.md`, "A versions listing
   resumes after the null delete marker its version-id-marker names").
   Before that change its listing, on fakerados's emulation of the class,
   lost the key's older versions in both cases
@@ -23778,7 +23778,7 @@ Every new entry adds its row to this table, in document order.
   `bucket_list` takes whole as a start key without an instance, and an
   unordered listing that resumes there starts on the shard of the entry's
   object name (`resumeAfter`, `internal/driver/list.go`;
-  `docs/exclusions.md`, "A versions listing resumes after the null version
+  `docs/differences.md`, "A versions listing resumes after the null version
   it last visited"). Its listing, which
   resumed as radosgw's does before that change, repeated a key's sixteen
   newest versions on fakerados (`internal/driver/list_versions_test.go`,
@@ -23822,7 +23822,7 @@ Every new entry adds its row to this table, in document order.
   listing, and a retry from the same marker fails again.
 - **Releases:** v19.2.7 and v20.2.4.
 - **rgw-go:** lists the shard again from the marker in both listings
-  (`bucketList`, `internal/driver/list.go`; `docs/exclusions.md`, "An
+  (`bucketList`, `internal/driver/list.go`; `docs/differences.md`, "An
   unordered listing lists a shard that answers advance-and-retry again from
   its marker").
 - **Upstream:** pending; prior art not searched.
@@ -23953,14 +23953,14 @@ Every new entry adds its row to this table, in document order.
   head's state for as long as it stays.
 - **Releases:** v19.2.7 and v20.2.4.
 - **rgw-go:** sends no repair for the null version's list entry
-  (`checkDiskState`, `internal/driver/list.go`; `docs/exclusions.md`, "A
+  (`checkDiskState`, `internal/driver/list.go`; `docs/differences.md`, "A
   listing sends no repair for the null version's list entry"); its own
   versioned writes leave no list entry pending, since each awaits its index
   completion before its link, and its write or attr write of an object's
   plain or null entry on a bucket whose flags carry `BUCKET_VERSIONED`
   awaits its completion before it answers, so the delete after it links no
   marker over a pending op (`completePlain`, `internal/driver/headwrite.go`,
-  which `SetObjectAttrs` also calls; `docs/exclusions.md`, "A versioned
+  which `SetObjectAttrs` also calls; `docs/differences.md`, "A versioned
   write awaits its index completion"), which "answers a key's plain write
   once its completion has landed, so the null delete marker of the DELETE
   after it takes no pending op from it" and "answers an attr write on a
@@ -24036,7 +24036,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** sends a named version's repair as radosgw does, so it meets
   this too (`checkDiskState`, `internal/driver/list.go`); its own versioned
   writes leave no list entry pending, since each awaits its index
-  completion before its link (`docs/exclusions.md`, "A versioned write
+  completion before its link (`docs/differences.md`, "A versioned write
   awaits its index completion").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V3a's review; traced at v19.2.7 and v20.2.4 by
@@ -24112,7 +24112,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.7 and v20.2.4.
 - **rgw-go:** reproduces it: its unordered listing pages as radosgw's
   does, and fails when the shards go during a request, where its ordered
-  listing reads the new ones (`docs/exclusions.md`, "An ordered listing
+  listing reads the new ones (`docs/differences.md`, "An ordered listing
   reads the shards the bucket names after a reshard removes its own").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V9, 2026-10-20, pinning a listing across a
@@ -24157,7 +24157,7 @@ Every new entry adds its row to this table, in document order.
   AWS's API reference (API_ListObjectVersions.html, fetched 2026-10-22), the
   sample `GET /?versions&key-marker=key2` lists only the versions of `key3`
   and `sourcekey` (`markerStart`, `internal/driver/list.go`;
-  `docs/exclusions.md`, "A versions listing starts after every version of a
+  `docs/differences.md`, "A versions listing starts after every version of a
   key-marker given alone"). It starts the `list-type=2` form's
   `continuation-token` at its key's first version, as radosgw does
   (`ListObjectsParams.RelistMarker`, `internal/op/bucket.go`), so that form
@@ -24244,7 +24244,7 @@ Every new entry adds its row to this table, in document order.
   a bucket whose flags hold `BUCKET_VERSIONED` from the first version left
   of the name the page ended on (`ListObjectsParams.RelistMarker`,
   `internal/op/bucket.go`; `PurgeObjects`, `internal/op/adminpurge.go`;
-  `docs/exclusions.md`, "A purging removal resumes each page of a versioned
+  `docs/differences.md`, "A purging removal resumes each page of a versioned
   bucket at its last key's remaining versions"), and leave no version
   behind, which "removes every version of a key whose versions span pages,
   resuming at the key's versions left" (`internal/op/adminpurge_test.go`)
@@ -24352,7 +24352,7 @@ Every new entry adds its row to this table, in document order.
   backported to tentacle.
 - **rgw-go:** differs: a `partNumber` read shows its part head's record as
   main does at 8aa24c51928 (`partReadChecksum`, `internal/op/getobject.go`;
-  `docs/exclusions.md`, "A partNumber read shows its part's checksum
+  `docs/differences.md`, "A partNumber read shows its part's checksum
   bare"). Its S3 handler renders no stored checksum yet ("Stored checksums
   are not shown").
 - **Upstream:** fixed before we met it, by 9b43590e12e on main through
@@ -24403,7 +24403,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v20.2.4 and main 8aa24c51928. v19.2.7 has no checksum code.
 - **rgw-go:** differs: ListParts reports both from the upload's
   `multipart_upload_info`, for a type AWS defines (`ListParts`,
-  `internal/op/listparts.go`; `docs/exclusions.md`, "ListParts reports its
+  `internal/op/listparts.go`; `docs/differences.md`, "ListParts reports its
   upload's checksum algorithm and type"). Its S3 handler renders neither
   yet ("Stored checksums are not shown").
 - **Upstream:** pending; prior art not searched.
@@ -24485,7 +24485,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** removes the entry as the delete's last step, once the bucket
   is gone, so a delete that fails before keeps it (`Store.removeLCEntry` and
   `Store.DeleteBucket`, `internal/driver/bucketops.go`;
-  `docs/exclusions.md`, "A bucket delete removes the lifecycle entry once
+  `docs/differences.md`, "A bucket delete removes the lifecycle entry once
   the bucket is gone").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task C7, 2026-10-21, reading `RadosBucket::remove` at
@@ -24540,7 +24540,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** once a rename completes, files the entry under the new name
   and removes the one under the old name for a bucket carrying
   `user.rgw.lc`, logging a failure of either (`Store.moveLCEntry`,
-  `internal/driver/bucketadmin.go`; `docs/exclusions.md`, "A bucket rename
+  `internal/driver/bucketadmin.go`; `docs/differences.md`, "A bucket rename
   moves the lifecycle entry to the new name").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task C7, 2026-10-21, checking which bucket writes
@@ -24632,7 +24632,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it. PutObjectLockConfiguration writes
   through `retryBucketWrite`, which stops with 409 ConcurrentModification,
   writing nothing, when the name names another instance, and authorizes
-  each retry again (`internal/op/bucketobjectlock.go`; `docs/exclusions.md`,
+  each retry again (`internal/op/bucketobjectlock.go`; `docs/differences.md`,
   "A retried bucket write stops when the name names another bucket").
 - **Upstream:** pending: sent to rgw-bug-reproduction, whose triage on
   2026-10-21 added no row of its own: the case composes the two it tracks,
@@ -24728,7 +24728,7 @@ Every new entry adds its row to this table, in document order.
   on the new bucket against the requester's own policies once the header
   reads true, and refuses a denial of either with 403 AccessDenied,
   creating nothing (`verifyCreateActions`, `internal/op/bucketops.go`;
-  `createBucketActions`, `internal/authz/evaluator.go`; `docs/exclusions.md`,
+  `createBucketActions`, `internal/authz/evaluator.go`; `docs/differences.md`,
   "CreateBucket with object lock is authorized as
   s3:PutBucketObjectLockConfiguration and s3:PutBucketVersioning too").
   rgw-go reads the header in the handler and checks it in the op's execute,
@@ -24827,7 +24827,7 @@ Every new entry adds its row to this table, in document order.
   own policies once its parameters, the header among them, are read, and
   refuses a denial with 403 AccessDenied, creating nothing
   (`verifyCreateActions`, `internal/op/bucketops.go`; `createBucketActions`,
-  `internal/authz/evaluator.go`; `docs/exclusions.md`, "CreateBucket with
+  `internal/authz/evaluator.go`; `docs/differences.md`, "CreateBucket with
   x-amz-object-ownership is authorized as s3:PutBucketOwnershipControls
   too"). The S3 handler does not read the header yet, so no request reaches
   the check until it does.
@@ -24892,7 +24892,7 @@ Every new entry adds its row to this table, in document order.
   authorized as s3:PutBucketAcl on the new bucket against the requester's
   own policies, and a denial is 403 AccessDenied with nothing created
   (`NonPrivateACL`, `internal/s3/bucket.go` and `internal/op/bucketops.go`;
-  `docs/exclusions.md`, "CreateBucket with an ACL other than private is
+  `docs/differences.md`, "CreateBucket with an ACL other than private is
   authorized as s3:PutBucketAcl too").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task L2's review, 2026-10-21, beside the object-lock
@@ -24936,7 +24936,7 @@ Every new entry adds its row to this table, in document order.
   ([rgw_op.cc:7106-7113](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_op.cc#L7106-L7113)).
 - **rgw-go:** refuses it on both releases with v20.2.4's 405 and message
   (`PutBucketLifecycle.Execute`, `internal/op/lifecycle.go`;
-  `docs/exclusions.md`, "PutBucketLifecycleConfiguration refuses an
+  `docs/differences.md`, "PutBucketLifecycleConfiguration refuses an
   indexless bucket on Squid too").
 - **Upstream:** fixed on main before we met it by 76bd3d4b5e7, "rgw: reject
   PutBucketLifecycleConfiguration on indexless buckets", through
@@ -24970,7 +24970,7 @@ Every new entry adds its row to this table, in document order.
     [rgw_sal_rados.cc:771-775](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L771-L775)).
   - Neither goes through `retry_raced_bucket_write`, which the tagging,
     policy, website, encryption, CORS and public-access-block writes use
-    (`docs/exclusions.md`, "A PutBucketAcl that loses a race is retried,
+    (`docs/differences.md`, "A PutBucketAcl that loses a race is retried,
     and every retried bucket write is authorized again"),
     so a version another write moved fails the write with -ECANCELED, 409
     ConcurrentModification
@@ -24993,7 +24993,7 @@ Every new entry adds its row to this table, in document order.
   ([rgw_common.cc:140](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_common.cc#L140),
   [rgw_common.cc:361-368](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_common.cc#L361-L368)).
 - **rgw-go:** retries both through `RetryRacedBucketWrite`, authorizing
-  each retry again (`internal/op/lifecycle.go`; `docs/exclusions.md`, "A
+  each retry again (`internal/op/lifecycle.go`; `docs/differences.md`, "A
   lifecycle configuration put or delete that loses a race is retried, and
   authorized again").
 - **Upstream:** pending; prior art not searched.
@@ -25058,7 +25058,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_b64.h:61-82](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_b64.h#L61-L82)).
 - **rgw-go:** answers a Content-MD5 that does not decode, or decodes to
   other than 16 bytes, with 400 InvalidDigest before reading the body
-  (`lifecycleContentMD5`, `internal/op/lifecycle.go`; `docs/exclusions.md`,
+  (`lifecycleContentMD5`, `internal/op/lifecycle.go`; `docs/differences.md`,
   "PutBucketLifecycleConfiguration answers a Content-MD5 that is not a
   16-byte digest with InvalidDigest, before reading the body").
 - **Upstream:** pending; prior art not searched.
@@ -25251,7 +25251,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_rest_s3.cc:3553-3600](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L3553-L3600)).
 - **rgw-go:** differs: a part ends only at an RFC 2046 delimiter line and
   a header line is read whole, so such a file and its filename are kept as
-  sent (docs/exclusions.md, "A POST form part ends only at a delimiter
+  sent (docs/differences.md, "A POST form part ends only at a delimiter
   line"). s3-tests'
   `test_post_object_boundary_inside_file_data` covers it, in jhoblitt/ceph
   ea7dea4dba8, pending its merge into `rgw-go-s3tests`.
@@ -25395,7 +25395,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** unaffected. The parts before the file's data may take at
   most `rgw_max_chunk_size` and 1 MiB of the body, and a form past that is
   400 InvalidArgument with MaxPostPreDataLengthExceededError's description
-  (`errFormTooLarge`, `internal/s3/postform.go`; docs/exclusions.md, "A
+  (`errFormTooLarge`, `internal/s3/postform.go`; docs/differences.md, "A
   POST form's fields before its file are bounded"). In memory, measured by
   task BC-29's review at the default bound: 118,974 distinct tiny fields,
   5,242,720 bytes of body, retained 9.46 MB after garbage collection, 1.8
@@ -25447,7 +25447,7 @@ Every new entry adds its row to this table, in document order.
   ([rgw_rest.cc:1077-1110](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest.cc#L1077-L1110),
   [rgw_common.cc:2055-2077](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_common.cc#L2055-L2077)).
 - **rgw-go:** differs: a quoted value runs to its closing quote
-  (docs/exclusions.md, "A quoted POST form parameter keeps its
+  (docs/differences.md, "A quoted POST form parameter keeps its
   semicolons").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task BC-29, 2026-10-21, transcribing
@@ -25494,7 +25494,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_rest_s3.cc:3577-3600](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L3577-L3600),
   [rgw_op.cc:5511-5538](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_op.cc#L5511-L5538)).
 - **rgw-go:** differs: 400 InvalidArgument, "Malformed request" for the
-  first, "Couldn't find boundary" for the second (docs/exclusions.md, "A
+  first, "Couldn't find boundary" for the second (docs/differences.md, "A
   POST form that ends before its file part's delimiter is refused").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task BC-29, 2026-10-21, tracing where `get_params`'
@@ -25530,7 +25530,7 @@ Every new entry adds its row to this table, in document order.
   where all three ranges cited above at v20.2.4 are unchanged
   ([rgw_rest.cc:1280-1339](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest.cc#L1280-L1339),
   [rgw_rest_s3.cc:3212-3214](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L3212-L3214)).
-- **rgw-go:** differs: a preamble is skipped (docs/exclusions.md, "A POST
+- **rgw-go:** differs: a preamble is skipped (docs/differences.md, "A POST
   form part ends only at a delimiter line").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task BC-29, 2026-10-21, by the task's review, which
@@ -25569,7 +25569,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_rest.cc:1304-1336](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest.cc#L1304-L1336)).
 - **rgw-go:** differs: such a line is refused 400 InvalidArgument with no
   message, the answer radosgw gives a header line it cannot parse
-  (docs/exclusions.md, "A POST form's fields before its file are
+  (docs/differences.md, "A POST form's fields before its file are
   bounded").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task BC-29, 2026-10-21, by the task's review, which
@@ -25618,7 +25618,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_rest.cc:1308-1312](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest.cc#L1308-L1312),
   [rgw_rest_s3.cc:3247-3256](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L3247-L3256)).
 - **rgw-go:** differs: a delimiter's padding, at most 256 bytes, is part of
-  its line, and the part after it keeps its headers (docs/exclusions.md, "A
+  its line, and the part after it keeps its headers (docs/differences.md, "A
   POST form part ends only at a delimiter line").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task BC-29's fix round, 2026-10-21, taking RFC 2046's
@@ -25732,7 +25732,7 @@ Every new entry adds its row to this table, in document order.
   attrs and before anything is sent, and answers it once, an error
   document's too (`GetObject.websiteObjectRedirect`,
   `internal/op/website_get.go`; `websiteGet.serveErrorDoc`,
-  `internal/s3/website_serve.go`; `docs/exclusions.md`, "An object's
+  `internal/s3/website_serve.go`; `docs/differences.md`, "An object's
   website redirect is answered once").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 unit B, Task BC-14, 2026-10-22, porting the website
@@ -25786,7 +25786,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_common.cc:1902-1935](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_common.cc#L1902-L1935));
   the other ranges cited above at v20.2.4 are unchanged.
 - **rgw-go:** not affected. `GetObject.isFile` stats the key the request
-  names (`internal/op/website_get.go`; `docs/exclusions.md`, "A website
+  names (`internal/op/website_get.go`; `docs/differences.md`, "A website
   request's file test reads its key decoded once").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, Task BC-14, 2026-10-22, porting `web_dir`.
@@ -25841,7 +25841,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_rest.cc:396-399](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest.cc#L396-L399)).
 - **rgw-go:** not affected. It writes the header and its website
   endpoint's Location through net/http, which rewrites each CR and LF in a
-  header value to a space (`docs/exclusions.md`, "A stored
+  header value to a space (`docs/differences.md`, "A stored
   header value's CR and LF go out as spaces"). It writes no such attr until
   it serves POST object, whose write refuses or folds the field's CR and LF
   (task BC-32).
@@ -25883,7 +25883,7 @@ Every new entry adds its row to this table, in document order.
   and the POST upload is still the attr's one writer in `src/rgw`.
 - **rgw-go:** not affected. It takes the attr up to its first NUL, an empty
   one as an empty Location (`GetObject.websiteObjectRedirect`,
-  `internal/op/website_get.go`; `docs/exclusions.md`, "An object's website
+  `internal/op/website_get.go`; `docs/differences.md`, "An object's website
   redirect is answered once"), and writes no such attr until it serves POST
   object, whose plan stores the field with a NUL appended, as radosgw's
   POST upload does (task BC-32).
@@ -25960,7 +25960,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_rados.cc:8489-8490](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_rados.cc#L8489-L8490)).
 - **rgw-go:** differs: it answers InvalidPart whatever the policies name
   (`GetObject.websiteObjectRedirect`, `internal/op/website_get.go`;
-  `docs/exclusions.md`, "A website GET of a part the object has not is
+  `docs/differences.md`, "A website GET of a part the object has not is
   InvalidPart under any policy").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, Task BC-14's review, 2026-10-22, tracing where
@@ -26024,7 +26024,7 @@ Every new entry adds its row to this table, in document order.
   the bucket; any other requester gets radosgw's 404 or 403. The object
   store tells a listed marker from a missing version (`namedVersion`,
   `internal/driver/stat.go`), and the op answers it (`deleteMarkerVersion`,
-  `internal/op/deletemarker.go`; `docs/exclusions.md`, "A read naming a
+  `internal/op/deletemarker.go`; `docs/differences.md`, "A read naming a
   delete marker's version answers 405 MethodNotAllowed"). Pinned in
   `internal/op/getobject_test.go`, `internal/authz/evaluator_test.go` and
   `internal/s3/versionedread_test.go`.
@@ -26112,7 +26112,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_op.cc:10067](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_op.cc#L10067)),
   so it puts no OLH attr back.
 - **rgw-go:** not affected: `SetObjectAttrs` writes and removes no
-  `user.rgw.olh.` attr (`internal/driver/attrs.go`; docs/exclusions.md, "An
+  `user.rgw.olh.` attr (`internal/driver/attrs.go`; docs/differences.md, "An
   attr write leaves the OLH attrs as they are on disk"), pinned by the spec
   "leaves the OLH attrs as they are on disk, so a link applied after the
   read survives the write" in `internal/driver/stat_olh_test.go`. Its S3
@@ -26189,7 +26189,7 @@ Every new entry adds its row to this table, in document order.
   ([XMLFormatter.cc:42-55](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/common/XMLFormatter.cc#L42-L55),
   [XMLFormatter.cc:227-230](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/common/XMLFormatter.cc#L227-L230)).
 - **rgw-go:** differs: its website error page ends at its Content-Length
-  (`writeHTMLError`, `internal/s3/html.go`; `docs/exclusions.md`, "A
+  (`writeHTMLError`, `internal/s3/html.go`; `docs/differences.md`, "A
   website error page ends at its Content-Length").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, Task BC-15, 2026-10-22, porting the website
@@ -26254,7 +26254,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_rest.cc:806-822](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest.cc#L806-L822)).
 - **rgw-go:** differs: it reads the document whole and unconditionally
   (`websiteGet.serveErrorDoc`, `internal/s3/website_serve.go`;
-  `docs/exclusions.md`, "A website error document is read whole and
+  `docs/differences.md`, "A website error document is read whole and
   unconditionally").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, Task BC-15, 2026-10-22, porting
@@ -26335,7 +26335,7 @@ Every new entry adds its row to this table, in document order.
   ([rgw_rest.cc:751-770](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest.cc#L751-L770)).
 - **rgw-go:** differs: a HEAD gets the document's headers alone
   (`websiteGet.serveErrorDoc`, `internal/s3/website_serve.go`;
-  `docs/exclusions.md`, "A website HEAD's error document has no body").
+  `docs/differences.md`, "A website HEAD's error document has no body").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 unit B, Task BC-15, 2026-10-22, porting
   `serve_errordoc`. Derived from the source, not reproduced.
@@ -26405,7 +26405,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: net/http writes its own reason phrase, a website
   error document is served for a 4XX error only, so never under -1, and a
   redirect code below 200 or above 999 is answered 301
-  (`internal/s3/website_serve.go`; `docs/exclusions.md`, "A website error
+  (`internal/s3/website_serve.go`; `docs/differences.md`, "A website error
   document is served for a 4XX error only" and "A website redirect's code
   below 200 or above 999 is answered 301").
 - **Upstream:** pending; prior art not searched.
@@ -26442,7 +26442,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_rest_s3.cc:6433-6439](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L6433-L6439)).
 - **rgw-go:** differs: it serves the error document for 400-499 only
   (`websiteGet.errorHandler`, `internal/s3/website_serve.go`;
-  `docs/exclusions.md`, "A website error document is served for a 4XX
+  `docs/differences.md`, "A website error document is served for a 4XX
   error only").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, Task BC-15's review, 2026-10-22, against
@@ -26476,7 +26476,7 @@ Every new entry adds its row to this table, in document order.
   and the ops log still records `http_ret`
   ([rgw_log.cc:672-678](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_log.cc#L672-L678)).
 - **rgw-go:** differs: it logs the status it sent (`op.LogUsage`,
-  `internal/op/usagelog.go`; `docs/exclusions.md`, "A website error
+  `internal/op/usagelog.go`; `docs/differences.md`, "A website error
   document's request is logged under the error's status").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, Task BC-15's review, 2026-10-22, reading
@@ -26642,7 +26642,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** has no radosgw-admin; it checks devices the operator's
   radosgw-admin resynced. On such a device it meets the class's refusals,
   and its own one-time rule refuses the codes found behind there as well
-  (`docs/exclusions.md`, "An MFA code the device may have accepted before
+  (`docs/differences.md`, "An MFA code the device may have accepted before
   does not verify", which also states what resync cures).
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task V13c's fix-round re-review, 2026-10-22, modelling
@@ -26717,7 +26717,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.7 and v20.2.4.
 - **rgw-go:** encodes each element as S3 does and writes ListMultipartUploads'
   `EncodingType` (`internal/s3/listobjects.go`, `internal/s3/multipart.go`;
-  `docs/exclusions.md`, "ListObjectVersions URL-encodes KeyMarker, Prefix
+  `docs/differences.md`, "ListObjectVersions URL-encodes KeyMarker, Prefix
   and Delimiter" and "ListObjects, ListObjectsV2 and ListMultipartUploads
   URL-encode the elements S3 encodes"). ListObjects' `Prefix`, which
   botocore never decodes, is written as sent, as radosgw writes it.
@@ -26825,7 +26825,7 @@ Every new entry adds its row to this table, in document order.
   the window.
 - **rgw-go:** reads the claim back once the shard is locked again and
   records nothing over a claim no longer its own (`lcWorker.claimHeld` and
-  `lcShard.process`, `internal/driver/lc_worker.go`; docs/exclusions.md,
+  `lcShard.process`, `internal/driver/lc_worker.go`; docs/differences.md,
   "rgw-go's lifecycle worker departs from radosgw's shard protocol in
   three places").
 - **Upstream:** pending; prior art not searched.
@@ -26902,7 +26902,7 @@ Every new entry adds its row to this table, in document order.
   between a claim and its first read back, records it failed on a context
   of its own: the relock, the read back and the write bounded at 5 s, then
   the unlock on a second 5 s, so the bucket is due again at the next pass
-  (`lcShard.recordStop`; docs/exclusions.md, "rgw-go's lifecycle worker
+  (`lcShard.recordStop`; docs/differences.md, "rgw-go's lifecycle worker
   departs from radosgw's shard protocol in three places"). goceph's
   callback and pipe completion modes stop waiting for each of those ops at
   its bound; its sync mode waits for the OSD, and in every mode the RADOS
@@ -26938,7 +26938,7 @@ Every new entry adds its row to this table, in document order.
   ([rgw_lc.cc:1953-1956](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_lc.cc#L1953-L1956),
   [rgw_lc.cc:2528-2530](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_lc.cc#L2528-L2530)).
 - **rgw-go:** treats such a key as naming no bucket and removes its entry
-  (`lcLoadBucket`, `internal/driver/lc_worker.go`; docs/exclusions.md, "A
+  (`lcLoadBucket`, `internal/driver/lc_worker.go`; docs/differences.md, "A
   bucket delete removes the lifecycle entry once the bucket is gone").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task C9's review, 2026-10-22. Derived from the
@@ -27000,7 +27000,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.7 and v20.2.4.
 - **rgw-go:** differs: it resolves `null` in `read_key_entry`'s order
   (`getInstanceEntry`, `internal/driver/olh_index.go`; `removeVersion`,
-  `internal/driver/delete_versioned.go`; `docs/exclusions.md`, "A versioned
+  `internal/driver/delete_versioned.go`; `docs/differences.md`, "A versioned
   delete of versionId=null checks the null version itself").
 - **Upstream:** pending; prior art not searched.
 - **Found:** the phase 2 versioning plan's review, finding F4, as the plan's
@@ -27069,7 +27069,7 @@ Every new entry adds its row to this table, in document order.
   the write tag its caller read, and a delete marker its index entry's
   tag, checked before the unlink; a head is checked again by the delete's
   own replay, whose refusal lists the version again and answers
-  ConcurrentModification (`docs/exclusions.md`, "A refused
+  ConcurrentModification (`docs/differences.md`, "A refused
   versioned removal re-links the version, unless a newer null write owns
   the null key"); a replay by another reader alongside it still removes
   the version, as radosgw's does. Its lifecycle expires the current
@@ -27080,7 +27080,7 @@ Every new entry adds its row to this table, in document order.
   while it is the one listed, the null version judged by its index entry,
   with the listed ETag and mtime as conditions on that entry and the state
   its read again returned as `Expect` (`lcBucket.removeVersion`;
-  `docs/exclusions.md`, "Lifecycle removes an object only as it was
+  `docs/differences.md`, "Lifecycle removes an object only as it was
   listed"). "keeps a null version written after the listing, where
   radosgw's removal of a named version takes no condition"
   (`internal/driver/lc_bucket_test.go`) pins it.
@@ -27132,7 +27132,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** checks a versioned write's conditions against the version
   current on the key's OLH on both releases, as v19.2.7 and v20.2.4 do
   (`condState`, `internal/driver/put_versioned.go`), so this is no
-  difference from either floor (`docs/exclusions.md`, "A conditional write
+  difference from either floor (`docs/differences.md`, "A conditional write
   to a versioned bucket commits only if its condition held when it linked").
 - **Upstream:** issues pending; prior art not searched. Fixed by
   [ceph/ceph#63348](https://github.com/ceph/ceph/pull/63348), with
@@ -27244,7 +27244,7 @@ Every new entry adds its row to this table, in document order.
   it, so two such writes are serialized within the bound; past it, or
   beside a pending attr it does not wait on, both can succeed
   (`writeNullVersion`, `internal/driver/put_versioned.go`). Both are in
-  `docs/exclusions.md`, "A conditional write to a versioned bucket commits
+  `docs/differences.md`, "A conditional write to a versioned bucket commits
   only if its condition held when it linked". Pinned in
   `internal/driver/put_versioned_test.go` and
   `internal/driver/olh_cond_test.go`, against a radosgw-shaped writer too,
@@ -27318,9 +27318,9 @@ Every new entry adds its row to this table, in document order.
   two conditional null writes within the wait's bound only: past it, or
   beside a pending attr the write does not wait on, both can answer 200,
   where v19.2.7 and v20.2.4 answer the second 412, their check reading the
-  head the first wrote, and the guarantee of `docs/exclusions.md`, "A
+  head the first wrote, and the guarantee of `docs/differences.md`, "A
   conditional write to a versioned bucket commits only if its condition held
-  when it linked", does not hold there (`docs/exclusions.md`, "A suspended
+  when it linked", does not hold there (`docs/differences.md`, "A suspended
   bucket's conditional write is checked against the current version").
   Pinned in `internal/driver/put_versioned_test.go`, and by the s3-test,
   whose body rgw-go passes on both releases.
@@ -27360,7 +27360,7 @@ Every new entry adds its row to this table, in document order.
     ([rgw_putobj_processor.cc:184-229](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L184-L229) at v19.2.7,
     [rgw_putobj_processor.cc:212-257](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L212-L257) at v20.2.4).
   - Nothing removes the version: `set_olh` cancels its pending modification
-    and leaves the head and its instance entry (`docs/exclusions.md`,
+    and leaves the head and its instance entry (`docs/differences.md`,
     "rgw-go removes the instance a failed versioned write made").
   - `copy_obj_data`, the copy that streams its source, completes through
     the same processor
@@ -27422,11 +27422,11 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: once a versioned write's head is written its tails
   stay whatever its completion or its link answers, and a removal of the
   version sends them to the GC (`putStream`, `internal/driver/put.go`;
-  `docs/exclusions.md`, "A versioned write whose link fails keeps its
+  `docs/differences.md`, "A versioned write whose link fails keeps its
   tails"). Pinned in `internal/driver/put_versioned_test.go`. A lifecycle
   transition keeps the version itself too, its head naming the new tails,
   whatever its completion or its link answers (`linkVersion`,
-  `internal/driver/put_versioned.go`; `docs/exclusions.md`, "A lifecycle
+  `internal/driver/put_versioned.go`; `docs/differences.md`, "A lifecycle
   transition whose index completion or link fails keeps the version"),
   which "keeps a version whose transition's index completion or link
   fails" (`internal/driver/lc_transition_test.go`) pins.
@@ -27526,7 +27526,7 @@ Every new entry adds its row to this table, in document order.
   signature compare is v19.1.0 on (the sink's entry).
 - **rgw-go:** not affected. It checks no `x-amz-mfa` for an identity its
   verifier granted on its key's id alone (`verifyMFA`,
-  `internal/s3/request.go`; `docs/exclusions.md`, "A preflight's x-amz-mfa
+  `internal/s3/request.go`; `docs/differences.md`, "A preflight's x-amz-mfa
   is not checked").
 - **Upstream:** pending: sent to rgw-bug-reproduction. Prior art not
   searched. The fix belongs at the sink, where the preflight is granted
@@ -27717,7 +27717,7 @@ Every new entry adds its row to this table, in document order.
   in any request to delete a version or change the versioning state".
   rgw-go counts a verified code only from the bucket's owner: the user that
   owns it, or for a bucket an account owns, the account's root user alone
-  (`op.OwnerMFAVerified`, `internal/op/mfa.go`; `docs/exclusions.md`,
+  (`op.OwnerMFAVerified`, `internal/op/mfa.go`; `docs/differences.md`,
   "Only the bucket owner's x-amz-mfa satisfies MFA delete"). Its
   DeleteObject of a version and its DeleteObjects naming one count the
   verdict the same way (`internal/op/deleteobject.go`,
@@ -27804,7 +27804,7 @@ Every new entry adds its row to this table, in document order.
   read again, whatever the write keeps" and "fails the removal's version
   assert on an attr write after the read again"
   (`internal/driver/lc_bucket_test.go`) pin it
-  (`docs/exclusions.md`, "Lifecycle removes an object only as it was
+  (`docs/differences.md`, "Lifecycle removes an object only as it was
   listed").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task C10a, 2026-10-22, reading both tags. Not
@@ -27880,7 +27880,7 @@ Every new entry adds its row to this table, in document order.
   [rgw.yaml.in:3509-3521](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L3509-L3521)),
   an option rgw-go's cache takes with that default. An object removed in
   the window after versioning is enabled is removed outright, as on
-  radosgw (`docs/exclusions.md`, "Lifecycle stops a bucket's pass when the
+  radosgw (`docs/differences.md`, "Lifecycle stops a bucket's pass when the
   bucket changes under it").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task C10a's security review, 2026-10-22, reading both
@@ -27914,7 +27914,7 @@ Every new entry adds its row to this table, in document order.
     ([rgw_op.cc:6431-6437](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6431-L6437),
     [rgw_op.cc:7242-7248](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7242-L7248)),
     so only the worker's abort escapes it. The bucket delete's
-    `abort_multiparts` calls the abort without it too (`docs/exclusions.md`,
+    `abort_multiparts` calls the abort without it too (`docs/differences.md`,
     "A bucket delete aborts its multipart uploads under their completion
     lock"): the fix belongs in the one sink, the abort taking the lock
     itself, rather than in each caller.
@@ -27934,7 +27934,7 @@ Every new entry adds its row to this table, in document order.
   `internal/driver/lc_actions.go`), so an upload whose completion holds the
   lock is left for a later pass, which "leaves an upload whose completion
   lock another gateway holds for a later pass"
-  (`internal/driver/lc_bucket_test.go`) pins (`docs/exclusions.md`,
+  (`internal/driver/lc_bucket_test.go`) pins (`docs/differences.md`,
   "Lifecycle aborts an expired multipart upload under its completion
   lock").
 - **Upstream:** [#80895](https://tracker.ceph.com/issues/80895), named by the
@@ -28010,7 +28010,7 @@ Every new entry adds its row to this table, in document order.
   are; every ACL grantee is refused with 403 AccessDenied
   (`verifyOwnershipAction`, `internal/op/ownership.go`;
   `authz.Evaluator.VerifyBucketOwnerOrPolicy`, `internal/authz/evaluator.go`;
-  `docs/exclusions.md`, "rgw-go stores and enforces ownership controls a
+  `docs/differences.md`, "rgw-go stores and enforces ownership controls a
   floor radosgw ignores"). The S3 handler does not route the ops yet.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task BC-28c, 2026-10-23, reading v21.1.2's ops beside
@@ -28082,7 +28082,7 @@ Every new entry adds its row to this table, in document order.
   bucket-owner-full-control and bucket-owner-read as that private ACL, as
   Amazon S3 ignores both on a bucket it creates (`enforcedOver`,
   `internal/op/ownership.go`; `op.CreateBucket`, `internal/op/bucketops.go`;
-  `docs/exclusions.md`, "CreateBucket with x-amz-object-ownership is
+  `docs/differences.md`, "CreateBucket with x-amz-object-ownership is
   authorized as s3:PutBucketOwnershipControls too"). The S3 handler does not
   read the header yet.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
@@ -28181,7 +28181,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it in its own replay, which drops a removal
   of the null version that a later link of null data in the same replay
   follows (`applyOLHLog`, `internal/driver/olh_head.go`;
-  `docs/exclusions.md`, "A replay keeps the null data a later null link
+  `docs/differences.md`, "A replay keeps the null data a later null link
   names"). On a mixed fleet radosgw's replay still removes the data
   whenever it is the replay that applies the log, and a replay that runs
   after the PUT's head write but before its link is in the log removes
@@ -28261,13 +28261,13 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** its otp metadata put refuses a window over 1024 steps and a
   step over 3600 seconds, with 400 InvalidArgument before it writes
   (`MaxOTPWindow` and `MaxOTPStepSize`, `internal/op/metadata_otp.go`;
-  `docs/exclusions.md`, "The admin metadata API serves four sections"), so
+  `docs/differences.md`, "The admin metadata API serves four sections"), so
   no rgw-go write stores such a device; a wrong code then costs at most
   2049 codes. A device radosgw wrote with a wider window, or a longer
   step, still reads back, and `(*Store).VerifyMFA` answers it not verified
   without calling the class, so no rgw-go check walks a window over 1024
   steps (`uncheckedOTPDevice`, `internal/driver/mfa.go`;
-  `docs/exclusions.md`, "A stored MFA device outside the otp put's bounds does not verify").
+  `docs/differences.md`, "A stored MFA device outside the otp put's bounds does not verify").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task WP-19's automated security review, 2026-10-23;
   checked at both tags in the task. Derived from the source, not
@@ -28342,12 +28342,12 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** its otp metadata put refuses a device without an id, or
   whose seed is any of the three, with 400 InvalidArgument before it writes
   (`op.EmptyOTPKey` and `op.DecodeOTPDocument`,
-  `internal/op/metadata_otp.go`; `docs/exclusions.md`, "The admin metadata
+  `internal/op/metadata_otp.go`; `docs/differences.md`, "The admin metadata
   API serves four sections"). A device radosgw stored with an empty key
   still reads back, and `(*Store).VerifyMFA` answers it not verified
   without calling the class, as its stored `seed_bin` is empty, so no code
   verifies through rgw-go (`uncheckedOTPDevice`, `internal/driver/mfa.go`;
-  `docs/exclusions.md`, "A stored MFA device outside the otp put's bounds does not verify").
+  `docs/differences.md`, "A stored MFA device outside the otp put's bounds does not verify").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task WP-19, 2026-10-23, comparing the otp put's
   checks with `mfa create`'s at both tags. Derived from the source, not
@@ -28389,7 +28389,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it. A metadata put compares versions and
   mtimes as Squid's `check_versions` does in every section, otp's included,
   on both releases (`PutMetadata`, `internal/op/adminmetadata.go`;
-  `docs/exclusions.md`, "The admin metadata API serves four sections").
+  `docs/differences.md`, "The admin metadata API serves four sections").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task WP-19, 2026-10-23, reading the otp handlers at
   both tags.
@@ -28456,11 +28456,11 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.7 and v20.2.4.
 - **rgw-go:** its otp metadata put refuses a step over 3600 seconds with 400
   InvalidArgument before it writes (`MaxOTPStepSize`,
-  `internal/op/metadata_otp.go`; `docs/exclusions.md`, "The admin metadata
+  `internal/op/metadata_otp.go`; `docs/differences.md`, "The admin metadata
   API serves four sections"), so no rgw-go write stores such a device.
   A device radosgw wrote with such a step still reads back, and
   `(*Store).VerifyMFA` answers it not verified without calling the class
-  (`uncheckedOTPDevice`, `internal/driver/mfa.go`; `docs/exclusions.md`, "A stored MFA device outside the otp put's bounds does not verify").
+  (`uncheckedOTPDevice`, `internal/driver/mfa.go`; `docs/differences.md`, "A stored MFA device outside the otp put's bounds does not verify").
   fakerados's otp class wraps the trim as the class does
   (`otpTrimExpired`, `internal/testutil/fakerados/cls_otp_check.go`; spec
   "keeps no attempt limit for a step longer than the clock's seconds, and
@@ -28529,7 +28529,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: once a versioned copy's head is written its
   references stay whatever its completion or its link answers, and a
   removal of the version queues the tails under the copy's tag, which drops
-  them (`shareTails`, `internal/driver/copy.go`; `docs/exclusions.md`, "A
+  them (`shareTails`, `internal/driver/copy.go`; `docs/differences.md`, "A
   versioned write whose link fails keeps its tails"). Pinned in
   `internal/driver/copy_versioned_test.go`.
 - **Upstream:** pending; prior art not searched.
@@ -28606,13 +28606,13 @@ Every new entry adds its row to this table, in document order.
   index log is a FIFO adds a failed flush of its log entry to the completion's
   failures, as the versioned PutObject entry above records.
 - **rgw-go:** differs: an unversioned head write's index completion is not
-  awaited and fails no write (`docs/exclusions.md`, "A versioned write
+  awaited and fails no write (`docs/differences.md`, "A versioned write
   awaits its index completion"), and a versioned completion whose head
   landed keeps its completion record whatever its completion or its link
   answers, so a retry reads the version the record names, finishing it
   while it carries the recorded tag and refusing with 404 NoSuchUpload once
   a removal took it (`completeLocked` and `replayRecorded`,
-  `internal/driver/mp_complete.go`; `docs/exclusions.md`, "A
+  `internal/driver/mp_complete.go`; `docs/differences.md`, "A
   CompleteMultipartUpload records itself on the meta object before its head
   write"). Pinned in `internal/driver/mp_complete_versioned_test.go`.
 - **Upstream:** pending; prior art not searched.
@@ -28725,7 +28725,7 @@ Every new entry adds its row to this table, in document order.
   source's OLH was followed to is the destination, so this copy takes a
   reference under its tag on each of the version's tails, and writes its
   own tail tag, before the null version names them (`shareTails`,
-  `internal/driver/copy.go`; `docs/exclusions.md`, "A copy onto its own
+  `internal/driver/copy.go`; `docs/differences.md`, "A copy onto its own
   key in a suspended bucket references the current version's tails").
   Pinned in `internal/driver/copy_versioned_test.go`.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
@@ -28780,7 +28780,7 @@ Every new entry adds its row to this table, in document order.
   reads its index shard's OLH log once more, and a delete of its last
   version leaves its OLH head and index entry behind. A conditional write
   through rgw-go to that key waits on the attr up to its wait's bound
-  before it goes on without that guard (`docs/exclusions.md`, "A
+  before it goes on without that guard (`docs/differences.md`, "A
   conditional write to a versioned bucket commits only if its condition
   held when it linked").
 - **Releases:** v19.2.7 and v20.2.4. Narrower on main at 8aa24c51928
@@ -28799,7 +28799,7 @@ Every new entry adds its row to this table, in document order.
   and still carries its head's pending attrs.
 - **rgw-go:** differs: a copy drops every OLH attr of its source, the
   pending ones among them, wherever it goes (`copyAttrs`,
-  `internal/driver/copy.go`; `docs/exclusions.md`, "A copy carries none of
+  `internal/driver/copy.go`; `docs/differences.md`, "A copy carries none of
   its source's OLH attrs"). Pinned in `internal/driver/copy_test.go`. A
   copy radosgw makes still leaves one.
 - **Upstream:** pending; prior art not searched.
@@ -28877,11 +28877,11 @@ Every new entry adds its row to this table, in document order.
   ([rgw_rados.cc:7012-7017](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_rados.cc#L7012-L7017),
   [cls_rgw.cc:2749-2821](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/cls/rgw/cls_rgw.cc#L2749-L2821)).
 - **rgw-go:** differs: a copy drops every OLH attr of its source wherever
-  it goes (`copyAttrs`, `internal/driver/copy.go`; `docs/exclusions.md`, "A
+  it goes (`copyAttrs`, `internal/driver/copy.go`; `docs/differences.md`, "A
   copy carries none of its source's OLH attrs"), and the removal of a
   version's head, and the reset of one a write replaces, remove it whole,
   keeping the OLH attrs only on a key's OLH head (`headKeptAttrs`,
-  `internal/driver/delete.go`; `docs/exclusions.md`, "A version's head is
+  `internal/driver/delete.go`; `docs/differences.md`, "A version's head is
   removed whole"), so a version radosgw's copy made is removed whole too.
   Pinned in `internal/driver/copy_versioned_test.go` and
   `internal/driver/delete_versioned_test.go`.
@@ -28929,7 +28929,7 @@ Every new entry adds its row to this table, in document order.
   the body nor the bypass for a requester its first check refuses, so an
   admin `op.Run` lets through reaches `Execute` with no document and
   answers MalformedXML (`internal/op/objectretention_test.go`). A body
-  error stays an error for an admin on both releases (`docs/exclusions.md`,
+  error stays an error for an admin on both releases (`docs/differences.md`,
   "An admin is served past a failed permission check only on an access
   denial").
 - **Upstream:** pending; prior art not searched.
@@ -29032,7 +29032,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_op.cc:4363-4367](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_op.cc#L4363-L4367)).
 - **rgw-go:** does not reproduce it. Its object-ACL fallback grants WRITE to
   the object's owner alone, through the owner's own grant, and never to the
-  anonymous user (`internal/authz/evaluator.go`; `docs/exclusions.md`, "An
+  anonymous user (`internal/authz/evaluator.go`; `docs/differences.md`, "An
   object ACL's WRITE grant authorizes nothing but its owner's own
   requests"), pinned in `internal/authz/objectwrite_test.go`,
   `internal/op/objectretention_test.go` and `internal/s3/objectattrs_test.go`.
@@ -29118,7 +29118,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not meet it: its replay sends each removal's completion
   and waits for the class's answer before its head op and its trim or
   clear (`indexOp.completeDelSync`, `internal/driver/indexop.go`;
-  `docs/exclusions.md`, "An OLH replay awaits the index completion of each
+  `docs/differences.md`, "An OLH replay awaits the index completion of each
   version it removes"). On a mixed fleet radosgw's replays still can.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V8b's review, 2026-10-23, tracing rgw-go's lost
@@ -29219,7 +29219,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: its purges name an entry listed without an instance
   `null` on a bucket whose flags hold `BUCKET_VERSIONED`, so the delete
   removes the version and writes no marker (`PurgeObjects`,
-  `internal/op/adminpurge.go`; `docs/exclusions.md`, "A purging removal
+  `internal/op/adminpurge.go`; `docs/differences.md`, "A purging removal
   removes a versioned bucket's null version, where radosgw writes a delete
   marker"), as `internal/op/adminpurge_test.go` and
   `internal/op/adminbucket_test.go` pin. Its admin object removal follows
@@ -29306,7 +29306,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: its two writes send the zero mtime, for which the OSD
   keeps the head's stored mtime, a null write's that landed after the read
   included (`keepHeadMtime`, `internal/driver/olh_head.go`;
-  `docs/exclusions.md`, "The removal of an OLH head's pending attrs keeps
+  `docs/differences.md`, "The removal of an OLH head's pending attrs keeps
   the head's mtime"), which "removes a noncurrent delete marker, keeping the
   mtime of the null version whose data the OLH head holds"
   (`internal/driver/delete_versioned_test.go`) and "keeps the mtime of a null
@@ -29325,7 +29325,7 @@ Every new entry adds its row to this table, in document order.
   (`internal/driver/lc_bucket_test.go`) pin. Its transition judges the null
   version so too and rewrites the head at the listed mtime, which puts the
   head's mtime back (`lcBucket.transitionListed`,
-  `internal/driver/lc_transition.go`; `docs/exclusions.md`, "A lifecycle
+  `internal/driver/lc_transition.go`; `docs/differences.md`, "A lifecycle
   transition judges a null version by its index entry"), which "rewrites a
   null version whose OLH head's mtime a radosgw gateway's removal of a
   pending attr moved" (`internal/driver/lc_transition_test.go`) pins.
@@ -29396,7 +29396,7 @@ Every new entry adds its row to this table, in document order.
   `DeleteParams.Expect`, which the delete requires current, by its instance
   and write tag, when the marker links (`lcBucket.markCurrent`,
   `internal/driver/lc_actions.go`; `deleteMarkerCondition`,
-  `internal/driver/delete_versioned.go`; `docs/exclusions.md`, "Lifecycle
+  `internal/driver/delete_versioned.go`; `docs/differences.md`, "Lifecycle
   removes an object only as it was listed"). "writes no delete marker over
   a version put after the listing, where radosgw's marker ignores
   unmod_since" and "writes no delete marker over a null current version
@@ -29483,7 +29483,7 @@ Every new entry adds its row to this table, in document order.
   `internal/driver/list.go`), and its pass drops each entry of the last key
   it handed out that lists at or before the last of that key's versions it
   handed out (`lcVersionPager`, `internal/driver/lc_bucket.go`;
-  `docs/exclusions.md`, "A lifecycle pass hands each version of a key
+  `docs/differences.md`, "A lifecycle pass hands each version of a key
   out once"). "hands each version of a key out once when the null delete
   marker removes the null version that ends a page"
   (`internal/driver/lc_bucket_test.go`) pins it: the pass's own null delete
@@ -29541,7 +29541,7 @@ Every new entry adds its row to this table, in document order.
   instance and list entries are still there, or after the one an earlier
   page resumed after, and only when neither is at the key's first version,
   dropping what it handed out already (`lcVersionPager`,
-  `internal/driver/lc_bucket.go`; `docs/exclusions.md`, "A lifecycle pass
+  `internal/driver/lc_bucket.go`; `docs/differences.md`, "A lifecycle pass
   hands each version of a key out once"). "removes every expired version of
   a key of more than one page, handing each out once", "lists a key again
   from its first version once a page's work removed every version of it the
@@ -29616,7 +29616,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.7 and v20.2.4.
 - **rgw-go:** differs: it lays the object out before anything is sent and
   answers a failure as the request's error (`op.GetObjectLayout`,
-  `internal/op/layout.go`; `docs/exclusions.md`, "`?layout` answers a
+  `internal/op/layout.go`; `docs/differences.md`, "`?layout` answers a
   layout that fails with its error"). "answers a layout that fails as its
   error, sending nothing of the document" (`internal/s3/layout_test.go`)
   pins it.
@@ -29747,7 +29747,7 @@ Every new entry adds its row to this table, in document order.
   the read's error, an empty head with 404 NoSuchUpload, and an info that
   does not decode with 500 UnknownError (`readMeta`,
   `internal/driver/mp_layout.go`; `completeLocked`,
-  `internal/driver/mp_complete.go`; `docs/exclusions.md`,
+  `internal/driver/mp_complete.go`; `docs/differences.md`,
   "CompleteMultipartUpload checks the part heads and keeps the parts until
   its head is written"). "refuses a completion whose upload info does not
   decode, where radosgw completes it without the upload's lock"
@@ -29859,7 +29859,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_http_client.h:75](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_http_client.h#L75),
   [rgw_http_client.cc:608](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_http_client.cc#L608)).
 - **rgw-go:** masks them (exclusion: "The zone config getter masks a sync
-  zone's endpoint credentials", `docs/exclusions.md`), since compatibility
+  zone's endpoint credentials", `docs/differences.md`), since compatibility
   does not mean reproducing radosgw's defects (spec §8).
   `GET /admin/config?type=zone` dumps the zone through `meta.MaskZoneSecrets`
   (`getZoneConfig`, `internal/admin/info.go`; `internal/meta/dump_zone.go`),
@@ -29927,7 +29927,7 @@ Every new entry adds its row to this table, in document order.
   `null` for a null version on a bucket whose versioning was ever enabled
   and neither on a bucket never versioned (`setVersionHeaders`,
   `internal/s3/putobject.go`; `ResponseVersionID`,
-  `internal/op/version.go`; `docs/exclusions.md`, "Writes name the null
+  `internal/op/version.go`; `docs/differences.md`, "Writes name the null
   version's id and a copy's two versions"). Pinned in
   `internal/s3/versionedwrite_test.go`, and by the s3-test, whose body
   rgw-go passes on both releases.
@@ -29980,7 +29980,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: PutObject and CompleteMultipartUpload send
   `x-amz-version-id: null` for the null version on a bucket whose
   versioning was ever enabled, and none on a bucket never versioned
-  (`ResponseVersionID`, `internal/op/version.go`; `docs/exclusions.md`,
+  (`ResponseVersionID`, `internal/op/version.go`; `docs/differences.md`,
   "Writes name the null version's id and a copy's two versions"). Pinned in
   `internal/s3/versionedwrite_test.go`, and by the s3-test, whose body
   rgw-go passes on both releases.
@@ -30058,7 +30058,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: its three writes send the zero mtime, for which the
   OSD keeps the head's stored mtime, a null write's that landed after the
   read included (`keepHeadMtime`, `internal/driver/olh_head.go`;
-  `docs/exclusions.md`, "The OLH init, replay and repair keep the head's
+  `docs/differences.md`, "The OLH init, replay and repair keep the head's
   mtime as it is when they land"), which "keeps the mtime of a write
   landing between its read and the init", "keeps the mtime of a null write
   landing between its read and the head op" and "keeps the mtime of a null
@@ -30105,7 +30105,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.7; v20.2.4 has the header.
 - **rgw-go:** differs on Squid: it sends the header on both releases
   wherever Tentacle does (`setMissingDeleteMarker`,
-  `internal/s3/deletemarker.go`; `docs/exclusions.md`, "A key whose current
+  `internal/s3/deletemarker.go`; `docs/differences.md`, "A key whose current
   version is a delete marker answers its 404 with x-amz-delete-marker: true
   on Squid too"). Pinned in `internal/s3/versionedread_test.go`.
 - **Upstream:** pending; prior art not searched.
@@ -30168,7 +30168,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: GET, HEAD and GetObjectAttributes name the null
   version `null` on a bucket whose versioning was ever enabled, and a
   `partNumber` read names the object's version (`readVersionID`,
-  `internal/op/getobject.go`; `docs/exclusions.md`, "GET, HEAD and
+  `internal/op/getobject.go`; `docs/differences.md`, "GET, HEAD and
   GetObjectAttributes name the version they read, null for the null
   version"). Pinned in `internal/op/getobject_test.go` and
   `internal/s3/versionedread_test.go`.
@@ -30271,7 +30271,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: DeleteObjectTagging removes the tags of the version
   its read resolved, the current one when none is named, and touches
   neither the OLH head nor the null version's index entry
-  (`DeleteObjectTagging`, `internal/op/objectattrs.go`; `docs/exclusions.md`,
+  (`DeleteObjectTagging`, `internal/op/objectattrs.go`; `docs/differences.md`,
   "DeleteObjectTagging naming no version removes the current version's
   tags"). Pinned in `internal/op/objectattrs_test.go` and
   `internal/s3/versionedread_test.go`. A bucket radosgw served keeps any
@@ -30325,7 +30325,7 @@ Every new entry adds its row to this table, in document order.
   of rgw-go's own, to a requester allowed `s3:GetObjectVersion` on the
   source's version, ahead of the missing source's rule; any other requester
   keeps radosgw's 404 or 403 (`copySourceMarker`,
-  `internal/op/deletemarker.go`; `docs/exclusions.md`, "A copy source naming
+  `internal/op/deletemarker.go`; `docs/differences.md`, "A copy source naming
   a delete marker's version answers 400 InvalidRequest"). Pinned in
   `internal/op/copyobject_test.go` and `internal/s3/versionedread_test.go`.
 - **Upstream:** pending; prior art not searched.
@@ -30401,10 +30401,10 @@ Every new entry adds its row to this table, in document order.
   v19.2.7 alone. What `radosgw-admin bucket check` makes of the list entry
   was not traced.
 - **rgw-go:** differs: its versioned write awaits the completion
-  (`docs/exclusions.md`, "A versioned write awaits its index completion"),
+  (`docs/differences.md`, "A versioned write awaits its index completion"),
   cancels the prepare on an answer that proves the completion did not
   land, and removes the version, or keeps it for a lifecycle transition
-  (`linkVersion`, `internal/driver/put_versioned.go`; `docs/exclusions.md`,
+  (`linkVersion`, `internal/driver/put_versioned.go`; `docs/differences.md`,
   "A lifecycle transition whose index completion or link fails keeps the
   version"), which "cancels its index prepare
   when its completion fails with a definite answer, so the version's
@@ -30574,7 +30574,7 @@ Every new entry adds its row to this table, in document order.
   that read returned, compared by its write tag, or by its manifest for a
   head without one, whatever the key (`lcBucket.transition`,
   `internal/driver/lc_transition.go`; `copyData` with raw set,
-  `internal/driver/copy.go`; `docs/exclusions.md`, "A lifecycle transition
+  `internal/driver/copy.go`; `docs/differences.md`, "A lifecycle transition
   lands only on the version it read"). That compare is on the head as read
   before the copy, so a null write made during the copy fails the rewrite
   too, and a rewrite that fails is logged as not done, with no
@@ -30667,7 +30667,7 @@ Every new entry adds its row to this table, in document order.
   transition still does.
 - **rgw-go:** not affected: its transition writes none of the OLH attrs it
   read, and its head write's reset keeps those on disk (`transitionAttrs`,
-  `internal/driver/lc_transition.go`; `docs/exclusions.md`, "A lifecycle
+  `internal/driver/lc_transition.go`; `docs/differences.md`, "A lifecycle
   transition writes none of the OLH attrs it read"), which "rewrites the
   null version's data in its key's OLH head without writing back the OLH
   attrs it read, so a link landing during the rewrite stands"
@@ -30813,7 +30813,7 @@ Every new entry adds its row to this table, in document order.
   when the OLH entry names it once the link has landed and its entry is not
   current, as another version's removal before the link leaves it
   (`transitionEpoch` and `keepCurrent`, `internal/driver/lc_transition.go`;
-  `docs/exclusions.md`, "A lifecycle transition keeps the current version
+  `docs/differences.md`, "A lifecycle transition keeps the current version
   current"). "keeps the current version current once a noncurrent
   version's removal raised its OLH entry's epoch", "lists the current
   version current again when another version's removal lands between its
@@ -30885,7 +30885,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: its transition keeps the version's lock state
   exactly, an existing retention or legal hold kept and no default added
   (`headWrite.keepLock`, `internal/driver/headwrite.go`; `copyData`,
-  `internal/driver/copy.go`; `docs/exclusions.md`, "A lifecycle
+  `internal/driver/copy.go`; `docs/differences.md`, "A lifecycle
   transition adds no default retention"). "keeps an object's own retention
   and legal hold, and adds no default retention to one without"
   (`internal/driver/lc_transition_test.go`) pins it.
@@ -31106,7 +31106,7 @@ Every new entry adds its row to this table, in document order.
   POST policy
   holding one is 400 InvalidArgument, "Malformed JSON", and a pre-v12
   zone's tier config value holding one fails the zone's decode
-  (docs/exclusions.md, "A POST policy with a `\x` or `\X` escape, a number
+  (docs/differences.md, "A POST policy with a `\x` or `\X` escape, a number
   json_spirit takes from the host's libm, or nesting past 10000 is
   refused" and "A pre-v12 zone whose old tier config holds a value
   json_spirit reads past what rgw-go transcribes does not decode"). It
@@ -31191,7 +31191,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** matches. `internal/jsonspirit`'s unescaping transcribes the
   `\u` and `\x` cases with json_spirit's bounds, so it reads such a
   string as radosgw does, under either `char` signedness; a `\x` or `\X`
-  the lexer takes stays refused (docs/exclusions.md, "A POST policy with
+  the lexer takes stays refused (docs/differences.md, "A POST policy with
   a `\x` or `\X` escape, a number json_spirit takes from the host's libm,
   or nesting past 10000 is refused" and "A pre-v12 zone whose old tier
   config holds a value json_spirit reads past what rgw-go transcribes does
@@ -31259,7 +31259,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** does not reproduce it: its DeleteObject makes the MFA check
   after any refusal its admin override would pass, and the override passes
   an access denial alone, on both releases (`op.DeleteObject`'s
-  VerifyPermission, `internal/op/deleteobject.go`; `docs/exclusions.md`,
+  VerifyPermission, `internal/op/deleteobject.go`; `docs/differences.md`,
   "Only the bucket owner's x-amz-mfa satisfies MFA delete" and "An admin is
   served past a failed permission check only on an access denial").
 - **Upstream:** pending; prior art not searched.
@@ -31941,7 +31941,7 @@ Every new entry adds its row to this table, in document order.
   set, and none is by default (`internal/s3/requestattrs.go:257-276`). Its
   frontend takes beast's 16384-byte header limit
   (`internal/frontend/spec.go:23`), which net/http enforces with 4096 bytes
-  of slack (`docs/exclusions.md`, "Header limit and malformed requests"), so
+  of slack (`docs/differences.md`, "Header limit and malformed requests"), so
   about 200 more headers fit; and its in-flight byte limit weighs these
   steps as librados budgets them, by their names' and values' bytes rather
   than the buffers they hold (`internal/radosclient/goceph/limiter.go:148-267`).

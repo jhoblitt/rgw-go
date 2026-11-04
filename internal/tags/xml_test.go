@@ -163,7 +163,7 @@ var _ = Describe("ParseXML", func() {
 		Entry("a DOCTYPE after the root", "<Tagging><TagSet/></Tagging><!DOCTYPE Tagging>"),
 		Entry("an empty CDATA section after the root", "<Tagging><TagSet/></Tagging><![CDATA[]]>"),
 	)
-	DescribeTable("reads some bodies otherwise than expat, as docs/exclusions.md records",
+	DescribeTable("reads some bodies otherwise than expat, as docs/differences.md records",
 		func(doc []byte, refused bool) {
 			s, err := tags.ParseXML(doc, tags.MaxObjectTags)
 			if refused {
