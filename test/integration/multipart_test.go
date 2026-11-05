@@ -6,9 +6,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5" //nolint:gosec // radosgw's ETag is an MD5, not a security control
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"hash/crc32"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -619,15 +622,12 @@ var _ = Describe("the multipart oracle against radosgw and radosgw-admin", Order
 		if release >= denc.Tentacle {
 			// An upload a Tentacle radosgw began with a checksum algorithm
 			// keeps it through rgw-go, whose completion combines the parts'
-			// checksums into the object's as radosgw's does
-			// (docs/differences.md, "Client checksums are ignored until phase
-			// 2" and "A multipart upload's combined CRC follows its checksum
-			// type"), so the object's record is the one radosgw stores when it
-			// completes a twin of the same parts itself. rgw-go's S3 handler
-			// renders no checksum: ListParts shows no part's ("Stored
-			// checksums are not shown"), and the completion's response none
-			// ("A first CompleteMultipartUpload shows no checksum in its
-			// response").
+			// checksums into the object's as radosgw's does, answers it and
+			// stores it, where radosgw reads it back (docs/differences.md,
+			// "Multipart uploads in flight are shared" and "A multipart
+			// upload's combined CRC follows its checksum type"), so the
+			// object's record is the one radosgw stores when it completes a
+			// twin of the same parts itself.
 			const ckey, twinKey = "k2-crc32", "k2-crc32-radosgw"
 			cbodies := [][]byte{randBytes(5 * mib), randBytes(1 * mib)}
 			crc32Upload := func(key string) (string, []s3types.CompletedPart) {
@@ -652,22 +652,39 @@ var _ = Describe("the multipart oracle against radosgw and radosgw-admin", Order
 			cid, cparts := crc32Upload(ckey)
 			status, body := rawRequest(ctx, rgwgo.url, http.MethodGet, "/"+mpBucket+"/"+ckey+"?uploadId="+cid)
 			Expect(status).To(Equal(http.StatusOK), "%s", body)
-			Expect(string(body)).NotTo(ContainSubstring("<Checksum"), "rgw-go's ListParts of a CRC32 upload")
+			Expect(string(body)).NotTo(ContainSubstring("<Checksum"),
+				"rgw-go's ListParts of a CRC32 upload renders no checksum yet (docs/differences.md, \"Stored checksums are not shown\")")
 			Expect(metaInfo(ctx, metaOID(rec, ckey, cid)).CksumType).NotTo(BeZero(), "the checksum type radosgw stored with the upload")
 			cout, err := completeUpload(ctx, viaGo, ckey, cid, cparts)
 			Expect(err).NotTo(HaveOccurred(), "CompleteMultipartUpload of a CRC32 upload through rgw-go")
 			cetag := mpETag(cbodies...)
 			Expect(aws.ToString(cout.ETag)).To(Equal(`"`+cetag+`"`), "%s's completed ETag", ckey)
+			// A CRC32 upload created without x-amz-checksum-type combines
+			// into the full-object CRC32 of the parts' bytes.
+			want := base64.StdEncoding.EncodeToString(binary.BigEndian.AppendUint32(nil, crc32.ChecksumIEEE(slices.Concat(cbodies...))))
 			Expect(cout).To(And(
-				HaveField("ChecksumCRC32", BeNil()), HaveField("ChecksumCRC32C", BeNil()), HaveField("ChecksumCRC64NVME", BeNil()),
-				HaveField("ChecksumSHA1", BeNil()), HaveField("ChecksumSHA256", BeNil()), HaveField("ChecksumType", BeEmpty()),
-			), "rgw-go's completion of a CRC32 upload carries no checksum")
+				HaveField("ChecksumCRC32", HaveValue(Equal(want))), HaveField("ChecksumType", Equal(s3types.ChecksumTypeFullObject)),
+				HaveField("ChecksumCRC32C", BeNil()), HaveField("ChecksumCRC64NVME", BeNil()),
+				HaveField("ChecksumSHA1", BeNil()), HaveField("ChecksumSHA256", BeNil()),
+			), "rgw-go's completion of a CRC32 upload")
 			expectRadosgwReads(ctx, ckey, cetag, slices.Concat(cbodies...))
+			stored := headCksum(ctx, rec, ckey)
+			Expect(stored).To(And(
+				HaveField("Type", cksum.CRC32), HaveField("Flags", cksum.FlagV2|cksum.FlagCombined|cksum.FlagFullObject),
+				WithTransform(cksum.Cksum.Armor, Equal(want)),
+			), "the completed object's user.rgw.cksum")
+			head, err := viaRGW.HeadObject(ctx, &awss3.HeadObjectInput{
+				Bucket: aws.String(mpBucket), Key: aws.String(ckey), ChecksumMode: s3types.ChecksumModeEnabled,
+			})
+			Expect(err).NotTo(HaveOccurred(), "a checksum-mode HEAD of %s through radosgw", ckey)
+			Expect(head).To(And(
+				HaveField("ChecksumCRC32", HaveValue(Equal(want))), HaveField("ChecksumType", Equal(s3types.ChecksumTypeFullObject)),
+			), "radosgw's checksum-mode HEAD of the object rgw-go completed")
 			tid, tparts := crc32Upload(twinKey)
 			mustComplete(ctx, viaRGW, twinKey, tid, tparts, cbodies...)
 			theirs := headCksum(ctx, rec, twinKey)
 			Expect(theirs.Type).To(Equal(cksum.CRC32), "the checksum type of radosgw's completion")
-			Expect(headCksum(ctx, rec, ckey)).To(Equal(theirs), "rgw-go's completed checksum record against radosgw's of the same parts")
+			Expect(stored).To(Equal(theirs), "rgw-go's completed checksum record against radosgw's of the same parts")
 			expectBucketCheckClean(ctx, mpBucket)
 		}
 	})

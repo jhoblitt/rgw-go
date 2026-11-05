@@ -15723,8 +15723,7 @@ Every new entry adds its row to this table, in document order.
   (`internal/cksum/record.go`). It writes nothing radosgw would not, so
   there is no exclusion. Its write ops also refuse a request naming MD5,
   XXHASH64 or XXHASH128, the types main stores at 8aa24c51928 as 9 to 11, with
-  400 InvalidArgument before the body, once the S3 handler hands them the
-  checksum headers (`internal/op/checksumreq.go`;
+  400 InvalidArgument before the body (`internal/op/checksumreq.go`;
   `docs/differences.md`, "A checksum algorithm rgw-go does not compute is
   refused at write").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
@@ -21677,10 +21676,8 @@ Every new entry adds its row to this table, in document order.
   verifies such a value.
 - **Releases:** v20.2.4. Fixed on main 8aa24c51928 and from v21.0.0.
   v19.2.7 has no checksum code.
-- **rgw-go:** differs in its op layer, which the S3 handler does not reach
-  yet (`docs/differences.md`, "Client checksums are ignored until phase
-  2"). It takes the algorithm from the one value header or checksum
-  trailer and verifies the value, and refuses two values, or one of
+- **rgw-go:** differs. It takes the algorithm from the one value header or
+  checksum trailer and verifies the value, and refuses two values, or one of
   another algorithm than the algorithm header's, with 400 InvalidRequest
   before the body (`internal/op/checksumreq.go`; `docs/differences.md`, "A
   checksum value without an algorithm header names its algorithm and is
@@ -21737,12 +21734,10 @@ Every new entry adds its row to this table, in document order.
   its own finds the mismatch only after the upload completes.
 - **Releases:** v20.2.4. On main 8aa24c51928, and from v21.0.0, the
   inference reaches it first. v19.2.7 has no checksum code.
-- **rgw-go:** differs in its op layer, which the S3 handler does not reach
-  yet (`docs/differences.md`, "Client checksums are ignored until phase
-  2"). A part's lone value header or checksum trailer names its algorithm,
-  which must be its upload's, and its value is compared for every type
-  rgw-go computes, CRC64NVME included; rgw-go computes no xxh3 and answers
-  a part of an xxh3 upload with 501 NotImplemented
+- **rgw-go:** differs. A part's lone value header or checksum trailer names
+  its algorithm, which must be its upload's, and its value is compared for
+  every type rgw-go computes, CRC64NVME included; rgw-go computes no xxh3
+  and answers a part of an xxh3 upload with 501 NotImplemented
   (`internal/op/checksumreq.go`; `docs/differences.md`, "A checksum value
   without an algorithm header names its algorithm and is verified" and "A
   checksum algorithm rgw-go does not compute is refused at write").
@@ -32215,13 +32210,16 @@ Every new entry adds its row to this table, in document order.
   development tag v22.0.0. v19.2.7 has no checksum code.
 - **rgw-go:** differs. It names the types as Amazon S3 does, and as main
   does at 8aa24c51928 (`internal/cksum/type.go`), and answers a SHA512
-  PutObject, UploadPart or UploadPartCopy with
-  `x-amz-checksum-type: FULL_OBJECT` and `x-amz-checksum-sha512`
-  (`setChecksumHeaders`, `internal/s3/checksum.go`; `docs/differences.md`,
+  PutObject or UploadPart with `x-amz-checksum-type: FULL_OBJECT` and
+  `x-amz-checksum-sha512`, and an UploadPartCopy with `ChecksumSHA512` in
+  `CopyPartResult`, as Amazon S3 does (`setChecksumHeaders` and
+  `copyPartChecksum`, `internal/s3/checksum.go`; `docs/differences.md`,
   "Writes answer a SHA512 checksum under AWS's name"). It computes no
   XXHASH3 ("A checksum algorithm rgw-go does not compute is refused at
-  write"), and its S3 handler renders no stored checksum on a read yet
-  ("Stored checksums are not shown").
+  write"), but answers a completion retried after a Tentacle radosgw
+  completed an xxh3 upload with `ChecksumXXHASH3` (`completeChecksum`,
+  `internal/s3/checksum.go`), and its S3 handler renders no stored
+  checksum on a read yet ("Stored checksums are not shown").
 - **Upstream:** fixed on main by
   [ceph/ceph#71484](https://github.com/ceph/ceph/pull/71484) (ee6894210c6),
   first tagged in the development tag v22.0.0; no tracker issue
@@ -32265,10 +32263,11 @@ Every new entry adds its row to this table, in document order.
   completion reads no part checksum from the document, so the completion
   itself succeeds.
 - **Releases:** v20.2.4 and main 8aa24c51928. v19.2.7 computes none.
-- **rgw-go:** reproduces it: a copied part's checksum is answered in the
-  two headers and `CopyPartResult` carries none (`uploadPart`,
-  `internal/s3/multipart.go`; `setChecksumHeaders`,
-  `internal/s3/checksum.go`), so there is no exclusion.
+- **rgw-go:** differs: it follows Amazon S3, answering a copied part's
+  checksum as `CopyPartResult`'s `Checksum<ALG>` element, with no checksum
+  header (`copyPartChecksum`, `internal/s3/checksum.go`;
+  `docs/differences.md`, "UploadPartCopy and CreateMultipartUpload answer
+  their checksums as Amazon S3 does").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task WP-7, 2026-10-28, checking radosgw's write
   responses against Amazon S3's model. Derived from the source, not
@@ -32308,11 +32307,11 @@ Every new entry adds its row to this table, in document order.
   from the completion. The algorithm on an error answer is harmless.
 - **Releases:** v20.2.4 and main 8aa24c51928. v19.2.7 keeps no upload
   checksum.
-- **rgw-go:** reproduces the missing header, and sends
-  `x-amz-checksum-algorithm` with a created upload alone
-  (`setUploadAlgorithm`, `internal/s3/checksum.go`;
-  `docs/differences.md`, "CreateMultipartUpload answers its checksum
-  algorithm only with the upload").
+- **rgw-go:** differs: it follows Amazon S3, sending `x-amz-checksum-type`,
+  the upload's COMPOSITE or FULL_OBJECT, beside `x-amz-checksum-algorithm`,
+  both with a created upload alone (`setUploadChecksum`,
+  `internal/s3/checksum.go`; `docs/differences.md`, "UploadPartCopy and
+  CreateMultipartUpload answer their checksums as Amazon S3 does").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task WP-7, 2026-10-28, checking radosgw's write
   responses against Amazon S3's model. Derived from the source, not

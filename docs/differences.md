@@ -2350,86 +2350,14 @@ review and verified against the tree.
   (`driver/rados/rgw_obj_manifest.h:303-318` at both tags), differs:
   CompleteMultipartUpload answers 400 InvalidPart for an upload holding
   such a part, which radosgw completes, and leaves the upload in place.
-- **Client checksums are ignored until phase 2.** rgw-go's op layer reads
-  the checksum requests of PutObject, UploadPart, CreateMultipartUpload and
-  CompleteMultipartUpload as the "Object write differences" entries from "A
-  checksum algorithm rgw-go does not compute is refused at write" to
-  "CompleteMultipartUpload reads one checksum header, of any type"
-  describe, and the RADOS driver computes, verifies, stores and combines
-  what the ops ask for, but the S3 handler does not yet hand the ops the
-  checksum headers. So in the binary rgw-go ignores the `x-amz-checksum-*`
-  headers and aws-chunked trailers of PutObject, UploadPart and
-  CompleteMultipartUpload, and `x-amz-checksum-algorithm` on
-  CreateMultipartUpload, on both releases. A Squid radosgw ignores them
-  too, so on Squid nothing differs. A Tentacle radosgw validates a supplied
-  checksum, answering 400 BadDigest on a mismatch, and stores the object's
-  checksum in `user.rgw.cksum` (`rgw_op.cc:4757-4789` for PutObject and
-  UploadPart, `:7295-7341` for CompleteMultipartUpload, at v20.2.4); it
-  also keeps the algorithm CreateMultipartUpload names in the upload's
-  `multipart_upload_info` (`:7006-7010`). On a Tentacle cluster a PutObject
-  through rgw-go, and an upload rgw-go began, therefore carry no
-  `user.rgw.cksum`: GetObjectAttributes and a checksum-mode GET through
-  radosgw show no checksum for them, and rgw-go accepts a checksum that
-  does not match the data. A CopyObject keeps or drops its source's record
-  as radosgw's does, but for a composite one, which a copy that streams
-  drops ("A copy that streams its data drops a composite checksum"). An
-  upload a Tentacle radosgw began with a
-  checksum algorithm keeps it through rgw-go: rgw-go reads the upload's
-  type, computes it over each part it writes, a copied one included, with
-  the upload's flags, and combines the parts' checksums into the object's
-  at completion, so either gateway completes the upload ("Multipart
-  uploads in flight are shared"), though rgw-go verifies no value a part or
-  the completion supplies; an upload of a type rgw-go does not compute is
-  answered 501 ("A checksum algorithm rgw-go does not compute is refused at
-  write"). rgw-go also accepts what a Tentacle radosgw refuses: an
-  `x-amz-checksum-algorithm` or `x-amz-sdk-checksum-algorithm` that names
-  no algorithm it knows, which fails PutObject and UploadPart with EINVAL,
-  400 InvalidArgument (`RGWPutObj_Cksum::Factory`,
-  `rgw_cksum_pipe.cc:40-62`, caught at `rgw_op.cc:4602-4611`), and an
-  `x-amz-checksum-type` that does not suit CreateMultipartUpload's
-  algorithm, which fails it with 400 InvalidRequest
-  (`rgw_rest_s3.cc:4508-4520`, `permitted_cksum_algo_and_type` in
-  `rgw_cksum.h`). CreateMultipartUpload takes an algorithm Tentacle does
-  not know as none, as rgw-go does. Phase 2 adds Tentacle-level
-  checksums.
 - **ListParts lists the parts of an upload whose checksum does not decode,
-  and shows no part's checksum; a retried CompleteMultipartUpload shows no
-  checksum.** Tentacle's ListParts decodes the upload's `user.rgw.cksum`
-  and answers 500 UnknownError, -EIO, when it does not decode
-  (`rgw_op.cc:7617-7630` at v20.2.4); rgw-go reads no checksum there and
-  lists the parts. Tentacle's ListParts also renders each part's checksum
-  of an AWS type from its part record as a `<Checksum*>` element
+  and shows no part's checksum.** Tentacle's ListParts decodes the upload's
+  `user.rgw.cksum` and answers 500 UnknownError, -EIO, when it does not
+  decode (`rgw_op.cc:7617-7630` at v20.2.4); rgw-go reads no checksum there
+  and lists the parts. Tentacle's ListParts also renders each part's
+  checksum of an AWS type from its part record as a `<Checksum*>` element
   ([rgw_rest_s3.cc:4709-4713](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4709-L4713)),
-  which rgw-go does not. A retried CompleteMultipartUpload that a Tentacle
-  radosgw answers 200 from an object it completed with a checksum
-  (`user.rgw.cksum`) carries the `<Checksum*>` and `<ChecksumType>`
-  elements in its response (`rgw_rest_s3.cc:4635-4639`, the checksum
-  decoded at `rgw_op.cc:7474-7501` in `check_previously_completed`, where a
-  decode failure is logged and still answers 200, `:7498-7500`, all at
-  v20.2.4); rgw-go answers the same 200 without them.
-- **A first CompleteMultipartUpload shows no checksum in its response.** A
-  Tentacle radosgw that completes an upload created with a checksum
-  algorithm combines its parts' checksums and renders the result in the
-  response: a `<Checksum*>` element holding the armored checksum, which
-  `armored_cksum` appends `-<parts>` to for a composite
-  ([rgw_op.cc:7145-7151](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7145-L7151)),
-  and `<ChecksumType>`
-  ([rgw_rest_s3.cc:4635-4639](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4635-L4639)).
-  A Squid radosgw's `RGWCompleteMultipart_ObjStore_S3::send_response`
-  renders neither
-  ([rgw_rest_s3.cc:4106-4138](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4106-L4138)).
-  rgw-go's completion of such an upload combines and stores the object's
-  checksum ("Client checksums are ignored until phase 2", "A multipart
-  upload's combined CRC follows its checksum type"), but its S3 handler
-  renders neither element on either release (`internal/s3/multipart.go`),
-  so on Tentacle it hides a checksum radosgw shows; on Squid nothing
-  differs. A retried completion and ListParts hide theirs alike ("ListParts
-  lists the parts of an upload whose checksum does not decode, and shows no
-  part's checksum; a retried CompleteMultipartUpload shows no checksum"),
-  as do the reads ("Stored checksums are not shown"). Phase 2's task WP-7
-  renders the elements
-  (`docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md`, its
-  behaviour 4).
+  which rgw-go does not.
 - **Members of IAM groups are refused until phase 3 evaluates group
   policies.** radosgw loads, with a user's own identity policies, the
   inline and managed policies of every IAM group the user's record lists
@@ -8089,8 +8017,8 @@ does the following.
   (`cksum.DecodeAttr`), and its reads show no checksum of type none, which
   holds no digest. Either way a checksum-mode GET or HEAD, and
   GetObjectAttributes' `Checksum` and parts, show none and the read
-  succeeds; a retried CompleteMultipartUpload reports no checksum for the
-  first. No radosgw writes either form. A Tentacle radosgw's checksum-mode
+  succeeds; a retried CompleteMultipartUpload reports none for either. No
+  radosgw writes either form. A Tentacle radosgw's checksum-mode
   GET or HEAD of an object whose attr has bytes past its record ends the
   radosgw process, as its decode of the whole buffer asserts
   ([encoding.h:632-638](https://github.com/ceph/ceph/blob/v20.2.4/src/include/encoding.h#L632-L638);
@@ -10821,17 +10749,15 @@ does the following.
   aggressive it then does not compress the part's stored bytes again
   ([BlueStore.cc:17267-17272](https://github.com/ceph/ceph/blob/v19.2.7/src/os/bluestore/BlueStore.cc#L17267-L17272),
   [BlueStore.cc:17508-17513](https://github.com/ceph/ceph/blob/v20.2.4/src/os/bluestore/BlueStore.cc#L17508-L17513)).
-- **A checksum algorithm rgw-go does not compute is refused at write.** In
-  the op layer, which the S3 handler does not reach yet ("Client checksums
-  are ignored until phase 2"), rgw-go computes CRC32, CRC32C, CRC64NVME,
-  SHA1, SHA256 and SHA512. A PutObject or UploadPart that names MD5,
-  XXHASH64, XXHASH128, XXHASH3, Tentacle's XXH3 or BLAKE3, in any case, in
-  `x-amz-checksum-algorithm`, `x-amz-sdk-checksum-algorithm`, an
-  `x-amz-checksum-<alg>` header or `x-amz-trailer` answers 400
-  InvalidArgument before its body is read, on both releases, and a
-  CreateMultipartUpload on Tentacle answers the same ("CreateMultipartUpload
-  refuses the checksum algorithms rgw-go does not compute"). MD5, XXHASH64
-  and XXHASH128 are main's types 9 to 11
+- **A checksum algorithm rgw-go does not compute is refused at write.**
+  rgw-go computes CRC32, CRC32C, CRC64NVME, SHA1, SHA256 and SHA512. A
+  PutObject or UploadPart that names MD5, XXHASH64, XXHASH128, XXHASH3,
+  Tentacle's XXH3 or BLAKE3, in any case, in `x-amz-checksum-algorithm`,
+  `x-amz-sdk-checksum-algorithm`, an `x-amz-checksum-<alg>` header or
+  `x-amz-trailer` answers 400 InvalidArgument before its body is read, on
+  both releases, and a CreateMultipartUpload on Tentacle answers the same
+  ("CreateMultipartUpload refuses the checksum algorithms rgw-go does not
+  compute"). MD5, XXHASH64 and XXHASH128 are main's types 9 to 11
   ([rgw_cksum.h:41-56](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_cksum.h#L41-L56)
   at main 8aa24c51928), for which a v20.2.4 radosgw has no id: it indexes its
   nine-entry table with a record's stored type
@@ -10871,17 +10797,16 @@ does the following.
   (`internal/driver/mp_cksum_test.go`). A Squid cluster's uploads have no
   checksum type.
 - **A checksum value without an algorithm header names its algorithm and is
-  verified.** In the op layer, which the S3 handler does not reach yet
-  ("Client checksums are ignored until phase 2"), a PutObject or UploadPart
-  without `x-amz-checksum-algorithm` or `x-amz-sdk-checksum-algorithm`
-  takes its algorithm from its one `x-amz-checksum-<alg>` header, or from
-  the one checksum trailer `x-amz-trailer` lists, and rgw-go verifies the
+  verified.** A PutObject or UploadPart without `x-amz-checksum-algorithm`
+  or `x-amz-sdk-checksum-algorithm` takes its algorithm from its one
+  `x-amz-checksum-<alg>` header, or from the one checksum trailer
+  `x-amz-trailer` lists, and rgw-go verifies the
   value, answering 400 BadDigest when the body's checksum differs, as
   Amazon S3 does, and when a declared trailer brings no value ("A declared
   checksum trailer that brings no value is refused"). A Tentacle radosgw
   builds no checksum filter for such a request, unless it is a part of an
-  upload with a checksum type, so it computes and stores no checksum and
-  never compares the value
+  upload with a checksum type, so it computes, stores and answers no
+  checksum and never compares the value
   ([rgw_cksum_pipe.cc:40-73](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.cc#L40-L73);
   `docs/ceph-upstream-bugs.md`, "[radosgw verifies no checksum value sent
   without an algorithm
@@ -10896,13 +10821,11 @@ does the following.
   ([rgw_cksum_pipe.h:193-211](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L193-L211)).
   Squid's radosgw ignores them all.
 - **An UploadPart naming another algorithm than its upload's is refused.**
-  In the op layer, which the S3 handler does not reach yet ("Client
-  checksums are ignored until phase 2"), on Tentacle, an UploadPart whose
-  algorithm header, value header or checksum trailer names another
-  algorithm than its upload's checksum type answers 400 InvalidRequest
-  before its body is read, and stores no part. A Tentacle radosgw computes
-  an algorithm header's type over such a part, the header winning over the
-  upload's type
+  On Tentacle, an UploadPart whose algorithm header, value header or
+  checksum trailer names another algorithm than its upload's checksum type
+  answers 400 InvalidRequest before its body is read, and stores no part.
+  A Tentacle radosgw computes an algorithm header's type over such a part,
+  the header winning over the upload's type
   ([rgw_cksum_pipe.cc:40-73](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.cc#L40-L73)),
   and then refuses the upload's completion with 400 InvalidRequest
   ([rgw_op.cc:7121-7131](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7121-L7131)),
@@ -10911,28 +10834,36 @@ does the following.
   computes the upload's type, unverified, and ignores the value. A Squid
   upload has no checksum type.
 - **Squid clusters get single-object and part checksums, not an upload's.**
-  In the op layer, which the S3 handler does not reach yet ("Client
-  checksums are ignored until phase 2"), rgw-go reads a PutObject's and an
-  UploadPart's checksum request on a Squid cluster as on Tentacle: it
-  refuses what it cannot compute or verify, verifies a value, answering 400
-  BadDigest when it differs, and stores the checksum in the head's
-  `user.rgw.cksum`, a part head's included. Squid's radosgw has no checksum
-  code, ignores every checksum header and never reads the attr, which is
-  one of its own (spec §8). CreateMultipartUpload's
-  `x-amz-checksum-algorithm`, `x-amz-sdk-checksum-algorithm` and
-  `x-amz-checksum-type` are ignored on Squid, with no error, as Squid's
-  radosgw ignores them, since its `multipart_upload_info` and part record
-  have no field for a checksum
+  rgw-go reads a PutObject's and an UploadPart's checksum request on a
+  Squid cluster as on Tentacle: it refuses what it cannot compute or
+  verify, verifies a value, answering 400 BadDigest when it differs, stores
+  the checksum in the head's `user.rgw.cksum`, a part head's included, and
+  answers it with `x-amz-checksum-type: FULL_OBJECT` and the value header,
+  as a Tentacle radosgw does
+  ([rgw_rest_s3.cc:2914-2917](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2914-L2917)).
+  Squid's radosgw has no checksum code, ignores every checksum header,
+  answers none
+  ([rgw_rest_s3.cc:2738-2791](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2738-L2791))
+  and never reads the attr, which is one of its own (spec §8).
+  CreateMultipartUpload's `x-amz-checksum-algorithm`,
+  `x-amz-sdk-checksum-algorithm` and `x-amz-checksum-type` are ignored on
+  Squid, with no error, as Squid's radosgw ignores them, since its
+  `multipart_upload_info` and part record have no field for a checksum
   ([rgw_common.h:1508-1552](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L1508-L1552),
   [rgw_basic_types.h:253-300](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_basic_types.h#L253-L300)).
   A Squid upload therefore has no checksum type: a part naming no algorithm
   computes none, a part's own checksum carries no upload flags, and a
-  completion ignores a supplied value and stores no combined checksum.
+  completion ignores a supplied value and stores no combined checksum. So
+  on Squid CreateMultipartUpload answers neither `x-amz-checksum-algorithm`
+  nor `x-amz-checksum-type`, an UploadPartCopy no checksum, and a
+  completion, a retried one included, no checksum element, as Squid's
+  radosgw answers none of them
+  ([rgw_rest_s3.cc:4059-4085](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4059-L4085),
+  [rgw_rest_s3.cc:4106-4138](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4106-L4138)).
 - **CreateMultipartUpload refuses the checksum algorithms rgw-go does not
-  compute.** In the op layer, which the S3 handler does not reach yet
-  ("Client checksums are ignored until phase 2"), on Tentacle, a
-  CreateMultipartUpload whose algorithm header names MD5, XXHASH64,
-  XXHASH128, XXHASH3, XXH3 or BLAKE3, in any case, or that carries an
+  compute.** On Tentacle, a CreateMultipartUpload whose algorithm header
+  names MD5, XXHASH64, XXHASH128, XXHASH3, XXH3 or BLAKE3, in any case, or
+  that carries an
   `x-amz-checksum-<alg>` header or an `x-amz-trailer` naming one, answers
   400 InvalidArgument and creates no upload. A Tentacle radosgw reads only
   the algorithm header there, takes a name it does not know, MD5, XXHASH64,
@@ -10965,12 +10896,11 @@ does the following.
   InvalidRequest
   ([rgw_op.cc:7121-7131](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7121-L7131)).
   v19.2.7 computes nothing for a copy part.
-- **A declared checksum trailer that brings no value is refused.** In the
-  op layer, which the S3 handler does not reach yet ("Client checksums are
-  ignored until phase 2"), a PutObject or UploadPart whose checksum value
-  `x-amz-trailer` declares answers 400 BadDigest, storing nothing, when the
-  value does not arrive. rgw-go keeps trailers only for an aws-chunked
-  payload whose `x-amz-content-sha256` ends in `TRAILER` ("aws-chunked
+- **A declared checksum trailer that brings no value is refused.** A
+  PutObject or UploadPart whose checksum value `x-amz-trailer` declares
+  answers 400 BadDigest, storing nothing, when the value does not arrive.
+  rgw-go keeps trailers only for an aws-chunked payload whose
+  `x-amz-content-sha256` ends in `TRAILER` ("aws-chunked
   trailer sections are read line by line"), so every other payload, the
   plain `STREAMING-AWS4-HMAC-SHA256-PAYLOAD` and a single payload among
   them, is refused, and so is a `TRAILER` payload whose section lacks the
@@ -10987,11 +10917,10 @@ does the following.
   Where no value is there, radosgw stores that checksum unverified
   ([rgw_op.cc:4757-4790](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4757-L4790)),
   and with neither an algorithm header nor an upload type it computes none.
-- **CompleteMultipartUpload reads one checksum header, of any type.** In
-  the op layer, which the S3 handler does not reach yet ("Client checksums
-  are ignored until phase 2"), rgw-go takes the value a completion of an
-  upload with a checksum type supplies from its one `x-amz-checksum-<alg>`
-  header, of every type, `crc64nvme` included, and compares it with the
+- **CompleteMultipartUpload reads one checksum header, of any type.**
+  rgw-go takes the value a completion of an upload with a checksum type
+  supplies from its one `x-amz-checksum-<alg>` header, of every type,
+  `crc64nvme` included, and compares it with the
   upload's combined checksum on Tentacle; a value of another type than the
   upload's, `x-amz-checksum-md5` and the other names with no Tentacle type
   among them, is 400 BadDigest, and two such headers are 400
@@ -11051,12 +10980,76 @@ does the following.
     compares a supplied CRC64NVME
     checksum](ceph-upstream-bugs.md#radosgws-completemultipartupload-never-compares-a-supplied-crc64nvme-checksum)").
 
-  The S3 handler does not yet hand the op a completion's checksum header,
-  so in the binary rgw-go compares no supplied value ("Client checksums are
-  ignored until phase 2"); the combination and the order of the faults
-  hold in the binary. A Squid upload has no checksum type, so nothing is
-  combined or compared on Squid ("Squid clusters get single-object and part
-  checksums, not an upload's").
+  A Squid upload has no checksum type, so nothing is combined or compared
+  on Squid ("Squid clusters get single-object and part checksums, not an
+  upload's").
+- **Writes answer a SHA512 checksum under AWS's name.** rgw-go names a
+  checksum type as Amazon S3 does, and as ceph main does at 8aa24c51928:
+  a PutObject or UploadPart whose checksum is SHA512 answers
+  `x-amz-checksum-type: FULL_OBJECT` and `x-amz-checksum-sha512`, and an
+  UploadPartCopy `ChecksumSHA512` in `CopyPartResult`, as it answers every
+  type it computes (`setChecksumHeaders` and `copyPartChecksum`,
+  `internal/s3/checksum.go`).
+  A v20.2.4 radosgw's table counts sha512 as no AWS type
+  ([rgw_cksum.h:88-99](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L88-L99)),
+  and its write responses send the two headers only for an AWS type
+  ([rgw_rest_s3.cc:2914-2917](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2914-L2917),
+  [rgw_rest_s3.cc:2922-2925](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2922-L2925)),
+  so it answers a SHA512 PutObject, part or copied part with neither, and
+  names the type's header `x-rgw-checksum-sha512` where it sends one
+  ([rgw_cksum.h:177-187](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L177-L187);
+  `docs/ceph-upstream-bugs.md`, "[radosgw answers no SHA512 checksum to a
+  write and names it outside AWS's
+  names](ceph-upstream-bugs.md#radosgw-answers-no-sha512-checksum-to-a-write-and-names-it-outside-awss-names)").
+  A completion's `ChecksumSHA512` element is the same on both gateways, as
+  radosgw's element name has no AWS check
+  ([rgw_cksum.h:189-192](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L189-L192)).
+  Its xxh3 element is not: a CompleteMultipartUpload retried after a
+  Tentacle radosgw completed an xxh3 upload, the one completion of such an
+  upload rgw-go answers ("A checksum algorithm rgw-go does not compute is
+  refused at write"), carries `ChecksumXXHASH3`, Amazon S3's name for the
+  type (`completeChecksum`, `internal/s3/checksum.go`), where a v20.2.4
+  radosgw answers `ChecksumXXH3`, the table's `xxh3` upper-cased
+  ([rgw_cksum.h:93](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L93)).
+  Squid's radosgw computes no checksum.
+- **UploadPartCopy and CreateMultipartUpload answer their checksums as
+  Amazon S3 does.** Amazon S3's model gives UploadPartCopy no checksum
+  header and its `CopyPartResult` a `Checksum<ALG>` element for the copied
+  part's checksum, and CreateMultipartUpload both `x-amz-checksum-algorithm`
+  and `x-amz-checksum-type`, COMPOSITE or FULL_OBJECT (botocore 1.43.90's
+  `s3/2006-03-01/service-2.json`, `UploadPartCopyOutput`, `CopyPartResult`
+  and `CreateMultipartUploadOutput`). rgw-go answers so; neither answer
+  touches what is stored:
+  - an UploadPartCopy answers its part's checksum, its upload's type, as
+    `CopyPartResult`'s `Checksum<ALG>` after the ETag, the armor bare, and
+    sends no checksum header (`copyPartChecksum`,
+    `internal/s3/checksum.go`). A Tentacle radosgw sends
+    `x-amz-checksum-type: FULL_OBJECT` and the value header and no element
+    ([rgw_rest_s3.cc:2918-2940](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2918-L2940);
+    `docs/ceph-upstream-bugs.md`, "[radosgw's UploadPartCopy answers the
+    copied part's checksum in headers, not in
+    CopyPartResult](ceph-upstream-bugs.md#radosgws-uploadpartcopy-answers-the-copied-parts-checksum-in-headers-not-in-copypartresult)");
+  - a CreateMultipartUpload of an upload with a checksum type sends
+    `x-amz-checksum-type` beside `x-amz-checksum-algorithm`: COMPOSITE for
+    an upload flagged COMPOSITE and FULL_OBJECT for any other, which is a
+    CRC's that its completion combines into a full-object CRC
+    (`setUploadChecksum`, `internal/s3/checksum.go`). It sends both with a
+    created upload alone. A Tentacle radosgw sends the algorithm alone, and
+    sends it before it looks at the result
+    ([rgw_rest_s3.cc:4526-4543](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4526-L4543)),
+    so once `get_params` has read an algorithm it knows, an error that
+    follows carries it too: the 400 InvalidRequest for a checksum type the
+    algorithm does not permit
+    ([rgw_rest_s3.cc:4507-4521](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4507-L4521)),
+    and each error of `RGWInitMultipart::execute` after `get_params`
+    ([rgw_op.cc:6968-7012](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6968-L7012);
+    `docs/ceph-upstream-bugs.md`, "[radosgw's CreateMultipartUpload answers no
+    x-amz-checksum-type](ceph-upstream-bugs.md#radosgws-createmultipartupload-answers-no-x-amz-checksum-type)").
+
+  On Squid neither answer arises: a Squid upload has no checksum type, so a
+  copied part computes no checksum and a creation answers neither header,
+  as Squid's radosgw answers none ("Squid clusters get single-object and
+  part checksums, not an upload's").
 - **A copy that streams its data drops a composite checksum.** A CopyObject
   under `COPY` keeps its source's `user.rgw.cksum` and one under `REPLACE`
   drops it, as `set_copy_attrs` does
