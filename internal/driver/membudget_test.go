@@ -205,6 +205,12 @@ var _ = Describe("the memory budget", func() {
 		}
 	}
 
+	// deadlockTimeout bounds a spec that would otherwise hang on a deadlock.
+	// It is no measure of speed: under -race and coverage on a 4-vCPU CI
+	// runner the compressing copies take most of 30 s, and a deadlock is
+	// still caught, just later.
+	const deadlockTimeout = 2 * time.Minute
+
 	Describe("cannot deadlock", func() {
 		It("lets PUTs finish whose heads fill the hold class", func(ctx SpecContext) {
 			data := mibPattern(12)
@@ -219,7 +225,7 @@ var _ = Describe("the memory budget", func() {
 				Expect(read(ctx, key("k", i))).To(Equal(data), "object %d", i)
 			}
 			drained()
-		}, SpecTimeout(30*time.Second))
+		}, SpecTimeout(deadlockTimeout))
 
 		It("lets a copy into a compressing class finish whose read side fills the budget before its write side draws", func(ctx SpecContext) {
 			// Half the entropy of random bytes: the stored head holds about
@@ -236,7 +242,7 @@ var _ = Describe("the memory budget", func() {
 			settle(s)
 			Expect(read(ctx, meta.ObjKey{Name: "dst"})).To(Equal(src))
 			drained()
-		}, SpecTimeout(30*time.Second))
+		}, SpecTimeout(deadlockTimeout))
 
 		It("lets part copies finish that decode a compressed source into a compressing class", func(ctx SpecContext) {
 			plain := hexNoise(12 << 20)
@@ -265,7 +271,7 @@ var _ = Describe("the memory budget", func() {
 			Expect(etags).To(HaveEach(Equal(md5hex(plain))))
 			settle(s)
 			drained()
-		}, SpecTimeout(30*time.Second))
+		}, SpecTimeout(deadlockTimeout))
 
 		It("lets GETs finish that each want a window, on a budget of two windows", func(ctx SpecContext) {
 			data := mibPattern(64)
@@ -283,7 +289,7 @@ var _ = Describe("the memory budget", func() {
 			}
 			noErrors(all(fns...))
 			drained()
-		}, SpecTimeout(30*time.Second))
+		}, SpecTimeout(deadlockTimeout))
 
 		It("lets a compressed GET finish whose prefetched head and decoder blocks pass the hold cap together", func(ctx SpecContext) {
 			plain := hexNoise(8 << 20)
@@ -293,7 +299,7 @@ var _ = Describe("the memory budget", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(got).To(Equal(plain))
 			drained()
-		}, SpecTimeout(10*time.Second))
+		}, SpecTimeout(deadlockTimeout))
 
 		It("lets every kind of transfer finish at once on a small budget", func(ctx SpecContext) {
 			small, big, plain := mibPattern(20), mibPattern(40), hexNoise(12<<20)
@@ -336,7 +342,7 @@ var _ = Describe("the memory budget", func() {
 			noErrors(all(fns...))
 			settle(s)
 			drained()
-		}, SpecTimeout(60*time.Second))
+		}, SpecTimeout(deadlockTimeout))
 
 		It("lets transfers finish under an in-flight limiter that runs one op at a time", func(ctx SpecContext) {
 			open(ctx, limitedCluster{Cluster: c, sem: semaphore.NewWeighted(1)})
@@ -359,7 +365,7 @@ var _ = Describe("the memory budget", func() {
 			noErrors(all(fns...))
 			settle(s)
 			drained()
-		}, SpecTimeout(30*time.Second))
+		}, SpecTimeout(deadlockTimeout))
 	})
 
 	Describe("what a request sees", func() {
