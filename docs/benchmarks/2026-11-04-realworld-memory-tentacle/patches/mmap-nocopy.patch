@@ -1,0 +1,238 @@
+THROWAWAY patch from the real-world memory spike of 2026-11-04, variant FMMNC: never merge.
+It applies to 296ad44 (#559) with `patch -p1` or `git apply`.
+mmap.patch (FMM) and nocopy.patch (FNC) together.
+
+--- a/internal/driver/buflist.go
++++ b/internal/driver/buflist.go
+@@ -4,7 +4,10 @@
+ 	"runtime/debug"
+ 	"slices"
+ 	"sync"
++	"sync/atomic"
++	"syscall"
+ 	"time"
++	"unsafe"
+ 	"weak"
+ )
+ 
+@@ -55,6 +58,47 @@
+ 	// arm no trim.
+ 	armed, used, closed bool
+ 	stop                func() bool
++
++	// THROWAWAY (realworld spike, variant FMM): blocks of mmapSize bytes are mmap'd, off the
++	// Go heap; mapped holds them by their first byte, and the counters the bytes mapped and
++	// unmapped.
++	mmapSize               uint64
++	mapped                 map[unsafe.Pointer]struct{}
++	mmapBytes, munmapBytes atomic.Int64
++}
++
++// alloc is a new block of n bytes: mmap'd when n is mmapSize, from the Go heap otherwise or when
++// the mmap fails. THROWAWAY (realworld spike, variant FMM).
++func (l *bufLists) alloc(n uint64) *[]byte {
++	if n == l.mmapSize && n > 0 {
++		b, err := syscall.Mmap(-1, 0, int(n), syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_PRIVATE|syscall.MAP_ANONYMOUS) //nolint:gosec // n is a chunk size
++		if err == nil {
++			l.mu.Lock()
++			if l.mapped == nil {
++				l.mapped = make(map[unsafe.Pointer]struct{})
++			}
++			l.mapped[unsafe.Pointer(unsafe.SliceData(b))] = struct{}{}
++			l.mu.Unlock()
++			l.mmapBytes.Add(int64(n)) //nolint:gosec // n is a chunk size
++			return &b
++		}
++	}
++	return new(make([]byte, n))
++}
++
++// dropLocked lets p go: munmap'd if the list mapped it, left to the GC otherwise, which it
++// reports. THROWAWAY (realworld spike, variant FMM).
++func (l *bufLists) dropLocked(p *[]byte) (heap bool) {
++	b := (*p)[:cap(*p)]
++	key := unsafe.Pointer(unsafe.SliceData(b))
++	if _, ok := l.mapped[key]; !ok {
++		return true
++	}
++	delete(l.mapped, key)
++	if err := syscall.Munmap(b); err == nil {
++		l.munmapBytes.Add(int64(len(b)))
++	}
++	return false
+ }
+ 
+ // bufList is the idle blocks of one size, the last handed back at the end,
+@@ -103,7 +147,7 @@
+ 	}
+ 	l.shedLocked(n)
+ 	l.mu.Unlock()
+-	return new(make([]byte, n))
++	return l.alloc(n)
+ }
+ 
+ // shedLocked drops idle blocks of sizes other than n, oldest first, until
+@@ -126,6 +170,7 @@
+ 		if oldest == nil {
+ 			return
+ 		}
++		l.dropLocked(oldest.blocks[0].p)
+ 		oldest.blocks = slices.Delete(oldest.blocks, 0, 1)
+ 		oldest.lowWater = max(0, oldest.lowWater-1)
+ 		l.idle -= toInt64(size)
+@@ -144,6 +189,7 @@
+ 	// A block the list never lent takes lent below zero, which under an
+ 	// unbounded limit would overflow the headroom and drop every block.
+ 	if w > l.limit-l.idle-max(l.lent, 0) {
++		l.dropLocked(p)
+ 		return
+ 	}
+ 	bl := l.lists[n]
+@@ -165,6 +211,9 @@
+ 	l.mu.Lock()
+ 	defer l.mu.Unlock()
+ 	l.lent -= toInt64(uint64(cap(*p)))
++	// THROWAWAY (realworld spike, variant FMM): a forgotten block may still be written by its
++	// abandoned op, so it is never unmapped: it leaks.
++	delete(l.mapped, unsafe.Pointer(unsafe.SliceData((*p)[:cap(*p)])))
+ }
+ 
+ // touchLocked records a get or put, arming the trim when none is pending.
+@@ -203,9 +252,14 @@
+ 	dropped := false
+ 	for n, bl := range l.lists {
+ 		if k := bl.lowWater - bufTrimFloor; k > 0 {
++			// THROWAWAY (realworld spike, variant FMM): only heap blocks call for FreeOSMemory.
++			for _, b := range bl.blocks[:k] {
++				if l.dropLocked(b.p) {
++					dropped = true
++				}
++			}
+ 			bl.blocks = slices.Delete(bl.blocks, 0, k)
+ 			l.idle -= int64(k) * toInt64(n)
+-			dropped = true
+ 		}
+ 		if len(bl.blocks) == 0 {
+ 			delete(l.lists, n)
+--- a/internal/driver/store.go
++++ b/internal/driver/store.go
+@@ -162,6 +162,8 @@
+ 		mp: mp, lc: newLCIndex(), newTicker: newTimeTicker, mem: mem, bufs: newBufLists(mem.size),
+ 	}
+ 	s.heads = unfollowedHeads{s}
++	// THROWAWAY (realworld spike, variant FMM): the free list maps its chunk-sized blocks.
++	s.bufs.mmapSize = readCfg.chunk
+ 	s.bgAIO = semaphore.NewWeighted(int64(opts.bucketIndexMaxAIO))
+ 	s.w = newWriter(ctx, s, wopts)
+ 	if err := s.gcInitialize(ctx); err != nil {
+--- a/internal/driver/membudget.go
++++ b/internal/driver/membudget.go
+@@ -333,6 +333,9 @@
+ 	// FreeListIdle is the bytes of buffers the free list keeps for reuse, at
+ 	// most Size.
+ 	FreeListIdle int64
++	// FreeListMmap and FreeListMunmap are the bytes the free list has mmap'd and munmap'd.
++	// THROWAWAY (realworld spike, variant FMM).
++	FreeListMmap, FreeListMunmap int64
+ }
+ 
+ func (b *memBudget) stats() MemoryBudgetStats {
+@@ -354,6 +357,7 @@
+ func (s *Store) MemoryBudgetStats() MemoryBudgetStats {
+ 	st := s.mem.stats()
+ 	st.FreeListIdle = s.bufs.idleBytes()
++	st.FreeListMmap, st.FreeListMunmap = s.bufs.mmapBytes.Load(), s.bufs.munmapBytes.Load()
+ 	return st
+ }
+ 
+--- a/internal/metrics/metrics.go
++++ b/internal/metrics/metrics.go
+@@ -223,6 +223,11 @@
+ 	budgetPrefetchSkipped = prometheus.NewDesc("rgw_go_memory_budget_prefetch_skipped_total",
+ 		"Head prefetches refused, a GET's, a copy source's or a versioned key's followed head, because the memory budget's prefetch room was spent or another draw was waiting; the head's bytes are then read with the data.",
+ 		nil, nil)
++	// THROWAWAY (realworld spike, variant FMM).
++	budgetFreeListMmap = prometheus.NewDesc("rgw_go_memory_budget_free_list_mmap_bytes_total",
++		"Bytes the free list has mmap'd for blocks off the Go heap.", nil, nil)
++	budgetFreeListMunmap = prometheus.NewDesc("rgw_go_memory_budget_free_list_munmap_bytes_total",
++		"Bytes the free list has munmap'd.", nil, nil)
+ 	budgetFreeList = prometheus.NewDesc("rgw_go_memory_budget_free_list_bytes",
+ 		"Bytes of buffers of object data the free list keeps idle for reuse, at most the memory budget's total; they are live heap the GC cannot reclaim until the list's idle trim drops them.",
+ 		nil, nil)
+@@ -241,7 +246,7 @@
+ }
+ 
+ func (c *budgetCollector) Describe(ch chan<- *prometheus.Desc) {
+-	for _, d := range []*prometheus.Desc{budgetBytes, budgetHeld, budgetWaiting, budgetWaits, budgetWaited, budgetSlowdowns, budgetPrefetchSkipped, budgetFreeList} {
++	for _, d := range []*prometheus.Desc{budgetBytes, budgetHeld, budgetWaiting, budgetWaits, budgetWaited, budgetSlowdowns, budgetPrefetchSkipped, budgetFreeList, budgetFreeListMmap, budgetFreeListMunmap} {
+ 		ch <- d
+ 	}
+ }
+@@ -276,6 +281,8 @@
+ 	counter(budgetSlowdowns, float64(st.HoldSlowdowns), "hold")
+ 	ch <- prometheus.MustNewConstMetric(budgetPrefetchSkipped, prometheus.CounterValue, float64(st.PrefetchSkipped))
+ 	ch <- prometheus.MustNewConstMetric(budgetFreeList, prometheus.GaugeValue, float64(st.FreeListIdle))
++	ch <- prometheus.MustNewConstMetric(budgetFreeListMmap, prometheus.CounterValue, float64(st.FreeListMmap))
++	ch <- prometheus.MustNewConstMetric(budgetFreeListMunmap, prometheus.CounterValue, float64(st.FreeListMunmap))
+ }
+ 
+ var processThreads = prometheus.NewDesc("rgw_go_process_threads",
+--- a/internal/driver/stat.go
++++ b/internal/driver/stat.go
+@@ -5,8 +5,8 @@
+ 	"errors"
+ 	"fmt"
+ 	"log/slog"
+-	"slices"
+ 	"strings"
++	"sync"
+ 
+ 	"github.com/jhoblitt/rgw-go/internal/cksum"
+ 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
+@@ -291,13 +291,20 @@
+ 	}()
+ 	ver, err := ref.pool.Read(ctx, ref.oid, rop, radosclient.OpFlagNone)
+ 	settled = true
++	headKept := false
+ 	if buf != nil {
+ 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+ 			// An op abandoned to its context may still fill the buffer, so
+ 			// only one that ended goes back to the free list.
+ 			s.bufs.forget(buf)
+ 		} else {
+-			defer s.bufs.put(buf)
++			// THROWAWAY (realworld spike, variant FNC): a buffer the state keeps as its Head
++			// goes back only when the request is done with it, below.
++			defer func() {
++				if !headKept {
++					s.bufs.put(buf)
++				}
++			}()
+ 		}
+ 	}
+ 	st := &op.ObjectState{Bucket: rec, Key: key}
+@@ -319,10 +326,22 @@
+ 	st.Size, st.Mtime = stat.Size, stat.ModTime
+ 	st.Attrs = filterAttrs(xattrs.Xattrs)
+ 	if rd != nil {
+-		st.Head = slices.Clone(rd.Data[:rd.N])
++		// THROWAWAY (realworld spike, variant FNC): no copy. The free-list buffer is the
++		// head; it returns to the list once, when ctx ends or the state is discarded.
++		st.Head = rd.Data[:rd.N]
+ 		kept := min(share, int64(len(st.Head)))
+-		st.HeadRelease = s.mem.prefetchRelease(ctx, kept)
++		budget := s.mem.prefetchRelease(ctx, kept)
+ 		share -= kept
++		headKept = true
++		giveBack := sync.OnceFunc(func() { s.bufs.put(buf) })
++		stop := context.AfterFunc(ctx, giveBack)
++		st.HeadRelease = func() {
++			stop()
++			if budget != nil {
++				budget()
++			}
++			giveBack()
++		}
+ 	}
+ 	if err := decodeState(ctx, st); err != nil {
+ 		dropHead(st)

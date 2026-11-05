@@ -1,0 +1,42 @@
+NAME                                VALUE                                      SOURCE    OVERRIDES                   IGNORES
+admin_socket                        $run_dir/$cluster-$name.$pid.$cctid.asok   default                                      
+auth_client_required                cephx                                      default                                      
+daemonize                           false                                      override                                     
+debug_rgw                           1/5                                        default                                      
+err_to_stderr                       true                                       default                                      
+keyring                             /etc/ceph/keyring-store/keyring            override  default[$rgw_data/keyring]         
+log_stderr_prefix                   debug                                      default                                      
+log_to_file                         true                                       mon       default[false]                     
+log_to_stderr                       true                                       default                                      
+mon_allow_pool_delete               true                                       mon                                          
+mon_allow_pool_size_one             true                                       mon                                          
+mon_cluster_log_file                                                           mon                                          
+mon_cluster_log_to_file             false                                      default                                      
+mon_cluster_log_to_stderr           true                                       default                                      
+mon_data_avail_crit                 0                                          file                                         
+mon_host                            [v2:10.89.0.124:3300,v1:10.89.0.124:6789]  override                                     
+mon_initial_members                 a                                          cmdline                                      
+ms_mon_client_mode                  secure                                     default                                      
+no_config_file                      false                                      override                                     
+objecter_inflight_ops               24576                                      default                                      
+osd_pool_default_size               1                                          file                                         
+rbd_default_features                61                                         default                                      
+rbd_qos_exclude_ops                 0                                          default                                      
+rgw_d3n_l1_local_datacache_enabled  false                                      mon                                          
+rgw_dynamic_resharding              false                                      mon                                          
+rgw_enable_gc_threads               false                                      mon                                          
+rgw_enable_lc_threads               false                                      mon                                          
+rgw_enable_usage_log                true                                       mon                                          
+rgw_frontends                       beast port=80 tcp_nodelay=1                cmdline                                      
+rgw_lc_debug_interval               10                                         mon                                          
+rgw_log_nonexistent_bucket          true                                       mon                                          
+rgw_log_object_name_utc             true                                       mon                                          
+rgw_mime_types_file                 /etc/ceph/rgw/mime.types                   cmdline                                      
+rgw_realm                           ceph-objectstore                           cmdline                                      
+rgw_run_sync_thread                 false                                      mon                                          
+rgw_usage_log_flush_threshold       1                                          mon                                          
+rgw_usage_log_tick_interval         1                                          mon                                          
+rgw_zone                            ceph-objectstore                           cmdline   (mon[ceph-objectstore])            
+rgw_zonegroup                       ceph-objectstore                           cmdline   (mon[ceph-objectstore])            
+setgroup                            ceph                                       cmdline                                      
+setuser                             ceph                                       cmdline                                      

@@ -1,0 +1,2 @@
+rgw {"limits":{"memory":"2Gi"},"requests":{"cpu":"500m","memory":"1Gi"}}
+log-collector {"limits":{"memory":"1Gi"},"requests":{"cpu":"50m","memory":"100Mi"}}

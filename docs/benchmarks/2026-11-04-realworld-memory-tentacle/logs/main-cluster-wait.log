@@ -1,0 +1,12 @@
+==> waiting up to 30m0s for cluster "rgw-go-main" to be ready for clients
+==> not ready: CephCluster has no phase yet; ceph status: error: Internal error occurred: unable to upgrade connection: container not found ("rook-ceph-tools"); object store "ceph-objectstore" has no phase yet
+==> not ready: CephCluster phase is "Progressing", not Ready; ceph status: error: Internal error occurred: unable to upgrade connection: container not found ("rook-ceph-tools"); object store "ceph-objectstore" phase is "Progressing", not Ready
+==> not ready: CephCluster phase is "Progressing", not Ready; no OSDs; no PGs; object store "ceph-objectstore" phase is "Progressing", not Ready
+==> not ready: CephCluster phase is "Progressing", not Ready; OSDs: 0 up and 1 in of 1; no PGs; object store "ceph-objectstore" phase is "Progressing", not Ready
+==> not ready: OSDs: 0 up and 1 in of 1; no PGs; object store "ceph-objectstore" phase is "Progressing", not Ready
+==> not ready: PGs: 9 of 17 active+clean; object store "ceph-objectstore" phase is "Progressing", not Ready
+==> not ready: object store "ceph-objectstore" phase is "Progressing", not Ready
+==> not ready: PGs: 49 of 57 active+clean; object store "ceph-objectstore" phase is "Progressing", not Ready
+==> not ready: PGs: 89 of 185 active+clean; object store "ceph-objectstore": RGW at http://rook-ceph-rgw-ceph-objectstore.rook-ceph.svc:80 did not answer (HTTP 000; command terminated with exit code 7)
+==> not ready: object store "ceph-objectstore": RGW at http://rook-ceph-rgw-ceph-objectstore.rook-ceph.svc:80 did not answer (HTTP 000; command terminated with exit code 7)
+==> cluster "rgw-go-main" is ready for clients after 4m20.2s

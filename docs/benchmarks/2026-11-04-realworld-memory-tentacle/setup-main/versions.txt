@@ -1,0 +1,17 @@
+{
+    "mon": {
+        "ceph version 22.0.0-442-gd7075594 (d70755948de6884af4140268e388ccf95ec3657f) vampire (dev - RelWithDebInfo)": 1
+    },
+    "mgr": {
+        "ceph version 22.0.0-442-gd7075594 (d70755948de6884af4140268e388ccf95ec3657f) vampire (dev - RelWithDebInfo)": 1
+    },
+    "osd": {
+        "ceph version 22.0.0-442-gd7075594 (d70755948de6884af4140268e388ccf95ec3657f) vampire (dev - RelWithDebInfo)": 1
+    },
+    "rgw": {
+        "ceph version 22.0.0-442-gd7075594 (d70755948de6884af4140268e388ccf95ec3657f) vampire (dev - RelWithDebInfo)": 1
+    },
+    "overall": {
+        "ceph version 22.0.0-442-gd7075594 (d70755948de6884af4140268e388ccf95ec3657f) vampire (dev - RelWithDebInfo)": 4
+    }
+}

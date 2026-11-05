@@ -1,0 +1,81 @@
+2026-11-04T16:08:38-07:00 start F1G large 1 (osd used 1333338112) 0.71 1.17 2.40 2/10660 1975417
+TOTAL  10 GiB  6.7 GiB  3.3 GiB   3.3 GiB      32.59
+ceph-objectstore.rgw.buckets.data     9  128  2.0 GiB      530  2.0 GiB  24.57    6.2 GiB
+2026-11-04T16:10:34-07:00 end F1G large 1
+2026-11-04T16:10:35-07:00 start FG50 large 1 (osd used 1351819264) 1.29 1.34 2.31 2/10685 1981401
+TOTAL  10 GiB  6.7 GiB  3.3 GiB   3.3 GiB      32.59
+ceph-objectstore.rgw.buckets.data     9  128  2.0 GiB      530  2.0 GiB  24.57    6.2 GiB
+2026-11-04T16:12:42-07:00 end FG50 large 1
+2026-11-04T16:12:43-07:00 start FNC large 1 (osd used 1351819264) 2.04 1.81 2.38 1/10662 1987458
+TOTAL  10 GiB  6.7 GiB  3.3 GiB   3.3 GiB      32.59
+ceph-objectstore.rgw.buckets.data     9  128  1.9 GiB      498  1.9 GiB  23.42    6.2 GiB
+2026-11-04T16:14:57-07:00 end FNC large 1
+2026-11-04T16:14:58-07:00 start FMM large 1 (osd used 1370300416) 2.04 1.94 2.35 3/10649 1994001
+TOTAL  10 GiB  6.7 GiB  3.3 GiB   3.3 GiB      32.76
+ceph-objectstore.rgw.buckets.data     9  128  1.9 GiB      498  1.9 GiB  23.47    6.2 GiB
+2026-11-04T16:17:12-07:00 end FMM large 1
+2026-11-04T16:17:13-07:00 start FMMNC large 1 (osd used 1370300416) 2.46 2.10 2.35 1/10687 2000263
+TOTAL  10 GiB  6.7 GiB  3.3 GiB   3.3 GiB      32.76
+ceph-objectstore.rgw.buckets.data     9  128  2.0 GiB      530  2.0 GiB  24.62    6.2 GiB
+2026-11-04T16:19:26-07:00 end FMMNC large 1
+2026-11-04T16:19:27-07:00 start FMMNC small 1 (osd used 1370300416) 2.01 2.13 2.33 1/10643 2006532
+TOTAL  10 GiB  8.1 GiB  1.9 GiB   1.9 GiB      19.05
+ceph-objectstore.rgw.buckets.data     9  128   34 MiB       18   34 MiB   0.44    7.6 GiB
+2026-11-04T16:21:50-07:00 end FMMNC small 1
+2026-11-04T16:21:51-07:00 start FMM small 1 (osd used 579018752) 6.80 4.24 3.09 1/10785 2014125
+TOTAL  10 GiB  9.0 GiB  1.0 GiB   1.0 GiB      10.03
+ceph-objectstore.rgw.buckets.data     9  128   64 MiB    7.76k   64 MiB   0.73    8.5 GiB
+2026-11-04T16:24:14-07:00 end FMM small 1
+2026-11-04T16:24:15-07:00 start FNC small 1 (osd used 1114906624) 8.93 6.37 4.06 1/10768 2021931
+TOTAL  10 GiB  8.4 GiB  1.6 GiB   1.6 GiB      16.16
+ceph-objectstore.rgw.buckets.data     9  128   40 MiB    1.64k   40 MiB   0.50    7.9 GiB
+2026-11-04T16:26:07-07:00 end FNC small 1
+2026-11-04T16:26:07-07:00 start FG50 small 1 (osd used 1724653568) 9.42 7.23 4.61 1/10635 2028292
+TOTAL  10 GiB  8.1 GiB  1.9 GiB   1.9 GiB      18.54
+ceph-objectstore.rgw.buckets.data     9  128   39 MiB    1.19k   39 MiB   0.49    7.6 GiB
+2026-11-04T16:27:57-07:00 end FG50 small 1
+2026-11-04T16:27:57-07:00 start F1G small 1 (osd used 1984897024) 8.63 7.55 5.01 2/10649 2033994
+TOTAL  10 GiB  9.0 GiB  1021 MiB  1021 MiB       9.97
+ceph-objectstore.rgw.buckets.data     9  128   57 MiB    5.78k   57 MiB   0.65    8.5 GiB
+2026-11-04T16:29:49-07:00 end F1G small 1
+2026-11-04T16:29:50-07:00 start FMMNC large 2 (osd used 1114054656) 6.67 7.13 5.14 2/10786 2039682
+TOTAL  10 GiB  7.0 GiB  3.0 GiB   3.0 GiB      30.38
+ceph-objectstore.rgw.buckets.data     9  128  2.0 GiB      530  2.0 GiB  23.93    6.5 GiB
+2026-11-04T16:32:04-07:00 end FMMNC large 2
+2026-11-04T16:32:04-07:00 start FMM large 2 (osd used 1114054656) 2.40 5.31 4.74 3/10687 2045489
+TOTAL  10 GiB  7.0 GiB  3.0 GiB   3.0 GiB      30.38
+ceph-objectstore.rgw.buckets.data     9  128  2.0 GiB      530  2.0 GiB  23.93    6.5 GiB
+2026-11-04T16:34:18-07:00 end FMM large 2
+2026-11-04T16:34:18-07:00 start FNC large 2 (osd used 1114054656) 2.17 4.16 4.38 1/10816 2051071
+TOTAL  10 GiB  6.9 GiB  3.1 GiB   3.1 GiB      30.55
+ceph-objectstore.rgw.buckets.data     9  128  2.0 GiB      530  2.0 GiB  23.98    6.4 GiB
+2026-11-04T16:36:32-07:00 end FNC large 2
+2026-11-04T16:36:32-07:00 start F1G large 2 (osd used 1132535808) 2.56 3.56 4.12 2/10636 2056405
+TOTAL  10 GiB  7.1 GiB  2.9 GiB   2.9 GiB      29.30
+ceph-objectstore.rgw.buckets.data     9  128  1.9 GiB      498  1.9 GiB  22.51    6.6 GiB
+2026-11-04T16:38:29-07:00 end F1G large 2
+2026-11-04T16:38:30-07:00 start FG50 large 2 (osd used 1151016960) 2.48 3.32 3.97 1/10630 2061330
+TOTAL  10 GiB  6.9 GiB  3.1 GiB   3.1 GiB      30.72
+ceph-objectstore.rgw.buckets.data     9  128  2.0 GiB      530  2.0 GiB  24.03    6.4 GiB
+2026-11-04T16:40:31-07:00 end FG50 large 2
+2026-11-04T16:40:32-07:00 start F1G small 2 (osd used 1151016960) 1.58 2.77 3.69 1/10662 2066567
+TOTAL  10 GiB  8.4 GiB  1.6 GiB   1.6 GiB      16.11
+ceph-objectstore.rgw.buckets.data     9  128   55 MiB    5.37k   55 MiB   0.68    7.9 GiB
+2026-11-04T16:42:18-07:00 end F1G small 2
+2026-11-04T16:42:19-07:00 start FG50 small 2 (osd used 1759191040) 5.33 3.86 3.98 1/10801 2072093
+TOTAL  10 GiB  8.2 GiB  1.8 GiB   1.8 GiB      17.52
+ceph-objectstore.rgw.buckets.data     9  128   34 MiB       18   34 MiB   0.43    7.7 GiB
+2026-11-04T16:44:05-07:00 end FG50 small 2
+2026-11-04T16:44:06-07:00 start FNC small 2 (osd used 1879449600) 6.33 4.75 4.29 3/10629 2077565
+TOTAL  10 GiB  9.1 GiB  954 MiB   954 MiB       9.31
+ceph-objectstore.rgw.buckets.data     9  128   38 MiB    1.11k   38 MiB   0.43    8.6 GiB
+2026-11-04T16:45:57-07:00 end FNC small 2
+2026-11-04T16:45:58-07:00 start FMM small 2 (osd used 992288768) 9.63 6.47 4.95 1/10633 2083309
+TOTAL  10 GiB  8.6 GiB  1.4 GiB   1.4 GiB      14.30
+ceph-objectstore.rgw.buckets.data     9  128   40 MiB    1.52k   40 MiB   0.48    8.1 GiB
+2026-11-04T16:48:23-07:00 end FMM small 2
+2026-11-04T16:48:23-07:00 start FMMNC small 2 (osd used 1546657792) 11.87 8.32 5.83 3/10721 2090049
+TOTAL  10 GiB  8.4 GiB  1.6 GiB   1.6 GiB      16.24
+ceph-objectstore.rgw.buckets.data     9  128   54 MiB    5.12k   54 MiB   0.67    7.9 GiB
+2026-11-04T16:50:44-07:00 end FMMNC small 2
+2026-11-04T16:50:44-07:00 campaign done

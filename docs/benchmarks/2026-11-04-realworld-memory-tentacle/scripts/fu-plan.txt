@@ -1,0 +1,22 @@
+# VARIANT LOAD REP for the follow-up (RW_RUNS=realworld/runs-fu, idle_points_list=30).
+# F1G: F in a 1 GiB scope; FG50: F with GOGC=50; FNC, FMM, FMMNC: the throwaway builds.
+F1G large 1
+FG50 large 1
+FNC large 1
+FMM large 1
+FMMNC large 1
+FMMNC small 1
+FMM small 1
+FNC small 1
+FG50 small 1
+F1G small 1
+FMMNC large 2
+FMM large 2
+FNC large 2
+F1G large 2
+FG50 large 2
+F1G small 2
+FG50 small 2
+FNC small 2
+FMM small 2
+FMMNC small 2

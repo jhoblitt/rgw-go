@@ -1,0 +1,89 @@
+== stop rgw-go
+== rgw-go processes: 0
+== leftover buckets of bench
+[]
+== remove bench
+bench removed, gc processed
+== usage trim --uid=bench
+exit 0
+== usage show --uid=bench --start-date=2026-11-01
+{
+    "entries": [],
+    "summary": []
+}
+== gc process
+exit 0
+== crash ls before archiving
+ID                                                                ENTITY  NEW  
+2026-11-04T17:23:55.242938Z_0da929ba-c393-44f6-b203-07132dc4a4bc  osd.0    *   
+2026-11-04T17:24:15.985226Z_0f6e67a4-cab6-4ab7-9e83-0c11255786f6  osd.0    *   
+2026-11-04T17:24:43.484958Z_838e4784-934a-4d72-a3fb-b4e20c19896c  osd.0    *   
+2026-11-04T17:25:21.412319Z_8bde39e5-57a9-4009-a12a-0060afd7e833  osd.0    *   
+2026-11-04T17:26:18.492244Z_05b10849-87fc-40b3-8418-05051ad81c9d  osd.0    *   
+2026-11-04T17:27:54.446177Z_5443ab83-c9ac-4128-80aa-bc0f1aaf4d63  osd.0    *   
+2026-11-04T17:30:50.455646Z_28dda55b-aea9-4d34-8521-eb45361fa5f4  osd.0    *   
+2026-11-04T17:36:13.461585Z_ebf9479b-8c9d-4890-9546-9db2be9dda2b  osd.0    *   
+2026-11-04T17:37:16.359160Z_796d82c0-b977-4eb8-ae22-6d6edf0ec0c7  osd.0    *   
+2026-11-04T17:37:25.165278Z_a3889819-6c61-46b8-a066-8aee50422f2f  osd.0    *   
+2026-11-04T17:37:54.487098Z_7e5eba9c-2c5d-4839-abdf-b7ec516c6e1d  osd.0    *   
+2026-11-04T17:38:25.468048Z_5b46d47b-a0bd-42d5-97c3-9572d2c64d31  osd.0    *   
+2026-11-04T17:39:22.963952Z_e9531306-7b58-464c-a9f7-df0ea1aef85f  osd.0    *   
+2026-11-04T17:39:45.959322Z_144bab7b-3f1d-45ae-9532-6f817b0a36bf  osd.0    *   
+2026-11-04T17:39:57.004561Z_152ab399-9d49-492e-a4aa-bfad2ecc347b  osd.0    *   
+2026-11-04T17:40:39.346937Z_67fb27e3-d75a-4709-a404-d22bc1461346  osd.0    *   
+2026-11-04T17:40:50.315637Z_ecaeba13-04e6-4764-bb4f-675b93a29e15  osd.0    *   
+2026-11-04T17:41:39.463107Z_5cce4d10-622c-49c6-98af-0a17beafc40b  osd.0    *   
+2026-11-04T17:41:50.496745Z_0318a3fb-d7d1-43bd-934c-102bf06dd75a  osd.0    *   
+2026-11-04T17:42:23.005501Z_79c5971f-1be0-4a42-be52-f84b5ba1b9ea  osd.0    *   
+2026-11-04T17:43:00.769013Z_582c0b62-5cf7-439e-9bc5-bee845843ae2  osd.0    *   
+2026-11-04T17:43:55.981444Z_9e2e7443-a426-45bb-9ef6-02910639b58f  osd.0    *   
+== crash archive-all
+exit 0
+== start vs end (users, buckets, gc, usage, config dump; df, pod names and dates left out)
+25c25
+< NAME                                                READY   STATUS    RESTARTS   AGE   IP            NODE                     NOMINATED NODE   READINESS GATES
+---
+> NAME                                                READY   STATUS    RESTARTS   AGE     IP            NODE                     NOMINATED NODE   READINESS GATES
+== ceph df at the end
+== ceph df
+--- RAW STORAGE ---
+CLASS    SIZE    AVAIL     USED  RAW USED  %RAW USED
+hdd    10 GiB  8.4 GiB  1.6 GiB   1.6 GiB      16.37
+TOTAL  10 GiB  8.4 GiB  1.6 GiB   1.6 GiB      16.37
+ 
+--- POOLS ---
+POOL                                 ID  PGS   STORED  OBJECTS     USED  %USED  MAX AVAIL
+ceph-objectstore.rgw.control          1    8      0 B        9      0 B      0    7.9 GiB
+ceph-objectstore.rgw.meta             2    8  6.5 KiB       42  121 KiB      0    7.9 GiB
+.mgr                                  3    1  577 KiB        2  580 KiB      0    7.9 GiB
+ceph-objectstore.rgw.log              4    8  2.9 MiB      106  3.2 MiB   0.04    7.9 GiB
+ceph-objectstore.rgw.buckets.index    5    8   13 MiB       22   13 MiB   0.16    7.9 GiB
+ceph-objectstore.rgw.buckets.non-ec   6    8      0 B        0      0 B      0    7.9 GiB
+ceph-objectstore.rgw.otp              7    8  1.0 KiB        1  1.0 KiB      0    7.9 GiB
+.rgw.root                             8    8  9.2 KiB       18   68 KiB      0    7.9 GiB
+ceph-objectstore.rgw.buckets.data     9  128   34 MiB       18   34 MiB   0.42    7.9 GiB
+rgw-go-test                          10   32      0 B        0      0 B      0    7.9 GiB
+== rgw pods and deployment
+== rgw pod now
+rook-ceph-rgw-ceph-objectstore-a-556b4df4c6-b9g4k   2/2     Running   0          4h48m   10.89.0.124   rgw-go-tentacle-worker   <none>           <none>
+== health
+HEALTH_WARN 4 auth client entities with insecure key types; Monitors are configured to allow auth using insecure key types; Monitors are configured to allow creation of insecure key types; 10 pool(s) have no replicas configured
+[WRN] AUTH_INSECURE_CLIENT_KEY_TYPE: 4 auth client entities with insecure key types
+    entity client.csi-cephfs-node.1 using insecure key type: aes
+    entity client.csi-cephfs-provisioner.1 using insecure key type: aes
+    entity client.csi-rbd-node.1 using insecure key type: aes
+    entity client.csi-rbd-provisioner.1 using insecure key type: aes
+[WRN] AUTH_INSECURE_KEYS_ALLOWED: Monitors are configured to allow auth using insecure key types
+    insecure cipher aes allowed for auth
+[WRN] AUTH_INSECURE_KEYS_CREATABLE: Monitors are configured to allow creation of insecure key types
+[WRN] POOL_NO_REDUNDANCY: 10 pool(s) have no replicas configured
+    pool 'ceph-objectstore.rgw.control' has no replicas configured
+    pool 'ceph-objectstore.rgw.meta' has no replicas configured
+    pool '.mgr' has no replicas configured
+    pool 'ceph-objectstore.rgw.log' has no replicas configured
+    pool 'ceph-objectstore.rgw.buckets.index' has no replicas configured
+    pool 'ceph-objectstore.rgw.buckets.non-ec' has no replicas configured
+    pool 'ceph-objectstore.rgw.otp' has no replicas configured
+    pool '.rgw.root' has no replicas configured
+    pool 'ceph-objectstore.rgw.buckets.data' has no replicas configured
+    pool 'rgw-go-test' has no replicas configured

@@ -1,0 +1,142 @@
+# Gateway binaries of the 2026-11-04 real-world memory run: sha256, go version -m (module path, VCS revision, build flags), DT_NEEDED and RPATH.
+# F1G and FG50 run the F binary; they differ from it in the scope's MemoryMax and the process's GOGC.
+
+=== M
+0f7eb90c9f00a45cf58775e85b7c2cf67a6092c68182313174f7237c6c23b325  M/rgw-go
+bin/M/rgw-go: go1.27.3
+	path	github.com/jhoblitt/rgw-go/cmd/rgw-go
+	mod	github.com/jhoblitt/rgw-go	v0.0.0-20261104005720-01ebd5a291c4	
+	=>	github.com/jhoblitt/go-ceph	v0.0.0-20261019213543-2bd6901ea775	h1:wE7tbxOVVszyBTK5HjczF21eq5glLyoUXk8VpLPSwlw=
+	
+	build	-buildmode=exe
+	build	-compiler=gc
+	build	-tags=ceph_preview
+	build	CGO_ENABLED=1
+	build	CGO_CFLAGS=-I/home/jhoblitt/.local/share/rgw-go/ceph-v20.2.4/src/include
+	build	CGO_CPPFLAGS=
+	build	CGO_CXXFLAGS=
+	build	CGO_LDFLAGS="-L/home/jhoblitt/.local/lib/rgw-go-20.2.4 -L/home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1 -Wl,--disable-new-dtags,-rpath,/home/jhoblitt/.local/lib/rgw-go-20.2.4,-rpath,/home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1"
+	build	GOARCH=amd64
+	build	GOOS=linux
+	build	GOAMD64=v1
+	build	vcs=git
+	build	vcs.revision=01ebd5a291c4e5d26f5c20fc4d6e9fe84aaa2cc2
+	build	vcs.time=2026-11-04T00:57:20Z
+	build	vcs.modified=false
+ 0x0000000000000001 (NEEDED)             Shared library: [libresolv.so.2]
+ 0x0000000000000001 (NEEDED)             Shared library: [libtcmalloc.so.4]
+ 0x0000000000000001 (NEEDED)             Shared library: [librados.so.2]
+ 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+ 0x000000000000000f (RPATH)              Library rpath: [/home/jhoblitt/.local/lib/rgw-go-20.2.4:/home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1]
+
+=== F
+831dd2d36669aa4e9da5cff9329aa4cba021022590efe44e9124cbca9a6f9973  F/rgw-go
+bin/F/rgw-go: go1.27.3
+	path	github.com/jhoblitt/rgw-go/cmd/rgw-go
+	mod	github.com/jhoblitt/rgw-go	v0.0.0-20261104030252-296ad44503ea	
+	=>	github.com/jhoblitt/go-ceph	v0.0.0-20261019213543-2bd6901ea775	h1:wE7tbxOVVszyBTK5HjczF21eq5glLyoUXk8VpLPSwlw=
+	
+	build	-buildmode=exe
+	build	-compiler=gc
+	build	-tags=ceph_preview
+	build	CGO_ENABLED=1
+	build	CGO_CFLAGS=-I/home/jhoblitt/.local/share/rgw-go/ceph-v20.2.4/src/include
+	build	CGO_CPPFLAGS=
+	build	CGO_CXXFLAGS=
+	build	CGO_LDFLAGS="-L/home/jhoblitt/.local/lib/rgw-go-20.2.4 -L/home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1 -Wl,--disable-new-dtags,-rpath,/home/jhoblitt/.local/lib/rgw-go-20.2.4,-rpath,/home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1"
+	build	GOARCH=amd64
+	build	GOOS=linux
+	build	GOAMD64=v1
+	build	vcs=git
+	build	vcs.revision=296ad44503ea1f8044ebf364473e050cfda4d351
+	build	vcs.time=2026-11-04T03:02:52Z
+	build	vcs.modified=false
+ 0x0000000000000001 (NEEDED)             Shared library: [libresolv.so.2]
+ 0x0000000000000001 (NEEDED)             Shared library: [libtcmalloc.so.4]
+ 0x0000000000000001 (NEEDED)             Shared library: [librados.so.2]
+ 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+ 0x000000000000000f (RPATH)              Library rpath: [/home/jhoblitt/.local/lib/rgw-go-20.2.4:/home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1]
+
+=== FNC
+22a336dfa298f0d8492dcf6a911b7a2524c2615664376832b990f411a73e0299  FNC/rgw-go
+bin/FNC/rgw-go: go1.27.3
+	path	github.com/jhoblitt/rgw-go/cmd/rgw-go
+	mod	github.com/jhoblitt/rgw-go	v0.0.0-20261104030252-296ad44503ea+dirty	
+	=>	github.com/jhoblitt/go-ceph	v0.0.0-20261019213543-2bd6901ea775	h1:wE7tbxOVVszyBTK5HjczF21eq5glLyoUXk8VpLPSwlw=
+	
+	build	-buildmode=exe
+	build	-compiler=gc
+	build	-tags=ceph_preview
+	build	CGO_ENABLED=1
+	build	CGO_CFLAGS=-I/home/jhoblitt/.local/share/rgw-go/ceph-v20.2.4/src/include
+	build	CGO_CPPFLAGS=
+	build	CGO_CXXFLAGS=
+	build	CGO_LDFLAGS="-L/home/jhoblitt/.local/lib/rgw-go-20.2.4 -L/home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1 -Wl,--disable-new-dtags,-rpath,/home/jhoblitt/.local/lib/rgw-go-20.2.4,-rpath,/home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1"
+	build	GOARCH=amd64
+	build	GOOS=linux
+	build	GOAMD64=v1
+	build	vcs=git
+	build	vcs.revision=296ad44503ea1f8044ebf364473e050cfda4d351
+	build	vcs.time=2026-11-04T03:02:52Z
+	build	vcs.modified=true
+ 0x0000000000000001 (NEEDED)             Shared library: [libresolv.so.2]
+ 0x0000000000000001 (NEEDED)             Shared library: [libtcmalloc.so.4]
+ 0x0000000000000001 (NEEDED)             Shared library: [librados.so.2]
+ 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+ 0x000000000000000f (RPATH)              Library rpath: [/home/jhoblitt/.local/lib/rgw-go-20.2.4:/home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1]
+
+=== FMM
+bfaa7cc2bbedd2ab6ec25dc03f4827ae48cb49c836ae340b121f40a4bec30afa  FMM/rgw-go
+bin/FMM/rgw-go: go1.27.3
+	path	github.com/jhoblitt/rgw-go/cmd/rgw-go
+	mod	github.com/jhoblitt/rgw-go	v0.0.0-20261104030252-296ad44503ea+dirty	
+	=>	github.com/jhoblitt/go-ceph	v0.0.0-20261019213543-2bd6901ea775	h1:wE7tbxOVVszyBTK5HjczF21eq5glLyoUXk8VpLPSwlw=
+	
+	build	-buildmode=exe
+	build	-compiler=gc
+	build	-tags=ceph_preview
+	build	CGO_ENABLED=1
+	build	CGO_CFLAGS=-I/home/jhoblitt/.local/share/rgw-go/ceph-v20.2.4/src/include
+	build	CGO_CPPFLAGS=
+	build	CGO_CXXFLAGS=
+	build	CGO_LDFLAGS="-L/home/jhoblitt/.local/lib/rgw-go-20.2.4 -L/home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1 -Wl,--disable-new-dtags,-rpath,/home/jhoblitt/.local/lib/rgw-go-20.2.4,-rpath,/home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1"
+	build	GOARCH=amd64
+	build	GOOS=linux
+	build	GOAMD64=v1
+	build	vcs=git
+	build	vcs.revision=296ad44503ea1f8044ebf364473e050cfda4d351
+	build	vcs.time=2026-11-04T03:02:52Z
+	build	vcs.modified=true
+ 0x0000000000000001 (NEEDED)             Shared library: [libresolv.so.2]
+ 0x0000000000000001 (NEEDED)             Shared library: [libtcmalloc.so.4]
+ 0x0000000000000001 (NEEDED)             Shared library: [librados.so.2]
+ 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+ 0x000000000000000f (RPATH)              Library rpath: [/home/jhoblitt/.local/lib/rgw-go-20.2.4:/home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1]
+
+=== FMMNC
+1244af414d477c6d9617967ec7a92419d6891f0cb9119783cf2db77d242a0ea1  FMMNC/rgw-go
+bin/FMMNC/rgw-go: go1.27.3
+	path	github.com/jhoblitt/rgw-go/cmd/rgw-go
+	mod	github.com/jhoblitt/rgw-go	v0.0.0-20261104030252-296ad44503ea+dirty	
+	=>	github.com/jhoblitt/go-ceph	v0.0.0-20261019213543-2bd6901ea775	h1:wE7tbxOVVszyBTK5HjczF21eq5glLyoUXk8VpLPSwlw=
+	
+	build	-buildmode=exe
+	build	-compiler=gc
+	build	-tags=ceph_preview
+	build	CGO_ENABLED=1
+	build	CGO_CFLAGS=-I/home/jhoblitt/.local/share/rgw-go/ceph-v20.2.4/src/include
+	build	CGO_CPPFLAGS=
+	build	CGO_CXXFLAGS=
+	build	CGO_LDFLAGS="-L/home/jhoblitt/.local/lib/rgw-go-20.2.4 -L/home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1 -Wl,--disable-new-dtags,-rpath,/home/jhoblitt/.local/lib/rgw-go-20.2.4,-rpath,/home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1"
+	build	GOARCH=amd64
+	build	GOOS=linux
+	build	GOAMD64=v1
+	build	vcs=git
+	build	vcs.revision=296ad44503ea1f8044ebf364473e050cfda4d351
+	build	vcs.time=2026-11-04T03:02:52Z
+	build	vcs.modified=true
+ 0x0000000000000001 (NEEDED)             Shared library: [libresolv.so.2]
+ 0x0000000000000001 (NEEDED)             Shared library: [libtcmalloc.so.4]
+ 0x0000000000000001 (NEEDED)             Shared library: [librados.so.2]
+ 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+ 0x000000000000000f (RPATH)              Library rpath: [/home/jhoblitt/.local/lib/rgw-go-20.2.4:/home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1]

@@ -1,0 +1,53 @@
+# Values for the rook-ceph-cluster chart (the Tentacle cluster's, with the Ceph image of Ceph main), over rooket's one-worker base, which
+# already fits the chart's ceph-objectstore pools to a single OSD.
+# THROWAWAY (real-world memory spike, 2026-11-04): the Ceph main image pinned by digest,
+# quay.ceph.io/ceph-ci/ceph@sha256:c928697602b7feffdaef0b59d95a7e94a864e4dd89d33a867e0e48bac0fe7e06,
+# tagged localhost/ceph-main:c928697 and pushed to this cluster's registry with `rooket load`.
+# Rook v1.20.7 does not know Ceph main, so allowUnsupported.
+cephImage:
+  repository: localhost:5003/ceph-main
+  tag: c928697
+  allowUnsupported: true
+cephClusterSpec:
+  # With the dashboard on, Rook creates a dashboard-admin user in the object
+  # store's zone, which the population and the gate would have to account for.
+  dashboard:
+    enabled: false
+# Only the object store is needed; the chart's block pool and filesystem would
+# add pools, an MDS and CPU requests to the one worker.
+cephBlockPools: []
+cephFileSystems: []
+# rooket merges this entry by name onto the base's copy of the chart's
+# ceph-objectstore, so it carries only what it adds.
+cephObjectStores:
+  - name: ceph-objectstore
+    spec:
+      gateway:
+        # The parity options, lib.sh's parity_options; make check fails when
+        # the two differ. At every reconcile, before it creates or updates the
+        # radosgw's deployment, Rook writes these to the radosgw's config
+        # entity in place of the keys it generates, rgw_run_sync_thread=true
+        # among them, so the radosgw starts under them and a reconcile cannot
+        # reset one. make lc-mode sets rgw_enable_lc_threads in the running
+        # object store's copy, the one way an LC mode holds (README.md,
+        # "Lifecycle runs").
+        rgwConfig:
+          rgw_dynamic_resharding: "false"
+          rgw_enable_gc_threads: "false"
+          rgw_enable_lc_threads: "false"
+          rgw_run_sync_thread: "false"
+          rgw_d3n_l1_local_datacache_enabled: "false"
+          rgw_enable_usage_log: "true"
+          rgw_usage_log_tick_interval: "1"
+          rgw_usage_log_flush_threshold: "1"
+          rgw_lc_debug_interval: "10"
+        # Rook passes the radosgw --rgw-frontends="beast port=80" and then
+        # these flags, so this frontend is the one its argument parsing keeps
+        # (rook pkg/operator/ceph/object/spec.go). It replaces Rook's whole
+        # frontend rather than adding to it: a port or TLS setting the gateway
+        # is given must be repeated here, or the radosgw will not serve it.
+        # beast leaves TCP_NODELAY off unless tcp_nodelay=1, and rgw-go keeps
+        # Go's on: with this, both gateways answer with it on, as the gateway
+        # comparison requires.
+        rgwCommandFlags:
+          rgw_frontends: "beast port=80 tcp_nodelay=1"

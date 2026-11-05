@@ -1,0 +1,56 @@
+== date
+2026-11-04T21:00:44-07:00
+== users
+[]
+== buckets
+[]
+== gc entries (include-all)
+0
+== usage show --uid=bench --start-date=2026-11-01
+{
+    "entries": [],
+    "summary": []
+}
+== ceph df
+--- RAW STORAGE ---
+CLASS    SIZE   AVAIL    USED  RAW USED  %RAW USED
+hdd    10 GiB  10 GiB  27 MiB    27 MiB       0.27
+TOTAL  10 GiB  10 GiB  27 MiB    27 MiB       0.27
+ 
+--- POOLS ---
+POOL                                 ID  PGS   STORED  OBJECTS     USED  %USED  MAX AVAIL
+ceph-objectstore.rgw.control          1    8      0 B        9      0 B      0    9.5 GiB
+.mgr                                  2    1  577 KiB        2  580 KiB      0    9.5 GiB
+ceph-objectstore.rgw.meta             3    8      0 B        0      0 B      0    9.5 GiB
+ceph-objectstore.rgw.log              4    8   10 KiB       68  266 KiB      0    9.5 GiB
+ceph-objectstore.rgw.buckets.index    5    8      0 B        0      0 B      0    9.5 GiB
+ceph-objectstore.rgw.buckets.non-ec   6    8      0 B        0      0 B      0    9.5 GiB
+ceph-objectstore.rgw.otp              7    8      0 B        0      0 B      0    9.5 GiB
+.rgw.root                             8    8  5.3 KiB       16   60 KiB      0    9.5 GiB
+ceph-objectstore.rgw.buckets.data     9  128      0 B        0      0 B      0    9.5 GiB
+== rgw pods and deployment
+NAME                                                READY   STATUS    RESTARTS   AGE   IP            NODE                 NOMINATED NODE   READINESS GATES
+rook-ceph-rgw-ceph-objectstore-a-568b7fb698-z74ft   2/2     Running   0          63s   10.89.0.214   rgw-go-main-worker   <none>           <none>
+1 localhost:5003/ceph-main:c928697
+== config dump
+WHO                            MASK  LEVEL     OPTION                                 VALUE             RO
+global                               basic     log_to_file                            true                
+global                               advanced  mon_allow_pool_delete                  true                
+global                               advanced  mon_allow_pool_size_one                true                
+global                               advanced  mon_cluster_log_file                                       
+mon                                  advanced  auth_allow_insecure_global_id_reclaim  false               
+client.rgw.ceph.objectstore.a        advanced  rgw_d3n_l1_local_datacache_enabled     false               
+client.rgw.ceph.objectstore.a        basic     rgw_dynamic_resharding                 false             * 
+client.rgw.ceph.objectstore.a        advanced  rgw_enable_gc_threads                  false               
+client.rgw.ceph.objectstore.a        advanced  rgw_enable_lc_threads                  false               
+client.rgw.ceph.objectstore.a        advanced  rgw_enable_usage_log                   true                
+client.rgw.ceph.objectstore.a        dev       rgw_lc_debug_interval                  10                  
+client.rgw.ceph.objectstore.a        advanced  rgw_log_nonexistent_bucket             true                
+client.rgw.ceph.objectstore.a        advanced  rgw_log_object_name_utc                true                
+client.rgw.ceph.objectstore.a        advanced  rgw_run_sync_thread                    false               
+client.rgw.ceph.objectstore.a        advanced  rgw_usage_log_flush_threshold          1                   
+client.rgw.ceph.objectstore.a        advanced  rgw_usage_log_tick_interval            1                   
+client.rgw.ceph.objectstore.a        advanced  rgw_zone                               ceph-objectstore  * 
+client.rgw.ceph.objectstore.a        advanced  rgw_zonegroup                          ceph-objectstore  * 
+== rgw-go processes and scopes on the host
+no rgw-go

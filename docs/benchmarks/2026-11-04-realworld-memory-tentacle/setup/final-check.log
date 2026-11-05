@@ -1,0 +1,61 @@
+== compact osd.0
+== osd used (bluestore.allocated + bluefs.db_used_bytes)
+116785152
+37617664
+79167488
+== ceph df
+--- RAW STORAGE ---
+CLASS    SIZE    AVAIL     USED  RAW USED  %RAW USED
+hdd    10 GiB  9.9 GiB  111 MiB   111 MiB       1.09
+TOTAL  10 GiB  9.9 GiB  111 MiB   111 MiB       1.09
+ 
+--- POOLS ---
+== ceph -s
+  cluster:
+    id:     8bcd55ea-aeb4-4e94-9e4c-53fba0e163ab
+    health: HEALTH_WARN
+            4 auth client entities with insecure key types
+            Monitors are configured to allow auth using insecure key types
+            Monitors are configured to allow creation of insecure key types
+            10 pool(s) have no replicas configured
+ 
+  services:
+    mon: 1 daemons, quorum a (age 7d) [leader: a]
+    mgr: a(active, since 7d)
+    osd: 1 osds: 1 up (since 9h), 1 in (since 7d)
+    rgw: 1 daemon active (1 hosts, 1 zones)
+ 
+  data:
+    pools:   10 pools, 217 pgs
+    objects: 218 objects, 166 MiB
+    usage:   111 MiB used, 9.9 GiB / 10 GiB avail
+    pgs:     217 active+clean
+ 
+  io:
+    client:   85 B/s rd, 170 B/s wr, 0 op/s rd, 0 op/s wr
+ 
+== crash ls (new only)
+== pods
+ceph-csi-controller-manager-58894d897d-226c7                      1/1     Running     2 (2d3h ago)   7d19h   10.244.1.3    rgw-go-tentacle-worker   <none>           <none>
+rook-ceph-crashcollector-rgw-go-tentacle-worker-578d6b65c6pzw58   1/1     Running     0              7d19h   10.89.0.124   rgw-go-tentacle-worker   <none>           <none>
+rook-ceph-exporter-rgw-go-tentacle-worker-86c4f9cc9-2vwmm         2/2     Running     0              7d19h   10.89.0.124   rgw-go-tentacle-worker   <none>           <none>
+rook-ceph-mgr-a-7fd899b7f9-6vm5q                                  2/2     Running     0              7d19h   10.89.0.124   rgw-go-tentacle-worker   <none>           <none>
+rook-ceph-mon-a-6bc9cfd79-4njc9                                   2/2     Running     0              7d19h   10.89.0.124   rgw-go-tentacle-worker   <none>           <none>
+rook-ceph-operator-59c46c6dfc-vclgh                               1/1     Running     0              9h      10.244.1.10   rgw-go-tentacle-worker   <none>           <none>
+rook-ceph-osd-0-c79b88d9c-2gn95                                   2/2     Running     0              9h      10.89.0.124   rgw-go-tentacle-worker   <none>           <none>
+rook-ceph-osd-prepare-rgw-go-tentacle-worker-p9wjj                0/1     Completed   0              9h      10.244.1.14   rgw-go-tentacle-worker   <none>           <none>
+rook-ceph-rgw-ceph-objectstore-a-556b4df4c6-b9g4k                 2/2     Running     0              4h49m   10.89.0.124   rgw-go-tentacle-worker   <none>           <none>
+rook-ceph-tools-68f844645d-cmfn2                                  1/1     Running     0              7d19h   10.89.0.124   rgw-go-tentacle-worker   <none>           <none>
+rook-ceph.cephfs.csi.ceph.com-ctrlplugin-dcc84ccc9-xh5x8          5/5     Running     0              7d19h   10.244.1.5    rgw-go-tentacle-worker   <none>           <none>
+rook-ceph.cephfs.csi.ceph.com-nodeplugin-hm2c8                    3/3     Running     0              7d19h   10.89.0.124   rgw-go-tentacle-worker   <none>           <none>
+rook-ceph.rbd.csi.ceph.com-ctrlplugin-7f6865896d-qjvzc            5/5     Running     0              7d19h   10.244.1.6    rgw-go-tentacle-worker   <none>           <none>
+rook-ceph.rbd.csi.ceph.com-nodeplugin-lts7s                       3/3     Running     0              7d19h   10.89.0.124   rgw-go-tentacle-worker   <none>           <none>
+== config dump vs start
+1d0
+< == config dump
+29d27
+< == rgw-go processes and scopes on the host
+== leftover rgw-go / scopes on host
+no rgw-go
+== leftover files on the kind node
+0

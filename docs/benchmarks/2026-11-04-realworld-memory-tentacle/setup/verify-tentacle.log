@@ -1,0 +1,32 @@
+tentacle: users, buckets, gc entries, usage and config dump identical to the start's
+== ceph df per pool (objects)
+--- POOLS ---
+POOL                                 ID  PGS   STORED  OBJECTS     USED  %USED  MAX AVAIL
+ceph-objectstore.rgw.control          1    8      0 B        9      0 B      0    9.4 GiB
+ceph-objectstore.rgw.meta             2    8  5.1 KiB       42  120 KiB      0    9.4 GiB
+.mgr                                  3    1  577 KiB        2  580 KiB      0    9.4 GiB
+ceph-objectstore.rgw.log              4    8  650 KiB      106  905 KiB      0    9.4 GiB
+ceph-objectstore.rgw.buckets.index    5    8  2.6 KiB       22  2.6 KiB      0    9.4 GiB
+ceph-objectstore.rgw.buckets.non-ec   6    8      0 B        0      0 B      0    9.4 GiB
+ceph-objectstore.rgw.otp              7    8  2.2 KiB        1  2.2 KiB      0    9.4 GiB
+.rgw.root                             8    8  9.2 KiB       18   68 KiB      0    9.4 GiB
+ceph-objectstore.rgw.buckets.data     9  128   34 MiB       18   34 MiB   0.35    9.4 GiB
+rgw-go-test                          10   32      0 B        0      0 B      0    9.4 GiB
+== crash ls
+23
+== health
+HEALTH_WARN 4 auth client entities with insecure key types; Monitors are configured to allow auth using insecure key types; Monitors are configured to allow creation of insecure key types; 10 pool(s) have no replicas configured
+== osd, pgs
+    osd: 1 osds: 1 up (since 12h), 1 in (since 7d)
+    objects: 218 objects, 166 MiB
+    usage:   111 MiB used, 9.9 GiB / 10 GiB avail
+    pgs:     217 active+clean
+== osd used
+116785152
+== pods
+rook-ceph-crashcollector-rgw-go-tentacle-worker-578d6b65c6pzw58   1/1     Running     0              7d23h
+rook-ceph-exporter-rgw-go-tentacle-worker-86c4f9cc9-2vwmm         2/2     Running     0              7d23h
+rook-ceph-operator-59c46c6dfc-vclgh                               1/1     Running     0              12h
+rook-ceph-osd-0-c79b88d9c-2gn95                                   2/2     Running     0              12h
+rook-ceph-osd-prepare-rgw-go-tentacle-worker-p9wjj                0/1     Completed   0              12h
+rook-ceph-rgw-ceph-objectstore-a-556b4df4c6-b9g4k                 2/2     Running     0              8h

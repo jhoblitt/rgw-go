@@ -1,0 +1,64 @@
+THROWAWAY patch from the real-world memory spike of 2026-11-04, variant FNC: never merge.
+It applies to 296ad44 (#559) with `patch -p1` or `git apply`.
+A GET's prefetched head is served from its free-list buffer instead of a copy; the
+buffer goes back to the list once, when the request's context ends or the state is discarded.
+
+--- a/internal/driver/stat.go
++++ b/internal/driver/stat.go
+@@ -5,8 +5,8 @@
+ 	"errors"
+ 	"fmt"
+ 	"log/slog"
+-	"slices"
+ 	"strings"
++	"sync"
+ 
+ 	"github.com/jhoblitt/rgw-go/internal/cksum"
+ 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
+@@ -291,13 +291,20 @@
+ 	}()
+ 	ver, err := ref.pool.Read(ctx, ref.oid, rop, radosclient.OpFlagNone)
+ 	settled = true
++	headKept := false
+ 	if buf != nil {
+ 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+ 			// An op abandoned to its context may still fill the buffer, so
+ 			// only one that ended goes back to the free list.
+ 			s.bufs.forget(buf)
+ 		} else {
+-			defer s.bufs.put(buf)
++			// THROWAWAY (realworld spike, variant FNC): a buffer the state keeps as its Head
++			// goes back only when the request is done with it, below.
++			defer func() {
++				if !headKept {
++					s.bufs.put(buf)
++				}
++			}()
+ 		}
+ 	}
+ 	st := &op.ObjectState{Bucket: rec, Key: key}
+@@ -319,10 +326,22 @@
+ 	st.Size, st.Mtime = stat.Size, stat.ModTime
+ 	st.Attrs = filterAttrs(xattrs.Xattrs)
+ 	if rd != nil {
+-		st.Head = slices.Clone(rd.Data[:rd.N])
++		// THROWAWAY (realworld spike, variant FNC): no copy. The free-list buffer is the
++		// head; it returns to the list once, when ctx ends or the state is discarded.
++		st.Head = rd.Data[:rd.N]
+ 		kept := min(share, int64(len(st.Head)))
+-		st.HeadRelease = s.mem.prefetchRelease(ctx, kept)
++		budget := s.mem.prefetchRelease(ctx, kept)
+ 		share -= kept
++		headKept = true
++		giveBack := sync.OnceFunc(func() { s.bufs.put(buf) })
++		stop := context.AfterFunc(ctx, giveBack)
++		st.HeadRelease = func() {
++			stop()
++			if budget != nil {
++				budget()
++			}
++			giveBack()
++		}
+ 	}
+ 	if err := decodeState(ctx, st); err != nil {
+ 		dropHead(st)

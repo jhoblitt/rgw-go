@@ -1,0 +1,637 @@
+== date
+2026-11-04T23:44:41-07:00
+== users
+[
+    "bench"
+]
+== buckets
+[]
+== gc entries (include-all)
+0
+== usage show --uid=bench --start-date=2026-11-01
+{
+    "entries": [
+        {
+            "user": "bench",
+            "buckets": [
+                {
+                    "bucket": "",
+                    "time": "2026-11-05T04:00:00.000000Z",
+                    "epoch": 1793851200,
+                    "owner": "bench",
+                    "categories": [
+                        {
+                            "category": "list_buckets",
+                            "bytes_sent": 668,
+                            "bytes_received": 0,
+                            "ops": 2,
+                            "successful_ops": 2
+                        }
+                    ],
+                    "s3select": {
+                        "bytes_processed": 0,
+                        "bytes_returned": 0
+                    }
+                },
+                {
+                    "bucket": "rw-large",
+                    "time": "2026-11-05T04:00:00.000000Z",
+                    "epoch": 1793851200,
+                    "owner": "bench",
+                    "categories": [
+                        {
+                            "category": "create_bucket",
+                            "bytes_sent": 0,
+                            "bytes_received": 0,
+                            "ops": 4,
+                            "successful_ops": 4
+                        },
+                        {
+                            "category": "delete_bucket",
+                            "bytes_sent": 0,
+                            "bytes_received": 0,
+                            "ops": 4,
+                            "successful_ops": 4
+                        },
+                        {
+                            "category": "get_obj",
+                            "bytes_sent": 137438953472,
+                            "bytes_received": 0,
+                            "ops": 2048,
+                            "successful_ops": 2048
+                        },
+                        {
+                            "category": "list_bucket",
+                            "bytes_sent": 30704,
+                            "bytes_received": 0,
+                            "ops": 4,
+                            "successful_ops": 4
+                        },
+                        {
+                            "category": "multi_object_delete",
+                            "bytes_sent": 548,
+                            "bytes_received": 0,
+                            "ops": 4,
+                            "successful_ops": 4
+                        },
+                        {
+                            "category": "put_obj",
+                            "bytes_sent": 0,
+                            "bytes_received": 8589934592,
+                            "ops": 128,
+                            "successful_ops": 128
+                        }
+                    ],
+                    "s3select": {
+                        "bytes_processed": 0,
+                        "bytes_returned": 0
+                    }
+                },
+                {
+                    "bucket": "rw-mix",
+                    "time": "2026-11-05T04:00:00.000000Z",
+                    "epoch": 1793851200,
+                    "owner": "bench",
+                    "categories": [
+                        {
+                            "category": "create_bucket",
+                            "bytes_sent": 0,
+                            "bytes_received": 0,
+                            "ops": 4,
+                            "successful_ops": 4
+                        },
+                        {
+                            "category": "delete_bucket",
+                            "bytes_sent": 0,
+                            "bytes_received": 0,
+                            "ops": 4,
+                            "successful_ops": 4
+                        },
+                        {
+                            "category": "get_obj",
+                            "bytes_sent": 2024784887808,
+                            "bytes_received": 0,
+                            "ops": 83760,
+                            "successful_ops": 83760
+                        },
+                        {
+                            "category": "list_bucket",
+                            "bytes_sent": 2015068,
+                            "bytes_received": 0,
+                            "ops": 12,
+                            "successful_ops": 12
+                        },
+                        {
+                            "category": "multi_object_delete",
+                            "bytes_sent": 1644,
+                            "bytes_received": 0,
+                            "ops": 12,
+                            "successful_ops": 12
+                        },
+                        {
+                            "category": "put_obj",
+                            "bytes_sent": 0,
+                            "bytes_received": 878506295296,
+                            "ops": 45088,
+                            "successful_ops": 45088
+                        }
+                    ],
+                    "s3select": {
+                        "bytes_processed": 0,
+                        "bytes_returned": 0
+                    }
+                },
+                {
+                    "bucket": "rw-small",
+                    "time": "2026-11-05T04:00:00.000000Z",
+                    "epoch": 1793851200,
+                    "owner": "bench",
+                    "categories": [
+                        {
+                            "category": "create_bucket",
+                            "bytes_sent": 0,
+                            "bytes_received": 0,
+                            "ops": 4,
+                            "successful_ops": 4
+                        },
+                        {
+                            "category": "delete_bucket",
+                            "bytes_sent": 0,
+                            "bytes_received": 0,
+                            "ops": 4,
+                            "successful_ops": 4
+                        },
+                        {
+                            "category": "get_obj",
+                            "bytes_sent": 16777216000,
+                            "bytes_received": 0,
+                            "ops": 4096000,
+                            "successful_ops": 4096000
+                        },
+                        {
+                            "category": "list_bucket",
+                            "bytes_sent": 23384816,
+                            "bytes_received": 0,
+                            "ops": 104,
+                            "successful_ops": 104
+                        },
+                        {
+                            "category": "multi_object_delete",
+                            "bytes_sent": 14248,
+                            "bytes_received": 0,
+                            "ops": 104,
+                            "successful_ops": 104
+                        },
+                        {
+                            "category": "put_obj",
+                            "bytes_sent": 0,
+                            "bytes_received": 419430400,
+                            "ops": 102400,
+                            "successful_ops": 102400
+                        }
+                    ],
+                    "s3select": {
+                        "bytes_processed": 0,
+                        "bytes_returned": 0
+                    }
+                },
+                {
+                    "bucket": "rw-vl1",
+                    "time": "2026-11-05T04:00:00.000000Z",
+                    "epoch": 1793851200,
+                    "owner": "bench",
+                    "categories": [
+                        {
+                            "category": "create_bucket",
+                            "bytes_sent": 0,
+                            "bytes_received": 0,
+                            "ops": 4,
+                            "successful_ops": 4
+                        },
+                        {
+                            "category": "delete_bucket",
+                            "bytes_sent": 0,
+                            "bytes_received": 0,
+                            "ops": 4,
+                            "successful_ops": 4
+                        },
+                        {
+                            "category": "get_obj",
+                            "bytes_sent": 25769803776,
+                            "bytes_received": 0,
+                            "ops": 96,
+                            "successful_ops": 96
+                        },
+                        {
+                            "category": "list_bucket",
+                            "bytes_sent": 6584,
+                            "bytes_received": 0,
+                            "ops": 4,
+                            "successful_ops": 4
+                        },
+                        {
+                            "category": "multi_object_delete",
+                            "bytes_sent": 548,
+                            "bytes_received": 0,
+                            "ops": 4,
+                            "successful_ops": 4
+                        },
+                        {
+                            "category": "put_obj",
+                            "bytes_sent": 0,
+                            "bytes_received": 6442450944,
+                            "ops": 24,
+                            "successful_ops": 24
+                        }
+                    ],
+                    "s3select": {
+                        "bytes_processed": 0,
+                        "bytes_returned": 0
+                    }
+                },
+                {
+                    "bucket": "rw-vl2",
+                    "time": "2026-11-05T04:00:00.000000Z",
+                    "epoch": 1793851200,
+                    "owner": "bench",
+                    "categories": [
+                        {
+                            "category": "create_bucket",
+                            "bytes_sent": 0,
+                            "bytes_received": 0,
+                            "ops": 4,
+                            "successful_ops": 4
+                        },
+                        {
+                            "category": "delete_bucket",
+                            "bytes_sent": 0,
+                            "bytes_received": 0,
+                            "ops": 4,
+                            "successful_ops": 4
+                        },
+                        {
+                            "category": "get_obj",
+                            "bytes_sent": 25769803776,
+                            "bytes_received": 0,
+                            "ops": 96,
+                            "successful_ops": 96
+                        },
+                        {
+                            "category": "list_bucket",
+                            "bytes_sent": 6584,
+                            "bytes_received": 0,
+                            "ops": 4,
+                            "successful_ops": 4
+                        },
+                        {
+                            "category": "multi_object_delete",
+                            "bytes_sent": 548,
+                            "bytes_received": 0,
+                            "ops": 4,
+                            "successful_ops": 4
+                        },
+                        {
+                            "category": "put_obj",
+                            "bytes_sent": 0,
+                            "bytes_received": 6442450944,
+                            "ops": 24,
+                            "successful_ops": 24
+                        }
+                    ],
+                    "s3select": {
+                        "bytes_processed": 0,
+                        "bytes_returned": 0
+                    }
+                },
+                {
+                    "bucket": "smoke-2695251",
+                    "time": "2026-11-05T04:00:00.000000Z",
+                    "epoch": 1793851200,
+                    "owner": "bench",
+                    "categories": [
+                        {
+                            "category": "abort_multipart",
+                            "bytes_sent": 0,
+                            "bytes_received": 0,
+                            "ops": 1,
+                            "successful_ops": 1
+                        },
+                        {
+                            "category": "complete_multipart",
+                            "bytes_sent": 309,
+                            "bytes_received": 0,
+                            "ops": 1,
+                            "successful_ops": 1
+                        },
+                        {
+                            "category": "create_bucket",
+                            "bytes_sent": 0,
+                            "bytes_received": 0,
+                            "ops": 1,
+                            "successful_ops": 1
+                        },
+                        {
+                            "category": "delete_bucket",
+                            "bytes_sent": 0,
+                            "bytes_received": 0,
+                            "ops": 1,
+                            "successful_ops": 1
+                        },
+                        {
+                            "category": "delete_obj",
+                            "bytes_sent": 0,
+                            "bytes_received": 0,
+                            "ops": 2,
+                            "successful_ops": 2
+                        },
+                        {
+                            "category": "get_obj",
+                            "bytes_sent": 26100000,
+                            "bytes_received": 0,
+                            "ops": 8,
+                            "successful_ops": 8
+                        },
+                        {
+                            "category": "init_multipart",
+                            "bytes_sent": 498,
+                            "bytes_received": 0,
+                            "ops": 2,
+                            "successful_ops": 2
+                        },
+                        {
+                            "category": "list_bucket",
+                            "bytes_sent": 1466,
+                            "bytes_received": 0,
+                            "ops": 2,
+                            "successful_ops": 2
+                        },
+                        {
+                            "category": "list_bucket_multiparts",
+                            "bytes_sent": 661,
+                            "bytes_received": 0,
+                            "ops": 1,
+                            "successful_ops": 1
+                        },
+                        {
+                            "category": "list_multipart",
+                            "bytes_sent": 644,
+                            "bytes_received": 0,
+                            "ops": 1,
+                            "successful_ops": 1
+                        },
+                        {
+                            "category": "put_obj",
+                            "bytes_sent": 0,
+                            "bytes_received": 50100000,
+                            "ops": 5,
+                            "successful_ops": 5
+                        }
+                    ],
+                    "s3select": {
+                        "bytes_processed": 0,
+                        "bytes_returned": 0
+                    }
+                },
+                {
+                    "bucket": "smoke-2696426",
+                    "time": "2026-11-05T04:00:00.000000Z",
+                    "epoch": 1793851200,
+                    "owner": "bench",
+                    "categories": [
+                        {
+                            "category": "abort_multipart",
+                            "bytes_sent": 0,
+                            "bytes_received": 0,
+                            "ops": 1,
+                            "successful_ops": 1
+                        },
+                        {
+                            "category": "complete_multipart",
+                            "bytes_sent": 309,
+                            "bytes_received": 0,
+                            "ops": 1,
+                            "successful_ops": 1
+                        },
+                        {
+                            "category": "create_bucket",
+                            "bytes_sent": 0,
+                            "bytes_received": 0,
+                            "ops": 1,
+                            "successful_ops": 1
+                        },
+                        {
+                            "category": "delete_bucket",
+                            "bytes_sent": 0,
+                            "bytes_received": 0,
+                            "ops": 1,
+                            "successful_ops": 1
+                        },
+                        {
+                            "category": "delete_obj",
+                            "bytes_sent": 0,
+                            "bytes_received": 0,
+                            "ops": 2,
+                            "successful_ops": 2
+                        },
+                        {
+                            "category": "get_obj",
+                            "bytes_sent": 26100000,
+                            "bytes_received": 0,
+                            "ops": 8,
+                            "successful_ops": 8
+                        },
+                        {
+                            "category": "init_multipart",
+                            "bytes_sent": 498,
+                            "bytes_received": 0,
+                            "ops": 2,
+                            "successful_ops": 2
+                        },
+                        {
+                            "category": "list_bucket",
+                            "bytes_sent": 1466,
+                            "bytes_received": 0,
+                            "ops": 2,
+                            "successful_ops": 2
+                        },
+                        {
+                            "category": "list_bucket_multiparts",
+                            "bytes_sent": 661,
+                            "bytes_received": 0,
+                            "ops": 1,
+                            "successful_ops": 1
+                        },
+                        {
+                            "category": "list_multipart",
+                            "bytes_sent": 644,
+                            "bytes_received": 0,
+                            "ops": 1,
+                            "successful_ops": 1
+                        },
+                        {
+                            "category": "put_obj",
+                            "bytes_sent": 0,
+                            "bytes_received": 50100000,
+                            "ops": 5,
+                            "successful_ops": 5
+                        }
+                    ],
+                    "s3select": {
+                        "bytes_processed": 0,
+                        "bytes_returned": 0
+                    }
+                }
+            ]
+        }
+    ],
+    "summary": [
+        {
+            "user": "bench",
+            "categories": [
+                {
+                    "category": "abort_multipart",
+                    "bytes_sent": 0,
+                    "bytes_received": 0,
+                    "ops": 2,
+                    "successful_ops": 2
+                },
+                {
+                    "category": "complete_multipart",
+                    "bytes_sent": 618,
+                    "bytes_received": 0,
+                    "ops": 2,
+                    "successful_ops": 2
+                },
+                {
+                    "category": "create_bucket",
+                    "bytes_sent": 0,
+                    "bytes_received": 0,
+                    "ops": 22,
+                    "successful_ops": 22
+                },
+                {
+                    "category": "delete_bucket",
+                    "bytes_sent": 0,
+                    "bytes_received": 0,
+                    "ops": 22,
+                    "successful_ops": 22
+                },
+                {
+                    "category": "delete_obj",
+                    "bytes_sent": 0,
+                    "bytes_received": 0,
+                    "ops": 4,
+                    "successful_ops": 4
+                },
+                {
+                    "category": "get_obj",
+                    "bytes_sent": 2230592864832,
+                    "bytes_received": 0,
+                    "ops": 4182016,
+                    "successful_ops": 4182016
+                },
+                {
+                    "category": "init_multipart",
+                    "bytes_sent": 996,
+                    "bytes_received": 0,
+                    "ops": 4,
+                    "successful_ops": 4
+                },
+                {
+                    "category": "list_bucket",
+                    "bytes_sent": 25446688,
+                    "bytes_received": 0,
+                    "ops": 132,
+                    "successful_ops": 132
+                },
+                {
+                    "category": "list_bucket_multiparts",
+                    "bytes_sent": 1322,
+                    "bytes_received": 0,
+                    "ops": 2,
+                    "successful_ops": 2
+                },
+                {
+                    "category": "list_buckets",
+                    "bytes_sent": 668,
+                    "bytes_received": 0,
+                    "ops": 2,
+                    "successful_ops": 2
+                },
+                {
+                    "category": "list_multipart",
+                    "bytes_sent": 1288,
+                    "bytes_received": 0,
+                    "ops": 2,
+                    "successful_ops": 2
+                },
+                {
+                    "category": "multi_object_delete",
+                    "bytes_sent": 17536,
+                    "bytes_received": 0,
+                    "ops": 128,
+                    "successful_ops": 128
+                },
+                {
+                    "category": "put_obj",
+                    "bytes_sent": 0,
+                    "bytes_received": 900500762176,
+                    "ops": 147674,
+                    "successful_ops": 147674
+                }
+            ],
+            "total": {
+                "bytes_sent": 2230618333948,
+                "bytes_received": 900500762176,
+                "ops": 4330012,
+                "successful_ops": 4330012,
+                "bytes_processed": 0,
+                "bytes_returned": 0
+            }
+        }
+    ]
+}
+== ceph df
+--- RAW STORAGE ---
+CLASS    SIZE    AVAIL     USED  RAW USED  %RAW USED
+hdd    10 GiB  9.1 GiB  924 MiB   924 MiB       9.02
+TOTAL  10 GiB  9.1 GiB  924 MiB   924 MiB       9.02
+ 
+--- POOLS ---
+POOL                                 ID  PGS   STORED  OBJECTS     USED  %USED  MAX AVAIL
+ceph-objectstore.rgw.control          1    8      0 B        9      0 B      0    8.6 GiB
+.mgr                                  2    1  577 KiB        2  580 KiB      0    8.6 GiB
+ceph-objectstore.rgw.meta             3    8  4.6 KiB        3   12 KiB      0    8.6 GiB
+ceph-objectstore.rgw.log              4    8  540 KiB       69  795 KiB      0    8.6 GiB
+ceph-objectstore.rgw.buckets.index    5    8  9.9 MiB        0  9.9 MiB   0.11    8.6 GiB
+ceph-objectstore.rgw.buckets.non-ec   6    8      0 B        0      0 B      0    8.6 GiB
+ceph-objectstore.rgw.otp              7    8      0 B        0      0 B      0    8.6 GiB
+.rgw.root                             8    8  5.3 KiB       16   60 KiB      0    8.6 GiB
+ceph-objectstore.rgw.buckets.data     9  128      0 B        0      0 B      0    8.6 GiB
+== rgw pods and deployment
+NAME                                                READY   STATUS    RESTARTS   AGE   IP            NODE                 NOMINATED NODE   READINESS GATES
+rook-ceph-rgw-ceph-objectstore-a-568b7fb698-665lk   2/2     Running   0          22m   10.89.0.214   rgw-go-main-worker   <none>           <none>
+1 localhost:5003/ceph-main:c928697
+== config dump
+WHO                            MASK  LEVEL     OPTION                                 VALUE             RO
+global                               basic     log_to_file                            true                
+global                               advanced  mon_allow_pool_delete                  true                
+global                               advanced  mon_allow_pool_size_one                true                
+global                               advanced  mon_cluster_log_file                                       
+mon                                  advanced  auth_allow_insecure_global_id_reclaim  false               
+client.rgw.ceph.objectstore.a        advanced  rgw_d3n_l1_local_datacache_enabled     false               
+client.rgw.ceph.objectstore.a        basic     rgw_dynamic_resharding                 false             * 
+client.rgw.ceph.objectstore.a        advanced  rgw_enable_gc_threads                  false               
+client.rgw.ceph.objectstore.a        advanced  rgw_enable_lc_threads                  false               
+client.rgw.ceph.objectstore.a        advanced  rgw_enable_usage_log                   true                
+client.rgw.ceph.objectstore.a        advanced  rgw_heap_release_interval              1                   
+client.rgw.ceph.objectstore.a        dev       rgw_lc_debug_interval                  10                  
+client.rgw.ceph.objectstore.a        advanced  rgw_log_nonexistent_bucket             true                
+client.rgw.ceph.objectstore.a        advanced  rgw_log_object_name_utc                true                
+client.rgw.ceph.objectstore.a        advanced  rgw_run_sync_thread                    false               
+client.rgw.ceph.objectstore.a        advanced  rgw_usage_log_flush_threshold          1                   
+client.rgw.ceph.objectstore.a        advanced  rgw_usage_log_tick_interval            1                   
+client.rgw.ceph.objectstore.a        advanced  rgw_zone                               ceph-objectstore  * 
+client.rgw.ceph.objectstore.a        advanced  rgw_zonegroup                          ceph-objectstore  * 
+== rgw-go processes and scopes on the host
+no rgw-go

@@ -1,0 +1,77 @@
+== date
+2026-11-04T23:45:55-07:00
+== users
+[
+    "alice",
+    "s3tests-alt",
+    "s3tests-main",
+    "t1$bob",
+    "s3tests-root2",
+    "s3tests-iam",
+    "s3tests-root1",
+    "s3tt$s3tests-tenant"
+]
+== buckets
+[
+    "t1/tenanted",
+    "plain"
+]
+== gc entries (include-all)
+0
+== usage show --uid=bench --start-date=2026-11-01
+{
+    "entries": [],
+    "summary": []
+}
+== ceph df
+--- RAW STORAGE ---
+CLASS    SIZE    AVAIL     USED  RAW USED  %RAW USED
+hdd    10 GiB  9.9 GiB  111 MiB   111 MiB       1.09
+TOTAL  10 GiB  9.9 GiB  111 MiB   111 MiB       1.09
+ 
+--- POOLS ---
+POOL                                 ID  PGS   STORED  OBJECTS     USED  %USED  MAX AVAIL
+ceph-objectstore.rgw.control          1    8      0 B        9      0 B      0    9.4 GiB
+ceph-objectstore.rgw.meta             2    8  5.1 KiB       42  120 KiB      0    9.4 GiB
+.mgr                                  3    1  577 KiB        2  580 KiB      0    9.4 GiB
+ceph-objectstore.rgw.log              4    8  650 KiB      106  905 KiB      0    9.4 GiB
+ceph-objectstore.rgw.buckets.index    5    8  2.6 KiB       22  2.6 KiB      0    9.4 GiB
+ceph-objectstore.rgw.buckets.non-ec   6    8      0 B        0      0 B      0    9.4 GiB
+ceph-objectstore.rgw.otp              7    8  2.2 KiB        1  2.2 KiB      0    9.4 GiB
+.rgw.root                             8    8  9.2 KiB       18   68 KiB      0    9.4 GiB
+ceph-objectstore.rgw.buckets.data     9  128   34 MiB       18   34 MiB   0.35    9.4 GiB
+rgw-go-test                          10   32      0 B        0      0 B      0    9.4 GiB
+== rgw pods and deployment
+NAME                                                READY   STATUS    RESTARTS   AGE   IP            NODE                     NOMINATED NODE   READINESS GATES
+rook-ceph-rgw-ceph-objectstore-a-556b4df4c6-b9g4k   2/2     Running   0          8h    10.89.0.124   rgw-go-tentacle-worker   <none>           <none>
+1 quay.io/ceph/ceph:v20.2.4
+== config dump
+WHO                            MASK  LEVEL     OPTION                                 VALUE             RO
+global                               basic     log_to_file                            true                
+global                               advanced  mon_allow_pool_delete                  true                
+global                               advanced  mon_allow_pool_size_one                true                
+global                               advanced  mon_cluster_log_file                                       
+mon                                  advanced  auth_allow_insecure_global_id_reclaim  false               
+client.rgw.ceph.objectstore.a        advanced  rgw_d3n_l1_local_datacache_enabled     false               
+client.rgw.ceph.objectstore.a        basic     rgw_dynamic_resharding                 false               
+client.rgw.ceph.objectstore.a        advanced  rgw_enable_gc_threads                  false               
+client.rgw.ceph.objectstore.a        advanced  rgw_enable_lc_threads                  false               
+client.rgw.ceph.objectstore.a        advanced  rgw_enable_usage_log                   true                
+client.rgw.ceph.objectstore.a        dev       rgw_lc_debug_interval                  10                  
+client.rgw.ceph.objectstore.a        advanced  rgw_log_nonexistent_bucket             true                
+client.rgw.ceph.objectstore.a        advanced  rgw_log_object_name_utc                true                
+client.rgw.ceph.objectstore.a        advanced  rgw_run_sync_thread                    false               
+client.rgw.ceph.objectstore.a        advanced  rgw_usage_log_flush_threshold          1                   
+client.rgw.ceph.objectstore.a        advanced  rgw_usage_log_tick_interval            1                   
+client.rgw.ceph.objectstore.a        advanced  rgw_zone                               ceph-objectstore  * 
+client.rgw.ceph.objectstore.a        advanced  rgw_zonegroup                          ceph-objectstore  * 
+client.rgw.rgw-go                    basic     rgw_dynamic_resharding                 false               
+client.rgw.rgw-go                    advanced  rgw_enable_gc_threads                  false               
+client.rgw.rgw-go                    advanced  rgw_enable_lc_threads                  false               
+client.rgw.rgw-go                    advanced  rgw_enable_usage_log                   true                
+client.rgw.rgw-go                    dev       rgw_lc_debug_interval                  10                  
+client.rgw.rgw-go                    advanced  rgw_run_sync_thread                    false               
+client.rgw.rgw-go                    advanced  rgw_usage_log_flush_threshold          1                   
+client.rgw.rgw-go                    advanced  rgw_usage_log_tick_interval            1                   
+== rgw-go processes and scopes on the host
+no rgw-go

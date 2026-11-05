@@ -1,0 +1,25 @@
+# VARIANT LOAD REP, one run a line, in order; the variants rotate between loads and reps.
+R large 1
+M large 1
+F large 1
+M vlarge 1
+F vlarge 1
+R vlarge 1
+F small 1
+R small 1
+M small 1
+R mix 1
+M mix 1
+F mix 1
+F large 2
+R large 2
+M large 2
+R vlarge 2
+M vlarge 2
+F vlarge 2
+M small 2
+F small 2
+R small 2
+F mix 2
+R mix 2
+M mix 2

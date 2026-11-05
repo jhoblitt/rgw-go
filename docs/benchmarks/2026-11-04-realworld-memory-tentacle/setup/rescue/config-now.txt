@@ -1,0 +1,27 @@
+WHO                            MASK  LEVEL     OPTION                                 VALUE             RO
+global                               basic     log_to_file                            true                
+global                               advanced  mon_allow_pool_delete                  true                
+global                               advanced  mon_allow_pool_size_one                true                
+global                               advanced  mon_cluster_log_file                                       
+mon                                  advanced  auth_allow_insecure_global_id_reclaim  false               
+client.rgw.ceph.objectstore.a        advanced  rgw_d3n_l1_local_datacache_enabled     false               
+client.rgw.ceph.objectstore.a        basic     rgw_dynamic_resharding                 false               
+client.rgw.ceph.objectstore.a        advanced  rgw_enable_gc_threads                  false               
+client.rgw.ceph.objectstore.a        advanced  rgw_enable_lc_threads                  false               
+client.rgw.ceph.objectstore.a        advanced  rgw_enable_usage_log                   true                
+client.rgw.ceph.objectstore.a        dev       rgw_lc_debug_interval                  10                  
+client.rgw.ceph.objectstore.a        advanced  rgw_log_nonexistent_bucket             true                
+client.rgw.ceph.objectstore.a        advanced  rgw_log_object_name_utc                true                
+client.rgw.ceph.objectstore.a        advanced  rgw_run_sync_thread                    false               
+client.rgw.ceph.objectstore.a        advanced  rgw_usage_log_flush_threshold          1                   
+client.rgw.ceph.objectstore.a        advanced  rgw_usage_log_tick_interval            1                   
+client.rgw.ceph.objectstore.a        advanced  rgw_zone                               ceph-objectstore  * 
+client.rgw.ceph.objectstore.a        advanced  rgw_zonegroup                          ceph-objectstore  * 
+client.rgw.rgw-go                    basic     rgw_dynamic_resharding                 false               
+client.rgw.rgw-go                    advanced  rgw_enable_gc_threads                  false               
+client.rgw.rgw-go                    advanced  rgw_enable_lc_threads                  false               
+client.rgw.rgw-go                    advanced  rgw_enable_usage_log                   true                
+client.rgw.rgw-go                    dev       rgw_lc_debug_interval                  10                  
+client.rgw.rgw-go                    advanced  rgw_run_sync_thread                    false               
+client.rgw.rgw-go                    advanced  rgw_usage_log_flush_threshold          1                   
+client.rgw.rgw-go                    advanced  rgw_usage_log_tick_interval            1                   
