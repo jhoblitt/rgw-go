@@ -9808,7 +9808,7 @@ does the following.
   draws nothing more, so it never holds what its write side waits for. A GET
   keeps its prefetched head only while a quarter of the budget has room for
   it at once and no other draw waits, and its share then lasts as long as
-  the request does, which keeps the copy; otherwise its stat reads no data
+  the request does, which keeps the head; otherwise its stat reads no data
   and the GET reads the head's bytes with the rest of its data, as a GET
   with a Range header does, with one more RADOS read. A multipart upload's
   meta object is metadata, which draws nothing: rgw-go reads it into a

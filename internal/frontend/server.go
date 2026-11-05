@@ -218,7 +218,11 @@ func (s *Server) Serve(ctx context.Context) error {
 	// A connection's goroutine runs its handlers, so its end is theirs; a
 	// hijacked connection's handler is the hijacker's to finish.
 	var conns sync.WaitGroup
-	// beast speaks HTTP/1.x alone.
+	// beast speaks HTTP/1.x alone. The driver also depends on it: it recycles
+	// a buffer, a pooled read piece or a prefetched head, as soon as the
+	// response's Write returns, which holds for HTTP/1.x, where Write has
+	// copied or sent its bytes by then, and not for HTTP/2, whose handler
+	// write can return before the frame that holds the slice is sent.
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
 	srv := &http.Server{

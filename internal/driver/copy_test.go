@@ -184,6 +184,32 @@ var _ = Describe("CopyObject", func() {
 		Expect(head.Xattrs).To(HaveKeyWithValue("user.rgw.tail_tag", []byte("tx-copy\x00")), "the source's tail tag dropped, then the copy's set")
 	})
 
+	It("writes the source's prefetched head to its end when the client leaves, and leaves the head's buffer to the state's release", func(ctx SpecContext) {
+		srcSt.ReleaseHead()
+		Expect(s.LentBufBytesForTest()).To(BeZero(), "the fixture's own prefetch is back")
+		reqCtx, leave := context.WithCancel(ctx)
+		defer leave()
+		src, err := s.PrefetchObject(reqCtx, rec, srcKey)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(s.LentBufBytesForTest()).To(BeEquivalentTo(4 << 20))
+		idle := s.IdleBufsForTest(4 << 20)
+		prefetched := func() int64 { return s.MemoryBudgetStats().PrefetchHeld }
+		c.BeforeWrite(testDataPool, "", dstOID, func(*fakerados.Object) {
+			leave()
+			Eventually(prefetched).WithTimeout(5*time.Second).WithPolling(time.Millisecond).Should(BeZero(),
+				"the budget's share went back with the client's context")
+			Expect(s.LentBufBytesForTest()).To(BeEquivalentTo(4<<20), "but the head this write carries is still the state's")
+			Expect(s.IdleBufsForTest(4 << 20)).To(Equal(idle))
+		})
+		_, err = s.CopyObject(reqCtx, src, rec, dstKey, op.CopyParams{Attrs: reqAttrs(), Tag: "tx-copy"})
+		Expect(err).NotTo(HaveOccurred(), "the copy runs to its end from the head write on")
+		Expect(c.Object(testDataPool, "", dstOID).Data).To(Equal(body[:4<<20]))
+		Expect(s.LentBufBytesForTest()).To(BeEquivalentTo(4<<20), "CopyObject leaves the release to the state's holder")
+		src.ReleaseHead()
+		Expect(s.LentBufBytesForTest()).To(BeZero())
+		Expect(s.IdleBufsForTest(4 << 20)).To(Equal(idle + 1))
+	})
+
 	It("rewrites only the head when copying onto itself with REPLACE", func(ctx SpecContext) {
 		c.ResetCounters()
 		_, err := s.CopyObject(ctx, srcSt, rec, srcKey, op.CopyParams{Attrs: reqAttrs(meta.AttrMetaPrefix+"c", "3"), ReplaceAttrs: true, Tag: "tx-self"})

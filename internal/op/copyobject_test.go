@@ -2,9 +2,12 @@ package op_test
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -31,6 +34,8 @@ func (f *writeFixture) putAttrs(ctx context.Context, key, data string, attrs map
 		op.PutParams{Size: int64(len(data)), Attrs: all})
 	Expect(err).NotTo(HaveOccurred())
 }
+
+var errCopyFailed = errors.New("the store could not copy")
 
 // countingBuckets is a bucket store that records the name of each bucket it
 // loads.
@@ -121,6 +126,48 @@ var _ = Describe("CopyObject", func() {
 		Expect(p.IfNoneMatch).To(Equal("f"))
 		Expect(o.Attrs).To(HaveLen(1), "the request's attrs stay as the handler gave them")
 		Expect(o.VersionID).To(BeEmpty(), "an object of a bucket never versioned has no version id")
+	})
+	Describe("the source's prefetched head", func() {
+		var (
+			stub               *opfakes.FakeObjectStore
+			src                *op.ObjectState
+			released, atCopied atomic.Int32
+		)
+		BeforeEach(func() {
+			released.Store(0)
+			atCopied.Store(-1)
+			src = &op.ObjectState{
+				Exists: true, Size: 5, Head: []byte("hello"), Attrs: map[string][]byte{meta.AttrETag: []byte("e")},
+				HeadRelease: sync.OnceFunc(func() { released.Add(1) }),
+			}
+			stub = &opfakes.FakeObjectStore{}
+			stub.PrefetchObjectReturns(src, nil)
+			stub.CopyObjectCalls(func(context.Context, *op.ObjectState, *op.BucketRecord, meta.ObjKey, op.CopyParams) (*op.PutResult, error) {
+				atCopied.Store(released.Load())
+				return &op.PutResult{ETag: "e", Mtime: smallMtime()}, nil
+			})
+			f.env.Objects = stub
+		})
+		It("is held while the store copies, and given back, dropped, when the op is over", func(ctx SpecContext) {
+			Expect(op.Run(ctx, f.copyOf("src"), f.req(http.MethodPut, "plain", "dst"))).To(Succeed())
+			Expect(stub.CopyObjectCallCount()).To(Equal(1))
+			Expect(atCopied.Load()).To(BeZero(), "the copy writes the head as its data, so the head was still held")
+			Expect(released.Load()).To(BeEquivalentTo(1))
+			Expect(src.Head).To(BeNil())
+		})
+		DescribeTable("is given back however the op ends",
+			func(ctx SpecContext, setup func(), want error) {
+				setup()
+				Expect(op.Run(ctx, f.copyOf("src"), f.req(http.MethodPut, "plain", "dst"))).To(MatchError(want))
+				Expect(released.Load()).To(BeEquivalentTo(1))
+			},
+			Entry("the store's copy fails", func() { stub.CopyObjectReturns(nil, errCopyFailed) }, errCopyFailed),
+			Entry("the source's read is refused", func() {
+				authz := &opfakes.FakeAuthorizer{}
+				authz.VerifyObjectInReturns(op.ErrAccessDenied)
+				f.env.Authz = authz
+			}, op.ErrAccessDenied),
+		)
 	})
 	It("takes the request's metadata over the source's with REPLACE", func(ctx SpecContext) {
 		o := f.copyOf("src")

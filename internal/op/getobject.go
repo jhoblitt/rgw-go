@@ -147,7 +147,7 @@ func (o *GetObject) Init(ctx context.Context, r *Request) error {
 	if err := o.initBucket(ctx, r); err != nil {
 		return err
 	}
-	st, err := o.readHead(ctx, r.Env.Objects, r.BucketRec, r.Object)
+	st, err := o.readHead(ctx, r, r.BucketRec, r.Object)
 	if err != nil {
 		return err
 	}
@@ -413,11 +413,11 @@ func (o *GetObject) send(ctx context.Context, r *Request) error {
 // a GET without a Range header reads the head's first chunk with its stat.
 func (o *GetObject) prefetch() bool { return o.GetData && o.Range == "" }
 
-func (o *GetObject) readHead(ctx context.Context, objects ObjectStore, rec *BucketRecord, key meta.ObjKey) (*ObjectState, error) {
+func (o *GetObject) readHead(ctx context.Context, r *Request, rec *BucketRecord, key meta.ObjKey) (*ObjectState, error) {
 	if o.prefetch() {
-		return objects.PrefetchObject(ctx, rec, key)
+		return prefetchObject(ctx, r, rec, key)
 	}
-	return objects.StatObject(ctx, rec, key)
+	return r.Env.Objects.StatObject(ctx, rec, key)
 }
 
 // parseRange is init_common's parse of the Range header
@@ -530,7 +530,7 @@ func (o *GetObject) redirectToPart(ctx context.Context, r *Request) (int, error)
 		}
 		return 0, fmt.Errorf("%w: %s has no part %d", ErrInvalidPart, r.Object.Name, n)
 	}
-	st, err := o.readHead(ctx, r.Env.Objects, partBucket(r.BucketRec, obj.Bucket), obj.Key)
+	st, err := o.readHead(ctx, r, partBucket(r.BucketRec, obj.Bucket), obj.Key)
 	if err != nil {
 		// radosgw answers InvalidPart whatever the read failed with, so the
 		// cause is kept for the log but not matched.
@@ -539,7 +539,9 @@ func (o *GetObject) redirectToPart(ctx context.Context, r *Request) (int, error)
 	if st == nil || !st.Exists {
 		return 0, fmt.Errorf("%w: part %d of %s has no head", ErrInvalidPart, n, r.Object.Name)
 	}
+	// part shares st's release but not its Head slice, which Run drops too.
 	part := *st
+	r.holdHead(&part)
 	part.Attrs = maps.Clone(st.Attrs)
 	if part.Attrs == nil {
 		part.Attrs = map[string][]byte{}

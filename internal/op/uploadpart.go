@@ -187,7 +187,7 @@ func (o *UploadPart) VerifyPermission(ctx context.Context, r *Request) error {
 	if o.srcRec, err = r.Env.Buckets.GetBucket(ctx, o.SrcTenant, o.SrcBucket); err != nil {
 		return err
 	}
-	if o.src, err = r.Env.Objects.PrefetchObject(ctx, o.srcRec, o.SrcKey); err != nil {
+	if o.src, err = prefetchObject(ctx, r, o.srcRec, o.SrcKey); err != nil {
 		return err
 	}
 	if o.src == nil {

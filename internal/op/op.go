@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"syscall"
 
+	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/policy"
 )
 
@@ -67,7 +68,57 @@ type Op interface {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_process.cc#L228-L236);
 // docs/differences.md records the difference. Before any of it, Run refuses an
 // Unverified identity unless o is the CORS preflight (RefuseUnverified).
+//
+// When the op is over, whatever it returned, Run gives back the Head of every
+// state it read with prefetchObject: the store may have lent a buffer for it,
+// which its next read reuses, so nothing may read a state's Head once Run
+// has returned. A panic releases nothing, since a goroutine the op started
+// may still be reading a Head and nothing joined it; the buffers are left to
+// the GC and forgotten, so the free list stops counting them lent.
 func Run(ctx context.Context, o Op, r *Request) error {
+	over := false
+	defer func() {
+		if !over {
+			r.forgetHeads()
+		}
+	}()
+	err := run(ctx, o, r)
+	r.releaseHeads()
+	over = true
+	return err
+}
+
+// prefetchObject is r.Env.Objects.PrefetchObject for an op that Run is
+// driving, the state's Head held until Run returns.
+func prefetchObject(ctx context.Context, r *Request, rec *BucketRecord, key meta.ObjKey) (*ObjectState, error) {
+	st, err := r.Env.Objects.PrefetchObject(ctx, rec, key)
+	r.holdHead(st)
+	return st, err
+}
+
+// holdHead has Run give back st's Head, a copy of a held state included,
+// once the op is over.
+func (r *Request) holdHead(st *ObjectState) {
+	if st != nil {
+		r.heads = append(r.heads, st)
+	}
+}
+
+func (r *Request) releaseHeads() {
+	for _, st := range r.heads {
+		st.ReleaseHead()
+	}
+	r.heads = nil
+}
+
+func (r *Request) forgetHeads() {
+	for _, st := range r.heads {
+		st.ForgetHead()
+	}
+}
+
+// run is Run's lifecycle.
+func run(ctx context.Context, o Op, r *Request) error {
 	if err := RefuseUnverified(r.Identity, o.Name()); err != nil {
 		return err
 	}

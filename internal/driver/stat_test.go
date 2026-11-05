@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"maps"
 	"slices"
 	"time"
@@ -39,6 +40,28 @@ func testZone() driver.ZoneForTest {
 // testReadConfig is the read options at rgw.yaml.in's defaults.
 func testReadConfig() driver.ReadConfigForTest {
 	return driver.ReadConfigForTest{Chunk: 4 << 20, MaxReq: 4 << 20, Window: 16 << 20}
+}
+
+// panicOnMessage is a log handler that panics with msg on the record that
+// carries it, which injects a panic into the code that logs it, and passes
+// any other record on to the handler it wraps.
+type panicOnMessage struct {
+	slog.Handler
+	msg string
+}
+
+func (h panicOnMessage) Enabled(ctx context.Context, level slog.Level) bool {
+	return level == slog.LevelDebug || h.Handler.Enabled(ctx, level)
+}
+
+func (h panicOnMessage) Handle(ctx context.Context, r slog.Record) error {
+	if r.Message == h.msg {
+		panic(h.msg)
+	}
+	if !h.Handler.Enabled(ctx, r.Level) {
+		return nil
+	}
+	return h.Handler.Handle(ctx, r)
 }
 
 // fakeClusterWith is a counterfeiter cluster that opens every pool as pool.
@@ -420,6 +443,160 @@ var _ = Describe("StatObject and PrefetchObject", func() {
 			}).To(PanicWith("read"))
 			Expect(s2.LentBufBytesForTest()).To(BeZero())
 			Expect(s2.IdleBufsForTest(4<<20)).To(BeZero(), "a buffer the panicking read may still fill does not go back")
+		})
+
+		Describe("served from the buffer", func() {
+			// stored puts a head of n bytes at key k and returns them.
+			stored := func(k string, n int) []byte {
+				GinkgoHelper()
+				data := mibPattern((n + 1<<20 - 1) >> 20)[:n]
+				head(marker+"_"+k, data, map[string][]byte{meta.AttrETag: []byte("e")})
+				return data
+			}
+			prefetch := func(ctx context.Context, k string) *op.ObjectState {
+				GinkgoHelper()
+				st, err := s.PrefetchObject(ctx, plain, meta.ObjKey{Name: k})
+				Expect(err).NotTo(HaveOccurred())
+				return st
+			}
+			held := func() int64 { return s.MemoryBudgetStats().PrefetchHeld }
+
+			DescribeTable("serves a head above half the read request size from its buffer, the state owning it, and copies a shorter one",
+				func(ctx SpecContext, n int, served bool) {
+					data := stored("k", n)
+					st := prefetch(ctx, "k")
+					Expect(st.Head).To(Equal(data[:min(n, 4<<20)]))
+					if served {
+						Expect(s.LentBufBytesForTest()).To(BeEquivalentTo(4<<20), "the state holds the buffer")
+						Expect(s.IdleBufsForTest(4 << 20)).To(BeZero())
+					} else {
+						Expect(s.LentBufBytesForTest()).To(BeZero(), "a copied head holds no buffer")
+						Expect(s.IdleBufsForTest(4<<20)).To(Equal(1), "it went back as the prefetch returned")
+					}
+				},
+				Entry("a head of 4 KiB is copied", 4<<10, false),
+				Entry("a head of exactly half the request size is copied", 2<<20, false),
+				Entry("a head of one byte more is served from the buffer", 2<<20+1, true),
+				Entry("a head of a whole chunk and more is served from the buffer", 5<<20, true),
+			)
+
+			It("gives the buffer back, once, when the state is released, and drops the head with it", func(ctx SpecContext) {
+				stored("k", 5<<20)
+				st := prefetch(ctx, "k")
+				served := &st.Head[0]
+				Expect(held()).To(BeEquivalentTo(4 << 20))
+
+				st.ReleaseHead()
+				Expect(st.Head).To(BeNil())
+				Expect(s.LentBufBytesForTest()).To(BeZero())
+				Expect(s.IdleBufsForTest(4 << 20)).To(Equal(1))
+				Expect(held()).To(BeZero(), "the budget's share went with it")
+
+				st.ReleaseHead()
+				st.HeadRelease()
+				Expect(s.IdleBufsForTest(4<<20)).To(Equal(1), "a second release puts nothing back")
+				a, b := s.GetBufForTest(4<<20), s.GetBufForTest(4<<20)
+				Expect(&(*a)[0]).To(BeIdenticalTo(served), "the buffer the head was served from, with no copy of it made")
+				Expect(b).NotTo(BeIdenticalTo(a), "and it is on the list once")
+			})
+
+			It("keeps the buffer past the end of the request's context, which a copy that outlives its client still reads", func(ctx SpecContext) {
+				data := stored("k", 5<<20)
+				reqCtx, end := context.WithCancel(ctx)
+				st := prefetch(reqCtx, "k")
+				end()
+				Eventually(held).WithTimeout(5*time.Second).WithPolling(time.Millisecond).Should(BeZero(), "the budget's share goes back with the context")
+				Consistently(s.LentBufBytesForTest).WithTimeout(100*time.Millisecond).WithPolling(10*time.Millisecond).Should(BeEquivalentTo(4<<20),
+					"the buffer does not")
+				Expect(s.IdleBufsForTest(4 << 20)).To(BeZero())
+				Expect(st.Head).To(Equal(data[:4<<20]))
+				st.ReleaseHead()
+				Expect(s.LentBufBytesForTest()).To(BeZero())
+				Expect(held()).To(BeZero(), "the share was given back once")
+			})
+
+			It("holds the buffer's whole share for a head shorter than the buffer, and a copied head's length alone", func(ctx SpecContext) {
+				stored("long", 3<<20)
+				stored("short", 4<<10)
+				long := prefetch(ctx, "long")
+				Expect(held()).To(BeEquivalentTo(4<<20), "the buffer is held whole")
+				short := prefetch(ctx, "short")
+				Expect(held()).To(BeEquivalentTo(4<<20 + 4<<10))
+				long.ReleaseHead()
+				Expect(held()).To(BeEquivalentTo(4 << 10))
+				short.ReleaseHead()
+				Expect(held()).To(BeZero())
+			})
+
+			It("leaves nothing of a released state to see through the buffer when the free list lends it again", func(ctx SpecContext) {
+				stored("a", 5<<20)
+				other := bytes.Repeat([]byte("other request"), (3<<20)/13)
+				head(marker+"_b", other, nil)
+				a := prefetch(ctx, "a")
+				stale := a.Head
+				a.ReleaseHead()
+				for i := range stale {
+					stale[i] = 0xFF
+				}
+				b := prefetch(ctx, "b")
+				Expect(&b.Head[0]).To(BeIdenticalTo(&stale[0]), "the second request was lent the first's buffer")
+				Expect(b.Head).To(Equal(other))
+				Expect(a.Head).To(BeNil(), "the first state has no view of it")
+			})
+
+			It("lends the buffers of two live states apart", func(ctx SpecContext) {
+				first, second := stored("a", 5<<20), stored("b", 6<<20)
+				a, b := prefetch(ctx, "a"), prefetch(ctx, "b")
+				Expect(&a.Head[0]).NotTo(BeIdenticalTo(&b.Head[0]))
+				a.ReleaseHead()
+				again := prefetch(ctx, "a")
+				Expect(b.Head).To(Equal(second[:4<<20]), "a release and a draw leave the other state's head alone")
+				Expect(again.Head).To(Equal(first[:4<<20]))
+			})
+
+			It("gives the buffer back when the state is discarded before anyone has seen it", func(ctx SpecContext) {
+				head(marker+"_bad", mibPattern(5), map[string][]byte{meta.AttrCompression: {1}})
+				_, err := s.PrefetchObject(ctx, plain, meta.ObjKey{Name: "bad"})
+				Expect(err).To(MatchError(op.ErrUnknown))
+				Expect(s.LentBufBytesForTest()).To(BeZero())
+				Expect(s.IdleBufsForTest(4 << 20)).To(Equal(1))
+				Expect(held()).To(BeZero())
+			})
+
+			It("takes the buffer out of the lent bytes without reusing it on ForgetHead, and a later release puts nothing back", func(ctx SpecContext) {
+				data := stored("k", 5<<20)
+				st := prefetch(ctx, "k")
+				st.ForgetHead()
+				Expect(s.LentBufBytesForTest()).To(BeZero())
+				Expect(s.IdleBufsForTest(4<<20)).To(BeZero(), "forgotten, not put back")
+				Expect(st.Head).To(Equal(data[:4<<20]), "ForgetHead leaves Head to a goroutine that may still read it")
+				st.ReleaseHead()
+				Expect(s.LentBufBytesForTest()).To(BeZero(), "the buffer left the lent bytes once")
+				Expect(s.IdleBufsForTest(4<<20)).To(BeZero(), "and was never put back")
+			})
+
+			It("forgets nothing once the state is released", func(ctx SpecContext) {
+				stored("k", 5<<20)
+				st := prefetch(ctx, "k")
+				st.ReleaseHead()
+				st.ForgetHead()
+				Expect(s.LentBufBytesForTest()).To(BeZero(), "the buffer left the lent bytes once")
+				Expect(s.IdleBufsForTest(4<<20)).To(Equal(1), "and is on the list once")
+			})
+
+			It("forgets the buffer of a state that never left statHead when decoding it panics", func(ctx SpecContext) {
+				const msg = "the stored checksum does not decode; the object shows none"
+				head(marker+"_k", mibPattern(5), map[string][]byte{meta.AttrCksum: {0xff}})
+				old := slog.Default()
+				slog.SetDefault(slog.New(panicOnMessage{Handler: old.Handler(), msg: msg}))
+				DeferCleanup(slog.SetDefault, old)
+				Expect(func() {
+					_, err := s.PrefetchObject(ctx, plain, meta.ObjKey{Name: "k"})
+					Expect(err).NotTo(HaveOccurred())
+				}).To(PanicWith(msg))
+				Expect(s.LentBufBytesForTest()).To(BeZero(), "no one holds the state, so the buffer is no longer counted lent")
+				Expect(s.IdleBufsForTest(4<<20)).To(BeZero(), "and is not put back, for the panic may have left it half read")
+			})
 		})
 	})
 

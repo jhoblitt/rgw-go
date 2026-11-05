@@ -50,7 +50,10 @@ var (
 // src is the state the op read with PrefetchObject, as radosgw's object
 // context holds it from read_obj_policy, so the head's bytes come from its
 // Head without a second read: a named version, or the version current on
-// the source key's OLH, whose key it carries.
+// the source key's OLH, whose key it carries. The copy reads src.Head until
+// it returns, a head write that outlives the client's context included, so
+// the caller releases src (op.ObjectState.ReleaseHead) only after CopyObject
+// has returned.
 //
 // The destination's head write is radosgw's with the epoch RGWCopyObj
 // passes, 0 for every S3 request

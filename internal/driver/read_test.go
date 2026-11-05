@@ -192,6 +192,19 @@ func (f *failingSink) Write(p []byte) (int, error) {
 	return f.fail(p)
 }
 
+// leavingSink is a client that leaves as its first write arrives: it cancels
+// its request's context and fails the write with it.
+type leavingSink struct {
+	leave context.CancelFunc
+	wrote int
+}
+
+func (l *leavingSink) Write(p []byte) (int, error) {
+	l.wrote += len(p)
+	l.leave()
+	return 0, context.Canceled
+}
+
 // blockingSink collects what it is written. On its at'th write it closes
 // writing, then waits for resume before taking the bytes.
 type blockingSink struct {
@@ -603,11 +616,48 @@ var _ = Describe("ReadObject", func() {
 			Expect(active.Load()).To(BeZero(), "every read had returned before ReadObject did")
 			Expect(canceled.Load()).To(BeEquivalentTo(3), "the failure canceled tails 2-4")
 			Expect(s2.PooledBuffersForTest()).To(BeEquivalentTo(1), "tail 1's buffer went back to the free list; the abandoned reads' did not")
-			Expect(s2.LentBufBytesForTest()).To(BeZero(), "the abandoned reads' buffers left the lent bytes")
+			Expect(s2.LentBufBytesForTest()).To(BeEquivalentTo(4<<20),
+				"the abandoned reads' buffers left the lent bytes; the prefetched head's, which the state owns, stays lent")
+			st.ReleaseHead()
+			Expect(s2.LentBufBytesForTest()).To(BeZero(), "and leaves them with the state's release")
 		},
 		Entry("an error", func([]byte) (int, error) { return 0, errSinkGone }, errSinkGone),
 		Entry("a short write", func(p []byte) (int, error) { return len(p) / 2, nil }, io.ErrShortWrite),
 	)
+
+	It("returns from a GET whose client leaves as its head is written with nothing reading the head, so its release is safe", func(ctx SpecContext) {
+		pool := &radosclientfakes.FakePool{}
+		pool.WithLocatorReturns(pool)
+		m := largeManifestOfSize(20 << 20)
+		data := payload(20<<20, 14)
+		pool.ReadStub = func(ctx context.Context, _ string, rop *radosclient.ReadOp, _ radosclient.OpFlags) (uint64, error) {
+			if isStat(rop) {
+				return fillHead(rop, data[:4<<20], largeAttrs(m)), nil
+			}
+			<-ctx.Done()
+			return 0, ctx.Err()
+		}
+		s2 := driver.NewStoreForTest(fakeClusterWith(pool), testZone(), testReadConfig())
+		reqCtx, leave := context.WithCancel(ctx)
+		defer leave()
+		st, err := s2.PrefetchObject(reqCtx, plain, meta.ObjKey{Name: "large.bin"})
+		Expect(err).NotTo(HaveOccurred())
+		held := st.Head
+		sink := &leavingSink{leave: leave}
+		err = s2.ReadObject(reqCtx, st, op.ByteRange{Length: 20 << 20}, sink)
+		Expect(err).To(MatchError(context.Canceled))
+		Expect(sink.wrote).To(Equal(4<<20), "the client left as the head was written")
+		Expect(s2.LentBufBytesForTest()).To(BeEquivalentTo(4<<20), "the head's buffer is still the state's")
+		Expect(s2.IdleBufsForTest(4 << 20)).To(BeZero())
+		st.ReleaseHead()
+		Expect(s2.LentBufBytesForTest()).To(BeZero())
+		Expect(s2.IdleBufsForTest(4 << 20)).To(Equal(1))
+		for i := range held {
+			held[i] = 0xFF
+		}
+		next := s2.GetBufForTest(4 << 20)
+		Expect(&(*next)[0]).To(BeIdenticalTo(&held[0]), "the next request is lent the head's buffer, which the race detector sees no reader of")
+	})
 
 	It("stops at the first failed tail, drains the rest, and maps the error", func(ctx SpecContext) {
 		data := payload(10<<20, 6)
