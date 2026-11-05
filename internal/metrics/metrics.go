@@ -223,6 +223,9 @@ var (
 	budgetPrefetchSkipped = prometheus.NewDesc("rgw_go_memory_budget_prefetch_skipped_total",
 		"Head prefetches refused, a GET's, a copy source's or a versioned key's followed head, because the memory budget's prefetch room was spent or another draw was waiting; the head's bytes are then read with the data.",
 		nil, nil)
+	budgetFreeList = prometheus.NewDesc("rgw_go_memory_budget_free_list_bytes",
+		"Bytes of buffers of object data the free list keeps idle for reuse, at most the memory budget's total; they are live heap the GC cannot reclaim until the list's idle trim drops them.",
+		nil, nil)
 )
 
 // budgetCollector reads the watched memory budget once per scrape.
@@ -238,7 +241,7 @@ func (c *budgetCollector) watch(m MemoryBudgetReporter) {
 }
 
 func (c *budgetCollector) Describe(ch chan<- *prometheus.Desc) {
-	for _, d := range []*prometheus.Desc{budgetBytes, budgetHeld, budgetWaiting, budgetWaits, budgetWaited, budgetSlowdowns, budgetPrefetchSkipped} {
+	for _, d := range []*prometheus.Desc{budgetBytes, budgetHeld, budgetWaiting, budgetWaits, budgetWaited, budgetSlowdowns, budgetPrefetchSkipped, budgetFreeList} {
 		ch <- d
 	}
 }
@@ -272,6 +275,7 @@ func (c *budgetCollector) Collect(ch chan<- prometheus.Metric) {
 	counter(budgetSlowdowns, float64(st.PieceSlowdowns), "piece")
 	counter(budgetSlowdowns, float64(st.HoldSlowdowns), "hold")
 	ch <- prometheus.MustNewConstMetric(budgetPrefetchSkipped, prometheus.CounterValue, float64(st.PrefetchSkipped))
+	ch <- prometheus.MustNewConstMetric(budgetFreeList, prometheus.GaugeValue, float64(st.FreeListIdle))
 }
 
 var processThreads = prometheus.NewDesc("rgw_go_process_threads",

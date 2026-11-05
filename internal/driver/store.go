@@ -61,19 +61,16 @@ type Store struct {
 	// condSleep, when set, is how a conditional link waits out a backoff
 	// (waitOLHPending); sleepCtx when nil.
 	condSleep func(ctx context.Context, d time.Duration) error
-	// headBufs holds the *[]byte buffers prefetches read the head into.
-	headBufs sync.Pool
-	// readBufs holds the *[]byte buffers of rgw_get_obj_max_req_size that
-	// data reads of more than half that go into, and pooledReadBufs counts
-	// those handed back and not taken out again.
-	readBufs       sync.Pool
+	// bufs is the free list, capped at the memory budget's size, of the
+	// buffers prefetches read the head into, those of
+	// rgw_get_obj_max_req_size that data reads of more than half that go
+	// into, and those of one chunk PUTs read their tail pieces and parts
+	// their first stripes into. pooledReadBufs counts the read buffers handed
+	// back to it.
+	bufs           *bufLists
 	pooledReadBufs atomic.Int64
-	// tailBufs holds the *[]byte buffers PUTs read their tail chunks and
-	// parts their first stripes into, each exactly one chunk of the layout
-	// that pooled it: a *sync.Pool, or a spec's fake.
-	tailBufs bufPool
-	quota    statsCaches
-	usage    usageLogger
+	quota          statsCaches
+	usage          usageLogger
 	// newTicker makes the tickers the workers run on.
 	newTicker func(time.Duration) ticker
 	// heads is what a listing checks a pending index entry's head with: the
@@ -159,10 +156,10 @@ func Open(ctx context.Context, cluster radosclient.Cluster, conf *cephconf.Optio
 	}
 	zc.log(ctx)
 	opts.logWorkersNotRun(ctx)
+	mem := newMemBudget(memoryBudgetSize(ctx, o.MemoryLimit, o.MemoryBudgetRatio, memBudgetFloor(readCfg, wopts), physicalMemory), memStartWait)
 	s := &Store{
 		cluster: cluster, conf: conf, opts: opts, release: release, zone: zc, names: names, roots: roots, pools: pools, sysobj: sys, readCfg: readCfg,
-		mp: mp, lc: newLCIndex(), newTicker: newTimeTicker, tailBufs: new(sync.Pool),
-		mem: newMemBudget(memoryBudgetSize(ctx, o.MemoryLimit, o.MemoryBudgetRatio, memBudgetFloor(readCfg, wopts), physicalMemory), memStartWait),
+		mp: mp, lc: newLCIndex(), newTicker: newTimeTicker, mem: mem, bufs: newBufLists(mem.size),
 	}
 	s.heads = unfollowedHeads{s}
 	s.bgAIO = semaphore.NewWeighted(int64(opts.bucketIndexMaxAIO))
@@ -198,10 +195,11 @@ func openZone(ctx context.Context, conf *cephconf.Options, pools *poolCache, nam
 func (s *Store) MaxConcurrentRequests() int64 { return s.w.opts.maxRequests }
 
 // Close cancels the stats caches' refreshes under way and waits for them,
-// then closes the pools the Store opened. The workers stop with Run's
-// context, not here.
+// stops the free list's pending trim, then closes the pools the Store
+// opened. The workers stop with Run's context, not here.
 func (s *Store) Close() error {
 	s.quota.close()
+	s.bufs.close()
 	return s.pools.closeAll()
 }
 

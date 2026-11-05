@@ -614,6 +614,20 @@ var _ = Describe("part writer", func() {
 		Expect(tw.PeakBuffered()).To(BeEquivalentTo(1<<20), "the declared length sizes the buffer")
 	})
 
+	It("stops counting as lent a first-stripe buffer of one chunk that the body outgrows", func(ctx SpecContext) {
+		// A 32 MiB stripe grows past the 4 MiB the part declares, to the
+		// window and one byte, a buffer the free list does not lend.
+		s = openPutStore(ctx, c, denc.Squid, map[string]string{"rgw_obj_stripe_size": "33554432"}, time.Now())
+		tw := writer(ctx, 1)
+		body := mibPattern(5)
+		size, err := tw.Consume(ctx, bytes.NewReader(body), 4<<20, md5.New())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(tw.Drain()).To(Succeed())
+		Expect(size).To(BeEquivalentTo(5 << 20))
+		Expect(c.Object(testDataPool, "", partOID(1)).Data).To(Equal(body), "the grown first stripe holds the whole body")
+		Expect(s.LentBufBytesForTest()).To(BeZero(), "the chunk buffer the body outgrew left the lent bytes")
+	})
+
 	It("sizes a small part's buffer by its declared length, and grows it when the body runs past it", func(ctx SpecContext) {
 		tw := writer(ctx, 1)
 		_, err := tw.Consume(ctx, strings.NewReader("x"), 1, md5.New())
@@ -629,18 +643,16 @@ var _ = Describe("part writer", func() {
 		Expect(c.Object(testDataPool, "", shadowOID(2, 1)).Data).To(Equal(body[4<<20:]))
 	})
 
-	DescribeTable("draws a part's first-stripe buffer of one chunk from the tail buffers it goes back to, so parts add none to them",
+	DescribeTable("draws a part's first-stripe buffer of one chunk from the free list it goes back to, so parts add none to it",
 		func(ctx SpecContext, declared int64) {
 			const parts = 8
-			pool := &lifoPool{}
-			s.SetTailBufsForTest(pool)
 			afterFirst := 0
 			for i := range parts {
 				n := uint32(i + 1)
 				// A 4 MiB first stripe and a 3 MiB shadow piece read to the
 				// end. A body ending on a chunk would draw one more buffer to
 				// find its end while the last write may still hold its own, and
-				// the pool's count would depend on which came first.
+				// the list's count would depend on which came first.
 				body := partPattern(i, 7)
 				tw := writer(ctx, n)
 				_, err := tw.Consume(ctx, bytes.NewReader(body), declared, md5.New())
@@ -649,10 +661,11 @@ var _ = Describe("part writer", func() {
 				Expect(c.Object(testDataPool, "", partOID(i+1)).Data).To(Equal(body[:4<<20]), "part %d's head", n)
 				Expect(c.Object(testDataPool, "", shadowOID(i+1, 1)).Data).To(Equal(body[4<<20:]), "part %d's shadow", n)
 				if i == 0 {
-					afterFirst = pool.Len()
+					afterFirst = s.IdleBufsForTest(4 << 20)
 				}
 			}
-			Expect(pool.Len()).To(Equal(afterFirst), "the pool holds after %d parts what it held after the first", parts)
+			Expect(s.IdleBufsForTest(4<<20)).To(Equal(afterFirst), "the free list holds after %d parts what it held after the first", parts)
+			Expect(s.LentBufBytesForTest()).To(BeZero(), "every buffer the list lent came back")
 		},
 		Entry("a part of its declared length, whose first stripe is one chunk", int64(7<<20)),
 		Entry("a part whose body runs past its declared length, whose first stripe grows to one chunk", int64(10)),
@@ -660,11 +673,10 @@ var _ = Describe("part writer", func() {
 
 	DescribeTable("never writes or hashes the stale bytes of a recycled first-stripe buffer",
 		func(ctx SpecContext, body []byte, draws int, after func(body []byte) []byte) {
-			pool := &lifoPool{}
-			s.SetTailBufsForTest(pool)
 			poison := bytes.Repeat([]byte{0xAA}, 4<<20)
 			poisoned := &poison
-			pool.Put(poisoned)
+			s.PutBufForTest(poisoned)
+			drawn := s.CountDrawsForTest(poisoned)
 			tw := writer(ctx, 1)
 			h := md5.New()
 			// A declared length short of the body grows the first stripe's
@@ -673,8 +685,9 @@ var _ = Describe("part writer", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(tw.Drain()).To(Succeed())
 			Expect(size).To(BeEquivalentTo(len(body)))
-			Expect(pool.Draws(poisoned)).To(Equal(draws), "the first stripe, and any shadow piece after it, was read into the poisoned chunk buffer")
+			Expect(drawn()).To(Equal(draws), "the first stripe, and any shadow piece after it, was read into the poisoned chunk buffer")
 			Expect(*poisoned).To(Equal(after(body)), "the buffer holds stale bytes past what was read into it last")
+			Expect(s.GetBufForTest(4<<20)).To(BeIdenticalTo(poisoned), "the poisoned buffer went back to the free list, last")
 			stored := bytes.Clone(c.Object(testDataPool, "", partOID(1)).Data)
 			if shadow := c.Object(testDataPool, "", shadowOID(1, 1)); shadow != nil {
 				stored = append(stored, shadow.Data...)
@@ -741,6 +754,43 @@ var _ = Describe("memory budget on the write path", func() {
 		Entry("raised to the least one request needs when the share is smaller",
 			int64(64<<20), 0.0, func(st *driver.Store) int64 { return st.MemoryBudgetFloorForTest() }),
 	)
+
+	It("caps the free list's idle bytes at the budget it sizes", func(ctx SpecContext) {
+		rel := denc.Squid
+		st, err := driver.Open(ctx, c, conf(nil), driver.Options{Release: &rel, MemoryLimit: 256 << 20})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(st.MemoryBudgetForTest().Size).To(BeEquivalentTo(128 << 20))
+		const half = 64<<20 + 1
+		st.PutBufForTest(new(make([]byte, half)))
+		st.PutBufForTest(new(make([]byte, half)))
+		Expect(st.IdleBufsForTest(half)).To(Equal(1), "a second block would take the list past the budget")
+		Expect(st.MemoryBudgetStats().FreeListIdle).To(BeEquivalentTo(half))
+	})
+
+	It("does not hand back a tail buffer whose write is abandoned to the driver's lifetime, and no later get is lent it", func(ctx SpecContext) {
+		held := make(chan []byte, 1)
+		cl := abandoningCluster{Cluster: c, stall: func(oid string) bool { return strings.Contains(oid, "__shadow_") }, held: held}
+		rel := denc.Squid
+		st, err := driver.Open(ctx, cl, conf(nil), driver.Options{Release: &rel})
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(st.Close)
+		st.SetRandForTest(fixedRand(prefix(0)))
+		tw, err := st.NewTailWriterForTest(ctx, rec, meta.ObjKey{Name: prefix(0)}, "")
+		Expect(err).NotTo(HaveOccurred())
+		// A 4 MiB head and a 3 MiB tail piece: the body ends inside the
+		// piece, so the writer draws one buffer, which the stalled write holds.
+		_, _, err = tw.Consume(ctx, bytes.NewReader(mibPattern(7)), 7<<20, md5.New())
+		Expect(err).NotTo(HaveOccurred())
+		var tail []byte
+		Eventually(held).WithTimeout(5*time.Second).Should(Receive(&tail), "the tail write is in flight")
+		st.EndLifetimeForTest()
+		Expect(tw.Drain()).To(HaveOccurred(), "the write was abandoned")
+		Expect(tail).To(HaveLen(3 << 20))
+		Expect(st.IdleBufsForTest(4<<20)).To(BeZero(), "librados may still read the buffer, so it did not go back")
+		Expect(st.LentBufBytesForTest()).To(BeZero(), "and it is not counted as lent")
+		next := st.GetBufForTest(4 << 20)
+		Expect(&(*next)[0]).NotTo(BeIdenticalTo(&tail[0]), "a later get of 4 MiB is not lent the abandoned write's buffer")
+	})
 
 	It("needs at the defaults room for a copy's hold twice and the largest piece four times", func() {
 		Expect(s.MemoryBudgetFloorForTest()).To(BeEquivalentTo(2*((16<<20)+(10<<20)+(8<<20))),
@@ -1119,53 +1169,46 @@ func partPattern(k, n int) []byte {
 	return b
 }
 
-// lifoPool is a tail buffer pool that hands out the buffer put last and,
-// unlike a sync.Pool, never drops one, at any GOMAXPROCS and under -race. It
-// records every buffer Get handed out.
-type lifoPool struct {
-	mu    sync.Mutex
-	bufs  []any
-	drawn []any
+// abandoningCluster is a cluster whose pools hold each write to an oid stall
+// matches until the write's context ends, as an op abandoned to it, and send
+// the data of each such write on held first.
+type abandoningCluster struct {
+	*fakerados.Cluster
+	stall func(oid string) bool
+	held  chan<- []byte
 }
 
-var _ driver.BufPool = (*lifoPool)(nil)
-
-func (p *lifoPool) Get() any {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.bufs) == 0 {
-		return nil
+func (c abandoningCluster) Pool(ctx context.Context, pool, namespace string) (radosclient.Pool, error) {
+	p, err := c.Cluster.Pool(ctx, pool, namespace)
+	if err != nil {
+		return nil, err
 	}
-	b := p.bufs[len(p.bufs)-1]
-	p.bufs = p.bufs[:len(p.bufs)-1]
-	p.drawn = append(p.drawn, b)
-	return b
+	return abandoningPool{Pool: p, c: c}, nil
 }
 
-func (p *lifoPool) Put(b any) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.bufs = append(p.bufs, b)
+type abandoningPool struct {
+	radosclient.Pool
+	c abandoningCluster
 }
 
-// Len is the number of buffers the pool holds.
-func (p *lifoPool) Len() int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return len(p.bufs)
+func (p abandoningPool) WithLocator(loc string) radosclient.Pool {
+	return abandoningPool{Pool: p.Pool.WithLocator(loc), c: p.c}
 }
 
-// Draws is the number of times Get handed out b.
-func (p *lifoPool) Draws(b any) int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	n := 0
-	for _, d := range p.drawn {
-		if d == b {
-			n++
+func (p abandoningPool) Write(ctx context.Context, oid string, w *radosclient.WriteOp, flags radosclient.OpFlags) (uint64, error) {
+	if !p.c.stall(oid) {
+		return p.Pool.Write(ctx, oid, w, flags)
+	}
+	for _, step := range w.Steps() {
+		switch st := step.(type) {
+		case *radosclient.WriteFullStep:
+			p.c.held <- st.Data
+		case *radosclient.WriteStep:
+			p.c.held <- st.Data
 		}
 	}
-	return n
+	<-ctx.Done()
+	return 0, ctx.Err()
 }
 
 // zeros reads as an endless run of zero bytes.

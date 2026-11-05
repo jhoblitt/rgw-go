@@ -281,11 +281,24 @@ func (s *Store) statHead(ctx context.Context, rec *op.BucketRecord, key meta.Obj
 		}
 	}
 	defer func() { s.mem.release(memPrefetch, share) }()
+	settled := false
+	defer func() {
+		// A read that panicked, which the request's recovery survives, may
+		// still fill the buffer: it never goes back, and leaves the lent bytes.
+		if buf != nil && !settled {
+			s.bufs.forget(buf)
+		}
+	}()
 	ver, err := ref.pool.Read(ctx, ref.oid, rop, radosclient.OpFlagNone)
-	if buf != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-		// An op abandoned to its context may still fill the buffer, so only
-		// one that ended goes back to the pool.
-		defer s.headBufs.Put(buf)
+	settled = true
+	if buf != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			// An op abandoned to its context may still fill the buffer, so
+			// only one that ended goes back to the free list.
+			s.bufs.forget(buf)
+		} else {
+			defer s.bufs.put(buf)
+		}
 	}
 	st := &op.ObjectState{Bucket: rec, Key: key}
 	if errors.Is(err, radosclient.ErrNotFound) {
@@ -319,15 +332,9 @@ func (s *Store) statHead(ctx context.Context, rec *op.BucketRecord, key meta.Obj
 }
 
 // headBuf returns a buffer of rgw_max_chunk_size bytes for a prefetch. The
-// buffers are pooled because a prefetch reads into a whole chunk however
-// short the head is.
-func (s *Store) headBuf() *[]byte {
-	if b, ok := s.headBufs.Get().(*[]byte); ok {
-		return b
-	}
-	b := make([]byte, s.readCfg.chunk)
-	return &b
-}
+// buffers come from the free list because a prefetch reads into a whole
+// chunk however short the head is.
+func (s *Store) headBuf() *[]byte { return s.bufs.get(s.readCfg.chunk) }
 
 // filterAttrs is rgw_filter_attrset over RGW_ATTR_PREFIX: the user.rgw. names
 // only.

@@ -225,24 +225,12 @@ func (t *tailWriter) buf(ctx context.Context) (*[]byte, error) {
 	return p, nil
 }
 
-// bufPool is the part of a sync.Pool the tail buffers use, so that a spec can
-// see which buffers the writers take and hand back.
-type bufPool interface {
-	Get() any
-	Put(x any)
-}
-
 // tailBuf is a buffer of n bytes. One of one chunk, the only size release
-// pools, is drawn from tailBufs. A buffer of another layout's chunk that the
-// draw returns is dropped, so the buffer weighs n, and one of n bytes is
-// allocated in its place, as it is when the pool is empty. Any other size is
+// hands back, is drawn from the free list of that size. Any other size is
 // allocated.
 func (t *tailWriter) tailBuf(n uint64) *[]byte {
 	if n == t.chunk {
-		if p, ok := t.s.tailBufs.Get().(*[]byte); ok && uint64(cap(*p)) == n {
-			*p = (*p)[:n]
-			return p
-		}
+		return t.s.bufs.get(n)
 	}
 	b := make([]byte, n)
 	return &b
@@ -258,23 +246,33 @@ func (t *tailWriter) hold(p *[]byte) {
 	t.peak = max(t.peak, t.held)
 }
 
-// release hands p back for the next piece, and its share of the memory budget;
-// pool is false for a buffer that is dropped instead: one an abandoned write
-// may still read, one a panicking write or body reader left, and a piece
-// stream gives up after a read error or EntityTooLarge, whose one deferred
-// release also serves a panic. Only a buffer of one chunk is pooled: a piece
-// weighs its buffer's capacity in the window, so a part's first-stripe buffer
-// reused for a smaller piece would hold room the piece does not need. Every
-// buffer of one chunk must come from tailBuf, a part's first stripe's
-// included: one allocated elsewhere is a buffer the pool never lent, and the
-// pool would grow by one with every part.
+// release hands p back to the free list for the next piece, and its share of
+// the memory budget; pool is false for a buffer that is dropped instead, and
+// leaves the list's lent bytes: one an abandoned write may still read, one a
+// panicking write or body reader left, and a piece stream gives up after a
+// read error or EntityTooLarge, whose one deferred release also serves a
+// panic. Only a buffer of one chunk goes back: a piece weighs its buffer's
+// capacity in the window, so a part's first-stripe buffer reused for a
+// smaller piece would hold room the piece does not need. Every buffer of one
+// chunk must come from tailBuf, a part's first stripe's included: one
+// allocated elsewhere is a buffer the list never lent, and the list would
+// grow by one with every part.
 func (t *tailWriter) release(p *[]byte, pool bool) {
 	t.mu.Lock()
 	t.held -= uint64(cap(*p))
 	t.mu.Unlock()
 	t.mem.give(t.mem.b.share(memPiece, uint64(cap(*p))))
-	if pool && uint64(cap(*p)) == t.chunk {
-		t.s.tailBufs.Put(p)
+	if !pool {
+		t.unlend(p)
+	} else if uint64(cap(*p)) == t.chunk {
+		t.s.bufs.put(p)
+	}
+}
+
+// unlend tells the free list that p, if it lent it, is not coming back.
+func (t *tailWriter) unlend(p *[]byte) {
+	if uint64(cap(*p)) == t.chunk {
+		t.s.bufs.forget(p)
 	}
 }
 
@@ -495,14 +493,16 @@ func (t *tailWriter) consumeFirst(ctx context.Context, r io.Reader, declared int
 // readFirst reads the first stripe, at most limit bytes, into a buffer of
 // the declared length when that is smaller, grown to limit when the body
 // runs past it. Either buffer comes from tailBuf, as a tail piece's does,
-// since release pools one of one chunk. A stripe longer than the put window
-// cannot pass BlockingAioThrottle::get, which fails it with EDEADLK
+// since release hands one of one chunk back to the free list. A stripe
+// longer than the put window cannot pass BlockingAioThrottle::get, which
+// fails it with EDEADLK
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_aio_throttle.cc#L40-L42 at v19.2.6
 // and v20.2.4), answered 500 UnknownError by set_req_state_err; reading one
 // byte past the window is enough to know. The share of the memory budget
 // taken first is limit's, the most the buffer can grow to; what the buffer
 // does not weigh goes back once it is read, and all of it if the body reader
-// panics.
+// panics. A buffer of one chunk that the body outgrows, or that a panicking
+// body reader leaves, is dropped and leaves the free list's lent bytes.
 func (t *tailWriter) readFirst(ctx context.Context, r io.Reader, declared int64, limit uint64) (*firstPiece, error) {
 	reserved, err := t.mem.piece(ctx, limit)
 	if err != nil {
@@ -514,6 +514,12 @@ func (t *tailWriter) readFirst(ctx context.Context, r io.Reader, declared int64,
 		n = uint64(declared)
 	}
 	p := t.tailBuf(n)
+	held := false
+	defer func() {
+		if !held {
+			t.unlend(p)
+		}
+	}()
 	got, done, err := readPiece(r, *p)
 	if err == nil && !done && uint64(got) < limit { //nolint:gosec // a read count is never negative
 		var probe [512]byte
@@ -523,6 +529,7 @@ func (t *tailWriter) readFirst(ctx context.Context, r io.Reader, declared int64,
 			grown := t.tailBuf(limit)
 			copy(*grown, (*p)[:got])
 			copy((*grown)[got:], probe[:k])
+			t.unlend(p)
 			p, got = grown, got+k
 			if err == nil && !done {
 				k, done, err = readPiece(r, (*p)[got:])
@@ -531,6 +538,7 @@ func (t *tailWriter) readFirst(ctx context.Context, r io.Reader, declared int64,
 		}
 	}
 	t.hold(p)
+	held = true
 	reserved -= t.mem.b.share(memPiece, uint64(cap(*p)))
 	switch {
 	case err != nil:

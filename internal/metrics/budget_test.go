@@ -54,6 +54,7 @@ var _ = Describe("the memory budget's metrics", func() {
 			PieceWaited: 1500 * time.Millisecond, HoldWaited: 250 * time.Millisecond,
 			PieceSlowdowns: 4, HoldSlowdowns: 2,
 			PrefetchSkipped: 9,
+			FreeListIdle:    48 << 20,
 		})
 		resp, body := scrape(ctx, srv.URL)
 		Expect(resp.StatusCode).To(Equal(http.StatusOK), body)
@@ -73,9 +74,12 @@ var _ = Describe("the memory budget's metrics", func() {
 			`rgw_go_memory_budget_slowdowns_total{class="piece"} 4`,
 			`rgw_go_memory_budget_slowdowns_total{class="hold"} 2`,
 			`rgw_go_memory_budget_prefetch_skipped_total 9`,
+			`rgw_go_memory_budget_free_list_bytes 5.0331648e+07`,
 		} {
 			Expect(body).To(ContainSubstring("\n"+line+"\n"), "%s", line)
 		}
+		Expect(body).To(ContainSubstring("# HELP rgw_go_memory_budget_free_list_bytes Bytes of buffers of object data the free list keeps idle for reuse, at most the memory budget's total; they are live heap the GC cannot reclaim until the list's idle trim drops them.\n" +
+			"# TYPE rgw_go_memory_budget_free_list_bytes gauge\n"))
 
 		fake.set(driver.MemoryBudgetStats{Size: 800, PieceHeld: 600})
 		_, body = scrape(ctx, srv.URL)
