@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -322,6 +324,43 @@ var _ = Describe("UploadPart", func() {
 			Expect(op.Run(ctx, f.copyPartOf(id, 1, "src", "bytes=500-999"), f.req(http.MethodPut, "plain", "k"))).To(Succeed())
 			_, _, _, _, rng = stub.CopyPartArgsForCall(1)
 			Expect(rng).To(Equal(op.ByteRange{Offset: 500, Length: 500}))
+		})
+		Describe("the source's prefetched head", func() {
+			var (
+				partStub           *opfakes.FakeMultipartStore
+				srcState           *op.ObjectState
+				released, atCopied atomic.Int32
+			)
+			BeforeEach(func() {
+				released.Store(0)
+				atCopied.Store(-1)
+				srcState = &op.ObjectState{
+					Exists: true, Key: meta.ObjKey{Name: "src"}, Size: 5, Head: []byte("hello"),
+					Attrs:       map[string][]byte{meta.AttrACL: f.aliceACL, meta.AttrETag: []byte("e")},
+					HeadRelease: sync.OnceFunc(func() { released.Add(1) }),
+				}
+				objs := &opfakes.FakeObjectStore{}
+				objs.PrefetchObjectReturns(srcState, nil)
+				f.env.Objects = objs
+				partStub = &opfakes.FakeMultipartStore{}
+				partStub.CopyPartCalls(func(context.Context, *op.Upload, int, *op.ObjectState, op.ByteRange) (*op.PartResult, error) {
+					atCopied.Store(released.Load())
+					return &op.PartResult{ETag: "e"}, nil
+				})
+				f.env.Multipart = partStub
+			})
+			It("is held while the store copies the part, and given back, dropped, when the op is over", func(ctx SpecContext) {
+				Expect(op.Run(ctx, f.copyPartOf(id, 1, "src", ""), f.req(http.MethodPut, "plain", "k"))).To(Succeed())
+				Expect(partStub.CopyPartCallCount()).To(Equal(1))
+				Expect(atCopied.Load()).To(BeZero(), "the part reads the head while it is copied, so the head was still held")
+				Expect(released.Load()).To(BeEquivalentTo(1))
+				Expect(srcState.Head).To(BeNil())
+			})
+			It("is given back when the store's copy fails", func(ctx SpecContext) {
+				partStub.CopyPartReturns(nil, errCopyFailed)
+				Expect(op.Run(ctx, f.copyPartOf(id, 1, "src", ""), f.req(http.MethodPut, "plain", "k"))).To(MatchError(errCopyFailed))
+				Expect(released.Load()).To(BeEquivalentTo(1))
+			})
 		})
 		DescribeTable("refuses a range radosgw's parse refuses before checking permissions",
 			func(ctx SpecContext, rng string, want error) {

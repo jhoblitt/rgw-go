@@ -49,11 +49,22 @@ type ObjectState struct {
 	ContentType  string
 	// Head is the first bytes of the head object, rgw_max_chunk_size or the
 	// whole head when shorter, filled by PrefetchObject; nil after StatObject.
+	// It may be a buffer the store lent for the state, which the store
+	// reuses once HeadRelease has run, so nothing reads Head after that:
+	// ReleaseHead is how a holder of the state ends its use of it.
 	Head []byte
-	// HeadRelease gives back the store's memory budget share for Head, at
-	// most once however many copies of the state call it; nil when Head
-	// holds none.
+	// HeadRelease gives back what Head holds: the store's memory budget share
+	// for it, and a buffer the store lent for it. It runs at most once
+	// however many copies of the state call it, and nil when Head holds
+	// neither. A store gives the share back when the request's context ends
+	// as well, but never the buffer, which a copy still writing the head
+	// after its client left may be reading.
 	HeadRelease func()
+	// HeadForget takes the buffer HeadRelease would give back out of the
+	// store's books without ever reusing it, for a holder that cannot say no
+	// goroutine reads Head. The two share one guard, so at most one of them
+	// acts on the buffer; nil when Head holds no buffer.
+	HeadForget func()
 	// Version is the head's cls_version, read in the same op as the stat, as
 	// RGWObjVersionTracker::prepare_op_for_read composes cls_version_read
 	// into every raw_obj_stat
@@ -70,6 +81,28 @@ type ObjectState struct {
 	// carries no ACL: radosgw reads the ACL once per request and warns once,
 	// where rgw-go's authorizer and an op may each derive it from the state.
 	defaultACLLogged bool
+}
+
+// ReleaseHead runs HeadRelease and drops Head, which the store may reuse
+// from then on. Whoever holds the state calls it once no goroutine can read
+// Head any more, and calling it again does nothing. A state without a
+// HeadRelease holds a Head of its own, which it keeps; a state never released
+// leaves its buffer to the GC.
+func (st *ObjectState) ReleaseHead() {
+	if st == nil || st.HeadRelease == nil {
+		return
+	}
+	st.Head = nil
+	st.HeadRelease()
+}
+
+// ForgetHead is ReleaseHead for a holder that cannot tell whether a goroutine
+// still reads Head, as one that is unwinding from a panic cannot. It runs
+// HeadForget and leaves Head alone.
+func (st *ObjectState) ForgetHead() {
+	if st != nil && st.HeadForget != nil {
+		st.HeadForget()
+	}
 }
 
 // ByteRange is a resolved range: Length bytes from Offset.
@@ -260,7 +293,8 @@ type ObjectStore interface {
 	// bytes in the same RADOS op, as RGWRados::raw_obj_stat reads them when
 	// radosgw's prefetch_data asks for a first chunk; after a follow, the
 	// bytes of the version's head. A missing object returns a state with
-	// Exists false and no error.
+	// Exists false and no error. The caller ends its use of the state with
+	// ReleaseHead, after ReadObject or CopyObject has returned.
 	PrefetchObject(ctx context.Context, rec *BucketRecord, key meta.ObjKey) (*ObjectState, error)
 	// ReadObject streams rng of st to sink, in order.
 	ReadObject(ctx context.Context, st *ObjectState, rng ByteRange, sink io.Writer) error

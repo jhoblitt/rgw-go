@@ -141,6 +141,7 @@ var _ = Describe("the free list's memory over a burst and an idle trim", Label("
 			if perr != nil {
 				return perr
 			}
+			defer st.ReleaseHead()
 			return s.ReadObject(reqCtx, st, op.ByteRange{Length: st.Size}, io.Discard)
 		}
 		began := time.Now()

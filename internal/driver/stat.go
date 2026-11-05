@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
@@ -63,18 +64,10 @@ func (s *Store) headState(ctx context.Context, rec *op.BucketRecord, key meta.Ob
 		return nil, err
 	}
 	if _, olh := st.Attrs[meta.AttrOLHVer]; olh && key.Instance == meta.NullInstance && st.Manifest == nil {
-		dropHead(st)
+		st.ReleaseHead()
 		return &op.ObjectState{Bucket: rec, Key: key}, nil
 	}
 	return st, nil
-}
-
-// dropHead gives back the memory budget's share for st's prefetched head,
-// a state the caller discards.
-func dropHead(st *op.ObjectState) {
-	if st.HeadRelease != nil {
-		st.HeadRelease()
-	}
 }
 
 // followHead is get_olh_target_state
@@ -108,26 +101,26 @@ func (s *Store) followHead(ctx context.Context, rec *op.BucketRecord, head *op.O
 			found = fresh
 			return errNotOLH
 		}
-		dropHead(h)
+		h.ReleaseHead()
 		*h = *fresh
 		return nil
 	}
 	target, deleteMarker, err := s.followOLH(ctx, head, update)
 	switch {
 	case errors.Is(err, errNotOLH):
-		dropHead(head)
+		head.ReleaseHead()
 		return found, nil
 	case errors.Is(err, radosclient.ErrNotFound):
-		dropHead(head)
+		head.ReleaseHead()
 		return &op.ObjectState{Bucket: rec, Key: head.Key, DeleteMarker: deleteMarker}, nil
 	case err != nil:
-		dropHead(head)
+		head.ReleaseHead()
 		return nil, err
 	}
 	if target == head.Key {
 		return head, nil
 	}
-	dropHead(head)
+	head.ReleaseHead()
 	return s.headState(ctx, rec, target, prefetch)
 }
 
@@ -246,10 +239,22 @@ func (s *Store) readOLHHead(ctx context.Context, rec *op.BucketRecord, key meta.
 // with prefetch, its first rgw_max_chunk_size bytes. A prefetch reads only
 // while the memory budget has room for it now; without room the state has no
 // Head, as a stat's has not, and a read takes the head's bytes with its data.
-// The copy of the bytes keeps its share of the budget for as long as the
-// request may hold the state, which it does to its end: until ctx ends, or
-// until the driver discards the state (st.HeadRelease). Writing the head to
-// the client gives nothing back, since the copy stays live.
+//
+// A head longer than half the read request size (pooledRead) is served from
+// the free list's buffer it was read into, which the state owns until
+// st.HeadRelease runs, so it costs no copy. A shorter one is copied and its
+// buffer goes back as statHead returns, so a small GET holds its few bytes
+// and not a whole buffer. The release is the holder's alone, made once
+// nothing can read Head, and the buffer never goes back for the end of a
+// context, since a copy that outlives its client (context.WithoutCancel)
+// writes Head as its data. A state never released leaves its buffer to the GC.
+//
+// The head keeps its share of the budget for as long as the request may hold
+// the state, which it does to its end: until ctx ends, or until the release
+// runs, the driver's discard of the state included. Writing the head to the
+// client gives nothing back, since the head stays live. A head served from
+// the buffer keeps the buffer's whole share; a copied one keeps its length,
+// the rest going back as statHead returns.
 func (s *Store) statHead(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, prefetch bool) (*op.ObjectState, error) {
 	ref, err := s.headRef(ctx, rec, key)
 	if errors.Is(err, radosclient.ErrNotFound) {
@@ -291,13 +296,20 @@ func (s *Store) statHead(ctx context.Context, rec *op.BucketRecord, key meta.Obj
 	}()
 	ver, err := ref.pool.Read(ctx, ref.oid, rop, radosclient.OpFlagNone)
 	settled = true
+	// served is that st serves its head from buf, which then goes back with
+	// st.HeadRelease and not as statHead returns.
+	served := false
 	if buf != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			// An op abandoned to its context may still fill the buffer, so
 			// only one that ended goes back to the free list.
 			s.bufs.forget(buf)
 		} else {
-			defer s.bufs.put(buf)
+			defer func() {
+				if !served {
+					s.bufs.put(buf)
+				}
+			}()
 		}
 	}
 	st := &op.ObjectState{Bucket: rec, Key: key}
@@ -318,16 +330,30 @@ func (s *Store) statHead(ctx context.Context, rec *op.BucketRecord, key meta.Obj
 	}
 	st.Size, st.Mtime = stat.Size, stat.ModTime
 	st.Attrs = filterAttrs(xattrs.Xattrs)
+	handedOff := false
 	if rd != nil {
-		st.Head = slices.Clone(rd.Data[:rd.N])
-		kept := min(share, int64(len(st.Head)))
-		st.HeadRelease = s.mem.prefetchRelease(ctx, kept)
+		var kept int64
+		if served = s.pooledRead(uint64(rd.N)); served { //nolint:gosec // a read count is never negative
+			st.Head, kept = (*buf)[:rd.N], share
+		} else {
+			st.Head = slices.Clone(rd.Data[:rd.N])
+			kept = min(share, int64(len(st.Head)))
+		}
+		st.HeadRelease, st.HeadForget = s.headRelease(ctx, kept, buf, served)
 		share -= kept
+		// A panic before the return hands the state to no one: the buffer is
+		// forgotten, not put back, since the panic may have left it half read.
+		defer func() {
+			if !handedOff {
+				st.ForgetHead()
+			}
+		}()
 	}
 	if err := decodeState(ctx, st); err != nil {
-		dropHead(st)
+		st.ReleaseHead()
 		return nil, err
 	}
+	handedOff = true
 	return st, nil
 }
 
@@ -335,6 +361,28 @@ func (s *Store) statHead(ctx context.Context, rec *op.BucketRecord, key meta.Obj
 // buffers come from the free list because a prefetch reads into a whole
 // chunk however short the head is.
 func (s *Store) headBuf() *[]byte { return s.bufs.get(s.readCfg.chunk) }
+
+// headRelease is the HeadRelease of a head holding share w of the memory
+// budget and, when lent, buf, the free list's buffer it is served from. The
+// share goes back when ctx ends or the release runs; buf only when the
+// release runs, and before the share, which covers it until it is back. The
+// forget takes buf out of the free list's lent bytes without putting it back.
+// One guard serves both, so buf is put back or forgotten, never both.
+func (s *Store) headRelease(ctx context.Context, w int64, buf *[]byte, lent bool) (release, forget func()) {
+	giveShare := s.mem.prefetchRelease(ctx, w)
+	if !lent {
+		return giveShare, nil
+	}
+	var once sync.Once
+	release = func() {
+		once.Do(func() { s.bufs.put(buf) })
+		if giveShare != nil {
+			giveShare()
+		}
+	}
+	forget = func() { once.Do(func() { s.bufs.forget(buf) }) }
+	return release, forget
+}
 
 // filterAttrs is rgw_filter_attrset over RGW_ATTR_PREFIX: the user.rgw. names
 // only.

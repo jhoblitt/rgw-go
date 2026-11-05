@@ -246,6 +246,54 @@ var _ = Describe("StatObject and PrefetchObject of a versioned key", func() {
 			Expect([]any{st.Exists, st.Key, st.Size}).To(Equal([]any{true, version(""), uint64(len("plain"))}))
 		})
 
+		Describe("gives back the prefetch of the OLH head when the follow discards it", func() {
+			// withBytes gives the OLH head 3 MiB of data, so that its prefetch is
+			// served from a buffer of the free list and holds a share of the budget.
+			withBytes := func() { olhHead().Data = mibPattern(3) }
+			noneKept := func() {
+				GinkgoHelper()
+				Expect(s.MemoryBudgetStats().PrefetchHeld).To(BeZero(), "the share, though the request's context is live")
+				Expect(s.LentBufBytesForTest()).To(BeZero(), "and the buffer")
+			}
+
+			It("when the current version is a delete marker", func(ctx SpecContext) {
+				put(ctx, "v1")
+				marker(ctx, "dm")
+				withBytes()
+				st, err := s.PrefetchObject(ctx, rec, version(""))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(st.DeleteMarker).To(BeTrue())
+				noneKept()
+			})
+
+			It("when the follow fails", func(ctx SpecContext) {
+				put(ctx, "v1")
+				withBytes()
+				olhHead().Xattrs[meta.AttrOLHInfo] = []byte{0xff}
+				_, err := s.PrefetchObject(ctx, rec, version(""))
+				Expect(err).To(HaveOccurred())
+				noneKept()
+			})
+
+			It("when the head its update left is no longer an OLH, and answers that head's own", func(ctx SpecContext) {
+				put(ctx, "v1")
+				Expect(s.SetOLHForTest(ctx, rec, write(ctx, "v2"), driver.OLHLink{SkipUpdate: true})).To(Succeed())
+				withBytes()
+				reads := 0
+				c.BeforeRead(testDataPool, "", olhHeadOID(version("")), func() {
+					if reads++; reads == 2 {
+						c.BeforeRead(testDataPool, "", olhHeadOID(version("")), nil)
+						c.Put(testDataPool, "", olhHeadOID(version("")), []byte("plain"))
+					}
+				})
+				st, err := s.PrefetchObject(ctx, rec, version(""))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(st.Head).To(Equal([]byte("plain")))
+				Expect(s.MemoryBudgetStats().PrefetchHeld).To(BeEquivalentTo(len("plain")), "the answered head's share alone")
+				Expect(s.LentBufBytesForTest()).To(BeZero())
+			})
+		})
+
 		It("decodes the OLH head as any head before it follows it", func(ctx SpecContext) {
 			put(ctx, "v1")
 			olhHead().Xattrs[meta.AttrCompression] = []byte{0xff}
@@ -318,6 +366,17 @@ var _ = Describe("StatObject and PrefetchObject of a versioned key", func() {
 				Expect(olhHead()).NotTo(BeNil())
 				Expect(stat(ctx, version(meta.NullInstance))).To(Equal(&op.ObjectState{Bucket: rec, Key: version(meta.NullInstance)}),
 					"read null version, and the head object only have olh info")
+			})
+
+			It("gives back the prefetch of an OLH head without a manifest, which it discards, at once", func(ctx SpecContext) {
+				put(ctx, "v1")
+				olhHead().Data = mibPattern(3)
+				held := func() int64 { return s.MemoryBudgetStats().PrefetchHeld }
+				st, err := s.PrefetchObject(ctx, rec, version(meta.NullInstance))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(st).To(Equal(&op.ObjectState{Bucket: rec, Key: version(meta.NullInstance)}))
+				Expect(held()).To(BeZero(), "the request's context is live, so the share would stay until it ends")
+				Expect(s.LentBufBytesForTest()).To(BeZero(), "and the head's buffer, served from the list, would stay lent")
 			})
 
 			It("answers a null delete marker as not existing, with DeleteMarker set", func(ctx SpecContext) {

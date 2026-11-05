@@ -7,10 +7,13 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -210,6 +213,56 @@ var _ = Describe("GetObject", func() {
 		Expect(sink.status).To(Equal(http.StatusOK))
 		Expect(sink.headers).To(Equal(1))
 		Expect(sink.body.Len()).To(BeZero())
+	})
+	Describe("the prefetched head", func() {
+		var lent *lender
+		BeforeEach(func() {
+			lent = newLender(store)
+			env.Objects = lent
+		})
+		It("is held while the store reads and given back, dropped, when the GET is over", func() {
+			o, _, err := get("small", nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(sink.body.Bytes()).To(Equal(payload(1024)))
+			Expect(lent.reads.Load()).To(BeEquivalentTo(1))
+			Expect(lent.releasedAtRead.Load()).To(BeZero(), "ReadObject served the head, so it was still held")
+			Expect(lent.lent()).To(Equal(1))
+			Expect(lent.released.Load()).To(BeEquivalentTo(1))
+			Expect(lent.forgotten.Load()).To(BeZero(), "released, so not forgotten")
+			Expect(o.State.Head).To(BeNil(), "nothing reads the head once its buffer is the store's again")
+		})
+		It("is forgotten, not released, when the op panics, and the panic goes on", func() {
+			Expect(func() {
+				_, _, err := get("small", func(o *op.GetObject) { o.Sink = &panicSink{} })
+				Expect(err).NotTo(HaveOccurred())
+			}).To(PanicWith(sinkBug))
+			Expect(lent.lent()).To(Equal(1))
+			Expect([]int32{lent.released.Load(), lent.forgotten.Load()}).To(Equal([]int32{0, 1}),
+				"a goroutine the op started may still read the head, so it is not reused, but it is no longer counted lent")
+			Expect(lent.prefetched[0].Head).NotTo(BeNil(), "and its readers keep what they read")
+		})
+		DescribeTable("is given back however the GET ends",
+			func(setup func(), mut func(o *op.GetObject), key string, want error) {
+				setup()
+				_, _, err := get(key, mut)
+				Expect(err).To(MatchError(want))
+				Expect(lent.lent()).To(Equal(1), "the head was prefetched")
+				Expect(lent.released.Load()).To(BeEquivalentTo(1))
+			},
+			Entry("the object is missing", func() {}, nil, "nope", op.ErrNoSuchKey),
+			Entry("the requester is refused", func() {
+				authz := &opfakes.FakeAuthorizer{}
+				authz.VerifyObjectReturns(op.ErrAccessDenied)
+				env.Authz = authz
+			}, nil, "small", op.ErrAccessDenied),
+			Entry("a precondition fails", func() {}, func(o *op.GetObject) { o.IfMatch = "not-the-etag" }, "small", op.ErrPreconditionFailed),
+			Entry("the client's connection fails mid-body", func() {}, func(o *op.GetObject) { o.Sink = &failingSink{} }, "small", errClientGone),
+		)
+		It("gives back nothing for a HEAD, which prefetches nothing", func() {
+			_, _, err := get("small", func(o *op.GetObject) { o.GetData = false })
+			Expect(err).NotTo(HaveOccurred())
+			Expect(lent.lent()).To(BeZero())
+		})
 	})
 	It("answers NoSuchKey for a missing key and NoSuchBucket for a missing bucket", func() {
 		_, _, err := get("nope", nil)
@@ -646,6 +699,28 @@ var _ = Describe("GetObject", func() {
 				Expect(key).To(Equal(meta.ObjKey{Name: "k"}))
 				_, _, key = objects.PrefetchObjectArgsForCall(1)
 				Expect(key).To(Equal(meta.ObjKey{Name: partKey, NS: meta.NSMultipart}))
+			})
+			It("holds the multipart head's and the part head's buffers while the part is read, and gives both back when the op is over, the served copy's head dropped too", func() {
+				var headReleased, partReleased, headAtRead, partAtRead atomic.Int32
+				head, p := multipart(), partHead(true, true)
+				head.Head, head.HeadRelease = []byte("multipart"), sync.OnceFunc(func() { headReleased.Add(1) })
+				p.Head, p.HeadRelease = []byte("part"), sync.OnceFunc(func() { partReleased.Add(1) })
+				objects = &opfakes.FakeObjectStore{}
+				env.Objects = objects
+				objects.PrefetchObjectReturnsOnCall(0, head, nil)
+				objects.PrefetchObjectReturnsOnCall(1, p, nil)
+				objects.ReadObjectCalls(func(context.Context, *op.ObjectState, op.ByteRange, io.Writer) error {
+					headAtRead.Store(headReleased.Load())
+					partAtRead.Store(partReleased.Load())
+					return nil
+				})
+				o, _, err := get("k", part(2))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(objects.ReadObjectCallCount()).To(Equal(1))
+				Expect([]int32{headAtRead.Load(), partAtRead.Load()}).To(Equal([]int32{0, 0}), "both were held while the store read the part")
+				Expect([]int32{headReleased.Load(), partReleased.Load()}).To(Equal([]int32{1, 1}))
+				Expect(o.State).NotTo(BeIdenticalTo(p), "the part is served from a copy of its state")
+				Expect([][]byte{o.State.Head, p.Head, o.CondState.Head}).To(Equal([][]byte{nil, nil, nil}), "no state of the op keeps a head")
 			})
 			It("reads both heads without a prefetch on HEAD", func() {
 				_, err := serveParts(multipart(), partHead(true, true), func(o *op.GetObject) { part(2)(o); o.GetData = false })

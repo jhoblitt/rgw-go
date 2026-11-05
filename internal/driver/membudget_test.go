@@ -454,6 +454,21 @@ var _ = Describe("the memory budget", func() {
 				"the request ended, and its copy with it")
 		})
 
+		It("gives back a prefetched head's share and buffer together when the state is released, ahead of the request's end", func(ctx SpecContext) {
+			mustPut(ctx, meta.ObjKey{Name: "k"}, mibPattern(6), "")
+			prefetched := func() int64 { return s.MemoryBudgetStats().PrefetchHeld }
+			reqCtx, end := context.WithCancel(ctx)
+			defer end()
+			st, err := s.PrefetchObject(reqCtx, rec, meta.ObjKey{Name: "k"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect([]int64{prefetched(), s.LentBufBytesForTest()}).To(Equal([]int64{4 << 20, 4 << 20}), "the share covers the buffer the head is served from")
+			Expect(s.ReadObject(reqCtx, st, op.ByteRange{Length: st.Size}, io.Discard)).To(Succeed())
+			st.ReleaseHead()
+			Expect([]int64{prefetched(), s.LentBufBytesForTest()}).To(Equal([]int64{0, 0}))
+			end()
+			Consistently(prefetched).WithTimeout(50*time.Millisecond).WithPolling(5*time.Millisecond).Should(BeZero(), "the context's end gives nothing back twice")
+		})
+
 		It("bounds the live copies of prefetched heads by the prefetch room, however fast each head is written", func(ctx SpecContext) {
 			// A head and 4 KiB more: each GET's head goes out in one write
 			// while its tail is still to come.

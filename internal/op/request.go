@@ -136,6 +136,9 @@ type Request struct {
 	Redirect string
 	// cors is BucketCORS's last decode.
 	cors corsDecode
+	// heads are the states the op read with PrefetchObject, whose Head Run
+	// gives back once the op is over (prefetchObject).
+	heads []*ObjectState
 
 	// Status and the byte counters are filled by the protocol layer as the
 	// response goes out, for Complete, metrics and the usage log.

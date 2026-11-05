@@ -43,6 +43,10 @@ import (
 // object's range is widened to its compression blocks and decoded through
 // compression.Stream, as RGWGetObj_Decompress does.
 //
+// ReadObject returns only once nothing reads st.Head any more, so a caller
+// that finished with the state may release it (op.ObjectState.ReleaseHead)
+// whatever ReadObject returned.
+//
 // A compressed object's damage answers UnknownError, the class of radosgw's
 // -EIO: a block map that does not hold together, and a block refused where
 // radosgw's decompress hands on what it decoded or never returns. A block its
