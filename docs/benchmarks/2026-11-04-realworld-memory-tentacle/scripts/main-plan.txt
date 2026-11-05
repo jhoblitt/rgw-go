@@ -1,0 +1,18 @@
+# VARIANT LOAD REP for the Ceph main radosgw (RW_CLUSTER=main, RW_RUNS=realworld/runs-main), one run a line, in order; RM and RMH alternate.
+# RM: radosgw from the pinned Ceph main image, rgw_heap_release_interval 0 (default); RMH: the same with rgw_heap_release_interval 1.
+RM large 1
+RMH large 1
+RMH vlarge 1
+RM vlarge 1
+RM small 1
+RMH small 1
+RMH mix 1
+RM mix 1
+RMH large 2
+RM large 2
+RM vlarge 2
+RMH vlarge 2
+RMH small 2
+RM small 2
+RM mix 2
+RMH mix 2

@@ -1,0 +1,20 @@
+PASS create bucket
+PASS PUT 100 kB
+PASS multipart upload 25 MB (aws s3 cp: 8 MB parts)
+PASS multipart ETag "ea6426117610041878d5a26bff96a304-3"
+PASS GET 100 kB, bytes equal
+PASS GET 25 MB (multipart), bytes equal
+PASS ranged GET
+PASS list objects (2)
+PASS list buckets
+PASS start a multipart upload
+PASS upload a 25 MB part
+PASS list multipart uploads
+PASS list parts
+PASS abort the multipart upload
+PASS delete objects
+PASS delete bucket
+== radosgw log: error lines and cls -EOPNOTSUPP / -95
+log lines: 434
+no matching line
+SMOKE PASS

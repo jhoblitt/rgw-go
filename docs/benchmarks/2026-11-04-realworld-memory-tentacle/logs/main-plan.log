@@ -1,0 +1,69 @@
+2026-11-04T21:03:54-07:00 start RM large 1 (osd used 47296512) 1.27 1.33 1.32 2/12379 2704938
+TOTAL  10 GiB  8.0 GiB  2.0 GiB   2.0 GiB      20.44
+ceph-objectstore.rgw.buckets.data     9  128    2 GiB      512    2 GiB  21.15    7.5 GiB
+2026-11-04T21:16:11-07:00 end RM large 1
+2026-11-04T21:16:13-07:00 start RMH large 1 (osd used 47296512) 0.72 0.98 1.18 5/12407 2749504
+TOTAL  10 GiB  8.0 GiB  2.0 GiB   2.0 GiB      20.44
+ceph-objectstore.rgw.buckets.data     9  128    2 GiB      512    2 GiB  21.15    7.5 GiB
+2026-11-04T21:28:27-07:00 end RMH large 1
+2026-11-04T21:28:28-07:00 start RMH vlarge 1 (osd used 47296512) 1.62 1.15 1.17 2/12410 2794231
+TOTAL  10 GiB  7.0 GiB  3.0 GiB   3.0 GiB      30.15
+ceph-objectstore.rgw.buckets.data     9  128  3.0 GiB      756  3.0 GiB  31.29    6.5 GiB
+2026-11-04T21:30:39-07:00 end RMH vlarge 1
+2026-11-04T21:30:40-07:00 start RM vlarge 1 (osd used 65712128) 2.41 1.60 1.33 2/12372 2805315
+TOTAL  10 GiB  6.9 GiB  3.1 GiB   3.1 GiB      30.61
+ceph-objectstore.rgw.buckets.data     9  128    3 GiB      768    3 GiB  31.78    6.4 GiB
+2026-11-04T21:32:45-07:00 end RM vlarge 1
+2026-11-04T21:32:46-07:00 start RM small 1 (osd used 65712128) 1.61 1.54 1.34 2/12511 2816217
+TOTAL  10 GiB  9.5 GiB  515 MiB   515 MiB       5.03
+ceph-objectstore.rgw.buckets.data     9  128   28 MiB    7.28k   28 MiB   0.31    9.0 GiB
+2026-11-04T21:35:39-07:00 end RM small 1
+2026-11-04T21:35:40-07:00 start RMH small 1 (osd used 546222080) 15.21 7.72 3.66 2/12325 2829467
+TOTAL  10 GiB  9.0 GiB  1.0 GiB   1.0 GiB      10.13
+ceph-objectstore.rgw.buckets.data     9  128   16 MiB    4.19k   16 MiB   0.19    8.5 GiB
+2026-11-04T21:38:27-07:00 end RMH small 1
+2026-11-04T21:38:27-07:00 compact osd.0: 
+2026-11-04T21:38:29-07:00 start RMH mix 1 (osd used 25538560) 13.64 10.24 5.24 1/12320 2842629
+TOTAL  10 GiB  7.5 GiB  2.5 GiB   2.5 GiB      24.77
+ceph-objectstore.rgw.buckets.data     9  128  1.7 GiB    2.58k  1.7 GiB  19.52    7.0 GiB
+2026-11-04T22:00:49-07:00 end RMH mix 1
+2026-11-04T22:00:49-07:00 compact osd.0: 
+2026-11-04T22:00:51-07:00 start RM mix 1 (osd used 32485376) 1.91 2.19 3.44 2/12555 2951566
+TOTAL  10 GiB  7.4 GiB  2.6 GiB   2.6 GiB      25.75
+ceph-objectstore.rgw.buckets.data     9  128  1.7 GiB    2.53k  1.7 GiB  19.45    6.9 GiB
+2026-11-04T22:23:13-07:00 end RM mix 1
+2026-11-04T22:23:14-07:00 start RMH large 2 (osd used 936751104) 1.06 1.69 3.07 2/12462 3062658
+TOTAL  10 GiB  7.3 GiB  2.7 GiB   2.7 GiB      27.48
+ceph-objectstore.rgw.buckets.data     9  128   16 MiB       14   16 MiB   0.23    6.8 GiB
+2026-11-04T22:35:35-07:00 end RMH large 2
+2026-11-04T22:35:36-07:00 start RM large 2 (osd used 936751104) 1.27 1.37 2.21 1/12402 3107205
+TOTAL  10 GiB  7.1 GiB  2.9 GiB   2.9 GiB      28.90
+ceph-objectstore.rgw.buckets.data     9  128    2 GiB      512    2 GiB  23.23    6.6 GiB
+2026-11-04T22:47:48-07:00 end RM large 2
+2026-11-04T22:47:49-07:00 start RM vlarge 2 (osd used 955232256) 2.77 2.00 2.17 4/12562 3151365
+TOTAL  10 GiB  6.1 GiB  3.9 GiB   3.9 GiB      38.90
+ceph-objectstore.rgw.buckets.data     9  128    3 GiB      768     3 GiB  34.84    5.6 GiB
+2026-11-04T22:50:03-07:00 end RM vlarge 2
+2026-11-04T22:50:04-07:00 start RMH vlarge 2 (osd used 955232256) 3.75 2.55 2.34 3/12332 3162455
+TOTAL  10 GiB  6.1 GiB  3.9 GiB   3.9 GiB      39.07
+ceph-objectstore.rgw.buckets.data     9  128  3.0 GiB      756  3.0 GiB  34.55    5.6 GiB
+2026-11-04T22:52:23-07:00 end RMH vlarge 2
+2026-11-04T22:52:24-07:00 start RMH small 2 (osd used 973713408) 4.58 3.12 2.56 3/12428 3173863
+TOTAL  10 GiB  8.9 GiB  1.1 GiB   1.1 GiB      11.04
+ceph-objectstore.rgw.buckets.data     9  128  2.7 MiB      691  2.7 MiB   0.03    8.4 GiB
+2026-11-04T22:55:14-07:00 end RMH small 2
+2026-11-04T22:55:15-07:00 start RM small 2 (osd used 1179561984) 15.75 8.79 4.76 3/12422 3186994
+TOTAL  10 GiB  9.3 GiB  694 MiB   694 MiB       6.78
+ceph-objectstore.rgw.buckets.data     9  128   11 MiB    2.73k   11 MiB   0.12    8.8 GiB
+2026-11-04T22:58:04-07:00 end RM small 2
+2026-11-04T22:58:04-07:00 compact osd.0: 
+2026-11-04T22:58:06-07:00 start RM mix 2 (osd used 42971136) 16.52 11.62 6.41 2/12345 3200424
+TOTAL  10 GiB  7.6 GiB  2.4 GiB   2.4 GiB      23.55
+ceph-objectstore.rgw.buckets.data     9  128  1.5 GiB      480  1.5 GiB  16.90    7.1 GiB
+2026-11-04T23:21:24-07:00 end RM mix 2
+2026-11-04T23:21:24-07:00 compact osd.0: 
+2026-11-04T23:21:25-07:00 start RMH mix 2 (osd used 820162560) 1.39 1.93 3.88 3/12412 3313353
+TOTAL  10 GiB  7.4 GiB  2.6 GiB   2.6 GiB      26.05
+ceph-objectstore.rgw.buckets.data     9  128  1.7 GiB    2.58k  1.7 GiB  19.81    6.9 GiB
+2026-11-04T23:43:55-07:00 end RMH mix 2
+2026-11-04T23:43:55-07:00 campaign done

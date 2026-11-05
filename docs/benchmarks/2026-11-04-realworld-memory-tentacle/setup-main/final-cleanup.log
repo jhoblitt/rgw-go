@@ -1,0 +1,43 @@
+== state before teardown
+client.rgw.ceph.objectstore.a        advanced  rgw_usage_log_tick_interval            1                   
+client.rgw.ceph.objectstore.a        advanced  rgw_zone                               ceph-objectstore  * 
+client.rgw.ceph.objectstore.a        advanced  rgw_zonegroup                          ceph-objectstore  * 
+== rgw-go processes and scopes on the host
+no rgw-go
+== rooket down --delete-disks rgw-go-main
++ sudo -n /usr/bin/iscsiadm -m node -T iqn.2003-01.local.rooket:rgw-go-main-worker0-disk0 -o delete
++ sudo -n /usr/bin/targetcli /iscsi delete iqn.2003-01.local.rooket:rgw-go-main-worker0-disk0
+Deleted Target iqn.2003-01.local.rooket:rgw-go-main-worker0-disk0.
++ sudo -n /usr/bin/targetcli /backstores/fileio delete rgw-go-main-worker0-disk0
+Deleted storage object rgw-go-main-worker0-disk0.
++ sudo -n /usr/bin/targetcli saveconfig
+Last 10 configs saved in /etc/target/backup/.
+Configuration saved to /etc/target/saveconfig.json
+==> deleting disk images
+removed /home/jhoblitt/.local/share/rooket/rgw-go-main/worker0-disk0.img
+removed state dir /home/jhoblitt/.local/share/rooket/rgw-go-main
++ podman ps -a --filter name=^rooket-cache$ --format {{.Names}}
+image cache preserved (pass --delete-cache to remove it)
+
+rooket down complete.
+== rooket list
++ KIND_EXPERIMENTAL_PROVIDER=podman kind get clusters
++ KIND_EXPERIMENTAL_PROVIDER=docker kind get clusters
+NAME             LIVE           REGISTRY PORT  STATE DIR
+rgw-go-squid     podman,docker  5001           /home/jhoblitt/.local/share/rooket/rgw-go-squid
+rgw-go-tentacle  podman,docker  5002           /home/jhoblitt/.local/share/rooket/rgw-go-tentacle
+== state directory
+ls: cannot access '/home/jhoblitt/.local/share/rooket/rgw-go-main': No such file or directory
+== iSCSI target and backstore left for rgw-go-main
+0
+== kind clusters
+enabling experimental podman provider
+rgw-go-squid
+rgw-go-tentacle
+== containers named rgw-go-main
+0
+== images made for the run
+localhost:5003/ceph-main                                                                         c928697                            sha256:c928697602b7feffdaef0b59d95a7e94a864e4dd89d33a867e0e48bac0fe7e06  19cc50549c14  7 hours ago    2.07 GB
+== host processes of the run
+no rgw-go
+no sampler, guard or gc loop

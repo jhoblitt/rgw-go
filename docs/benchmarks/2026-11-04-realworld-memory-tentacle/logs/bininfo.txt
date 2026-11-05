@@ -1,0 +1,110 @@
+=== M /tmp/claude-1000/spike-memory/realworld/bin/M/rgw-go
+0f7eb90c9f00a45cf58775e85b7c2cf67a6092c68182313174f7237c6c23b325  /tmp/claude-1000/spike-memory/realworld/bin/M/rgw-go
+/tmp/claude-1000/spike-memory/realworld/bin/M/rgw-go: go1.27.3
+	path	github.com/jhoblitt/rgw-go/cmd/rgw-go
+	mod	github.com/jhoblitt/rgw-go	v0.0.0-20261104005720-01ebd5a291c4	
+	dep	github.com/beorn7/perks	v1.0.1	h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
+	dep	github.com/ceph/go-ceph	v0.39.0
+	=>	github.com/jhoblitt/go-ceph	v0.0.0-20261019213543-2bd6901ea775	h1:wE7tbxOVVszyBTK5HjczF21eq5glLyoUXk8VpLPSwlw=
+	
+	dep	github.com/cespare/xxhash/v2	v2.3.0	h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
+	dep	github.com/fsnotify/fsnotify	v1.9.0	h1:2Ml+OJNzbYCTzsxtv8vKSFD9PbJjmhYF14k/jKC7S9k=
+	dep	github.com/go-viper/mapstructure/v2	v2.4.0	h1:EBsztssimR/CONLSZZ04E8qAkxNYq4Qp9LvH92wZUgs=
+	dep	github.com/hashicorp/go-uuid	v1.0.3	h1:2gKiV6YVmrJ1i2CKKa9obLvRieoRGviZFL26PcT/Co8=
+	dep	github.com/klauspost/compress	v1.20.3	h1:zWNoFqq/lSuYQRim3dUXlXeA0IqwuZGicdG5ZTfY5j4=
+	dep	github.com/munnerz/goautoneg	v0.0.0-20191010083416-a7dc8b61c822	h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
+	dep	github.com/pandatix/go-abnf	v0.5.1	h1:iyLvSu2Aq12iE0r4n948Qw21BHDuckLq/8WIXAAF+HI=
+	dep	github.com/pelletier/go-toml/v2	v2.2.4	h1:mye9XuhQ6gvn5h28+VilKrrPoQVanw5PMw/TB0t5Ec4=
+	dep	github.com/pierrec/lz4/v4	v4.1.33	h1:GjG1TJ1V4IzKP8L96muuuDNpTwd7D+l2ccXrjAbe014=
+	dep	github.com/prometheus/client_golang	v1.25.0	h1:cDtW1TcFsMi1RJc8khwCKB4VhzwV04aKqbYtNOXuiK0=
+	dep	github.com/prometheus/client_model	v0.6.3	h1:O0jaTVAYNxTHYInEPFJt5I3+sN8zqBtVMPTB1qyxiEo=
+	dep	github.com/prometheus/common	v0.73.0	h1:NGIOmVi8jrgiiPQgXxD6rP0FfxFsuZxnMQkel0qBy/g=
+	dep	github.com/prometheus/procfs	v0.22.0	h1:6q9+/JL9IKAPbCmBrv9n5O5Ty3NKnciV5X7YGw0oics=
+	dep	github.com/sagikazarmark/locafero	v0.11.0	h1:1iurJgmM9G3PA/I+wWYIOw/5SyBtxapeHDcg+AAIFXc=
+	dep	github.com/sourcegraph/conc	v0.3.1-0.20240121214520-5f936abd7ae8	h1:+jumHNA0Wrelhe64i8F6HNlS8pkoyMv5sreGx2Ry5Rw=
+	dep	github.com/spf13/afero	v1.15.0	h1:b/YBCLWAJdFWJTN9cLhiXXcD7mzKn9Dm86dNnfyQw1I=
+	dep	github.com/spf13/cast	v1.10.0	h1:h2x0u2shc1QuLHfxi+cTJvs30+ZAHOGRic8uyGTDWxY=
+	dep	github.com/spf13/cobra	v1.10.2	h1:DMTTonx5m65Ic0GOoRY2c16WCbHxOOw6xxezuLaBpcU=
+	dep	github.com/spf13/pflag	v1.0.10	h1:4EBh2KAYBwaONj6b2Ye1GiHfwjqyROoF4RwYO+vPwFk=
+	dep	github.com/spf13/viper	v1.21.0	h1:x5S+0EU27Lbphp4UKm1C+1oQO+rKx36vfCoaVebLFSU=
+	dep	github.com/subosito/gotenv	v1.6.0	h1:9NlTDc1FTs4qu0DDq7AEtTPNw6SVm7uBMsUCUjABIf8=
+	dep	go.yaml.in/yaml/v3	v3.0.6	h1:zcDfvjXEqTQmpjniUBLc91xYJMB2c4QOFxEF/LCEckM=
+	dep	golang.org/x/sync	v0.24.0	h1:iqiDrGoDgyuvAKrhLQthUEzU/R378N78gXbBjxed7oA=
+	dep	golang.org/x/sys	v0.49.0	h1:XbzkgYJHdqh/8m2Uu0W/dQv8nktxx4BFHp1M0gROTXA=
+	dep	golang.org/x/text	v0.43.0	h1:1QivrlhwAsnMOcqgOdl9my7s9OyZl8O5/UGUTJVXoWc=
+	dep	google.golang.org/protobuf	v1.36.12	h1:pJOKDDOyeXErUroCihFAd5LQuwXBSpVnKGrj5o/fwxc=
+	build	-buildmode=exe
+	build	-compiler=gc
+	build	-tags=ceph_preview
+	build	CGO_ENABLED=1
+	build	CGO_CFLAGS=-I/home/jhoblitt/.local/share/rgw-go/ceph-v20.2.4/src/include
+	build	CGO_CPPFLAGS=
+	build	CGO_CXXFLAGS=
+	build	CGO_LDFLAGS="-L/home/jhoblitt/.local/lib/rgw-go-20.2.4 -L/home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1 -Wl,--disable-new-dtags,-rpath,/home/jhoblitt/.local/lib/rgw-go-20.2.4,-rpath,/home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1"
+	build	GOARCH=amd64
+	build	GOOS=linux
+	build	GOAMD64=v1
+	build	vcs=git
+	build	vcs.revision=01ebd5a291c4e5d26f5c20fc4d6e9fe84aaa2cc2
+	build	vcs.time=2026-11-04T00:57:20Z
+	build	vcs.modified=false
+ 0x0000000000000001 (NEEDED)             Shared library: [libresolv.so.2]
+ 0x0000000000000001 (NEEDED)             Shared library: [libtcmalloc.so.4]
+ 0x0000000000000001 (NEEDED)             Shared library: [librados.so.2]
+ 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+ 0x000000000000000f (RPATH)              Library rpath: [/home/jhoblitt/.local/lib/rgw-go-20.2.4:/home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1]
+=== F /tmp/claude-1000/spike-memory/realworld/bin/F/rgw-go
+831dd2d36669aa4e9da5cff9329aa4cba021022590efe44e9124cbca9a6f9973  /tmp/claude-1000/spike-memory/realworld/bin/F/rgw-go
+/tmp/claude-1000/spike-memory/realworld/bin/F/rgw-go: go1.27.3
+	path	github.com/jhoblitt/rgw-go/cmd/rgw-go
+	mod	github.com/jhoblitt/rgw-go	v0.0.0-20261104030252-296ad44503ea	
+	dep	github.com/beorn7/perks	v1.0.1	h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
+	dep	github.com/ceph/go-ceph	v0.39.0
+	=>	github.com/jhoblitt/go-ceph	v0.0.0-20261019213543-2bd6901ea775	h1:wE7tbxOVVszyBTK5HjczF21eq5glLyoUXk8VpLPSwlw=
+	
+	dep	github.com/cespare/xxhash/v2	v2.3.0	h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
+	dep	github.com/fsnotify/fsnotify	v1.9.0	h1:2Ml+OJNzbYCTzsxtv8vKSFD9PbJjmhYF14k/jKC7S9k=
+	dep	github.com/go-viper/mapstructure/v2	v2.4.0	h1:EBsztssimR/CONLSZZ04E8qAkxNYq4Qp9LvH92wZUgs=
+	dep	github.com/hashicorp/go-uuid	v1.0.3	h1:2gKiV6YVmrJ1i2CKKa9obLvRieoRGviZFL26PcT/Co8=
+	dep	github.com/klauspost/compress	v1.20.3	h1:zWNoFqq/lSuYQRim3dUXlXeA0IqwuZGicdG5ZTfY5j4=
+	dep	github.com/munnerz/goautoneg	v0.0.0-20191010083416-a7dc8b61c822	h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
+	dep	github.com/pandatix/go-abnf	v0.5.1	h1:iyLvSu2Aq12iE0r4n948Qw21BHDuckLq/8WIXAAF+HI=
+	dep	github.com/pelletier/go-toml/v2	v2.2.4	h1:mye9XuhQ6gvn5h28+VilKrrPoQVanw5PMw/TB0t5Ec4=
+	dep	github.com/pierrec/lz4/v4	v4.1.33	h1:GjG1TJ1V4IzKP8L96muuuDNpTwd7D+l2ccXrjAbe014=
+	dep	github.com/prometheus/client_golang	v1.25.0	h1:cDtW1TcFsMi1RJc8khwCKB4VhzwV04aKqbYtNOXuiK0=
+	dep	github.com/prometheus/client_model	v0.6.3	h1:O0jaTVAYNxTHYInEPFJt5I3+sN8zqBtVMPTB1qyxiEo=
+	dep	github.com/prometheus/common	v0.73.0	h1:NGIOmVi8jrgiiPQgXxD6rP0FfxFsuZxnMQkel0qBy/g=
+	dep	github.com/prometheus/procfs	v0.22.0	h1:6q9+/JL9IKAPbCmBrv9n5O5Ty3NKnciV5X7YGw0oics=
+	dep	github.com/sagikazarmark/locafero	v0.11.0	h1:1iurJgmM9G3PA/I+wWYIOw/5SyBtxapeHDcg+AAIFXc=
+	dep	github.com/sourcegraph/conc	v0.3.1-0.20240121214520-5f936abd7ae8	h1:+jumHNA0Wrelhe64i8F6HNlS8pkoyMv5sreGx2Ry5Rw=
+	dep	github.com/spf13/afero	v1.15.0	h1:b/YBCLWAJdFWJTN9cLhiXXcD7mzKn9Dm86dNnfyQw1I=
+	dep	github.com/spf13/cast	v1.10.0	h1:h2x0u2shc1QuLHfxi+cTJvs30+ZAHOGRic8uyGTDWxY=
+	dep	github.com/spf13/cobra	v1.10.2	h1:DMTTonx5m65Ic0GOoRY2c16WCbHxOOw6xxezuLaBpcU=
+	dep	github.com/spf13/pflag	v1.0.10	h1:4EBh2KAYBwaONj6b2Ye1GiHfwjqyROoF4RwYO+vPwFk=
+	dep	github.com/spf13/viper	v1.21.0	h1:x5S+0EU27Lbphp4UKm1C+1oQO+rKx36vfCoaVebLFSU=
+	dep	github.com/subosito/gotenv	v1.6.0	h1:9NlTDc1FTs4qu0DDq7AEtTPNw6SVm7uBMsUCUjABIf8=
+	dep	go.yaml.in/yaml/v3	v3.0.6	h1:zcDfvjXEqTQmpjniUBLc91xYJMB2c4QOFxEF/LCEckM=
+	dep	golang.org/x/sync	v0.24.0	h1:iqiDrGoDgyuvAKrhLQthUEzU/R378N78gXbBjxed7oA=
+	dep	golang.org/x/sys	v0.49.0	h1:XbzkgYJHdqh/8m2Uu0W/dQv8nktxx4BFHp1M0gROTXA=
+	dep	golang.org/x/text	v0.43.0	h1:1QivrlhwAsnMOcqgOdl9my7s9OyZl8O5/UGUTJVXoWc=
+	dep	google.golang.org/protobuf	v1.36.12	h1:pJOKDDOyeXErUroCihFAd5LQuwXBSpVnKGrj5o/fwxc=
+	build	-buildmode=exe
+	build	-compiler=gc
+	build	-tags=ceph_preview
+	build	CGO_ENABLED=1
+	build	CGO_CFLAGS=-I/home/jhoblitt/.local/share/rgw-go/ceph-v20.2.4/src/include
+	build	CGO_CPPFLAGS=
+	build	CGO_CXXFLAGS=
+	build	CGO_LDFLAGS="-L/home/jhoblitt/.local/lib/rgw-go-20.2.4 -L/home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1 -Wl,--disable-new-dtags,-rpath,/home/jhoblitt/.local/lib/rgw-go-20.2.4,-rpath,/home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1"
+	build	GOARCH=amd64
+	build	GOOS=linux
+	build	GOAMD64=v1
+	build	vcs=git
+	build	vcs.revision=296ad44503ea1f8044ebf364473e050cfda4d351
+	build	vcs.time=2026-11-04T03:02:52Z
+	build	vcs.modified=false
+ 0x0000000000000001 (NEEDED)             Shared library: [libresolv.so.2]
+ 0x0000000000000001 (NEEDED)             Shared library: [libtcmalloc.so.4]
+ 0x0000000000000001 (NEEDED)             Shared library: [librados.so.2]
+ 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+ 0x000000000000000f (RPATH)              Library rpath: [/home/jhoblitt/.local/lib/rgw-go-20.2.4:/home/jhoblitt/.local/lib/rgw-go-tcmalloc-2.9.1]

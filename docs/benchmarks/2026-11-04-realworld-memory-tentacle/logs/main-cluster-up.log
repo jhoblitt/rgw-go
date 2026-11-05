@@ -1,0 +1,314 @@
+==> [1/4] block setup + node image
+==> creating disk images
++ truncate -s 10G /home/jhoblitt/.local/share/rooket/rgw-go-main/worker0-disk0.img
+created /home/jhoblitt/.local/share/rooket/rgw-go-main/worker0-disk0.img (10GiB)
+==> configuring iSCSI targets
++ sudo -n /usr/bin/systemctl start iscsid
++ sudo -n /usr/bin/targetcli /backstores/fileio create rgw-go-main-worker0-disk0 /home/jhoblitt/.local/share/rooket/rgw-go-main/worker0-disk0.img 10G
+/home/jhoblitt/.local/share/rooket/rgw-go-main/worker0-disk0.img exists, using its size (10737418240 bytes) instead
+Created fileio rgw-go-main-worker0-disk0 with size 10737418240
++ sudo -n /usr/bin/targetcli /iscsi create iqn.2003-01.local.rooket:rgw-go-main-worker0-disk0
+Created target iqn.2003-01.local.rooket:rgw-go-main-worker0-disk0.
+Created TPG 1.
+Global pref auto_add_default_portal=true
+Created default portal listening on all IPs (::0), port 3260.
++ sudo -n /usr/bin/targetcli /iscsi/iqn.2003-01.local.rooket:rgw-go-main-worker0-disk0/tpg1/luns create /backstores/fileio/rgw-go-main-worker0-disk0
+Created LUN 0.
++ sudo -n /usr/bin/targetcli /iscsi/iqn.2003-01.local.rooket:rgw-go-main-worker0-disk0/tpg1/acls create iqn.2003-01.local.rooket:initiator
+Created Node ACL for iqn.2003-01.local.rooket:initiator
+Created mapped LUN 0.
++ sudo -n /usr/bin/targetcli /iscsi/iqn.2003-01.local.rooket:rgw-go-main-worker0-disk0/tpg1/acls/iqn.2003-01.local.rooket:initiator create tpg_lun_or_backstore=lun0 mapped_lun=0
+Warning: TPG LUN 0 already mapped to this NodeACL
+This MappedLUN already exists in configFS
+warning: targetcli /iscsi/iqn.2003-01.local.rooket:rgw-go-main-worker0-disk0/tpg1/acls/iqn.2003-01.local.rooket:initiator create tpg_lun_or_backstore=lun0 mapped_lun=0 failed, continuing: exit status 1
++ sudo -n /usr/bin/targetcli saveconfig
+Last 10 configs saved in /etc/target/backup/.
+Configuration saved to /etc/target/saveconfig.json
++ sudo -n /usr/bin/iscsiadm -m discovery -t sendtargets -p 127.0.0.1
+127.0.0.1:3260,1 iqn.2003-01.local.rooket:rgw-go-squid-worker0-disk0
+127.0.0.1:3260,1 iqn.2003-01.local.rooket:rgw-go-tentacle-worker0-disk0
+127.0.0.1:3260,1 iqn.2003-01.local.rooket:rgw-go-main-worker0-disk0
++ sudo -n /usr/bin/iscsiadm -m node --login
+Login to [iface: default, target: iqn.2003-01.local.rooket:rgw-go-main-worker0-disk0, portal: 127.0.0.1,3260] successful.
++ sudo -n /usr/bin/iscsiadm -m node -T iqn.2003-01.local.rooket:rgw-go-main-worker0-disk0 -R
+Rescanning session [sid: 156, target: iqn.2003-01.local.rooket:rgw-go-main-worker0-disk0, portal: 127.0.0.1,3260]
+==> waiting for block devices
+worker0 disk0: /dev/sde
+==> pre-pulling kind node image kindest/node:v1.33.1@sha256:050072256b9a903bd914c0b2866828150cb229cea0efe5892e2b644d5dd3b34f
++ podman pull kindest/node:v1.33.1@sha256:050072256b9a903bd914c0b2866828150cb229cea0efe5892e2b644d5dd3b34f
+Trying to pull docker.io/kindest/node@sha256:050072256b9a903bd914c0b2866828150cb229cea0efe5892e2b644d5dd3b34f...
+Getting image source signatures
+Copying blob sha256:841483099b542d6aeafc6ffacd59617954c409d3ebc558b7a95f43e05b1701a1
+Copying blob sha256:dc42dfa52495c90dc5b99c19534d6d4fa9cd37fa439356fcbd73e770c35f2293
+Copying config sha256:d6b20550c77b11385dd30115ba29dbf9a9bfc98c2f28ff7d162a6ad7c9686251
+Writing manifest to image destination
+d6b20550c77b11385dd30115ba29dbf9a9bfc98c2f28ff7d162a6ad7c9686251
+==> [1/4] block setup + node image done in 1.7s
+==> [2/4] cluster create
+==> locating iSCSI block devices
+worker0 disk0: /dev/sde
+==> kind cluster
++ KIND_EXPERIMENTAL_PROVIDER=podman kind get clusters
+kind cluster config:
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+containerdConfigPatches:
+- |-
+  [plugins."io.containerd.grpc.v1.cri".registry]
+    config_path = "/etc/containerd/certs.d"
+nodes:
+- role: control-plane
+- role: worker
+  extraMounts:
+  # ceph-volume reads /run/udev to inventory disks; without it Rook fails with
+  # "No udev data could be retrieved" and skips the device.
+  - hostPath: /run/udev
+    containerPath: /run/udev
+    propagation: HostToContainer
+  # /dev/disk/by-path carries the stable iSCSI symlinks Rook pins OSDs to; the
+  # node runs no udevd, so without the host's /dev/disk these are absent.
+  - hostPath: /dev/disk
+    containerPath: /dev/disk
+    propagation: HostToContainer
+  - hostPath: /dev/sde
+    containerPath: /dev/sde
+    propagation: HostToContainer
+
++ kind create cluster --name rgw-go-main --config /tmp/rooket-kind-rgw-go-main.yaml --image kindest/node:v1.33.1@sha256:050072256b9a903bd914c0b2866828150cb229cea0efe5892e2b644d5dd3b34f
+using podman due to KIND_EXPERIMENTAL_PROVIDER
+enabling experimental podman provider
+Creating cluster "rgw-go-main" ...
+ • Ensuring node image (kindest/node:v1.33.1) 🖼  ...
+ ✓ Ensuring node image (kindest/node:v1.33.1) 🖼
+ • Preparing nodes 📦 📦   ...
+ ✓ Preparing nodes 📦 📦 
+ • Writing configuration 📜  ...
+ ✓ Writing configuration 📜
+ • Starting control-plane 🕹️  ...
+ ✓ Starting control-plane 🕹️
+ • Installing CNI 🔌  ...
+ ✓ Installing CNI 🔌
+ • Installing StorageClass 💾  ...
+ ✓ Installing StorageClass 💾
+ • Joining worker nodes 🚜  ...
+ ✓ Joining worker nodes 🚜
+Set kubectl context to "kind-rgw-go-main"
+You can now use your cluster with:
+
+kubectl cluster-info --context kind-rgw-go-main
+
+Have a question, bug, or feature request? Let us know! https://kind.sigs.k8s.io/#community 🙂
+==> preparing nodes, registry, cache, ConfigMap, and prometheus CRDs (concurrent)
+==> preparing nodes for OSD provisioning
++ kind get nodes --name rgw-go-main
++ podman exec -i rgw-go-main-worker sh -c eval "$(cat)"
+systemd DefaultTasksMax set to unlimited
+Get:1 http://deb.debian.org/debian bookworm InRelease [151 kB]
+Get:2 http://deb.debian.org/debian bookworm-updates InRelease [55.4 kB]
+Get:3 http://deb.debian.org/debian-security bookworm-security InRelease [34.8 kB]
+Get:4 http://deb.debian.org/debian bookworm/main amd64 Packages [8790 kB]
+Get:5 http://deb.debian.org/debian bookworm-updates/main amd64 Packages [6924 B]
+Get:6 http://deb.debian.org/debian-security bookworm-security/main amd64 Packages [361 kB]
+Fetched 9399 kB in 23s (410 kB/s)
+Reading package lists...
+Reading package lists...
+Building dependency tree...
+Reading state information...
+The following additional packages will be installed:
+  cryptsetup-bin dmeventd libaio1 libdevmapper-event1.02.1 liblvm2cmd2.03
+  libpopt0 thin-provisioning-tools
+Suggested packages:
+  cryptsetup-initramfs dosfstools liblocale-gettext-perl
+The following NEW packages will be installed:
+  cryptsetup cryptsetup-bin dmeventd libaio1 libdevmapper-event1.02.1
+  liblvm2cmd2.03 libpopt0 lvm2 thin-provisioning-tools
+0 upgraded, 9 newly installed, 0 to remove and 60 not upgraded.
+Need to get 3177 kB of archives.
+After this operation, 12.0 MB of additional disk space will be used.
+Get:1 http://deb.debian.org/debian bookworm/main amd64 libpopt0 amd64 1.19+dfsg-1 [43.3 kB]
+Get:2 http://deb.debian.org/debian bookworm/main amd64 cryptsetup-bin amd64 2:2.6.1-4~deb12u2 [474 kB]
+Get:3 http://deb.debian.org/debian bookworm/main amd64 cryptsetup amd64 2:2.6.1-4~deb12u2 [213 kB]
+Get:4 http://deb.debian.org/debian bookworm/main amd64 libdevmapper-event1.02.1 amd64 2:1.02.185-2 [12.9 kB]
+Get:5 http://deb.debian.org/debian bookworm/main amd64 libaio1 amd64 0.3.113-4 [13.4 kB]
+Get:6 http://deb.debian.org/debian bookworm/main amd64 liblvm2cmd2.03 amd64 2.03.16-2 [742 kB]
+Get:7 http://deb.debian.org/debian bookworm/main amd64 dmeventd amd64 2:1.02.185-2 [59.2 kB]
+Get:8 http://deb.debian.org/debian bookworm/main amd64 lvm2 amd64 2.03.16-2 [1229 kB]
+Get:9 http://deb.debian.org/debian bookworm/main amd64 thin-provisioning-tools amd64 0.9.0-2 [391 kB]
+debconf: delaying package configuration, since apt-utils is not installed
+Fetched 3177 kB in 18s (174 kB/s)
+Selecting previously unselected package libpopt0:amd64.
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 9629 files and directories currently installed.)
+Preparing to unpack .../0-libpopt0_1.19+dfsg-1_amd64.deb ...
+Unpacking libpopt0:amd64 (1.19+dfsg-1) ...
+Selecting previously unselected package cryptsetup-bin.
+Preparing to unpack .../1-cryptsetup-bin_2%3a2.6.1-4~deb12u2_amd64.deb ...
+Unpacking cryptsetup-bin (2:2.6.1-4~deb12u2) ...
+Selecting previously unselected package cryptsetup.
+Preparing to unpack .../2-cryptsetup_2%3a2.6.1-4~deb12u2_amd64.deb ...
+Unpacking cryptsetup (2:2.6.1-4~deb12u2) ...
+Selecting previously unselected package libdevmapper-event1.02.1:amd64.
+Preparing to unpack .../3-libdevmapper-event1.02.1_2%3a1.02.185-2_amd64.deb ...
+Unpacking libdevmapper-event1.02.1:amd64 (2:1.02.185-2) ...
+Selecting previously unselected package libaio1:amd64.
+Preparing to unpack .../4-libaio1_0.3.113-4_amd64.deb ...
+Unpacking libaio1:amd64 (0.3.113-4) ...
+Selecting previously unselected package liblvm2cmd2.03:amd64.
+Preparing to unpack .../5-liblvm2cmd2.03_2.03.16-2_amd64.deb ...
+Unpacking liblvm2cmd2.03:amd64 (2.03.16-2) ...
+Selecting previously unselected package dmeventd.
+Preparing to unpack .../6-dmeventd_2%3a1.02.185-2_amd64.deb ...
+Unpacking dmeventd (2:1.02.185-2) ...
+Selecting previously unselected package lvm2.
+Preparing to unpack .../7-lvm2_2.03.16-2_amd64.deb ...
+Unpacking lvm2 (2.03.16-2) ...
+Selecting previously unselected package thin-provisioning-tools.
+Preparing to unpack .../8-thin-provisioning-tools_0.9.0-2_amd64.deb ...
+Unpacking thin-provisioning-tools (0.9.0-2) ...
+Setting up libdevmapper-event1.02.1:amd64 (2:1.02.185-2) ...
+Setting up libaio1:amd64 (0.3.113-4) ...
+Setting up libpopt0:amd64 (1.19+dfsg-1) ...
+Setting up cryptsetup-bin (2:2.6.1-4~deb12u2) ...
+Setting up cryptsetup (2:2.6.1-4~deb12u2) ...
+Setting up thin-provisioning-tools (0.9.0-2) ...
+Setting up liblvm2cmd2.03:amd64 (2.03.16-2) ...
+Setting up dmeventd (2:1.02.185-2) ...
+Created symlink /etc/systemd/system/sockets.target.wants/dm-event.socket → /lib/systemd/system/dm-event.socket.
+/usr/sbin/policy-rc.d returned 101, not running 'start dm-event.service dm-event.socket'
+Setting up lvm2 (2.03.16-2) ...
+Created symlink /etc/systemd/system/sysinit.target.wants/blk-availability.service → /lib/systemd/system/blk-availability.service.
+Created symlink /etc/systemd/system/sysinit.target.wants/lvm2-monitor.service → /lib/systemd/system/lvm2-monitor.service.
+/usr/sbin/policy-rc.d returned 101, not running 'start blk-availability.service lvm2-monitor.service'
+Created symlink /etc/systemd/system/sysinit.target.wants/lvm2-lvmpolld.socket → /lib/systemd/system/lvm2-lvmpolld.socket.
+/usr/sbin/policy-rc.d returned 101, not running 'start lvm2-lvmpolld.socket'
+Processing triggers for libc-bin (2.36-9+deb12u10) ...
+ROOKET_DONE
++ podman exec -i rgw-go-main-control-plane sh -c eval "$(cat)"
+systemd DefaultTasksMax set to unlimited
+Get:1 http://deb.debian.org/debian bookworm InRelease [151 kB]
+Get:2 http://deb.debian.org/debian bookworm-updates InRelease [55.4 kB]
+Get:3 http://deb.debian.org/debian-security bookworm-security InRelease [34.8 kB]
+Get:4 http://deb.debian.org/debian bookworm/main amd64 Packages [8790 kB]
+Get:5 http://deb.debian.org/debian bookworm-updates/main amd64 Packages [6924 B]
+Get:6 http://deb.debian.org/debian-security bookworm-security/main amd64 Packages [361 kB]
+Fetched 9399 kB in 23s (408 kB/s)
+Reading package lists...
+Reading package lists...
+Building dependency tree...
+Reading state information...
+The following additional packages will be installed:
+  cryptsetup-bin dmeventd libaio1 libdevmapper-event1.02.1 liblvm2cmd2.03
+  libpopt0 thin-provisioning-tools
+Suggested packages:
+  cryptsetup-initramfs dosfstools liblocale-gettext-perl
+The following NEW packages will be installed:
+  cryptsetup cryptsetup-bin dmeventd libaio1 libdevmapper-event1.02.1
+  liblvm2cmd2.03 libpopt0 lvm2 thin-provisioning-tools
+0 upgraded, 9 newly installed, 0 to remove and 60 not upgraded.
+Need to get 3177 kB of archives.
+After this operation, 12.0 MB of additional disk space will be used.
+Get:1 http://deb.debian.org/debian bookworm/main amd64 libpopt0 amd64 1.19+dfsg-1 [43.3 kB]
+Get:2 http://deb.debian.org/debian bookworm/main amd64 cryptsetup-bin amd64 2:2.6.1-4~deb12u2 [474 kB]
+Get:3 http://deb.debian.org/debian bookworm/main amd64 cryptsetup amd64 2:2.6.1-4~deb12u2 [213 kB]
+Get:4 http://deb.debian.org/debian bookworm/main amd64 libdevmapper-event1.02.1 amd64 2:1.02.185-2 [12.9 kB]
+Get:5 http://deb.debian.org/debian bookworm/main amd64 libaio1 amd64 0.3.113-4 [13.4 kB]
+Get:6 http://deb.debian.org/debian bookworm/main amd64 liblvm2cmd2.03 amd64 2.03.16-2 [742 kB]
+Get:7 http://deb.debian.org/debian bookworm/main amd64 dmeventd amd64 2:1.02.185-2 [59.2 kB]
+Get:8 http://deb.debian.org/debian bookworm/main amd64 lvm2 amd64 2.03.16-2 [1229 kB]
+Get:9 http://deb.debian.org/debian bookworm/main amd64 thin-provisioning-tools amd64 0.9.0-2 [391 kB]
+debconf: delaying package configuration, since apt-utils is not installed
+Fetched 3177 kB in 14s (223 kB/s)
+Selecting previously unselected package libpopt0:amd64.
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 9629 files and directories currently installed.)
+Preparing to unpack .../0-libpopt0_1.19+dfsg-1_amd64.deb ...
+Unpacking libpopt0:amd64 (1.19+dfsg-1) ...
+Selecting previously unselected package cryptsetup-bin.
+Preparing to unpack .../1-cryptsetup-bin_2%3a2.6.1-4~deb12u2_amd64.deb ...
+Unpacking cryptsetup-bin (2:2.6.1-4~deb12u2) ...
+Selecting previously unselected package cryptsetup.
+Preparing to unpack .../2-cryptsetup_2%3a2.6.1-4~deb12u2_amd64.deb ...
+Unpacking cryptsetup (2:2.6.1-4~deb12u2) ...
+Selecting previously unselected package libdevmapper-event1.02.1:amd64.
+Preparing to unpack .../3-libdevmapper-event1.02.1_2%3a1.02.185-2_amd64.deb ...
+Unpacking libdevmapper-event1.02.1:amd64 (2:1.02.185-2) ...
+Selecting previously unselected package libaio1:amd64.
+Preparing to unpack .../4-libaio1_0.3.113-4_amd64.deb ...
+Unpacking libaio1:amd64 (0.3.113-4) ...
+Selecting previously unselected package liblvm2cmd2.03:amd64.
+Preparing to unpack .../5-liblvm2cmd2.03_2.03.16-2_amd64.deb ...
+Unpacking liblvm2cmd2.03:amd64 (2.03.16-2) ...
+Selecting previously unselected package dmeventd.
+Preparing to unpack .../6-dmeventd_2%3a1.02.185-2_amd64.deb ...
+Unpacking dmeventd (2:1.02.185-2) ...
+Selecting previously unselected package lvm2.
+Preparing to unpack .../7-lvm2_2.03.16-2_amd64.deb ...
+Unpacking lvm2 (2.03.16-2) ...
+Selecting previously unselected package thin-provisioning-tools.
+Preparing to unpack .../8-thin-provisioning-tools_0.9.0-2_amd64.deb ...
+Unpacking thin-provisioning-tools (0.9.0-2) ...
+Setting up libdevmapper-event1.02.1:amd64 (2:1.02.185-2) ...
+Setting up libaio1:amd64 (0.3.113-4) ...
+Setting up libpopt0:amd64 (1.19+dfsg-1) ...
+Setting up cryptsetup-bin (2:2.6.1-4~deb12u2) ...
+Setting up cryptsetup (2:2.6.1-4~deb12u2) ...
+Setting up thin-provisioning-tools (0.9.0-2) ...
+Setting up liblvm2cmd2.03:amd64 (2.03.16-2) ...
+Setting up dmeventd (2:1.02.185-2) ...
+Created symlink /etc/systemd/system/sockets.target.wants/dm-event.socket → /lib/systemd/system/dm-event.socket.
+/usr/sbin/policy-rc.d returned 101, not running 'start dm-event.service dm-event.socket'
+Setting up lvm2 (2.03.16-2) ...
+Created symlink /etc/systemd/system/sysinit.target.wants/blk-availability.service → /lib/systemd/system/blk-availability.service.
+Created symlink /etc/systemd/system/sysinit.target.wants/lvm2-monitor.service → /lib/systemd/system/lvm2-monitor.service.
+/usr/sbin/policy-rc.d returned 101, not running 'start blk-availability.service lvm2-monitor.service'
+Created symlink /etc/systemd/system/sysinit.target.wants/lvm2-lvmpolld.socket → /lib/systemd/system/lvm2-lvmpolld.socket.
+/usr/sbin/policy-rc.d returned 101, not running 'start lvm2-lvmpolld.socket'
+Processing triggers for libc-bin (2.36-9+deb12u10) ...
+ROOKET_DONE
+==> creating local OCI registry on the kind network
+installed registry config /home/jhoblitt/.local/share/rooket/rgw-go-main/registry-config.json
++ podman ps -a --filter name=^rgw-go-main-registry$ --format {{.Names}}
++ podman run -d --restart=always -p 127.0.0.1:5003:5000 -v /home/jhoblitt/.local/share/rooket/rgw-go-main/registry-config.json:/etc/zot/config.json:ro,z --label dev.rooket.registry-config=8b45fbbcfe81ae9c63933e97dcc2eddeac9c9d7229162125915f13c345ea3dc6 --name rgw-go-main-registry --network=kind ghcr.io/project-zot/zot:v2.1.17 serve /etc/zot/config.json
+5f046145a9fbc35c6144dce40b3b5fe3061c481f07088c74bdc3bd95844ad4e1
+==> applying local-registry-hosting ConfigMap
++ kubectl apply --context kind-rgw-go-main -f -
+configmap/local-registry-hosting created
+==> installing prometheus-operator-crds helm chart
++ helm --kube-context kind-rgw-go-main -n rook-ceph list -o json --filter ^prometheus-operator-crds$
++ helm --kube-context kind-rgw-go-main -n rook-ceph list -o json --filter ^my-prometheus-operator-crds$
++ helm --kube-context kind-rgw-go-main -n rook-ceph list -o json --filter ^prometheus-operator-crds$
++ helm --kube-context kind-rgw-go-main -n rook-ceph upgrade --install prometheus-operator-crds prometheus-operator-crds --repo https://prometheus-community.github.io/helm-charts --version 29.0.0 --create-namespace
+Release "prometheus-operator-crds" does not exist. Installing it now.
+NAME: prometheus-operator-crds
+LAST DEPLOYED: Wed Nov  4 20:38:33 2026
+NAMESPACE: rook-ceph
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+==> starting the shared OCI pull-through cache
++ podman ps -a --filter name=^rooket-cache$ --format {{.Names}}
++ podman inspect -f {{.Config.Image}} rooket-cache
+cache container "rooket-cache" already exists; ensuring it is running
++ podman start rooket-cache
+==> configuring containerd mirrors on cluster nodes
++ kind get nodes --name rgw-go-main
++ podman exec -i rgw-go-main-worker sh -c eval "$(cat)"
+ROOKET_DONE
+configured containerd mirrors on node rgw-go-main-worker
++ podman exec -i rgw-go-main-control-plane sh -c eval "$(cat)"
+ROOKET_DONE
+configured containerd mirrors on node rgw-go-main-control-plane
+
+Cluster "rgw-go-main" is ready.
+
+  kubectl:           rooket k <args>   (or: export KUBECONFIG="$(rooket kubeconfig --path)")
+  local registry:    localhost:5003
+  push images with:  podman push localhost:5003/<image>
+  image cache:       rooket-cache (shared by every rooket cluster on this host)
+
+==> [2/4] cluster create done in 1m22.1s
+==> [3/4] build (skipped: deploying released Rook v1.20.7)
+==> [4/4] deploy (skipped)
+
+rooket up complete in 1m23.9s. cluster "rgw-go-main" is ready.
+
+  kubectl:     rooket k <args>
+  kubeconfig:  export KUBECONFIG="$(rooket kubeconfig --path)"

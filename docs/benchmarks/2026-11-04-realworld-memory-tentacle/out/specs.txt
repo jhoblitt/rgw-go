@@ -1,0 +1,38 @@
+# internal/driver specs for the throwaway builds, 'go test -tags=ceph_preview -race -count=1 ./internal/driver/ -ginkgo.focus=...' over the files each patch changes (151 of 2771 specs).
+# FMM also with the specs' own Stores mapping their blocks (mmapon). FNC and FMMNC fail the same 2 specs: the no-copy head keeps its block lent until the request's context ends.
+
+=== FMM
+ok  	github.com/jhoblitt/rgw-go/internal/driver	22.696s
+
+=== FMM-mmapon
+ok  	github.com/jhoblitt/rgw-go/internal/driver	22.104s
+
+=== FMMNC
+  [FAIL] ReadObject stops on a sink that fails mid-stream: it cancels the reads in flight, drops their buffers and waits for them [It] a short write
+  [FAIL] ReadObject stops on a sink that fails mid-stream: it cancels the reads in flight, drops their buffers and waits for them [It] an error
+Ran 151 of 2771 Specs in 20.720 seconds
+FAIL! -- 149 Passed | 2 Failed | 0 Pending | 2620 Skipped
+--- FAIL: TestDriver (21.41s)
+FAIL
+FAIL	github.com/jhoblitt/rgw-go/internal/driver	21.535s
+FAIL
+
+=== FMMNC-mmapon
+  [FAIL] ReadObject stops on a sink that fails mid-stream: it cancels the reads in flight, drops their buffers and waits for them [It] a short write
+  [FAIL] ReadObject stops on a sink that fails mid-stream: it cancels the reads in flight, drops their buffers and waits for them [It] an error
+Ran 151 of 2771 Specs in 20.666 seconds
+FAIL! -- 149 Passed | 2 Failed | 0 Pending | 2620 Skipped
+--- FAIL: TestDriver (21.31s)
+FAIL
+FAIL	github.com/jhoblitt/rgw-go/internal/driver	21.430s
+FAIL
+
+=== FNC
+  [FAIL] ReadObject stops on a sink that fails mid-stream: it cancels the reads in flight, drops their buffers and waits for them [It] a short write
+  [FAIL] ReadObject stops on a sink that fails mid-stream: it cancels the reads in flight, drops their buffers and waits for them [It] an error
+Ran 151 of 2771 Specs in 21.177 seconds
+FAIL! -- 149 Passed | 2 Failed | 0 Pending | 2620 Skipped
+--- FAIL: TestDriver (21.76s)
+FAIL
+FAIL	github.com/jhoblitt/rgw-go/internal/driver	21.918s
+FAIL
