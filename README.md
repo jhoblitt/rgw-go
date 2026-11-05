@@ -20,6 +20,8 @@ Nothing to install yet. rgw-go is in its foundations phase.
 
 Not yet usable. The first runnable milestone is the phase 1 gateway described in the design spec.
 
+How rgw-go sizes its memory, and the settings that tune it, are in [docs/memory.md](docs/memory.md).
+
 ## Development
 
 Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/);
