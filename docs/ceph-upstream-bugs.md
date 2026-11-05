@@ -506,6 +506,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw answers no SHA512 checksum to a write and names it outside AWS's names](#radosgw-answers-no-sha512-checksum-to-a-write-and-names-it-outside-awss-names) | pending | [ceph/ceph#71484](https://github.com/ceph/ceph/pull/71484) |  |
 | [radosgw's UploadPartCopy answers the copied part's checksum in headers, not in CopyPartResult](#radosgws-uploadpartcopy-answers-the-copied-parts-checksum-in-headers-not-in-copypartresult) | pending | pending | ✓ |
 | [radosgw's CreateMultipartUpload answers no x-amz-checksum-type](#radosgws-createmultipartupload-answers-no-x-amz-checksum-type) | pending | pending | ✓ |
+| [radosgw's permission override lets an admin's DeleteObject bypass GOVERNANCE retention without s3:BypassGovernanceRetention](#radosgws-permission-override-lets-an-admins-deleteobject-bypass-governance-retention-without-s3bypassgovernanceretention) | pending | pending | ✓ |
+| [radosgw's DeleteObjects checks s3:BypassGovernanceRetention on the bucket's ARN, not each key's](#radosgws-deleteobjects-checks-s3bypassgovernanceretention-on-the-buckets-arn-not-each-keys) | pending | pending | ✓ |
+| [radosgw's S3 deletes naming no version remove an object under object lock when the bucket's versioning is not enabled](#radosgws-s3-deletes-naming-no-version-remove-an-object-under-object-lock-when-the-buckets-versioning-is-not-enabled) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -29129,8 +29132,13 @@ Every new entry adds its row to this table, in document order.
   object ACL's WRITE grant authorizes nothing but its owner's own
   requests"), pinned in `internal/authz/objectwrite_test.go`,
   `internal/op/objectretention_test.go` and `internal/s3/objectattrs_test.go`.
-  Its deletes on a bucket with object lock answer 501 until the lock checks
-  are served.
+  Its deletes evaluate the governance bypass with no ACL fallback: the
+  identity's and the bucket's policies decide, and where none does the
+  bucket's owner alone passes, so a grantee of the bucket's WRITE, whom
+  `RGWDeleteObj`'s `bypass_perm` lets through, gets no bypass
+  (`bypassAllowed`, `internal/op/objectlock.go`; `docs/differences.md`, "No
+  ACL grant authorizes a delete's governance bypass"), pinned in
+  `internal/op/objectlock_test.go`.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task L3's review, 2026-10-23, at the object-lock ops'
   authorization boundary; derived from the source, not reproduced.
@@ -32411,3 +32419,181 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task WP-7, 2026-10-28, checking radosgw's write
   responses against Amazon S3's model. Derived from the source, not
   reproduced.
+
+## radosgw's permission override lets an admin's DeleteObject bypass GOVERNANCE retention without s3:BypassGovernanceRetention
+
+- **Kind:** defect: a DeleteObject that the delete's own permission refuses
+  and the permission override lets through keeps `bypass_perm` at its
+  initial true, so with `x-amz-bypass-governance-retention` it removes a
+  version under GOVERNANCE retention with s3:BypassGovernanceRetention
+  never evaluated; without the header it is refused. Unreproduced: derived
+  from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWDeleteObj` initialises `bypass_perm` to true
+    ([rgw_op.h:1482](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L1482),
+    [rgw_op.h:1582](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1582)).
+  - `RGWDeleteObj::verify_permission` returns -EACCES when the delete's
+    own permission, s3:DeleteObject or s3:DeleteObjectVersion, is refused,
+    before it assigns `bypass_perm` from s3:BypassGovernanceRetention
+    ([rgw_op.cc:5149-5156](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5149-L5156),
+    [rgw_op.cc:5539-5546](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5539-L5546)).
+  - At v19.2.7 `rgw_process_authenticated` overrides any negative result of
+    `verify_permission` for a system request or an identity whose
+    `is_admin_of` holds, which `LocalApplier` answers for a user whose admin
+    or system flag is set
+    ([rgw_process.cc:228-236](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L228-L236);
+    [rgw_auth.cc:1048-1051](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L1048-L1051)).
+    At v20.2.4 it overrides -EACCES, -EPERM and -ERR_AUTHORIZATION for an
+    identity whose `is_admin()` holds, which `LocalApplier` answers for the
+    same two flags; its comment says a system request is not relied on for
+    the override, as one may impersonate another user
+    ([rgw_process.cc:228-235](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L228-L235);
+    [rgw_auth.cc:1068-1071](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L1068-L1071)).
+  - `execute` passes `bypass_perm` and the header's
+    `bypass_governance_mode` to `verify_object_lock`
+    ([rgw_op.cc:5213](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5213),
+    [rgw_op.cc:5603](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5603)),
+    which refuses a GOVERNANCE retention unless both are set
+    ([rgw_common.cc:1650-1652](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1650-L1652),
+    [rgw_common.cc:1713-1715](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1713-L1715)).
+  - `RGWDeleteMultiObj::verify_permission` assigns its `bypass_perm` before
+    it returns
+    ([rgw_op.cc:6774-6786](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6774-L6786),
+    [rgw_op.cc:7707-7719](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7707-L7719)),
+    so DeleteObjects is not affected.
+- **Releases:** v19.2.7 and v20.2.4, and main at 6e32cc97ba3 (2026-11-05),
+  which holds it as v20.2.4 does: `bypass_perm` starts true
+  ([rgw_op.h:1606](https://github.com/ceph/ceph/blob/6e32cc97ba3c6b0ac3d7ccb6446d4e2346af23f8/src/rgw/rgw_op.h#L1606)),
+  `verify_permission` returns -EACCES before it assigns it
+  ([rgw_op.cc:6079-6086](https://github.com/ceph/ceph/blob/6e32cc97ba3c6b0ac3d7ccb6446d4e2346af23f8/src/rgw/rgw_op.cc#L6079-L6086)),
+  and the override passes -EACCES, -EPERM and -ERR_AUTHORIZATION for an
+  identity whose `is_admin()` holds
+  ([rgw_process.cc:373-380](https://github.com/ceph/ceph/blob/6e32cc97ba3c6b0ac3d7ccb6446d4e2346af23f8/src/rgw/rgw_process.cc#L373-L380)).
+- **rgw-go:** does not reproduce it: its DeleteObject evaluates the bypass
+  only once the delete's own permission has passed, so a requester that
+  permission refuses and its admin override lets through gets no bypass,
+  and its delete of a GOVERNANCE version is refused with the header as
+  without it (`op.DeleteObject`'s permitted, `internal/op/deleteobject.go`;
+  `docs/differences.md`, "No ACL grant authorizes a delete's governance
+  bypass"), pinned in `internal/op/objectlock_test.go`.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task L4's review, 2026-11-05, reading `RGWDeleteObj`'s
+  initialiser and `verify_permission` at both tags; registered by its first
+  fix round. Derived from the source, not reproduced.
+
+## radosgw's DeleteObjects checks s3:BypassGovernanceRetention on the bucket's ARN, not each key's
+
+- **Kind:** defect, security-relevant: DeleteObjects evaluates
+  s3:BypassGovernanceRetention once, on the bucket's ARN, where DeleteObject
+  evaluates it on the object's ARN, so the two deletes of one version match
+  a policy statement against different resources. Unreproduced: derived from
+  the source; the reproduction is budgeted to the object-lock cross-gateway
+  cases (phase 2 task C13 (a)).
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWDeleteMultiObj::verify_permission` evaluates the bypass once, when
+    the bucket has object lock and the request sends
+    `x-amz-bypass-governance-retention`, through the overload of
+    `verify_bucket_permission` that takes no ARN
+    ([rgw_op.cc:6774-6786](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6774-L6786),
+    [rgw_op.cc:7707-7719](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7707-L7719)),
+    which checks the bucket's ARN
+    ([rgw_common.cc:1469-1476](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1469-L1476),
+    [rgw_common.cc:1506-1513](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1506-L1513)).
+  - Every key then passes that one `bypass_perm` to `verify_object_lock`
+    ([rgw_op.cc:6871-6878](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6871-L6878),
+    [rgw_op.cc:7799-7806](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7799-L7806)).
+  - `RGWDeleteObj::verify_permission` evaluates the same action on the
+    object's ARN
+    ([rgw_op.cc:5144-5156](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5144-L5156),
+    [rgw_op.cc:5534-5546](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5534-L5546)),
+    so the two deletes of one version disagree.
+- **Impact:** a statement on s3:BypassGovernanceRetention is matched
+  against `arn:aws:s3:::<bucket>` for DeleteObjects and against
+  `arn:aws:s3:::<bucket>/<key>` for DeleteObject, so a statement whose
+  resource is one of the two applies to one delete of a version and not to
+  the other. COMPLIANCE retention and legal holds are not affected.
+- **Releases:** v19.2.7 and v20.2.4, and main at 6e32cc97ba3 (2026-11-05),
+  where `RGWDeleteMultiObj::verify_permission` still evaluates the bypass
+  once
+  ([rgw_op.cc:8339-8342](https://github.com/ceph/ceph/blob/6e32cc97ba3c6b0ac3d7ccb6446d4e2346af23f8/src/rgw/rgw_op.cc#L8339-L8342))
+  through the overload of `verify_bucket_permission` that checks the
+  bucket's ARN
+  ([rgw_common.cc:1635-1642](https://github.com/ceph/ceph/blob/6e32cc97ba3c6b0ac3d7ccb6446d4e2346af23f8/src/rgw/rgw_common.cc#L1635-L1642)),
+  every key passes that one `bypass_perm` to `verify_object_lock`
+  ([rgw_op.cc:8457-8464](https://github.com/ceph/ceph/blob/6e32cc97ba3c6b0ac3d7ccb6446d4e2346af23f8/src/rgw/rgw_op.cc#L8457-L8464)),
+  and `RGWDeleteObj::verify_permission` evaluates it on the object's ARN
+  ([rgw_op.cc:6074-6086](https://github.com/ceph/ceph/blob/6e32cc97ba3c6b0ac3d7ccb6446d4e2346af23f8/src/rgw/rgw_op.cc#L6074-L6086)).
+- **rgw-go:** does not reproduce it: DeleteObjects evaluates the bypass for
+  each key on that key's ARN, as DeleteObject does (`deleteUnderLock`,
+  `internal/op/objectlock.go`; `docs/differences.md`, "DeleteObjects checks
+  s3:BypassGovernanceRetention for each key, on the key's ARN"), pinned in
+  `internal/op/objectlock_test.go`.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 planning of unit L (object lock), 2026-10-13, comparing
+  the two deletes' `verify_permission`; registered by task L4, 2026-10-28.
+  Derived from the source, not reproduced.
+
+## radosgw's S3 deletes naming no version remove an object under object lock when the bucket's versioning is not enabled
+
+- **Kind:** defect, data corruption: on a lock bucket whose versioning is
+  suspended, or whose flags lack `BUCKET_VERSIONED`, DeleteObject and
+  DeleteObjects naming no version remove a version a retention or legal
+  hold protects. Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - Both deletes check the lock only when the key names a version,
+    `check_obj_lock = have_instance() && obj_lock_enabled()`
+    ([rgw_op.cc:5186](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5186) and
+    [rgw_op.cc:6854](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6854),
+    [rgw_op.cc:5576](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5576) and
+    [rgw_op.cc:7782](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7782)).
+  - `delete_obj` takes its versioned branch on `BUCKET_VERSIONED` alone
+    ([rgw_rados.cc:5850](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5850),
+    [rgw_rados.cc:6462](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6462)),
+    so on a bucket without it a delete naming no version removes the head
+    outright.
+  - On a suspended bucket the delete links the null delete marker, which
+    takes the null version's list entry and logs its removal wherever it
+    sits
+    ([cls_rgw.cc:1712-1731](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1712-L1731),
+    [cls_rgw.cc:1853-1872](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1853-L1872)),
+    and the replay removes its data
+    ([rgw_rados.cc:8530-8541](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8530-L8541),
+    [rgw_rados.cc:9275-9287](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9275-L9287)).
+  - S3 makes neither state. PutBucketVersioning refuses any status but
+    Enabled on an object-lock bucket
+    ([rgw_op.cc:2788-2793](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2788-L2793),
+    [rgw_op.cc:3020-3025](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3020-L3025)),
+    PutObjectLockConfiguration enables object lock only on a bucket with
+    versioning enabled
+    ([rgw_op.cc:8289-8298](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8289-L8298),
+    [rgw_op.cc:9224-9233](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9224-L9233)),
+    and a CreateBucket with object lock sets `BUCKET_VERSIONED` with it
+    ([rgw_rados.cc:2404-2406](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L2404-L2406),
+    [rgw_rados.cc:2496-2498](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L2496-L2498)).
+    A `bucket.instance` metadata put, by a holder of metadata caps, stores
+    either.
+- **Impact:** on a bucket in either state a delete that names no version
+  removes a retained or held object, where the same object named by its
+  version is refused.
+- **Shared sink:** the lock check keyed on the request naming a version
+  rather than on the delete removing one; the sibling entry "[radosgw's
+  lifecycle current expiration removes an object under object
+  lock](#radosgws-lifecycle-current-expiration-removes-an-object-under-object-lock)"
+  reaches the same removal with no check at all.
+- **Releases:** v19.2.7 and v20.2.4, and main at 6e32cc97ba3 (2026-11-05),
+  where both deletes still key the check on the request naming a version
+  ([rgw_op.cc:6116](https://github.com/ceph/ceph/blob/6e32cc97ba3c6b0ac3d7ccb6446d4e2346af23f8/src/rgw/rgw_op.cc#L6116),
+  [rgw_op.cc:8440](https://github.com/ceph/ceph/blob/6e32cc97ba3c6b0ac3d7ccb6446d4e2346af23f8/src/rgw/rgw_op.cc#L8440))
+  and `delete_obj` still takes its versioned branch on `BUCKET_VERSIONED`
+  alone
+  ([rgw_rados.cc:7060](https://github.com/ceph/ceph/blob/6e32cc97ba3c6b0ac3d7ccb6446d4e2346af23f8/src/rgw/driver/rados/rgw_rados.cc#L7060)).
+- **rgw-go:** does not reproduce it: a delete on a bucket with object lock
+  checks the version it removes for good, the plain object on a bucket
+  without `BUCKET_VERSIONED` and the null version the null delete marker
+  replaces on a suspended one, as one a request names (`lockTarget`,
+  `internal/op/objectlock.go`; `docs/differences.md`, "A delete that
+  removes a version for good on an object-lock bucket checks its lock"),
+  pinned in `internal/op/objectlock_test.go`.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task L4, 2026-10-28, lifting the deletes' object-lock
+  501; derived from the source, not reproduced.
