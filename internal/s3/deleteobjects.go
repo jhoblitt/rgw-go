@@ -21,6 +21,10 @@ var errBadDeleteObject = errors.New("s3: an Object element radosgw refuses")
 // deleteObjects is multi_object_delete (RGWDeleteMultiObj_ObjStore_S3,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4231-L4336,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4779-L4877),
+// whose get_params reads x-amz-bypass-governance-retention as
+// op.BypassGovernanceHeader does
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4261-L4275 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4779-L4793 at v20.2.4),
 // streamed as radosgw streams it:
 //   - a failure the op meets before its first key is send_status alone
 //     (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4247-L4255):
@@ -58,7 +62,9 @@ func deleteObjects(ctx context.Context, w http.ResponseWriter, r *op.Request) er
 			slog.DebugContext(ctx, "delete result not delivered", slog.Any("error", err))
 		}
 	}
+	bypass, _ := op.HeaderValue(r.Header, "X-Amz-Bypass-Governance-Retention")
 	o := &op.DeleteObjects{
+		BypassHeader: op.BypassGovernanceHeader(bypass),
 		Parse: func(body []byte) ([]op.DeleteObjectsEntry, error) {
 			entries, q, err := parseDelete(body, rel)
 			quiet = q

@@ -8523,9 +8523,10 @@ does the following.
   they write as radosgw does, but for DeleteObjectTagging naming no version
   ("DeleteObjectTagging naming no version removes the current version's
   tags"), and an UploadPartCopy copies the version its source names.
-  DeleteObject and DeleteObjects serve a versioned bucket too, and answer
-  501 on one with object lock ("DeleteObject and DeleteObjects answer 501
-  on an object-lock bucket", below).
+  DeleteObject and DeleteObjects serve a versioned bucket too, one with
+  object lock included, where they check a version's retention and legal
+  hold before they remove it, as radosgw does ("DeleteObjects checks
+  s3:BypassGovernanceRetention for each key, on the key's ARN", below).
 
   On a bucket whose versioning was never enabled, its flags lacking
   `BUCKET_VERSIONED`, which suspending versioning keeps set
@@ -8540,9 +8541,9 @@ does the following.
   delete taking the unversioned path (`:5774`, `:6462`), as it does for
   each key of a DeleteObjects (`rgw_op.cc:6889` at v19.2.6, `:7826` at
   v20.2.4). rgw-go's store does the same. A delete naming any version,
-  `null` included, is served on any bucket without object lock, authorized
-  for `s3:DeleteObjectVersion` as radosgw authorizes any key naming a
-  version (`rgw_op.cc:5145-5147` and `:6829-6831` at v19.2.6, `:5535-5537`
+  `null` included, is served on any bucket, authorized for
+  `s3:DeleteObjectVersion` as radosgw authorizes any key naming a version
+  (`rgw_op.cc:5145-5147` and `:6838-6840` at v19.2.7, `:5535-5537`
   and `:7766-7768` at v20.2.4). PutObjectAcl, PutObjectTagging and
   DeleteObjectTagging and the reads take `versionId=null` the same way on
   any bucket whose versioning was never enabled, each authorized for its
@@ -8553,22 +8554,126 @@ does the following.
   does (`rgw_rest_s3.cc:3541-3548` at v19.2.6, `:3821-3828` at v20.2.4).
   An UploadPartCopy whose source names it copies the plain object, as
   radosgw's does.
-- **DeleteObject and DeleteObjects answer 501 on an object-lock bucket.**
-  rgw-go serves both on a bucket whose versioning is enabled or suspended,
-  writing a delete marker or removing the version a request names, as
-  radosgw does, but on a bucket with object lock it answers every delete
-  with 501 NotImplemented once the requester is authorized and before it
-  touches the store, a delete that would write a delete marker included;
-  DeleteObjects answers it through its status line before its first key
-  (`deleteLockUnserved`, `internal/op/deleteobject.go`). radosgw checks the
-  retention and legal hold of a version a delete names before it removes
-  it, and writes a delete marker unchecked
-  ([rgw_op.cc:5186-5221](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5186-L5221) and
-  [rgw_op.cc:6854-6878](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6854-L6878),
+- **DeleteObjects checks s3:BypassGovernanceRetention for each key, on the
+  key's ARN.** On a bucket with object lock, radosgw's DeleteObject and
+  DeleteObjects read the version a delete names, `null` included, and
+  refuse it with 403 AccessDenied while its retention or legal hold holds
+  (`verify_object_lock`,
+  [rgw_op.cc:5186-5221](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5186-L5221) and
+  [rgw_op.cc:6852-6879](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6852-L6879),
   [rgw_op.cc:5576-5611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5576-L5611) and
-  [rgw_op.cc:7782-7806](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7782-L7806)). rgw-go's deletes
-  do not make those checks yet, and without them a version under
-  retention or a legal hold could be removed. radosgw serves them.
+  [rgw_op.cc:7780-7807](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7780-L7807)).
+  A GOVERNANCE retention lets the delete through when the request sends
+  `x-amz-bypass-governance-retention: true` and the requester holds
+  s3:BypassGovernanceRetention. DeleteObject evaluates that permission on
+  the object's ARN
+  ([rgw_op.cc:5153-5156](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5153-L5156),
+  [rgw_op.cc:5543-5546](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5543-L5546)),
+  but DeleteObjects evaluates it once, before its keys, on the bucket's
+  ARN
+  ([rgw_op.cc:6780-6783](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6780-L6783),
+  [rgw_op.cc:7713-7716](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7713-L7716);
+  [rgw_common.cc:1469-1476](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1469-L1476),
+  [rgw_common.cc:1506-1513](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1506-L1513)),
+  so the two deletes of one version match a statement on the action
+  against different resources, `arn:aws:s3:::<bucket>/<key>` for
+  DeleteObject and `arn:aws:s3:::<bucket>` for DeleteObjects
+  (`docs/ceph-upstream-bugs.md`,
+  "[radosgw's DeleteObjects checks s3:BypassGovernanceRetention on the
+  bucket's ARN, not each
+  key's](ceph-upstream-bugs.md#radosgws-deleteobjects-checks-s3bypassgovernanceretention-on-the-buckets-arn-not-each-keys)").
+  rgw-go evaluates it for each DeleteObjects key on that key's ARN, as
+  DeleteObject does, with the object's tags as the check read them
+  (`deleteUnderLock`, `internal/op/objectlock.go`), and only when the header
+  is sent. A key whose bypass is refused, so that its retention holds, gets
+  AccessDenied in its Error element, as a key its permission refuses does,
+  and the other keys go on. So both deletes match a statement against the
+  key's ARN, and one whose resource is the bucket's ARN alone applies to
+  neither.
+
+  The removal is held to the version as the check read it: on a versioned
+  bucket the store's delete must still find it as read, or find none where
+  the read found none (`DeleteParams.Expect`), and on one whose flags lack
+  `BUCKET_VERSIONED` its head must still be at the RADOS version read
+  (`DeleteParams.AssertEpoch`). A retention, a legal hold
+  or any other write that lands after the check refuses the removal, which
+  leaves the version listed as it was ("A refused versioned removal
+  re-links the version, unless a newer null write owns the null key",
+  below). rgw-go then reads the version again and checks it again, up to
+  three times: a version locked by then is 403 AccessDenied, "forbidden by
+  object lock", and one that is not is removed under the state read again.
+  Past the third the refusal stands as radosgw's lost race: 204 for
+  DeleteObject, and the key's ConcurrentModification for DeleteObjects.
+  radosgw checks once and removes the version whatever is written after its
+  check. The window that refusal leaves, another reader's replay of the
+  unlink removing the head after the check, is radosgw's own, and the
+  delete had passed its check by then.
+- **No ACL grant authorizes a delete's governance bypass.** radosgw
+  evaluates a delete's s3:BypassGovernanceRetention through
+  `verify_bucket_permission`, which, where no policy decides, falls back to
+  the bucket's ACL with the WRITE that `op_to_perm` gives the action
+  ([rgw_common.cc:1342-1372](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1342-L1372),
+  [rgw_common.cc:1355-1394](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1355-L1394);
+  [rgw_iam_policy.h:260-268](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L260-L268),
+  [rgw_iam_policy.h:273-284](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L273-L284)),
+  so any grantee of the bucket's WRITE, everyone under `public-read-write`,
+  bypasses a GOVERNANCE retention on a delete (`docs/ceph-upstream-bugs.md`,
+  "[radosgw lets an object ACL's WRITE grant set, shorten and bypass an
+  object's retention and legal
+  hold](ceph-upstream-bugs.md#radosgw-lets-an-object-acls-write-grant-set-shorten-and-bypass-an-objects-retention-and-legal-hold)",
+  its shared sink). Amazon S3 maps no ACL permission to the action
+  ([ACL overview](https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html#acl-access-policy-permission-mapping)).
+  rgw-go lets the identity's and the bucket's policies decide the bypass,
+  and where none decides passes the bucket's owner alone
+  (`bypassAllowed`, `internal/op/objectlock.go`), as it authorizes the
+  guardrail actions ("No ACL grant authorizes the public access block's
+  ops") and an object ACL's WRITE ("An object ACL's WRITE grant authorizes
+  nothing but its owner's own requests"). A grantee of the bucket's WRITE
+  still deletes any version no lock holds. rgw-go evaluates the bypass only
+  once the delete's own permission has passed, so a requester that
+  permission refuses and the admin override lets through gets none, and
+  its DeleteObject of a GOVERNANCE version is refused with the header as
+  without it. That is stricter than radosgw, whose `RGWDeleteObj` starts
+  `bypass_perm` true
+  ([rgw_op.h:1482](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L1482),
+  [rgw_op.h:1582](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1582))
+  and whose `verify_permission` returns -EACCES before it assigns it
+  ([rgw_op.cc:5149-5156](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5149-L5156),
+  [rgw_op.cc:5539-5546](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5539-L5546)),
+  so the admin its override lets through passes the bypass on the header
+  alone, s3:BypassGovernanceRetention never evaluated
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's permission override lets an
+  admin's DeleteObject bypass GOVERNANCE retention without
+  s3:BypassGovernanceRetention](ceph-upstream-bugs.md#radosgws-permission-override-lets-an-admins-deleteobject-bypass-governance-retention-without-s3bypassgovernanceretention)";
+  `op.DeleteObject`'s permitted, `internal/op/deleteobject.go`).
+- **A delete that removes a version for good on an object-lock bucket
+  checks its lock.** radosgw checks a delete's retention and legal hold only
+  when the request names a version (`check_obj_lock = have_instance() &&
+  obj_lock_enabled()`, cited above). A delete naming no version writes a
+  delete marker on a bucket whose versioning is enabled, which removes
+  nothing. But on a lock bucket whose flags lack `BUCKET_VERSIONED`, which a
+  `bucket.instance` metadata put can store, it removes the object outright,
+  and on one whose versioning is suspended, which that put can store too,
+  its null delete marker replaces the null version wherever it sits
+  ([cls_rgw.cc:1712-1731](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1712-L1731),
+  [cls_rgw.cc:1853-1872](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1853-L1872)),
+  so radosgw removes a retained or held object (`docs/ceph-upstream-bugs.md`,
+  "[radosgw's S3 deletes naming no version remove an object under object
+  lock when the bucket's versioning is not
+  enabled](ceph-upstream-bugs.md#radosgws-s3-deletes-naming-no-version-remove-an-object-under-object-lock-when-the-buckets-versioning-is-not-enabled)").
+  Amazon S3 makes no such bucket. rgw-go checks the version such a delete
+  removes, the plain object or the null version, as it checks one a
+  request names, and holds the removal to it (`lockTarget`,
+  `internal/op/objectlock.go`), as its lifecycle checks every permanent
+  removal ("Every permanent removal by lifecycle runs the object-lock
+  check"). A null version written after the read found none refuses the
+  removal as well: on a suspended bucket the null delete marker expects the
+  OLH head, read again by the store's delete, to hold no null data still,
+  and a delete naming `versionId=null` expects no null version, so the
+  delete reads the key again and checks what it finds. On a bucket whose
+  flags lack `BUCKET_VERSIONED` an object written after the read found none
+  is removed unchecked, as radosgw removes it with no read at all: there is
+  no RADOS version for that delete to assert.
 - **DeleteObjects leaves a key's skipped updates to its last delete.** On
   a bucket whose versioning was ever enabled, DeleteObjects groups its keys
   by name, skips the OLH update of every delete of a name but its last, and
@@ -10057,7 +10162,7 @@ does the following.
   is the replay that applies the log. And a replay that runs after the null
   write's head write but before its link is in the log removes the data in
   rgw-go too, after which that write's link fails, as through radosgw. The
-  S3 deletes reach it on a versioned bucket without object lock.
+  S3 deletes reach it on any versioned bucket.
 - **rgw-go removes the instance a failed versioned write made.** A
   versioned write writes its version's head and completes the version's
   instance entry in the bucket index before it links the version under the
@@ -10293,8 +10398,12 @@ does the following.
   it](ceph-upstream-bugs.md#radosgws-null-version-removal-takes-the-data-of-a-null-putobject-that-links-after-it)").
   radosgw's delete takes no expected state. rgw-go's takes the null version
   as its caller read it, `DeleteParams.Expect`, which the lifecycle and the
-  object-lock checks are to pass: the marker's link carries its
-  `user.rgw.idtag`, absent read as empty (`writeDeleteMarker`,
+  S3 deletes' object-lock check pass: the marker's link carries its
+  `user.rgw.idtag`, absent read as empty, or, for a null version that holds
+  no data, one that does not exist or a delete marker, whose state carries
+  no tag of the OLH head, the head's own as the delete reads it again, a
+  head that has gained null data since answering 409 ConcurrentModification
+  with nothing written (`writeDeleteMarker` and `nullMarkerExpect`,
   `internal/driver/delete_versioned.go`). Each attempt compares it on the
   OLH head it reads and the attempt's init compares it again, so a null
   write or an attr write that landed before the init answers 409
@@ -10306,7 +10415,8 @@ does the following.
   since the guard is in that replay. On a bucket whose versioning is
   enabled the marker removes nothing and `Expect` is not read. The
   windows that entry names stay. The object store's delete does this;
-  the S3 deletes pass no `Expect`.
+  the S3 deletes pass `Expect` on a bucket with object lock ("A delete that
+  removes a version for good on an object-lock bucket checks its lock").
 - **A refused versioned removal re-links the version, unless a newer null
   write owns the null key.** A versioned delete removes a version in two
   steps: the class's unlink, or the null delete marker's link, takes its
@@ -10479,7 +10589,9 @@ does the following.
     its retry never landed, removes the version guarded only on the write
     tag it reads.
 
-  The object store's delete does this; the S3 deletes pass no `Expect`.
+  The object store's delete does this, and the S3 deletes pass `Expect`
+  on a bucket with object lock ("DeleteObjects checks
+  s3:BypassGovernanceRetention for each key, on the key's ARN").
 - **A conditional write to a versioned bucket commits only if its condition
   held when it linked.** radosgw checks a versioned write's If-Match and
   If-None-Match once, before its head write, and then links the version

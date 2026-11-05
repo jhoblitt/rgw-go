@@ -18,17 +18,20 @@ import (
 // Each condition is its header's last value, nil when the header is
 // absent: x-amz-delete-if-unmodified-since and
 // x-amz-if-match-last-modified-time url-decoded, If-Match and
-// x-amz-if-match-size as sent, all four read by both releases alike. The
-// success, a missing key's or version's included, is 204 and no body, with
-// x-amz-version-id when the delete reports a version and
+// x-amz-if-match-size as sent, all four read by both releases alike, and
+// x-amz-bypass-governance-retention as op.BypassGovernanceHeader reads it.
+// The success, a missing key's or version's included, is 204 and no body,
+// with x-amz-version-id when the delete reports a version and
 // x-amz-delete-marker: true when that version is a delete marker, the one it
 // wrote or the one it removed.
 func deleteObject(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
+	bypass, _ := op.HeaderValue(r.Header, "X-Amz-Bypass-Governance-Retention")
 	o := &op.DeleteObject{
 		UnmodifiedSince:     decodedHeader(r, "X-Amz-Delete-If-Unmodified-Since"),
 		IfMatch:             headerPtr(r, "If-Match"),
 		IfMatchSize:         headerPtr(r, "X-Amz-If-Match-Size"),
 		IfMatchLastModified: decodedHeader(r, "X-Amz-If-Match-Last-Modified-Time"),
+		BypassHeader:        op.BypassGovernanceHeader(bypass),
 	}
 	if err := op.Run(ctx, o, r); err != nil {
 		return err

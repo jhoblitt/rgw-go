@@ -82,6 +82,9 @@ type DeleteObjects struct {
 	// Result is send_partial_response: called once per key, in completion
 	// order, never concurrently.
 	Result func(DeleteResult)
+	// BypassHeader is x-amz-bypass-governance-retention as
+	// BypassGovernanceHeader reads it, bypass_governance_mode.
+	BypassHeader bool
 
 	body []byte
 }
@@ -123,7 +126,9 @@ func (o *DeleteObjects) Init(ctx context.Context, r *Request) error {
 // nothing
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6768-L6780 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7707-L7719 at v20.2.4),
-// and each key is authorized as it is deleted.
+// and each key is authorized as it is deleted. The governance bypass, which
+// radosgw evaluates here once on the bucket's ARN, is evaluated for each key
+// on its own ARN (deleteOne).
 func (o *DeleteObjects) VerifyPermission(ctx context.Context, r *Request) error {
 	if err := VerifyBucketPermission(ctx, r, policy.S3DeleteObject, acl.PermFor(policy.S3DeleteObject)); IsBeforeVerify(err) {
 		return err
@@ -161,25 +166,31 @@ func (o *DeleteObjects) Execute(ctx context.Context, r *Request) error {
 	if err := o.Begin(); err != nil {
 		return err
 	}
+	// Result writes the response, and with it the request's byte count,
+	// while other keys are still being deleted, so the keys read this copy
+	// of the request, taken before the first of them starts, and never the
+	// request itself.
+	kr := *r
 	var mu sync.Mutex
 	report := func(res DeleteResult) {
 		mu.Lock()
 		defer mu.Unlock()
 		o.Result(res)
 	}
-	if !r.BucketRec.Info.Versioned() {
-		return o.deleteAll(ctx, r, objects, false, report)
+	if !kr.BucketRec.Info.Versioned() {
+		return o.deleteAll(ctx, &kr, objects, false, report)
 	}
 	rest, last := groupByName(objects)
-	if err := o.deleteAll(ctx, r, rest, true, report); err != nil {
+	if err := o.deleteAll(ctx, &kr, rest, true, report); err != nil {
 		return err
 	}
-	return o.deleteAll(ctx, r, last, false, report)
+	return o.deleteAll(ctx, &kr, last, false, report)
 }
 
 // deleteAll deletes entries, at most maxAIO at once, each skipping its key's
 // OLH update when skipOLHUpdate is set, and reports each outcome as it
-// completes. It returns once every delete has.
+// completes. It returns once every delete has. r is the request as Execute
+// copied it before the keys, which every key reads and none writes.
 func (o *DeleteObjects) deleteAll(ctx context.Context, r *Request, entries []DeleteObjectsEntry, skipOLHUpdate bool, report func(DeleteResult)) error {
 	var g errgroup.Group
 	g.SetLimit(o.maxAIO(r))
@@ -216,8 +227,7 @@ func (o *DeleteObjects) Complete(context.Context, *Request) {}
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L7031-L7081 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7923-L7983 at v20.2.4):
 // the body, its parse, Tentacle's refusal of an empty list, the key
-// count, and MFA delete. A bucket with object lock is refused first
-// (deleteLockUnserved).
+// count, and MFA delete.
 //
 // On a bucket with MFA delete a request any of whose keys names a version
 // is ERR_MFA_REQUIRED, 403 AccessDenied, unless its x-amz-mfa verified a
@@ -233,9 +243,6 @@ func (o *DeleteObjects) Complete(context.Context, *Request) {}
 // (https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html).
 // The check is execute's, so op.Run's admin override never passes it.
 func (o *DeleteObjects) checkRequest(r *Request) ([]DeleteObjectsEntry, error) {
-	if err := deleteLockUnserved(r.BucketRec); err != nil {
-		return nil, err
-	}
 	if len(o.body) == 0 {
 		// data.c_str() is NULL for an empty bufferlist.
 		return nil, fmt.Errorf("%w: an empty body", ErrInvalidArgument)
@@ -307,7 +314,9 @@ func (o *DeleteObjects) maxAIO(r *Request) int {
 // marker's owner, del_op->params.obj_owner being s->owner, where a missing
 // key is success. radosgw reads the key's state ahead of the delete, failing
 // the key on a read that fails otherwise than with ENOENT; the store's
-// delete makes the reads it needs, whose failure fails the key alike.
+// delete makes the reads it needs, whose failure fails the key alike, and
+// the op reads the key only for its object-lock check (deleteUnderLock),
+// whose refusal is the key's error, rendered as an AccessDenied key is.
 func (o *DeleteObjects) deleteOne(ctx context.Context, r *Request, e DeleteObjectsEntry, skipOLHUpdate bool) DeleteResult {
 	res := DeleteResult{Key: e.Key}
 	if e.Key.Name == "" {
@@ -328,7 +337,7 @@ func (o *DeleteObjects) deleteOne(ctx context.Context, r *Request, e DeleteObjec
 		SkipOLHUpdate: skipOLHUpdate,
 	}
 	p.MarkerOwner, p.MarkerOwnerDisplayName = requesterOwner(r)
-	d, err := r.Env.Objects.DeleteObject(ctx, r.BucketRec, e.Key, p)
+	d, err := deleteUnderLock(ctx, r, e.Key, p, o.BypassHeader)
 	switch {
 	case errors.Is(err, ErrNoSuchKey):
 	case err != nil:

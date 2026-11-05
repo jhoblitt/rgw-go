@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -36,6 +37,14 @@ func (d *deleteResults) DeleteObject(_ context.Context, _ *op.BucketRecord, key 
 // every key.
 func answering(store op.ObjectStore, res *op.DeleteObjectResult, err error) *deleteResults {
 	return &deleteResults{ObjectStore: store, answer: func(meta.ObjKey) (*op.DeleteObjectResult, error) { return res, err }}
+}
+
+// lockKey gives key in w's bucket a retention of mode to 2030-01-03.
+func lockKey(ctx context.Context, w *writeWorld, key, mode string) {
+	GinkgoHelper()
+	e := denc.NewEncoder()
+	meta.ObjectRetention{Mode: mode, RetainUntil: time.Date(2030, 1, 3, 0, 0, 0, 0, time.UTC)}.Encode(e, denc.Squid)
+	Expect(w.store.SetObjectAttrs(ctx, w.stat(ctx, key), map[string][]byte{meta.AttrObjectRetention: e.Bytes()}, nil)).To(Succeed())
 }
 
 // expectNoContent checks rec is a 204 with no body and no type, as
@@ -133,14 +142,52 @@ var _ = Describe("delete_obj", func() {
 		expectNoContent(w.send(w.alice, http.MethodDelete, "/plain/src?versionId=v1", ""))
 		Expect(store.keys).To(Equal([]meta.ObjKey{{Name: "src", Instance: "v1"}}))
 	})
-	It("answers 501 on a bucket with object lock and deletes nothing", func(ctx SpecContext) {
-		w.setBucketInfo(ctx, func(i *meta.BucketInfo) { i.Flags |= meta.BucketVersioned | meta.BucketObjLockEnabled })
-		store := answering(w.store, &op.DeleteObjectResult{}, nil)
-		w.env.Objects = store
-		expectError(w.send(w.alice, http.MethodDelete, "/plain/src?versionId=v1", ""), 501, "NotImplemented")
-		expectError(w.send(w.alice, http.MethodDelete, "/plain/src", ""), 501, "NotImplemented")
-		Expect(store.keys).To(BeEmpty())
+	// The bucket's flags carry object lock without BUCKET_VERSIONED, which
+	// memstore serves; versionId=null names src.
+	Describe("on a bucket with object lock", func() {
+		BeforeEach(func(ctx SpecContext) {
+			w.setBucketInfo(ctx, func(i *meta.BucketInfo) { i.Flags |= meta.BucketObjLockEnabled })
+			lockKey(ctx, w, "src", "GOVERNANCE")
+		})
+		It("answers a locked version 403 AccessDenied with radosgw's message, and keeps it", func(ctx SpecContext) {
+			rec := w.send(w.alice, http.MethodDelete, "/plain/src?versionId=null", "")
+			expectError(rec, 403, "AccessDenied")
+			Expect(rec.Body.String()).To(ContainSubstring("<Message>forbidden by object lock</Message>"))
+			Expect(w.stat(ctx, "src").Exists).To(BeTrue())
+		})
+		DescribeTable("reads x-amz-bypass-governance-retention url-decoded and \"true\" in any case, as get_params does",
+			func(ctx SpecContext, removed bool, hdr ...string) {
+				rec := w.send(w.alice, http.MethodDelete, "/plain/src?versionId=null", "", hdr...)
+				if removed {
+					expectNoContent(rec)
+				} else {
+					expectError(rec, 403, "AccessDenied")
+				}
+				Expect(w.stat(ctx, "src").Exists).To(Equal(!removed))
+			},
+			Entry("true, which the owner's bypass passes", true, "X-Amz-Bypass-Governance-Retention", "true"),
+			Entry("TRUE", true, "X-Amz-Bypass-Governance-Retention", "TRUE"),
+			Entry("%74rue, url-decoded first", true, "X-Amz-Bypass-Governance-Retention", "%74rue"),
+			Entry("yes, which is not true", false, "X-Amz-Bypass-Governance-Retention", "yes"),
+			Entry("absent", false),
+		)
+		It("bypasses no COMPLIANCE retention", func(ctx SpecContext) {
+			lockKey(ctx, w, "src", "COMPLIANCE")
+			expectError(w.send(w.alice, http.MethodDelete, "/plain/src?versionId=null", "", "X-Amz-Bypass-Governance-Retention", "true"), 403, "AccessDenied")
+			Expect(w.stat(ctx, "src").Exists).To(BeTrue())
+		})
 	})
+	// A version's lock attrs are read only on a bucket with object lock; on
+	// any other they are not looked at, whatever they hold.
+	DescribeTable("deletes an object carrying a retention on a bucket without object lock, checking no lock",
+		func(ctx SpecContext, target string) {
+			lockKey(ctx, w, "src", "COMPLIANCE")
+			expectNoContent(w.send(w.alice, http.MethodDelete, target, ""))
+			Expect(w.stat(ctx, "src").Exists).To(BeFalse())
+		},
+		Entry("naming no version", "/plain/src"),
+		Entry("naming versionId=null", "/plain/src?versionId=null"),
+	)
 	Describe("on a bucket with MFA delete", func() {
 		var store *deleteResults
 		BeforeEach(func(ctx SpecContext) {
