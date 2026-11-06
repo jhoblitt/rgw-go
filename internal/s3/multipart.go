@@ -57,14 +57,17 @@ type initiateMultipartUploadResult struct {
 // The success is send_response's
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4029-L4055,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4526-L4556):
-// 200 and the document, whose length radosgw's frontend adds, without
-// x-amz-abort-date while lifecycle is not served.
+// 200, the upload's checksum algorithm and type (setUploadChecksum) and the
+// document, whose length radosgw's frontend adds, without x-amz-abort-date
+// while lifecycle is not served. The checksum fields are the headers'
+// (checksumField).
 func (wr *objectWrites) initMultipart(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
-	o := &op.InitMultipart{StorageClass: header(r, "X-Amz-Storage-Class")}
+	o := &op.InitMultipart{StorageClass: header(r, "X-Amz-Storage-Class"), ChecksumField: checksumField(r)}
 	o.Params = func(ctx context.Context, o *op.InitMultipart) error { return wr.initMultipartParams(ctx, r, o) }
 	if err := op.Run(ctx, o, r); err != nil {
 		return err
 	}
+	setUploadChecksum(w.Header(), o.Upload.Checksum)
 	WriteXML(w, r, http.StatusOK, initiateMultipartUploadResult{
 		Xmlns: xmlnsS3, Tenant: xmltext.Text(r.Tenant), Bucket: xmltext.Text(r.Bucket),
 		Key: xmltext.Text(r.Object.Name), UploadID: xmltext.Text(o.UploadID),
@@ -121,6 +124,8 @@ type copyPartResult struct {
 	Xmlns        string       `xml:"xmlns,attr"`
 	LastModified xmltext.Text `xml:"LastModified"`
 	ETag         xmltext.Text `xml:"ETag"`
+	// Checksum is written as its Checksum<ALG> element (copyPartChecksum).
+	Checksum *checksumElement `xml:"Checksum"`
 }
 
 // uploadPart serves put_obj requests carrying uploadId: UploadPart and
@@ -140,14 +145,16 @@ type copyPartResult struct {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2891-L2952),
 // whose status rgw_s3_success_create_obj_status names for both forms: for a
 // part with a body the ETag, the Content-Length of 0 with Accept-Ranges that
-// dump_content_length sends, and Rgwx-Mtime for a system request; for a
-// copied part CopyPartResult, its LastModified the mtime's whole seconds with
-// a literal .000Z, as strftime's "%Y-%m-%dT%T.000Z" writes it, and its
-// length the frontend's.
+// dump_content_length sends, the part's checksum (setChecksumHeaders) and
+// Rgwx-Mtime for a system request; for a copied part CopyPartResult, its
+// LastModified the mtime's whole seconds with a literal .000Z, as strftime's
+// "%Y-%m-%dT%T.000Z" writes it, the part's checksum after its ETag
+// (copyPartChecksum), and its length the frontend's. A part with a body
+// reads its checksum request from the headers (checksumField).
 func (wr *objectWrites) uploadPart(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.UploadPart{
 		UploadID: r.Query.Get("uploadId"), Body: r.Body, Size: r.ContentLength,
-		StorageClass: header(r, "X-Amz-Storage-Class"), CannedACL: header(r, "X-Amz-Acl"),
+		StorageClass: header(r, "X-Amz-Storage-Class"), CannedACL: header(r, "X-Amz-Acl"), ChecksumField: checksumField(r),
 	}
 	if v, _ := op.HeaderValue(r.Header, "X-Amz-Copy-Source"); v != "" {
 		tenant, bucket, key, ok := partCopySource(v, r.Identity.Tenant)
@@ -176,7 +183,7 @@ func (wr *objectWrites) uploadPart(ctx context.Context, w http.ResponseWriter, r
 	if o.CopySource {
 		WriteXML(w, r, status, copyPartResult{
 			Xmlns: xmlnsS3, LastModified: xmltext.Text(o.Mtime.UTC().Truncate(time.Second).Format("2006-01-02T15:04:05") + ".000Z"),
-			ETag: quotedETag(o.ETag),
+			ETag: quotedETag(o.ETag), Checksum: copyPartChecksum(o.Checksum),
 		})
 		return nil
 	}
@@ -184,6 +191,7 @@ func (wr *objectWrites) uploadPart(ctx context.Context, w http.ResponseWriter, r
 	h := w.Header()
 	SetHeader(h, "ETag", `"`+o.ETag+`"`)
 	SetContentLength(h, 0)
+	setChecksumHeaders(h, o.Checksum)
 	setSystemMtime(h, r, o.Mtime)
 	w.WriteHeader(status)
 	return nil
@@ -333,7 +341,7 @@ func multipartObjectLock(r *op.Request) error {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4084-L4106,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4614-L4642):
 // Location first, as dump_format writes it, then the tenant of a
-// tenanted bucket.
+// tenanted bucket, and after the ETag the checksum completeChecksum gives.
 type completeMultipartUploadResult struct {
 	XMLName  xml.Name     `xml:"CompleteMultipartUploadResult"`
 	Xmlns    string       `xml:"xmlns,attr"`
@@ -342,6 +350,9 @@ type completeMultipartUploadResult struct {
 	Bucket   xmltext.Text `xml:"Bucket"`
 	Key      xmltext.Text `xml:"Key"`
 	ETag     xmltext.Text `xml:"ETag"`
+	// Checksum is written as its Checksum<ALG> element.
+	Checksum     *checksumElement `xml:"Checksum"`
+	ChecksumType xmltext.Text     `xml:"ChecksumType,omitempty"`
 }
 
 // completeMultipart is complete_multipart, CompleteMultipartUpload. The op
@@ -354,19 +365,24 @@ type completeMultipartUploadResult struct {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4076-L4108,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4604-L4644):
 // 200, x-amz-version-id (setVersionHeaders), and the document, whose length
-// radosgw's frontend adds, the ETag in the quotes dump_format adds.
+// radosgw's frontend adds, the ETag in the quotes dump_format adds and the
+// checksum after it (completeChecksum). The value a completion supplies is
+// read from the headers (checksumField).
 func completeMultipart(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.CompleteMultipart{
 		UploadID: r.Query.Get("uploadId"), IfMatch: headerPtr(r, "If-Match"), IfNoneMatch: headerPtr(r, "If-None-Match"),
+		ChecksumField: checksumField(r),
 	}
 	if err := op.Run(ctx, o, r); err != nil {
 		return err
 	}
 	setVersionHeaders(w.Header(), o.VersionID, "")
-	WriteXML(w, r, http.StatusOK, completeMultipartUploadResult{
+	doc := completeMultipartUploadResult{
 		Xmlns: xmlnsS3, Location: xmltext.Text(completeLocation(r)), Tenant: xmltext.Text(r.Tenant),
 		Bucket: xmltext.Text(r.Bucket), Key: xmltext.Text(r.Object.Name), ETag: quotedETag(o.ETag),
-	})
+	}
+	doc.Checksum, doc.ChecksumType = completeChecksum(r, o.Checksum, len(o.Parts))
+	WriteXML(w, r, http.StatusOK, doc)
 	return nil
 }
 

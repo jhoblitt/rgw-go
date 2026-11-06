@@ -43,8 +43,10 @@ import (
 // Accept-Ranges that dump_content_length sends
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2747,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2911),
-// x-amz-version-id (setVersionHeaders), Rgwx-Mtime for a system request, and
-// the status rgw_s3_success_create_obj_status names.
+// x-amz-version-id (setVersionHeaders), the checksum the store computed
+// (setChecksumHeaders), Rgwx-Mtime for a system request, and the status
+// rgw_s3_success_create_obj_status names. The checksum request is read from
+// the headers (checksumField).
 func (wr *objectWrites) putObject(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	switch {
 	case r.Query.Get("uploadId") != "":
@@ -56,7 +58,7 @@ func (wr *objectWrites) putObject(ctx context.Context, w http.ResponseWriter, r 
 		Body: r.Body, Size: r.ContentLength,
 		StorageClass: header(r, "X-Amz-Storage-Class"), CannedACL: header(r, "X-Amz-Acl"),
 		IfMatch: headerPtr(r, "If-Match"), IfNoneMatch: headerPtr(r, "If-None-Match"),
-		Append: r.Query.Has("append"),
+		Append: r.Query.Has("append"), ChecksumField: checksumField(r),
 	}
 	o.Params = func(_ context.Context, o *op.PutObject) error { return wr.putObjectParams(r, o) }
 	o.Authorized = func(ctx context.Context, o *op.PutObject) error { return putObjectChecks(ctx, r, o) }
@@ -68,6 +70,7 @@ func (wr *objectWrites) putObject(ctx context.Context, w http.ResponseWriter, r 
 	SetHeader(h, "ETag", `"`+o.ETag+`"`)
 	SetContentLength(h, 0)
 	setVersionHeaders(h, o.VersionID, "")
+	setChecksumHeaders(h, o.Checksum)
 	setSystemMtime(h, r, o.Mtime)
 	w.WriteHeader(successStatus(r))
 	return nil

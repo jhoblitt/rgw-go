@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"slices"
 
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/op"
 )
 
@@ -14,7 +15,12 @@ var (
 	ParseCopySourceForTest     = parseCopySource
 	ParseDeleteForTest         = parseDelete
 	FormatXattrForTest         = formatXattr
+	SetChecksumHeadersForTest  = setChecksumHeaders
 )
+
+// CopyPartChecksumForTest reports whether copyPartChecksum gives c an
+// element.
+func CopyPartChecksumForTest(c *cksum.Cksum) bool { return copyPartChecksum(c) != nil }
 
 // RequestAttrsForTest is requestAttrs with the generic attrs r's
 // configuration names.
