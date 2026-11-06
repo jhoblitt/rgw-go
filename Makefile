@@ -241,9 +241,9 @@ populate: need-release ## Write the fixed data set through the RELEASE cluster's
 # header to the population. It runs when the first go test fails too, so a
 # failure there hides none of its results, and the target fails if either
 # does. make integration leaves out the specs labelled rgw-go, which make
-# admin-gate runs: the admin gate's need the rgw-go make rgw-go-up starts,
-# and the website gate builds an rgw-go of its own and restarts the radosgw
-# twice.
+# admin-gate runs: the admin and CORS gates' need the rgw-go make rgw-go-up
+# starts, and the website gate builds an rgw-go of its own and restarts the
+# radosgw twice.
 .PHONY: integration
 integration: need-release ## Run the integration specs against the RELEASE cluster
 	@tags="$(GO_TAGS),integration"; \
@@ -261,7 +261,7 @@ integration: need-release ## Run the integration specs against the RELEASE clust
 # it, with the garbage its removal leaves, when go test ends some other way.
 
 .PHONY: admin-gate
-admin-gate: need-release ## Compare the admin API of the rgw-go rgw-go-up started with the RELEASE cluster's radosgw
+admin-gate: need-release ## Run the admin, website and CORS gates against the RELEASE cluster's radosgw and the rgw-go rgw-go-up started (the website gate builds its own)
 	trap 'ROOKET=$(ROOKET_BIN) hack/admin/remove-user.sh $(RELEASE) rgwgo-admin || echo "could not remove the user rgwgo-admin" >&2' EXIT; \
 	$(CGO_RUN_RELEASE) env RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf RGW_GO_TEST_ROOKET=$(ROOKET_BIN) \
 	  go test "-tags=$(GO_TAGS),integration" -race -count=1 ./test/integration -ginkgo.label-filter=rgw-go -ginkgo.fail-on-empty

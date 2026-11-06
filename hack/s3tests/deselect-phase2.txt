@@ -96,34 +96,6 @@ s3tests/functional/test_s3.py::test_post_object_empty_conditions # POST object
 s3tests/functional/test_s3.py::test_post_object_tags_anonymous_request # POST object
 s3tests/functional/test_s3.py::test_post_object_tags_authenticated_request # POST object
 
-# CORS, including the OPTIONS preflight
-s3tests/functional/test_s3.py::test_object_raw_get_x_amz_expires_not_expired # OPTIONS preflight on the presigned URL before its GET
-s3tests/functional/test_s3.py::test_object_raw_get_x_amz_expires_not_expired_tenant # OPTIONS preflight on the presigned URL before its GET
-s3tests/functional/test_s3.py::test_set_cors # PutBucketCors, GetBucketCors, DeleteBucketCors
-s3tests/functional/test_s3.py::test_cors_origin_response # PutBucketCors, GetBucketCors, OPTIONS preflight
-s3tests/functional/test_s3.py::test_cors_origin_wildcard # PutBucketCors, GetBucketCors
-s3tests/functional/test_s3.py::test_cors_header_option # PutBucketCors, GetBucketCors, OPTIONS preflight
-s3tests/functional/test_s3.py::test_cors_presigned_get_object # PutBucketCors, OPTIONS preflight
-s3tests/functional/test_s3.py::test_cors_presigned_get_object_tenant # PutBucketCors, OPTIONS preflight
-s3tests/functional/test_s3.py::test_cors_presigned_get_object_v2 # PutBucketCors, OPTIONS preflight
-s3tests/functional/test_s3.py::test_cors_presigned_get_object_tenant_v2 # PutBucketCors, OPTIONS preflight
-s3tests/functional/test_s3.py::test_cors_presigned_put_object # PutBucketCors, OPTIONS preflight
-s3tests/functional/test_s3.py::test_cors_presigned_put_object_with_acl # PutBucketCors, OPTIONS preflight
-s3tests/functional/test_s3.py::test_cors_presigned_put_object_v2 # PutBucketCors, OPTIONS preflight
-s3tests/functional/test_s3.py::test_cors_presigned_put_object_tenant_v2 # PutBucketCors, OPTIONS preflight
-s3tests/functional/test_s3.py::test_cors_presigned_put_object_tenant # PutBucketCors, OPTIONS preflight
-s3tests/functional/test_s3.py::test_cors_presigned_put_object_tenant_with_acl # PutBucketCors, OPTIONS preflight
-s3tests/functional/test_s3.py::test_cors_presigned_url_non_preflight # PutBucketCors
-s3tests/functional/test_s3.py::test_cors_preflight_later_rule_allows_method # PutBucketCors, OPTIONS preflight
-s3tests/functional/test_s3.py::test_cors_preflight_later_rule_allows_headers # PutBucketCors, OPTIONS preflight
-s3tests/functional/test_s3.py::test_bucket_cors_storage_class_checked_after_authorization # PutBucketCors, GetBucketCors, DeleteBucketCors
-s3tests/functional/test_s3.py::test_cors_presigned_preflight_credentials # PutBucketCors, OPTIONS preflight
-s3tests/functional/test_s3.py::test_cors_presigned_v2_preflight_method_refused # PutBucketCors, OPTIONS preflight
-s3tests/functional/test_s3.py::test_cors_headers_on_bucket_config_writes # PutBucketCors, PutBucketEncryption, DeleteBucketEncryption, PutBucketPolicy, DeleteBucketPolicy, PutPublicAccessBlock, DeletePublicAccessBlock, PutObjectLockConfiguration
-s3tests/functional/test_s3.py::test_cors_headers_on_refused_bucket_config_writes # PutBucketCors, PutBucketEncryption, DeleteBucketEncryption, PutBucketPolicy, DeleteBucketPolicy, PutPublicAccessBlock, DeletePublicAccessBlock, PutObjectLockConfiguration
-s3tests/functional/test_s3.py::test_cors_signed_request_on_wildcard_rule_gets_origin # PutBucketCors
-s3tests/functional/test_s3.py::test_cors_headers_on_delete_objects_refusal # PutBucketCors
-
 # public access block
 s3tests/functional/test_s3.py::test_get_undefined_public_block # GetPublicAccessBlock, DeletePublicAccessBlock
 s3tests/functional/test_s3.py::test_get_public_block_deny_bucket_policy # PutPublicAccessBlock, GetPublicAccessBlock

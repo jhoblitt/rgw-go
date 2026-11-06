@@ -326,7 +326,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw sends no document to a request with an Origin when the bucket's CORS configuration does not decode](#radosgw-sends-no-document-to-a-request-with-an-origin-when-the-buckets-cors-configuration-does-not-decode) | pending | pending | ✓ |
 | [radosgw's PutBucketWebsite answers InvalidArgument for a document that does not parse](#radosgws-putbucketwebsite-answers-invalidargument-for-a-document-that-does-not-parse) | pending | pending | ✓ |
 | [radosgw writes a website redirect's key, host and protocol raw into its Location](#radosgw-writes-a-website-redirects-key-host-and-protocol-raw-into-its-location) | pending | pending | ✓ |
-| [radosgw answers a CORS request with the first rule whose origin matches](#radosgw-answers-a-cors-request-with-the-first-rule-whose-origin-matches) | [#77575](https://tracker.ceph.com/issues/77575), [#77584](https://tracker.ceph.com/issues/77584), [#77586](https://tracker.ceph.com/issues/77586) | [ceph/ceph#69190](https://github.com/ceph/ceph/pull/69190), [ceph/ceph#69647](https://github.com/ceph/ceph/pull/69647), [ceph/ceph#69648](https://github.com/ceph/ceph/pull/69648) |  |
+| [radosgw answers a CORS request with the first rule whose origin matches](#radosgw-answers-a-cors-request-with-the-first-rule-whose-origin-matches) | [#77575](https://tracker.ceph.com/issues/77575), [#77584](https://tracker.ceph.com/issues/77584), [#77586](https://tracker.ceph.com/issues/77586), [#77585](https://tracker.ceph.com/issues/77585) | [ceph/ceph#69190](https://github.com/ceph/ceph/pull/69190), [ceph/ceph#69647](https://github.com/ceph/ceph/pull/69647), [ceph/ceph#69648](https://github.com/ceph/ceph/pull/69648), [ceph/ceph#69651](https://github.com/ceph/ceph/pull/69651) |  |
 | [radosgw serves a request whose Origin no CORS rule allows](#radosgw-serves-a-request-whose-origin-no-cors-rule-allows) | pending | [ceph/ceph#70697](https://github.com/ceph/ceph/pull/70697) |  |
 | [radosgw's CORS wildcard match allows origins and headers its pattern does not cover](#radosgws-cors-wildcard-match-allows-origins-and-headers-its-pattern-does-not-cover) | pending | pending | ✓ |
 | [radosgw from Quincy on lacks CVE-2021-3524's fix for CORS expose headers](#radosgw-from-quincy-on-lacks-cve-2021-3524s-fix-for-cors-expose-headers) | [CVE-2021-3524](https://nvd.nist.gov/vuln/detail/CVE-2021-3524) | none |  |
@@ -11822,45 +11822,68 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw's PutBucketPolicy retry writes back the bucket attrs its request started with
 
-- **Kind:** defect, a race, unfixed at v19.2.6 and v20.2.4;
+- **Kind:** defect, a race, unfixed at v19.2.7 and v20.2.4;
   security-relevant: it can silently revert a concurrent change of a
   security control, the bucket's ACL, public-access block or ownership
-  setting. Triage
-  estimate CVSS ~5.0 (rgw-bug-reproduction). Unreproduced: derived from the
-  source.
-- **Evidence:** paths are under `src/rgw/`; each pair of lines is v19.2.6's,
-  then v20.2.4's.
+  setting. Triage estimate CVSS ~5.0 (rgw-bug-reproduction). Reproduced for
+  PutBucketCors on v19.2.7 and v20.2.4; PutBucketPolicy's,
+  PutBucketPublicAccessBlock's and PutBucketVersioning's stale copies are
+  read in the source at both tags.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
   - `RGWPutBucketPolicy::execute` copies `s->bucket_attrs`, the attrs the
-    request loaded, once, before its retried write (`rgw_op.cc:8102`,
-    `:9028`), and each try sets the policy in that copy (`:8111-8112`,
-    `:9037-9038`) and hands it to `merge_and_store_attrs` (`:8113`,
-    `:9044`), inside the retry at `:8110-8115` and `:9036-9046`.
+    request loaded, once, before its retried write
+    ([rgw_op.cc:8115](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8115),
+    [rgw_op.cc:9028](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9028)),
+    and each try sets the policy in that copy
+    ([rgw_op.cc:8124-8125](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8124-L8125),
+    [rgw_op.cc:9037-9038](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9037-L9038))
+    and hands it to `merge_and_store_attrs`
+    ([rgw_op.cc:8126](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8126),
+    [rgw_op.cc:9044](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9044)),
+    inside the retry
+    ([rgw_op.cc:8123-8128](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8123-L8128),
+    [rgw_op.cc:9036-9046](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9036-L9046)).
   - `merge_and_store_attrs` lays every attr of the copy over the bucket's
     own and stores the result under the bucket's version
-    (`driver/rados/rgw_sal_rados.cc:771-778`, `:789-796`).
+    ([rgw_sal_rados.cc:771-778](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L771-L778),
+    [rgw_sal_rados.cc:789-796](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L789-L796)).
   - A try that lost to another write is retried after `try_refresh_info`
-    has read that write's attrs into the bucket (`rgw_op.h:183-196`,
-    `:197-210`). The copy still holds the values from before it, so the
-    retry stores them over it: an ACL, tag set, public-access block or
-    ownership setting another request changed in that time returns to its
-    old value, while the 2xx of the request that changed it stands.
+    has read that write's attrs into the bucket (`retry_raced_bucket_write`,
+    [rgw_op.h:184-197](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L184-L197),
+    [rgw_op.h:197-210](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L197-L210)).
+    The copy still holds the values from before it, so the retry stores
+    them over it: an ACL, tag set, public-access block or ownership setting
+    another request changed in that time returns to its old value, while
+    the 2xx of the request that changed it stands.
   - PutBucketPublicAccessBlock has the same stale snapshot: each try copies
     `s->bucket_attrs` afresh, but that is still the request-start set
-    (`rgw_op.cc:8656-8660`, `:9637-9641`), so a policy write and a block
-    write that race can each revert the other. PutBucketCors does the same
-    (`:6100-6104` at v19.2.6, the copy at `:6771` at v20.2.4).
+    ([rgw_op.cc:8669-8673](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8669-L8673),
+    [rgw_op.cc:9637-9641](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9637-L9641)),
+    so a policy write and a block write that race can each revert the
+    other. PutBucketCors does the same, as the last bullet cites.
   - PutBucketTagging builds its copy from `s->bucket->get_attrs()` inside
     the retried write, so each try starts from the refreshed attrs
-    (`rgw_op.cc:1197-1201`, `:1434-1438`).
-  - PutBucketVersioning has the same stale snapshot, checked at v19.2.7 and
-    v20.2.4: each try sets its flags over the bucket `try_refresh_info` read
-    again, info and attrs both
+    ([rgw_op.cc:1197-1201](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1197-L1201),
+    [rgw_op.cc:1434-1438](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1434-L1438)).
+  - PutBucketVersioning has the same stale snapshot: each try sets its
+    flags over the bucket `try_refresh_info` read again, info and attrs
+    both
     ([rgw_sal_rados.cc:780-783](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L780-L783),
     [rgw_sal_rados.cc:798-801](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L798-L801)), then replaces those
     attrs with `s->bucket_attrs` before `put_info` writes them
     ([rgw_op.cc:2847-2848](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2847-L2848),
     [rgw_op.cc:3079-3080](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3079-L3080)), so a versioning change that races
     an ACL, policy or tag change puts the older attrs back.
+  - Reproduced for PutBucketCors on rooket clusters of v19.2.7 and v20.2.4,
+    task BC-8, 2026-10-28. Its retried write copies the attrs the request
+    loaded on each try (`RGWPutCORS::execute`, `retry_raced_bucket_write`,
+    [rgw_op.cc:6103-6107](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6103-L6107),
+    [rgw_op.cc:6770-6774](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6770-L6774)).
+    Over 200 rounds, each sending three PutBucketCors and one
+    PutBucketTagging of a new tag set to one bucket at once, every request
+    answered 200, and GetBucketTagging afterwards returned the tag set from
+    before the round in 136 rounds on v19.2.7 and 156 on v20.2.4. rgw-go,
+    sent the same rounds, lost none on either release.
 - **Impact:** a PutBucketPolicy that races a PutBucketAcl making the bucket
   private, or a PutPublicAccessBlock changing an existing block, can restore
   the public ACL or the older block, with both requests told they succeeded;
@@ -11871,7 +11894,8 @@ Every new entry adds its row to this table, in document order.
   rgw-go's PutBucketOwnershipControls can put back the setting its request
   loaded, turning BucketOwnerEnforced back into ObjectWriter and the
   bucket's object ACLs back on.
-- **Releases:** v19.2.6 and v20.2.4.
+- **Releases:** v19.2.7 and v20.2.4: each write's copy is read in the
+  source at both tags, and PutBucketCors's race is reproduced at both.
 - **rgw-go:** does not reproduce it. Each try sets only the policy attr over
   the bucket as last read (`op.PutBucketPolicy`,
   `internal/op/bucketsubres.go`; `docs/differences.md`, "A retried
@@ -11889,11 +11913,15 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** [#51572](https://tracker.ceph.com/issues/51572),
   "retry_raced_bucket_write() callers not handling attrs correctly", open
   since 2021-07-07, reports the same mechanism and the same fix, building
-  the attrs from the refreshed bucket inside the retried write; found as
-  prior art by rgw-bug-reproduction's triage. No fix PR.
+  the attrs from the refreshed bucket inside the retried write, and gives
+  RGWPutCORS and RGWDeleteCORS as its examples; found as prior art by
+  rgw-bug-reproduction's triage. No fix PR: a search on 2026-10-28 of
+  ceph/ceph's pull requests for `retry_raced_bucket_write` and for #51572
+  found none that builds the attrs afresh.
 - **Found:** phase 1 unit M, Task 11, 2026-10-07, transcribing
-  `RGWPutBucketPolicy::execute`; derived from the source, not reproduced;
-  reported upstream before us.
+  `RGWPutBucketPolicy::execute` at v19.2.6; reported upstream before us.
+  PutBucketCors's race reproduced by task BC-8, 2026-10-28, and every
+  citation re-read at v19.2.7 on 2026-11-05.
 
 ## radosgw's PutBucketAcl answers success when its write loses a race
 
@@ -18536,7 +18564,7 @@ Every new entry adds its row to this table, in document order.
   preflight whose method or requested headers only a later rule allows is
   refused 403, and any other request that only a later rule allows gets no
   CORS headers, so the browser keeps its page from reading the response.
-  Unreproduced: derived from the source.
+  Reproduced on v19.2.7 and v20.2.4.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
   `rgw_cors.h`, `rgw_cors.cc`, `rgw_cors_s3.h` and `rgw_cors_s3.cc` are
   identical at the two tags.
@@ -18589,6 +18617,15 @@ Every new entry adds its row to this table, in document order.
     affected: Fetch makes Access-Control-Request-Headers a forbidden request
     header (https://fetch.spec.whatwg.org/#forbidden-request-header), so
     only another client sends it on such a request. Not security-relevant.
+  - Reproduced on rooket clusters of v19.2.7 and v20.2.4, task BC-8,
+    2026-10-28. With a rule allowing GET from `example.origin` before one
+    allowing PUT from it, a preflight from that origin asking PUT is 403
+    with no CORS headers, and the bucket owner's signed PUT from it is 200
+    with none. With a rule allowing the header `x-amz-date` before one
+    allowing `x-amz-meta-*`, a preflight asking `x-amz-meta-a` is 403.
+    s3-tests' `test_cors_preflight_later_rule_allows_method` and
+    `test_cors_preflight_later_rule_allows_headers` fail on both releases.
+    rgw-go answers each request from the second rule.
 - **Impact:** the configuration's later rules for an origin are dead: a
   page the owner meant to allow is refused, unless each origin's methods
   and headers sit in its first rule. No request is allowed that the
@@ -18617,9 +18654,12 @@ Every new entry adds its row to this table, in document order.
     merged as 50137a456e2 on 2026-10-20, in no tag.
   - reef: [ceph/ceph#69649](https://github.com/ceph/ceph/pull/69649),
     closed unmerged.
+  - umbrella: [ceph/ceph#69651](https://github.com/ceph/ceph/pull/69651),
+    merged as 4694f79c41b on 2026-07-28, tracked as
+    [#77585](https://tracker.ceph.com/issues/77585).
 - **Found:** phase 2 research, 2026-10-13, comparing `host_name_rule` with
   main's `match_rule`; confirmed by task BC-2, 2026-10-15, which found the
-  tentacle backport. Derived from the source, not reproduced.
+  tentacle backport; reproduced by task BC-8, 2026-10-28.
 
 ## radosgw serves a request whose Origin no CORS rule allows
 
@@ -18644,7 +18684,7 @@ Every new entry adds its row to this table, in document order.
   The one ambient authority is network position, such as an aws:SourceIp
   bucket policy or an internal-only gateway, on an anonymous-write path, and
   main's refusal mitigates that only for buckets that happen to have a CORS
-  configuration. Unreproduced: derived from the source.
+  configuration. Reproduced on v19.2.7 and v20.2.4.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
   - `rgw_process_authenticated` runs the op mask, OPA and
     `verify_permission` with no CORS check among them
@@ -18677,6 +18717,17 @@ Every new entry adds its row to this table, in document order.
     decode lets a request through. On the floors a browser's PutBucketCors
     still replaces such a configuration, which it does not read (the same
     entry).
+  - Reproduced on rooket clusters of v19.2.7 and v20.2.4, task BC-8,
+    2026-10-28. On a bucket whose one rule allows GET from
+    `example.origin`, an anonymous GET of a public-read object with the
+    Origin `https://evil.test` is 200 with the object and no CORS headers,
+    and the bucket owner's signed PUT from that Origin is 200 and writes
+    the object. s3-tests' `test_cors_origin_response` and
+    `test_cors_presigned_url_non_preflight` fail on both releases, as does
+    `test_cors_non_preflight_origin_refused`, which
+    [jhoblitt/ceph#28](https://github.com/jhoblitt/ceph/pull/28) added to
+    rgw-go-s3tests after the s3-tests pin. rgw-go refuses the GET and the
+    PUT 403 AccessDenied, and writes nothing.
 - **Impact:** a request from an origin the owner's configuration does not
   name is served, and only a browser's own CORS check keeps the page from
   reading the response. A test suite, or a client, that expects the
@@ -18695,10 +18746,15 @@ Every new entry adds its row to this table, in document order.
   [ceph/ceph#70697](https://github.com/ceph/ceph/pull/70697), "RGW: Verify
   non-preflight authenticated cross origin requests": 4e056f98e78, 8d652cd24c1
   and 7f147f02058, merged as a956c21a8c9 on 2026-09-30, first tagged in the
-  development tag v22.0.0. Its commits name no tracker issue; prior art not
-  searched further.
+  development tag v22.0.0. Its commits name no tracker issue, and the tracker
+  holds no report of the floors' behaviour: a search of its subjects,
+  descriptions and notes on 2026-10-28 for `verify_cors_match`,
+  `generate_cors_headers`, `AllowedOrigin` and "CORS rule" found none.
+  [ceph/ceph#72756](https://github.com/ceph/ceph/pull/72756) (open): an
+  anonymous CORS preflight to a bucket without a CORS configuration
+  crashes radosgw on main since 7f147f02058; no stable release is affected.
 - **Found:** phase 2 research for unit B's plan; task BC-4, 2026-10-27,
-  read the fix on main. Derived from the source, not reproduced.
+  read the fix on main; reproduced by task BC-8, 2026-10-28.
 
 ## radosgw's CORS wildcard match allows origins and headers its pattern does not cover
 
@@ -18709,8 +18765,7 @@ Every new entry adds its row to this table, in document order.
   so such a page carries no cookies or HTTP authentication, but a browser's
   network position is ambient authority all the same. The
   rgw-bug-reproduction session's triage rates it conditional (low) on that
-  case. Unreproduced: derived from the source and checked against a
-  transcription of the matcher.
+  case. Reproduced on v19.2.7 and v20.2.4.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
   - AllowedOrigin and AllowedHeader share one matcher: `is_origin_present`
     passes it the Origin, and `is_header_allowed` a lower-cased requested
@@ -18748,6 +18803,16 @@ Every new entry adds its row to this table, in document order.
     so an overlapping pattern and one with whitespace reach a stored rule.
   - A line-for-line Python transcription of `is_string_in_set` and
     `get_str_list` gives each result above.
+  - Reproduced on rooket clusters of v19.2.7 and v20.2.4, task BC-8,
+    2026-10-28. PutBucketCors stores the AllowedOrigins `* example.com`
+    and `https://a*a.example` and the AllowedHeader `x-amz *` as written,
+    as GetBucketCors shows. A preflight from `https://evilexample.com` is
+    then 200 with `Access-Control-Allow-Origin: https://evilexample.com`,
+    one from `https://a.example` 200 through the overlap, and one asking
+    the header `x-amzfoo` or `x-amz-meta-a` from the `x-amz *` rule's
+    origin 200 with that header allowed; one from `https://evil.test`,
+    which no pattern covers, is 403. rgw-go refuses all four 403 and
+    allows `https://aba.example`, which `https://a*a.example` covers.
 - **Impact:** CORS decides which pages a browser lets read a response.
   Where access depends on the requester's network position, under a
   bucket policy's `aws:SourceIp`, which radosgw evaluates
@@ -18774,11 +18839,16 @@ Every new entry adds its row to this table, in document order.
   [ceph/ceph#56225](https://github.com/ceph/ceph/pull/56225), 64803e1ced5,
   merged 2024-03-20, added `is_string_in_set`'s empty checks for a member
   such as `" *"`, which it calls a misconfiguration; it fixed the crash
-  and left the over-match. The over-match itself is pending: sent to
-  rgw-bug-reproduction.
+  and left the over-match. No tracker issue or pull request reports the
+  over-match: a search on 2026-10-28 of the tracker's subjects,
+  descriptions and notes for `is_string_in_set`, `AllowedOrigin` and "CORS
+  rule", and of ceph/ceph's pull requests for `is_string_in_set`, found
+  only that fix, its backports and the 2013 request for a unit test,
+  [#6232](https://tracker.ceph.com/issues/6232). The over-match itself is
+  pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task BC-2, 2026-10-15, transcribing
   `is_string_in_set`; its two-`*` behaviour corrected by the task review
-  the same day. Derived from the source, not reproduced.
+  the same day; reproduced by task BC-8, 2026-10-28.
 
 ## radosgw from Quincy on lacks CVE-2021-3524's fix for CORS expose headers
 
@@ -18792,9 +18862,7 @@ Every new entry adds its row to this table, in document order.
   client or an intermediary that ends a header line at a bare carriage
   return, which RFC 9112, section 2.2, forbids a recipient to do, so the
   rgw-bug-reproduction session's triage rates it low and conditional on a
-  lenient parser or intermediary. Unreproduced: derived from the source,
-  with expat's reading of the reference checked through Python's expat
-  binding.
+  lenient parser or intermediary. Reproduced on v19.2.7 and v20.2.4.
 - **Evidence:**
   - The fix, "rgw: sanitize \r in s3 CORSConfiguration's ExposeHeader"
     (Casey Bodley, 2021-05-04, "Fixes: CVE-2021-3524"), exists only as
@@ -18837,6 +18905,15 @@ Every new entry adds its row to this table, in document order.
     CRLF as they are (`ClientIO::send_header`,
     [rgw_asio_client.cc:167-180](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L167-L180),
     [rgw_asio_client.cc:167-180](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_client.cc#L167-L180)).
+  - Reproduced on rooket clusters of v19.2.7 and v20.2.4, task BC-8,
+    2026-10-28. A PutBucketCors body whose one rule allows GET from `*`
+    with the ExposeHeaders `x&#13;Set-Cookie: injected=1` and `y&#10;z` is
+    stored, and GetBucketCors renders the first as
+    `x&#x0d;Set-Cookie: injected=1`. An anonymous GET with an Origin, read
+    off the socket, then carries the header line
+    `Access-Control-Expose-Headers: x`, a bare carriage return,
+    `Set-Cookie: injected=1,y\nz`: the line feed escaped, the carriage
+    return not. rgw-go sends `x\rSet-Cookie: injected=1,y\nz`.
 - **Impact:** anyone allowed s3:PutBucketCORS on a bucket can store an
   ExposeHeader such as `x&#13;Set-Cookie: a=b`, and every CORS response of
   the bucket then sends `Access-Control-Expose-Headers: x`, a bare carriage
@@ -18865,11 +18942,21 @@ Every new entry adds its row to this table, in document order.
   and Ceph's advisory above. The fix landed as the three commits above,
   with no pull request; the newline half, 1524d3c0c5c, came with
   [ceph/ceph#35773](https://github.com/ceph/ceph/pull/35773), merged
-  2020-06-25. A forward port to main and the supported branches is
-  pending: sent to rgw-bug-reproduction.
+  2020-06-25. No tracker issue or pull request carries the carriage-return
+  half past Pacific: a search on 2026-10-28 of the tracker's subjects,
+  descriptions and notes for CVE-2021-3524, `format_exp_headers` and
+  `ExposeHeader` found the three releases' trackers
+  ([#50809](https://tracker.ceph.com/issues/50809),
+  [#50810](https://tracker.ceph.com/issues/50810) and
+  [#50812](https://tracker.ceph.com/issues/50812)) and a release-notes
+  backport, [#55855](https://tracker.ceph.com/issues/55855), and a search
+  of ceph/ceph's pull requests for `ExposeHeader` and CVE-2021-3524 found
+  the newline half's #35773 and its two backports alone. A forward port to
+  main and the supported branches is pending: sent to
+  rgw-bug-reproduction.
 - **Found:** phase 2 task BC-2, 2026-10-15, reading `format_exp_headers`;
-  the task review matched it to CVE-2021-3524 the same day. Derived from
-  the source, not reproduced.
+  the task review matched it to CVE-2021-3524 the same day; reproduced by
+  task BC-8, 2026-10-28.
 
 ## radosgw's IgnorePublicAcls and ACL is_public miss grants to the anonymous user
 
