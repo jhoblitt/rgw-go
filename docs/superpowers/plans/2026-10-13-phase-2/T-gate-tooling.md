@@ -377,6 +377,67 @@ Found by F5's task review (Minor 2), and numbered here before F5 merged (PP-12).
 - **Depends on:** nothing. **PR:** the s3-tests PR into `rgw-go-s3tests`, and the registry entry
   in its own rgw-go PR. **Brief:** about 25 lines.
 
+### Task T-6: the combined s3-tests pin bump
+
+Deferred by BC-8 (its report's pin bump), WP-7 (PP-19) and L4's review (F5), and numbered here
+before L4 merged (PP-12).
+
+- **Layer:** s3-tests, on jhoblitt/ceph's `rgw-go-s3tests` branch, then rgw-go's pin and ledgers.
+  **Cluster:** yes, Squid then Tentacle, one at a time.
+- **Files:** src/test/rgw/s3-tests/s3tests/functional/test_s3.py, merged into `rgw-go-s3tests` by
+  PR; hack/s3tests/PIN; test/s3tests/baseline/squid.json and tentacle.json;
+  test/s3tests/known-differences-squid.txt and known-differences-tentacle.txt.
+- **Behaviour:**
+  1. Four s3-tests PRs into `rgw-go-s3tests`, one per change (PP-13), each onto the branch's tip
+     (jhoblitt/ceph#31's merge, 4069f5e7f7f):
+     - BC-8's two CORS tests: `test_cors_non_preflight_later_rule_allows_method`
+       (`fails_on_rgw`) and `test_cors_non_preflight_requested_headers_choose_no_rule`.
+     - WP-7's `test_object_checksum_type_full_object` (marker `checksum`): a PutObject naming
+       SHA256 answers `ChecksumType` FULL_OBJECT and its `ChecksumSHA256`.
+     - L4's two object-lock tests, in this order, since the second's context is the first's:
+       `test_object_lock_multi_delete_bypass_denied`, then
+       `test_object_lock_delete_bypass_by_bucket_write_grantee`.
+     - The MFA timing fix. jhoblitt/ceph#31's `test_versioning_mfa_delete_object_version` and
+       `test_versioning_mfa_delete_objects_version` each take their first code from
+       `_mfa_code_after(serial, seed)`, which with no `after` returns the current step's code.
+       cls_otp refuses a code at or below the last one it verified, so whichever test runs second
+       within the first one's last step is refused at its first PutBucketVersioning, on radosgw
+       and rgw-go alike. Both calls pass `int(time.time()) // 30` as `after`: both, because either
+       can run second under another order or a selection. A `~` line is not the fix: no exclusion
+       says rgw-go's outcome there depends on timing, and it would accept a regression of rgw-go's
+       DeleteObjects MFA check.
+  2. The rgw-go PR moves the pin to the merged head and records both ledgers in full, in one PR.
+     The additive proof cannot admit the move: past the pin 4f4a1b6719e, jhoblitt/ceph#28 adds the
+     top-level helper `_cors_headers_client`, #30 adds `_transition_kept_fields` and top-level
+     comment lines, #31 adds `_mfa_code_after`, and the MFA fix changes lines inside two existing
+     tests. So PIN is written by hand, with a `PIN_REASON` naming #28 to #31, the four PRs above
+     and what the proof refuses, as 4f4a1b6's reason does.
+  3. Known-differences lines, in both files, each under its group's comment:
+     - `test_cors_non_preflight_origin_refused` (#28), under "A request whose Origin no CORS rule
+       allows is refused".
+     - `test_cors_non_preflight_later_rule_allows_method`, under "CORS rules are matched as Amazon
+       S3 matches them". That group's comment describes only a preflight radosgw refuses 403,
+       while this test is a signed PUT radosgw serves 200 without CORS headers, so the bump widens
+       the comment or adds a second one under the same title.
+     - `test_versioning_mfa_delete_objects_version`, a plain line once the fix is in, under a new
+       group in each file whose comment ends
+       `(differences: "DeleteObjects asks for MFA for the keys that name a version")`.
+
+     None for `test_cors_non_preflight_requested_headers_choose_no_rule` or
+     `test_versioning_mfa_delete_object_version`, which both gateways pass on both releases.
+  4. No deselect or known-differences line for the tests a marker excludes, which the include list
+     does not name: #29's five, #30's four, #31's four marked `versioning` or `delete_marker`,
+     WP-7's test and L4's two. Each of L4's two needs a known-differences line in both files
+     (rgw-go passes, radosgw fails) in the recording that lifts `object_lock`.
+  5. The MFA outcomes are confirmed on both releases at the merged head: rgw-go passing
+     `test_versioning_mfa_delete_objects_version` alone was shown on Squid only.
+- **Specs:** none in rgw-go. Each changed s3-tests module compiles and collects (`py_compile`,
+  pytest `--collect-only`), and `make s3tests-parity` passes on both releases at the new pin.
+- **Exclusions and registry:** nothing new. The MFA timing defect is in #31's tests, which are
+  rgw-go's own, so it gets no registry entry.
+- **Depends on:** BC-8, WP-7, L4 and V12a. **PR:** the four s3-tests PRs into `rgw-go-s3tests`,
+  then one rgw-go PR with the pin and both ledgers. **Brief:** about 60 lines.
+
 ## Order
 
 The unit starts at once (index, Order 2).
@@ -389,6 +450,7 @@ The unit starts at once (index, Order 2).
 | cluster, one at a time | T-2 (b), then T-3 | T-1; T-2 (b) and WP-23 |
 | any time after its inputs | T-4 (its smoke run is a cluster slot) | V7a, V11, WP-7, WP-8, WP-10 (b), T-2 (a) |
 | any time | T-5 | nothing |
+| after its inputs (a cluster slot) | T-6 | BC-8, WP-7, L4, V12a |
 | last | T-gate (a), (b), (c) | every task of every unit |
 
 The cluster tasks share the plan's one-at-a-time slot with every unit's.
