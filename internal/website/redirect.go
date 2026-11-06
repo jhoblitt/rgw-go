@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jhoblitt/rgw-go/internal/meta"
+	"github.com/jhoblitt/rgw-go/internal/xmltext"
 )
 
 // redirectCode is WebsiteRedirect's status
@@ -110,9 +111,9 @@ func Apply(r meta.RoutingRule, proto, host, key string) (url string, code int, e
 	}
 	switch {
 	case !hostSafe(host):
-		return "", 0, fmt.Errorf("%w: the host %.64q holds a byte at or below 0x20, or 0x7F", ErrUnsafeRedirect, host)
+		return "", 0, fmt.Errorf("%w: the host %s holds a byte at or below 0x20, or 0x7F", ErrUnsafeRedirect, xmltext.Quote(host))
 	case proto != "http" && proto != "https":
-		return "", 0, fmt.Errorf("%w: the protocol %.64q is not http or https", ErrUnsafeRedirect, proto)
+		return "", 0, fmt.Errorf("%w: the protocol %s is not http or https", ErrUnsafeRedirect, xmltext.Quote(proto))
 	}
 	var newKey string
 	switch prefix := r.Condition.KeyPrefixEquals; {

@@ -376,6 +376,13 @@ var _ = Describe("ParsePublicAccessBlockXML", func() {
 		Entry("a long declaration", []byte("<!"+strings.Repeat("D", 1<<19)+">"+string(blockDoc("", "")))),
 		Entry("a long undeclared entity, which Go's decoder names", blockDoc("", element("BlockPublicAcls", "&"+strings.Repeat("e", 1<<19)+";"))),
 		Entry("a long processing instruction target, which xmltext names", blockDoc("", "<?"+strings.Repeat("p", 1<<19)+"*?>")),
+		Entry("64 astral tag runes as the root's namespace, each quoted as ten bytes",
+			blockDoc(` xmlns="`+strings.Repeat("\U000E0001", 64)+`"`, "")),
+		Entry("a 64-byte attribute name holding 64 astral tag runes",
+			blockDoc(" "+strings.Repeat("n", 64)+`="`+strings.Repeat("\U000E0001", 64)+`"`, "")),
+		Entry("a processing instruction target of four-byte letters, which xmltext names",
+			blockDoc("", "<?"+strings.Repeat("\U00020000", 1<<10)+"*?>")),
+		Entry("a boolean of 32 next-line controls, 64 bytes each quoted as six", blockDoc("", element("BlockPublicAcls", strings.Repeat("\u0085", 32)))),
 	)
 	It("refuses a body over MaxPublicAccessBlockXML before reading it", func() {
 		pad := acl.MaxPublicAccessBlockXML + 1 - len(blockDoc("", ""))

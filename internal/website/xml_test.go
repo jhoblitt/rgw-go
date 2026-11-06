@@ -338,6 +338,21 @@ var _ = Describe("ParseXML", func() {
 		Entry("a long declaration", []byte("<!DOCTYPE "+long+"><WebsiteConfiguration/>")),
 		Entry("long text between elements", doc(long)),
 		Entry("a long HttpRedirectCode", doc(index+routingRules(routingRule("<Redirect><HttpRedirectCode>"+long+"</HttpRedirectCode></Redirect>")))),
+		Entry("64 astral tag runes as a namespace, each quoted as ten bytes",
+			[]byte(`<WebsiteConfiguration xmlns="`+strings.Repeat("\U000E0001", 64)+`">`+index+`</WebsiteConfiguration>`)),
+		Entry("a 64-byte attribute name holding 64 astral tag runes",
+			doc(`<IndexDocument `+strings.Repeat("n", 64)+`="`+strings.Repeat("\U000E0001", 64)+`"><Suffix>i</Suffix></IndexDocument>`)),
+		Entry("text of astral tag runes between elements", doc(strings.Repeat("\U000E0001", 64)+index)),
+		Entry("a Protocol of astral tag runes", doc("<RedirectAllRequestsTo><HostName>h</HostName><Protocol>"+
+			strings.Repeat("\U000E0001", 64)+"</Protocol></RedirectAllRequestsTo>")),
+		Entry("a redirect-all HostName of astral tag runes and a space, which decode refuses",
+			doc("<RedirectAllRequestsTo><HostName>"+strings.Repeat("\U000E0001", 63)+" </HostName></RedirectAllRequestsTo>")),
+		Entry("an HttpRedirectCode of astral tag runes", doc(index+routingRules(routingRule(
+			"<Redirect><HttpRedirectCode>"+strings.Repeat("\U000E0001", 64)+"</HttpRedirectCode></Redirect>")))),
+		Entry("an HttpErrorCodeReturnedEquals of astral tag runes", doc(index+routingRules(routingRule(
+			"<Condition><HttpErrorCodeReturnedEquals>"+strings.Repeat("\U000E0001", 64)+"</HttpErrorCodeReturnedEquals></Condition>"+redirect)))),
+		Entry("a processing-instruction target of four-byte letters, which xmltext refuses",
+			doc("<?"+strings.Repeat("\U00020000", 1<<10)+"*?>"+index)),
 	)
 
 	Context("InvalidArgument with no message, as radosgw's decode refusals carry none", func() {

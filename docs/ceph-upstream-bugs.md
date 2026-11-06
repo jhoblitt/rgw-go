@@ -12188,7 +12188,13 @@ Every new entry adds its row to this table, in document order.
     they ask for 411 MissingContentLength. PutBucketEncryption's
     `get_params` passes false too
     ([rgw_op.cc:8757-8762](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8757-L8762),
-    [rgw_op.cc:9725-9730](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9725-L9730)).
+    [rgw_op.cc:9725-9730](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9725-L9730)),
+    and so do PutPublicAccessBlock's
+    ([rgw_op.cc:8626-8631](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8626-L8631),
+    [rgw_op.cc:9594-9599](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9594-L9599))
+    and PutBucketWebsite's
+    ([rgw_rest_s3.cc:2279-2285](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2279-L2285),
+    [rgw_rest_s3.cc:2374-2380](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2374-L2380)).
     v21.1.2 adds another, the
     PutBucketOwnershipControls body
     ([rgw_rest_s3.cc:4557](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L4557)).
@@ -12205,7 +12211,9 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6, v20.2.4 and v21.1.2.
 - **rgw-go:** reproduces it on purpose: `op.ReadParamBody` reads a chunked
   body for CompleteMultipartUpload, DeleteObjects and PutBucketEncryption as
-  radosgw does (`internal/op/parambody.go`).
+  radosgw does (`internal/op/parambody.go`), and the S3 handlers'
+  `readParamBody` for the bodies they read, PutPublicAccessBlock's and
+  PutBucketWebsite's among them (`internal/s3/bucket.go`).
 - **Upstream:** none. rgw-bug-reproduction's prior-art search found no
   report or fix; [#81230](https://tracker.ceph.com/issues/81230), on the
   same function's payload hash, is unrelated. The fix is a cleanup that

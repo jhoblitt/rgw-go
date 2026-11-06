@@ -1,13 +1,8 @@
 package acl
 
 import (
-	"bytes"
-	"encoding/xml"
 	"errors"
 	"fmt"
-	"io"
-	"strconv"
-	"unicode/utf8"
 
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -125,6 +120,17 @@ const (
 // holding Rule holding ObjectOwnership, each at the depth of its index.
 var ownershipPath = [...]string{"OwnershipControls", "Rule", "ObjectOwnership"}
 
+// ownershipSchema is ownershipPath as a table: each element holding the next
+// once, ObjectOwnership holding text alone, in S3's namespace or none.
+var ownershipSchema = &xmltext.Schema{
+	Root: ownershipPath[0],
+	Children: map[string][]xmltext.Child{
+		ownershipPath[0]: {{Name: ownershipPath[1]}},
+		ownershipPath[1]: {{Name: ownershipPath[2]}},
+	},
+	Namespaces: []string{s3XMLNS, ""},
+}
+
 // ParseOwnershipXML reads a PutBucketOwnershipControls body as v21 does
 // (https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L4553-L4579 at v21.1.2):
 // it parses the body with expat and refuses one expat refuses; then it looks
@@ -134,7 +140,7 @@ var ownershipPath = [...]string{"OwnershipControls", "Rule", "ObjectOwnership"}
 // Every refusal is a *ParseError whose Err wraps ErrMalformedXML, all of
 // which radosgw answers 400 MalformedXML. Message is v21's text for a missing
 // root, Rule or ObjectOwnership, or for another name. It is empty where v21
-// sets none, and also where the scan below refuses the body first, even when
+// sets none, and also where the scan refuses the body first, even when
 // v21 would refuse it with a message: an unknown element standing where Rule
 // or ObjectOwnership belongs carries none. The Ownership returned with a
 // refusal is ObjectWriter.
@@ -153,29 +159,34 @@ var ownershipPath = [...]string{"OwnershipControls", "Rule", "ObjectOwnership"}
 // docs/differences.md, "A PutBucketOwnershipControls document is held to S3's
 // schema", lists each case.
 //
-// The body is refused at the first token that breaks one of those rules, so
-// a hostile document costs no more than its offending prefix, and only then
-// is it read with xmltext.Parse, the reader every S3 XML request body shares,
-// which refuses what expat refuses. The missing elements and the name are
-// judged last, as v21 judges them once expat has read the whole body, so a
-// body that is not well-formed carries no message. The one exception is a
-// root other than an unprefixed OwnershipControls: the scan refuses it at its
-// start tag with v21's message, without reading the rest, so the message is
-// sent once Go's decoder has read that tag, even when expat would refuse the
-// body. A malformation the decoder meets first, before or on that tag, is
-// refused with no message, as v21 refuses it. Client-chosen text in a refusal
-// is cut short by bytes, so a refusal's text stays small however its runes
-// quote.
+// The body is first read with xmltext.Scan against ownershipSchema, which
+// refuses it at the first token that breaks one of those rules, so a hostile
+// document costs no more than its offending prefix, and only then is it read
+// with xmltext.Parse, the reader every S3 XML request body shares, which
+// refuses what expat refuses. The missing elements and the name are judged
+// last, as v21 judges them once expat has read the whole body, so a body
+// that is not well-formed carries no message. The one exception is a root
+// other than an unprefixed OwnershipControls: the scan refuses it at its
+// start tag, xmltext.RefusedRoot, with v21's message, without reading the
+// rest, so the message is sent once Go's decoder has read that tag, even
+// when expat would refuse the body. A malformation the decoder meets first,
+// before or on that tag, is refused with no message, as v21 refuses it.
+// Client-chosen text in a refusal is cut by bytes before it is quoted, so a
+// refusal's text stays small however its runes quote.
 func ParseOwnershipXML(body []byte) (Ownership, error) {
 	if len(body) > MaxOwnershipXML {
 		return ObjectWriter, &ParseError{Err: fmt.Errorf("%w: a %d-byte body exceeds %d bytes", ErrMalformedXML, len(body), MaxOwnershipXML)}
 	}
-	if err := scanOwnership(body); err != nil {
-		return ObjectWriter, err
+	if err := xmltext.Scan(body, ownershipSchema, nil); err != nil {
+		pe := &ParseError{Err: fmt.Errorf("%w: %w", ErrMalformedXML, err)}
+		if se, ok := errors.AsType[*xmltext.ScanError](err); ok && se.Refusal == xmltext.RefusedRoot {
+			pe.Message = msgNoOwnershipControls
+		}
+		return ObjectWriter, pe
 	}
 	root, err := xmltext.Parse(body)
 	if err != nil {
-		return ObjectWriter, &ParseError{Err: fmt.Errorf("%w: %s", ErrMalformedXML, clip(err.Error(), 128))}
+		return ObjectWriter, &ParseError{Err: fmt.Errorf("%w: %s", ErrMalformedXML, xmltext.Clip(err.Error(), 128))}
 	}
 	rule := root.FindFirst(ownershipPath[1])
 	if rule == nil {
@@ -187,7 +198,7 @@ func ParseOwnershipXML(body []byte) (Ownership, error) {
 	}
 	o, err := ParseOwnership(value.Text)
 	if err != nil {
-		return ObjectWriter, &ParseError{Message: msgBadObjectOwnership, Err: fmt.Errorf("%w: ObjectOwnership is %s", ErrMalformedXML, quote(value.Text))}
+		return ObjectWriter, &ParseError{Message: msgBadObjectOwnership, Err: fmt.Errorf("%w: ObjectOwnership is %s", ErrMalformedXML, xmltext.Quote(value.Text))}
 	}
 	return o, nil
 }
@@ -207,87 +218,7 @@ func ParseOwnership(s string) (Ownership, error) {
 			return o, nil
 		}
 	}
-	return ObjectWriter, &ParseError{Message: msgBadObjectOwnership, Err: fmt.Errorf("%w: ObjectOwnership is %s", ErrInvalid, quote(s))}
-}
-
-// scanOwnership reads body's tokens and refuses the first that breaks
-// ParseOwnershipXML's rules. Each element the document may hold stands at
-// the depth of its place in ownershipPath, and ObjectOwnership holds only
-// text, so nothing is read past depth three.
-func scanOwnership(body []byte) error {
-	doc := bytes.TrimPrefix(body, utf8BOM)
-	base := int64(len(body) - len(doc))
-	var (
-		seen   [len(ownershipPath)]bool
-		depth  int
-		closed bool
-	)
-	d := xml.NewDecoder(bytes.NewReader(doc))
-	for {
-		off := base + d.InputOffset()
-		tok, err := d.RawToken()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return &ParseError{Err: malformedAt(off, "%s", clip(err.Error(), 128))}
-		}
-		switch t := tok.(type) {
-		case xml.StartElement:
-			name := quote(writtenName(t.Name))
-			switch {
-			case depth == 0 && closed:
-				return &ParseError{Err: malformedAt(off, "a second root %s", name)}
-			case depth == len(ownershipPath):
-				return &ParseError{Err: malformedAt(off, "an element %s inside %s", name, ownershipPath[depth-1])}
-			case t.Name != (xml.Name{Local: ownershipPath[depth]}) && depth == 0:
-				return &ParseError{
-					Message: msgNoOwnershipControls,
-					Err:     malformedAt(off, "the root is %s, not %s", name, ownershipPath[0]),
-				}
-			case t.Name != (xml.Name{Local: ownershipPath[depth]}):
-				return &ParseError{Err: malformedAt(off, "an unknown element %s in %s", name, ownershipPath[depth-1])}
-			case seen[depth]:
-				return &ParseError{Err: malformedAt(off, "a repeated %s", ownershipPath[depth])}
-			}
-			if a, ok := foreignAttr(t.Attr); ok {
-				return &ParseError{Err: malformedAt(off, "an attribute %s=%s on %s", quote(writtenName(a.Name)), quote(a.Value), ownershipPath[depth])}
-			}
-			seen[depth] = true
-			depth++
-		case xml.EndElement:
-			depth--
-			switch depth {
-			case -1:
-				return &ParseError{Err: malformedAt(off, "an end tag with no start tag")}
-			case 0:
-				closed = true
-			}
-		case xml.CharData:
-			if depth < len(ownershipPath) && len(bytes.Trim(t, xmlSpace)) > 0 {
-				return &ParseError{Err: malformedAt(off, "text outside ObjectOwnership")}
-			}
-		case xml.Directive:
-			return &ParseError{Err: malformedAt(off, "a declaration %s", quote(string(t)))}
-		}
-	}
-}
-
-// quote is s, cut by clip to 32 bytes, quoted. strconv.Quote writes a byte
-// as up to four, so a quoted name is at most 133 bytes.
-func quote(s string) string { return strconv.Quote(clip(s, 32)) }
-
-// clip is s cut at a rune boundary to at most n bytes, marked when cut, so a
-// refusal that repeats a client's text stays small. Cutting by runes would
-// not bound it: a non-printable rune quotes as up to ten bytes.
-func clip(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
-	}
-	return s[:n] + "..."
+	return ObjectWriter, &ParseError{Message: msgBadObjectOwnership, Err: fmt.Errorf("%w: ObjectOwnership is %s", ErrInvalid, xmltext.Quote(s))}
 }
 
 // MarshalS3XML is the body GetBucketOwnershipControls writes

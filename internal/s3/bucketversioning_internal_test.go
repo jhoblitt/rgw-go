@@ -90,6 +90,28 @@ var _ = Describe("parseVersioningConfiguration", func() {
 		Entry("an element nested in one the schema does not name", doc(`<Status>Enabled</Status><Foo><Bar/></Foo>`)),
 	)
 
+	DescribeTable("keeps a refusal's text short when the client's text in it is long",
+		func(body string) {
+			_, _, err := parseVersioningConfiguration([]byte(body))
+			Expect(err).To(MatchError(op.ErrMalformedXML))
+			Expect(len(err.Error())).To(BeNumerically("<", 512), "error %.200q", err)
+		},
+		Entry("64 astral tag runes as the root's namespace, each quoted as ten bytes",
+			`<VersioningConfiguration xmlns="`+strings.Repeat("\U000E0001", 64)+`"><Status>Enabled</Status></VersioningConfiguration>`),
+		Entry("a 64-byte attribute name holding 64 astral tag runes beside another namespace",
+			`<VersioningConfiguration `+strings.Repeat("n", 64)+`="`+strings.Repeat("\U000E0001", 64)+`" xmlns:p="`+
+				strings.Repeat("\U000E0001", 64)+`"><Status>Enabled</Status></VersioningConfiguration>`),
+		Entry("a long root name", "<"+strings.Repeat("a", 1<<19)+"/>"),
+		Entry("a long prefix", head+"<"+strings.Repeat("p", 1<<19)+":Status>Enabled</"+strings.Repeat("p", 1<<19)+":Status>"+tail),
+		Entry("a long namespace", head+`<Status xmlns="`+strings.Repeat("u", 1<<19)+`">Enabled</Status>`+tail),
+		Entry("a long declaration", "<!"+strings.Repeat("D", 1<<19)+">"+doc(`<Status>Enabled</Status>`)),
+		Entry("a long undeclared entity, which Go's decoder names", doc(`<Status>&`+strings.Repeat("e", 1<<19)+`;</Status>`)),
+		Entry("a long processing instruction target, which xmltext names", doc("<?"+strings.Repeat("p", 1<<19)+"*?><Status>Enabled</Status>")),
+		Entry("a long Status", doc(`<Status>`+strings.Repeat("E", 1<<19)+`</Status>`)),
+		Entry("a Status of astral tag runes", doc(`<Status>`+strings.Repeat("\U000E0001", 64)+`</Status>`)),
+		Entry("a long MfaDelete", doc(`<Status>Enabled</Status><MfaDelete>`+strings.Repeat("D", 1<<19)+`</MfaDelete>`)),
+	)
+
 	Describe("bounded work", func() {
 		// Each prefix is followed by two megabytes that are not well-formed: a
 		// parser that reads past the refusal fails on them instead.

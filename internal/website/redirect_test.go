@@ -2,6 +2,7 @@ package website_test
 
 import (
 	"net/url"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -141,6 +142,10 @@ var _ = Describe("Apply's host and protocol", func() {
 		Entry("a rule's stored protocol other than http or https", meta.RoutingRule{RedirectInfo: meta.RoutingRedirect{Redirect: meta.RedirectInfo{Protocol: "javascript"}}}, "http", "h"),
 		Entry("a rule's protocol in upper case", meta.RoutingRule{RedirectInfo: meta.RoutingRedirect{Redirect: meta.RedirectInfo{Protocol: "HTTP"}}}, "http", "h"),
 		Entry("the request's protocol other than http or https", meta.RoutingRule{}, "ftp", "h"),
+		Entry("a rule's host of astral tag runes and a space, each rune quoted as ten bytes",
+			meta.RoutingRule{RedirectInfo: meta.RoutingRedirect{Redirect: meta.RedirectInfo{Hostname: strings.Repeat("\U000E0001", 63) + " "}}}, "http", "h"),
+		Entry("a rule's protocol of astral tag runes",
+			meta.RoutingRule{RedirectInfo: meta.RoutingRedirect{Redirect: meta.RedirectInfo{Protocol: strings.Repeat("\U000E0001", 64)}}}, "http", "h"),
 	)
 
 	It("declines a redirect-all's stored host or protocol the same way", func() {

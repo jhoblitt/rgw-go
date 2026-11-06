@@ -114,24 +114,25 @@ const (
 // The answers are, in this order:
 //   - MalformedXML, Amazon S3's code for configuration XML that does not
 //     conform to its schema (aws-sdk-go v1.55.8 service/s3/api.go:20217-20221),
-//     for a body longer than MaxXML; then, before any tree is built, for what
-//     scan refuses: a declaration, whose internal subset can declare entities
-//     that expat, as RGWXMLParser sets it up, expands
+//     for a body longer than MaxXML; then, before any tree is built, for the
+//     first token or whole element scan refuses: a declaration, whose
+//     internal subset can declare entities that expat, as RGWXMLParser sets
+//     it up, expands
 //     (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L213-L223 at v19.2.7 and v20.2.4);
-//     a root other than WebsiteConfiguration; an element the schema does not
-//     hold where it stands, a field holding one among them;
-//     a second of an element the schema allows once, where
+//     a root other than WebsiteConfiguration, or a second root; an element
+//     the schema does not hold where it stands, a field holding one among
+//     them; a second of an element the schema allows once, where
 //     RGWXMLDecoder::decode_xml reads the first
 //     (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.h#L218-L241 at v19.2.7 and v20.2.4);
 //     an element name with a prefix, which radosgw, with namespace processing
 //     off (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L158 at v19.2.7 and v20.2.4),
 //     reads as another name; an attribute other than xmlns naming S3's
-//     namespace; text other than XML whitespace between elements; and what
-//     S3's model asks of a whole element (frame.end). Then for what
-//     xmltext.Parse refuses, as expat refuses it, a second root among them.
-//     radosgw answers
-//     InvalidArgument for a body that does not parse or has another root, and
-//     reads the rest.
+//     namespace; text other than XML whitespace between elements; what S3's
+//     model asks of a whole element (model.end); and every body
+//     xmltext.Parse refuses as expat refuses it, text outside the root and a
+//     misplaced XML declaration among them (xmltext.Scan). radosgw answers
+//     InvalidArgument for a body that does not parse or has another root,
+//     and reads the rest.
 //   - InvalidArgument with no message, as radosgw's caught decode throws
 //     carry none: a RedirectAllRequestsTo without a HostName; an
 //     HttpRedirectCode outside 301-399 or an HttpErrorCodeReturnedEquals
@@ -151,7 +152,7 @@ func ParseXML(body []byte, maxRules int) (meta.WebsiteConf, error) {
 	}
 	root, err := xmltext.Parse(body)
 	if err != nil {
-		return meta.WebsiteConf{}, malformed("%.128s", err.Error())
+		return meta.WebsiteConf{}, malformed("%s", xmltext.Clip(err.Error(), 128))
 	}
 	conf, err := decode(root)
 	if err != nil {
@@ -269,7 +270,7 @@ func (d *decoder) rule(e *xmltext.Element) meta.RoutingRule {
 // InvalidArgument, not MalformedXML.
 func (d *decoder) host(h string) {
 	if !hostSafe(h) {
-		d.invalidArgument("the HostName %.64q holds a byte at or below 0x20, or 0x7F", h)
+		d.invalidArgument("the HostName %s holds a byte at or below 0x20, or 0x7F", xmltext.Quote(h))
 	}
 }
 
@@ -278,7 +279,7 @@ func (d *decoder) host(h string) {
 func (d *decoder) code(name, s string, lo, hi int) uint16 {
 	n, ok := strtolInt(s)
 	if !ok || n < lo || n > hi {
-		d.invalidArgument("%s %.64q is not %d to %d", name, s, lo, hi)
+		d.invalidArgument("%s %s is not %d to %d", name, xmltext.Quote(s), lo, hi)
 		return 0
 	}
 	return uint16(n) //nolint:gosec // lo and hi lie within u16

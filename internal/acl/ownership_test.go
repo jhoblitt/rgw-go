@@ -398,6 +398,8 @@ var _ = Describe("ParseOwnershipXML", func() {
 			ownershipDoc("", ownershipRule("&"+strings.Repeat("\U00020000", 1<<16)+";"))),
 		Entry("64 astral tag runes as the root's namespace",
 			ownershipDoc(` xmlns="`+strings.Repeat("\U000E0001", 64)+`"`, ownershipRule("ObjectWriter"))),
+		Entry("a 64-byte attribute name holding 64 astral tag runes",
+			ownershipDoc(" "+strings.Repeat("n", 64)+`="`+strings.Repeat("\U000E0001", 64)+`"`, ownershipRule("ObjectWriter"))),
 	)
 	DescribeTable("gives a root other than OwnershipControls v21's root message even when expat would refuse the body",
 		func(body string) {

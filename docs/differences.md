@@ -2896,10 +2896,12 @@ following.
 - **S3 XML request bodies are read with Go's `encoding/xml`, not expat.**
   radosgw reads them with expat, without namespace processing and without
   an unknown-encoding handler (`RGWXMLParser`, `rgw_xml.cc:158` and
-  `:219-221` at v19.2.6 and v20.2.4). rgw-go reads them through one
-  reader, `xmltext.Parse`, which keeps names as written, prefix included,
-  as radosgw does, and adds the well-formedness checks expat makes and Go's
-  decoder skips. It still refuses with 400 some bodies expat reads: one
+  `:219-221` at v19.2.6 and v20.2.4). rgw-go reads them through
+  `xmltext.Parse`, which keeps names as written, prefix included, as
+  radosgw does, and adds the well-formedness checks expat makes and Go's
+  decoder skips; it reads a PutPublicAccessBlock or PutBucketEncryption
+  body with `xmltext.Scan` alone, which refuses every body `xmltext.Parse`
+  refuses. It still refuses with 400 some bodies expat reads: one
   declaring ISO-8859-1 or US-ASCII, or written in UTF-16, the encodings
   expat knows besides UTF-8; one whose XML declaration names a version
   other than 1.0; one with a name holding more than one colon; and one that
@@ -2982,9 +2984,28 @@ following.
     [rgw_rest.cc:1556-1558](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1556-L1558)),
     which it answers 416 InvalidRange
     ([rgw_common.cc:128](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L128),
-    [rgw_common.cc:129](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L129)),
-    so under the default the parser's limit is never reached. Under a
-    raised option radosgw reads a longer document, and rgw-go refuses it.
+    [rgw_common.cc:129](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L129)).
+    A chunked body, which has no Content-Length, radosgw reads past the
+    option. The op asks for no chunked body, `read_all_input(s, max_size,
+    false)`
+    ([rgw_op.cc:8629](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8629),
+    [rgw_op.cc:9597](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9597)),
+    but `RGWOp::read_all_input` drops that argument and reads one
+    ([rgw_op.h:216-228](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L216-L228),
+    [rgw_op.h:229-241](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L229-L241);
+    docs/ceph-upstream-bugs.md, "[RGWOp::read_all_input ignores its
+    allow_chunked
+    argument](ceph-upstream-bugs.md#rgwopread_all_input-ignores-its-allow_chunked-argument)"),
+    and `read_all_chunked_input` checks the option only after a read fills
+    its buffer
+    ([rgw_rest.cc:1506-1540](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1506-L1540),
+    [rgw_rest.cc:1506-1540](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1506-L1540)),
+    so under the 1 MiB default radosgw reads and parses a chunked body of up
+    to 1,175,551 bytes. rgw-go's `readParamBody` reads such a body as
+    radosgw does (`internal/s3/bucket.go`), and
+    `acl.ParsePublicAccessBlockXML` then refuses one over 1 MiB. Under a
+    raised option radosgw reads a longer document of either kind, and
+    rgw-go refuses it.
 
   The refusal comes at the first token that breaks a rule, so a hostile
   document costs no more than its offending prefix. A document an SDK sends
@@ -3062,9 +3083,27 @@ following.
     [rgw_rest.cc:1556-1558](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1556-L1558)),
     which it answers 416 InvalidRange
     ([rgw_common.cc:128](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L128),
-    [rgw_common.cc:129](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L129)),
-    so under the default the parser's limit is never reached. Under a
-    raised option radosgw reads a longer document, and rgw-go refuses it.
+    [rgw_common.cc:129](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L129)).
+    A chunked body, which has no Content-Length, radosgw reads past the
+    option. The op asks for no chunked body, `read_all_input(s, max_size,
+    false)`
+    ([rgw_op.cc:8760](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8760),
+    [rgw_op.cc:9728](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9728)),
+    but `RGWOp::read_all_input` drops that argument and reads one
+    ([rgw_op.h:216-228](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L216-L228),
+    [rgw_op.h:229-241](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L229-L241);
+    docs/ceph-upstream-bugs.md, "[RGWOp::read_all_input ignores its
+    allow_chunked
+    argument](ceph-upstream-bugs.md#rgwopread_all_input-ignores-its-allow_chunked-argument)"),
+    and `read_all_chunked_input` checks the option only after a read fills
+    its buffer
+    ([rgw_rest.cc:1506-1540](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1506-L1540),
+    [rgw_rest.cc:1506-1540](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1506-L1540)),
+    so under the 1 MiB default radosgw reads and parses a chunked body of up
+    to 1,175,551 bytes. rgw-go's `op.ReadParamBody` reads such a body as
+    radosgw does (`internal/op/parambody.go`), and `sse.ParseXML` then
+    refuses one over 1 MiB. Under a raised option radosgw reads a longer
+    document of either kind, and rgw-go refuses it.
 
   rgw-go keeps radosgw's reading where S3's model is stricter and nothing
   the document says is lost: a document without a `Rule` stores a
@@ -7073,8 +7112,33 @@ differ, rgw-go does the following.
     ([rgw.yaml.in:138-145](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L138-L145),
     [rgw.yaml.in:144-151](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L144-L151)), the limit `get_params` reads
     the body under ([rgw_rest_s3.cc:2281-2289](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2281-L2289),
-    [rgw_rest_s3.cc:2376-2384](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2376-L2384)), which radosgw parses when an
-    operator raises the option.
+    [rgw_rest_s3.cc:2376-2384](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2376-L2384)). radosgw refuses a
+    Content-Length over it unread, `-ERANGE`
+    ([rgw_rest.cc:1556-1558](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1556-L1558),
+    [rgw_rest.cc:1556-1558](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1556-L1558)),
+    which it answers 416 InvalidRange
+    ([rgw_common.cc:128](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L128),
+    [rgw_common.cc:129](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L129)).
+    A chunked body, which has no Content-Length, radosgw reads past the
+    option. The op asks for no chunked body, `read_all_input(s, max_size,
+    false)`
+    ([rgw_rest_s3.cc:2285](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2285),
+    [rgw_rest_s3.cc:2380](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2380)),
+    but `RGWOp::read_all_input` drops that argument and reads one
+    ([rgw_op.h:216-228](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L216-L228),
+    [rgw_op.h:229-241](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L229-L241);
+    docs/ceph-upstream-bugs.md, "[RGWOp::read_all_input ignores its
+    allow_chunked
+    argument](ceph-upstream-bugs.md#rgwopread_all_input-ignores-its-allow_chunked-argument)"),
+    and `read_all_chunked_input` checks the option only after a read fills
+    its buffer
+    ([rgw_rest.cc:1506-1540](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1506-L1540),
+    [rgw_rest.cc:1506-1540](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1506-L1540)),
+    so under the 1 MiB default radosgw reads and parses a chunked body of up
+    to 1,175,551 bytes. rgw-go's `readParamBody` reads such a body as
+    radosgw does (`internal/s3/bucket.go`), and `website.ParseXML` then
+    refuses one over 1 MiB. Under a raised option radosgw reads and parses
+    a longer document of either kind, and rgw-go refuses it.
 
   rgw-go answers every MalformedXML before any InvalidArgument, so its
   answer does not depend on where in the document each sits; radosgw
