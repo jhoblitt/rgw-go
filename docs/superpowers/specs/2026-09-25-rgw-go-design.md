@@ -30,6 +30,10 @@ on the same cluster, and the project evaluates whether go-ceph's cgo
 boundary is a performance bottleneck a pure-Go RADOS client would remove.
 The evidence accumulates in `docs/cgo-limitations.md`.
 
+Since 2026-10-31 rgw-go also aims to be more hardened than radosgw,
+suitable for exposure to the commodity Internet. Section 15 states the
+threat model and the rules that follow from it.
+
 ## 2. Objectives, in priority order
 
 1. Performance: latency and throughput on the S3 data path.
@@ -165,13 +169,17 @@ Ceph config is the single source for everything radosgw configures.
 rgw-go's own flags cover only what has no ceph option: `--log-level`,
 `--log-format`, `--metrics-addr`, `--rados-completions`,
 `--memory-limit-ratio`, `--memory-budget-ratio`, and viper's `--config`.
-The frontend parses the beast spec keys `port`, `ssl_port`, `endpoint`,
-`ssl_endpoint`, `ssl_certificate`, `ssl_private_key`, `ssl_options`,
-`ssl_ciphers`, `tcp_nodelay`, `request_timeout_ms`,
-`max_connection_backlog` and `max_header_size`; unknown keys log and are
-ignored. `rgw_enable_apis` is honored; swift and swift_auth are ignored
-with one log line. Logging is slog, JSON to stderr, as radosgw in Rook
-logs to stderr.
+The two memory flags are the precedent section 15's rule for budget flags
+follows: they size the Go memory limit and the buffer budget from the
+memory the pod or host has, which no Ceph option knows, and
+`--memory-budget-ratio` refuses 0, the one value that would leave the
+buffers unbounded. The frontend parses the beast spec keys `port`,
+`ssl_port`, `endpoint`, `ssl_endpoint`, `ssl_certificate`,
+`ssl_private_key`, `ssl_options`, `ssl_ciphers`, `tcp_nodelay`,
+`request_timeout_ms`, `max_connection_backlog` and `max_header_size`;
+unknown keys log and are ignored. `rgw_enable_apis` is honored; swift and
+swift_auth are ignored with one log line. Logging is slog, JSON to stderr,
+as radosgw in Rook logs to stderr.
 
 ## 6. Data path
 
@@ -296,8 +304,8 @@ Where a radosgw defect could corrupt data the two gateways share, rgw-go
 acts to prevent the corruption, even though radosgw allows it. A serious
 defect is reported upstream once a running release reproduces it. Where
 rgw-go's correct behaviour differs from radosgw's at the S3 API, the
-difference is an exclusion, and the parity check's known-differences file
-lists it. The choice is recorded per defect in
+difference is recorded in `docs/differences.md`, and the parity check's
+known-differences file lists it. The choice is recorded per defect in
 `docs/ceph-upstream-bugs.md`, together with the affected releases, evidence
 at a named release tag, and the defect's upstream status. The registry is
 maintained for the life of the project: an entry is added whenever work
@@ -459,6 +467,11 @@ own image, which can be a newer release than the cluster's, so the gate
 holds such an object to the writing release's encoding and to what the
 cluster's own ceph-dencoder writes back. The ambient cluster is never used.
 
+Section 15 adds two layers to these: a fuzz target for every parser of
+untrusted bytes and, if the owner confirms it, every decoder of stored
+state, whose seeds run in `make test` and whose longer runs are scheduled;
+and a denial-of-service suite that pins its resource budgets.
+
 ## 11. Benchmarking
 
 Three benchmarks answer three questions. The seam microbenchmark answers
@@ -495,7 +508,8 @@ CI runs the template's test, lint, checks and govulncheck jobs, and CodeQL,
 in Tentacle's builder, the Ceph image with librados's headers and the Go
 toolchain, and adds a job that compiles and links everything in Squid's;
 those jobs never connect to a cluster. No runner installs a Ceph package.
-Three added workflows.
+Three added workflows, and a fourth that section 15 adds to run the fuzz
+targets on a schedule.
 An integration workflow, on pull requests and on demand, brings up the
 disposable Rook clusters on the runner with a pinned rooket, one job per
 release, and runs the integration specs, the oracle matrix and the phase 0
@@ -610,3 +624,776 @@ data from a modifying class method through the return-vector flag.
   rgw-go can avoid triggering but not fix: a Squid radosgw's queue registry
   listing never pages, and reservation drift accrued under a release below
   the floor survives the upgrade.
+
+## 15. Threat model and hardening
+
+On 2026-10-31 the owner added a goal beside section 1's: rgw-go is to be
+more hardened than radosgw, aiming at being suitable for exposure to the
+commodity Internet. This section is that goal's design: what the claim
+covers, what it protects and from whom, where untrusted bytes enter, the
+rule for departing from radosgw on security grounds, and the budgets,
+reviews and tests that back the claim. rgw-go keeps one behaviour. A
+separate "Internet" profile beside a "compatibility" one was proposed and
+rejected, so every hardening below applies to every deployment. A rule
+marked "proposed" is a drafting decision the owner has not yet made;
+"Decisions for the owner", at the end, gives each with its reason. The
+owner decided the kinds of budget, how a connection past the cap is
+refused, the deadline on waits for the cluster, how probes are answered at
+the cap, the egress rule for connections a tenant directs, the fuzzing
+time bound and the handling of notifies on 2026-11-06. Where a rule needs
+code that does not exist yet, the text says what holds today beside it.
+
+### Goal and claim
+
+The claim: an rgw-go gateway at its defaults, serving a supported cluster,
+may listen on an address the Internet reaches with no filtering proxy in
+front of it, and then:
+
+- no request, signed or anonymous, is granted what the stored ACLs,
+  policies, public access blocks, object lock, MFA delete and admin caps
+  deny, and no tenant reads or changes another's data, metadata or
+  credentials beyond what those grant;
+- no request ends or wedges the process, and no request makes rgw-go send
+  the cluster input known to fault an OSD or to corrupt the RADOS state it
+  shares with radosgw, except where a class's defect fires on state rgw-go
+  can neither see nor change, which the registry names as the exposure
+  that remains (Defence of the cluster);
+- what one request or one client can hold, memory, connections,
+  goroutines, time, and RADOS operations in flight, is bounded by a budget,
+  so that a client's load costs service in proportion to what it sends
+  rather than taking the gateway down for every tenant;
+- no secret, a secret key, a signing key, an MFA seed or the gateway's own
+  cephx key, leaves through a response, a log line or a metric.
+
+"More hardened than radosgw" has a measurable form: every security-rated
+entry of `docs/ceph-upstream-bugs.md` that rgw-go could meet has rgw-go
+unaffected, or mitigated with the exposure that remains named, and a test
+pins it (Assurance); and every budget below is enforced, those radosgw
+lacks included.
+
+The claim is a target, not a statement about today's code; when it is met,
+and who says so, is proposed decision D5. It does not cover:
+
+- Volumetric denial of service, floods that fill the network or the host
+  before a request is parsed. Budgets bound what each request costs;
+  capacity against a flood belongs to the network in front of the
+  gateway, and to a rate limiter (Open questions).
+- Storage capacity. A tenant can fill the cluster up to its quota, and
+  radosgw's default quotas are unlimited
+  (`rgw_user_default_quota_max_size`,
+  [rgw.yaml.in:2326-2337](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L2326-L2337),
+  [rgw.yaml.in:2420-2431](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L2420-L2431)).
+  Capacity is the operator's quota policy, which rgw-go enforces as
+  radosgw does, not a budget of the gateway's.
+- The rest of the deployment: the Ceph daemons and their network, Rook,
+  Kubernetes, the host, and any radosgw serving the same zone. A radosgw on
+  the zone keeps its own defects, and what an attacker writes through it is
+  state that rgw-go then serves.
+- The operator's listener, until proposed decision D8 settles what of it
+  the claim covers. Today `--metrics-addr` serves `/metrics` and
+  `/debug/pprof/` with no authentication, and it is off by default.
+- The S3 protocol's own weaknesses that clients rely on and radosgw serves
+  too: SigV2's HMAC-SHA1 with no payload hash, unsigned payloads, presigned
+  URLs as bearer tokens for their lifetime, and plain HTTP where the
+  operator configures no TLS listener.
+- Options radosgw has that switch a check off, such as
+  `rgw_sigv4_insecure`, which keep radosgw's meaning because the operator
+  sets them; the claim is made at their defaults.
+
+### Assets
+
+- **Object data and metadata**: the bytes, user metadata, tags, checksums
+  and versions of every tenant's objects. Confidentiality and integrity
+  against other tenants and anonymous clients; availability against loss
+  through a defect, such as a GC or index race.
+- **Authorization state**: ACLs, bucket and user policies, public access
+  blocks, object lock retention and legal holds, MFA devices, admin caps,
+  quotas, and the ownership of users, buckets and accounts. A change to
+  them is a change to who may do what, so it is guarded as data access is.
+- **Credentials**: users' access and secret keys and system users' keys,
+  stored in RADOS by radosgw's formats; MFA seeds in the otp pool; the
+  gateway's cephx key, which reaches the RGW pools; and, as later phases add
+  them, STS session tokens and SSE-C keys in flight. None is ever logged or
+  rendered beyond what radosgw's admin API returns to a caller with the
+  caps for it.
+- **The cluster**: its OSDs, whose class code a gateway feeds, and the
+  shared RADOS state, the bucket index, GC queues, OLH logs and metadata,
+  that radosgw and rgw-go must both keep consistent. A fault here is shared
+  by every client of the cluster, not only the gateway's.
+- **The gateway's availability**: the process, its memory, its goroutines
+  and threads, its connections, and its share of the cluster's in-flight
+  budget. One process serves every tenant, so its exhaustion is shared
+  fate.
+- **Accounting**: usage logs, user and bucket statistics, quotas and rate
+  limit settings, on which tenants' bills and limits rest.
+
+### Attackers and what is trusted
+
+Three attackers, from the outside in:
+
+- **Anonymous Internet clients** hold no key. They reach every byte of the
+  frontend before authentication: the TLS handshake, the request line and
+  headers, routing, the anonymous engine, the parse of a signed request
+  that names a key they do not have, and the access-key lookup it drives.
+  They also reach whatever a bucket's ACL or policy opens to everyone,
+  static website serving, CORS preflights, and, once phase 2 routes POST
+  object, a form whose fields rgw-go must read before the form's signature
+  can be checked. A request with no signature is authenticated at once, as
+  the anonymous user, so for them the boundary that matters is
+  authorization: what a request no ACL or policy grants can still make the
+  gateway do. They want data they were not granted, a crash or exhaustion
+  that takes the gateway down, and anything the answers disclose.
+- **Authenticated S3 users and tenants** hold keys of their own, so they
+  also reach everything behind authentication: every op, every request
+  body parser, and the documents they store, policies, lifecycle, CORS,
+  website and tagging configurations, which rgw-go later parses and
+  evaluates in other requests and in its workers. A malicious tenant on a
+  shared gateway wants other tenants' data or accounting, more than its
+  share of the shared process and cluster, or a crash that is shared fate.
+  A user holding admin caps is still this attacker: the caps grant the
+  admin operations they name and nothing else, and its input is checked as
+  strictly as an S3 client's, since an admin cap holder can fault an OSD
+  through radosgw ("cls_otp's otp_set puts an array as long as the seed on
+  the OSD's stack" in the registry).
+- **Holders of low-privilege Ceph keys on the same cluster**, such as an
+  RBD or CephFS client, never speak to rgw-go. With caps on other pools
+  they can load the cluster, which only Ceph's own scheduling bounds. With
+  read caps on the zone's control pool they can send the notifies that
+  keep metadata caches coherent; rgw-go treats any such notify as a reason
+  to drop and re-read an entry, never as data to cache. A flood of notifies
+  can so keep the metadata cache empty, and every request then reads from
+  RADOS as a gateway without a cache would, but it cannot make rgw-go serve
+  wrong data. Notifies are not rate-limited, because a real one skipped
+  would leave stale permissions cached. With read caps on the RGW pools
+  they read every stored key and object, and with write caps they can
+  write anything there: the gateway cannot defend data whose pools its
+  attacker can write.
+
+Trusted, each for its reason:
+
+- **The operator** and everything the operator sets: Ceph configuration,
+  the mon config store, the beast spec, rgw-go's flags and environment, the
+  keyring, the derived image, the host, and the system users whose keys
+  may act as any user. They decide how the process runs and no request can
+  change them. Values that would crash rgw-go or the cluster are still
+  refused or floored at startup, never left to fault on first use, since
+  an operator's typo is an outage, not an attack.
+- **The cluster's daemons**, monitors and OSDs, which cephx authenticates
+  and which hold the data whatever rgw-go does. Their replies are trusted
+  for meaning but decoded as defensively as stored state (below).
+- **Stored RADOS state**, trusted for authenticity but not for form
+  (proposed, D3). Whoever can write the RGW pools already has the gateway's
+  power, so its content cannot be defended at the gateway; but corruption,
+  version skew, partial writes and radosgw's own defects do leave malformed
+  records, so a record that does not decode fails the request that meets
+  it, never the process.
+- **radosgw on the same zone**, as a peer writer of the shared formats
+  (section 8); its control notifies are trusted only as invalidation
+  hints.
+- **librados and the go-ceph fork**, in-process C and its bindings, which
+  rgw-go cannot isolate: a fault there ends the process, so nothing reaches
+  them in a form they are known to mishandle (Defence of the cluster).
+- **Rook**, as the operator's agent, which runs the gateway and reaches the
+  admin API with keys the operator granted. Rook is trusted for intent, not
+  exempted from checks: its admin-ops user is an admin cap holder like any
+  other, so a defect in Rook, or a stolen key of that user, gains only what
+  the user's caps grant.
+
+### Trust boundaries and the request path
+
+The request path is every component an untrusted byte reaches, from a
+client directly or from a document a tenant stored. It is:
+
+| Component | Code | Untrusted input |
+|---|---|---|
+| HTTP frontend | `internal/frontend`, over Go's `net/http` and `crypto/tls` | every byte of every connection: the TLS handshake, the request line, headers, and body framing, before anything is known about the client; HTTP/1.x only |
+| Routing and URL decoding | the router and the unserved-API handler in `internal/cli/serve.go`; `internal/s3`'s request parse (Host, path, query, malformed escapes, NUL refusals, bucket and key names); `internal/vhost`; `internal/rgwtext` | the request target and Host, decoded once, and the choice of S3, admin API or an unserved API's refusal |
+| Dispatch and headers | `internal/s3` (dispatch, route sets, headers, request attrs, copy source); the header readers in `internal/op` (conditions, ranges, checksums, MFA); the value parsers they call in `internal/iso8601`, `internal/strptime`, `internal/cksum`, `internal/tags`, `internal/objectlock`, `internal/sse`, `internal/acl` and `internal/cors` | every request header, including `x-amz-meta-*`, grants, dates, ranges, ETag lists, `x-amz-copy-source` and CORS preflight headers |
+| Authentication | `internal/auth`: the anonymous engine; SigV4 by header, query and presigned URL, with aws-chunked and trailer payloads verified as they stream; SigV2 by header and presigned URL; the POST object form's signature; the CORS preflight that resolves a key without a signature compare; a system user's `rgwx-uid`; and the access-key lookup they drive | the Authorization header, query credentials, the signed payload. No STS, Keystone or LDAP engine exists; STS joins this row when phase 3 adds it |
+| Request bodies | `internal/op`'s parameter-body reader; `internal/xmltext` and every XML document decoder, in `internal/s3`, `internal/op`, `internal/acl`, `internal/cors`, `internal/lifecycle`, `internal/tags`, `internal/website`, `internal/objectlock` and `internal/sse`; IAM policy JSON in `internal/policy`; POST policy JSON in `internal/jsonspirit` and `internal/postpolicy`; the POST object form in `internal/s3`; aws-chunked framing in `internal/auth` | every body an op parses. Object data streams through `internal/op` and `internal/driver` unparsed, checksummed by `internal/cksum` and, from phase 2, compressed by `internal/compression` |
+| Admin API | `internal/admin` (resource and argument parse, dispatch, caps, formats) and its ops in `internal/op`, with metadata documents decoded through `internal/meta` and `internal/jsonspirit` | the same as S3, at `rgw_admin_entry` on the same listener with the same authentication, plus JSON documents from cap holders |
+| Authorization and stored configuration | `internal/authz`, `internal/policy`, `internal/acl`, `internal/objectlock`, `internal/cors`, `internal/website`, `internal/lifecycle`, and the workers that evaluate them | the request's condition environment, and every policy, ACL and configuration a tenant stored, through rgw-go or radosgw |
+| Responses | `internal/formatter`, `internal/xmltext`'s escaping, and `internal/s3`'s and `internal/admin`'s error documents and response headers, response overrides, website redirects and CORS headers included | request and stored bytes reflected to clients: keys, metadata, redirect targets |
+| Store and cluster boundary | `internal/driver` (names, manifests, the index protocol, the metadata cache and its control watch, the workers); `internal/meta` and `internal/denc`; `internal/cls/...`; `internal/compression`'s decoders; `internal/radosclient` and `internal/radosclient/goceph`, with the go-ceph fork beneath them | names, metadata and data from requests, encoded into RADOS operations and class requests; stored state and class replies, decoded |
+| Notification delivery | none yet: the topic actions' endpoint parser and the HTTP and HTTPS deliverer join this row when phase 3 adds them | the push endpoint a topic's owner stores, a URL the gateway then dials, and every byte its destination sends back |
+| Operator listener | `--metrics-addr`'s server in `internal/cli/serve.go`, with `internal/metrics` and `net/http/pprof` | any byte from whoever reaches its address; it is off by default, and what of it the claim covers is proposed decision D8 |
+
+Some of this code no route reaches yet: the POST object form reader, its
+signature check and `internal/postpolicy` wait for phase 2 to serve POST
+object, as the ownership controls ops do. They are on the path already,
+since a route is all it takes to expose them.
+
+rgw-go has no health endpoint of its own: Rook's probes are an anonymous
+`GET /` to the endpoint root, a ListBuckets that reads nothing from RADOS.
+The rows above cover what a probe parses, not whether it is answered. A
+probe counts against `rgw_max_concurrent_requests` as any request does,
+as in radosgw, so while a client holds that cap the probe is answered 503
+SlowDown at once. Rook's probe script takes a 503 as throttling and passes
+([rgw-probe.sh:40-52](https://github.com/rook/rook/blob/v1.21.1/pkg/operator/ceph/object/rgw-probe.sh#L40-L52)
+at Rook v1.21.1, the release the disposable clusters run; every release
+since v1.11 has it), so the cap does not take Rook's pods out of service,
+and rgw-go keeps that behaviour. A health check that passes only 200 to
+399, as Kubernetes' own HTTP probe does
+([rgw-probe.sh:43-45](https://github.com/rook/rook/blob/v1.21.1/pkg/operator/ceph/object/rgw-probe.sh#L43-L45)),
+fails while the cap is held and takes the gateway out of whatever service
+it guards; an operator who points one at rgw-go, as at radosgw, accepts
+that. A connection past the connection cap is answered 503 SlowDown too
+(Resource budgets), so a probe also passes under a flood of connections.
+
+Not on the request path: `cmd/rgw-go`, `internal/cephconf`,
+`internal/cli`'s command line (`root.go`, `signals.go`),
+`internal/version`, the packages only tests import (`internal/testutil`,
+`internal/memstore`, `internal/op/conformance`,
+`internal/denc/goldentest` and the counterfeiter packages, whose names end
+in `fakes`), every `_test.go` file, `hack/` and `test/` apart from the pins
+below, and CI configuration. They take operator or developer input, and
+PP-14's ruling stands for them: they are guarded against honest mistakes.
+One of them is a security boundary all the same, the privilege drop in
+`internal/cephconf`, and is reviewed as the request path is.
+
+A pull request changes the request path when it changes a non-test file of
+a package in the table, `go.mod` or `go.sum` (a dependency or the Go
+toolchain under the frontend, the parsers or the cgo boundary), the go-ceph
+fork's pin, or the Ceph image pin that chooses the librados a release
+ships, each release's `cephImage` in its rooket chart values, which
+`.goreleaser.yaml` mirrors. A new package joins the table in the change
+that adds it, in the row its input puts it in.
+
+Each boundary owes the rest of the system these properties:
+
+- **Before a signature is checked**, only bounded work: the header within
+  its budget, the route, the reads that resolve the access key to its user
+  and account, and, for a POST object form, the fields before its file
+  within their budget.
+- **Before authorization**, no body is parsed, except a body whose content
+  the authorization itself reads, such as a multi-object delete's keys,
+  and that within its budget. A request no ACL or policy grants, the
+  anonymous one included, costs the gateway its header, its route and the
+  reads its authorization needs, and, for such a request, its body within
+  its budget: a multi-object delete reads its body, unparsed, within
+  `rgw_max_put_param_size`, 1 MiB by default, before its permission check.
+- **Decoding** happens once, and a malformed escape or a NUL that would
+  reach a RADOS name is refused before any handler or lookup.
+- **Authentication** compares every signature in constant time, logs no
+  credential, and lets no body byte take effect before the payload's
+  verdict on it.
+- **Parsers** never panic, never recurse past a fixed depth, and allocate
+  at most a fixed multiple of their input, which the input's own budget
+  bounds.
+- **Responses** escape every reflected byte for its context, never put CR,
+  LF or NUL into a header, and render no secret.
+- **Outbound connections** that a tenant directs reach no loopback,
+  link-local or cloud-metadata address the operator has not allowed, and
+  no destination the operator refuses. There are two in phase 3. Its HTTP
+  and HTTPS notification deliverer dials a URL the
+  topic's owner chooses, and radosgw lets that URL name any destination:
+  it checks only that the URL parses and that credentials in it arrived
+  over TLS (`validate_and_update_endpoint_secret`,
+  [rgw_rest_pubsub.cc:40-82](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_pubsub.cc#L40-L82),
+  [rgw_rest_pubsub.cc:40-93](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_pubsub.cc#L40-L93)),
+  and its deliverer posts to it, guarded only by `verify-ssl`
+  ([rgw_pubsub_push.cc:75-100](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_pubsub_push.cc#L75-L100),
+  [rgw_pubsub_push.cc:77-103](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_pubsub_push.cc#L77-L103)).
+  Its AssumeRoleWithWebIdentity fetches an OpenID Connect provider's keys
+  from the token's issuer once the issuer matches a provider that an
+  account registered with CreateOpenIDConnectProvider (`load_provider`
+  and `get_cert_url`,
+  [rgw_rest_sts.cc:251-255](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_sts.cc#L251-L255),
+  [rgw_rest_sts.cc:309-311](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_sts.cc#L309-L311),
+  [rgw_rest_sts.cc:253-257](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_sts.cc#L253-L257),
+  [rgw_rest_sts.cc:311-313](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_sts.cc#L311-L313)),
+  so an account chooses that URL too. A tenant can so make a gateway
+  inside the cluster's network connect to the gateway's own loopback, to a
+  link-local address or to a cloud provider's metadata service. rgw-go
+  refuses loopback, link-local and cloud-metadata destinations by default,
+  judged on the address each connection it opens actually reaches after
+  name resolution, so that a name that resolves to one address when
+  checked and another when dialled gets no further. An operator option
+  adjusts the set both ways: it refuses destinations rgw-go cannot know
+  to, such as the cluster's own networks, and it allows a refused one an
+  operator delivers to on purpose, such as a receiver on the gateway's own
+  host. An allowance names its destinations one by one, so it never
+  switches the refusal off as a whole (D2). The refusal is a security
+  difference, recorded in `docs/differences.md` when phase 3 implements
+  the deliverer and STS, and the topic actions' endpoint parser is a
+  parser under the rules here and in Assurance, fuzz target included.
+- **A panic** in a request's own goroutine is answered 500 and the process
+  goes on. A panic in any other goroutine, exhaustion of memory or of a
+  goroutine's stack, or a fault in C ends the process, so no input may
+  reach one: a goroutine a request starts touches request data only
+  through code on this path, and depth and memory are budgeted.
+
+### Security differences from radosgw
+
+Section 8 already has rgw-go do the correct thing where radosgw is wrong.
+For security the rule is stricter, and it has one form, since rgw-go has
+one behaviour:
+
+- **Fail closed.** Where radosgw's behaviour is a vulnerability, or unsafe
+  for a gateway the Internet reaches, rgw-go refuses the request, or the
+  part of it that is unsafe, with the error S3 defines for the condition,
+  or radosgw's error for the nearest condition it refuses. It never accepts
+  the input with another meaning, never drops part of it silently, and
+  never answers success for a check it skipped. Where upstream has fixed
+  the defect in a later release, the fix is the model, on both floors.
+- **Refuse on write, serve on read, make output safe** (proposed, D4).
+  Hardening applies to new input. State that radosgw or an earlier release
+  stored is read as radosgw reads it, so that no tenant loses data to a
+  check it never met, unless serving it as stored is itself the
+  vulnerability; then rgw-go neutralizes it on the way out, as a stored
+  header value's CR and LF go out as spaces. A decoder of stored state
+  admits whatever radosgw's write path can store, so a bound set on
+  requests never fails the read of state radosgw wrote; only where serving
+  a stored thing would itself exhaust the gateway does the bound win, and
+  then the read fails closed and the difference's entry says so. What
+  rgw-go writes stays in radosgw's formats, so a radosgw on the zone reads
+  it.
+- **Recorded in the same change.** The difference gets its
+  `docs/differences.md` entry in the change that introduces it, under the
+  heading of the area it belongs to, naming radosgw's behaviour at v19.2.7
+  and v20.2.4 and what a client sees instead. `docs/exclusions.md` lists
+  only features rgw-go does not implement, so a hardening never goes
+  there. A difference that stems from an upstream defect also has its
+  registry entry with its security class, whose rgw-go line names the
+  difference's entry and the test that pins it (Assurance), and, where
+  reasonable, an s3-tests test on jhoblitt/ceph's `rgw-go-s3tests` branch
+  that exercises it.
+- **The parity ledgers keep radosgw's outcomes.** Such a test passes on one
+  gateway and fails on the other, so the parity check of section 9 sees a
+  difference, and the release's known-differences file lists it in the
+  same change, under a comment naming the difference's entry. A release
+  whose radosgw already behaves safely needs no line. The baseline is never
+  edited to make a difference disappear: it records what radosgw does.
+  When upstream fixes the defect and the baseline is recorded again at a
+  release with the fix, the outcomes agree, the known-differences line
+  fails the check as stale, and its removal, with the entry's update,
+  records that radosgw caught up.
+- **A client that relied on radosgw's laxness gets the refusal**: a status
+  and an error code it can act on, where radosgw accepted, documented in
+  `docs/differences.md`. It never gets its request served with a changed
+  meaning. No setting restores radosgw's behaviour (proposed, D2), since a
+  setting that switched a hardening off would be the rejected compatibility
+  profile under another name. A limit radosgw reads from a Ceph option stays
+  configurable through that option, with radosgw's meaning (Resource
+  budgets).
+- **The acceptance criterion still binds.** A hardening that would fail
+  section 1's criterion is raised with the owner before it lands.
+
+### Defence of the cluster
+
+A gateway is the main way untrusted bytes reach OSD class code, and a
+faulted OSD is every client's loss, not only the gateway's. The registry
+records class methods that fail on input radosgw passes them unchecked:
+cls_otp divides by a stored step of 0, puts an array as long as a
+device's seed on the OSD's stack, and walks a window as wide as the stored
+one on every check. So:
+
+- **rgw-go never sends a class method a request-shaped input the registry
+  records it mishandling** (proposed, D1). A request-shaped trigger is one
+  the class request itself carries, such as otp_set's seed, step and
+  window. Its guard belongs in the class client, the last code before the
+  exec step, so that it holds for every caller, present and future; the op
+  that takes the input from a client refuses it earlier, with the S3 or
+  admin error the client should see. Today the otp metadata put refuses a
+  step of 0 or over 3600 seconds, a window over 1024 steps and a seed over
+  1024 bytes in the op, and the class client gains those guards as planned
+  work.
+- **A state-shaped trigger**, one the class reads from what is already
+  stored, never passes the class client, so it is guarded where rgw-go
+  reads that state (proposed, D1): rgw-go reads the state first, sends no
+  class call for state the registry records the class mishandling, and
+  makes the call it does send conditional on the state being as it read
+  it, in the same operation, so that no other writer changes it in
+  between. The MFA check works so: it reads the device, calls the class
+  for no device of step 0, of a step over 3600 seconds or of a window over
+  1024 steps, and compares the device's record in the operation that sends
+  the check. What rgw-go cannot do is repair such state, which radosgw or
+  an older release stored and which still reads back, or keep a radosgw on
+  the zone from calling the class with it; and a device rgw-go will not
+  check is one its owner cannot use through rgw-go. The registry entry
+  names that exposure.
+- **Where the class decides from state rgw-go cannot see or change**, such
+  as its own records inside the bucket index, a defect can fire on a
+  legitimate request whoever sends it. rgw-go then mitigates what it can,
+  as its MFA check refuses a code the class's replay accounting would
+  accept again, and the registry entry names the exposure that remains.
+- **What rgw-go sends is bounded.** Every RADOS operation built from a
+  request has sizes the request's budgets bound, within what the OSDs
+  accept, and the operations one request causes are bounded per op at
+  radosgw's own counts, so that what a request costs the cluster is known
+  and pinned. The in-flight limiter of section 7 caps what the gateway has
+  outstanding.
+- **Stored state and class replies are decoded defensively** (proposed,
+  D3). A decoder refuses a record that does not decode and never allocates
+  by a stored length past a bound. A request that meets such a record
+  fails with an internal error and a log line naming the object, a worker
+  skips it, and the process goes on.
+- **Control notifies are hints.** A notify on the zone's control objects
+  drops the cache entry it names, and the next read fetches the entry
+  again; its payload is never cached. None is rate-limited, so a flood of
+  them costs reads but never correctness (Attackers).
+
+The cgo boundary rests on these assumptions. The seam's specs check the
+NUL refusal, the in-flight limiter and the completion's hold on an
+abandoned operation's buffers, under the race detector and cgo checks
+(section 14); the first assumption and the last are ones no test can
+check:
+
+- A fault in librados or in the bindings ends the process with every
+  request it serves, and nothing recovers from one, so input reaches C
+  only in forms it is known to handle.
+- C reads every name up to its first NUL, so no name holding a NUL reaches
+  librados: the request checks refuse one, and beneath them the seam
+  refuses any object name, locator, xattr name, or omap listing start or
+  prefix that holds one (`docs/cgo-limitations.md`).
+- A buffer pinned for an operation belongs to its completion until
+  librados reports the operation done, an abandoned one's included, since
+  a write already sent may still apply and C may still read the buffer.
+  Cancellation never frees memory C may read.
+- librados blocks the submitting OS thread once its objecter throttle is
+  spent, so every submission waits on rgw-go's in-flight limiter first, and
+  a flood of requests costs goroutines, not threads.
+- A read's buffer is sized before the call, from a stat or a fixed bound,
+  so a size taken from stored state must be capped before it sizes one.
+- librados aborts the process on some cluster states, such as a listing
+  that seeks after its pool was deleted, which rgw-go meets as radosgw
+  does (registry). No request can delete a pool, so it stays an
+  operational hazard, not an attack.
+
+### Resource budgets
+
+Every resource a client can make the gateway spend has a budget, and each
+budget is one of three kinds, which differ in what a request past one
+meets:
+
+- **Admission budgets** refuse a request before it starts, with the error
+  S3 or radosgw gives for the condition: a header, a body or a document
+  past its bound, a request past `rgw_max_concurrent_requests`. The memory
+  budget's first draw is one: a transfer whose first buffer finds the
+  budget spent waits at most 5 s and is then answered 503 SlowDown, before
+  any byte of its response and, for a PUT, before its body is read. A
+  refusal at the start costs the client a retry and the gateway nothing.
+- **Hold budgets** bound what a started request holds. A draw past one
+  waits for room and never fails a transfer mid-flight, since failing it
+  would throw away what the transfer has already moved and leave the
+  client to send it all again. A wait lasts as long as the requests that
+  hold the room take, slow clients among them, so each hold budget's row
+  names the slow-client exposure it leaves open.
+- **Connection caps** refuse a connection past the cap by accepting it
+  only to read its request header, under the header budget and the client
+  I/O timer, answer 503 SlowDown and close it. A client gets an error it
+  can retry rather than a connect timeout, and Rook's probe, which takes a
+  503 as throttling, still passes. The refusal holds a descriptor and a
+  goroutine for that moment only.
+
+Time is bounded by two clocks rather than drawn on, besides the planned
+minimum transfer rate of the progress row: the client I/O timer,
+`request_timeout_ms` for each read of a body and each write of a response,
+armed as beast arms it, which rgw-go copies; and a deadline on each wait
+for the cluster (Waits on the cluster, below).
+
+A budget's value comes from, in order:
+
+1. radosgw's own limit where it has one, read from the same Ceph option
+   with the same default, per release where the releases differ, so that a
+   client meets the same refusals and an operator's tuning carries over;
+2. AWS S3's documented limit for the same quantity where radosgw has none,
+   since S3 clients are written against it;
+3. measurement where neither exists: the plan measures what the largest
+   legitimate requests in s3-tests, Rook's suite and the benchmark profiles
+   need, adds a margin, and checks the budgets together against the memory
+   and file descriptors the gateway has, so that every admitted request at
+   its budget at once still fits.
+
+A budget is stricter than radosgw's where radosgw's limit, or its lack of
+one, is itself the defect: where it lets a request or a client hold
+resources out of proportion to what it sends, or reach code the registry
+records failing. The stricter budget is then a security difference under
+the rule above. A budget radosgw has no option for and whose right value
+depends on the host, as a connection cap does, is an rgw-go flag, which can
+bound and never disable (proposed, D2), as `--memory-budget-ratio`
+already is (section 5).
+
+| Budget | radosgw at the floors | rgw-go |
+|---|---|---|
+| Request header | 16 KiB of `header_limit`, raised by the beast key `max_header_size` up to its 64 KiB parse buffer ([rgw_asio_frontend.cc:403](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L403) and [rgw_asio_frontend.cc:594-607](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L594-L607), [rgw_asio_frontend.cc:414](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L414) and [rgw_asio_frontend.cc:595-608](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L595-L608)); no count of fields | radosgw's limit, from the beast spec, which net/http enforces with 4096 bytes of slack; a `max_header_size` of 0, which makes radosgw refuse every request, means net/http's 1 MiB (`docs/differences.md`, "Header limit and malformed requests") |
+| Header, idle and each body read or write | `request_timeout_ms`, 65 s by default (`REQUEST_TIMEOUT`, [rgw_asio_frontend.h:11](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.h#L11), [rgw_asio_frontend.h:11](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.h#L11)), armed for the whole header and for each read or write of a body (`recv_body`, [rgw_asio_frontend.cc:151-174](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L151-L174), [rgw_asio_frontend.cc:152-175](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L152-L175)) | the same per operation; on a kept-alive connection the idle wait and the next header are timed separately, each by `request_timeout_ms` (`docs/differences.md`, "Timeouts per operation") |
+| Waits on the cluster | none by default: the one deadline librados offers, `rados_osd_op_timeout`, is process-wide and 0, off ([global.yaml.in:6402-6409](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/global.yaml.in#L6402-L6409), [global.yaml.in:6538-6545](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/global.yaml.in#L6538-L6545)); set, it completes every OSD operation that outlasts it with ETIMEDOUT, a write's commit steps included (`op_cancel`, [Objecter.cc:2317-2324](https://github.com/ceph/ceph/blob/v19.2.7/src/osdc/Objecter.cc#L2317-L2324), [Objecter.cc:2385-2392](https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.cc#L2385-L2392)) | today none: a request waits on a stalled cluster until its client leaves; the rule: each wait 60 s, then 503 SlowDown, a write's commit steps excepted (Waits on the cluster, below) |
+| A request's progress | none: a request body trickled within the per-read timeout holds its request, and its share of the concurrency cap, without end, and beast sets no `body_limit` ([rgw_asio_frontend.cc:248-258](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L248-L258), [rgw_asio_frontend.cc:249-259](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L249-L259)); a response drained just fast enough for each write to finish within the timeout holds its read window, up to 16 MiB, for the whole object, so 1024 such readers hold up to 16 GiB | stricter: a minimum transfer rate for every request body and every response, and a deadline for a body read whole; measured |
+| Open connections | none; `max_connection_backlog` sizes only the listen backlog ([rgw_asio_frontend.cc:694-704](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L694-L704), [rgw_asio_frontend.cc:702-712](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L702-L712)) | stricter: a cap on open connections, past which a connection is answered 503 SlowDown and closed, and a cap on idle ones; measured |
+| Open files | a descriptor per open connection, which nothing bounds but the process's limit; at that limit `accept` backs off and retries (`backoff_sleep`, [rgw_asio_frontend.cc:1084-1111](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L1084-L1111), [rgw_asio_frontend.cc:1051-1078](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L1051-L1078)) | a descriptor per open connection, which only the connection cap above will bound, and librados's sockets to the monitors and OSDs; no request opens a file of its own |
+| Goroutines | a coroutine per open connection (`on_accept`, [rgw_asio_frontend.cc:1113-1164](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L1113-L1164), [rgw_asio_frontend.cc:1080-1126](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L1080-L1126)) | one per open connection, which only the connection cap will bound; for each request the concurrency cap admits, those its op starts, a fixed few or as many as radosgw's own option for the op allows, such as `rgw_bucket_index_max_aio` and `rgw_multi_obj_del_max_aio`; and, outliving its request, one for each index completion or abandoned operation it leaves waiting on the cluster, which the in-flight limiter bounds once it admits them and nothing yet bounds while they wait for it |
+| Concurrent requests | `rgw_max_concurrent_requests`, 1024, past which a request is answered 503 SlowDown ([rgw.yaml.in:3471-3483](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L3471-L3483), [rgw.yaml.in:3650-3662](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L3650-L3662)) | the same option, S3 and admin requests in one count |
+| Refused requests | uncounted: the rate limit runs after `verify_permission` ([rgw_process.cc:221-250](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L221-L250), [rgw_process.cc:221-253](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L221-L253)), so a request refused for its signature or its permissions is never charged; an access key's index is read through the system-object cache (`read_index`, [svc_user_rados.cc:650-668](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_user_rados.cc#L650-L668), [svc_user_rados.cc:626-644](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_user_rados.cc#L626-L644)), which keeps a missing object as a negative entry (`ENOENT`, [svc_sys_obj_cache.cc:200-205](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_sys_obj_cache.cc#L200-L205), [svc_sys_obj_cache.cc:200-205](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_sys_obj_cache.cc#L200-L205)) | the same today: each unknown access key costs a RADOS read and a negative entry in the metadata cache of section 7, so a flood of random keys costs reads without bound and evicts real users' entries; open question 2 |
+| Parameter bodies | `rgw_max_put_param_size`, 1 MiB ([rgw.yaml.in:138-145](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L138-L145), [rgw.yaml.in:144-151](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L144-L151)); an admin metadata document of any length | the same option; an admin metadata document bounded at 16 MiB |
+| Document structure | none beyond the body's size: every XML element is built, and json_spirit recurses with no limit (registry) | stricter: a fixed nesting depth, and a parse's allocation bounded by a multiple of its body; measured |
+| Objects and uploads | `rgw_max_put_size`, 5 GiB ([rgw.yaml.in:127-137](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L127-L137), [rgw.yaml.in:130-143](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L130-L143)); `rgw_multipart_part_upload_limit`, 10000 parts ([rgw.yaml.in:2373-2380](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L2373-L2380), [rgw.yaml.in:2467-2474](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L2467-L2474)); `rgw_multipart_min_part_size`, 5 MiB ([rgw.yaml.in:2363-2372](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L2363-L2372), [rgw.yaml.in:2457-2466](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L2457-L2466)) | the same options |
+| Item counts | `rgw_acl_grants_max_num` 100, `rgw_user_policies_max_num` 100, `rgw_cors_rules_max_num` 100, `rgw_delete_multi_obj_max_num` 1000 and `rgw_website_routing_rules_max_num` 50 ([rgw.yaml.in:7-53](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L7-L53), [rgw.yaml.in:7-53](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L7-L53)); `rgw_lc_max_rules` 1000 ([rgw.yaml.in:438-446](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L438-L446), [rgw.yaml.in:464-472](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L464-L472)); `rgw_max_listing_results` 1000 on Squid and 5000 on Tentacle ([rgw.yaml.in:3434-3446](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L3434-L3446), [rgw.yaml.in:3613-3625](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L3613-L3625)) | the same options, per release |
+| Names and metadata | object names of 1024 bytes (`MAX_OBJ_NAME_LEN`, [rgw_rest.h:556](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.h#L556), [rgw_rest.h:568](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.h#L568)); `rgw_max_attr_size`, `rgw_max_attr_name_len` and `rgw_max_attrs_num_in_req` 0, unlimited within the header ([rgw.yaml.in:146-176](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L146-L176), [rgw.yaml.in:152-182](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L152-L182)) | the same; the header budget bounds metadata |
+| A POST form's fields before its file | none (registry) | stricter: `rgw_max_chunk_size` plus 1 MiB of the body, refused InvalidArgument with the description AWS S3 gives its MaxPostPreDataLengthExceeded |
+| Memory for object data | each PUT's writes in flight to `rgw_put_obj_min_window_size`, 16 MiB ([rgw.yaml.in:99-113](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L99-L113), [rgw.yaml.in:102-116](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L102-L116)), and each GET's reads to `rgw_get_obj_window_size`, 16 MiB ([rgw.yaml.in:1905-1913](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L1905-L1913), [rgw.yaml.in:1999-2007](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L1999-L2007)); no bound across requests | one budget across requests for the buffers of object data every GET, PUT and copy holds (section 7): `--memory-budget-ratio` of the Go memory limit, half by default, the limit itself `--memory-limit-ratio` of the pod's memory limit, 0.8 by default, so 819 MiB in a 2 GiB pod (`docs/memory.md`). A transfer's first buffer is an admission draw, which waits at most 5 s and is then answered 503 SlowDown; every later one is a hold draw, which waits as long as the client stays. Slow-client exposure: a client that sends a body or takes a response slowly holds its shares as long as it does, and about forty slow readers in a 2 GiB pod make every transfer wait (`docs/differences.md`, "Object data buffers share one memory budget, sized from the Go memory limit"). Still to come: the progress row's minimum transfer rate, and a ceiling on the shares one request holds; measured |
+| Cluster work per request | the windows above and each op's own counts | the in-flight limiter under the objecter throttle (section 7), a hold budget: a submission past it waits for room, within the deadline on waits for the cluster, and room is held only while the cluster works on an operation, so a slow client holds none of it; and a ceiling per op on the RADOS operations one request causes, at radosgw's counts |
+| Request rate | per user, per bucket, and one budget shared by every anonymous request, set through the admin API and charged only to requests authorization passes ("Refused requests" above); none per client address (`rate_limit`, [rgw_process.cc:94-163](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L94-L163), [rgw_process.cc:95-163](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L95-L163)) | settings stored since phase 1, enforced from phase 3 (Open questions) |
+| Work before authorization | a POST form's fields read whole before its signature is checked, its policy and tagging parsed only after it (`get_policy` and `get_tags`, [rgw_rest_s3.cc:3063-3067](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3063-L3067), [rgw_rest_s3.cc:3202-3206](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3202-L3206); `Strategy::apply` before `from_json`, [rgw_rest_s3.cc:3190-3210](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3190-L3210), [rgw_rest_s3.cc:3326-3346](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3326-L3346)); and some ops' XML parsed before the request is authorized (registry) | the bounded work the request path allows (above) |
+| The operator listener | radosgw has no such listener: its counters reach Prometheus through its admin socket (section 9) | today a 10-second header timeout and nothing else: no write or idle timeout and no connection cap of its own; proposed (D8): the frontend's header and idle timeouts, a write timeout, and a connection cap of its own |
+
+Rows marked measured get their values from the plan, by rule 3. Every
+budget is pinned by a test of its kind. An admission budget's test serves
+a request at the limit and refuses one past it with the budget's error,
+before the resource is spent. A hold budget's test pins the wait: a draw
+past the budget waits, the transfer completes once room frees, and
+nothing it had moved is lost. A connection cap's test shows a connection
+past the cap answered 503 SlowDown and closed while one under it is
+served, and a clock's test
+shows that what it times ends at its deadline with the answer this
+section gives. The denial-of-service suite drives many at once. It opens
+connections and holds them idle, trickles headers and bodies, drains
+responses at the slowest rate the per-write timeout allows, sends
+documents at the size and depth bounds and multipart forms at theirs,
+signs requests under random access keys, starts more large transfers
+than the memory budget admits, and holds back the cluster's replies, each
+while a well-behaved client keeps working; it asserts that the gateway's
+memory, goroutines and open files stay within their budgets and that the
+well-behaved client is served. It runs in-process in the unit suite where
+no cluster is needed, and against the disposable clusters for the budgets
+that involve RADOS.
+
+**Waits on the cluster.** A request waiting on a stalled cluster holds its
+concurrency slot, its memory shares and its goroutines for as long as the
+cluster takes, and no clock of the client's ends the wait, since the
+client is waiting too. Enough such requests fill
+`rgw_max_concurrent_requests`, and the gateway, though up, answers every
+other request 503 SlowDown. Today only the client's departure ends such a
+wait, apart from a few cleanup steps that bound their own. The rule: each
+wait on the cluster, for an operation's reply or for room under the
+in-flight limiter, is limited to 60 s, and a request whose wait reaches
+the limit is answered 503 SlowDown, or, once its response has begun,
+ends where its body stopped, as any failure after the header does. The
+limit is per wait, not per request, so a transfer of any length still
+completes while the cluster keeps answering. 60 s is twice the 30 s after
+which an OSD reports an operation as slow (`osd_op_complaint_time`,
+[global.yaml.in:3152-3158](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/global.yaml.in#L3152-L3158),
+[global.yaml.in:3206-3212](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/global.yaml.in#L3206-L3212)).
+The deadline cancels a wait as a client's departure does, and reaches
+only what that reaches. A write's commit steps stay shielded from
+cancellation, as they are today, so that a commit that has started
+finishes rather than leave its object half linked. A wait abandoned at
+the deadline leaves its operation to the reaper that already takes
+abandoned operations, which keeps the operation's buffers until librados
+answers (section 7, "Cancellation"). A call made synchronously, such as a
+lock taken through the bindings' synchronous call or any call in the
+`sync` completion mode, cannot be abandoned and stays outside the rule
+until it is sent asynchronously (`docs/cgo-limitations.md`). The deadline
+is a difference from radosgw, recorded in `docs/differences.md` when it
+is implemented. rgw-go does not rely on `rados_osd_op_timeout` instead,
+because that option times out commit steps too, and a write it times out
+may still have landed, leaving the gateway to act on a result it does not
+know (registry, "radosgw's set_olh cancels the pending attr of a link that
+timed out, though it may have landed"). Whether the 60 s is a flag, and
+its name, follows the rule for budget flags above.
+
+What the memory budget settles, and what it leaves open. The gateway
+comparison of 2026-10-15 measured rgw-go's peak resident memory on 64 MiB
+objects at 32 concurrent streams at 3.3 to 5.1 times radosgw's, 1.9 to
+3.0 GiB against about 0.6 GiB, on both releases
+(`docs/benchmarks/2026-10-15-gateway-squid/REPORT.md`,
+`docs/benchmarks/2026-10-15-gateway-tentacle/REPORT.md`). The memory
+measurements of 2026-11-02 to 2026-11-04 found the cause, mostly the Go
+heap, whose pools of 4 MiB buffers grew with the traffic and which the
+collector's default let reach twice its live size with no memory limit
+set (`docs/benchmarks/2026-11-02-memory-tentacle/REPORT.md`). The Go
+memory limit sized from the pod's, the buffer budget, and one free list
+of buffers that the budget caps now bound it (`docs/memory.md`): in a
+2 GiB pod, 32 concurrent 64 MiB GETs peaked at about 1.5 GiB, about twice
+Tentacle radosgw's and within the pod
+(`docs/benchmarks/2026-11-04-realworld-memory-tentacle/REPORT.md`).
+Outside the budget and the Go limit are the C heap, which holds
+librados's copies of data in flight under the in-flight limiter, and the
+socket buffers the pod is charged for each connection, which the
+connection cap will bound. What stays open is the slow client. The budget
+never fails a transfer it has let start, so a client that sends or reads
+slowly holds its shares as long as it keeps each read or write within
+`request_timeout_ms`, and enough such clients make every new transfer
+wait and then answer SlowDown, though their buffers stay within the
+budget, where radosgw's would run the pod out of memory. The progress
+row's minimum transfer rate, with a ceiling on the shares one request
+holds, is what closes it.
+
+### Assurance
+
+Three practices back the claim, adopted with it.
+
+**Adversarial review of the request path.** Every pull request that
+changes the request path, as the table above defines it, gets an
+adversarial review besides its task review: a reviewer takes the
+attackers above, tries to use the change against the claim, and judges it
+against this model. This widens PP-14's rule (`docs/porting-process.md`),
+which kept adversarial review to the boundaries the spec named. Changes off
+the path, the parity ledgers and their tooling among them, are still
+reviewed against honest mistakes only.
+
+**Fuzzing of every parser.** Every function that parses bytes a client
+controls has a Go fuzz target, and so, if the owner confirms it (proposed,
+D7), does every decoder of stored state:
+
+- the request target, Host and query, and the admin API's arguments;
+- every header value parser: dates, ranges, conditions and ETag lists,
+  copy sources, grants, tags, checksums, MFA, encryption and object lock
+  headers, and CORS preflight headers;
+- authentication: SigV4 and SigV2 header and query parsing, the canonical
+  request, aws-chunked framing and trailers, and a POST form's signature
+  fields;
+- every request body: the XML reader and each document decoder, IAM policy
+  JSON, POST policy JSON, the multipart/form-data reader, and the admin
+  API's documents;
+- from phase 3, the topic actions' push endpoints and their arguments;
+- stored state: the `denc` and `meta` decoders, class replies, manifests
+  and the compression decoders.
+
+Each target asserts that its parser never panics and allocates within its
+multiple of the input; `make test`'s runs of the seeds check only that. In
+the scheduled fuzz workflow alone, each input must also finish within
+1 s, a margin thousands of times a parser's normal cost, so that the
+bound catches a catastrophic slowdown without failing on a slow or loaded
+runner. Where an encoder pairs with the decoder, the target asserts
+idempotence, not byte identity: what decodes re-encodes to bytes that
+decode to the same value and re-encode to themselves. Section 8 decodes
+versions older than the one it writes and skips trailing fields it does
+not know, so a decoded input need not re-encode to its own bytes.
+
+`go test` runs every target's seed corpus, so the seeds run in `make test`
+on every pull request. A new target lands with seeds that include its
+parser's spec inputs, and an input a longer run finds is committed as a
+seed in the pull request that fixes it. A scheduled workflow, beside
+section 12's three, runs each target for a time the plan sets; its
+failures are watched and triaged as a failed required check is. The
+targets that exist are a start, and the plan lists the parsers that lack
+one.
+
+**Every security-rated registry entry becomes a regression test.** An
+entry of `docs/ceph-upstream-bugs.md` that is security-rated, in the scope
+proposed decision D6 sets, gets a test that shows rgw-go is not exposed,
+and the entry's rgw-go line names it:
+
+- a unit spec where rgw-go parses or decides the input;
+- an s3-tests test on `rgw-go-s3tests`, under the project's rule, where a
+  client can observe the behaviour;
+- for a defect in OSD class code, cls_rgw, cls_otp, cls_user, cls_lock,
+  cls_version or the 2pc queue: for a request-shaped trigger, a spec that
+  the class client refuses the triggering input before the exec step; for
+  a state-shaped one, a spec that the path that reads the state sends no
+  class call for state the class mishandles, and sends the call it does
+  send conditional on the state as read. fakerados's emulation of the class
+  must fail the triggering input as the OSD would, so that a spec of any
+  path that still sends it fails; where the emulation does not yet, the
+  backfill task makes it.
+
+Where rgw-go inherits a defect it cannot avoid (Defence of the cluster),
+the test pins rgw-go's mitigation and the entry names the exposure that
+remains. A new entry gets its test in the change that records rgw-go's
+handling of it. The existing entries are backfilled by a numbered plan
+task, which lists those still without a test.
+
+### Decisions for the owner
+
+Drafting decisions the owner has not yet made. The sections above apply
+each as proposed until the owner approves or rejects it.
+
+- **D1. Guards against class-code defects.** Proposed: a trigger the class
+  request carries is refused in the class client as well as in the op that
+  takes it from a client; a trigger in stored state is guarded where
+  rgw-go reads that state, with the class call conditional on the state
+  as read; and the registry names what neither guard reaches. Reason: the
+  class client is the one place every caller passes, present and future,
+  so a new path cannot forget the guard, while stored state reaches the
+  class without passing the client, so only its reader can see it. It
+  creates planned work: the otp guards sit in the op and the driver today.
+- **D2. No setting switches a hardening off.** Proposed: rgw-go adds no
+  option that restores an unsafe radosgw behaviour; radosgw's own options
+  keep radosgw's meaning; and a budget with no Ceph option whose value
+  depends on the host becomes an rgw-go flag that can bound and never
+  disable, which widens section 5's list of rgw-go's own flags. Reason: a
+  switch per check is the rejected compatibility profile under another
+  name, while radosgw's options are the drop-in configuration operators
+  already have. Cost: a client that depends on a lax radosgw behaviour has
+  no setting to fall back on, so a drop-in deployment fixes the client; it
+  gets the refusal "Security differences from radosgw" describes, where
+  radosgw accepted.
+- **D3. Stored state is trusted for authenticity, not for form.** Proposed:
+  a record that does not decode, or would exhaust the gateway, fails the
+  request or the worker item that meets it, never the process. Reason:
+  whoever can write the RGW pools holds the gateway's power, so
+  authenticity cannot be defended at the gateway, but malformed records
+  occur without an attacker, from corruption, version skew, partial writes
+  and radosgw's own defects, and a crash is every tenant's outage.
+- **D4. Refuse on write, serve on read, make output safe.** Proposed: as
+  "Security differences from radosgw" states it, decoders admitting
+  whatever radosgw's write path can store, and the bound winning only
+  where serving the stored thing would exhaust the gateway. Reason: a
+  tenant must not lose its data over a check it never met, which keeps a
+  rolling replacement safe, but a stored payload that attacks its readers
+  must not reach them. It also decides that a tenant's existing unsafe
+  state keeps being served, neutralized where that is the vulnerability.
+- **D5. The claim is a target with exit conditions.** Proposed: the claim
+  is met once every budget in the table is enforced and pinned by its
+  test, the denial-of-service suite passes, the memory budget's
+  slow-client exposure is closed by the minimum transfer rate and the
+  ceiling on one request's shares, the registry backfill is done and the
+  open questions are settled. The owner declares it met, and the README
+  and the notes of the release that meets it say so; until then neither
+  claims fitness for the Internet. Reason: operators act on the claim
+  where they read it, so it should appear there only once it holds, and
+  from the person accountable for it.
+- **D6. Which registry entries are security-rated.** Proposed: an entry
+  counts when its Kind line or a triage rates it security-relevant,
+  possibly or conditionally so included: about 106 of the registry's 470
+  entries on 2026-10-31, roughly half rated outright and half possibly or
+  conditionally. Counting outright ratings only would halve the backfill.
+  Reason: "possibly" and "conditional" mark entries whose exposure nobody
+  has measured, and a regression test is the cheapest way to settle it
+  for rgw-go.
+- **D7. Fuzzing stored-state decoders.** Proposed: besides every parser of
+  client bytes, every decoder of stored state and of class replies gets a
+  fuzz target. Reason: D3 promises that a malformed record fails a request
+  rather than the process, and fuzzing is how that promise is checked; it
+  multiplies the number of targets.
+- **D8. The operator listener.** Today `--metrics-addr`, off by default,
+  serves `/metrics` and every pprof handler, the command line, CPU
+  profiles, traces and the runtime's named profiles, with no
+  authentication, a 10-second header timeout and nothing else, on the file
+  descriptors the frontend also needs. The options: keep it as it is,
+  outside the claim; put pprof behind a flag of its own, off by default;
+  or bind the listener to loopback by default. Proposed: pprof behind its
+  own off-by-default flag and outside the claim, and `/metrics` covered by
+  the claim when enabled, under the listener budgets in the table. Reason:
+  Prometheus scrapes `/metrics` from another pod, which a loopback default
+  would defeat, while pprof discloses the command line and spends CPU on
+  request, which no scrape needs.
+
+### Open questions for the owner
+
+Listed, not decided:
+
+1. **Disclosure of rgw-go's own vulnerabilities.** Section 8 and PP-4 make
+   every defect the project finds public as soon as it is found, which
+   suits the upstream defects the registry holds. Once rgw-go is deployed
+   where the Internet reaches it, a public record of a defect in rgw-go
+   itself tells attackers before a fixed release exists. Whether rgw-go's
+   own vulnerabilities keep that rule, or go through a private channel,
+   such as GitHub's private vulnerability reporting with an advisory
+   published beside the fix, is open.
+2. **A rate limiter as a prerequisite.** rgw-go enforces no rate limit
+   today. Phase 3 enforces radosgw's, which counts per user, per bucket,
+   and one budget for every anonymous request together, nothing per client
+   address, and charges only requests that pass authorization: a request
+   refused for its signature or its permissions is never counted. A flood
+   of requests signed under random access keys therefore costs each
+   gateway a RADOS read and a negative cache entry per key, evicting real
+   users' entries, and no limiter radosgw has sees it (Resource budgets).
+   Open: whether the claim waits for a limiter, and whether it needs one
+   radosgw lacks, per client address or charging refused requests, which
+   would be a security difference under the rule above and would key on an
+   address that a proxy in front of the gateway may hide.
+3. **Where hardening ranks among section 2's objectives**, whose first is
+   performance. A budget can cost throughput, as a lower memory ceiling per
+   large transfer would; which wins when the two conflict is open.
