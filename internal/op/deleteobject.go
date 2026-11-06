@@ -34,6 +34,9 @@ type DeleteObject struct {
 	IfMatch             *string
 	IfMatchSize         *string
 	IfMatchLastModified *string
+	// BypassHeader is x-amz-bypass-governance-retention as
+	// BypassGovernanceHeader reads it, bypass_governance_mode.
+	BypassHeader bool
 
 	// VersionID and DeleteMarker are del_op->result, which execute keeps
 	// only from a delete that succeeded: the version a versioned delete
@@ -44,6 +47,17 @@ type DeleteObject struct {
 	DeleteMarker bool
 
 	params DeleteParams
+	// permitted is that the delete's permission passed, past which alone the
+	// governance bypass is evaluated: a requester that permission refuses
+	// and op.Run's admin override lets through gets none. radosgw's
+	// bypass_perm starts true
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L1482 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L1582 at v20.2.4)
+	// and verify_permission returns before it assigns it, so the admin its
+	// override lets through passes the bypass on the header alone; rgw-go is
+	// stricter (docs/differences.md, "No ACL grant authorizes a delete's
+	// governance bypass").
+	permitted bool
 }
 
 var _ Op = (*DeleteObject)(nil)
@@ -114,13 +128,15 @@ func (o *DeleteObject) Init(ctx context.Context, r *Request) error {
 // that op.Run's admin override passes still meets the check, so an admin
 // needs the owner's code too, where radosgw returns that refusal before its
 // check and its override then lets the delete through without one.
-// ERR_MFA_REQUIRED is no access denial op.Run overrides.
+// ERR_MFA_REQUIRED is no access denial op.Run overrides. The governance
+// bypass, bypass_perm, is Execute's, for a requester the permission passed.
 func (o *DeleteObject) VerifyPermission(ctx context.Context, r *Request) error {
 	a := o.Action()
 	err := VerifyBucketPermission(ctx, r, a, acl.PermFor(a))
 	if IsBeforeVerify(err) || err != nil && !isAccessDenial(err) {
 		return err
 	}
+	o.permitted = err == nil
 	if o.Versioned && r.BucketRec.Info.MFAEnabled() && !OwnerMFAVerified(r) {
 		return fmt.Errorf("%w: deleting version %q of %s needs the bucket owner's verified x-amz-mfa", ErrMFARequired, r.Object.Instance, r.Object.Name)
 	}
@@ -144,17 +160,14 @@ func (o *DeleteObject) VerifyPermission(ctx context.Context, r *Request) error {
 // following the OLH, ahead of the delete and ignores what the read answers
 // unless it checks object lock; the store's delete reads what it needs
 // itself, following the OLH where a delete marker's conditions need the
-// version current, so the op makes no read of its own. A bucket with object
-// lock answers 501 (deleteLockUnserved).
+// version current, so the op reads the object only for that check
+// (deleteUnderLock), whose refusal is the delete's answer.
 func (o *DeleteObject) Execute(ctx context.Context, r *Request) error {
-	if err := deleteLockUnserved(r.BucketRec); err != nil {
-		return err
-	}
 	if r.Object.Name == "" {
 		return ErrInvalidArgument
 	}
 	o.params.MarkerOwner, o.params.MarkerOwnerDisplayName = requesterOwner(r)
-	res, err := r.Env.Objects.DeleteObject(ctx, r.BucketRec, r.Object, o.params)
+	res, err := deleteUnderLock(ctx, r, r.Object, o.params, o.BypassHeader && o.permitted)
 	switch {
 	case errors.Is(err, ErrNoSuchKey), errors.Is(err, ErrConcurrentModification):
 		return nil
@@ -168,24 +181,6 @@ func (o *DeleteObject) Execute(ctx context.Context, r *Request) error {
 
 // Complete does nothing: the handler logs usage once the response is written.
 func (o *DeleteObject) Complete(context.Context, *Request) {}
-
-// deleteLockUnserved answers 501 NotImplemented for a delete in a bucket with
-// object lock: radosgw checks the retention and legal hold of a version a
-// delete names before it removes it
-// (verify_object_lock,
-// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5186-L5221 and
-// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6854-L6878 at v19.2.7,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5576-L5611 and
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7782-L7806 at v20.2.4),
-// which rgw-go's deletes do not, so they refuse every delete there, a delete
-// marker's included, before they touch the store (docs/differences.md,
-// "DeleteObject and DeleteObjects answer 501 on an object-lock bucket").
-func deleteLockUnserved(rec *BucketRecord) error {
-	if rec.Info.ObjLockEnabled() {
-		return fmt.Errorf("%w: deletes in bucket %s, which has object lock, are not implemented", ErrNotImplemented, rec.Info.Bucket.Name)
-	}
-	return nil
-}
 
 // requesterOwner is s->owner, the owner the request acts as, which a delete
 // marker it writes names

@@ -1,6 +1,7 @@
 package s3_test
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -136,12 +137,66 @@ var _ = Describe("multi_object_delete", func() {
 					"<Deleted><Key>c</Key><VersionId>v1</VersionId></Deleted>" +
 					"<Deleted><Key>d</Key><VersionId>v9</VersionId></Deleted></DeleteResult>"))
 			})
-			It("answers a bucket with object lock with the status line alone and deletes nothing", func(ctx SpecContext) {
-				w.setBucketInfo(ctx, func(i *meta.BucketInfo) { i.Flags |= meta.BucketVersioned | meta.BucketObjLockEnabled })
-				store := answering(w.store, &op.DeleteObjectResult{}, nil)
-				w.env.Objects = store
-				expectStatusLine(post(deleteDoc("<Key>src</Key>")), 501)
-				Expect(store.keys).To(BeEmpty())
+			// The bucket's flags carry object lock without BUCKET_VERSIONED,
+			// which memstore serves; versionId=null names src.
+			Describe("on a bucket with object lock", func() {
+				BeforeEach(func(ctx SpecContext) {
+					w.setBucketInfo(ctx, func(i *meta.BucketInfo) { i.Flags |= meta.BucketObjLockEnabled })
+					lockKey(ctx, w, "src", "GOVERNANCE")
+				})
+				It("answers a locked key with AccessDenied in its element, keeping it, and deletes the others", func(ctx SpecContext) {
+					rec := post(deleteDoc("<Key>src</Key><VersionId>null</VersionId>", "<Key>b&amp;c</Key>"))
+					Expect(rec.Code).To(Equal(200))
+					Expect(rec.Body.String()).To(Equal(deleteResultOpen +
+						"<Error><Key>src</Key><VersionId>null</VersionId><Code>AccessDenied</Code><Message>AccessDenied</Message></Error>" +
+						"<Deleted><Key>b&amp;c</Key></Deleted></DeleteResult>"))
+					Expect(w.stat(ctx, "src").Exists).To(BeTrue())
+					Expect(w.stat(ctx, "b&c").Exists).To(BeFalse())
+				})
+				DescribeTable("reads x-amz-bypass-governance-retention as get_params does",
+					func(ctx SpecContext, removed bool, hdr ...string) {
+						rec := post(deleteDoc("<Key>src</Key><VersionId>null</VersionId>"), hdr...)
+						Expect(rec.Code).To(Equal(200))
+						if removed {
+							Expect(rec.Body.String()).To(ContainSubstring("<Deleted><Key>src</Key>"))
+						} else {
+							Expect(rec.Body.String()).To(ContainSubstring("<Code>AccessDenied</Code>"))
+						}
+						Expect(w.stat(ctx, "src").Exists).To(Equal(!removed))
+					},
+					Entry("tRuE, which the owner's bypass passes", true, "X-Amz-Bypass-Governance-Retention", "tRuE"),
+					Entry("%74rue, url-decoded first", true, "X-Amz-Bypass-Governance-Retention", "%74rue"),
+					Entry("1, which is not true", false, "X-Amz-Bypass-Governance-Retention", "1"),
+					Entry("absent", false),
+				)
+				// Run under -race: each key's bypass check reads the request
+				// while other keys' results are written to the response.
+				It("bypasses GOVERNANCE for many keys deleted at once, rgw_multi_obj_del_max_aio of them in flight", func(ctx SpecContext) {
+					w.conf["rgw_multi_obj_del_max_aio"] = "16"
+					var objs []string
+					for i := range 64 {
+						k := fmt.Sprintf("k%02d", i)
+						w.put(ctx, k, "x", nil)
+						lockKey(ctx, w, k, "GOVERNANCE")
+						objs = append(objs, "<Key>"+k+"</Key><VersionId>null</VersionId>")
+					}
+					rec := post(deleteDoc(objs...), "X-Amz-Bypass-Governance-Retention", "true")
+					Expect(rec.Code).To(Equal(200))
+					Expect(strings.Count(rec.Body.String(), "<Deleted>")).To(Equal(64), rec.Body.String())
+					Expect(w.stat(ctx, "k63").Exists).To(BeFalse())
+				})
+			})
+			// A version's lock attrs are read only on a bucket with object
+			// lock; on any other they are not looked at, whatever they hold.
+			It("deletes keys carrying a retention on a bucket without object lock, checking no lock", func(ctx SpecContext) {
+				lockKey(ctx, w, "src", "COMPLIANCE")
+				lockKey(ctx, w, "b&c", "COMPLIANCE")
+				rec := post(deleteDoc("<Key>src</Key>", "<Key>b&amp;c</Key><VersionId>null</VersionId>"))
+				Expect(rec.Code).To(Equal(200))
+				Expect(rec.Body.String()).To(Equal(deleteResultOpen +
+					"<Deleted><Key>src</Key></Deleted><Deleted><Key>b&amp;c</Key><VersionId>null</VersionId></Deleted></DeleteResult>"))
+				Expect(w.stat(ctx, "src").Exists).To(BeFalse())
+				Expect(w.stat(ctx, "b&c").Exists).To(BeFalse())
 			})
 			Describe("on a bucket with MFA delete", func() {
 				var store *deleteResults

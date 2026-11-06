@@ -642,13 +642,14 @@ var _ = Describe("DeleteObjects", func() {
 				op.DeleteResult{Key: meta.ObjKey{Name: "gone", Instance: "v9"}},
 			))
 		})
-		It("refuses a bucket with object lock with 501 through Status before the body is parsed", func(ctx SpecContext) {
+		It("serves a bucket with object lock, deleting each key once its lock is checked", func(ctx SpecContext) {
 			f.setBucketFlags(ctx, meta.BucketObjLockEnabled)
-			err := op.Run(ctx, m.op(keys("a"), nil), f.multiReq("x"))
-			Expect(err).To(MatchError(op.ErrNotImplemented))
-			Expect(m.statuses).To(ConsistOf(MatchError(op.ErrNotImplemented)))
-			Expect(m.parsed).To(BeZero())
-			Expect(stub.DeleteObjectCallCount()).To(BeZero())
+			stub.StatObjectReturns(&op.ObjectState{Exists: true}, nil)
+			Expect(op.Run(ctx, m.op(keys("a", "b@v1"), nil), f.multiReq("x"))).To(Succeed())
+			Expect(m.statuses).To(BeEmpty())
+			Expect(errByKey(m.results)).To(Equal(map[string]error{"a": nil, "b": nil}))
+			Expect(stub.DeleteObjectCallCount()).To(Equal(2))
+			Expect(stub.StatObjectCallCount()).To(Equal(1), "the version b names; a's delete marker removes nothing")
 		})
 	})
 	It("deletes a key naming a version on a bucket whose versioning was never enabled", func(ctx SpecContext) {

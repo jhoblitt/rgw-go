@@ -68,10 +68,11 @@ func (s *Store) deleteVersioned(ctx context.Context, rec *op.BucketRecord, key m
 // version current when it links").
 //
 // On a suspended bucket p.Expect is the null version the null marker
-// replaces, whose data is the OLH head's: its write tag goes to the link as
-// its ExpectTag, which each attempt compares on the head it reads and its
-// init compares again, and which guards the replay's removal of that data,
-// the link logging it
+// replaces, whose data is the OLH head's: its write tag, or for a null
+// version that holds no data the head's as nullMarkerExpect reads it, goes
+// to the link as its ExpectTag, which each attempt compares on the head it
+// reads and its init compares again, and which guards the replay's removal
+// of that data, the link logging it
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1712-L1731 and
 // https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1806-L1810 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1853-L1872 and
@@ -103,7 +104,11 @@ func (s *Store) writeDeleteMarker(ctx context.Context, rec *op.BucketRecord, key
 		Cond:         s.deleteMarkerCondition(p, current),
 	}
 	if suspended && p.Expect != nil {
-		link.ExpectTag, link.SkipUpdate = expectTag(p.Expect), false
+		tag, err := s.nullMarkerExpect(ctx, rec, key, p.Expect)
+		if err != nil {
+			return nil, err
+		}
+		link.ExpectTag, link.SkipUpdate = tag, false
 	}
 	err := s.setOLH(ctx, rec, marker, link)
 	switch {
@@ -113,6 +118,29 @@ func (s *Store) writeDeleteMarker(ctx context.Context, rec *op.BucketRecord, key
 		return nil, s.refusedRemoval(ctx, rec, key, err, s.relistNull)
 	}
 	return nil, err
+}
+
+// nullMarkerExpect is the write tag a suspended bucket's null delete marker
+// expects of key's head, e being the null version as its caller read it:
+// e's own when e holds data, which is the OLH head's. A null version that
+// holds no data, one that does not exist or a delete marker, is read off an
+// OLH head without a manifest (headState), whose write tag, which the
+// head's first OLH init gave it, e does not carry. The head is read again
+// here: one that has gained null data since, a manifest or no OLH, is
+// ConcurrentModification with nothing written, and one that has not is
+// expected as read, so null data written after this read refuses the link.
+func (s *Store) nullMarkerExpect(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, e *op.ObjectState) ([]byte, error) {
+	if e.Exists {
+		return expectTag(e), nil
+	}
+	head, err := s.readOLHHead(ctx, rec, key)
+	if err != nil {
+		return nil, fmt.Errorf("reading the head of %s: %w", versionName(rec, key), err)
+	}
+	if _, olh := head.Attrs[meta.AttrOLHVer]; head.Exists && (!olh || head.Manifest != nil) {
+		return nil, fmt.Errorf("%w: %s holds null data written since its null version was read", op.ErrConcurrentModification, versionName(rec, key))
+	}
+	return expectTag(head), nil
 }
 
 // nullAsEmpty is instance with null, the null version's name in a request,
@@ -300,12 +328,20 @@ func (s *Store) removeVersion(ctx context.Context, rec *op.BucketRecord, key met
 //     replaced it before the unlink refuses it; were the class to unlink a
 //     null write's data in the marker's place, read in read_key_entry's
 //     order, the replay would refuse that removal.
+//   - An e that found no version takes a marker too, as a marker holds no
+//     lock: StatObject answers one whose list entry an older-epoch unlink
+//     took as no version (namedVersion), and radosgw's unlink removes its
+//     instance entry
+//     (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5905-L5953 at v19.2.7,
+//     https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6517-L6565 at v20.2.4).
 //   - Any other version must be one e names as data, and its head, the key's
 //     OLH head for the null version, must carry e's write tag (expectTag),
 //     which then guards the removal.
 func (s *Store) expectRemoval(ctx context.Context, rec *op.BucketRecord, v meta.ObjKey, en rgw.DirEntry, e *op.ObjectState) ([]byte, error) {
 	marker := en.Flags&rgw.FlagDeleteMarker != 0
 	switch {
+	case marker && !e.Exists && !e.DeleteMarker:
+		return markerRemovalTag, nil
 	case marker != e.DeleteMarker:
 		return nil, fmt.Errorf("%w: the version is not the one expected, one a delete marker and the other not", op.ErrConcurrentModification)
 	case marker && (en.VersionedEpoch != e.VersionedEpoch || !en.Meta.Mtime.Equal(e.Mtime)):

@@ -369,13 +369,14 @@ var _ = Describe("DeleteObject", func() {
 			Entry("a missing version, radosgw's 204 with neither header", nil, op.ErrNoSuchKey, "", false),
 			Entry("a lost race, radosgw's 204 with neither header", nil, op.ErrConcurrentModification, "", false),
 		)
-		DescribeTable("answers 501 on a bucket with object lock, a delete marker's included, before the store",
+		DescribeTable("serves a bucket with object lock, a delete marker's included",
 			func(ctx SpecContext, instance string) {
 				f.setBucketFlags(ctx, meta.BucketVersioned|meta.BucketObjLockEnabled)
+				stub.StatObjectReturns(&op.ObjectState{Exists: true}, nil)
 				r := f.req(http.MethodDelete, "plain", "small")
 				r.Object.Instance = instance
-				Expect(op.Run(ctx, &op.DeleteObject{}, r)).To(MatchError(op.ErrNotImplemented))
-				Expect(stub.DeleteObjectCallCount()).To(BeZero())
+				Expect(op.Run(ctx, &op.DeleteObject{}, r)).To(Succeed())
+				Expect(stub.DeleteObjectCallCount()).To(Equal(1))
 			},
 			Entry("no version", ""),
 			Entry("a version", "v1"),
