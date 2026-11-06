@@ -954,11 +954,15 @@ flowchart LR
   t_T_4["T-4"]
   t_T_gate["T-gate"]
   t_T_5["T-5"]
+  t_T_6["T-6"]
   t_V7a["V7a"]:::ext
   t_V11["V11"]:::ext
   t_WP_7["WP-7"]:::ext
   t_WP_8["WP-8"]:::ext
   t_WP_10["WP-10"]:::ext
+  t_BC_8["BC-8"]:::ext
+  t_L4["L4"]:::ext
+  t_V12a["V12a"]:::ext
   t_WP_22 --> t_WP_23
   t_WP_23 --> t_T_1
   t_WP_22 --> t_T_2
@@ -971,6 +975,10 @@ flowchart LR
   t_WP_8 --> t_T_4
   t_WP_10 --> t_T_4
   t_T_2 --> t_T_4
+  t_BC_8 --> t_T_6
+  t_WP_7 --> t_T_6
+  t_L4 --> t_T_6
+  t_V12a --> t_T_6
   click t_WP_22 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/T-gate-tooling.md#task-wp-22-the-s3-tests-selection-in-go" "WP-22: the s3-tests selection in Go"
   click t_WP_23 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/T-gate-tooling.md#task-wp-23-the-include-list" "WP-23: the include list"
   click t_T_1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/T-gate-tooling.md#task-t-1-the-per-pr-and-gate-sets" "T-1: the per-PR and gate sets"
@@ -979,11 +987,15 @@ flowchart LR
   click t_T_4 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/T-gate-tooling.md#task-t-4-benchmark-profiles-for-the-phase-2-paths" "T-4: benchmark profiles for the phase 2 paths"
   click t_T_gate href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/T-gate-tooling.md#task-t-gate-the-phase-2-gate" "T-gate: the phase 2 gate"
   click t_T_5 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/T-gate-tooling.md#task-t-5-s3-tests-_has_target_object_key_format-reports-what-it-probes" "T-5: s3-tests, `_has_target_object_key_format` reports what it probes"
+  click t_T_6 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/T-gate-tooling.md#task-t-6-the-combined-s3-tests-pin-bump" "T-6: the combined s3-tests pin bump"
   click t_V7a href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v7a-driver-versioned-putobject" "V7a: driver, versioned PutObject"
   click t_V11 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v11-op-and-s3-versioned-writes" "V11: op and s3, versioned writes"
   click t_WP_7 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-7-checksum-headers-on-writes" "WP-7: checksum headers on writes"
   click t_WP_8 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-8-put-and-part-checksums" "WP-8: PUT and part checksums"
   click t_WP_10 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-10-compression-on-put-and-parts" "WP-10: compression on PUT and parts"
+  click t_BC_8 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-8-cors-recording-and-gate" "BC-8: CORS recording and gate"
+  click t_L4 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l4-delete-enforcement" "L4: delete enforcement"
+  click t_V12a href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v12a-op-and-s3-versioned-deleteobject-and-deleteobjects" "V12a: op and s3, versioned DeleteObject and DeleteObjects"
   classDef ext stroke-dasharray: 5 4
 ```
 
@@ -995,6 +1007,7 @@ flowchart LR
 - [T-4](T-gate-tooling.md#task-t-4-benchmark-profiles-for-the-phase-2-paths): benchmark profiles for the phase 2 paths
 - [T-gate](T-gate-tooling.md#task-t-gate-the-phase-2-gate): the phase 2 gate
 - [T-5](T-gate-tooling.md#task-t-5-s3-tests-_has_target_object_key_format-reports-what-it-probes): s3-tests, `_has_target_object_key_format` reports what it probes
+- [T-6](T-gate-tooling.md#task-t-6-the-combined-s3-tests-pin-bump): the combined s3-tests pin bump
 
 ### CL: citation links
 
