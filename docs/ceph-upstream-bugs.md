@@ -7189,8 +7189,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** unaffected: each listed part's checksum is the one the head
   of that part, which it stats, carries, and a part whose head has none, or
   one rgw-go cannot read, shows none (`listParts`,
-  `internal/op/objectread.go`). Its S3 handler renders no part checksum yet
-  (`docs/differences.md`, "Stored checksums are not shown").
+  `internal/op/objectread.go`; `partChecksum`, `internal/s3/checksum.go`).
 - **Upstream:** pending: rgw-bug-reproduction classified it on 2026-10-05
   and has not reported a prior-art result.
 - **Found:** review of phase 1 unit R, Task 6, 2026-10-04; derived from the
@@ -16811,11 +16810,17 @@ Every new entry adds its row to this table, in document order.
   full-object CRC it carries a suffix and the wrong type.
 - **Releases:** v20.2.4 and main 8aa24c51928. v19.2.7 has no checksum
   code.
-- **rgw-go:** differs. `cksum.NewCombiner` stores every full-object CRC with
-  flags V2, COMBINED and FULL_OBJECT, a one-part upload's included, which a
-  Tentacle radosgw renders as the bare CRC with FULL_OBJECT
-  (`internal/cksum/combine.go`; `docs/differences.md`, "A multipart upload's
-  combined CRC follows its checksum type").
+- **rgw-go:** differs on writes. `cksum.NewCombiner` stores every
+  full-object CRC with flags V2, COMBINED and FULL_OBJECT, a one-part
+  upload's included, which a Tentacle radosgw renders as the bare CRC with
+  FULL_OBJECT (`internal/cksum/combine.go`; `docs/differences.md`, "A
+  multipart upload's combined CRC follows its checksum type"). Its reads
+  show a record a radosgw stored this way as radosgw does: a checksum-mode
+  GET or HEAD, and GetObjectAttributes' Checksum, type it by
+  `get_checksum_type`'s rule and send `<crc>-1` with COMPOSITE
+  (`objectReadChecksum`, `internal/op/getobject.go`; `cksum.Cksum.ObjectType`,
+  `internal/cksum/record.go`), since the record alone does not say it is
+  not a composite.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** the phase 2 write-path research, 2026-10-13
   (`docs/superpowers/plans/2026-10-13-phase-2/research/research-writepath.md`,
@@ -23136,13 +23141,17 @@ Every new entry adds its row to this table, in document order.
   SDK checks on GET refuses the intact object, and a composite claims
   parts it did not combine.
 - **Releases:** v20.2.4 and main 8aa24c51928. v19.2.7 has no checksum code.
-- **rgw-go:** differs. Its completion combines exactly the parts the
-  request names, in number order, from the part records its assembly
+- **rgw-go:** differs on writes. Its completion combines exactly the parts
+  the request names, in number order, from the part records its assembly
   matched to them, once every named part has matched, so it answers a part
   fault before a checksum fault (`combineChecksums`,
   `internal/driver/mp_cksum.go`; `docs/differences.md`,
   "CompleteMultipartUpload combines the parts it completes and compares the
-  whole supplied checksum").
+  whole supplied checksum"). Its reads show the checksum a radosgw stored
+  under the race as radosgw does, a checksum-mode GET or HEAD and
+  GetObjectAttributes' Checksum sending the record as stored
+  (`objectReadChecksum`, `internal/op/getobject.go`): the value cannot be
+  told wrong without reading the data again.
 - **Upstream:** pending; prior art not searched.
 - **Found:** the phase 2 write-path research, 2026-10-13
   (`docs/superpowers/plans/2026-10-13-phase-2/research/research-writepath.md`,
@@ -23405,8 +23414,7 @@ Every new entry adds its row to this table, in document order.
   (`internal/driver/lc_transition_test.go`) pins. rgw-go's reads show
   no composite on an object without parts (`objectReadChecksum`,
   `internal/op/getobject.go`; `docs/differences.md`, "A composite checksum
-  on an object without parts is not shown"), though its S3 handler renders
-  no stored checksum yet ("Stored checksums are not shown").
+  on an object without parts is not shown").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task WP-11's review, 2026-10-20, from the exclusion
   WP-11 wrote for rgw-go's drop; derived from the source, not reproduced.
@@ -24459,8 +24467,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: a `partNumber` read shows its part head's record as
   main does at 8aa24c51928 (`partReadChecksum`, `internal/op/getobject.go`;
   `docs/differences.md`, "A partNumber read shows its part's checksum
-  bare"). Its S3 handler renders no stored checksum yet ("Stored checksums
-  are not shown").
+  bare").
 - **Upstream:** fixed before we met it, by 9b43590e12e on main through
   [ceph/ceph#66042](https://github.com/ceph/ceph/pull/66042) (merge
   590ef383142, 2025-12-04), first tagged in v21.0.0, which `git tag
@@ -24508,10 +24515,13 @@ Every new entry adds its row to this table, in document order.
   sent to CreateMultipartUpload.
 - **Releases:** v20.2.4 and main 8aa24c51928. v19.2.7 has no checksum code.
 - **rgw-go:** differs: ListParts reports both from the upload's
-  `multipart_upload_info`, for a type AWS defines (`ListParts`,
-  `internal/op/listparts.go`; `docs/differences.md`, "ListParts reports its
-  upload's checksum algorithm and type"). Its S3 handler renders neither
-  yet ("Stored checksums are not shown").
+  `multipart_upload_info`, for a type AWS defines, `ChecksumType` after
+  `ChecksumAlgorithm` (`ListParts`, `internal/op/listparts.go`;
+  `listPartsChecksum`, `internal/s3/checksum.go`; `docs/differences.md`,
+  "ListParts reports its upload's checksum algorithm and type"), an
+  encrypted upload's only to a requester who could read its data
+  ("ListParts shows an encrypted upload's checksums only to a requester
+  who could read its data").
 - **Upstream:** pending; prior art not searched.
 - **Found:** the phase 2 write-path research, 2026-10-13
   (`docs/superpowers/plans/2026-10-13-phase-2/research/research-writepath.md`,
@@ -32331,8 +32341,13 @@ Every new entry adds its row to this table, in document order.
   XXHASH3 ("A checksum algorithm rgw-go does not compute is refused at
   write"), but answers a completion retried after a Tentacle radosgw
   completed an xxh3 upload with `ChecksumXXHASH3` (`completeChecksum`,
-  `internal/s3/checksum.go`), and its S3 handler renders no stored
-  checksum on a read yet ("Stored checksums are not shown").
+  `internal/s3/checksum.go`). A checksum-mode GET or HEAD sends a SHA512
+  record as `x-amz-checksum-sha512` and an xxh3 record as
+  `x-amz-checksum-xxhash3`, and GetObjectAttributes names the xxh3
+  record's elements `ChecksumXXHASH3` (`setReadChecksum`,
+  `objectAttrsChecksum` and `partChecksum`, `internal/s3/checksum.go`;
+  `docs/differences.md`, "Reads show a SHA512 or XXHASH3 checksum under
+  AWS's names").
 - **Upstream:** fixed on main by
   [ceph/ceph#71484](https://github.com/ceph/ceph/pull/71484) (ee6894210c6),
   first tagged in the development tag v22.0.0; no tracker issue
@@ -32340,7 +32355,8 @@ Every new entry adds its row to this table, in document order.
 - **Found:** the phase 2 write-path plan's naming decision WD-8, 2026-10-13
   (`docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md`); recorded
   by phase 2 task WP-7, 2026-10-28, which traced the write responses.
-  Derived from the source, not reproduced.
+  Phase 2 task WP-13 added rgw-go's read names, 2026-11-10. Derived from
+  the source, not reproduced.
 
 ## radosgw's UploadPartCopy answers the copied part's checksum in headers, not in CopyPartResult
 

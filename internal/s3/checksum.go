@@ -1,6 +1,7 @@
 package s3
 
 import (
+	"encoding/base64"
 	"encoding/xml"
 	"net/http"
 	"strconv"
@@ -118,4 +119,111 @@ func completeChecksum(r *op.Request, c *cksum.Cksum, parts int) (*checksumElemen
 		value += "-" + strconv.Itoa(parts)
 	}
 	return &checksumElement{name: c.Type.Info().Element, value: xmltext.Text(value)}, xmltext.Text(c.ObjectType(true))
+}
+
+// elementText is e as XMLFormatter's dump_string writes it, its value
+// escaped
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/common/Formatter.cc#L536-L543 at v20.2.4);
+// "" for nil.
+func elementText(e *checksumElement) string {
+	if e == nil {
+		return ""
+	}
+	return "<" + e.name + ">" + xmltext.Escape(string(e.value)) + "</" + e.name + ">"
+}
+
+// setReadChecksum is the stored checksum a GET or HEAD reports, c
+// (op.GetObject.Checksum), as send_response_data sends it after the ETag
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L551-L586 at v20.2.4):
+// the value under its type's header, then x-amz-checksum-type; nothing for
+// nil. Unlike a write's, a read's header has no AWS check, so a type AWS does
+// not define goes out under x-rgw-checksum-<alg>. rgw-go names SHA512 and
+// XXHASH3 as AWS does, x-amz-checksum-sha512 and x-amz-checksum-xxhash3,
+// where a v20.2.4 radosgw sends x-rgw-checksum-sha512 and
+// x-rgw-checksum-xxh3 (docs/differences.md, "Reads show a SHA512 or
+// XXHASH3 checksum under AWS's names").
+func setReadChecksum(h http.Header, c *op.ReadChecksum) {
+	if !renderable(c) {
+		return
+	}
+	addHeader(h, c.Type.Info().Header, c.Value)
+	addHeader(h, "x-amz-checksum-type", c.ChecksumType)
+}
+
+// objectAttrsChecksum is GetObjectAttributes' Checksum section for c
+// (op.GetObjectAttributes' Checksum), as send_response renders it
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4029-L4057 at v20.2.4):
+// Checksum<ALG> and ChecksumType; the section empty for nil, as radosgw
+// leaves it for an object without a record or with one that does not
+// decode.
+func objectAttrsChecksum(c *op.ReadChecksum) string {
+	if !renderable(c) {
+		return "<Checksum></Checksum>"
+	}
+	e := &checksumElement{name: c.Type.Info().Element, value: xmltext.Text(c.Value)}
+	return "<Checksum>" + elementText(e) + "<ChecksumType>" + xmltext.Escape(c.ChecksumType) + "</ChecksumType></Checksum>"
+}
+
+// partChecksum is a listed part's checksum as its Checksum<ALG> element, the
+// armor bare, as an ObjectParts part's element_name and to_armor render it
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4091-L4094 at v20.2.4)
+// and a ListParts part's part_cksum
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4709-L4713 at v20.2.4);
+// nil for none, for a record of type none, which holds no digest, and for
+// one cksum.Cksum.Valid refuses. ListParts' AWS check is op.ListParts'.
+func partChecksum(c *cksum.Cksum) *checksumElement {
+	if c == nil || c.Type == cksum.None || c.Valid() != nil {
+		return nil
+	}
+	return &checksumElement{name: c.Type.Info().Element, value: xmltext.Text(c.Armor())}
+}
+
+// listPartsChecksum is ListPartsResult's ChecksumAlgorithm, the upload's
+// type upper-cased, and its ChecksumType, both from the upload
+// (op.ListParts); neither for an upload without a type. radosgw renders no
+// ChecksumType, and its ChecksumAlgorithm is the type_string of a cksum read
+// from an attr nothing writes
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4695-L4698 at v20.2.4;
+// docs/differences.md, "ListParts reports its upload's checksum algorithm
+// and type").
+func listPartsChecksum(o *op.ListParts) (algorithm, typ xmltext.Text) {
+	name := o.ChecksumAlgorithm.Info().Name
+	if o.ChecksumAlgorithm == cksum.None || name == "" {
+		return "", ""
+	}
+	return xmltext.Text(strings.ToUpper(name)), xmltext.Text(o.ChecksumType)
+}
+
+// renderable reports whether c is a checksum a read may render: a type with
+// a digest, a ChecksumType of FULL_OBJECT or COMPOSITE, and a value that is
+// the canonical base64 of exactly the type's digest size, with nothing
+// after it but "-" and a part count. The op builds every one from a record
+// cksum.DecodeAttr accepted, which this refuses none of; the check keeps
+// whatever reaches the handler from putting any other byte, a CR, LF or NUL
+// among them, into a header or a document. The decoder alone would not:
+// encoding/base64 skips CR and LF.
+func renderable(c *op.ReadChecksum) bool {
+	if c == nil || c.ChecksumType != cksum.FullObjectType && c.ChecksumType != cksum.CompositeType {
+		return false
+	}
+	size := c.Type.Info().DigestSize
+	armor, parts, counted := strings.Cut(c.Value, "-")
+	if size == 0 || counted && !decimalDigits(parts) {
+		return false
+	}
+	d, err := base64.StdEncoding.DecodeString(armor)
+	return err == nil && len(d) == size && base64.StdEncoding.EncodeToString(d) == armor
+}
+
+// decimalDigits reports whether s is one or more ASCII digits.
+func decimalDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := range len(s) {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }

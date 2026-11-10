@@ -75,10 +75,10 @@ func objectAttrsInput(r *op.Request, o *op.GetObjectAttributes) error {
 // objectAttrsDocument is send_response's GetObjectAttributes section
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4017-L4133),
 // with no namespace: the requested attributes in its order. The ETag is the
-// stored attr, unquoted; the Checksum is empty, rgw-go storing none
-// (docs/differences.md); ObjectParts appears for a multipart object only.
-// Every string goes through the formatter's escaping and every number is
-// written bare.
+// stored attr, unquoted; the Checksum and each part's checksum are the
+// op's (objectAttrsChecksum, partChecksum); ObjectParts appears for a
+// multipart object only. Every string goes through the formatter's escaping
+// and every number is written bare.
 func objectAttrsDocument(o *op.GetObjectAttributes) string {
 	var b strings.Builder
 	b.WriteString("<GetObjectAttributes>")
@@ -87,7 +87,7 @@ func objectAttrsDocument(o *op.GetObjectAttributes) string {
 		element(&b, "ETag", xmltext.Escape(string(attrs[meta.AttrETag])))
 	}
 	if o.Requested&op.AttrChecksum != 0 {
-		b.WriteString("<Checksum></Checksum>")
+		b.WriteString(objectAttrsChecksum(o.Checksum))
 	}
 	if o.Requested&op.AttrObjectParts != 0 && o.PartsCount != nil {
 		b.WriteString("<ObjectParts>")
@@ -95,6 +95,7 @@ func objectAttrsDocument(o *op.GetObjectAttributes) string {
 			b.WriteString("<Part>")
 			element(&b, "PartNumber", strconv.Itoa(p.Number))
 			element(&b, "Size", strconv.FormatUint(p.Size, 10))
+			b.WriteString(elementText(partChecksum(p.Checksum)))
 			b.WriteString("</Part>")
 		}
 		element(&b, "PartsCount", strconv.Itoa(*o.PartsCount))

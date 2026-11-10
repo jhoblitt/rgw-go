@@ -2350,14 +2350,15 @@ review and verified against the tree.
   (`driver/rados/rgw_obj_manifest.h:303-318` at both tags), differs:
   CompleteMultipartUpload answers 400 InvalidPart for an upload holding
   such a part, which radosgw completes, and leaves the upload in place.
-- **ListParts lists the parts of an upload whose checksum does not decode,
-  and shows no part's checksum.** Tentacle's ListParts decodes the upload's
-  `user.rgw.cksum` and answers 500 UnknownError, -EIO, when it does not
-  decode (`rgw_op.cc:7617-7630` at v20.2.4); rgw-go reads no checksum there
-  and lists the parts. Tentacle's ListParts also renders each part's
-  checksum of an AWS type from its part record as a `<Checksum*>` element
-  ([rgw_rest_s3.cc:4709-4713](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4709-L4713)),
-  which rgw-go does not.
+- **ListParts lists the parts of an upload whose checksum does not
+  decode.** Tentacle's ListParts decodes the upload's `user.rgw.cksum` and
+  answers 500 UnknownError, -EIO, when it does not decode
+  (`rgw_op.cc:7617-7630` at v20.2.4); rgw-go reads no checksum there and
+  lists the parts. Each part's checksum of an AWS type is rendered from its
+  part record as a `<Checksum*>` element, as Tentacle's `part_cksum`
+  check renders it
+  ([rgw_rest_s3.cc:4709-4713](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4709-L4713);
+  "ListParts reports its upload's checksum algorithm and type").
 - **Members of IAM groups are refused until phase 3 evaluates group
   policies.** radosgw loads, with a user's own identity policies, the
   inline and managed policies of every IAM group the user's record lists
@@ -7646,20 +7647,6 @@ does the following.
   alone, so where that attr is later, it answers 304 Not Modified where
   Tentacle serves the object, and serves it where Tentacle answers 412
   PreconditionFailed. Squid has no such attr.
-- **Stored checksums are not shown.** A Tentacle radosgw answers a GET or
-  HEAD carrying `x-amz-checksum-mode: enabled`, without a Range, with the
-  checksum stored in `user.rgw.cksum` as an `x-amz-checksum-<algorithm>`
-  header and `x-amz-checksum-type` (`rgw_rest_s3.cc:314-318` and
-  `:548-586` at v20.2.4), and fills GetObjectAttributes' `Checksum`, and
-  each listed part's checksum, from the stored ones (`:4029-4057`,
-  `:4091-4094`). rgw-go's op layer picks the checksum each of those reads
-  reports, and ListParts' `ChecksumAlgorithm`, `ChecksumType` and part
-  checksums, by the rules the entries from "A partNumber read shows its
-  part's checksum bare" to "An empty Range leaves checksum mode on", below,
-  describe. Its S3 handler does not render them yet: rgw-go sends neither
-  header, an empty `<Checksum></Checksum>` and no checksum element in
-  ListParts, so it hides a checksum a Tentacle radosgw shows. Squid's
-  radosgw shows none.
 - **No x-amz-expiration.** radosgw computes `x-amz-expiration` for a GET
   or HEAD from the bucket's lifecycle rules (`get_s3_expiration_header`,
   `rgw_rest_s3.cc:112-118`, `:389` and `:462` at v19.2.6; `:117-123`,
@@ -7966,7 +7953,10 @@ does the following.
   answers the original error's HTML page when that read fails before its
   response starts, as radosgw does for a failure before the read's
   execute, such as a missing or private document
-  (`websiteGet.serveErrorDoc`, `internal/s3/website_serve.go`).
+  (`websiteGet.serveErrorDoc`, `internal/s3/website_serve.go`). It keeps
+  the request's checksum mode, as Tentacle's `get_params` does, so under
+  checksum mode the whole document carries its stored checksum, which
+  Tentacle's radosgw leaves out when the request also carries a Range.
 - **A website HEAD's error document has no body.** radosgw reads a
   bucket's error document for a website HEAD as for a GET, with its data,
   and sends that data after the HEAD's header, past the response's end
@@ -8004,10 +7994,9 @@ does the following.
   success](ceph-upstream-bugs.md#radosgw-logs-a-served-error-document-as-a-200-success)").
   rgw-go logs the status it sent, so a 404's entry counts no successful op
   and takes the bucket name `-` (`op.LogUsage`, `internal/op/usagelog.go`).
-- **A partNumber read shows its part's checksum bare.** In the op layer,
-  which the S3 handler does not render yet ("Stored checksums are not
-  shown"), a checksum-mode GET or HEAD with `partNumber` reports the part
-  head's own `user.rgw.cksum` as its armor alone, with
+- **A partNumber read shows its part's checksum bare.** A checksum-mode
+  GET or HEAD with `partNumber` reports the part head's own
+  `user.rgw.cksum` as its armor alone, with
   `x-amz-checksum-type` COMPOSITE only when the record's flags say
   COMPOSITE, as main does at 8aa24c51928
   ([rgw_rest_s3.cc:569-608](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L569-L608),
@@ -8025,11 +8014,10 @@ does the following.
   an object without parts, which both gateways serve as the whole object,
   follows the whole object's rules, where main types its record by its
   flags.
-- **A composite checksum on an object without parts is not shown.** In the
-  op layer, which the S3 handler does not render yet ("Stored checksums are
-  not shown"), a checksum-mode GET or HEAD, and GetObjectAttributes'
-  `Checksum`, of an object without parts whose record is flagged COMPOSITE
-  and COMBINED report none. A Tentacle radosgw reports such a record's
+- **A composite checksum on an object without parts is not shown.** A
+  checksum-mode GET or HEAD, and GetObjectAttributes' `Checksum`, of an
+  object without parts whose record is flagged COMPOSITE and COMBINED
+  report none. A Tentacle radosgw reports such a record's
   armor as the object's FULL_OBJECT checksum
   ([rgw_rest_s3.cc:551-578](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L551-L578),
   [rgw_rest_s3.cc:4029-4050](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4029-L4050),
@@ -8041,13 +8029,13 @@ does the following.
   checksum](ceph-upstream-bugs.md#radosgw-carries-a-composite-checksum-to-a-copy-without-parts-which-tentacle-reports-as-its-full_object-checksum)");
   a copy through rgw-go that streams drops it ("A copy that streams its
   data drops a composite checksum").
-- **ListParts reports its upload's checksum algorithm and type.** In the op
-  layer, which the S3 handler does not render yet ("Stored checksums are
-  not shown"), ListParts reports `ChecksumAlgorithm`, the upload's checksum
-  type, and `ChecksumType`, FULL_OBJECT for a CRC upload whose flags do not
+- **ListParts reports its upload's checksum algorithm and type.** ListParts
+  reports `ChecksumAlgorithm`, the upload's checksum type upper-cased, and
+  after it `ChecksumType`, FULL_OBJECT for a CRC upload whose flags do not
   say COMPOSITE and COMPOSITE for any other, as its completion combines
   the parts, both from the upload's `multipart_upload_info` and only for a
-  type AWS defines, under AWS's names, so SHA512 and XXHASH3 too. A
+  type AWS defines, under AWS's names, so SHA512 and XXHASH3 too
+  (`listPartsChecksum`, `internal/s3/checksum.go`). A
   Tentacle radosgw takes `ChecksumAlgorithm` from the meta object's
   `user.rgw.cksum`, which nothing writes, so it reports it for no upload,
   and it renders no `ChecksumType`
@@ -8065,15 +8053,53 @@ does the following.
   A Squid upload has no checksum type and its part records hold no
   checksum ("Squid clusters get single-object and part checksums, not an
   upload's"), so ListParts on Squid reports neither, as Squid's radosgw
-  does.
-- **Squid clusters show the checksums they store.** In the op layer, which
-  the S3 handler does not render yet ("Stored checksums are not shown"),
-  the read rules of these entries apply on Squid as on Tentacle: a
-  checksum-mode GET or HEAD, and GetObjectAttributes, which rgw-go serves
-  on Squid too, show the `user.rgw.cksum` rgw-go stores there, a single
-  object's or a part head's ("Squid clusters get single-object and part
-  checksums, not an upload's"), and GetObjectAttributes lists each part's.
-  Squid's radosgw has no checksum code and shows none. No Squid completion
+  does. An encrypted upload's checksums are shown only as the next entry
+  says.
+- **ListParts shows an encrypted upload's checksums only to a requester who
+  could read its data.** A part's checksum, like the upload's combined one,
+  is computed over the plaintext, ahead of encryption
+  ([rgw_op.cc:4564-4616](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4564-L4616)),
+  and CreateMultipartUpload keeps the upload's encryption mode on its meta
+  object
+  ([rgw_op.cc:6986-6987](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6986-L6987)).
+  rgw-go's ListParts of an upload whose mode is SSE-C renders
+  `ChecksumAlgorithm`, `ChecksumType` and the part checksums only when the
+  request's `x-amz-server-side-encryption-customer-algorithm`, `-key` and
+  `-key-MD5` name AES256 and a 32-byte key whose MD5 is both the header's
+  and the upload's, and, under `rgw_crypt_require_ssl`, true by default,
+  only over a secure transport, as a GET of the data needs on either
+  gateway
+  ([rgw_crypt.cc:1333-1338](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1333-L1338);
+  `prepareDecrypt`, `internal/op/getobject.go`); of an SSE-KMS upload, or
+  one of a mode rgw-go does not know, it renders none; and of an upload
+  without encryption, or under
+  SSE-S3 or RGW-AUTO, whose key no requester holds, it renders them as
+  before (`ListParts.checksumsShown`, `internal/op/listparts.go`). The
+  listing itself is answered either way. Amazon S3's model takes the three
+  SSE-C headers on ListParts, "needed only when the object was created
+  using a checksum algorithm", and needs `kms:Decrypt` for an SSE-KMS
+  upload (aws-sdk-go-v2 `service/s3` v1.114.6, `ListParts` and
+  `ListPartsInput`), which rgw-go, with no key server, cannot evaluate. What
+  Amazon S3 answers when the SSE-C headers are missing or wrong is
+  unverified. A Tentacle radosgw reads no SSE header for ListParts and
+  renders every part's checksum of an AWS type to any requester its
+  `s3:ListMultipartUploadParts` check admits
+  ([rgw_rest.cc:1602-1627](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1602-L1627),
+  [rgw_op.cc:7576-7633](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7576-L7633),
+  [rgw_rest_s3.cc:4709-4713](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4709-L4713)).
+  rgw-go encrypts no write: it answers one that asks for encryption 501
+  ("Writes that ask for encryption answer 501, SSE-S3 and SSE-KMS until
+  phase 2 and SSE-C until phase 4"), so only an upload a radosgw began can
+  be encrypted. Squid's radosgw stores no checksum in a part record, so
+  the rule changes nothing on Squid.
+- **Squid clusters show the checksums they store.** The read rules of these
+  entries apply on Squid as on Tentacle: rgw-go reads
+  `x-amz-checksum-mode` on Squid too, and a checksum-mode GET or HEAD, and
+  GetObjectAttributes, which rgw-go serves on Squid too, show the
+  `user.rgw.cksum` rgw-go stores there, a single object's or a part
+  head's ("Squid clusters get single-object and part checksums, not an
+  upload's"), and GetObjectAttributes lists each part's. Squid's radosgw
+  has no checksum code and shows none. No Squid completion
   combines a checksum, so a whole multipart object shows none there.
 - **A stored checksum rgw-go cannot read whole is not shown.** rgw-go's
   stores read a `user.rgw.cksum` with bytes past its record as no
@@ -8098,21 +8124,60 @@ does the following.
   `ChecksumNONE` element, neither holding a digest, where ObjectParts
   skips one
   ([rgw_rest_s3.cc:4091-4094](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4091-L4094)).
+  rgw-go also shows none for a record whose type has no id, or whose
+  digest's length is not its type's, both of which `Cksum::decode` takes
+  unchecked
+  ([rgw_cksum.h:268-281](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L268-L281)).
+  For the first a Tentacle radosgw's release build aborts at its type
+  table, and for the second its `to_armor` shows the type's digest size of
+  its 64-byte buffer, a longer digest's first bytes or a shorter one's
+  followed by stack bytes
+  ([rgw_cksum.h:199-207](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L199-L207);
+  `docs/ceph-upstream-bugs.md`, "[radosgw's checksum decode overruns its
+  digest buffer and its type
+  table](ceph-upstream-bugs.md#radosgws-checksum-decode-overruns-its-digest-buffer-and-its-type-table)").
   A copy that streams its data drops an attr with bytes past its record,
   as it drops any attr it cannot read, where radosgw carries it ("A copy
   that streams its data drops a composite checksum").
 - **An empty Range leaves checksum mode on.** rgw-go takes a `Range` header
   sent with an empty value for no Range ("An empty header reads as no
-  header", above), so in the op layer, which the S3 handler does not
-  render yet ("Stored checksums are not shown"), a checksum-mode GET or
-  HEAD carrying one reports the stored checksum. radosgw takes the empty
-  header for a Range, which turns checksum mode off
-  (`RGWGetObj_ObjStore::get_params`, for GET and HEAD alike,
+  header", above), so a checksum-mode GET or HEAD carrying one reports the
+  stored checksum. radosgw takes the empty header for a Range, which turns
+  checksum mode off (`RGWGetObj_ObjStore::get_params`, for GET and HEAD
+  alike,
   [rgw_rest.cc:843](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L843)
   at v19.2.7 and
   [rgw_rest.cc:843](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L843)
   at v20.2.4;
   [rgw_rest_s3.cc:551](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L551)).
+- **Reads show a SHA512 or XXHASH3 checksum under AWS's names.** rgw-go
+  names a stored checksum's type as Amazon S3 does, and as ceph main does
+  at 8aa24c51928 ("Writes answer a SHA512 checksum under AWS's name"):
+  a checksum-mode GET or HEAD sends a SHA512 record as
+  `x-amz-checksum-sha512` and an xxh3 record as `x-amz-checksum-xxhash3`,
+  and GetObjectAttributes renders the xxh3 record's `Checksum` and part
+  elements as `ChecksumXXHASH3` (`setReadChecksum`, `objectAttrsChecksum`
+  and `partChecksum`, `internal/s3/checksum.go`). A v20.2.4 radosgw's
+  `checksums` table gives sha512 and xxh3 no `FLAG_AWS_CKSUM`
+  ([rgw_cksum.h:88-99](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L88-L99)),
+  and its `header_name` is `x-amz-checksum-<name>` only for a type the
+  table counts as AWS's, its `element_name` the table's name upper-cased
+  ([rgw_cksum.h:177-192](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L177-L192)).
+  So a read's `dump_header(s, cksum.header_name(), ...)` sends them as
+  `x-rgw-checksum-sha512` and `x-rgw-checksum-xxh3`
+  ([rgw_rest_s3.cc:551-586](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L551-L586)),
+  and GetObjectAttributes' `element_name` names the xxh3 element
+  `ChecksumXXH3`
+  ([rgw_rest_s3.cc:4029-4057](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4029-L4057),
+  [rgw_rest_s3.cc:4091-4094](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4091-L4094);
+  `docs/ceph-upstream-bugs.md`, "[radosgw answers no SHA512 checksum to a
+  write and names it outside AWS's
+  names](ceph-upstream-bugs.md#radosgw-answers-no-sha512-checksum-to-a-write-and-names-it-outside-awss-names)").
+  A SHA512 record's `ChecksumSHA512` element is the same on both gateways.
+  BLAKE3, which AWS does not define, goes out as `x-rgw-checksum-blake3`
+  and `ChecksumBLAKE3` on both. ListParts' names are "ListParts reports
+  its upload's checksum algorithm and type". Squid's radosgw shows no
+  checksum ("Squid clusters show the checksums they store").
 - **A read that replays a pending modification answers the version current
   after it.** A GET, a HEAD and every other read of a versioned key named
   without a version id follow the key's OLH. radosgw's `follow_olh` runs

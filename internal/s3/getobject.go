@@ -132,8 +132,10 @@ func getObjectFailure(w http.ResponseWriter, o *op.GetObject, err error) error {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L836-L852 at v19.2.6)
 // over r, with the response-* parameters send_response_data reads and the SSE
 // inputs rgw_s3_prepare_decrypt reads. Each header is read by its last value,
-// as RGWEnv keeps it. A partNumber strict_strtol refuses is returned with the
-// op, for the op to answer where radosgw's execute does.
+// as RGWEnv keeps it. x-amz-checksum-mode, which only Tentacle's get_params
+// reads, is read on Squid too (docs/differences.md, "Squid clusters show the
+// checksums they store"). A partNumber strict_strtol refuses is returned with
+// the op, for the op to answer where radosgw's execute does.
 func getObjectInput(r *op.Request) (*op.GetObject, error) {
 	_, sse := op.HeaderValue(r.Header, "x-amz-server-side-encryption")
 	o := &op.GetObject{
@@ -150,6 +152,7 @@ func getObjectInput(r *op.Request) (*op.GetObject, error) {
 		SSECKey:           header(r, "x-amz-server-side-encryption-customer-key"),
 		SSECKeyMD5:        header(r, "x-amz-server-side-encryption-customer-key-MD5"),
 		Secure:            secure(r),
+		ChecksumMode:      header(r, "x-amz-checksum-mode"),
 	}
 	for _, p := range responseAttrParams {
 		if v, ok := arg(r.Query, p.param); ok {
@@ -301,9 +304,10 @@ func (s *getObjectSink) Flush() error { return s.w.Flush() }
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L417-L760)
 // for the op's results, adding them in the order radosgw dumps them: the
 // range, the length, the dates and version, the object type, replication,
-// the parts count, the ETag, Tentacle's restore state, the user metadata and
-// tagging count, then response_attrs, the response-* overrides and the
-// mapped attrs in its std::map's order, and last end_header's content type.
+// the parts count, the ETag, the stored checksum (setReadChecksum),
+// Tentacle's restore state, the user metadata and tagging count, then
+// response_attrs, the response-* overrides and the mapped attrs in its
+// std::map's order, and last end_header's content type.
 // net/http writes the lines sorted by name ("Header lines go out sorted by
 // name", docs/differences.md), so only the values under one name keep
 // radosgw's order. A mapped attr never sets the response's framing headers
@@ -330,6 +334,7 @@ func (s *getObjectSink) headers() http.Header {
 		addHeader(h, "x-amz-mp-parts-count", strconv.Itoa(*o.PartsCount))
 	}
 	setETag(h, st.Attrs)
+	setReadChecksum(h, o.Checksum)
 	attrs := st.Attrs
 	if r.Env.Zone.Release() >= denc.Tentacle {
 		attrs = s.setRestoreHeader(h, attrs)
