@@ -8,7 +8,7 @@
 # hack/rooket/<release>/values/, which .goreleaser.yaml repeats under make
 # release-pins-check, so a build that omits it must fail.
 ARG CEPH_IMAGE
-FROM docker.io/library/golang:1.27.3-bookworm@sha256:d9b6a1beb9474adc2a1ce842573639b44b2a0dd49b6669f51d3821baf9ec37c9 AS go
+FROM docker.io/library/golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS go
 FROM ${CEPH_IMAGE}
 # The Ceph image deletes its ceph repo file after installing (container/Containerfile
 # in ceph.git, "CLEAN UP!"), so librados-devel comes from the release's repo.
@@ -24,4 +24,4 @@ RUN version=$(rpm -q --queryformat '%{VERSION}' librados2) && \
 COPY --from=go /usr/local/go /usr/local/go
 # GOTOOLCHAIN=local fails a build whose go.mod needs a newer Go than this one
 # instead of downloading that toolchain.
-ENV PATH=/usr/local/go/bin:${PATH} GOTOOLCHAIN=local
+ENV PATH=/usr/local/go/bin:${PATH} GOTOOLCHAIN=local CGO_LDFLAGS_ALLOW=-l:libtcmalloc\.so\.4
