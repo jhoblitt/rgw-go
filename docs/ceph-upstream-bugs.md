@@ -510,6 +510,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's DeleteObjects checks s3:BypassGovernanceRetention on the bucket's ARN, not each key's](#radosgws-deleteobjects-checks-s3bypassgovernanceretention-on-the-buckets-arn-not-each-keys) | pending | pending | ✓ |
 | [radosgw's S3 deletes naming no version remove an object under object lock when the bucket's versioning is not enabled](#radosgws-s3-deletes-naming-no-version-remove-an-object-under-object-lock-when-the-buckets-versioning-is-not-enabled) | pending | pending | ✓ |
 | [radosgw's GetObjectAttributes needs s3:GetObject or s3:GetObjectAttributes, not both](#radosgws-getobjectattributes-needs-s3getobject-or-s3getobjectattributes-not-both) | [#72915](https://tracker.ceph.com/issues/72915) | [ceph/ceph#65441](https://github.com/ceph/ceph/pull/65441) |  |
+| [radosgw shows an encrypted upload's plaintext checksums to a requester without its key](#radosgw-shows-an-encrypted-uploads-plaintext-checksums-to-a-requester-without-its-key) | none | none | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -32684,3 +32685,118 @@ Every new entry adds its row to this table, in document order.
   saw GetObjectAttributes now hand checksums to a requester denied
   s3:GetObject; the controller found the prior art in the ceph clone the
   same day. Derived from the source, not reproduced.
+
+## radosgw shows an encrypted upload's plaintext checksums to a requester without its key
+
+- **Kind:** defect, security (possible), low: disclosure of a plaintext
+  checksum. ListParts gives every part's checksum of an SSE-C or SSE-KMS
+  upload to a requester who sends no key, and CompleteMultipartUpload
+  gives an SSE-KMS upload's combined checksum to any requester allowed to
+  complete it over a transport `rgw_crypt_require_ssl` accepts, where
+  Amazon S3 needs the SSE-C key or `kms:Decrypt`. Unreproduced: derived
+  from the source.
+- **Evidence:** paths are under `src/rgw/`, at v20.2.4 unless a link names
+  another tag.
+  - An upload's part checksums, and the combination completion makes of
+    them, are computed over the plaintext: the checksum filter runs ahead
+    of compression and encryption
+    ([rgw_op.cc:4564-4616](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4564-L4616)),
+    and `RGWInitMultipart::execute` keeps the upload's encryption mode on
+    its meta object through `prepare_encryption`
+    ([rgw_op.cc:6986-6988](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6986-L6988)).
+  - ListParts reads no SSE header
+    ([rgw_rest.cc:1602-1627](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1602-L1627)),
+    checks only s3:ListMultipartUploadParts
+    ([rgw_op.cc:7576-7633](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7576-L7633)),
+    and its `send_response` renders each part's `part_cksum` of an AWS
+    type
+    ([rgw_rest_s3.cc:4709-4713](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4709-L4713)),
+    whatever the upload's mode.
+  - CompleteMultipartUpload's `get_params` runs `rgw_s3_prepare_decrypt`
+    over the meta object's attrs
+    ([rgw_rest_s3.cc:4591-4598](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4591-L4598)).
+    For SSE-C that refuses a request without the upload's key, or over an
+    insecure transport under `rgw_crypt_require_ssl`
+    ([rgw_crypt.cc:1333-1421](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1333-L1421)),
+    so an SSE-C upload's combined checksum reaches only a holder of its
+    key. For SSE-KMS it refuses an insecure transport under
+    `rgw_crypt_require_ssl` too
+    ([rgw_crypt.cc:1424-1428](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1424-L1428)),
+    then fetches the key with radosgw's own access to the key server,
+    asking nothing of the requester
+    ([rgw_crypt.cc:1429-1456](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1429-L1456)).
+    `send_response` then echoes the encryption headers that check
+    gathered
+    ([rgw_rest_s3.cc:4610-4611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4610-L4611))
+    and renders the combined checksum
+    ([rgw_rest_s3.cc:4635-4639](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4635-L4639)).
+  - From v20.2.5 the completion asks for the SSE-C key only for an
+    upload created with a checksum, or when SSE-C headers are sent: its
+    `verify_encryption` skips the check for any other SSE-C upload
+    ([rgw_rest_s3.cc:4622-4635](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_rest_s3.cc#L4622-L4635)),
+    from 079205fb001, "rgw: only require sse-c headers to complete a
+    checksummed multipart upload"
+    ([ceph/ceph#71241](https://github.com/ceph/ceph/pull/71241), merged
+    on main as be4927e5fc1, first tagged in v22.0.0), which
+    [ceph/ceph#71842](https://github.com/ceph/ceph/pull/71842) backported
+    to tentacle as c059118ba2c, first tagged in v20.2.5, and
+    [ceph/ceph#71841](https://github.com/ceph/ceph/pull/71841) into
+    v21.1.2. An upload made with a checksum, the case this entry
+    concerns, still needs the key.
+  - Amazon S3's model takes the SSE-C headers on ListParts and on
+    CompleteMultipartUpload, "needed only when the object was created
+    using a checksum algorithm", and needs `kms:Decrypt` for either on an
+    SSE-KMS upload (aws-sdk-go-v2 `service/s3` v1.114.6, `ListParts`,
+    `ListPartsInput`, `CompleteMultipartUpload` and
+    `CompleteMultipartUploadInput`).
+  - v21.1.2 is the same: ListParts renders `part_cksum`
+    ([rgw_rest_s3.cc:4950-4954](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L4950-L4954)),
+    the completion's `verify_encryption` still runs
+    `rgw_s3_prepare_decrypt` for SSE-C with a checksum and for SSE-KMS
+    ([rgw_rest_s3.cc:4831-4844](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L4831-L4844)),
+    and `send_response` renders the combined checksum
+    ([rgw_rest_s3.cc:4877-4882](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_rest_s3.cc#L4877-L4882)).
+  - v19.2.7 renders no checksum: its `rgw_rest_s3.cc` mentions checksums
+    only for the aws-chunked trailer.
+- **Impact:** a requester allowed s3:ListMultipartUploadParts on an SSE-C
+  or SSE-KMS upload made with a checksum, and without the key or
+  `kms:Decrypt`, learns a CRC or digest of each part's plaintext, and one
+  allowed to complete an SSE-KMS upload, over a transport
+  `rgw_crypt_require_ssl` accepts, learns its combined checksum. A
+  checksum confirms a guess at low-entropy data; it does not give the
+  data. The same ListParts already gives each part's ETag, the MD5 of its
+  plaintext.
+- **Releases:** v20.2.4, and still in v20.2.5 and v21.1.2. v19.2.7
+  renders no checksum.
+- **rgw-go:** differs for ListParts: it shows an encrypted upload's
+  checksums only to a requester who could read its data
+  (`ListParts.checksumsShown`, `internal/op/listparts.go`;
+  `docs/differences.md`, "ListParts shows an encrypted upload's checksums
+  only to a requester who could read its data"). Its
+  CompleteMultipartUpload reads neither an SSE header nor the upload's
+  crypt mode, so it completes a radosgw-begun encrypted upload where a
+  v20.2.4 radosgw refuses or fails: an SSE-C upload without its key,
+  which from v20.2.5 radosgw refuses only for an upload made with a
+  checksum, or for SSE-C headers that do not name its key; an SSE-C or
+  SSE-KMS upload over plain HTTP under `rgw_crypt_require_ssl`, the SSE-C
+  one from v20.2.5 only for an upload made with a checksum or a request
+  that sends SSE-C headers; and an SSE-KMS, SSE-S3 or RGW-AUTO upload
+  with no key server or default key to fetch its key from. It echoes
+  none of radosgw's encryption response headers, and it answers an
+  encrypted upload's combined checksum to its requester
+  (`completeChecksum`, `internal/s3/checksum.go`; `docs/differences.md`,
+  "ListParts shows an encrypted upload's checksums only to a requester
+  who could read its data"). Phase 2 plan task WP-26 is to make the
+  completion ask for an SSE-C upload's key as Amazon S3 and a v20.2.5
+  radosgw do, refuse an SSE-KMS, SSE-S3 or RGW-AUTO upload and one of a
+  mode rgw-go does not know, and echo radosgw's encryption headers for a
+  completed SSE-C upload.
+- **Upstream:** none known for the disclosure; related:
+  [ceph/ceph#71241](https://github.com/ceph/ceph/pull/71241),
+  [ceph/ceph#71842](https://github.com/ceph/ceph/pull/71842) and
+  [ceph/ceph#71841](https://github.com/ceph/ceph/pull/71841), whose
+  s3-test `test_multipart_sse_c_checksum_complete` keeps the key required
+  to complete an SSE-C upload made with a checksum.
+- **Found:** phase 2 task WP-13's adversarial review, 2026-11-10, for
+  ListParts, and its re-review the same day for CompleteMultipartUpload.
+  Derived from the source, not reproduced.

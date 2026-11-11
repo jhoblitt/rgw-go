@@ -8091,7 +8091,49 @@ does the following.
   ("Writes that ask for encryption answer 501, SSE-S3 and SSE-KMS until
   phase 2 and SSE-C until phase 4"), so only an upload a radosgw began can
   be encrypted. Squid's radosgw stores no checksum in a part record, so
-  the rule changes nothing on Squid.
+  the rule changes nothing on Squid. rgw-go's CompleteMultipartUpload
+  reads neither an SSE header nor the upload's crypt mode, where a
+  v20.2.4 radosgw's completion runs `rgw_s3_prepare_decrypt` over the
+  upload's attrs
+  ([rgw_rest_s3.cc:4591-4598](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4591-L4598)).
+  It echoes none of the encryption response headers radosgw's completion
+  sends
+  ([rgw_rest_s3.cc:4610-4611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4610-L4611)),
+  and it answers any encrypted upload's combined checksum, as a Tentacle
+  radosgw answers an SSE-KMS upload's to any requester allowed to
+  complete it over a transport `rgw_crypt_require_ssl` accepts
+  (`docs/ceph-upstream-bugs.md`, "[radosgw shows an encrypted upload's
+  plaintext checksums to a requester without its
+  key](ceph-upstream-bugs.md#radosgw-shows-an-encrypted-uploads-plaintext-checksums-to-a-requester-without-its-key)").
+  Phase 2 plan task WP-26 is to make the completion check the upload's
+  crypt mode and the request's SSE-C headers: ask for an SSE-C upload's
+  key as Amazon S3 and a v20.2.5 radosgw do; refuse an SSE-KMS, SSE-S3
+  or RGW-AUTO upload, as a radosgw without a key server refuses or fails
+  one, and an upload of a mode rgw-go does not know; and echo radosgw's
+  encryption headers for a completed SSE-C upload. Until then rgw-go
+  completes a radosgw-begun encrypted upload that a v20.2.4 radosgw
+  refuses or fails:
+  - an SSE-C upload without its key
+    ([rgw_crypt.cc:1333-1421](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1333-L1421)),
+    which from v20.2.5, through
+    [ceph/ceph#71842](https://github.com/ceph/ceph/pull/71842), a radosgw
+    refuses only for an upload made with a checksum, or for SSE-C headers
+    that do not name its key
+    ([rgw_rest_s3.cc:4622-4635](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_rest_s3.cc#L4622-L4635));
+  - an SSE-C or SSE-KMS upload over plain HTTP, which
+    `rgw_crypt_require_ssl` refuses
+    ([rgw_crypt.cc:1334-1338](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1334-L1338),
+    [rgw_crypt.cc:1424-1428](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1424-L1428)),
+    the SSE-C one from v20.2.5 only for an upload made with a checksum or
+    a request that sends SSE-C headers, as that radosgw runs no SSE-C
+    check for any other
+    ([rgw_rest_s3.cc:4627-4631](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_rest_s3.cc#L4627-L4631),
+    [rgw_crypt.cc:2503-2508](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_crypt.cc#L2503-L2508));
+  - an SSE-KMS, SSE-S3 or RGW-AUTO upload with no key server or default
+    key to fetch its key from
+    ([rgw_crypt.cc:1429-1437](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1429-L1437),
+    [rgw_crypt.cc:1458-1478](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1458-L1478),
+    [rgw_crypt.cc:1495-1505](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1495-L1505)).
 - **Squid clusters show the checksums they store.** The read rules of these
   entries apply on Squid as on Tentacle: rgw-go reads
   `x-amz-checksum-mode` on Squid too, and a checksum-mode GET or HEAD, and
