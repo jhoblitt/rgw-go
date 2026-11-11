@@ -1805,18 +1805,29 @@ var _ = Describe("Evaluator", func() {
 			})
 		})
 
-		It("give PutObjectRetention's governance bypass the object's tags", func() {
-			f.object("priv", "held", aclAttr(ownerACL(userOwner("", "alice"))), encodeTags("legal", "hold"))
-			f.setPolicy("priv", doc(stmt("Deny", `"*"`, "s3:BypassGovernanceRetention", "arn:aws:s3:::priv/*",
-				`{"StringEquals": {"s3:ExistingObjectTag/legal": "hold"}}`)))
-			bypass := func(key string) error {
-				r := f.req(alice(), "priv", key)
-				r.Method = http.MethodPut
-				return f.eval.VerifyObject(f.ctx, r, policy.S3BypassGovernanceRetention, acl.PermFor(policy.S3BypassGovernanceRetention))
-			}
-			Expect(bypass("held")).To(MatchError(op.ErrAccessDenied), "a held object")
-			Expect(bypass("o")).To(Succeed(), "another")
-		})
+		DescribeTable("give the retention and legal-hold ops' checks, made with no ACL grant, the tags of the version they loaded",
+			func(a policy.Action) {
+				f.object("priv", "held", aclAttr(ownerACL(userOwner("", "alice"))), encodeTags("legal", "hold"))
+				f.setPolicy("priv", doc(stmt("Deny", `"*"`, a.String(), "arn:aws:s3:::priv/*",
+					`{"StringEquals": {"s3:ExistingObjectTag/legal": "hold"}}`)))
+				check := func(key string, loaded bool) error {
+					r := f.req(alice(), "priv", key)
+					r.Method = http.MethodPut
+					if !loaded {
+						r.ObjState = nil
+					}
+					return f.eval.VerifyBucketOwnerOrPolicy(f.ctx, r, a, acl.PermFor(a))
+				}
+				Expect(check("held", true)).To(MatchError(op.ErrAccessDenied), "a held object")
+				Expect(check("o", true)).To(Succeed(), "another")
+				if a != policy.S3BypassGovernanceRetention {
+					Expect(check("held", false)).To(Succeed(), "a check with no version loaded adds no tags")
+				}
+			},
+			Entry("s3:PutObjectRetention", policy.S3PutObjectRetention),
+			Entry("s3:BypassGovernanceRetention", policy.S3BypassGovernanceRetention),
+			Entry("s3:PutObjectLegalHold", policy.S3PutObjectLegalHold),
+		)
 	})
 
 	Describe("tag conditions on Tentacle", func() {

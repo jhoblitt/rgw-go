@@ -6286,9 +6286,14 @@ rgw-go does the following.
   rgw-go's object-ACL fallback grants WRITE to the object's owner alone, the
   owner its ACL names, through the owner's own grant and within the key's
   permission mask, and never to the anonymous user, an anonymous writer's
-  object included. Every other grantee of an object's WRITE or FULL_CONTROL,
-  a named user, AllUsers, AuthenticatedUsers, an email grantee, and the
-  grantees of a Swift write list, is refused with 403 AccessDenied (the
+  object included. The retention, the legal hold and the governance bypass
+  do not reach it: rgw-go evaluates them with no ACL grant, where the
+  object's owner passes only as the bucket's owner or by a policy ("No ACL
+  grant authorizes PutObjectRetention, PutObjectLegalHold or their
+  governance bypass"), so the fallback serves the tags and the restore.
+  Every other grantee of an object's WRITE or FULL_CONTROL, a named user,
+  AllUsers, AuthenticatedUsers, an email grantee, and the grantees of a
+  Swift write list, is refused with 403 AccessDenied (the
   object-ACL leg of `authz.Evaluator`, `internal/authz/evaluator.go`). That
   includes the bucket's owner on an object another user or account wrote
   with `bucket-owner-full-control`, whose FULL_CONTROL grant to the bucket
@@ -6297,7 +6302,8 @@ rgw-go does the following.
   [rgw_acl_s3.cc:444-449](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl_s3.cc#L444-L449))
   lets it tag the object and set its retention and legal hold in radosgw:
   in rgw-go that owner needs a bucket or identity policy allowing the
-  action, as in Amazon S3, where no ACL reaches these actions. A policy
+  tagging actions, as in Amazon S3, where no ACL reaches them, and sets the
+  retention and the legal hold as the bucket's owner. A policy
   decides as before, and first; the READ, READ_ACP and WRITE_ACP an
   object's grant gives are unchanged; and the bucket-scope WRITE that
   PutObject and DeleteObject check is still the bucket ACL's, as in radosgw.
@@ -8777,6 +8783,72 @@ does the following.
   admin's DeleteObject bypass GOVERNANCE retention without
   s3:BypassGovernanceRetention](ceph-upstream-bugs.md#radosgws-permission-override-lets-an-admins-deleteobject-bypass-governance-retention-without-s3bypassgovernanceretention)";
   `op.DeleteObject`'s permitted, `internal/op/deleteobject.go`).
+- **No ACL grant authorizes PutObjectRetention, PutObjectLegalHold or
+  their governance bypass.** radosgw's PutObjectRetention evaluates
+  s3:PutObjectRetention and, for `x-amz-bypass-governance-retention`,
+  s3:BypassGovernanceRetention, and its PutObjectLegalHold
+  s3:PutObjectLegalHold, each with `verify_object_permission`
+  ([rgw_op.cc:8340](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8340),
+  [rgw_op.cc:8348](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8348),
+  [rgw_op.cc:8492](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8492);
+  [rgw_op.cc:9275](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9275),
+  [rgw_op.cc:9283](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9283),
+  [rgw_op.cc:9440](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9440)),
+  which, where no policy decides, falls back to the version's ACL through
+  `verify_object_permission_no_policy`
+  ([rgw_common.cc:1560-1579](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1560-L1579),
+  [rgw_common.cc:1614-1636](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1614-L1636))
+  with the WRITE that `op_to_perm` gives the three actions
+  ([rgw_iam_policy.h:260-268](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L260-L268),
+  [rgw_iam_policy.h:273-284](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L273-L284)).
+  A version's writer holds FULL_CONTROL in the ACL its write stores
+  ([rgw_acl_s3.cc:413-418](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_s3.cc#L413-L418),
+  [rgw_acl_s3.cc:413-418](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl_s3.cc#L413-L418)),
+  so in radosgw a requester a policy allows s3:PutObject alone sets a
+  retention or a legal hold on the version it wrote in a request after the
+  write, shortens that version's GOVERNANCE retention with the header, and
+  releases a legal hold the bucket's owner set on it; any other grantee of
+  the version's WRITE does the same (`docs/ceph-upstream-bugs.md`,
+  "[radosgw lets an object ACL's WRITE grant set, shorten and bypass an
+  object's retention and legal
+  hold](ceph-upstream-bugs.md#radosgw-lets-an-object-acls-write-grant-set-shorten-and-bypass-an-objects-retention-and-legal-hold)").
+  rgw-go authorizes the three actions as it authorizes a delete's bypass
+  ("No ACL grant authorizes a delete's governance bypass"): after the
+  refusals radosgw makes before
+  `verify_permission`, a missing version's among them, the identity's and
+  the bucket's policies decide, the version's tags added as they need them,
+  and where none decides the bucket's owner alone passes (`verifyLockWrite`,
+  `internal/op/objectretention.go`). So it refuses with 403 AccessDenied,
+  where radosgw serves, the version's owner who does not own the bucket and
+  every grantee of the version's ACL, the anonymous user included, unless a
+  policy allows them. A bypass so refused leaves the change judged without
+  it, as radosgw judges one whose `bypass_perm` is false: shortening a
+  GOVERNANCE retention, or changing its mode, is 403 AccessDenied with
+  radosgw's message for it. And rgw-go serves the bucket's owner on every
+  version where no policy decides, where radosgw passes it only through a
+  grant of the version's ACL, such as the one `bucket-owner-full-control`
+  gives. For an account's identity rgw-go judges the request across
+  accounts when the bucket's owner is another account, where radosgw judges
+  it by the version's owner
+  ([rgw_common.cc:1530-1551](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1530-L1551),
+  [rgw_common.cc:1582-1604](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1582-L1604)):
+  there another account's root that wrote a version, allowed s3:PutObject
+  alone by the bucket's policy, owns the version and passes on its own
+  account root's Allow, where in rgw-go it needs the bucket policy's Allow
+  of the action. On a bucket without object lock, a requester these checks
+  refuse is answered 403 AccessDenied, where radosgw passes the version's
+  owner and answers 400 InvalidRequest from execute's object-lock check,
+  which comes before the document is parsed
+  ([rgw_op.cc:8360-8365](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8360-L8365),
+  [rgw_op.cc:8504-8509](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8504-L8509);
+  [rgw_op.cc:9295-9300](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9295-L9300),
+  [rgw_op.cc:9452-9457](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9452-L9457)).
+  ceph/ceph#73078, open, keeps radosgw's governance bypass from the ACLs,
+  passing the bucket's owner alone where no policy decides, as rgw-go does,
+  and leaves the fallback of s3:PutObjectRetention and s3:PutObjectLegalHold
+  to the version's ACL as it is. Amazon S3 maps no ACL permission to the
+  three actions
+  ([ACL overview](https://docs.aws.amazon.com/AmazonS3/latest/userguide/acl-overview.html#acl-access-policy-permission-mapping)).
 - **A delete that removes a version for good on an object-lock bucket
   checks its lock.** radosgw checks a delete's retention and legal hold only
   when the request names a version (`check_obj_lock = have_instance() &&

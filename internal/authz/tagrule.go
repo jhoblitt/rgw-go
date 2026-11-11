@@ -97,6 +97,17 @@ func tagRule(f form, r *op.Request, a policy.Action) (objectTags, bucketTags) {
 		// RGWPutACLs
 		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5750).
 		return noObjectTags, bucketTagsAlways
+	case policy.S3PutObjectRetention, policy.S3PutObjectLegalHold:
+		// RGWPutObjRetention
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8321-L8337)
+		// and RGWPutObjLegalHold
+		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8473-L8477),
+		// which rgw-go authorizes as bucket checks with no ACL grant, of
+		// the version their Init loaded into r.ObjState. A check made
+		// with no version loaded adds no tags.
+		if r.ObjState != nil {
+			return objectTagsAsNeeded, noBucketTags
+		}
 	}
 	if bucketTagActions[a] {
 		return noObjectTags, bucketTagsAsNeeded
@@ -118,15 +129,16 @@ func tagRule(f form, r *op.Request, a policy.Action) (objectTags, bucketTags) {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5695-L5704),
 // RGWListMultipart
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6652-L6656),
-// RGWPutObjRetention, whose BypassGovernanceRetention check follows its own
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8321-L8337),
 // RGWGetObjRetention
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8424-L8428),
-// the legal hold ops
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8473-L8477,
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8528-L8532),
+// RGWGetObjLegalHold
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8528-L8532),
 // and v20.2.4's RGWGetObjAttrs
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6361-L6379).
+// RGWPutObjRetention, its bypass and RGWPutObjLegalHold add the object's tags
+// too, but rgw-go checks them as bucket checks (tagRule's
+// S3PutObjectRetention and S3PutObjectLegalHold case, and
+// S3BypassGovernanceRetention's).
 var objectTagActions = map[policy.Action]bool{
 	policy.S3GetObject: true, policy.S3GetObjectVersion: true,
 	policy.S3GetObjectTorrent: true, policy.S3GetObjectVersionTorrent: true,
@@ -135,9 +147,7 @@ var objectTagActions = map[policy.Action]bool{
 	policy.S3DeleteObjectTagging: true, policy.S3DeleteObjectVersionTagging: true,
 	policy.S3GetObjectAcl: true, policy.S3GetObjectVersionAcl: true,
 	policy.S3ListMultipartUploadParts: true,
-	policy.S3PutObjectRetention:       true, policy.S3GetObjectRetention: true,
-	policy.S3BypassGovernanceRetention: true,
-	policy.S3PutObjectLegalHold:        true, policy.S3GetObjectLegalHold: true,
+	policy.S3GetObjectRetention:       true, policy.S3GetObjectLegalHold: true,
 	policy.S3GetObjectAttributes: true, policy.S3GetObjectVersionAttributes: true,
 }
 

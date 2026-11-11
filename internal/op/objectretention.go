@@ -97,7 +97,8 @@ func (*PutObjectRetention) OpMask() uint32 { return OpTypeWrite }
 func (*PutObjectRetention) Init(ctx context.Context, r *Request) error { return statHead(ctx, r) }
 
 // VerifyPermission is RGWPutObjRetention::verify_permission, in its order:
-// s3:PutObjectRetention on the object; the op mask, which radosgw's
+// s3:PutObjectRetention on the object, authorized by verifyLockWrite; the op
+// mask, which radosgw's
 // verify_op_mask
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L207-L211 at v19.2.7 and v20.2.4)
 // checks before verify_permission runs, so that the body of a requester it
@@ -106,18 +107,19 @@ func (*PutObjectRetention) Init(ctx context.Context, r *Request) error { return 
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4529-L4531 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5040-L5042 at v20.2.4);
 // and, only when BypassHeader is set, s3:BypassGovernanceRetention on the
-// object, whose access denial leaves the bypass off and refuses nothing, as
-// bypass_perm is a bool. Any other error of that check, a fault such as
-// policies whose tags cannot be read, is the request's, so that it is not
-// answered as the refusal of a change the bypass would have let through,
-// and still nothing is written. A requester the first check
+// object, authorized as verifyLockWrite authorizes, whose access denial
+// leaves the bypass off and refuses nothing, as bypass_perm is a bool. Any
+// other error of that check, a fault such as policies whose tags cannot be
+// read, is the request's, so that it is not answered as the refusal of a
+// change the bypass would have let through, and still nothing is written. A
+// requester the first check
 // refuses is answered before the body is read, and radosgw's admin override
 // then reaches execute with get_params never run, so an admin Run lets
 // through that refusal reaches Execute with no document and no bypass
 // (docs/ceph-upstream-bugs.md, "radosgw's PutObjectRetention reads no
 // document for an admin its permission check refuses").
 func (o *PutObjectRetention) VerifyPermission(ctx context.Context, r *Request) error {
-	if err := VerifyObjectPermission(ctx, r, policy.S3PutObjectRetention, acl.PermFor(policy.S3PutObjectRetention)); err != nil {
+	if err := verifyLockWrite(ctx, r, policy.S3PutObjectRetention); err != nil {
 		return err
 	}
 	if err := verifyOpMask(o, r); err != nil {
@@ -130,7 +132,7 @@ func (o *PutObjectRetention) VerifyPermission(ctx context.Context, r *Request) e
 	o.body = body
 	if o.BypassHeader {
 		a := policy.S3BypassGovernanceRetention
-		switch err := VerifyObjectPermission(ctx, r, a, acl.PermFor(a)); {
+		switch err := VerifyBucketPermissionOwnerOrPolicy(ctx, r, a, acl.PermFor(a)); {
 		case err == nil:
 			o.bypass = true
 		case !isAccessDenial(err):
@@ -261,9 +263,10 @@ func (*PutObjectLegalHold) OpMask() uint32 { return OpTypeWrite }
 // Init loads the bucket and the head of the version the request names.
 func (*PutObjectLegalHold) Init(ctx context.Context, r *Request) error { return statHead(ctx, r) }
 
-// VerifyPermission is RGWPutObjLegalHold::verify_permission.
+// VerifyPermission is RGWPutObjLegalHold::verify_permission, its action
+// authorized by verifyLockWrite.
 func (o *PutObjectLegalHold) VerifyPermission(ctx context.Context, r *Request) error {
-	return VerifyObjectPermission(ctx, r, o.Action(), acl.PermFor(o.Action()))
+	return verifyLockWrite(ctx, r, o.Action())
 }
 
 // Execute is RGWPutObjLegalHold::execute, in its order: a bucket whose flags
@@ -340,6 +343,34 @@ func (o *GetObjectLegalHold) Execute(_ context.Context, r *Request) error {
 
 // Complete does nothing: the handler logs usage once the response is written.
 func (*GetObjectLegalHold) Complete(context.Context, *Request) {}
+
+// verifyLockWrite authorizes a, s3:PutObjectRetention or
+// s3:PutObjectLegalHold, on the version the request names as a delete's
+// governance bypass is authorized (bypassAllowed): after
+// VerifyObjectPrelude's refusals, which radosgw makes before
+// verify_permission, the identity's and the bucket's policies decide, the
+// version's tags added as they need them, and where neither decides the
+// bucket's owner alone passes (VerifyBucketPermissionOwnerOrPolicy).
+// PutObjectRetention's s3:BypassGovernanceRetention is authorized the same
+// way. radosgw evaluates the three actions with verify_object_permission
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8340,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8348 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8492 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9275,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9283 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9440 at v20.2.4),
+// whose fallback to the object's ACL passes the version's owner, who holds
+// FULL_CONTROL on what it wrote: a requester allowed s3:PutObject alone sets
+// a lock on its version there, lifts a legal hold set on it, and with the
+// bypass header shortens a GOVERNANCE retention on it (docs/differences.md,
+// "No ACL grant authorizes PutObjectRetention, PutObjectLegalHold or their
+// governance bypass").
+func verifyLockWrite(ctx context.Context, r *Request, a policy.Action) error {
+	if err := VerifyObjectPrelude(ctx, r); err != nil {
+		return err
+	}
+	return VerifyBucketPermissionOwnerOrPolicy(ctx, r, a, acl.PermFor(a))
+}
 
 // lockAttr is the Get ops' read of the version's attr name: a bucket without
 // object lock is InvalidRequest, a version that does not exist NoSuchKey, and
