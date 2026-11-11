@@ -923,8 +923,10 @@ the controller's ruling that splits C10 (C-D16).
   1. The markers `lifecycle`, `lifecycle_expiration`, `lifecycle_transition` and
      `object_lock` leave the excluded set. `cloud_transition`, `cloud_restore` and
      `target_by_bucket` stay, under "Cloud transition and restore", 21 tests.
-  2. The 38 lines under "# object lock" leave `deselect-phase2.txt`, with
-     `test_object_lock_put_obj_lock_enable_after_create`, wherever V15a left it.
+  2. Every line under "# object lock" leaves `deselect-phase2.txt`, with
+     `test_object_lock_put_obj_lock_enable_after_create`, wherever V15a left it. They include
+     the two T-6 added for L4's tests, `test_object_lock_multi_delete_bypass_denied` and
+     `test_object_lock_delete_bypass_by_bucket_write_grantee`.
   3. The worker-marker tests go to the gate-only class (C-D5); the configuration and header
      tests join the per-PR set.
   4. radosgw's outcome for every freed test is recorded on both releases with
@@ -933,8 +935,10 @@ the controller's ruling that splits C10 (C-D16).
   5. `TestRadosGWTestSuite/TestBucket/enable_bucket_object_lock` leaves the admin deselect
      list, and the admin ledgers are re-recorded.
   6. Rook's `bucket/lifecycle` sub-test leaves the workflow's patch.
-  7. A known difference is added only where a recorded test touches an exclusion of L or C,
-     each line naming it.
+  7. A known difference is added only where a recorded test touches an exclusion or a
+     difference of L or C, each line naming it. L4's two tests are two such: radosgw fails both
+     (`fails_on_rgw`), and rgw-go passes them once L5b serves lock-bucket writes, so each gets a
+     line in both known-differences files under the differences entries L4 added.
 - **Specs:** the ledger checks pass on both releases; the per-PR run's set and time unchanged
   but for the configuration and header tests.
 - **Exclusions and registry:** none new; each known difference cites its exclusion.
