@@ -427,8 +427,9 @@ before L4 merged (PP-12).
      `test_versioning_mfa_delete_object_version`, which both gateways pass on both releases.
   4. No deselect or known-differences line for the tests a marker excludes, which the include list
      does not name: #29's five, #30's four, #31's four marked `versioning` or `delete_marker`,
-     WP-7's test and L4's two. Each of L4's two needs a known-differences line in both files
-     (rgw-go passes, radosgw fails) in the recording that lifts `object_lock`.
+     and WP-7's test. L4's two carry no marker (no test in test_s3.py carries `object_lock`),
+     so T-6 deselected them in `hack/s3tests/deselect-phase2.txt` beside the other object-lock
+     tests; C12 (a) lifts them with the rest.
   5. The MFA outcomes are confirmed on both releases at the merged head: rgw-go passing
      `test_versioning_mfa_delete_objects_version` alone was shown on Squid only.
 - **Specs:** none in rgw-go. Each changed s3-tests module compiles and collects (`py_compile`,
@@ -437,6 +438,32 @@ before L4 merged (PP-12).
   rgw-go's own, so it gets no registry entry.
 - **Depends on:** BC-8, WP-7, L4 and V12a. **PR:** the four s3-tests PRs into `rgw-go-s3tests`,
   then one rgw-go PR with the pin and both ledgers. **Brief:** about 60 lines.
+
+### Task T-7: the s3-tests venv pinned and its freeze compared
+
+Found by T-6's task review (I-1), and numbered here before T-6 merged (PP-12).
+
+- **Layer:** test tooling. **Files:** `hack/s3tests/run.sh` (the venv's install), a constraints
+  file beside `hack/s3tests/PIN`, the parity candidate's record and its comparison in the parity
+  tooling, their specs; the CI workflow that builds the venv. **Cluster:** no.
+- **Behaviour:**
+  1. The venv installs s3-tests' requirements under a constraints file committed beside PIN that
+     names every package's exact version. Its first content is the venv T-6 recorded both ledgers
+     with at pin 5018895083e (botocore 1.44.0 among its 39 packages), so the ledgers stay valid
+     and nothing is re-recorded.
+  2. The parity candidate's record carries `pytest_freeze`, as a ledger entry does, and a
+     comparison whose candidate freeze differs from the ledger head's fails as a tooling
+     mismatch, before any outcome is compared.
+  3. A pin bump moves the constraints file with PIN, and a change to the constraints alone is
+     recorded like a pin move: both ledgers in full, with a reason.
+- **Why:** run.sh installs unpinned, and CI builds a fresh venv on every run, so a client
+  release changes outcomes unseen: botocore 1.44.0's standard retry mode flipped
+  `test_headers::test_object_create_bad_contentlength_mismatch_below_aws2` during T-6, and
+  legacy retries had masked rgw-go's BadDigest on Squid.
+- **Specs:** a fresh venv's freeze equals the ledger head's; a candidate with another freeze is
+  refused with a message naming both; the constraints file and PIN move together in the pin
+  tooling's specs.
+- **Depends on:** T-6. **PR:** one. **Brief:** about 50 lines.
 
 ## Order
 
@@ -451,6 +478,7 @@ The unit starts at once (index, Order 2).
 | any time after its inputs | T-4 (its smoke run is a cluster slot) | V7a, V11, WP-7, WP-8, WP-10 (b), T-2 (a) |
 | any time | T-5 | nothing |
 | after its inputs (a cluster slot) | T-6 | BC-8, WP-7, L4, V12a |
+| after its input | T-7 | T-6 |
 | last | T-gate (a), (b), (c) | every task of every unit |
 
 The cluster tasks share the plan's one-at-a-time slot with every unit's.
