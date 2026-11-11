@@ -1217,7 +1217,10 @@ before WP-13 merged (PP-12).
      radosgw's `rgw_crypt_require_ssl` refusal over an insecure transport
      ([rgw_crypt.cc:1424-1428](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1424-L1428)).
      Verify each mode's answer at both tags at implementation.
-  3. A crypt mode rgw-go does not know, such as v20.2.5's GCM modes, is refused.
+  3. A crypt mode rgw-go does not know, such as v20.2.5's GCM modes, is refused. This item
+     lands early, in WP-27's PR: completing such an upload writes neither
+     `user.rgw.crypt.original-size` nor `user.rgw.crypt.part-numbers`, so no gateway can
+     read the object (WP-27's adversarial review).
   4. A completed SSE-C upload's response carries the encryption headers radosgw echoes
      ([rgw_rest_s3.cc:4610-4611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4610-L4611)),
      and its combined checksum as for any upload.

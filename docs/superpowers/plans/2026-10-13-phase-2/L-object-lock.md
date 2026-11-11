@@ -537,25 +537,59 @@ Versioning's ids are V-versioning.md's.
 ### Task L6: the retention and legal-hold ops authorize as the lock headers do
 
 Found while implementing L5b, after an automated security review of it, and numbered here before
-L5b (a) merged (PP-12).
+L5b (a) merged (PP-12). It ships in L5b (a)'s PR, widened to the governance bypass by L5b's
+adversarial review: before (a), every rgw-go write to an object-lock bucket answered 501, so (a)
+is what lets a writer create, through rgw-go alone, the version it then locks.
 
 - **Layer:** op. **Files:** `internal/op/objectretention.go` (PutObjectRetention's and
   PutObjectLegalHold's permission checks) and their specs; `docs/differences.md`; the registry
   entry L5b (a) adds. **Cluster:** no.
 - **Behaviour:**
   1. PutObjectRetention and PutObjectLegalHold authorize `s3:PutObjectRetention` and
-     `s3:PutObjectLegalHold` as L5b (a)'s lock headers do: a policy decides, and otherwise only
-     the bucket owner passes. Today they also consult the object's ACL, whose WRITE step passes
-     the object's owner (`objectACL`, `internal/authz/evaluator.go`), so a principal allowed only
-     `s3:PutObject` writes an object it then owns and locks it in COMPLIANCE, which nobody, the
-     bucket owner included, can lift before it expires. AWS grants these actions through
-     policies only; no ACL permission maps to them. radosgw's dedicated ops fall back to the
-     ACLs; verify how at both tags at implementation.
-  2. The governance bypass and the GetObjectRetention and GetObjectLegalHold reads are unchanged.
-- **Specs:** per release, the bucket owner; the object's owner with no policy, refused; a policy
-  Allow; an explicit Deny; anonymous on a public-read-write bucket, refused.
+     `s3:PutObjectLegalHold`, and PutObjectRetention its `s3:BypassGovernanceRetention`, as
+     L5b (a)'s lock headers do: a policy decides, and otherwise only the bucket owner passes.
+     Today they also consult the object's ACL, whose WRITE step passes the object's owner
+     (`objectACL`, `internal/authz/evaluator.go`), so a principal allowed only `s3:PutObject`
+     writes an object it then owns and locks it in COMPLIANCE, which nobody, the bucket owner
+     included, can lift before it expires; and, through the bypass, shortens the bucket's default
+     GOVERNANCE retention on its version or lifts a legal hold the bucket owner placed on it. AWS
+     grants these actions through policies only; no ACL permission maps to them. radosgw checks
+     them with `verify_object_permission`, which falls back to the ACLs
+     ([rgw_op.cc:8340-8348](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8340-L8348)); verify the legal-hold op and v20.2.4 at
+     implementation. Upstream's fix for the bypass alone is open:
+     [ceph/ceph#73078](https://github.com/ceph/ceph/pull/73078).
+  2. The GetObjectRetention and GetObjectLegalHold reads keep radosgw's object-ACL leg, recorded
+     in the registry: AWS maps an ACL's READ to neither.
+- **Specs:** per release, for each op and the bypass: the bucket owner; the object's owner with no
+  policy, refused; a policy Allow; an explicit Deny; anonymous on a public-read-write bucket,
+  refused; the two-request lock, the GOVERNANCE shortening and the lifted hold, each refused.
 - **Exclusions and registry:** a `docs/differences.md` entry, since rgw-go refuses where radosgw
   serves; the registry entry for radosgw's lock-header writes names the dedicated ops' fallback.
+- **Depends on:** L5a, as L5b does. **PR:** L5b (a)'s, as its own commit. **Brief:** L5b's
+  fix round.
+
+### Task L7: a policy's object-lock condition keys constrain the lock a request sets
+
+Found by L5b's adversarial review, and numbered here before L5b (a) merged (PP-12).
+
+- **Layer:** authz and op. **Files:** `internal/authz/env.go` and the ops that set a lock
+  (PutObject, CopyObject, CreateMultipartUpload, PutObjectRetention, PutObjectLegalHold); their
+  specs; `docs/differences.md`; the registry entry L5b (a) adds. **Cluster:** no.
+- **Behaviour:**
+  1. A request that sets a lock evaluates its policies with AWS's object-lock condition keys,
+     `s3:object-lock-mode`, `s3:object-lock-retain-until-date`,
+     `s3:object-lock-remaining-retention-days` and `s3:object-lock-legal-hold`, taken from the
+     lock headers or from the retention or legal-hold document. Which key applies to which action
+     is AWS's Service Authorization Reference, verified at implementation. A key the request does
+     not carry is absent, so condition operators treat it as AWS does.
+  2. radosgw sets none of them ([rgw_op.cc:848-909](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L848-L909),
+     [rgw_op.cc:884-945](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L884-L945)), so a guardrail Deny written as AWS documents it, such
+     as one on `s3:object-lock-mode` equal to `COMPLIANCE` or on more than 30 remaining days,
+     fails open there, and an Allow conditioned on one never matches.
+- **Specs:** per release and per lock-setting request, a Deny on each key refuses; an Allow
+  conditioned on a key passes only a matching value; a request without lock values is unaffected.
+- **Exclusions and registry:** a `docs/differences.md` entry, since rgw-go evaluates conditions
+  radosgw ignores; the registry entry's rgw-go line.
 - **Depends on:** L5b (a). **PR:** one. **Brief:** about 40 lines.
 
 ## Order
@@ -570,8 +604,8 @@ the cross-gateway lock cases are C13's PR (a); both follow L5b.
 | 3 | L2 (a), L2 (b) | L1, S2, V2 |
 | 4 | L3 | L2, V6 (V's wave 6) |
 | 5 | L5a | V7a, V7b, WP-5 (V's wave 8) |
-| 6 | L4; L5b (a), then L5b (b) | L3, V8c and V12a for L4 (V's waves 8 and 10); L5a, V11, V14a and WP-13 for L5b |
-| 7 | L6 | L5b (a) |
+| 6 | L4; L5b (a) with L6, then L5b (b) | L3, V8c and V12a for L4 (V's waves 8 and 10); L5a, V11, V14a and WP-13 for L5b |
+| 7 | L7 | L5b (a) |
 
 Cross-unit order:
 - Versioning keeps a lock bucket's S3 writes and deletes at 501 until L5b and L4 lift them
