@@ -66,7 +66,8 @@ type UploadPart struct {
 	// SSECAlgorithm, SSECKey and SSECKeyMD5 are the
 	// x-amz-server-side-encryption-customer-algorithm, -key and -key-MD5
 	// headers, "" when absent, with which a part of an SSE-C upload names the
-	// upload's key (refuseEncrypted).
+	// upload's key (refuseEncrypted), and on Squid an UploadPartCopy names an
+	// SSE-C source's key (refuseEncryptedSource).
 	SSECAlgorithm, SSECKey, SSECKeyMD5 string
 	// Secure is rgw_transport_is_secure: TLS, or a forwarded protocol radosgw
 	// trusts.
@@ -89,6 +90,11 @@ type UploadPart struct {
 	// present with an empty value is a condition, as CopyObject takes it.
 	IfMatch, IfNoneMatch               *string
 	IfModifiedSince, IfUnmodifiedSince *string
+	// CopySourceSSECAlgorithm, CopySourceSSECKey and CopySourceSSECKeyMD5
+	// are the x-amz-copy-source-server-side-encryption-customer-algorithm,
+	// -key and -key-MD5 headers, "" when absent, with which a Tentacle
+	// request names an SSE-C source's key (refuseEncryptedSource).
+	CopySourceSSECAlgorithm, CopySourceSSECKey, CopySourceSSECKeyMD5 string
 
 	ETag  string
 	Mtime time.Time
@@ -350,8 +356,10 @@ func (o *UploadPart) putPart(ctx context.Context, r *Request, up *Upload) (*Part
 // get_encrypt_filter runs next
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4350 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4566 at v20.2.4);
-// then the range against the source's accounted size, and the copy of
-// that range from the one state the request read.
+// the source's crypt mode decided (refuseEncryptedSource), which radosgw's
+// copy loop decrypts before it checks the range; then the range against the
+// source's accounted size, and the copy of that range from the one state the
+// request read.
 //
 // radosgw checks the cloud tier only for a copy without a range, and reads
 // no x-amz-copy-source-if-* header for a part: only RGWCopyObj's get_params
@@ -383,6 +391,9 @@ func (o *UploadPart) copyPart(ctx context.Context, r *Request, up *Upload) (*Par
 	if err := o.refuseEncrypted(ctx, r, upAttrs); err != nil {
 		return nil, err
 	}
+	if err := o.refuseEncryptedSource(ctx, r); err != nil {
+		return nil, err
+	}
 	if err := conds.check(o.src); err != nil {
 		return nil, err
 	}
@@ -410,6 +421,35 @@ func (o *UploadPart) refuseEncrypted(ctx context.Context, r *Request, upAttrs ma
 	return storedCryptRefusal(ctx, r, upAttrs, sseCRequest{
 		algorithm: o.SSECAlgorithm, key: o.SSECKey, keyMD5: o.SSECKeyMD5, secure: o.Secure,
 	})
+}
+
+// refuseEncryptedSource is RGWPutObj::get_data's decryption of a copy's
+// source
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4060-L4070 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4269-L4279 at v20.2.4):
+// rgw_s3_prepare_decrypt over the source's attrs (storedCryptRefusal), with
+// the copy-source SSE-C headers on Tentacle and the request's own on Squid
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2807-L2817 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2969-L2977 at v20.2.4).
+// rgw-go decrypts no source, so a key-server mode answers as radosgw without
+// a key server does, SSE-C and a mode rgw-go does not know answer
+// NotImplemented, and only an empty mode copies. radosgw's copy loop never
+// calls get_data for an unranged copy of an empty source, whose last byte
+// is -1
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4332-L4336 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4386-L4389 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4544-L4548 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4618-L4621 at v20.2.4),
+// so that copy checks nothing.
+func (o *UploadPart) refuseEncryptedSource(ctx context.Context, r *Request) error {
+	if o.Range == nil && copySourceSize(o.src) == 0 {
+		return nil
+	}
+	req := sseCRequest{algorithm: o.SSECAlgorithm, key: o.SSECKey, keyMD5: o.SSECKeyMD5, secure: o.Secure}
+	if r.Env.Zone.Release() >= denc.Tentacle {
+		req.algorithm, req.key, req.keyMD5 = o.CopySourceSSECAlgorithm, o.CopySourceSSECKey, o.CopySourceSSECKeyMD5
+	}
+	return storedCryptRefusal(ctx, r, o.src.Attrs, req)
 }
 
 // checkCloudTier is execute's refusal of a source transitioned to a cloud
@@ -444,10 +484,7 @@ func (o *UploadPart) checkCloudTier(r *Request) error {
 // after the leading pieces were written, where rgw-go refuses before it
 // copies.
 func (o *UploadPart) rangeFor(src *ObjectState) (ByteRange, error) {
-	size := src.Size
-	if src.Compression != nil {
-		size = src.Compression.OrigSize
-	}
+	size := copySourceSize(src)
 	switch {
 	case o.Range == nil:
 		return ByteRange{Offset: 0, Length: size}, nil
@@ -457,6 +494,14 @@ func (o *UploadPart) rangeFor(src *ObjectState) (ByteRange, error) {
 		return ByteRange{}, fmt.Errorf("%w: bytes %d-%d of a %d-byte source", ErrInvalidRange, o.first, o.last, size)
 	}
 	return ByteRange{Offset: o.first, Length: o.last - o.first + 1}, nil
+}
+
+// copySourceSize is a copy source's accounted size, its uncompressed length.
+func copySourceSize(src *ObjectState) uint64 {
+	if src.Compression != nil {
+		return src.Compression.OrigSize
+	}
+	return src.Size
 }
 
 // Complete does nothing: the handler logs usage once the response is written.

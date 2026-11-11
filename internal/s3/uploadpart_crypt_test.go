@@ -113,3 +113,40 @@ var _ = Describe("a part of an upload radosgw began encrypted", func() {
 		Expect(rec.Body.String()).To(ContainSubstring("<Code>AccessDenied</Code>"))
 	})
 })
+
+var _ = Describe("UploadPartCopy of a source radosgw encrypted", func() {
+	DescribeTable("is decided as radosgw's get_data decides it, on both releases, storing no part",
+		func(ctx SpecContext, mode, origin string, status int, code string, hdr []string) {
+			for _, rel := range []denc.Release{denc.Squid, denc.Tentacle} {
+				w := newWriteWorld(ctx, rel)
+				w.put(ctx, "enc", "hello", map[string][]byte{meta.AttrCryptMode: []byte(mode), meta.AttrCryptKeyID: []byte("kid")})
+				id := w.initUpload(w.alice, "/plain/k")
+				rec := w.send(w.alice, http.MethodPut, origin+"/plain/k?uploadId="+id+"&partNumber=1", "",
+					append([]string{"Content-Length", "0", "X-Amz-Copy-Source", "/plain/enc"}, hdr...)...)
+				Expect(rec.Code).To(Equal(status), "release %d: %s", rel, rec.Body.String())
+				Expect(rec.Body.String()).To(ContainSubstring("<Code>"+code+"</Code>"), "release %d", rel)
+				Expect(w.parts(ctx, "k", id)).To(BeEmpty(), "release %d", rel)
+			}
+		},
+		Entry("SSE-C, the request naming no key", "SSE-C-AES256", overTLS, 400, "InvalidArgument", nil),
+		Entry("SSE-C, the request naming a key: 501, as every request naming an SSE-C key",
+			"SSE-C-AES256", overTLS, 501, "NotImplemented", []string{"X-Amz-Copy-Source-Server-Side-Encryption-Customer-Algorithm", "AES256"}),
+		Entry("SSE-KMS, with no key server", "SSE-KMS", overTLS, 400, "InvalidArgument", nil),
+		Entry("SSE-KMS over plain HTTP, under rgw_crypt_require_ssl", "SSE-KMS", "", 400, "InvalidRequest", nil),
+		Entry("SSE-S3, with no vault", "AES256", overTLS, 400, "InvalidArgument", nil),
+		Entry("RGW-AUTO, with no default key", "RGW-AUTO", overTLS, 500, "UnknownError", nil),
+		Entry("a GCM mode v20.2.5 adds", "SSE-KMS-GCM", overTLS, 501, "NotImplemented", nil),
+	)
+
+	It("copies a source whose mode is empty, on both releases", func(ctx SpecContext) {
+		for _, rel := range []denc.Release{denc.Squid, denc.Tentacle} {
+			w := newWriteWorld(ctx, rel)
+			w.put(ctx, "enc", "hello", map[string][]byte{meta.AttrCryptMode: {}})
+			id := w.initUpload(w.alice, "/plain/k")
+			rec := w.send(w.alice, http.MethodPut, overTLS+"/plain/k?uploadId="+id+"&partNumber=1", "",
+				"Content-Length", "0", "X-Amz-Copy-Source", "/plain/enc")
+			Expect(rec.Code).To(Equal(200), "release %d: %s", rel, rec.Body.String())
+			Expect(w.parts(ctx, "k", id)).To(HaveLen(1), "release %d", rel)
+		}
+	})
+})

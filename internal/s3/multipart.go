@@ -140,8 +140,10 @@ type copyPartResult struct {
 // uploadPartChecks once the requester is authorized, so that a refused
 // requester learns nothing the store holds (docs/differences.md). The SSE-C
 // headers and the transport are what rgw_s3_prepare_decrypt reads of a part
-// of an encrypted upload, which the op refuses; a request carrying an SSE-C
-// header does not reach that check, as uploadPartParams refuses it first.
+// of an encrypted upload and, with the copy-source SSE-C headers, of an
+// encrypted copy source; the op refuses both, and a request carrying any
+// SSE-C header does not reach that check, as uploadPartParams refuses it
+// first.
 //
 // The success is send_response's
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2730-L2782,
@@ -172,6 +174,9 @@ func (wr *objectWrites) uploadPart(ctx context.Context, w http.ResponseWriter, r
 			o.IfNoneMatch = headerPtr(r, "X-Amz-Copy-Source-If-None-Match")
 			o.IfModifiedSince = headerPtr(r, "X-Amz-Copy-Source-If-Modified-Since")
 			o.IfUnmodifiedSince = headerPtr(r, "X-Amz-Copy-Source-If-Unmodified-Since")
+			o.CopySourceSSECAlgorithm = header(r, "x-amz-copy-source-server-side-encryption-customer-algorithm")
+			o.CopySourceSSECKey = header(r, "x-amz-copy-source-server-side-encryption-customer-key")
+			o.CopySourceSSECKeyMD5 = header(r, "x-amz-copy-source-server-side-encryption-customer-key-MD5")
 		} else {
 			o.SourceErr = op.ErrInvalidArgument
 		}

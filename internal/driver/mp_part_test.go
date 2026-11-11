@@ -7,6 +7,7 @@ import (
 	"errors"
 	"hash/crc32"
 	"io"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -655,6 +656,22 @@ var _ = Describe("CopyPart", func() {
 		Entry("xxhash3, which a v20.2.4 radosgw computes", op.UploadChecksum{Type: cksum.XXH3, Flags: cksum.FlagComposite}),
 		Entry("type 9, which no v20.2.4 radosgw reads", op.UploadChecksum{Type: 9, Flags: cksum.FlagComposite}),
 	)
+
+	It("refuses a source whose crypt mode is not empty when the range holds a byte, before it reads or writes anything", func(ctx SpecContext) {
+		st := source(ctx, mibPattern(5))
+		c.ResetCounters()
+		enc := *st
+		enc.Attrs = maps.Clone(st.Attrs)
+		enc.Attrs[meta.AttrCryptMode] = []byte("SSE-KMS")
+		_, err := s.CopyPart(ctx, up, 1, &enc, op.ByteRange{Length: 5 << 20})
+		Expect(err).To(MatchError(op.ErrNotImplemented))
+		Expect(c.Reads(testDataPool, "", tailOID(secondPrefix, 1))).To(BeZero(), "the source")
+		Expect(c.Object(testDataPool, "", partHeadOID(prefix, 1))).To(BeNil())
+		Expect(c.Writes(extraPoolName, "", metaObj)).To(BeZero(), "the part record")
+		enc.Attrs[meta.AttrCryptMode] = []byte{}
+		_, err = s.CopyPart(ctx, up, 1, &enc, op.ByteRange{Length: 5 << 20})
+		Expect(err).NotTo(HaveOccurred(), "an empty mode is none")
+	})
 
 	It("copies the version it was given when the source is overwritten during the copy", func(ctx SpecContext) {
 		old := mibPattern(10)

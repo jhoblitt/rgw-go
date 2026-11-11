@@ -235,3 +235,138 @@ var _ = Describe("UploadPart of an upload radosgw began encrypted", func() {
 		Expect(up.Attrs).To(Equal(p.Attrs))
 	})
 })
+
+var _ = Describe("UploadPartCopy of a source radosgw encrypted", func() {
+	// keyFor names sseCKey with SSE-C headers: the copy-source ones when
+	// copySource, else the request's own.
+	keyFor := func(copySource bool) func(*op.UploadPart) {
+		return func(o *op.UploadPart) {
+			k, m := base64.StdEncoding.EncodeToString(sseCKey()), base64.StdEncoding.EncodeToString(sseCKeyMD5())
+			if copySource {
+				o.CopySourceSSECAlgorithm, o.CopySourceSSECKey, o.CopySourceSSECKeyMD5 = "AES256", k, m
+				return
+			}
+			o.SSECAlgorithm, o.SSECKey, o.SSECKeyMD5 = "AES256", k, m
+		}
+	}
+	const badAlgorithm = "Requests specifying Server Side Encryption with Customer provided keys must provide a valid encryption algorithm."
+
+	// copyFrom copies plain's enc, which holds hello under attrs, into part 1
+	// of a new upload of k on rel, over a secure transport unless set says
+	// otherwise, and returns the parts the upload holds and the error.
+	copyFrom := func(ctx context.Context, rel denc.Release, attrs map[string][]byte, rng string, set func(*op.UploadPart)) ([]op.Part, error) {
+		GinkgoHelper()
+		f := newMPFixture(ctx, rel)
+		f.putAttrs(ctx, "enc", "hello", attrs)
+		id := f.initUpload(ctx, "k")
+		o := f.copyPartOf(id, 1, "enc", rng)
+		o.Secure = true
+		if set != nil {
+			set(o)
+		}
+		err := op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))
+		return f.parts(ctx, "k", id), err
+	}
+
+	DescribeTable("decides the source on both releases as radosgw's get_data does, copying nothing when it refuses",
+		func(ctx SpecContext, attrs map[string][]byte, set func(*op.UploadPart), want error, msg string) {
+			for _, rel := range bothReleases {
+				parts, err := copyFrom(ctx, rel, attrs, "", set)
+				Expect(err).To(MatchError(want), "release %d", rel)
+				Expect(messageOf(err)).To(Equal(msg), "release %d", rel)
+				Expect(parts).To(BeEmpty(), "release %d", rel)
+			}
+		},
+		Entry("SSE-C, the request naming no key", radosgwCryptAttrs("SSE-C-AES256"), nil, op.ErrInvalidArgument, badAlgorithm),
+		Entry("SSE-KMS, with no key server", radosgwCryptAttrs("SSE-KMS"), nil, op.ErrInvalidArgument, "Failed to retrieve the actual key, kms-keyid: kid"),
+		Entry("SSE-KMS over plain HTTP, under rgw_crypt_require_ssl", radosgwCryptAttrs("SSE-KMS"), func(o *op.UploadPart) { o.Secure = false }, op.ErrInvalidRequest, ""),
+		Entry("SSE-S3, with no vault", radosgwCryptAttrs("AES256"), nil, op.ErrInvalidArgument, "Failed to retrieve the actual key"),
+		Entry("RGW-AUTO, with no default key: radosgw's -EIO", radosgwCryptAttrs("RGW-AUTO"), nil, op.ErrUnknown, ""),
+		Entry("a GCM mode v20.2.5 adds, whose stored bytes an older radosgw copies", radosgwCryptAttrs("AES256-GCM"), nil, op.ErrNotImplemented, ""),
+	)
+
+	DescribeTable("takes an SSE-C source's key from the copy-source headers on Tentacle and the request's own on Squid, and answers it 501",
+		func(ctx SpecContext, rel denc.Release, copySource bool, want error) {
+			parts, err := copyFrom(ctx, rel, radosgwCryptAttrs("SSE-C-AES256"), "", keyFor(copySource))
+			Expect(err).To(MatchError(want))
+			Expect(parts).To(BeEmpty())
+		},
+		Entry("Squid, the request's own headers naming it", denc.Squid, false, op.ErrNotImplemented),
+		Entry("Squid, which reads no copy-source header", denc.Squid, true, op.ErrInvalidArgument),
+		Entry("Tentacle, the copy-source headers naming it", denc.Tentacle, true, op.ErrNotImplemented),
+		Entry("Tentacle, which reads not the request's own", denc.Tentacle, false, op.ErrInvalidArgument),
+	)
+
+	It("copies a source whose mode is empty, as radosgw takes it for none, where CopyObject's store refuses one", func(ctx SpecContext) {
+		for _, rel := range bothReleases {
+			attrs := map[string][]byte{meta.AttrCryptMode: {}}
+			parts, err := copyFrom(ctx, rel, attrs, "", nil)
+			Expect(err).NotTo(HaveOccurred(), "release %d", rel)
+			Expect(parts).To(HaveLen(1), "release %d", rel)
+			Expect(op.RefuseEncryptedSource(&op.ObjectState{Attrs: attrs})).To(MatchError(op.ErrNotImplemented), "copy_obj's rule, on presence")
+		}
+	})
+
+	It("copies a source without a crypt mode", func(ctx SpecContext) {
+		for _, rel := range bothReleases {
+			parts, err := copyFrom(ctx, rel, map[string][]byte{meta.AttrCryptKeyID: []byte("kid")}, "", nil)
+			Expect(err).NotTo(HaveOccurred(), "release %d", rel)
+			Expect(parts).To(HaveLen(1), "release %d", rel)
+		}
+	})
+
+	Describe("an empty source", func() {
+		It("copies nothing without a range, which radosgw's copy loop never reads, so it decides nothing", func(ctx SpecContext) {
+			for _, rel := range bothReleases {
+				f := newMPFixture(ctx, rel)
+				f.putAttrs(ctx, "enc", "", radosgwCryptAttrs("SSE-KMS"))
+				id := f.initUpload(ctx, "k")
+				o := f.copyPartOf(id, 1, "enc", "")
+				Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(Succeed(), "release %d", rel)
+				Expect(o.ETag).To(Equal(md5Hex(nil)), "release %d", rel)
+			}
+		})
+		It("decides the source for a copy with a range, whose get_data radosgw calls once", func(ctx SpecContext) {
+			for _, rel := range bothReleases {
+				f := newMPFixture(ctx, rel)
+				f.putAttrs(ctx, "enc", "", radosgwCryptAttrs("SSE-KMS"))
+				id := f.initUpload(ctx, "k")
+				o := f.copyPartOf(id, 1, "enc", "bytes=0-0")
+				o.Secure = true
+				Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrInvalidArgument), "release %d", rel)
+			}
+		})
+	})
+
+	Describe("the decision's place", func() {
+		var f *writeFixture
+		BeforeEach(func(ctx SpecContext) {
+			f = newMPFixture(ctx, denc.Tentacle)
+			f.putAttrs(ctx, "enc", "hello", radosgwCryptAttrs("RGW-AUTO"))
+		})
+
+		It("comes after the upload's own refusal, as radosgw runs get_encrypt_filter before it reads the source", func(ctx SpecContext) {
+			id := f.encryptedUpload(ctx, "k", "SSE-KMS")
+			o := f.copyPartOf(id, 1, "enc", "")
+			o.Secure = true
+			err := op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))
+			Expect(err).To(MatchError(op.ErrInvalidArgument))
+			Expect(messageOf(err)).To(Equal("Failed to retrieve the actual key, kms-keyid: kid"), "the upload's mode, not the source's")
+		})
+		DescribeTable("comes ahead of the range and the copy-source conditions, as radosgw decrypts before range_to_ofs",
+			func(ctx SpecContext, rng string, set func(*op.UploadPart)) {
+				stub := &opfakes.FakeMultipartStore{}
+				stub.GetUploadReturns(&op.Upload{ID: "2~x"}, nil)
+				f.env.Multipart = stub
+				o := f.copyPartOf("2~x", 1, "enc", rng)
+				if set != nil {
+					set(o)
+				}
+				Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(MatchError(op.ErrUnknown))
+				Expect(stub.CopyPartCallCount()).To(BeZero())
+			},
+			Entry("a range past the source", "bytes=10-20", nil),
+			Entry("an If-Match the source fails", "", func(o *op.UploadPart) { o.IfMatch = new("other") }),
+		)
+	})
+})

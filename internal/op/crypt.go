@@ -41,7 +41,8 @@ var errUnknownCryptMode = errors.New("a crypt mode rgw-go does not know")
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1317-L1505 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1333-L1527 at v20.2.4):
 // its answer to req for the crypt mode attrs store, an object's for GET and
-// HEAD, an upload's for each of its parts. rgw-go has no key server, so
+// HEAD, an upload's for each of its parts, and a copy source's for
+// UploadPartCopy. rgw-go has no key server, so
 // SSE-KMS, SSE-S3 and RGW-AUTO answer as radosgw does without one
 // (docs/exclusions.md), and it implements no SSE-C yet, so an SSE-C request
 // that passes every check is NotImplemented. rgw_crypt_require_ssl, true
@@ -82,6 +83,33 @@ func storedCryptRefusal(ctx context.Context, r *Request, attrs map[string][]byte
 	default:
 		return fmt.Errorf("%w: %w %q", ErrNotImplemented, errUnknownCryptMode, mode)
 	}
+}
+
+// RefuseEncryptedSource is CopyObject's refusal of a source that carries a
+// crypt mode attr, of any value, NotImplemented, as a Squid radosgw's
+// copy_obj refuses one
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4787-L4795 at v19.2.7).
+// A Tentacle radosgw decrypts it, which rgw-go cannot do for a key-server
+// mode and does not do for SSE-C yet; copying the source's stored bytes
+// would make ciphertext the copy's data.
+func RefuseEncryptedSource(src *ObjectState) error {
+	if _, ok := src.Attrs[meta.AttrCryptMode]; !ok {
+		return nil
+	}
+	return fmt.Errorf("%w: copy source %s is encrypted", ErrNotImplemented, src.Key.Name)
+}
+
+// RefuseEncryptedPartSource is a store's refusal to copy n bytes of a
+// source whose crypt mode is not empty into a part, NotImplemented; a copy
+// of no byte copies no ciphertext. UploadPartCopy decides such a source
+// before it asks the store (UploadPart.refuseEncryptedSource), so this
+// keeps a store from copying ciphertext as a part's data only for a caller
+// that did not.
+func RefuseEncryptedPartSource(src *ObjectState, n uint64) error {
+	if n == 0 || len(src.Attrs[meta.AttrCryptMode]) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: part copy source %s is encrypted", ErrNotImplemented, src.Key.Name)
 }
 
 // checkSSEC is rgw_s3_prepare_decrypt's SSE-C branch: the algorithm, the key

@@ -8989,6 +8989,40 @@ does the following.
   [rgw_op.cc:4457-4611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4457-L4611) at v20.2.4;
   `UploadPart.refuseEncrypted`, `internal/op/uploadpart.go`, and
   `storedCryptRefusal`, `internal/op/crypt.go`).
+- **UploadPartCopy answers 501 for an encrypted copy source radosgw would
+  decrypt.** radosgw reads an UploadPartCopy's source through
+  `RGWPutObj::get_data`, which runs `get_decrypt_filter` over the source's
+  attrs before it checks the range
+  ([rgw_op.cc:4060-4072](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4060-L4072) at v19.2.7,
+  [rgw_op.cc:4269-4281](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4269-L4281) at v20.2.4):
+  `rgw_s3_prepare_decrypt`, with the request's own SSE-C headers at
+  v19.2.7
+  ([rgw_rest_s3.cc:2807-2817](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2807-L2817))
+  and its `x-amz-copy-source-server-side-encryption-customer-*` headers at
+  v20.2.4
+  ([rgw_rest_s3.cc:2969-2977](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2969-L2977)).
+  rgw-go makes the same decision over the source's attrs, with the same
+  headers per release, so a source of a key-server mode answers as a
+  radosgw without a key server answers it, and a source of an empty mode
+  is none and is copied. It decrypts no source, so an SSE-C source whose
+  key the headers name answers 501 NotImplemented, where radosgw decrypts
+  it, and a source of a non-empty mode rgw-go does not know, such as
+  v20.2.5's GCM modes, answers 501 where a v19.2.7 or v20.2.4 radosgw
+  copies its stored bytes. A request naming any SSE-C key is refused 501
+  before the permission check ("Writes that ask for encryption answer
+  501, SSE-S3 and SSE-KMS until phase 2 and SSE-C until phase 4"). The
+  decision comes after the upload's own crypt mode is checked and before
+  the range and the copy-source conditions, and a refusal writes nothing.
+  An unranged copy of an empty source decides nothing, as radosgw's copy
+  loop never calls `get_data` for it
+  ([rgw_op.cc:4386-4389](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4386-L4389) at v19.2.7,
+  [rgw_op.cc:4618-4621](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4618-L4621) at v20.2.4).
+  CopyObject still refuses a source that carries a crypt mode attr of any
+  value ("A copy that streams a compressed source copies its stored
+  bytes") (`UploadPart.refuseEncryptedSource`, `internal/op/uploadpart.go`;
+  `storedCryptRefusal`, `internal/op/crypt.go`). Behind the decision, the
+  stores' `CopyPart` refuse to copy a byte of a source of a non-empty mode
+  (`op.RefuseEncryptedPartSource`).
 - **Appends and a PUT that names a copy source but is no copy are not
   served.** radosgw serves a PUT with `?append` as an append, and a PUT
   whose `x-amz-copy-source` comes with `x-amz-copy-source-range` and no

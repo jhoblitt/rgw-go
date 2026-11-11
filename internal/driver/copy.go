@@ -178,9 +178,12 @@ func (s *Store) CopyObject(ctx context.Context, src *op.ObjectState, dst *op.Buc
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5813-L5819),
 // which needs decryption rgw-go does not implement, and copying its
 // ciphertext under a head without its crypt attrs would make it unreadable.
+// UploadPartCopy decides its source as get_data does
+// (UploadPart.refuseEncryptedSource), and the stores' CopyPart refuse a
+// non-empty mode (op.RefuseEncryptedPartSource).
 func (s *Store) copyAttrs(src *op.ObjectState, req map[string][]byte, replace bool) (map[string][]byte, error) {
-	if _, ok := src.Attrs[meta.AttrCryptMode]; ok {
-		return nil, fmt.Errorf("%w: copy source %s is encrypted", op.ErrNotImplemented, objName(src))
+	if err := op.RefuseEncryptedSource(src); err != nil {
+		return nil, err
 	}
 	srcAttrs := maps.Clone(src.Attrs)
 	if srcAttrs == nil {

@@ -136,7 +136,12 @@ func (s *Store) PutPart(_ context.Context, up *op.Upload, n int, body io.Reader,
 
 // CopyPart implements op.MultipartStore: rng of src, its end clamped to the
 // object, becomes part n, with the upload's checksum type computed over it.
+// As the driver does, it refuses a source whose crypt mode is not empty when
+// rng holds a byte (op.RefuseEncryptedPartSource).
 func (s *Store) CopyPart(_ context.Context, up *op.Upload, n int, src *op.ObjectState, rng op.ByteRange) (*op.PartResult, error) {
+	if err := op.RefuseEncryptedPartSource(src, rng.Length); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, err := s.upload(up)
