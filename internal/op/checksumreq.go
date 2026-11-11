@@ -385,31 +385,20 @@ func SuppliedForComplete(in ChecksumInput) (*ChecksumRequest, error) {
 	return nil, fmt.Errorf("%w: %d checksum values, %s and %s", ErrInvalidRequest, len(found), found[0].name, found[1].name)
 }
 
-// partChecksum is the checksum request of an UploadPart of up, read once
-// the upload's info is (readUpload), as RGWPutObj::execute reads get_info's
-// multipart_cksum_type before its Factory runs
-// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4453-L4472 at v20.2.4):
-// an unknown upload is ErrNoSuchUpload before any checksum field is read.
-func partChecksum(ctx context.Context, r *Request, up *Upload, in ChecksumInput) (*ChecksumRequest, io.Reader, error) {
-	if err := readUpload(ctx, r, up); err != nil {
-		return nil, nil, err
-	}
-	return ChecksumForPart(in, up.Checksum, r.Env.Zone.Release())
-}
-
 // readUpload is get_info's read of up's upload for a part, which gives up
 // the upload's destination placement, which MultipartStore.PutPart writes
 // the part to, and its checksum type and flags, for the part's checksum
-// request or for MultipartStore.CopyPart to compute.
-func readUpload(ctx context.Context, r *Request, up *Upload) error {
+// request or for MultipartStore.CopyPart to compute. It returns the attrs of
+// the upload's meta object, whose crypt mode the part must take
+// (UploadPart.refuseEncrypted); they stay out of up, whose Attrs are the
+// part's head's.
+func readUpload(ctx context.Context, r *Request, up *Upload) (map[string][]byte, error) {
 	got, err := r.Env.Multipart.GetUpload(ctx, r.BucketRec, r.Object, up.ID)
-	if err != nil {
-		return err
+	if err != nil || got == nil {
+		return nil, err
 	}
-	if got != nil {
-		up.Placement, up.Checksum = got.Placement, got.Checksum
-	}
-	return nil
+	up.Placement, up.Checksum = got.Placement, got.Checksum
+	return got.Attrs, nil
 }
 
 // completeChecksum is the supplied checksum of a CompleteMultipartUpload of

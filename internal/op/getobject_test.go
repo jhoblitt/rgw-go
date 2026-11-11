@@ -642,6 +642,10 @@ var _ = Describe("GetObject", func() {
 				_, err := serve(encrypted("SSE-KMS"), func(o *op.GetObject) { o.GetData, o.Secure = false, true })
 				Expect(err).To(MatchError(op.ErrInvalidArgument))
 			})
+			It("serves an object of a mode rgw_s3_prepare_decrypt does not name as stored, as radosgw does", func() {
+				_, err := serve(encrypted("AES256-GCM"), func(o *op.GetObject) { o.Secure = true })
+				Expect(err).NotTo(HaveOccurred())
+			})
 			It("checks the range before the encryption", func() {
 				_, err := serve(encrypted("SSE-KMS"), func(o *op.GetObject) { o.Secure, o.Range = true, "bytes=20000000-" })
 				Expect(err).To(MatchError(op.ErrInvalidRange))

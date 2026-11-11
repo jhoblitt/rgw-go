@@ -63,6 +63,14 @@ type UploadPart struct {
 	// neither: AWS defines no checksum request header for UploadPartCopy,
 	// and its part takes its upload's type (MultipartStore.CopyPart).
 	ChecksumField func(name string) (string, bool)
+	// SSECAlgorithm, SSECKey and SSECKeyMD5 are the
+	// x-amz-server-side-encryption-customer-algorithm, -key and -key-MD5
+	// headers, "" when absent, with which a part of an SSE-C upload names the
+	// upload's key (refuseEncrypted).
+	SSECAlgorithm, SSECKey, SSECKeyMD5 string
+	// Secure is rgw_transport_is_secure: TLS, or a forwarded protocol radosgw
+	// trusts.
+	Secure bool
 
 	// SourceErr is the protocol's refusal of an x-amz-copy-source it cannot
 	// parse, which Init returns where init_processing parses the source.
@@ -226,10 +234,10 @@ func (o *UploadPart) VerifyPermission(ctx context.Context, r *Request) error {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4142-L4560 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4351-L4867 at v20.2.4):
 // the key; the quota for the request's length, unless it is chunked or the
-// request is a system request; for a part with a body, the upload's
-// checksum type and then the part's checksum request (partChecksum); then
-// the part, whose head's attrs are the request's with the policy, written
-// under the request id. First come the
+// request is a system request; the upload, a part of an encrypted one
+// refused (refuseEncrypted); for a part with a body, the part's checksum
+// request; then the part, whose head's attrs are the request's with the
+// policy, written under the request id. First come the
 // checks of stored state that radosgw makes before verify_permission, which
 // rgw-go makes once the requester is authorized: the request's storage class
 // must be one the zone has
@@ -298,14 +306,29 @@ func (o *UploadPart) Execute(ctx context.Context, r *Request) error {
 }
 
 // putPart is execute's write of a part from the request's body: an upload id
-// holding a "." is NoSuchUpload, then the part's checksum request is read
-// (partChecksum) and the part written under the request id with the head
-// attrs up holds.
+// holding a "." is NoSuchUpload; then the upload is read (readUpload) and a
+// part of an encrypted one refused (refuseEncrypted), as RGWPutObj::execute
+// reads get_info and then runs get_encrypt_filter
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4248-L4350 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4457-L4566 at v20.2.4);
+// then the part's checksum request is read (ChecksumForPart), which a
+// Tentacle radosgw's RGWPutObj_Cksum::Factory reads next
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4602-L4611 at v20.2.4),
+// so an unknown upload is ErrNoSuchUpload before any checksum field is read;
+// then the part is written under the request id with the head attrs up
+// holds.
 func (o *UploadPart) putPart(ctx context.Context, r *Request, up *Upload) (*PartResult, error) {
 	if err := aliasedUpload(o.UploadID); err != nil {
 		return nil, err
 	}
-	ck, body, err := partChecksum(ctx, r, up, ChecksumInput{Field: o.ChecksumField, Trailers: r.Trailers, Body: o.Body})
+	upAttrs, uerr := readUpload(ctx, r, up)
+	if uerr != nil {
+		return nil, uerr
+	}
+	if err := o.refuseEncrypted(ctx, r, upAttrs); err != nil {
+		return nil, err
+	}
+	ck, body, err := ChecksumForPart(ChecksumInput{Field: o.ChecksumField, Trailers: r.Trailers, Body: o.Body}, up.Checksum, r.Env.Zone.Release())
 	if err != nil {
 		return nil, err
 	}
@@ -323,6 +346,10 @@ func (o *UploadPart) putPart(ctx context.Context, r *Request, up *Upload) (*Part
 // and its existence
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4297-L4331 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4510-L4544 at v20.2.4);
+// a part of an encrypted upload refused (refuseEncrypted), as
+// get_encrypt_filter runs next
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4350 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4566 at v20.2.4);
 // then the range against the source's accounted size, and the copy of
 // that range from the one state the request read.
 //
@@ -342,8 +369,9 @@ func (o *UploadPart) copyPart(ctx context.Context, r *Request, up *Upload) (*Par
 	if err := aliasedUpload(o.UploadID); err != nil {
 		return nil, err
 	}
-	if err := readUpload(ctx, r, up); err != nil {
-		return nil, err
+	upAttrs, uerr := readUpload(ctx, r, up)
+	if uerr != nil {
+		return nil, uerr
 	}
 	if err := o.checkCloudTier(r); err != nil {
 		return nil, err
@@ -351,6 +379,9 @@ func (o *UploadPart) copyPart(ctx context.Context, r *Request, up *Upload) (*Par
 	// An admin let through a refusal of a missing source reaches here.
 	if !o.src.Exists {
 		return nil, fmt.Errorf("%w: %s", ErrNoSuchKey, o.SrcKey.Name)
+	}
+	if err := o.refuseEncrypted(ctx, r, upAttrs); err != nil {
+		return nil, err
 	}
 	if err := conds.check(o.src); err != nil {
 		return nil, err
@@ -360,6 +391,25 @@ func (o *UploadPart) copyPart(ctx context.Context, r *Request, up *Upload) (*Par
 		return nil, err
 	}
 	return r.Env.Multipart.CopyPart(ctx, up, o.PartNumber, o.src, rng)
+}
+
+// refuseEncrypted is get_encrypt_filter for a part
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2859-L2876 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2984-L3002 at v20.2.4),
+// which runs rgw_s3_prepare_decrypt over upAttrs, the attrs of the upload's
+// meta object, with the request's own SSE-C headers, a copy's too, and
+// encrypts the part with the mode they store. rgw-go encrypts no part, so
+// it refuses the part of an upload with a non-empty mode
+// (storedCryptRefusal), which it would otherwise store in the clear under a
+// completed head carrying the upload's crypt attrs: a key-server mode as
+// radosgw without a key server refuses it, SSE-C with radosgw's refusal of
+// the request's key or else NotImplemented, and a mode rgw-go does not know
+// NotImplemented (docs/differences.md). An upload without a mode, or with an
+// empty one, is nil.
+func (o *UploadPart) refuseEncrypted(ctx context.Context, r *Request, upAttrs map[string][]byte) error {
+	return storedCryptRefusal(ctx, r, upAttrs, sseCRequest{
+		algorithm: o.SSECAlgorithm, key: o.SSECKey, keyMD5: o.SSECKeyMD5, secure: o.Secure,
+	})
 }
 
 // checkCloudTier is execute's refusal of a source transitioned to a cloud

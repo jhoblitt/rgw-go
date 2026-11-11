@@ -8945,6 +8945,50 @@ does the following.
     once the requester is authorized, as its `get_params` runs in `execute`,
     from its headers alone. A refused upload creates no upload, a refused part
     stores no part, and no such header is stored as an attr.
+- **A part radosgw would encrypt with an SSE-C key, or under a crypt mode
+  rgw-go does not know, answers 501.** radosgw writes each part of an
+  upload under the upload's crypt mode: `get_encrypt_filter` runs
+  `rgw_s3_prepare_decrypt` over the attrs of the upload's meta object with
+  the request's own SSE-C headers, an UploadPartCopy's too
+  ([rgw_rest_s3.cc:2859-2876](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2859-L2876) at v19.2.7,
+  [rgw_rest_s3.cc:2984-3002](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2984-L3002) at v20.2.4),
+  and for an SSE-C upload encrypts the part with the key those headers
+  name once they pass the checks a GET's must
+  ([rgw_crypt.cc:1317-1399](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1317-L1399) at v19.2.7,
+  [rgw_crypt.cc:1333-1421](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1333-L1421) at v20.2.4).
+  rgw-go encrypts no part, so it refuses the part of an upload whose crypt
+  mode is not empty before a byte of it is read or stored, rather than
+  store it in the clear under a completed head that carries the upload's
+  crypt attrs; an empty mode is none, as radosgw takes it. A part of an
+  SSE-C upload whose request carries an SSE-C header
+  answers 501 NotImplemented before the permission check, as every SSE-C
+  write does ("Writes that ask for encryption answer 501, SSE-S3 and
+  SSE-KMS until phase 2 and SSE-C until phase 4"), where radosgw encrypts
+  the part with the key the headers name, or refuses headers that do not
+  name the upload's; one whose request carries none answers radosgw's
+  refusal, InvalidRequest over plain HTTP under `rgw_crypt_require_ssl`
+  and InvalidArgument otherwise. A part of an upload of a non-empty mode
+  rgw-go does not know answers 501 NotImplemented too: v20.2.5 adds
+  `SSE-C-AES256-GCM`, `SSE-KMS-GCM`, `AES256-GCM` and `RGW-AUTO-GCM`,
+  written when `rgw_crypt_sse_algorithm` is `aes-256-gcm`
+  ([rgw_crypt.cc:2486-2978](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_crypt.cc#L2486-L2978) at v20.2.5),
+  whose part a v20.2.5 radosgw encrypts, and a v19.2.7 or v20.2.4 one,
+  which takes a mode it does not name for none
+  ([rgw_crypt.cc:1503-1504](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1503-L1504) at v19.2.7,
+  [rgw_crypt.cc:1525-1526](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1525-L1526) at v20.2.4),
+  stores in the clear. The part of an SSE-KMS, SSE-S3 or RGW-AUTO upload
+  answers as a radosgw without a key server answers it (docs/exclusions.md,
+  "Key management: SSE-KMS and SSE-S3 with every backend", item 3), and
+  one of an upload without a crypt mode is stored as before. The refusal
+  comes where `get_encrypt_filter` runs: after the upload is read and, for
+  an unranged copy, after the source's cloud tier and existence are
+  checked, which rgw-go checks first for a ranged copy too, and before the
+  part's checksum request is read and a copy's range and conditions are
+  checked
+  ([rgw_op.cc:4248-4350](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4248-L4350) at v19.2.7,
+  [rgw_op.cc:4457-4611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4457-L4611) at v20.2.4;
+  `UploadPart.refuseEncrypted`, `internal/op/uploadpart.go`, and
+  `storedCryptRefusal`, `internal/op/crypt.go`).
 - **Appends and a PUT that names a copy source but is no copy are not
   served.** radosgw serves a PUT with `?append` as an append, and a PUT
   whose `x-amz-copy-source` comes with `x-amz-copy-source-range` and no

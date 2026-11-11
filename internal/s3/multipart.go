@@ -138,7 +138,10 @@ type copyPartResult struct {
 // before the permission check, as init_processing calls get_params; the
 // rest, and the checks radosgw makes in execute, run through
 // uploadPartChecks once the requester is authorized, so that a refused
-// requester learns nothing the store holds (docs/differences.md).
+// requester learns nothing the store holds (docs/differences.md). The SSE-C
+// headers and the transport are what rgw_s3_prepare_decrypt reads of a part
+// of an encrypted upload, which the op refuses; a request carrying an SSE-C
+// header does not reach that check, as uploadPartParams refuses it first.
 //
 // The success is send_response's
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2730-L2782,
@@ -155,6 +158,10 @@ func (wr *objectWrites) uploadPart(ctx context.Context, w http.ResponseWriter, r
 	o := &op.UploadPart{
 		UploadID: r.Query.Get("uploadId"), Body: r.Body, Size: r.ContentLength,
 		StorageClass: header(r, "X-Amz-Storage-Class"), CannedACL: header(r, "X-Amz-Acl"), ChecksumField: checksumField(r),
+		SSECAlgorithm: header(r, "x-amz-server-side-encryption-customer-algorithm"),
+		SSECKey:       header(r, "x-amz-server-side-encryption-customer-key"),
+		SSECKeyMD5:    header(r, "x-amz-server-side-encryption-customer-key-MD5"),
+		Secure:        secure(r),
 	}
 	if v, _ := op.HeaderValue(r.Header, "X-Amz-Copy-Source"); v != "" {
 		tenant, bucket, key, ok := partCopySource(v, r.Identity.Tenant)
