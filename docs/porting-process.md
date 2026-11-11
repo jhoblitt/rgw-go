@@ -92,6 +92,11 @@ Each fix below that is not this document lands on main before phase 2's tasks st
 | PP-46 | Scratch in /tmp exhausted the build host's per-user quota | Minor | the dispatch environment; the controller's build wrapper | open |
 | PP-47 | A general standing instruction could not stand in for a workflow acknowledgement | Major | the owner; the merge gate's acknowledgement check; subagent-driven-development | open |
 | PP-48 | An unpinned runner label moved and broke CI for every code PR | Major | go-conventions' ci.md (cgo); github-conventions' workflows.md | open |
+| PP-49 | A request header's read belonged to neither task across a seam | Minor | writing-plans (seams between layers); subagent-driven-development | open |
+| PP-50 | Plan text the controller wrote carried premises nobody checked | Major | writing-plans (claims in task text); the controller's brief checklist | open |
+| PP-51 | Review output was lost to worktree handling | Major | subagent-driven-development (reviewer dispatch); the controller's own worktree use | open |
+| PP-52 | A shared scratch copy of Ceph source changed under a running reviewer | Minor | the dispatch rules (how to read Ceph source) | open |
+| PP-53 | The cluster lock was taken without `flock -o` | Minor | the dispatch rules (cluster work); hack/rooket's docs | open |
 
 ## PP-1: Plan code treated as binding mandated a data-loss race
 
@@ -779,3 +784,75 @@ Each fix below that is not this document lands on main before phase 2's tasks st
   - A seam that carries a request input names both halves: the task that adds the op's field and the task that fills it from the request. A field the op reads and no handler sets is a seam with one side.
   - An op task whose input comes from the request either carries one spec through the handler, or its brief names the task that will, so that a field no handler sets fails a spec.
 - **Candidate home:** writing-plans (seams between layers); the plan review's seam check; subagent-driven-development (briefs that consume an op field).
+
+## PP-50: Plan text the controller wrote carried premises nobody checked
+
+- **Severity:** Major. **Status:** open.
+- **Observed:** three tasks the controller numbered on 2026-11-06 and 2026-11-10 stated facts it had
+  not checked against the code, and each was wrong:
+  - T-6 said L4's two s3-tests are kept out by an `object_lock` marker. No test in test_s3.py carries
+    that marker; the implementer found the tests would enter the gate set and deselected them, and
+    C12's plan text had to be corrected (#579).
+  - T-6 prescribed the MFA tests' first code as `_mfa_code_after(serial, seed, int(time.time()) // 30)`.
+    Run after `test_versioning_mfa_delete_code_used_once`, whose replay makes cls_otp record a step
+    ahead of the clock, that code is still refused; the fix needed a wait past the device's window.
+  - WP-26 (#578) said radosgw renders CompleteMultipartUpload's checksum "whatever the request
+    carries" and that the completion is unchanged. radosgw v20.2.4 runs its decrypt check on an
+    SSE-C upload before completing, and rgw-go reads no crypt mode at all; WP-26 was amended twice
+    (#580, #581).
+- **Cost:** two plan PRs to amend WP-26, one to correct C12 and T-6, a second MFA commit merged
+  into the s3-tests branch unsquashed, and a review round in WP-13 that judged sentences against
+  WP-26's wrong text.
+- **Improvement:**
+  - A fact a task's text states about the code, Ceph's or rgw-go's, is checked against the source
+    before the plan PR opens, as the project's CLAUDE.md asks of design docs; a fact taken from a
+    reviewer or an implementer is checked the same way.
+  - Where the premise is a claim about behaviour (which tests run, what a gateway refuses), the
+    plan says how it was established, or marks it "to verify at implementation".
+- **Candidate home:** writing-plans (claims in task text); the controller's checklist for numbering
+  a review finding (PP-12).
+
+## PP-51: Review output was lost to worktree handling
+
+- **Severity:** Major. **Status:** open.
+- **Observed:**
+  - T-6's task reviewer ran without its own worktree. Midway, the controller entered a plan
+    worktree, which moved the whole session's isolation: from then on the reviewer could not run
+    git, gh or `make ledger-check`, nor write its review file, and reviewed from files and reflogs.
+  - WP-13's second scoped re-reviewer ran with `isolation: worktree` and wrote its review into its
+    worktree's git-excluded `.superpowers/`. Its worktree had no tracked changes, so it was removed
+    when the agent finished, and the review file went with it; the next fix round worked from the
+    controller's summary.
+- **Cost:** a review that could not run the ledger checks it was asked to, and a review file lost.
+- **Improvement:**
+  - A reviewer returns its full review in its final message, and the controller saves it beside the
+    ledger; a file in an agent's own worktree is scratch.
+  - The controller does not enter a worktree while an agent without one is running, and gives
+    reviewers their own worktrees.
+- **Candidate home:** subagent-driven-development (reviewer dispatch and report contract); the
+  controller's use of EnterWorktree.
+
+## PP-52: A shared scratch copy of Ceph source changed under a running reviewer
+
+- **Severity:** Minor. **Status:** open.
+- **Observed:** during WP-13's second fix round, another session replaced
+  `$TMPDIR/ceph-src/v20.2.4/rgw_op.cc`, a copy several sessions read citations from. The implementer
+  noticed only because a citation it had checked stopped matching, and switched to reading the clone
+  with `git show`, which caught an off-by-one (N3) the copy had hidden.
+- **Cost:** one wrong citation that reached a review, and doubt about every citation read from the
+  copy before the switch.
+- **Improvement:** Ceph source is read from the clone at a tag, `git -C <clone> show <tag>:<path>`,
+  never from a shared scratch copy; the dispatch rules say so.
+- **Candidate home:** the controller's dispatch rules; citecheck's docs.
+
+## PP-53: The cluster lock was taken without `flock -o`
+
+- **Severity:** Minor. **Status:** open.
+- **Observed:** T-6's implementer took the cluster lock as the 2026-11-10 dispatch rules said,
+  `flock "$XDG_RUNTIME_DIR/rgw-go-cluster.lock"`. The rgw-go that `make rgw-go-up` starts inherited
+  the lock's descriptor and held the lock after the command ended, so the next cluster step waited
+  on it. gobuild.sh already passes `-o` for the same reason.
+- **Cost:** about ten minutes of a cluster recording.
+- **Improvement:** every lock around a command that may leave a daemon running is taken with
+  `flock -o`; the dispatch rules now say so.
+- **Candidate home:** the controller's dispatch rules; hack/rooket's docs.
