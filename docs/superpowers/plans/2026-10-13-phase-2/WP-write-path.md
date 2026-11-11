@@ -1193,39 +1193,69 @@ Found by WP-13's adversarial review (L2), and numbered here before WP-13 merged 
   serves; the registry entry's rgw-go line says rgw-go requires both.
 - **Depends on:** WP-13. **PR:** one. **Brief:** about 40 lines.
 
-### Task WP-26: CompleteMultipartUpload checks an encrypted upload's key and hides its checksum
+### Task WP-26: CompleteMultipartUpload treats an encrypted upload as radosgw does
 
-Found by WP-13's scoped re-review (N7) and its second fix round, and numbered here before WP-13
-merged (PP-12).
+Found by WP-13's scoped re-reviews (N7, then N10) and its second fix round, and numbered here
+before WP-13 merged (PP-12).
 
 - **Layer:** S3 handler and op. **Files:** `internal/s3/multipart.go` (CompleteMultipartUpload's
   request and response), the op's completion, the decision WP-13 gives ListParts
   (`internal/op/listparts.go`), their specs; `docs/differences.md`; the registry entry WP-13's
   PR adds. **Cluster:** no.
+- **Behaviour:** rgw-go's completion reads neither the upload's crypt mode nor an SSE header
+  today, so it completes uploads a radosgw refuses. It reads both, before it completes:
+  1. An SSE-C upload is completed without its key only when it was created without a checksum
+     and the request sends no SSE-C headers. Otherwise the request must carry SSE-C headers
+     naming the upload's key, over a secure transport while `rgw_crypt_require_ssl` is set,
+     or it is refused with radosgw's error. This is AWS's rule and v20.2.5's
+     (`verify_encryption`, [rgw_rest_s3.cc:4622-4635](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_rest_s3.cc#L4622-L4635));
+     v20.2.4 asks for the key on every SSE-C completion
+     ([rgw_rest_s3.cc:4591-4598](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4591-L4598)),
+     and rgw-go follows AWS where the status differs (D16).
+  2. An SSE-KMS, SSE-S3 or RGW-AUTO upload is refused as a radosgw without a key server refuses
+     or fails it (Key management, item 3, in `docs/exclusions.md`), the SSE-KMS one first with
+     radosgw's `rgw_crypt_require_ssl` refusal over an insecure transport
+     ([rgw_crypt.cc:1424-1428](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1424-L1428)).
+     Verify each mode's answer at both tags at implementation.
+  3. A crypt mode rgw-go does not know, such as v20.2.5's GCM modes, is refused.
+  4. A completed SSE-C upload's response carries the encryption headers radosgw echoes
+     ([rgw_rest_s3.cc:4610-4611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4610-L4611)),
+     and its combined checksum as for any upload.
+  Squid's v19.2.7 renders no checksum; verify its completion's checks at implementation.
+- **Specs:** per release, an SSE-C upload with and without a checksum, completed with the
+  matching key, a wrong key, no key, and over plain HTTP with `rgw_crypt_require_ssl` set; an
+  SSE-KMS, an SSE-S3 and an RGW-AUTO upload; an unknown mode; an unencrypted upload, unchanged.
+- **Exclusions and registry:** `docs/differences.md` entries where rgw-go's answer differs from
+  v20.2.4's; WP-13's sentences about rgw-go's weaker completion retire; the registry entry's
+  rgw-go line says what rgw-go does.
+- **Depends on:** WP-13. **PR:** one. **Brief:** about 55 lines.
+
+### Task WP-27: UploadPart and UploadPartCopy refuse a part of an encrypted upload
+
+Found by WP-13's second scoped re-review (N8), and numbered here before WP-13 merged (PP-12).
+On a zone radosgw shares it corrupts data today, so it goes first among this unit's open tasks.
+
+- **Layer:** op. **Files:** `internal/op/uploadpart.go` (the upload read and the part write),
+  UploadPartCopy's op, their specs; `docs/differences.md`. **Cluster:** no.
 - **Behaviour:**
-  1. For an upload created with SSE-C, CompleteMultipartUpload refuses a request that does not
-     carry SSE-C headers matching the upload's key, or that arrives over an insecure transport
-     while `rgw_crypt_require_ssl` is set, with the error radosgw gives. radosgw's `get_params`
-     runs `rgw_s3_prepare_decrypt` on the upload's attrs before it completes
-     ([rgw_rest_s3.cc:4591-4598](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4591-L4598));
-     rgw-go reads no SSE header on completion, so today it completes such an upload without the
-     key. Verify Squid's v19.2.7 at implementation.
-  2. For an upload created with SSE-KMS the completion proceeds, as radosgw's does, since neither
-     gateway evaluates the requester's `kms:Decrypt`, and the response omits the combined
-     checksum and its `ChecksumType`, which radosgw renders
-     ([rgw_rest_s3.cc:4635-4639](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4635-L4639))
-     and AWS withholds from a requester without `kms:Decrypt` (cite the documentation at
-     implementation).
-  3. rgw-go answers every encryption write 501 today, so only an upload radosgw began on a
-     shared zone reaches either rule.
-- **Specs:** per release, an SSE-C upload completed with the matching key (completes, checksum
-  shown), a wrong key and no key (refused with radosgw's error), and over plain HTTP with
-  `rgw_crypt_require_ssl` set (refused); an SSE-KMS upload (completes, no checksum); an
+  1. UploadPart and UploadPartCopy read the upload's crypt attributes along with its placement
+     and checksum. For an upload with any crypt mode they refuse the part before a byte of it is
+     stored: an SSE-C upload with the 501 rgw-go answers every SSE-C write, and an SSE-KMS,
+     SSE-S3 or RGW-AUTO upload, or a mode rgw-go does not know, with the error a radosgw without
+     a key server gives (Key management, items 1 and 3, in `docs/exclusions.md`).
+  2. Today rgw-go reads only the upload's placement and checksum, so a part for an upload
+     radosgw began encrypted is stored in the clear, while the completed object carries the
+     upload's crypt attributes and radosgw reads that part back as garbage. radosgw encrypts
+     every part with its upload's mode
+     ([rgw_rest_s3.cc:2984-3002](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2984-L3002)).
+  3. An upload with no crypt mode is unchanged.
+- **Specs:** per release, a fake upload per crypt mode as radosgw writes its attributes, where
+  UploadPart and UploadPartCopy are refused and no part is written; an unknown mode; an
   unencrypted upload, unchanged.
-- **Exclusions and registry:** a `docs/differences.md` entry for the withheld SSE-KMS checksum;
-  the SSE-C refusal matches radosgw and retires the sentence WP-13 records about rgw-go's
-  weaker completion; the registry entry's rgw-go line says what rgw-go does.
-- **Depends on:** WP-13. **PR:** one. **Brief:** about 45 lines.
+- **Exclusions and registry:** a `docs/differences.md` entry for the SSE-C refusal, where a
+  radosgw encrypts with the client's key; none for the key-server modes, which match a radosgw
+  without a key server.
+- **Depends on:** nothing. **PR:** one. **Brief:** about 40 lines.
 
 ## Order
 
@@ -1240,6 +1270,7 @@ Everything starts after the index's deferred benchmark run and the shared tasks 
 | 5 | WP-7, WP-9, WP-11 | WP-6, V11 and V14a; WP-8; WP-8 and WP-10 (b) |
 | 6 | WP-12, then WP-13 | WP-9; WP-12, WP-7 and V14a |
 | 7 | WP-25, WP-26 | WP-13 |
+| any time, first | WP-27 | nothing |
 | cluster, one at a time | WP-24, WP-15, WP-14 | WP-19 and WP-21; WP-8 to WP-11 and WP-13; WP-6 to WP-13, WP-22, T-1, and BC-34 or the POST line deselected |
 
 - Wave 1 is wider than the subagent budget allows at once; the controller starts WP-10 (a),
