@@ -509,6 +509,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's permission override lets an admin's DeleteObject bypass GOVERNANCE retention without s3:BypassGovernanceRetention](#radosgws-permission-override-lets-an-admins-deleteobject-bypass-governance-retention-without-s3bypassgovernanceretention) | pending | pending | ✓ |
 | [radosgw's DeleteObjects checks s3:BypassGovernanceRetention on the bucket's ARN, not each key's](#radosgws-deleteobjects-checks-s3bypassgovernanceretention-on-the-buckets-arn-not-each-keys) | pending | pending | ✓ |
 | [radosgw's S3 deletes naming no version remove an object under object lock when the bucket's versioning is not enabled](#radosgws-s3-deletes-naming-no-version-remove-an-object-under-object-lock-when-the-buckets-versioning-is-not-enabled) | pending | pending | ✓ |
+| [radosgw's GetObjectAttributes needs s3:GetObject or s3:GetObjectAttributes, not both](#radosgws-getobjectattributes-needs-s3getobject-or-s3getobjectattributes-not-both) | [#72915](https://tracker.ceph.com/issues/72915) | [ceph/ceph#65441](https://github.com/ceph/ceph/pull/65441) |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -32623,3 +32624,63 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task L4, 2026-10-28, lifting the deletes' object-lock
   501; derived from the source, not reproduced.
+
+## radosgw's GetObjectAttributes needs s3:GetObject or s3:GetObjectAttributes, not both
+
+- **Kind:** defect, security (possible): authorization, not found by us.
+  `RGWGetObjAttrs::verify_permission` allows a GetObjectAttributes that
+  either s3:GetObject or s3:GetObjectAttributes allows, s3:GetObjectVersion
+  or s3:GetObjectVersionAttributes for a version, where Amazon S3 needs
+  both. So a requester a policy denies s3:GetObject, and allows
+  s3:GetObjectAttributes, reads the object's ETag, size, storage class,
+  parts and stored checksums. Fixed upstream, not in the floors.
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - At v20.2.4 the first action is s3:GetObject, or s3:GetObjectVersion
+    for a request naming a version, and the second s3:GetObjectAttributes
+    or s3:GetObjectVersionAttributes
+    ([rgw_op.cc:6369-6375](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6369-L6375)).
+    The check joins them with `||`, beneath its own comment that "the
+    following conjunction should be &&--but iam_action2 is currently not
+    hooked up"
+    ([rgw_op.cc:6381-6385](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6381-L6385)).
+  - The tentacle branch at 062b5668b5f still joins them with `||`
+    ([rgw_op.cc:6550-6554](https://github.com/ceph/ceph/blob/062b5668b5f6fc7c7b7469a03f40df7b940fef93/src/rgw/rgw_op.cc#L6550-L6554)).
+  - v21.1.2 joins them with `&&`
+    ([rgw_op.cc:6783-6784](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L6783-L6784)).
+  - Amazon S3 needs s3:GetObject and s3:GetObjectAttributes for a request
+    without a version id, and s3:GetObjectVersion and
+    s3:GetObjectVersionAttributes for one with
+    (aws-sdk-go-v2 `service/s3` v1.114.6, `GetObjectAttributes`'
+    Permissions).
+  - v19.2.7 has no GetObjectAttributes: a Squid radosgw answers
+    `?attributes` as GetObject.
+- **Impact:** a requester a bucket or identity policy denies s3:GetObject
+  on an object, and allows s3:GetObjectAttributes, is answered
+  GetObjectAttributes in full: the ETag, which for a single-part object is
+  the MD5 of its data, the size, the storage class, the parts and their
+  sizes, and on Tentacle the stored full-object and part checksums. The
+  data itself stays refused.
+- **Releases:** v20.2.4 and the tentacle branch at 062b5668b5f. Fixed in
+  v21.0.0 onward, v21.1.2 among them (`git tag --contains d4b46f37c5a`).
+  v19.2.7 has no GetObjectAttributes.
+- **rgw-go:** reproduces it, to match radosgw:
+  `GetObjectAttributes.VerifyPermission` allows s3:GetObject or, when that
+  is refused with AccessDenied on Tentacle, s3:GetObjectAttributes, and
+  their version actions for a version (`internal/op/objectread.go:373-388`),
+  as the op spec "allows a request s3:GetObject refuses when
+  s3:GetObjectAttributes allows it" pins
+  (`internal/op/objectread_test.go`). Since phase 2 task WP-13 the
+  response carries the stored checksums too. Phase 2 plan task WP-25 makes
+  rgw-go require both, as Amazon S3 and v21.1.2 do.
+- **Upstream:** [#72915](https://tracker.ceph.com/issues/72915), Resolved;
+  fixed by [ceph/ceph#65441](https://github.com/ceph/ceph/pull/65441)
+  (16ab79dacbf, "rgw: fix policy enforcement for GetObjectAttributes",
+  merged as d4b46f37c5a on 2025-09-23), first tagged in v21.0.0 and
+  carried by v21.1.2, not backported to tentacle
+  (`git merge-base --is-ancestor d4b46f37c5a origin/tentacle` fails at
+  062b5668b5f).
+- **Found:** phase 2 task WP-13's adversarial review, 2026-11-10, which
+  saw GetObjectAttributes now hand checksums to a requester denied
+  s3:GetObject; the controller found the prior art in the ceph clone the
+  same day. Derived from the source, not reproduced.
