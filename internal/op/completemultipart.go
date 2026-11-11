@@ -71,9 +71,7 @@ func (o *CompleteMultipart) VerifyPermission(ctx context.Context, r *Request) er
 	return VerifyBucketPermission(ctx, r, policy.S3PutObject, acl.PermFor(policy.S3PutObject))
 }
 
-// Execute first refuses, once the requester is authorized and as PutObject
-// does, a bucket with object lock (objectLockUnserved). Then it is
-// RGWCompleteMultipart::execute in its order
+// Execute is RGWCompleteMultipart::execute in its order
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6367-L6416 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7163-L7211 at v20.2.4):
 // get_params, whose empty upload id is -ENOTSUP, 500 UnknownError, and whose
@@ -86,9 +84,6 @@ func (o *CompleteMultipart) VerifyPermission(ctx context.Context, r *Request) er
 // (completeChecksum); then the completion, whose head takes the request id
 // as its tag, at VersionForWrite's instance.
 func (o *CompleteMultipart) Execute(ctx context.Context, r *Request) error {
-	if err := objectLockUnserved(r.BucketRec); err != nil {
-		return err
-	}
 	if o.UploadID == "" {
 		return fmt.Errorf("%w: no upload id", ErrUnknown)
 	}

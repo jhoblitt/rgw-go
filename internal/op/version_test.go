@@ -176,32 +176,23 @@ var _ = Describe("the writes that create a head on a versioned bucket", func() {
 			}
 		}
 	})
-	DescribeTable("answer 501 NotImplemented on a bucket with object lock and write nothing",
-		func(ctx SpecContext, flags uint32) {
+	DescribeTable("write a bucket with object lock as its versioning has it, leaving the lock to the store",
+		func(ctx SpecContext, flags uint32, wantID string) {
 			f.setBucketFlags(ctx, flags)
 			for name, w := range writes {
-				_, _, err := w(ctx, "")
-				Expect(err).To(MatchError(op.ErrNotImplemented), name)
+				key, id, err := w(ctx, "")
+				Expect(err).NotTo(HaveOccurred(), name)
+				Expect(key.Name).To(Equal("k"), name)
+				Expect(id).To(MatchRegexp(wantID), name)
 			}
-			Expect(stub.PutObjectCallCount()).To(BeZero())
-			Expect(stub.CopyObjectCallCount()).To(BeZero())
-			Expect(mp.CompleteCallCount()).To(BeZero())
+			Expect(stub.PutObjectCallCount()).To(Equal(1))
+			Expect(stub.CopyObjectCallCount()).To(Equal(1))
+			Expect(mp.CompleteCallCount()).To(Equal(1))
 		},
-		Entry("versioned with object lock", flagsLocked),
-		Entry("suspended with object lock", flagsLocked|uint32(meta.BucketVersionsSuspended)),
-		Entry("the object-lock flag alone, which radosgw never writes", uint32(meta.BucketObjLockEnabled)),
+		Entry("versioned with object lock, a new version", flagsLocked, instanceForm),
+		Entry("suspended with object lock, the null version", flagsLocked|uint32(meta.BucketVersionsSuspended), "^null$"),
+		Entry("the object-lock flag alone, which radosgw never writes, the plain object", uint32(meta.BucketObjLockEnabled), "^$"),
 	)
-	It("refuse an object-lock bucket only once the requester is authorized", func(ctx SpecContext) {
-		f.setBucketFlags(ctx, flagsLocked)
-		requester = f.bob
-		for name, w := range writes {
-			_, _, err := w(ctx, "")
-			Expect(err).To(MatchError(op.ErrAccessDenied), name)
-		}
-		r := f.req(http.MethodPut, "plain", "k")
-		r.Identity = f.bob
-		Expect(op.Run(ctx, &op.PutObject{Body: failingReader{}, Size: 1}, r)).To(MatchError(op.ErrAccessDenied), "before the body is read")
-	})
 	It("report the version a completion's store answers with, which for a completion it finishes is the version that completion wrote", func(ctx SpecContext) {
 		f.setBucketFlags(ctx, flagsEnabled)
 		mp.CompleteStub = nil

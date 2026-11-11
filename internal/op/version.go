@@ -1,10 +1,6 @@
 package op
 
-import (
-	"fmt"
-
-	"github.com/jhoblitt/rgw-go/internal/meta"
-)
+import "github.com/jhoblitt/rgw-go/internal/meta"
 
 // VersionForWrite is the instance a write that creates an object's head
 // gives it: PutObject, CopyObject's destination, CompleteMultipartUpload and
@@ -52,24 +48,4 @@ func ResponseVersionID(rec *BucketRecord, instance string) string {
 		return meta.NullInstance
 	}
 	return ""
-}
-
-// objectLockUnserved answers 501 NotImplemented for a write that creates a
-// head in a bucket with object lock: radosgw's PutObject and CopyObject
-// store the retention and legal hold their object-lock headers name
-// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4542-L4551 and
-// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5587-L5596 at v19.2.7,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4810-L4819 and
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6150-L6159 at v20.2.4),
-// which rgw-go's ops do not yet. CompleteMultipartUpload's head already
-// takes its upload's lock and the bucket's default retention, and the
-// upload's writes refuse lock headers; it is refused too only so that the
-// three head writes are served on such a bucket together, once the ops
-// store those headers (docs/differences.md, "PutObject, CopyObject and
-// CompleteMultipartUpload answer 501 on an object-lock bucket").
-func objectLockUnserved(rec *BucketRecord) error {
-	if rec.Info.ObjLockEnabled() {
-		return fmt.Errorf("%w: writes to bucket %s, which has object lock, are not implemented", ErrNotImplemented, rec.Info.Bucket.Name)
-	}
-	return nil
 }

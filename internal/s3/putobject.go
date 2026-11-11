@@ -10,7 +10,6 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/authz"
-	"github.com/jhoblitt/rgw-go/internal/iso8601"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/rgwtext"
@@ -84,13 +83,14 @@ func (wr *objectWrites) putObject(ctx context.Context, w http.ResponseWriter, r 
 // InvalidArgument, as radosgw answers any such refusal on a PUT
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2626-L2637,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2787-L2798);
-// the object-lock headers' values are checked (objectLockHeaders); a
+// the object-lock headers' retention and legal hold (objectLockHeaders); a
 // partNumber is read as for a part (partNumberArg); an append's position
 // (appendPosition); a Content-MD5 that
 // ceph_unarmor does not decode to 16 bytes is InvalidDigest
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4184-L4198 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4393-L4407 at v20.2.4);
-// and the attrs are requestAttrs'. radosgw checks the last two after
+// and the attrs are requestAttrs' with the retention's and the legal
+// hold's (requestLock.addAttrs). radosgw checks the last two after
 // authorizing, and the attrs once the body is stored (docs/differences.md).
 func (wr *objectWrites) putObjectParams(r *op.Request, o *op.PutObject) error {
 	if r.ContentLength == 0 && r.Header.Get("Content-Length") == "" {
@@ -106,8 +106,9 @@ func (wr *objectWrites) putObjectParams(r *op.Request, o *op.PutObject) error {
 		}
 		o.Tags = &set
 	}
-	if err := objectLockHeaders(r, false); err != nil {
-		return err
+	lock, lerr := objectLockHeaders(r, false)
+	if lerr != nil {
+		return lerr
 	}
 	if _, err := partNumberArg(r); err != nil {
 		return err
@@ -124,9 +125,13 @@ func (wr *objectWrites) putObjectParams(r *op.Request, o *op.PutObject) error {
 		}
 		o.ContentMD5 = sum
 	}
-	var err error
-	o.Attrs, err = requestAttrs(r, wr.generic, true)
-	return err
+	attrs, err := requestAttrs(r, wr.generic, true)
+	if err != nil {
+		return err
+	}
+	lock.addAttrs(attrs)
+	o.Attrs = attrs
+	return nil
 }
 
 // partNumberArg is get_params' read of partNumber beside uploadId
@@ -265,12 +270,13 @@ func refuseEncryption(r *op.Request, query bool) error {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2830-L2834),
 // which a copy makes too, where radosgw stores them on such a bucket
 // (docs/ceph-upstream-bugs.md, "radosgw's CopyObject stores an object lock
-// on a bucket without object lock"; docs/differences.md). The callers make it
-// once the requester is authorized, so that a refused requester learns
-// nothing of the bucket's configuration. On a bucket with object lock a
-// PutObject or CopyObject answers NotImplemented, and a multipart write
-// naming a retention or a legal hold does (multipartObjectLock), until
-// object lock is served.
+// on a bucket without object lock"; docs/differences.md), and which
+// CreateMultipartUpload's get_params makes
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4051-L4054 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4502-L4505 at v20.2.4)
+// and UploadPart's, which is PutObject's own. The callers make it once the
+// requester is authorized, so that a refused requester learns nothing of the
+// bucket's configuration.
 func objectLock(r *op.Request) error {
 	if namesObjectLock(r) && r.BucketRec.Info.Flags&meta.BucketObjLockEnabled == 0 {
 		return op.ErrInvalidRequest
@@ -282,45 +288,6 @@ func objectLock(r *op.Request) error {
 // legal hold, which get_params keeps as obj_retention or obj_legal_hold.
 func namesObjectLock(r *op.Request) bool {
 	return hasHeader(r, "X-Amz-Object-Lock-Mode") || hasHeader(r, "X-Amz-Object-Lock-Legal-Hold")
-}
-
-// objectLockHeaders is get_params' check of the three object-lock headers
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2639-L2668,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2800-L2829;
-// RGWCopyObj_ObjStore_S3::get_params
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L3480-L3509,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3760-L3789),
-// which reads nothing the bucket holds: a mode with a retain-until date
-// that from_iso_8601 reads as later than now, the mode GOVERNANCE or
-// COMPLIANCE; a mode or a date alone; a legal hold of ON or OFF; each other
-// value InvalidArgument, with the message a copy sets when isCopy is set.
-func objectLockHeaders(r *op.Request, isCopy bool) error {
-	mode, hasMode := op.HeaderValue(r.Header, "X-Amz-Object-Lock-Mode")
-	date, hasDate := op.HeaderValue(r.Header, "X-Amz-Object-Lock-Retain-Until-Date")
-	hold, hasHold := op.HeaderValue(r.Header, "X-Amz-Object-Lock-Legal-Hold")
-	invalid := func(msg string) error {
-		if isCopy {
-			return op.ErrInvalidArgument.WithMessage(msg)
-		}
-		return op.ErrInvalidArgument
-	}
-	switch {
-	case hasMode && hasDate:
-		if until, ok := iso8601.Parse(rgwtext.CString(date)); !ok || until.Unix() <= r.Env.Clock().Unix() {
-			return invalid("invalid x-amz-object-lock-retain-until-date value")
-		}
-		if mode = rgwtext.CString(mode); mode != "GOVERNANCE" && mode != "COMPLIANCE" {
-			return invalid("invalid x-amz-object-lock-mode value")
-		}
-	case hasMode || hasDate:
-		return invalid("need both x-amz-object-lock-mode and x-amz-object-lock-retain-until-date ")
-	}
-	if hasHold {
-		if hold = rgwtext.CString(hold); hold != "ON" && hold != "OFF" {
-			return invalid("invalid x-amz-object-lock-legal-hold value")
-		}
-	}
-	return nil
 }
 
 // cephUnarmor is ceph_unarmor

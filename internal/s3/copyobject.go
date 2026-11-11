@@ -85,16 +85,19 @@ func (wr *objectWrites) copyObject(ctx context.Context, w http.ResponseWriter, r
 
 // copyObjectParams is the part of get_params that reads the request alone,
 // in its order, then init_common's attrs, which radosgw builds after
-// authorizing (docs/differences.md): the object-lock headers' values
-// (objectLockHeaders, with the messages a copy sets);
+// authorizing (docs/differences.md): the object-lock headers' retention and
+// legal hold (objectLockHeaders, with the messages a copy sets);
 // x-amz-metadata-directive, COPY or REPLACE in any case and anything else
 // InvalidArgument, "Unknown metadata directive."; the storage-class check of
 // a copy onto itself that does not replace the metadata
 // (need_to_check_storage_class); a request that asks for encryption refused
-// (refuseEncryption); and the attrs, the headers' alone (requestAttrs).
+// (refuseEncryption); and the attrs, the headers' alone (requestAttrs), with
+// the retention's and the legal hold's (requestLock.addAttrs), which the copy
+// keeps under COPY and REPLACE alike in place of its source's.
 func (wr *objectWrites) copyObjectParams(r *op.Request, o *op.CopyObject) error {
-	if err := objectLockHeaders(r, true); err != nil {
-		return err
+	lock, lerr := objectLockHeaders(r, true)
+	if lerr != nil {
+		return lerr
 	}
 	if d, ok := op.HeaderValue(r.Header, "X-Amz-Metadata-Directive"); ok {
 		switch d = rgwtext.CString(d); {
@@ -110,9 +113,13 @@ func (wr *objectWrites) copyObjectParams(r *op.Request, o *op.CopyObject) error 
 	if err := refuseEncryption(r, false); err != nil {
 		return err
 	}
-	var err error
-	o.Attrs, err = requestAttrs(r, wr.generic, false)
-	return err
+	attrs, err := requestAttrs(r, wr.generic, false)
+	if err != nil {
+		return err
+	}
+	lock.addAttrs(attrs)
+	o.Attrs = attrs
+	return nil
 }
 
 // copyObjectChecks is, once the destination and the source allow the

@@ -103,8 +103,8 @@ func tagRule(f form, r *op.Request, a policy.Action) (objectTags, bucketTags) {
 		// and RGWPutObjLegalHold
 		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L8473-L8477),
 		// which rgw-go authorizes as bucket checks with no ACL grant, of
-		// the version their Init loaded into r.ObjState. A check made
-		// with no version loaded adds no tags.
+		// the version their Init loaded into r.ObjState. A write's
+		// object-lock headers, whose op loads no version, add no tags.
 		if r.ObjState != nil {
 			return objectTagsAsNeeded, noBucketTags
 		}

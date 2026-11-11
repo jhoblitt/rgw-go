@@ -168,16 +168,25 @@ var _ = Describe("the writes that create a head on a versioned bucket", func() {
 				})
 			})
 
-			DescribeTable("answer 501 NotImplemented on a bucket with object lock and write nothing",
-				func(ctx SpecContext, flags uint32) {
+			DescribeTable("write a bucket with object lock as its versioning has it",
+				func(ctx SpecContext, flags uint32, want string) {
 					flagged(ctx, flags)
 					for name, write := range writes {
-						expectError(write(""), 501, "NotImplemented")
-						Expect(w.stat(ctx, "k").Exists).To(BeFalse(), name)
+						rec := write("")
+						Expect(rec.Code).To(Equal(200), "%s: %s", name, rec.Body.String())
+						id := exactHeader(rec.Header(), "x-amz-version-id")
+						Expect(id).To(MatchRegexp(want), name)
+						key := meta.ObjKey{Name: "k", Instance: id}
+						if id == meta.NullInstance {
+							key.Instance = ""
+						}
+						st, err := w.store.StatObject(ctx, w.bucket(ctx), key)
+						Expect(err).NotTo(HaveOccurred())
+						Expect(st.Exists).To(BeTrue(), "%s wrote k at %q", name, id)
 					}
 				},
-				Entry("versioned with object lock", uint32(meta.BucketVersioned|meta.BucketObjLockEnabled)),
-				Entry("suspended with object lock", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended|meta.BucketObjLockEnabled)),
+				Entry("versioned with object lock, a new version", uint32(meta.BucketVersioned|meta.BucketObjLockEnabled), newInstance),
+				Entry("suspended with object lock, the null version", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended|meta.BucketObjLockEnabled), "^null$"),
 			)
 		})
 	}

@@ -84,8 +84,10 @@ func (wr *objectWrites) initMultipart(ctx context.Context, w http.ResponseWriter
 // in their order, once the op has refused a bucket's default encryption, as
 // get_encryption_defaults comes first: the ACL, create_s3_policy's for the
 // requester, its bucket-owner grants naming the bucket's ACL owner;
-// x-amz-tagging, any refusal InvalidArgument; the object-lock headers
-// (multipartObjectLock); a request that asks for encryption, which
+// x-amz-tagging, any refusal InvalidArgument; the object-lock headers'
+// retention and legal hold (objectLockHeaders), refused on a bucket without
+// object lock (objectLock) and otherwise the upload's, which its completion
+// writes as the object's; a request that asks for encryption, which
 // prepare_encryption reads; and the attrs, the headers' alone, as no
 // map_qs_metadata runs.
 func (wr *objectWrites) initMultipartParams(ctx context.Context, r *op.Request, o *op.InitMultipart) error {
@@ -101,12 +103,14 @@ func (wr *objectWrites) initMultipartParams(ctx context.Context, r *op.Request, 
 		}
 		o.Tags = &set
 	}
-	if err := objectLockHeaders(r, false); err != nil {
+	lock, lerr := objectLockHeaders(r, false)
+	if lerr != nil {
+		return lerr
+	}
+	if err := objectLock(r); err != nil {
 		return err
 	}
-	if err := multipartObjectLock(r); err != nil {
-		return err
-	}
+	o.Retention, o.LegalHold = lock.retention, lock.legalHold
 	if err := refuseEncryption(r, false); err != nil {
 		return err
 	}
@@ -181,13 +185,16 @@ func (wr *objectWrites) uploadPart(ctx context.Context, w http.ResponseWriter, r
 			o.SourceErr = op.ErrInvalidArgument
 		}
 	}
-	var set *tags.Set
+	var (
+		set  *tags.Set
+		lock requestLock
+	)
 	o.Params = func(_ context.Context, o *op.UploadPart) error {
 		var err error
-		set, err = uploadPartParams(r, o)
+		set, lock, err = uploadPartParams(r, o)
 		return err
 	}
-	o.Authorized = func(ctx context.Context, o *op.UploadPart) error { return wr.uploadPartChecks(ctx, r, o, set) }
+	o.Authorized = func(ctx context.Context, o *op.UploadPart) error { return wr.uploadPartChecks(ctx, r, o, set, lock) }
 	if err := op.Run(ctx, o, r); err != nil {
 		return err
 	}
@@ -217,33 +224,35 @@ func (wr *objectWrites) uploadPart(ctx context.Context, w http.ResponseWriter, r
 // putObjectParams makes beside it: a body without a Content-Length that is
 // not chunked is MissingContentLength; a request that asks for encryption,
 // by a header or by the query, is refused; x-amz-tagging, any refusal
-// InvalidArgument, whose tags it returns; the object-lock headers' values
-// (objectLockHeaders); and partNumber (partNumberArg), which refuses an
-// empty or absent one beside an upload id.
-func uploadPartParams(r *op.Request, o *op.UploadPart) (*tags.Set, error) {
+// InvalidArgument, whose tags it returns; the object-lock headers'
+// retention and legal hold (objectLockHeaders), which it returns; and
+// partNumber (partNumberArg), which refuses an empty or absent one beside an
+// upload id.
+func uploadPartParams(r *op.Request, o *op.UploadPart) (*tags.Set, requestLock, error) {
 	if r.ContentLength == 0 && r.Header.Get("Content-Length") == "" {
-		return nil, op.ErrMissingContentLength
+		return nil, requestLock{}, op.ErrMissingContentLength
 	}
 	if err := refuseEncryption(r, true); err != nil {
-		return nil, err
+		return nil, requestLock{}, err
 	}
 	var set *tags.Set
 	if v, ok := op.HeaderValue(r.Header, "X-Amz-Tagging"); ok {
 		s, err := tags.ParseHeader(v, tags.MaxObjectTags)
 		if err != nil {
-			return nil, op.ErrInvalidArgument
+			return nil, requestLock{}, op.ErrInvalidArgument
 		}
 		set = &s
 	}
-	if err := objectLockHeaders(r, false); err != nil {
-		return nil, err
+	lock, err := objectLockHeaders(r, false)
+	if err != nil {
+		return nil, requestLock{}, err
 	}
 	n, err := partNumberArg(r)
 	if err != nil {
-		return nil, err
+		return nil, requestLock{}, err
 	}
 	o.PartNumber = n
-	return set, nil
+	return set, lock, nil
 }
 
 // uploadPartChecks is the rest of get_params and what RGWPutObj::execute
@@ -251,27 +260,29 @@ func uploadPartParams(r *op.Request, o *op.UploadPart) (*tags.Set, error) {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4142-L4531 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4351-L4799 at v20.2.4),
 // once the requester is authorized: the ACL, create_s3_policy's, whose
-// grantees are looked up; a retention or a legal hold, refused for what the
-// bucket holds (multipartObjectLock); a Content-MD5 that ceph_unarmor does
+// grantees are looked up; a retention or a legal hold on a bucket without
+// object lock, refused (objectLock); a Content-MD5 that ceph_unarmor does
 // not decode to 16 bytes, InvalidDigest
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4184-L4198,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4393-L4407);
 // then the attrs, requestAttrs' with the query's x-amz-meta-* included
 // where the route reads them (op.AuthRoute.ReadsQueryMeta), as
-// map_qs_metadata adds them for put_obj on every route, and the tag set, as
+// map_qs_metadata adds them for put_obj on every route, the tag set, as
 // encode_obj_tags_attr stores it on the part's head
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4531,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4799).
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4799), and
+// lock's retention and legal hold, which RGWPutObj::execute stores there too
+// (requestLock.addAttrs).
 // radosgw builds the ACL and checks the object lock in get_params, before
 // verify_permission, and the attrs once the part is stored
 // (docs/differences.md).
-func (wr *objectWrites) uploadPartChecks(ctx context.Context, r *op.Request, o *op.UploadPart, set *tags.Set) error {
+func (wr *objectWrites) uploadPartChecks(ctx context.Context, r *op.Request, o *op.UploadPart, set *tags.Set, lock requestLock) error {
 	p, aclErr := newObjectACL(ctx, r)
 	if aclErr != nil {
 		return aclErr
 	}
 	o.ACL = p
-	if err := multipartObjectLock(r); err != nil {
+	if err := objectLock(r); err != nil {
 		return err
 	}
 	if v, ok := op.HeaderValue(r.Header, "Content-MD5"); ok {
@@ -290,6 +301,7 @@ func (wr *objectWrites) uploadPartChecks(ctx context.Context, r *op.Request, o *
 		set.Encode(e, r.Env.Zone.Release())
 		attrs[tags.Attr] = e.Bytes()
 	}
+	lock.addAttrs(attrs)
 	o.Attrs = attrs
 	return nil
 }
@@ -322,30 +334,6 @@ func partCopySource(v, defaultTenant string) (tenant, bucket string, key meta.Ob
 		tenant, bucket = t, b
 	}
 	return tenant, bucket, meta.ObjKey{Name: name, Instance: instance}, true
-}
-
-// multipartObjectLock is a multipart write's refusal of a retention or a
-// legal hold for what the bucket holds: on a bucket without object lock
-// InvalidRequest, as get_params answers
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2669-L2673
-// and
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4021-L4024,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2830-L2834
-// and
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4502-L4505);
-// on one with it NotImplemented, as radosgw keeps them on the upload and
-// the parts' heads and rgw-go serves no object lock yet
-// (docs/differences.md). The callers make it once the requester is
-// authorized, so that a refused requester learns nothing of the bucket's
-// configuration.
-func multipartObjectLock(r *op.Request) error {
-	switch {
-	case !namesObjectLock(r):
-		return nil
-	case r.BucketRec.Info.Flags&meta.BucketObjLockEnabled == 0:
-		return op.ErrInvalidRequest
-	}
-	return fmt.Errorf("%w: object lock on a multipart upload is not served yet", op.ErrNotImplemented)
 }
 
 // completeMultipartUploadResult is RGWCompleteMultipart_ObjStore_S3's

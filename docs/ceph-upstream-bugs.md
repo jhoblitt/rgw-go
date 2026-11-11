@@ -512,6 +512,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's GetObjectAttributes needs s3:GetObject or s3:GetObjectAttributes, not both](#radosgws-getobjectattributes-needs-s3getobject-or-s3getobjectattributes-not-both) | [#72915](https://tracker.ceph.com/issues/72915) | [ceph/ceph#65441](https://github.com/ceph/ceph/pull/65441) |  |
 | [radosgw shows an encrypted upload's plaintext checksums to a requester without its key](#radosgw-shows-an-encrypted-uploads-plaintext-checksums-to-a-requester-without-its-key) | none | none | ✓ |
 | [A radosgw that predates the GCM crypt modes stores a GCM upload's parts in the clear and copies GCM ciphertext as data](#a-radosgw-that-predates-the-gcm-crypt-modes-stores-a-gcm-uploads-parts-in-the-clear-and-copies-gcm-ciphertext-as-data) | none | none | ✓ |
+| [radosgw's writes set an object lock without s3:PutObjectRetention or s3:PutObjectLegalHold](#radosgws-writes-set-an-object-lock-without-s3putobjectretention-or-s3putobjectlegalhold) | [#82703](https://tracker.ceph.com/issues/82703) | [ceph/ceph#73508](https://github.com/ceph/ceph/pull/73508) (open) |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -29176,7 +29177,8 @@ Every new entry adds its row to this table, in document order.
   policy (`verifyLockWrite`,
   `internal/op/objectretention.go`; `docs/differences.md`, "No ACL grant
   authorizes PutObjectRetention, PutObjectLegalHold or their governance
-  bypass"), pinned in `internal/op/objectretention_test.go`.
+  bypass"), pinned in `internal/op/objectretention_test.go` and
+  `internal/s3/objectlockperm_test.go`.
   Its deletes evaluate the governance bypass with no ACL fallback: the
   identity's and the bucket's policies decide, and where none does the
   bucket's owner alone passes, so a grantee of the bucket's WRITE, whom
@@ -32958,3 +32960,114 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task WP-27, 2026-11-11, while making rgw-go refuse a
   part of an encrypted upload, and its adversarial review the same day
   for the copies. Derived from the source, not reproduced.
+
+## radosgw's writes set an object lock without s3:PutObjectRetention or s3:PutObjectLegalHold
+
+- **Kind:** defect, possibly security-relevant: PutObject, CopyObject and
+  CreateMultipartUpload store the retention and the legal hold their
+  object-lock headers name having checked s3:PutObject alone.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - Each write's `get_params` reads the three headers into `obj_retention`
+    and `obj_legal_hold`: PutObject's
+    ([rgw_rest_s3.cc:2647-2676](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2647-L2676),
+    [rgw_rest_s3.cc:2800-2829](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2800-L2829)),
+    CopyObject's
+    ([rgw_rest_s3.cc:3510-3539](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3510-L3539),
+    [rgw_rest_s3.cc:3760-3789](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3760-L3789))
+    and CreateMultipartUpload's
+    ([rgw_rest_s3.cc:4025-4050](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4025-L4050),
+    [rgw_rest_s3.cc:4476-4501](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4476-L4501)).
+  - The writes store them: RGWPutObj::execute on the head
+    ([rgw_op.cc:4542-4551](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4542-L4551),
+    [rgw_op.cc:4810-4819](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4810-L4819)),
+    RGWCopyObj::execute on the copy
+    ([rgw_op.cc:5587-5596](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5587-L5596),
+    [rgw_op.cc:6150-6159](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6150-L6159)),
+    and RGWInitMultipart::execute on the upload, whose completion writes
+    them on the object
+    ([rgw_op.cc:6336-6338](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6336-L6338),
+    [rgw_op.cc:7004-7012](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7004-L7012)).
+  - The three ops' `verify_permission` check s3:PutObject on the
+    destination, and a copy's read of its source, and nothing of the lock
+    ([rgw_op.cc:3920-3988](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3920-L3988),
+    [rgw_op.cc:4129-4197](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4129-L4197);
+    [rgw_op.cc:5410-5501](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5410-L5501),
+    [rgw_op.cc:5973-6064](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5973-L6064);
+    [rgw_op.cc:6274-6289](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6274-L6289),
+    [rgw_op.cc:6941-6956](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6941-L6956)).
+  - s3:PutObjectRetention and s3:PutObjectLegalHold are evaluated by
+    `RGWPutObjRetention::verify_permission` and
+    `RGWPutObjLegalHold::verify_permission` alone
+    ([rgw_op.cc:8340](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8340) and
+    [rgw_op.cc:8492](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8492),
+    [rgw_op.cc:9275](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9275) and
+    [rgw_op.cc:9440](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9440)),
+    the only uses of the two actions under `src/rgw` outside the policy
+    module, `rgw_iam_policy.h` and `rgw_iam_policy.cc`.
+- **Impact:** a requester whose policies allow s3:PutObject but not
+  s3:PutObjectRetention or s3:PutObjectLegalHold, or deny them, stores the
+  retention and the legal hold its PutObject, CopyObject or
+  CreateMultipartUpload names. The same lock is also set in a second
+  request, where no policy decides: the writer owns the version it wrote,
+  whose ACL grants its owner FULL_CONTROL
+  ([rgw_acl_s3.cc:413-418](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_s3.cc#L413-L418),
+  [rgw_acl_s3.cc:413-418](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl_s3.cc#L413-L418)),
+  and PutObjectRetention's and PutObjectLegalHold's `verify_object_permission`
+  falls back to the object's ACL with the WRITE `op_to_perm` gives the two
+  actions
+  ([rgw_common.cc:1560-1579](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1560-L1579),
+  [rgw_common.cc:1614-1636](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1614-L1636)),
+  so the writer sets the retention or the legal hold on its version through
+  either op ("[radosgw lets an object ACL's WRITE grant set, shorten and
+  bypass an object's retention and legal
+  hold](#radosgw-lets-an-object-acls-write-grant-set-shorten-and-bypass-an-objects-retention-and-legal-hold)").
+  An explicit Deny of the action closes that second route, and not the
+  first. Amazon S3 refuses such a write: its user guide has a bucket whose
+  users are denied permission to configure object retention reject "any
+  request to put an object that includes a retention mode and setting"
+  ([object-lock-overview.md:84](https://github.com/awsdocs/amazon-s3-developer-guide/blob/e5e6bbd2771d39e8ce3736849548a94b98d5094b/doc_source/object-lock-overview.md#L84)
+  in the guide's archived source), and tracker #82703 cites the guide's list of
+  the two actions as required when the headers are set, though the
+  PutObject permissions the AWS SDK for Go v2 documents name s3:PutObject,
+  s3:PutObjectAcl and s3:PutObjectTagging and no lock action
+  ([api_op_PutObject.go:78-90](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_PutObject.go#L78-L90)).
+- **Releases:** v19.2.7, v20.2.4, v21.1.2 and main at 203e7c52025d
+  (2026-10-30), where the two dedicated ops still evaluate the actions
+  alone ([rgw_op.cc:9684](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L9684) and
+  [rgw_op.cc:9849](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L9849) at v21.1.2;
+  [rgw_op.cc:9837](https://github.com/ceph/ceph/blob/203e7c52025dc251989dca4802965692eec0ce61/src/rgw/rgw_op.cc#L9837) and
+  [rgw_op.cc:10002](https://github.com/ceph/ceph/blob/203e7c52025dc251989dca4802965692eec0ce61/src/rgw/rgw_op.cc#L10002) at main)
+  and the three writes' `verify_permission` check nothing of the lock
+  ([rgw_op.cc:4484-4552](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L4484-L4552),
+  [rgw_op.cc:6279-6411](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L6279-L6411) and
+  [rgw_op.cc:7359-7374](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L7359-L7374) at v21.1.2;
+  [rgw_op.cc:4616-4684](https://github.com/ceph/ceph/blob/203e7c52025dc251989dca4802965692eec0ce61/src/rgw/rgw_op.cc#L4616-L4684),
+  [rgw_op.cc:6386-6518](https://github.com/ceph/ceph/blob/203e7c52025dc251989dca4802965692eec0ce61/src/rgw/rgw_op.cc#L6386-L6518) and
+  [rgw_op.cc:7465-7480](https://github.com/ceph/ceph/blob/203e7c52025dc251989dca4802965692eec0ce61/src/rgw/rgw_op.cc#L7465-L7480) at main).
+- **rgw-go:** reproduces neither route. A write naming a retention needs
+  s3:PutObjectRetention on the object's ARN, and one naming a legal hold
+  s3:PutObjectLegalHold, decided by the identity's and the bucket's
+  policies and otherwise granted to the bucket's owner alone, and a refusal
+  is 403 AccessDenied before anything is written (`verifyLockHeaders`,
+  `internal/op/objectlock.go`; `docs/differences.md`, "A write's
+  object-lock headers need s3:PutObjectRetention and
+  s3:PutObjectLegalHold"). An UploadPart's headers, which only the part's
+  head stores and nothing enforces, need s3:PutObject alone.
+  PutObjectRetention and PutObjectLegalHold authorize their actions the same
+  way, with no ACL grant, so the version's owner passes them only as the
+  bucket's owner or by a policy (`verifyLockWrite`,
+  `internal/op/objectretention.go`; `docs/differences.md`, "No ACL grant
+  authorizes PutObjectRetention, PutObjectLegalHold or their governance
+  bypass").
+- **Upstream:** [#82703](https://tracker.ceph.com/issues/82703), Fix Under
+  Review, filed 2026-11-04, and
+  [ceph/ceph#73508](https://github.com/ceph/ceph/pull/73508), open, which
+  adds both checks to `verify_permission` of the three writes, an
+  UploadPart excepted, through `verify_bucket_permission`, which falls back
+  to the bucket's ACL where no policy decides. It leaves the dedicated ops'
+  fallback to the object's ACL, and so the second route, as it is. The
+  rgw-bug-reproduction session has it.
+- **Found:** phase 2 task L5b's security review, 2026-11-11, on rgw-go's
+  first write path that stores the headers; upstream's report predates it.
+  Derived from the source, not reproduced.

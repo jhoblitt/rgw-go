@@ -25,6 +25,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/s3"
 	"github.com/jhoblitt/rgw-go/internal/tags"
+	"github.com/jhoblitt/rgw-go/internal/testutil/locktest"
 )
 
 // writeMtime is the write world's store clock, on a whole second.
@@ -304,9 +305,13 @@ var _ = Describe("put_obj", func() {
 			expectError(w.send(w.alice, http.MethodPut, "/plain/k", "x", "X-Amz-Object-Lock-Mode", "COMPLIANCE",
 				"X-Amz-Object-Lock-Retain-Until-Date", "2030-01-01T00:00:00.5Z"), 400, "InvalidRequest")
 		})
-		It("are not served on a bucket with object lock", func(ctx SpecContext) {
+		It("are stored on a bucket with object lock", func(ctx SpecContext) {
 			w.setBucketInfo(ctx, func(i *meta.BucketInfo) { i.Flags |= meta.BucketObjLockEnabled | meta.BucketVersioned })
-			expectError(w.send(w.alice, http.MethodPut, "/plain/k", "x", "X-Amz-Object-Lock-Legal-Hold", "ON"), 501, "NotImplemented")
+			rec := w.send(w.alice, http.MethodPut, "/plain/k", "x", "X-Amz-Object-Lock-Legal-Hold", "ON")
+			Expect(rec.Code).To(Equal(200), rec.Body.String())
+			st, err := w.store.StatObject(ctx, w.bucket(ctx), meta.ObjKey{Name: "k", Instance: exactHeader(rec.Header(), "x-amz-version-id")})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Attrs).To(HaveKeyWithValue(meta.AttrObjectLegalHold, locktest.LegalHoldAttr("ON")))
 		})
 	})
 	// get_params reads partNumber on every put_obj request, a part or not

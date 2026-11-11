@@ -1821,7 +1821,7 @@ var _ = Describe("Evaluator", func() {
 				Expect(check("held", true)).To(MatchError(op.ErrAccessDenied), "a held object")
 				Expect(check("o", true)).To(Succeed(), "another")
 				if a != policy.S3BypassGovernanceRetention {
-					Expect(check("held", false)).To(Succeed(), "a check with no version loaded adds no tags")
+					Expect(check("held", false)).To(Succeed(), "a write's lock headers, whose op loads no version, add no tags")
 				}
 			},
 			Entry("s3:PutObjectRetention", policy.S3PutObjectRetention),

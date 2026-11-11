@@ -163,6 +163,40 @@ func guardRemoval(rec *BucketRecord, p DeleteParams, st *ObjectState) (DeletePar
 	return p, false
 }
 
+// verifyLockHeaders is the permission a write naming an object lock needs
+// beside s3:PutObject, on the object's ARN: s3:PutObjectRetention when its
+// request names a retention, x-amz-object-lock-mode or
+// x-amz-object-lock-retain-until-date, and s3:PutObjectLegalHold when it
+// names a legal hold, x-amz-object-lock-legal-hold, the actions
+// PutObjectRetention and PutObjectLegalHold check. radosgw checks neither
+// for a write (docs/ceph-upstream-bugs.md, "radosgw's writes set an object
+// lock without s3:PutObjectRetention or s3:PutObjectLegalHold"), so a write
+// there stores a lock its requester's policies do not allow, or deny. The
+// identity's and the bucket's policies decide, and where neither does, the
+// bucket's owner alone passes (VerifyBucketPermissionOwnerOrPolicy): Amazon
+// S3 maps no ACL permission to these actions, and the object a write makes
+// holds no ACL yet (docs/differences.md, "A write's object-lock headers need
+// s3:PutObjectRetention and s3:PutObjectLegalHold"). The write's own
+// permission check calls it once s3:PutObject has passed, so Run lets an
+// admin through its refusal as through that check's.
+func verifyLockHeaders(ctx context.Context, r *Request) error {
+	_, hasMode := HeaderValue(r.Header, "X-Amz-Object-Lock-Mode")
+	_, hasDate := HeaderValue(r.Header, "X-Amz-Object-Lock-Retain-Until-Date")
+	_, hasHold := HeaderValue(r.Header, "X-Amz-Object-Lock-Legal-Hold")
+	for _, c := range []struct {
+		named bool
+		a     policy.Action
+	}{{hasMode || hasDate, policy.S3PutObjectRetention}, {hasHold, policy.S3PutObjectLegalHold}} {
+		if !c.named {
+			continue
+		}
+		if err := VerifyBucketPermissionOwnerOrPolicy(ctx, r, c.a, acl.PermFor(c.a)); err != nil {
+			return fmt.Errorf("%w: the object-lock headers need %s", err, c.a)
+		}
+	}
+	return nil
+}
+
 // versionName names key's version in rec for an error.
 func versionName(rec *BucketRecord, key meta.ObjKey) string {
 	if key.Instance == "" {

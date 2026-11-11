@@ -1928,13 +1928,10 @@ review and verified against the tree.
   ([svc_bucket_sobj.cc:363-369](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_bucket_sobj.cc#L363-L369),
   [svc_bucket_sobj.cc:312-318](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bucket_sobj.cc#L312-L318)).
   A create write on such a bucket, PutObject, CopyObject or
-  CompleteMultipartUpload, answers 500 UnknownError before its head write
-  once those writes are served, as it needs the configuration's default
-  retention: it deletes the tails it wrote, or drops the tail references a
-  copy took, and a completion leaves its upload in place. Until then the
-  op layer answers all three on a bucket with object lock 501 first
-  ("PutObject, CopyObject and CompleteMultipartUpload answer 501 on an
-  object-lock bucket"). Reads, CreateMultipartUpload and UploadPart,
+  CompleteMultipartUpload, answers 500 UnknownError before its head write,
+  as it needs the configuration's default retention: it deletes the tails
+  it wrote, or drops the tail references a copy took, and a completion
+  leaves its upload in place. Reads, CreateMultipartUpload and UploadPart,
   which are not create writes, still succeed.
   The phase that serves bucket sync policy models it. The admin API's `GET` or `PUT
   /admin/metadata/bucket.instance` of a bucket holding a sync policy with
@@ -8628,43 +8625,8 @@ does the following.
   `internal/op/objectattrs.go`), and leaves the OLH head and the null
   version's index entry alone. On a key whose current version is the null
   version both gateways write the same head.
-- **PutObject, CopyObject and CompleteMultipartUpload answer 501 on an
-  object-lock bucket.** rgw-go serves PutObject, CopyObject and
-  CompleteMultipartUpload on a bucket whose versioning is enabled or
-  suspended, writing a new version or the null one as radosgw does ("A
-  write's versionId is ignored"), but answers them with 501 NotImplemented
-  on a bucket with object lock, once the requester is authorized and
-  before it writes anything. The stores give such a write's head the
-  bucket's default retention, as radosgw does
-  ([rgw_rados.cc:3211-3221](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3211-L3221) at v19.2.7,
-  [rgw_rados.cc:3308-3318](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3308-L3318) at v20.2.4),
-  but the ops do not yet store the retention and legal hold a
-  PutObject's or a CopyObject's object-lock headers name, as radosgw's do
-  ([rgw_op.cc:4542-4551](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4542-L4551) and
-  [rgw_op.cc:5587-5596](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5587-L5596) at v19.2.7,
-  [rgw_op.cc:4810-4819](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4810-L4819) and
-  [rgw_op.cc:6150-6159](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6150-L6159) at v20.2.4),
-  and a version written without them could be deleted; the three are
-  served on such a bucket together once they do. An append is answered
-  as on any other versioned bucket
-  ("Appends and a PUT that names a copy source but is no copy are not
-  served"). CreateMultipartUpload, UploadPart and UploadPartCopy are
-  served on a bucket with object lock, and only a request among them
-  naming a retention or a legal hold answers 501 ("A multipart upload
-  with a retention or a legal hold on a bucket with object lock answers
-  501"); it is the completion writing the head that is refused.
-  PutObjectRetention and PutObjectLegalHold, which write a version's lock
-  attrs, are object lock's own and are served on such a bucket, always a
-  versioned one. PutObjectAcl, PutObjectTagging and DeleteObjectTagging
-  serve any version on any bucket, one with object lock included, which
-  they write as radosgw does, but for DeleteObjectTagging naming no version
-  ("DeleteObjectTagging naming no version removes the current version's
-  tags"), and an UploadPartCopy copies the version its source names.
-  DeleteObject and DeleteObjects serve a versioned bucket too, one with
-  object lock included, where they check a version's retention and legal
-  hold before they remove it, as radosgw does ("DeleteObjects checks
-  s3:BypassGovernanceRetention for each key, on the key's ARN", below).
-
+- **`versionId=null` names the plain object on a bucket whose versioning
+  was never enabled.**
   On a bucket whose versioning was never enabled, its flags lacking
   `BUCKET_VERSIONED`, which suspending versioning keeps set
   (`rgw_op.cc:2837-2843` at v19.2.6, `:3069-3075` at v20.2.4) and object
@@ -8812,9 +8774,10 @@ does the following.
   "[radosgw lets an object ACL's WRITE grant set, shorten and bypass an
   object's retention and legal
   hold](ceph-upstream-bugs.md#radosgw-lets-an-object-acls-write-grant-set-shorten-and-bypass-an-objects-retention-and-legal-hold)").
-  rgw-go authorizes the three actions as it authorizes a delete's bypass
-  ("No ACL grant authorizes a delete's governance bypass"): after the
-  refusals radosgw makes before
+  rgw-go authorizes the three actions as it authorizes a write's object-lock
+  headers and a delete's bypass ("A write's object-lock headers need
+  s3:PutObjectRetention and s3:PutObjectLegalHold", "No ACL grant authorizes
+  a delete's governance bypass"): after the refusals radosgw makes before
   `verify_permission`, a missing version's among them, the identity's and
   the bucket's policies decide, the version's tags added as they need them,
   and where none decides the bucket's owner alone passes (`verifyLockWrite`,
@@ -9333,8 +9296,10 @@ does the following.
   [rgw_rest_s3.cc:4481-4490](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4481-L4490)).
   rgw-go's reader, `iso8601.Parse`, refuses every time before the epoch or
   past that instant, so each such header answers 400 InvalidArgument
-  (`objectLockHeaders`, `internal/s3/putobject.go`). A date inside the
-  range reads as radosgw reads it, to the nanosecond.
+  (`objectLockHeaders`, `internal/s3/objectlockheaders.go`). A date inside
+  the range reads as radosgw reads it, to the nanosecond, and is the
+  retention PutObject and CopyObject store and CreateMultipartUpload gives
+  its upload.
 
   The same reader refuses such a `RetainUntilDate` in a PutObjectRetention
   body as 400 MalformedXML (`objectlock.ParseRetention`). radosgw reads it
@@ -9463,10 +9428,13 @@ does the following.
   that second, refuses a header date of that second, and takes a body date
   of that second at a clock just past it. rgw-go compares the clock's whole
   seconds exactly (`objectlock.VerifyDelete`, for a delete and for
-  lifecycle; `objectLockHeaders` in `internal/s3/putobject.go`, for the
-  three headers; `objectlock.RetentionChange`; `op.PutObjectRetention`, for
-  its body's date), so in that window it keeps the version, takes the header
-  date, and refuses the body date.
+  lifecycle; `objectLockHeaders` in `internal/s3/objectlockheaders.go`, for
+  the three headers; `objectlock.RetentionChange`; `op.PutObjectRetention`,
+  for its body's date), so in that window it keeps the version, takes the
+  header date, and refuses the body date. A header date it takes is the
+  retention it stores: on the object PutObject and CopyObject write, on the
+  upload CreateMultipartUpload creates, whose completion writes it on the
+  object, and on the part head an UploadPart writes.
 - **CopyObject refuses an object lock on a bucket without object lock.**
   radosgw's CopyObject stores the retention and legal hold its headers ask
   for on a bucket without object lock, where its PutObject refuses them
@@ -9474,9 +9442,76 @@ does the following.
   CopyObject stores an object lock on a bucket without object
   lock](ceph-upstream-bugs.md#radosgws-copyobject-stores-an-object-lock-on-a-bucket-without-object-lock)").
   rgw-go refuses the copy as the PutObject is refused, once the requester
-  is authorized. On a bucket with object lock both writes answer 501
-  ("PutObject, CopyObject and CompleteMultipartUpload answer 501 on an
-  object-lock bucket").
+  is authorized. On a bucket with object lock both store them, as radosgw
+  does.
+- **A write's object-lock headers need s3:PutObjectRetention and
+  s3:PutObjectLegalHold.** radosgw's PutObject, CopyObject and
+  CreateMultipartUpload store the retention and the legal hold their
+  object-lock headers name having checked s3:PutObject alone: their
+  `verify_permission` evaluates neither s3:PutObjectRetention nor
+  s3:PutObjectLegalHold
+  ([rgw_op.cc:3920-3988](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3920-L3988),
+  [rgw_op.cc:5410-5501](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5410-L5501) and
+  [rgw_op.cc:6274-6289](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6274-L6289),
+  [rgw_op.cc:4129-4197](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4129-L4197),
+  [rgw_op.cc:5973-6064](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5973-L6064) and
+  [rgw_op.cc:6941-6956](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6941-L6956)),
+  which only PutObjectRetention and PutObjectLegalHold evaluate
+  ([rgw_op.cc:8340](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8340) and
+  [rgw_op.cc:8492](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8492),
+  [rgw_op.cc:9275](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9275) and
+  [rgw_op.cc:9440](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9440))
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's writes set an object lock
+  without s3:PutObjectRetention or
+  s3:PutObjectLegalHold](ceph-upstream-bugs.md#radosgws-writes-set-an-object-lock-without-s3putobjectretention-or-s3putobjectlegalhold)").
+  So a write there stores a lock its requester's policies do not allow, or
+  explicitly deny. rgw-go evaluates s3:PutObjectRetention on the object's
+  ARN for a write whose request names a retention, by
+  `x-amz-object-lock-mode` or `x-amz-object-lock-retain-until-date`, and
+  s3:PutObjectLegalHold for one that names a legal hold, once s3:PutObject
+  has passed, and refuses the write with 403 AccessDenied before it writes
+  anything (`verifyLockHeaders`, `internal/op/objectlock.go`), where radosgw
+  stores the lock. The identity's and the bucket's policies decide, and
+  where neither does, the bucket's owner alone passes, as for a delete's
+  governance bypass ("No ACL grant authorizes a delete's governance
+  bypass") and for PutObjectRetention and PutObjectLegalHold ("No ACL grant
+  authorizes PutObjectRetention, PutObjectLegalHold or their governance
+  bypass"), since Amazon S3 maps no ACL permission to these actions: a
+  grantee of the bucket's WRITE writes an object but sets no lock on it,
+  with the write or after it. An admin passes, as through any permission
+  check. An UploadPart's headers, which only its part's head stores and
+  nothing enforces, need s3:PutObject alone.
+
+  The check runs with the write's own permission check, before anything the
+  bucket holds is read, so that a refusal says nothing of the bucket's
+  configuration. Two answers change for a requester refused the action. On a
+  bucket without object lock, its PutObject, CopyObject or
+  CreateMultipartUpload naming a lock is 403 AccessDenied, where the
+  bucket's owner, whom the check passes, gets 400 InvalidRequest ("CopyObject
+  refuses an object lock on a bucket without object lock"), and radosgw
+  answers PutObject's and CreateMultipartUpload's 400 InvalidRequest and
+  stores CopyObject's lock. And its CreateMultipartUpload naming a value the
+  header checks refuse, a mode or a legal hold outside S3's values, a date
+  alone or one not in the future, is 403 AccessDenied where radosgw answers
+  400 InvalidArgument: CreateMultipartUpload reads its headers in execute,
+  after the permission check, on both gateways
+  ([rgw_op.cc:6302](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6302),
+  [rgw_op.cc:6968](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6968)).
+  PutObject and CopyObject read theirs before it, so their invalid values
+  stay 400 InvalidArgument for every requester.
+
+  ceph/ceph#73508, open, adds the two checks to radosgw's three writes, but
+  falls back to the bucket's ACL where no policy decides, so a grantee of
+  the bucket's WRITE passes there. Amazon S3 refuses such a write: its user
+  guide has a bucket whose users are denied permission to configure object
+  retention reject "any request to put an object that includes a retention
+  mode and setting"
+  ([object-lock-overview.md:84](https://github.com/awsdocs/amazon-s3-developer-guide/blob/e5e6bbd2771d39e8ce3736849548a94b98d5094b/doc_source/object-lock-overview.md#L84)
+  in the guide's archived source), and tracker #82703 cites the guide's list of
+  the two actions as required when the headers are set, though the
+  PutObject permissions the AWS SDK for Go v2 documents name s3:PutObject,
+  s3:PutObjectAcl and s3:PutObjectTagging and no lock action
+  ([api_op_PutObject.go:78-90](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_PutObject.go#L78-L90)).
 - **No x-amz-expiration on a write.** radosgw sends `x-amz-expiration`
   from the bucket's lifecycle rules on a PutObject's success too
   (`get_s3_expiration_header`, `rgw_rest_s3.cc:2742` at v19.2.6, `:2903`
@@ -9569,20 +9604,6 @@ does the following.
   where rgw-go writes `rgw_dns_name`, or the scheme and the Host. An
   HTTP/1.0 request that sends its Host empty gets `<HTTP_HOST>`, as one
   that sends none does: net/http does not tell them apart.
-- **A multipart upload with a retention or a legal hold on a bucket with
-  object lock answers 501.** radosgw keeps the object-lock headers of
-  CreateMultipartUpload and UploadPart on the upload and the parts' heads.
-  rgw-go serves no object lock yet, so it refuses a
-  request on such a bucket naming `x-amz-object-lock-mode` or
-  `x-amz-object-lock-legal-hold` with 501 NotImplemented once the
-  requester is authorized, where PutObject refuses such a bucket. The
-  headers' values are checked as PutObject checks them, before the
-  permission check on UploadPart, as its `get_params` runs in
-  `init_processing`, and once the requester is authorized on
-  CreateMultipartUpload, as its own runs in `execute`. Their refusal on a
-  bucket without object lock, which reads the bucket, comes once the
-  requester is authorized on both ("The multipart routes authorize a
-  request before they read what the store holds for it").
 - **UploadPart ignores If-Match and If-None-Match.** rgw-go writes a part
   head without the request's write conditions on both releases, as
   v19.2.7's `MultipartObjectProcessor::complete` does, which still passes

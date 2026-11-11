@@ -345,8 +345,8 @@ func (o *GetObjectLegalHold) Execute(_ context.Context, r *Request) error {
 func (*GetObjectLegalHold) Complete(context.Context, *Request) {}
 
 // verifyLockWrite authorizes a, s3:PutObjectRetention or
-// s3:PutObjectLegalHold, on the version the request names as a delete's
-// governance bypass is authorized (bypassAllowed): after
+// s3:PutObjectLegalHold, on the version the request names as a write's
+// object-lock headers are authorized (verifyLockHeaders): after
 // VerifyObjectPrelude's refusals, which radosgw makes before
 // verify_permission, the identity's and the bucket's policies decide, the
 // version's tags added as they need them, and where neither decides the
