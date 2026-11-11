@@ -16,11 +16,17 @@ var (
 	ParseDeleteForTest         = parseDelete
 	FormatXattrForTest         = formatXattr
 	SetChecksumHeadersForTest  = setChecksumHeaders
+	SetReadChecksumForTest     = setReadChecksum
+	ObjectAttrsChecksumForTest = objectAttrsChecksum
 )
 
 // CopyPartChecksumForTest reports whether copyPartChecksum gives c an
 // element.
 func CopyPartChecksumForTest(c *cksum.Cksum) bool { return copyPartChecksum(c) != nil }
+
+// PartChecksumForTest is the element partChecksum gives c, as a document
+// carries it.
+func PartChecksumForTest(c *cksum.Cksum) string { return elementText(partChecksum(c)) }
 
 // RequestAttrsForTest is requestAttrs with the generic attrs r's
 // configuration names.

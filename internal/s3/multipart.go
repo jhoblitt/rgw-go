@@ -459,12 +459,16 @@ type listPartsPart struct {
 	PartNumber   int          `xml:"PartNumber"`
 	ETag         xmltext.Text `xml:"ETag"`
 	Size         uint64       `xml:"Size"`
+	// Checksum is written as its Checksum<ALG> element (partChecksum).
+	Checksum *checksumElement `xml:"Checksum"`
 }
 
 // listPartsResult is RGWListMultipart_ObjStore_S3's document
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4130-L4168,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4666-L4716),
-// without the Initiator radosgw never writes.
+// without the Initiator radosgw never writes. ChecksumType follows
+// ChecksumAlgorithm, after the Owner, where Tentacle's radosgw writes
+// ChecksumAlgorithm alone (listPartsChecksum).
 type listPartsResult struct {
 	XMLName              xml.Name        `xml:"ListPartsResult"`
 	Xmlns                string          `xml:"xmlns,attr"`
@@ -478,6 +482,8 @@ type listPartsResult struct {
 	MaxParts             int             `xml:"MaxParts"`
 	IsTruncated          bool            `xml:"IsTruncated"`
 	Owner                multipartOwner  `xml:"Owner"`
+	ChecksumAlgorithm    xmltext.Text    `xml:"ChecksumAlgorithm,omitempty"`
+	ChecksumType         xmltext.Text    `xml:"ChecksumType,omitempty"`
 	Parts                []listPartsPart `xml:"Part"`
 }
 
@@ -488,7 +494,10 @@ type listPartsResult struct {
 // which RGWListMultipart::execute reads once the requester is authorized:
 // part-number-marker through strict_strtol, a refusal InvalidArgument and a
 // negative number taken; max-parts through parse_value_and_bound under
-// rgw_max_listing_results, 1000 when empty. The document is framed as
+// rgw_max_listing_results, 1000 when empty. It also hands the op the SSE-C
+// headers and whether the transport is secure, which radosgw's ListParts
+// does not read, and which decide whether an SSE-C upload's checksums are
+// shown (op.ListParts). The document is framed as
 // send_response frames it
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4121-L4171,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4657-L4719),
@@ -498,7 +507,13 @@ type listPartsResult struct {
 // Tentacle (dump_time_exact_seconds,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4704).
 func listParts(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
-	o := &op.ListParts{UploadID: r.Query.Get("uploadId")}
+	o := &op.ListParts{
+		UploadID:      r.Query.Get("uploadId"),
+		SSECAlgorithm: header(r, "x-amz-server-side-encryption-customer-algorithm"),
+		SSECKey:       header(r, "x-amz-server-side-encryption-customer-key"),
+		SSECKeyMD5:    header(r, "x-amz-server-side-encryption-customer-key-MD5"),
+		Secure:        secure(r),
+	}
 	var perr error
 	if v := r.Query.Get("part-number-marker"); v != "" {
 		var err error
@@ -519,6 +534,7 @@ func listParts(ctx context.Context, w http.ResponseWriter, r *op.Request) error 
 		PartNumberMarker: o.Marker, MaxParts: o.MaxParts, IsTruncated: o.Result.Truncated,
 		Owner: multipartOwner{ID: xmltext.Text(o.Owner.ID), DisplayName: xmltext.Text(o.Owner.DisplayName)},
 	}
+	doc.ChecksumAlgorithm, doc.ChecksumType = listPartsChecksum(o)
 	for _, p := range o.Result.Parts {
 		mtime := p.Mtime
 		if tentacle {
@@ -527,6 +543,7 @@ func listParts(ctx context.Context, w http.ResponseWriter, r *op.Request) error 
 		doc.NextPartNumberMarker = max(doc.NextPartNumberMarker, p.Number)
 		doc.Parts = append(doc.Parts, listPartsPart{
 			LastModified: xmltext.Text(ISO8601(mtime)), PartNumber: p.Number, ETag: quotedETag(p.ETag), Size: p.Size,
+			Checksum: partChecksum(p.Checksum),
 		})
 	}
 	writeChunkedXML(ctx, w, r, doc)

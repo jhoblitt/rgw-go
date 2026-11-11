@@ -18,6 +18,7 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/authz"
+	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/cors"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/memstore"
@@ -691,4 +692,58 @@ var _ = Describe("the website GetObject on Tentacle", func() {
 		expectRedirect(rec, http.StatusFound, "http://site.web.example.com/x/missing.html")
 		Expect(rec.Header()).To(HaveKeyWithValue("x-amz-delete-marker", []string{"false"}))
 	})
+})
+
+// The website GetObject is S3's: its get_params override reads S3's for
+// every read but an error document's, a flag no website op sets
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3website.h#L86-L99 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3website.h#L86-L99 at v20.2.4),
+// and its send_response_data override hands every read but a redirect to
+// S3's
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L274-L292 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L271-L289 at v20.2.4).
+// So a Tentacle radosgw sends the object's, and the error document's,
+// stored checksum under checksum mode, and none for an error document read
+// under a Range, which get_params takes back. Squid's has no checksum mode;
+// rgw-go shows the checksum there too (docs/differences.md, "Squid clusters
+// show the checksums they store"), and serves the error document whole
+// with its checksum under a Range (docs/differences.md, "A website error
+// document is read whole and unconditionally").
+var _ = Describe("the website GetObject under checksum mode", func() {
+	want := func() map[string]string {
+		return map[string]string{"x-amz-checksum-sha256": digestArmor, "x-amz-checksum-type": "FULL_OBJECT"}
+	}
+	for _, rel := range []denc.Release{denc.Squid, denc.Tentacle} {
+		Context("on "+rel.String(), func() {
+			var w *websiteWorld
+			BeforeEach(func(ctx SpecContext) {
+				w = newWebsiteWorld(ctx, rel)
+				stored := encodeCksum(cksum.Cksum{Type: cksum.SHA256, Digest: storedDigest()})
+				w.put(ctx, "a.txt", "plain text", map[string][]byte{meta.AttrCksum: stored})
+				w.put(ctx, "error.html", "<p>oops</p>", map[string][]byte{meta.AttrCksum: stored})
+				w.setWebsite(ctx, &meta.WebsiteConf{IndexDocSuffix: "index.html", ErrorDoc: "error.html"})
+			})
+
+			It("sends the object's stored checksum", func() {
+				rec := w.serve(nil, http.MethodGet, "/a.txt", "X-Amz-Checksum-Mode", "enabled")
+				Expect(rec.Code).To(Equal(http.StatusOK))
+				Expect(rec.Body.String()).To(Equal("plain text"))
+				Expect(checksumHeaders(rec.Header())).To(Equal(want()))
+			})
+			It("sends the error document's stored checksum", func() {
+				rec := w.serve(nil, http.MethodGet, "/missing.html", "X-Amz-Checksum-Mode", "enabled")
+				Expect(rec.Code).To(Equal(http.StatusNotFound))
+				Expect(rec.Body.String()).To(Equal("<p>oops</p>"))
+				Expect(checksumHeaders(rec.Header())).To(Equal(want()))
+			})
+			It("serves the error document whole with its checksum under a Range, where radosgw serves the range without one", func() {
+				rec := w.serve(nil, http.MethodGet, "/missing.html", "X-Amz-Checksum-Mode", "enabled", "Range", "bytes=0-1")
+				Expect(rec.Code).To(Equal(http.StatusNotFound))
+				Expect(rec.Body.String()).To(Equal("<p>oops</p>"))
+				Expect(rec.Header()).NotTo(HaveKey("Content-Range"))
+				Expect(rec.Header().Get("Content-Length")).To(Equal("11"))
+				Expect(checksumHeaders(rec.Header())).To(Equal(want()))
+			})
+		})
+	}
 })

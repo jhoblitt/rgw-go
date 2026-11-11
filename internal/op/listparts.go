@@ -1,7 +1,9 @@
 package op
 
 import (
+	"bytes"
 	"context"
+	"crypto/md5" //nolint:gosec // SSE-C names its key by the key's MD5
 	"errors"
 	"fmt"
 
@@ -24,6 +26,15 @@ type ListParts struct {
 	Marker int
 	// MaxParts is max-parts as parse_value_and_bound bounds it.
 	MaxParts int
+	// SSECAlgorithm, SSECKey and SSECKeyMD5 are the
+	// x-amz-server-side-encryption-customer-algorithm, -key and -key-MD5
+	// headers, "" when absent, which decide whether an SSE-C upload's
+	// checksums are shown (checksumsShown).
+	SSECAlgorithm, SSECKey, SSECKeyMD5 string
+	// Secure is rgw_transport_is_secure: TLS, or a forwarded protocol radosgw
+	// trusts. Under rgw_crypt_require_ssl an SSE-C key sent otherwise shows
+	// no checksum.
+	Secure bool
 
 	// Upload is the upload GetUpload read, nil when there is none.
 	Upload *Upload
@@ -41,12 +52,14 @@ type ListParts struct {
 	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7617-L7630 and
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4695-L4698 at v20.2.4;
 	// docs/ceph-upstream-bugs.md, "radosgw's ListParts never reports its
-	// upload's checksum algorithm").
+	// upload's checksum algorithm"). Both are unset for an encrypted upload
+	// whose checksums are not shown (checksumsShown).
 	ChecksumAlgorithm cksum.Type
 	ChecksumType      string
 	// Result is the page; each part's Checksum is its record's, only for a
 	// type AWS defines, as radosgw renders a part's
-	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4709-L4713 at v20.2.4).
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4709-L4713 at v20.2.4),
+	// and nil for an encrypted upload whose checksums are not shown.
 	Result ListPartsResult
 
 	// loadErr is a failure to read the upload or the object, which Execute
@@ -128,7 +141,8 @@ func (o *ListParts) VerifyPermission(ctx context.Context, r *Request) error {
 // get_info's NoSuchUpload, for an empty upload id too, whose meta object
 // "<key>..meta" no upload has; the meta object's ACL, whose owner the result
 // names and which is -EIO when it does not decode; the upload's storage
-// class and checksum; then the page.
+// class and checksum; then the page. An encrypted upload's checksums are
+// shown only as checksumsShown allows.
 func (o *ListParts) Execute(ctx context.Context, r *Request) error {
 	if o.loadErr != nil {
 		return o.loadErr
@@ -144,7 +158,8 @@ func (o *ListParts) Execute(ctx context.Context, r *Request) error {
 		o.Owner = p.Owner
 	}
 	o.StorageClass = o.Upload.Placement.CanonicalStorageClass()
-	if uc := o.Upload.Checksum; uc.Type.Info().AWS {
+	shown := o.checksumsShown(r)
+	if uc := o.Upload.Checksum; shown && uc.Type.Info().AWS {
 		o.ChecksumAlgorithm, o.ChecksumType = uc.Type, uploadChecksumType(uc)
 	}
 	res, err := r.Env.Multipart.ListParts(ctx, o.Upload, o.Marker, o.MaxParts)
@@ -152,12 +167,54 @@ func (o *ListParts) Execute(ctx context.Context, r *Request) error {
 		return err
 	}
 	for i := range res.Parts {
-		if c := res.Parts[i].Checksum; c != nil && !c.Type.Info().AWS {
+		if c := res.Parts[i].Checksum; c != nil && (!shown || !c.Type.Info().AWS) {
 			res.Parts[i].Checksum = nil
 		}
 	}
 	o.Result = res
 	return nil
+}
+
+// checksumsShown reports whether the upload's checksums, which radosgw
+// computes over the plaintext
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4564-L4616 at v20.2.4),
+// may be shown to this request, by the mode its meta object stores
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6986-L6987 at v20.2.4):
+// for an upload without encryption, SSE-S3's AES256 or RGW-AUTO, whose keys
+// the requester never holds; for SSE-C only when the request's headers name
+// the upload's key (sseCKeyMatches), as Amazon S3 takes them for an upload
+// created with a checksum algorithm, and arrive over a transport
+// rgw_crypt_require_ssl accepts, as a GET of the data needs (prepareDecrypt);
+// never for SSE-KMS, whose kms:Decrypt Amazon S3 requires and rgw-go, with
+// no key server, cannot evaluate, nor for a mode rgw-go does not know.
+// radosgw shows them to every requester (docs/differences.md, "ListParts
+// shows an encrypted upload's checksums only to a requester who could read
+// its data").
+func (o *ListParts) checksumsShown(r *Request) bool {
+	switch string(o.Upload.Attrs[meta.AttrCryptMode]) {
+	case "", "AES256", "RGW-AUTO":
+		return true
+	case "SSE-C-AES256":
+		if confBool(r, "rgw_crypt_require_ssl", true) && !o.Secure {
+			return false
+		}
+		return sseCKeyMatches(o.SSECAlgorithm, o.SSECKey, o.SSECKeyMD5, o.Upload.Attrs[meta.AttrCryptKeyMD5])
+	}
+	return false
+}
+
+// sseCKeyMatches reports whether SSE-C headers name the key whose MD5 is
+// stored: the algorithm AES256, a key that decodes to 32 bytes, and a key MD5
+// that is both the key's and stored, the checks checkSSEC makes, here as a
+// yes or no.
+func sseCKeyMatches(algorithm, key, keyMD5 string, stored []byte) bool {
+	k, ok := fromBase64(key)
+	if algorithm != "AES256" || !ok || len(k) != sseCKeySize {
+		return false
+	}
+	m, ok := fromBase64(keyMD5)
+	sum := md5.Sum(k) //nolint:gosec // SSE-C names its key by the key's MD5
+	return ok && len(stored) == md5.Size && bytes.Equal(sum[:], m) && bytes.Equal(stored, m)
 }
 
 // uploadChecksumType is how a completion of an upload of checksum uc

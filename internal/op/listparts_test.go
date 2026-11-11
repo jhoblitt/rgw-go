@@ -1,7 +1,10 @@
 package op_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/md5" //nolint:gosec // SSE-C names its key by the key's MD5
+	"encoding/base64"
 	"net/http"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -9,6 +12,7 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/authz"
+	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
@@ -16,6 +20,35 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/op/opfakes"
 	"github.com/jhoblitt/rgw-go/internal/policy"
 )
+
+// listPartsSSECKey is the SSE-C key the encrypted ListParts specs' upload
+// was created with.
+func listPartsSSECKey() []byte { return bytes.Repeat([]byte{7}, 32) }
+
+// withSSEC sets a ListParts' SSE-C headers to algorithm, key base64-encoded
+// and the MD5 of md5Of, or of key when md5Of is nil, sent over TLS; a nil
+// key sets neither key header.
+func withSSEC(algorithm string, key, md5Of []byte) func(*op.ListParts) {
+	return func(o *op.ListParts) {
+		o.SSECAlgorithm, o.Secure = algorithm, true
+		if key == nil {
+			return
+		}
+		if md5Of == nil {
+			md5Of = key
+		}
+		sum := md5.Sum(md5Of) //nolint:gosec // SSE-C names its key by the key's MD5
+		o.SSECKey, o.SSECKeyMD5 = base64.StdEncoding.EncodeToString(key), base64.StdEncoding.EncodeToString(sum[:])
+	}
+}
+
+// overHTTP is headers sent over a transport that is not secure.
+func overHTTP(headers func(*op.ListParts)) func(*op.ListParts) {
+	return func(o *op.ListParts) {
+		headers(o)
+		o.Secure = false
+	}
+}
 
 var _ = Describe("ListParts", func() {
 	var (
@@ -104,6 +137,55 @@ var _ = Describe("ListParts", func() {
 		Expect([]any{o.ChecksumAlgorithm, o.ChecksumType}).To(Equal([]any{cksum.None, ""}))
 		Expect(o.Result.Parts).To(HaveExactElements(HaveField("Checksum", BeNil()), HaveField("Checksum", Equal(crc)), HaveField("Checksum", BeNil())))
 	})
+	// Amazon S3 takes ListParts' SSE-C headers for an upload created with a
+	// checksum algorithm, and needs kms:Decrypt for an SSE-KMS one; radosgw
+	// reads neither and shows them all (docs/differences.md, "ListParts shows
+	// an encrypted upload's checksums only to a requester who could read its
+	// data").
+	DescribeTable("shows an encrypted upload's checksums only to a requester who could read its data",
+		func(ctx SpecContext, mode string, storedKey []byte, requireSSL string, headers func(*op.ListParts), shown bool) {
+			if requireSSL != "" {
+				f.env.Conf = cephconf.NewOptions(cephconf.MapGetter{"rgw_crypt_require_ssl": requireSSL})
+			}
+			stored := md5.Sum(storedKey) //nolint:gosec // SSE-C names its key by the key's MD5
+			sha := &cksum.Cksum{Type: cksum.SHA256, Digest: make([]byte, 32), Flags: cksum.FlagComposite}
+			stub := stubbed(&op.Upload{
+				ID: id, Checksum: op.UploadChecksum{Type: cksum.SHA256, Flags: cksum.FlagComposite},
+				Attrs: map[string][]byte{meta.AttrACL: f.aliceACL, meta.AttrCryptMode: []byte(mode), meta.AttrCryptKeyMD5: stored[:]},
+			})
+			stub.ListPartsReturns(op.ListPartsResult{Parts: []op.Part{{Number: 1, Checksum: sha}, {Number: 2}}}, nil)
+			o := &op.ListParts{UploadID: id, MaxParts: 10}
+			headers(o)
+			Expect(op.Run(ctx, o, f.req(http.MethodGet, "plain", "k"))).To(Succeed())
+			if shown {
+				Expect([]any{o.ChecksumAlgorithm, o.ChecksumType}).To(Equal([]any{cksum.SHA256, cksum.CompositeType}))
+				Expect(o.Result.Parts).To(HaveExactElements(HaveField("Checksum", Equal(sha)), HaveField("Checksum", BeNil())))
+			} else {
+				Expect([]any{o.ChecksumAlgorithm, o.ChecksumType}).To(Equal([]any{cksum.None, ""}))
+				Expect(o.Result.Parts).To(HaveExactElements(HaveField("Checksum", BeNil()), HaveField("Checksum", BeNil())))
+			}
+		},
+		Entry("an upload without encryption", "", listPartsSSECKey(), "", withSSEC("", nil, nil), true),
+		Entry("SSE-S3, whose key no requester holds", "AES256", listPartsSSECKey(), "", withSSEC("", nil, nil), true),
+		Entry("RGW-AUTO, whose key no requester holds", "RGW-AUTO", listPartsSSECKey(), "", withSSEC("", nil, nil), true),
+		Entry("SSE-C with the upload's key", "SSE-C-AES256", listPartsSSECKey(), "", withSSEC("AES256", listPartsSSECKey(), nil), true),
+		Entry("SSE-C with the upload's key over plain HTTP, as rgw_crypt_require_ssl refuses a GET of its data", "SSE-C-AES256",
+			listPartsSSECKey(), "", overHTTP(withSSEC("AES256", listPartsSSECKey(), nil)), false),
+		Entry("SSE-C with the upload's key over plain HTTP when rgw_crypt_require_ssl is unset", "SSE-C-AES256",
+			listPartsSSECKey(), "false", overHTTP(withSSEC("AES256", listPartsSSECKey(), nil)), true),
+		Entry("SSE-C without the SSE-C headers", "SSE-C-AES256", listPartsSSECKey(), "", withSSEC("", nil, nil), false),
+		Entry("SSE-C with another key and its own MD5", "SSE-C-AES256", listPartsSSECKey(), "",
+			withSSEC("AES256", bytes.Repeat([]byte{9}, 32), nil), false),
+		Entry("SSE-C with another key under the upload's key MD5", "SSE-C-AES256", listPartsSSECKey(), "",
+			withSSEC("AES256", bytes.Repeat([]byte{9}, 32), listPartsSSECKey()), false),
+		Entry("SSE-C with the upload's key under another algorithm", "SSE-C-AES256", listPartsSSECKey(), "",
+			withSSEC("AES128", listPartsSSECKey(), nil), false),
+		Entry("SSE-C whose stored key MD5 is a 16-byte key's, named with that key, as only the length refuses it", "SSE-C-AES256",
+			listPartsSSECKey()[:16], "", withSSEC("AES256", listPartsSSECKey()[:16], nil), false),
+		Entry("SSE-KMS, whose kms:Decrypt rgw-go cannot evaluate, SSE-C headers or not", "SSE-KMS", listPartsSSECKey(), "",
+			withSSEC("AES256", listPartsSSECKey(), nil), false),
+		Entry("a mode rgw-go does not know", "DSSE-KMS", listPartsSSECKey(), "", withSSEC("", nil, nil), false),
+	)
 	It("reports the storage class of the upload's placement", func(ctx SpecContext) {
 		stubbed(&op.Upload{ID: id, Placement: meta.PlacementRule{Name: "default-placement", StorageClass: "COLD"}, Attrs: map[string][]byte{meta.AttrACL: f.aliceACL}})
 		o := &op.ListParts{UploadID: id, MaxParts: 10}
