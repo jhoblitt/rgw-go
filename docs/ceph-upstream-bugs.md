@@ -3519,8 +3519,18 @@ Every new entry adds its row to this table, in document order.
     4b8dea3dfb6d, which lacked only the `fails_on_rgw` marker), at
     radosgw-admin's default step and window: the code that enabled MFA
     delete was refused again in its own step and accepted again just after
-    the next step began. The second replay, at distance 2, and the refusal
-    of intervening fresh codes were not exercised there.
+    the next step began. The second replay, at distance 2, was not
+    exercised there.
+  - The refusal of a fresh code reproduced on rooket clusters of v19.2.7
+    and v20.2.4 on 2026-11-10, by phase 2 Task T-6, at the same defaults.
+    Run right after that test's replay, which the class records a step
+    ahead of the step it checks it in,
+    `test_versioning_mfa_delete_object_version` (jhoblitt/ceph#31, as
+    f2ac0fef084 leaves it) sent the device's code of the step after the
+    replay's, and its PutBucketVersioning was refused 403 AccessDenied:
+    by radosgw at both tags, and on v19.2.7 by rgw-go too, which sends the
+    replay to the class before refusing it. jhoblitt/ceph#35's
+    9d9fc233f46 makes the test wait past the window for its first code.
 - **One-time use, across entries:** cls_otp keeps one `last_success`
   counter per device, and it does not reliably enforce one-time use. Besides
   this replay, the registry records:
@@ -3585,8 +3595,8 @@ Every new entry adds its row to this table, in document order.
   `otp_pos`. A userspace reproducer that calls liboath alone, run in a CentOS
   Stream 9 container and re-run independently, shows the defect and the fix
   side by side; it is attached to #80949. Its replay reproduced on running
-  radosgw at v19.2.7 and v20.2.4 (Replay of one code, above); the refusal of
-  intervening codes is not reproduced on a running cluster.
+  radosgw at v19.2.7 and v20.2.4 on 2026-10-22, and its refusal of a fresh
+  code on 2026-11-10 (Replay of one code, above).
 
 ## librbd leaks the update-watch context when registration fails
 
