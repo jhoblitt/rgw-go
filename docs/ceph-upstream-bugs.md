@@ -513,6 +513,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw shows an encrypted upload's plaintext checksums to a requester without its key](#radosgw-shows-an-encrypted-uploads-plaintext-checksums-to-a-requester-without-its-key) | none | none | ✓ |
 | [A radosgw that predates the GCM crypt modes stores a GCM upload's parts in the clear and copies GCM ciphertext as data](#a-radosgw-that-predates-the-gcm-crypt-modes-stores-a-gcm-uploads-parts-in-the-clear-and-copies-gcm-ciphertext-as-data) | none | none | ✓ |
 | [radosgw's writes set an object lock without s3:PutObjectRetention or s3:PutObjectLegalHold](#radosgws-writes-set-an-object-lock-without-s3putobjectretention-or-s3putobjectlegalhold) | [#82703](https://tracker.ceph.com/issues/82703) | [ceph/ceph#73508](https://github.com/ceph/ceph/pull/73508) (open) |  |
+| [radosgw sets none of the object-lock condition keys](#radosgw-sets-none-of-the-object-lock-condition-keys) | none | none | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -33075,3 +33076,47 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task L5b's security review, 2026-11-11, on rgw-go's
   first write path that stores the headers; upstream's report predates it.
   Derived from the source, not reproduced.
+
+## radosgw sets none of the object-lock condition keys
+
+- **Kind:** defect, possibly security-relevant: radosgw adds none of the
+  condition keys Amazon S3 documents for object lock,
+  `s3:object-lock-mode`, `s3:object-lock-retain-until-date`,
+  `s3:object-lock-remaining-retention-days` and `s3:object-lock-legal-hold`,
+  to the environment a request's policies are evaluated in, so a policy
+  conditioned on one judges every request as if the key were absent.
+  Unreproduced: derived from the source.
+- **Evidence:**
+  - `rgw_build_iam_environment` adds none of the four
+    ([rgw_op.cc:848-910](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L848-L910),
+    [rgw_op.cc:884-945](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L884-L945)),
+    and no file under `src/rgw` names `s3:object-lock` at v19.2.7, v20.2.4
+    or main at 203e7c52025d (2026-10-30), so neither do the ops that set a
+    lock, PutObject, CopyObject and CreateMultipartUpload by their headers
+    and PutObjectRetention and PutObjectLegalHold by their documents.
+  - A condition on a key the environment lacks is false, unless its
+    operator is `Null`, a `ForAllValues` one or carries `IfExists`
+    (`Condition::eval`,
+    [rgw_iam_policy.cc:854-869](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L854-L869),
+    [rgw_iam_policy.cc:873-889](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L873-L889)).
+  - Amazon S3 documents a bucket policy that denies s3:PutObjectRetention
+    where `s3:object-lock-remaining-retention-days` is greater than 10, to
+    cap the retention the bucket's objects take, in its "Setting retention
+    limits"
+    ([object-lock-managing.md:42-66](https://github.com/awsdocs/amazon-s3-developer-guide/blob/e5e6bbd2771d39e8ce3736849548a94b98d5094b/doc_source/object-lock-managing.md#L42-L66)
+    in the guide's archived source).
+- **Impact:** such a Deny, or one on a mode or a legal hold, refuses
+  nothing on radosgw, and an Allow conditioned on one of the keys allows
+  nothing.
+- **Releases:** v19.2.7, v20.2.4 and main at 203e7c52025d (2026-10-30).
+- **rgw-go:** reproduces it: its policy environment adds none of the four
+  keys either (`BuildEnv`, `internal/authz/env.go`), so a policy
+  conditioned on one evaluates as on radosgw. Plan task L7 adds them to
+  every request that sets a lock.
+- **Upstream:** none: searches of the tracker's full text for
+  `object-lock-remaining-retention-days` and `s3:object-lock-mode`, and of
+  ceph/ceph's issues and pull requests for those and for the other two keys
+  beside "condition", found no report or fix (2026-11-11).
+- **Found:** phase 2 task L5b's adversarial review, 2026-11-11, at the
+  write path that first stores a lock; derived from the source, not
+  reproduced.
