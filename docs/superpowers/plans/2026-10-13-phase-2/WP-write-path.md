@@ -1257,6 +1257,28 @@ On a zone radosgw shares it corrupts data today, so it goes first among this uni
   without a key server.
 - **Depends on:** nothing. **PR:** one. **Brief:** about 40 lines.
 
+### Task WP-28: a stored metadata value never puts a NUL into a response header
+
+Found while implementing L5b, and numbered here before L5b (a) merged (PP-12).
+
+- **Layer:** S3 handler. **Files:** `internal/s3/getobject.go` (`sanitizedHdrval` and the
+  user-metadata headers) and every other site that writes a stored attr to a response header;
+  their specs; `docs/differences.md`. **Cluster:** no.
+- **Behaviour:**
+  1. A stored user-metadata value, written by radosgw or by anyone with RADOS access, reaches a
+     response header without a NUL or another control byte that net/http does not rewrite.
+     `sanitizedHdrval` trims only a trailing NUL (`internal/s3/getobject.go:492-494`) and
+     net/http rewrites only CR and LF, so an interior NUL goes out on the wire, which RFC 9110
+     forbids in a field value. Drop or replace such a byte, deciding at implementation after
+     checking what radosgw sends at both tags.
+  2. The same holds for every other stored attr rendered as a header: content-type,
+     content-disposition, cache-control, content-encoding, expires and the website redirect.
+- **Specs:** per release, a stored value with an interior NUL and one with other control bytes,
+  each header site; a clean value, unchanged.
+- **Exclusions and registry:** a `docs/differences.md` entry where rgw-go's bytes differ from
+  radosgw's.
+- **Depends on:** nothing. **PR:** one. **Brief:** about 35 lines.
+
 ## Order
 
 Everything starts after the index's deferred benchmark run and the shared tasks it names.
@@ -1271,6 +1293,7 @@ Everything starts after the index's deferred benchmark run and the shared tasks 
 | 6 | WP-12, then WP-13 | WP-9; WP-12, WP-7 and V14a |
 | 7 | WP-25, WP-26 | WP-13 |
 | any time, first | WP-27 | nothing |
+| any time | WP-28 | nothing |
 | cluster, one at a time | WP-24, WP-15, WP-14 | WP-19 and WP-21; WP-8 to WP-11 and WP-13; WP-6 to WP-13, WP-22, T-1, and BC-34 or the POST line deselected |
 
 - Wave 1 is wider than the subagent budget allows at once; the controller starts WP-10 (a),

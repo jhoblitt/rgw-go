@@ -358,6 +358,7 @@ flowchart LR
   t_L4["L4"]
   t_L5a["L5a"]
   t_L5b["L5b"]
+  t_L6["L6"]
   t_S2["S2"]:::ext
   t_V2["V2"]:::ext
   t_V6["V6"]:::ext
@@ -390,12 +391,14 @@ flowchart LR
   t_V14a --> t_L5b
   t_L5a --> t_L5b
   t_WP_13 --> t_L5b
+  t_L5b --> t_L6
   click t_L1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l1-object-lock-types-xml-dates-and-evaluation" "L1: object-lock types, XML, dates and evaluation"
   click t_L2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l2-bucket-object-lock-configuration-and-createbucket-with-lock" "L2: bucket object-lock configuration, and CreateBucket with lock"
   click t_L3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l3-object-retention-and-legal-hold" "L3: object retention and legal hold"
   click t_L4 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l4-delete-enforcement" "L4: delete enforcement"
   click t_L5a href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l5a-the-lock-on-the-write-path-driver" "L5a: the lock on the write path, driver"
   click t_L5b href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l5b-the-lock-headers-op-and-s3" "L5b: the lock headers, op and S3"
+  click t_L6 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l6-the-retention-and-legal-hold-ops-authorize-as-the-lock-headers-do" "L6: the retention and legal-hold ops authorize as the lock headers do"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_V2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v2-meta-olh-head-types-and-bucket-helpers" "V2: meta OLH head types and bucket helpers"
   click t_V6 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v6-driver-reads-follow-the-olh-attrs-on-a-version" "V6: driver, reads follow the OLH; attrs on a version"
@@ -417,6 +420,7 @@ flowchart LR
 - [L4](L-object-lock.md#task-l4-delete-enforcement): delete enforcement
 - [L5a](L-object-lock.md#task-l5a-the-lock-on-the-write-path-driver): the lock on the write path, driver
 - [L5b](L-object-lock.md#task-l5b-the-lock-headers-op-and-s3): the lock headers, op and S3
+- [L6](L-object-lock.md#task-l6-the-retention-and-legal-hold-ops-authorize-as-the-lock-headers-do): the retention and legal-hold ops authorize as the lock headers do
 
 ### C: lifecycle
 
@@ -824,6 +828,7 @@ flowchart LR
   t_WP_25["WP-25"]
   t_WP_26["WP-26"]
   t_WP_27["WP-27"]
+  t_WP_28["WP-28"]
   t_S1["S1"]:::ext
   t_S2["S2"]:::ext
   t_S4["S4"]:::ext
@@ -912,6 +917,7 @@ flowchart LR
   click t_WP_25 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-25-getobjectattributes-requires-both-of-its-permissions" "WP-25: GetObjectAttributes requires both of its permissions"
   click t_WP_26 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-26-completemultipartupload-treats-an-encrypted-upload-as-radosgw-does" "WP-26: CompleteMultipartUpload treats an encrypted upload as radosgw does"
   click t_WP_27 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-27-uploadpart-and-uploadpartcopy-refuse-a-part-of-an-encrypted-upload" "WP-27: UploadPart and UploadPartCopy refuse a part of an encrypted upload"
+  click t_WP_28 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-28-a-stored-metadata-value-never-puts-a-nul-into-a-response-header" "WP-28: a stored metadata value never puts a NUL into a response header"
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_S4 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s4-fakerados-refuses-an-unregistered-class-method-at-op-setup" "S4: fakerados refuses an unregistered class method at op setup"
@@ -950,6 +956,7 @@ flowchart LR
 - [WP-25](WP-write-path.md#task-wp-25-getobjectattributes-requires-both-of-its-permissions): GetObjectAttributes requires both of its permissions
 - [WP-26](WP-write-path.md#task-wp-26-completemultipartupload-treats-an-encrypted-upload-as-radosgw-does): CompleteMultipartUpload treats an encrypted upload as radosgw does
 - [WP-27](WP-write-path.md#task-wp-27-uploadpart-and-uploadpartcopy-refuse-a-part-of-an-encrypted-upload): UploadPart and UploadPartCopy refuse a part of an encrypted upload
+- [WP-28](WP-write-path.md#task-wp-28-a-stored-metadata-value-never-puts-a-nul-into-a-response-header): a stored metadata value never puts a NUL into a response header
 
 ### T: gate tooling
 
