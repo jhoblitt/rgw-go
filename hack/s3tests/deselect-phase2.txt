@@ -58,6 +58,8 @@ s3tests/functional/test_s3.py::test_object_lock_default_retention_copy_object # 
 s3tests/functional/test_s3.py::test_object_lock_default_retention_multipart_no_lock # CompleteMultipartUpload on a bucket with object lock, x-amz-bypass-governance-retention
 s3tests/functional/test_s3.py::test_object_lock_default_retention_multipart_upload_retention # object lock headers on CreateMultipartUpload, CompleteMultipartUpload on a bucket with object lock, x-amz-bypass-governance-retention
 s3tests/functional/test_s3.py::test_object_lock_default_retention_multipart_upload_legal_hold # object lock headers on CreateMultipartUpload, CompleteMultipartUpload on a bucket with object lock, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_multi_delete_bypass_denied # CreateBucket with object lock, PutObject on it, PutObjectRetention, PutBucketPolicy, x-amz-bypass-governance-retention
+s3tests/functional/test_s3.py::test_object_lock_delete_bypass_by_bucket_write_grantee # CreateBucket with object lock, PutObject on it, PutObjectRetention, x-amz-bypass-governance-retention
 
 # POST object (browser-form uploads)
 s3tests/functional/test_s3.py::test_post_object_anonymous_request # POST object

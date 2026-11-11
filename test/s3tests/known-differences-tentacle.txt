@@ -67,13 +67,18 @@
 # A used MFA code refused in the later steps of its window too; radosgw's cls_otp verifies it again in the next step (differences: "An MFA code the device may have accepted before does not verify")
 ^s3tests\.functional\.test_s3::test_versioning_mfa_delete_code_used_once$
 
-# A CORS preflight whose method or requested header only a later rule for its origin allows, answered from that rule; radosgw answers from the first rule whose origin matches and refuses it 403 (differences: "CORS rules are matched as Amazon S3 matches them")
+# A DeleteObjects on a bucket with MFA delete, refused 403 without the owner's code when a key names a version and served without it when none does; radosgw's check is inverted, serving the first and refusing the second (differences: "DeleteObjects asks for MFA for the keys that name a version")
+^s3tests\.functional\.test_s3::test_versioning_mfa_delete_objects_version$
+
+# A CORS request whose method, or a preflight whose requested header, only a later rule for its origin allows, answered from that rule; radosgw answers from the first rule whose origin matches, refusing such a preflight 403 and serving another such request without CORS headers (differences: "CORS rules are matched as Amazon S3 matches them")
 ^s3tests\.functional\.test_s3::test_cors_preflight_later_rule_allows_method$
 ^s3tests\.functional\.test_s3::test_cors_preflight_later_rule_allows_headers$
+^s3tests\.functional\.test_s3::test_cors_non_preflight_later_rule_allows_method$
 
 # A request other than a preflight whose Origin no CORS rule allows for its method, refused 403 AccessDenied; radosgw serves it (differences: "A request whose Origin no CORS rule allows is refused")
 ^s3tests\.functional\.test_s3::test_cors_origin_response$
 ^s3tests\.functional\.test_s3::test_cors_presigned_url_non_preflight$
+^s3tests\.functional\.test_s3::test_cors_non_preflight_origin_refused$
 
 # A CORS configuration op's x-amz-storage-class that the placement lacks, checked once the requester is authorized, so a requester the bucket refuses gets 403 AccessDenied; radosgw answers it 400 InvalidArgument (differences: "The CORS configuration ops check the storage class once the requester is authorized")
 ^s3tests\.functional\.test_s3::test_bucket_cors_storage_class_checked_after_authorization$
