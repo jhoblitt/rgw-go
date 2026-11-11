@@ -534,6 +534,30 @@ Versioning's ids are V-versioning.md's.
   headers and the retired refusals; (b) the GET and HEAD headers. **Brief:** about 170
   lines.
 
+### Task L6: the retention and legal-hold ops authorize as the lock headers do
+
+Found while implementing L5b, after an automated security review of it, and numbered here before
+L5b (a) merged (PP-12).
+
+- **Layer:** op. **Files:** `internal/op/objectretention.go` (PutObjectRetention's and
+  PutObjectLegalHold's permission checks) and their specs; `docs/differences.md`; the registry
+  entry L5b (a) adds. **Cluster:** no.
+- **Behaviour:**
+  1. PutObjectRetention and PutObjectLegalHold authorize `s3:PutObjectRetention` and
+     `s3:PutObjectLegalHold` as L5b (a)'s lock headers do: a policy decides, and otherwise only
+     the bucket owner passes. Today they also consult the object's ACL, whose WRITE step passes
+     the object's owner (`objectACL`, `internal/authz/evaluator.go`), so a principal allowed only
+     `s3:PutObject` writes an object it then owns and locks it in COMPLIANCE, which nobody, the
+     bucket owner included, can lift before it expires. AWS grants these actions through
+     policies only; no ACL permission maps to them. radosgw's dedicated ops fall back to the
+     ACLs; verify how at both tags at implementation.
+  2. The governance bypass and the GetObjectRetention and GetObjectLegalHold reads are unchanged.
+- **Specs:** per release, the bucket owner; the object's owner with no policy, refused; a policy
+  Allow; an explicit Deny; anonymous on a public-read-write bucket, refused.
+- **Exclusions and registry:** a `docs/differences.md` entry, since rgw-go refuses where radosgw
+  serves; the registry entry for radosgw's lock-header writes names the dedicated ops' fallback.
+- **Depends on:** L5b (a). **PR:** one. **Brief:** about 40 lines.
+
 ## Order
 
 No task in this unit needs a cluster. The object-lock s3-tests recording is C12's PR (a), and
@@ -547,6 +571,7 @@ the cross-gateway lock cases are C13's PR (a); both follow L5b.
 | 4 | L3 | L2, V6 (V's wave 6) |
 | 5 | L5a | V7a, V7b, WP-5 (V's wave 8) |
 | 6 | L4; L5b (a), then L5b (b) | L3, V8c and V12a for L4 (V's waves 8 and 10); L5a, V11, V14a and WP-13 for L5b |
+| 7 | L6 | L5b (a) |
 
 Cross-unit order:
 - Versioning keeps a lock bucket's S3 writes and deletes at 501 until L5b and L4 lift them
