@@ -31,6 +31,42 @@ type sseCRequest struct {
 	secure                 bool
 }
 
+// cryptMode is a stored crypt mode as rgw-go reads it: every caller that
+// decides by a mode classifies it here, so one that rgw-go does not know is
+// cryptUnknown everywhere, never taken for none.
+type cryptMode int
+
+const (
+	// cryptNone is no mode attr, or an empty one, which radosgw takes for
+	// none.
+	cryptNone cryptMode = iota
+	cryptSSEC
+	cryptSSEKMS
+	cryptSSES3
+	cryptRGWAuto
+	// cryptUnknown is any other mode, such as a GCM mode v20.2.5 writes.
+	cryptUnknown
+)
+
+// storedCryptMode classifies the crypt mode attrs store, by the names
+// rgw_s3_prepare_encrypt writes
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1045-L1315 at v20.2.4).
+func storedCryptMode(attrs map[string][]byte) cryptMode {
+	switch string(attrs[meta.AttrCryptMode]) {
+	case "":
+		return cryptNone
+	case "SSE-C-AES256":
+		return cryptSSEC
+	case "SSE-KMS":
+		return cryptSSEKMS
+	case "AES256":
+		return cryptSSES3
+	case "RGW-AUTO":
+		return cryptRGWAuto
+	}
+	return cryptUnknown
+}
+
 // storedCryptRefusal is rgw_s3_prepare_decrypt past its refusal of
 // x-amz-server-side-encryption on a read
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1317-L1505 at v19.2.7,
@@ -55,30 +91,30 @@ type sseCRequest struct {
 func storedCryptRefusal(ctx context.Context, r *Request, attrs map[string][]byte, req sseCRequest) error {
 	insecure := confBool(r, "rgw_crypt_require_ssl", true) && !req.secure
 	errInsecure := fmt.Errorf("%w: rgw_crypt_require_ssl refuses an insecure request", ErrInvalidRequest)
-	switch mode := string(attrs[meta.AttrCryptMode]); mode {
-	case "":
+	switch storedCryptMode(attrs) {
+	case cryptNone:
 		return nil
-	case "SSE-C-AES256":
+	case cryptSSEC:
 		if insecure {
 			return errInsecure
 		}
 		return checkSSEC(ctx, r, attrs[meta.AttrCryptKeyMD5], req)
-	case "SSE-KMS":
+	case cryptSSEKMS:
 		if insecure {
 			return errInsecure
 		}
 		return ErrInvalidArgument.WithMessage("Failed to retrieve the actual key, kms-keyid: " + string(attrs[meta.AttrCryptKeyID]))
-	case "RGW-AUTO":
+	case cryptRGWAuto:
 		// rgw_crypt_default_encryption_key, unset, does not decode to 32
 		// bytes: -EIO.
 		return fmt.Errorf("%w: no default encryption key for %s", ErrUnknown, r.Object.Name)
-	case "AES256":
+	case cryptSSES3:
 		if insecure && r.Env.Zone.Release() < denc.Tentacle {
 			return errInsecure
 		}
 		return ErrInvalidArgument.WithMessage("Failed to retrieve the actual key")
 	default:
-		return fmt.Errorf("%w: crypt mode %q is not one rgw-go knows", ErrNotImplemented, mode)
+		return fmt.Errorf("%w: crypt mode %q is not one rgw-go knows", ErrNotImplemented, attrs[meta.AttrCryptMode])
 	}
 }
 
@@ -103,16 +139,29 @@ func RefuseEncryptedSource(src *ObjectState) error {
 // keeps a store from copying ciphertext as a part's data only for a caller
 // that did not.
 func RefuseEncryptedPartSource(src *ObjectState, n uint64) error {
-	if n == 0 || len(src.Attrs[meta.AttrCryptMode]) == 0 {
+	if n == 0 || storedCryptMode(src.Attrs) == cryptNone {
 		return nil
 	}
 	return fmt.Errorf("%w: part copy source %s is encrypted", ErrNotImplemented, src.Key.Name)
 }
 
-// checkSSEC is rgw_s3_prepare_decrypt's SSE-C branch: the algorithm, the key
-// and its MD5, which must match both the key and stored, the MD5 the object
-// or upload keeps.
+// checkSSEC is rgw_s3_prepare_decrypt's SSE-C branch: the key checks
+// (sseCKeyError), and NotImplemented for a key that passes them, which
+// radosgw decrypts or encrypts with.
 func checkSSEC(ctx context.Context, r *Request, stored []byte, req sseCRequest) error {
+	if err := sseCKeyError(stored, req); err != nil {
+		return err
+	}
+	slog.InfoContext(ctx, "refusing sse-c: customer keys are not implemented",
+		slog.String("bucket", r.Bucket), slog.String("key", r.Object.Name))
+	return fmt.Errorf("%w: SSE-C is not implemented", ErrNotImplemented)
+}
+
+// sseCKeyError is rgw_s3_prepare_decrypt's checks of req's SSE-C headers: the
+// algorithm, the key and its MD5, which must match both the key and stored,
+// the MD5 the object or upload keeps. It is nil for headers that name the
+// stored key.
+func sseCKeyError(stored []byte, req sseCRequest) error {
 	switch req.algorithm {
 	case "":
 		return ErrInvalidArgument.WithMessage(sseCAlgorithmMissing)
@@ -132,7 +181,5 @@ func checkSSEC(ctx context.Context, r *Request, stored []byte, req sseCRequest) 
 	if !bytes.Equal(sum[:], keyMD5) || !bytes.Equal(stored, keyMD5) {
 		return ErrInvalidArgument.WithMessage(sseCKeyMismatch)
 	}
-	slog.InfoContext(ctx, "refusing sse-c: customer keys are not implemented",
-		slog.String("bucket", r.Bucket), slog.String("key", r.Object.Name))
-	return fmt.Errorf("%w: SSE-C is not implemented", ErrNotImplemented)
+	return nil
 }

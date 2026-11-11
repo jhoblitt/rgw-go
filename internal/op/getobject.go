@@ -658,7 +658,7 @@ func (o *GetObject) checkConditions(r *Request, since, unmodSince *time.Time) er
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2511-L2535 at v20.2.4).
 // rgw-go serves no torrent (docs/differences.md).
 func (o *GetObject) torrent(ctx context.Context, r *Request) error {
-	if string(o.State.Attrs[meta.AttrCryptMode]) == "SSE-C-AES256" {
+	if storedCryptMode(o.State.Attrs) == cryptSSEC {
 		return fmt.Errorf("%w: no torrent of %s, which is encrypted with SSE-C", ErrInvalidArgument, r.Object.Name)
 	}
 	if _, ok := o.State.Attrs[meta.AttrTorrent]; !ok {
