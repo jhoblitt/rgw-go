@@ -1193,31 +1193,39 @@ Found by WP-13's adversarial review (L2), and numbered here before WP-13 merged 
   serves; the registry entry's rgw-go line says rgw-go requires both.
 - **Depends on:** WP-13. **PR:** one. **Brief:** about 40 lines.
 
-### Task WP-26: CompleteMultipartUpload hides an encrypted upload's checksum from a requester without its key
+### Task WP-26: CompleteMultipartUpload checks an encrypted upload's key and hides its checksum
 
-Found by WP-13's scoped re-review (N7), and numbered here before WP-13 merged (PP-12).
+Found by WP-13's scoped re-review (N7) and its second fix round, and numbered here before WP-13
+merged (PP-12).
 
 - **Layer:** S3 handler and op. **Files:** `internal/s3/multipart.go` (CompleteMultipartUpload's
-  response), the decision WP-13 gives ListParts (`internal/op/listparts.go`), their specs;
-  `docs/differences.md`; the registry entry WP-13's PR adds. **Cluster:** no.
+  request and response), the op's completion, the decision WP-13 gives ListParts
+  (`internal/op/listparts.go`), their specs; `docs/differences.md`; the registry entry WP-13's
+  PR adds. **Cluster:** no.
 - **Behaviour:**
-  1. CompleteMultipartUpload's response carries the upload's combined checksum and its
-     `ChecksumType` under the rule WP-13 gives ListParts: for an upload created with SSE-C only
-     when the request carries SSE-C headers whose key matches the upload's, honouring
-     `rgw_crypt_require_ssl` as GET does, and for an upload created with SSE-KMS never. The
-     completion itself is unchanged: it succeeds or fails as it does today and stores the same
-     checksum. radosgw renders the checksum whatever the request carries
-     ([rgw_rest_s3.cc:4635-4639](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4635-L4639)),
-     where AWS asks for the SSE-C key or `kms:Decrypt` on that call (cite the documentation at
+  1. For an upload created with SSE-C, CompleteMultipartUpload refuses a request that does not
+     carry SSE-C headers matching the upload's key, or that arrives over an insecure transport
+     while `rgw_crypt_require_ssl` is set, with the error radosgw gives. radosgw's `get_params`
+     runs `rgw_s3_prepare_decrypt` on the upload's attrs before it completes
+     ([rgw_rest_s3.cc:4591-4598](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4591-L4598));
+     rgw-go reads no SSE header on completion, so today it completes such an upload without the
+     key. Verify Squid's v19.2.7 at implementation.
+  2. For an upload created with SSE-KMS the completion proceeds, as radosgw's does, since neither
+     gateway evaluates the requester's `kms:Decrypt`, and the response omits the combined
+     checksum and its `ChecksumType`, which radosgw renders
+     ([rgw_rest_s3.cc:4635-4639](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4635-L4639))
+     and AWS withholds from a requester without `kms:Decrypt` (cite the documentation at
      implementation).
-  2. rgw-go answers every encryption write 501 today, so only an upload radosgw began on a
-     shared zone reaches the rule.
-- **Specs:** per release, an SSE-C upload completed with the matching key, a wrong key, no key,
-  and over plain HTTP with `rgw_crypt_require_ssl` set; an SSE-KMS upload; an unencrypted upload,
-  unchanged.
-- **Exclusions and registry:** a `docs/differences.md` entry, since rgw-go withholds what radosgw
-  shows; the registry entry's rgw-go line says rgw-go hides it.
-- **Depends on:** WP-13. **PR:** one. **Brief:** about 40 lines.
+  3. rgw-go answers every encryption write 501 today, so only an upload radosgw began on a
+     shared zone reaches either rule.
+- **Specs:** per release, an SSE-C upload completed with the matching key (completes, checksum
+  shown), a wrong key and no key (refused with radosgw's error), and over plain HTTP with
+  `rgw_crypt_require_ssl` set (refused); an SSE-KMS upload (completes, no checksum); an
+  unencrypted upload, unchanged.
+- **Exclusions and registry:** a `docs/differences.md` entry for the withheld SSE-KMS checksum;
+  the SSE-C refusal matches radosgw and retires the sentence WP-13 records about rgw-go's
+  weaker completion; the registry entry's rgw-go line says what rgw-go does.
+- **Depends on:** WP-13. **PR:** one. **Brief:** about 45 lines.
 
 ## Order
 

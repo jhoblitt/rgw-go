@@ -909,7 +909,7 @@ flowchart LR
   click t_WP_21 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-21-get-layout" "WP-21: GET `?layout`"
   click t_WP_24 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-24-layout-and-otp-gate" "WP-24: `?layout` and otp gate"
   click t_WP_25 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-25-getobjectattributes-requires-both-of-its-permissions" "WP-25: GetObjectAttributes requires both of its permissions"
-  click t_WP_26 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-26-completemultipartupload-hides-an-encrypted-uploads-checksum-from-a-requester-without-its-key" "WP-26: CompleteMultipartUpload hides an encrypted upload's checksum from a requester without its key"
+  click t_WP_26 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-26-completemultipartupload-checks-an-encrypted-uploads-key-and-hides-its-checksum" "WP-26: CompleteMultipartUpload checks an encrypted upload's key and hides its checksum"
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_S4 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s4-fakerados-refuses-an-unregistered-class-method-at-op-setup" "S4: fakerados refuses an unregistered class method at op setup"
@@ -946,7 +946,7 @@ flowchart LR
 - [WP-21](WP-write-path.md#task-wp-21-get-layout): GET `?layout`
 - [WP-24](WP-write-path.md#task-wp-24-layout-and-otp-gate): `?layout` and otp gate
 - [WP-25](WP-write-path.md#task-wp-25-getobjectattributes-requires-both-of-its-permissions): GetObjectAttributes requires both of its permissions
-- [WP-26](WP-write-path.md#task-wp-26-completemultipartupload-hides-an-encrypted-uploads-checksum-from-a-requester-without-its-key): CompleteMultipartUpload hides an encrypted upload's checksum from a requester without its key
+- [WP-26](WP-write-path.md#task-wp-26-completemultipartupload-checks-an-encrypted-uploads-key-and-hides-its-checksum): CompleteMultipartUpload checks an encrypted upload's key and hides its checksum
 
 ### T: gate tooling
 
