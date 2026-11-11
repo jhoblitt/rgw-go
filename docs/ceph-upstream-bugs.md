@@ -32774,9 +32774,11 @@ Every new entry adds its row to this table, in document order.
   (`ListParts.checksumsShown`, `internal/op/listparts.go`;
   `docs/differences.md`, "ListParts shows an encrypted upload's checksums
   only to a requester who could read its data"). Its
-  CompleteMultipartUpload reads neither an SSE header nor the upload's
-  crypt mode, so it completes a radosgw-begun encrypted upload where a
-  v20.2.4 radosgw refuses or fails: an SSE-C upload without its key,
+  CompleteMultipartUpload reads no SSE header, and of the upload's crypt
+  mode refuses only one it does not know (`docs/differences.md`, "A
+  completion of an upload of a crypt mode rgw-go does not know answers
+  501"), so it completes a radosgw-begun encrypted upload where a v20.2.4
+  radosgw refuses or fails: an SSE-C upload without its key,
   which from v20.2.5 radosgw refuses only for an upload made with a
   checksum, or for SSE-C headers that do not name its key; an SSE-C or
   SSE-KMS upload over plain HTTP under `rgw_crypt_require_ssl`, the SSE-C
@@ -32789,9 +32791,8 @@ Every new entry adds its row to this table, in document order.
   "ListParts shows an encrypted upload's checksums only to a requester
   who could read its data"). Phase 2 plan task WP-26 is to make the
   completion ask for an SSE-C upload's key as Amazon S3 and a v20.2.5
-  radosgw do, refuse an SSE-KMS, SSE-S3 or RGW-AUTO upload and one of a
-  mode rgw-go does not know, and echo radosgw's encryption headers for a
-  completed SSE-C upload.
+  radosgw do, refuse an SSE-KMS, SSE-S3 or RGW-AUTO upload, and echo
+  radosgw's encryption headers for a completed SSE-C upload.
 - **Upstream:** none known for the disclosure; related:
   [ceph/ceph#71241](https://github.com/ceph/ceph/pull/71241),
   [ceph/ceph#71842](https://github.com/ceph/ceph/pull/71842) and
@@ -32903,9 +32904,12 @@ Every new entry adds its row to this table, in document order.
   rgw-go does not know answers 501"); an UploadPartCopy from such a source
   (`docs/differences.md`, "UploadPartCopy answers 501 for an encrypted
   copy source radosgw would decrypt"); and a CopyObject from any
-  encrypted source. Its CompleteMultipartUpload does not look at the
-  upload's mode. Data an older radosgw already copied as plaintext it
-  cannot tell from any other.
+  encrypted source. Its CompleteMultipartUpload refuses such an upload
+  with 501 before writing anything, as its completion would write
+  neither `user.rgw.crypt.original-size` nor `user.rgw.crypt.part-numbers`
+  (`docs/differences.md`, "A completion of an upload of a crypt mode
+  rgw-go does not know answers 501"). Data an older radosgw already copied
+  as plaintext it cannot tell from any other.
 - **Upstream:** none known. A full-text search of tracker.ceph.com on
   2026-11-11 for GCM (18 issues, none on mixed releases), SSE-KMS-GCM,
   AES256-GCM, rgw_crypt_sse_algorithm, "GCM multipart", "GCM mixed",

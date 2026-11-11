@@ -8115,9 +8115,10 @@ does the following.
   phase 2 and SSE-C until phase 4"), so only an upload a radosgw began can
   be encrypted. Squid's radosgw stores no checksum in a part record, so
   the rule changes nothing on Squid. rgw-go's CompleteMultipartUpload
-  reads neither an SSE header nor the upload's crypt mode, where a
-  v20.2.4 radosgw's completion runs `rgw_s3_prepare_decrypt` over the
-  upload's attrs
+  reads no SSE header, and of the upload's crypt mode refuses only one it
+  does not know ("A completion of an upload of a crypt mode rgw-go does
+  not know answers 501"), where a v20.2.4 radosgw's completion runs
+  `rgw_s3_prepare_decrypt` over the upload's attrs
   ([rgw_rest_s3.cc:4591-4598](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4591-L4598)).
   It echoes none of the encryption response headers radosgw's completion
   sends
@@ -8132,8 +8133,8 @@ does the following.
   crypt mode and the request's SSE-C headers: ask for an SSE-C upload's
   key as Amazon S3 and a v20.2.5 radosgw do; refuse an SSE-KMS, SSE-S3
   or RGW-AUTO upload, as a radosgw without a key server refuses or fails
-  one, and an upload of a mode rgw-go does not know; and echo radosgw's
-  encryption headers for a completed SSE-C upload. Until then rgw-go
+  one; and echo radosgw's encryption headers for a completed SSE-C
+  upload. Until then rgw-go
   completes a radosgw-begun encrypted upload that a v20.2.4 radosgw
   refuses or fails:
   - an SSE-C upload without its key
@@ -9046,6 +9047,30 @@ does the following.
   `storedCryptRefusal`, `internal/op/crypt.go`). Behind the decision, the
   stores' `CopyPart` refuse to copy a byte of a source of a non-empty mode
   (`op.RefuseEncryptedPartSource`).
+- **A completion of an upload of a crypt mode rgw-go does not know
+  answers 501.** A v19.2.7 or v20.2.4 radosgw completes an upload whose
+  crypt mode it does not name, as it takes the mode for none
+  ([rgw_crypt.cc:1503-1504](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1503-L1504) at v19.2.7,
+  [rgw_crypt.cc:1525-1526](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1525-L1526) at v20.2.4),
+  and gives the head the meta object's attrs, the mode among them
+  ([rgw_op.cc:6470](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6470) at v19.2.7,
+  [rgw_op.cc:7293-7343](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7293-L7343) at v20.2.4).
+  A v20.2.5 radosgw's completion of an upload of one of its GCM modes
+  also writes `user.rgw.crypt.original-size` and
+  `user.rgw.crypt.part-numbers`
+  ([rgw_sal_rados.cc:4486-4500](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/driver/rados/rgw_sal_rados.cc#L4486-L4500) at v20.2.5),
+  which its read of the object needs. rgw-go writes neither, so no gateway
+  could return the data of an object it completed from such an upload: it
+  refuses the completion of an upload whose crypt mode is not empty and
+  names none of `SSE-C-AES256`, `SSE-KMS`, `AES256` and `RGW-AUTO` with
+  501 NotImplemented, on both releases, once it has read the upload's info
+  and before anything is written, and keeps the upload. It reads that info
+  on Squid too, where it read none before, and leaves an upload it does
+  not find to the store, which answers a completion retried after it
+  succeeded. An upload of a mode it knows, or of none, it completes as
+  before ("ListParts shows an encrypted upload's checksums only to a
+  requester who could read its data") (`refuseUnknownCryptMode`,
+  `internal/op/completemultipart.go`).
 - **Appends and a PUT that names a copy source but is no copy are not
   served.** radosgw serves a PUT with `?append` as an append, and a PUT
   whose `x-amz-copy-source` comes with `x-amz-copy-source-range` and no

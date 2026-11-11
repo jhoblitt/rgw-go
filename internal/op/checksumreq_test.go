@@ -908,7 +908,7 @@ var _ = Describe("CompleteMultipartUpload's checksum", func() {
 		o, err := complete(ctx, "x-amz-checksum-crc64nvme", "AAAAAAAAAAA=", "x-amz-checksum-crc32", "AAAAAA==")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(o.Checksum).To(BeNil())
-		Expect(stub.gets).To(BeZero(), "the upload's info is not read for its type")
+		Expect(stub.gets).To(Equal(1), "the upload's info is read once, for its crypt mode, not its type")
 	})
 })
 

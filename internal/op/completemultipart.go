@@ -2,11 +2,13 @@ package op
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/cksum"
+	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/policy"
 )
 
@@ -78,9 +80,11 @@ func (o *CompleteMultipart) VerifyPermission(ctx context.Context, r *Request) er
 // body is read as ReadParamBody reads it under rgw_max_put_param_size; an
 // empty body, a document that does not parse or holds no part, MalformedXML;
 // more parts than rgw_multipart_part_upload_limit once repeats collapse,
-// InvalidRange (-ERANGE); then, where execute reads the upload's info, the
-// checksum the request supplies (completeChecksum); then the completion,
-// whose head takes the request id as its tag, at VersionForWrite's instance.
+// InvalidRange (-ERANGE); then, where execute reads the upload's info
+// (readCompleteUpload), an upload of a crypt mode rgw-go does not know
+// refused (refuseUnknownCryptMode) and the checksum the request supplies
+// (completeChecksum); then the completion, whose head takes the request id
+// as its tag, at VersionForWrite's instance.
 func (o *CompleteMultipart) Execute(ctx context.Context, r *Request) error {
 	if err := objectLockUnserved(r.BucketRec); err != nil {
 		return err
@@ -104,7 +108,14 @@ func (o *CompleteMultipart) Execute(ctx context.Context, r *Request) error {
 	if aerr := aliasedUpload(o.UploadID); aerr != nil {
 		return aerr
 	}
-	supplied, err := completeChecksum(ctx, r, o.UploadID, ChecksumInput{Field: o.ChecksumField})
+	up, err := readCompleteUpload(ctx, r, o.UploadID)
+	if err != nil {
+		return err
+	}
+	if cerr := refuseUnknownCryptMode(up); cerr != nil {
+		return cerr
+	}
+	supplied, err := completeChecksum(r, up, ChecksumInput{Field: o.ChecksumField})
 	if err != nil {
 		return err
 	}
@@ -122,6 +133,34 @@ func (o *CompleteMultipart) Execute(ctx context.Context, r *Request) error {
 
 // Complete does nothing: the handler logs usage once the response is written.
 func (o *CompleteMultipart) Complete(context.Context, *Request) {}
+
+// readCompleteUpload is execute's read of upload id's info, nil for an
+// upload GetUpload does not find, which MultipartStore.Complete answers, as
+// it answers a completion retried after it succeeded.
+func readCompleteUpload(ctx context.Context, r *Request, id string) (*Upload, error) {
+	up, err := r.Env.Multipart.GetUpload(ctx, r.BucketRec, r.Object, id)
+	if errors.Is(err, ErrNoSuchUpload) {
+		return nil, nil
+	}
+	return up, err
+}
+
+// refuseUnknownCryptMode refuses with NotImplemented the completion of an
+// upload whose crypt mode is not empty and is one rgw-go does not know, as
+// v20.2.5's GCM modes are, before anything is written. A v20.2.5 radosgw's
+// completion of such an upload writes the plaintext size and each part's
+// number and salt
+// (https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/driver/rados/rgw_sal_rados.cc#L4486-L4500 at v20.2.5),
+// which its read of the object needs; rgw-go's writes neither, so no gateway
+// could return the data of the object it completed. A v19.2.7 or v20.2.4
+// radosgw, which takes the mode for none, completes it
+// (docs/differences.md).
+func refuseUnknownCryptMode(up *Upload) error {
+	if up == nil || storedCryptMode(up.Attrs) != cryptUnknown {
+		return nil
+	}
+	return fmt.Errorf("%w: upload %s has crypt mode %q, which rgw-go does not know", ErrNotImplemented, up.ID, up.Attrs[meta.AttrCryptMode])
+}
 
 // partUploadLimit is rgw_multipart_part_upload_limit, its default when the
 // configuration cannot be read.

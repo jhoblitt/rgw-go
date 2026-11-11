@@ -402,25 +402,16 @@ func readUpload(ctx context.Context, r *Request, up *Upload) (map[string][]byte,
 }
 
 // completeChecksum is the supplied checksum of a CompleteMultipartUpload of
-// upload id on Tentacle, once an upload whose type rgw-go does not compute
-// is refused with ErrNotImplemented (computableUpload). It is nil, with no
-// field read, for an upload without a checksum type, every Squid upload's
-// among them, which combines nothing and so compares nothing, as radosgw
-// compares a supplied value only with a combination
-// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7295-L7341 at v20.2.4).
-// An upload GetUpload does not find is left to MultipartStore.Complete,
-// which answers a completion retried after it succeeded.
-func completeChecksum(ctx context.Context, r *Request, id string, in ChecksumInput) (*ChecksumRequest, error) {
-	if r.Env.Zone.Release() < denc.Tentacle {
-		return nil, nil
-	}
-	up, err := r.Env.Multipart.GetUpload(ctx, r.BucketRec, r.Object, id)
-	switch {
-	case errors.Is(err, ErrNoSuchUpload):
-		return nil, nil
-	case err != nil:
-		return nil, err
-	case up == nil || up.Checksum.Type == cksum.None:
+// up, the upload as read (readCompleteUpload), on Tentacle, once an upload
+// whose type rgw-go does not compute is refused with ErrNotImplemented
+// (computableUpload). It is nil, with no field read, for an upload without a
+// checksum type, every Squid upload's among them, which combines nothing and
+// so compares nothing, as radosgw compares a supplied value only with a
+// combination
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7295-L7341 at v20.2.4),
+// and for an upload GetUpload did not find.
+func completeChecksum(r *Request, up *Upload, in ChecksumInput) (*ChecksumRequest, error) {
+	if r.Env.Zone.Release() < denc.Tentacle || up == nil || up.Checksum.Type == cksum.None {
 		return nil, nil
 	}
 	if err := computableUpload(up.Checksum); err != nil {
