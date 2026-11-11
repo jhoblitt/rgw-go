@@ -236,7 +236,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's admin user info shows the Swift TempURL keys to a caller it withholds keys from](#radosgws-admin-user-info-shows-the-swift-tempurl-keys-to-a-caller-it-withholds-keys-from) | none | none | ✓ |
 | [A stale bucket list entry blocks a user's removal for good](#a-stale-bucket-list-entry-blocks-a-users-removal-for-good) | none | none | ✓ |
 | [radosgw stores request credentials as object attrs](#radosgw-stores-request-credentials-as-object-attrs) | [#65460](https://tracker.ceph.com/issues/65460) | [ceph/ceph#63794](https://github.com/ceph/ceph/pull/63794), [ceph/ceph#69277](https://github.com/ceph/ceph/pull/69277) |  |
-| [radosgw's CopyObject stores an object lock on a bucket without object lock](#radosgws-copyobject-stores-an-object-lock-on-a-bucket-without-object-lock) | none | none | ✓ |
+| [radosgw's CopyObject stores an object lock on a bucket without object lock](#radosgws-copyobject-stores-an-object-lock-on-a-bucket-without-object-lock) | [#82248](https://tracker.ceph.com/issues/82248) | [ceph/ceph#73214](https://github.com/ceph/ceph/pull/73214) (open) | ✓ |
 | [radosgw's Swift key modify rebuilds the key](#radosgws-swift-key-modify-rebuilds-the-key) | pending | pending | ✓ |
 | [radosgw's quota set stores garbage for an unparsable max-size-kb](#radosgws-quota-set-stores-garbage-for-an-unparsable-max-size-kb) | pending | pending | ✓ |
 | [radosgw's admin API takes an unparsable boolean argument as its default](#radosgws-admin-api-takes-an-unparsable-boolean-argument-as-its-default) | pending | pending | ✓ |
@@ -12530,9 +12530,13 @@ Every new entry adds its row to this table, in document order.
   400 InvalidRequest, as PutObject does (`objectLock`,
   `internal/s3/putobject.go`; `docs/differences.md`, "CopyObject refuses an
   object lock on a bucket without object lock").
-- **Upstream:** none. rgw-bug-reproduction's triage on 2026-10-07 found no
-  report or fix. The fix would gate CopyObject's object-lock headers on
-  `obj_lock_enabled()` in its `get_params`, as PutObject's are.
+- **Upstream:** rgw-bug-reproduction's triage on 2026-10-07 found no
+  report or fix. Since then [#82248](https://tracker.ceph.com/issues/82248),
+  filed 2026-10-28 for POST object's lock fields, reports this case beside
+  it, and [ceph/ceph#73214](https://github.com/ceph/ceph/pull/73214), open,
+  gates CopyObject's object-lock headers on `obj_lock_enabled()` in its
+  `get_params`, as PutObject's are; both found 2026-11-11 by task L5b's
+  prior-art search.
 - **Found:** phase 1 unit W, Task 11, 2026-10-07, comparing PutObject's and
   CopyObject's `get_params`; derived from the source, not reproduced.
 
