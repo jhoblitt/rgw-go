@@ -359,6 +359,7 @@ flowchart LR
   t_L5a["L5a"]
   t_L5b["L5b"]
   t_L6["L6"]
+  t_L7["L7"]
   t_S2["S2"]:::ext
   t_V2["V2"]:::ext
   t_V6["V6"]:::ext
@@ -392,6 +393,7 @@ flowchart LR
   t_L5a --> t_L5b
   t_WP_13 --> t_L5b
   t_L5b --> t_L6
+  t_L5b --> t_L7
   click t_L1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l1-object-lock-types-xml-dates-and-evaluation" "L1: object-lock types, XML, dates and evaluation"
   click t_L2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l2-bucket-object-lock-configuration-and-createbucket-with-lock" "L2: bucket object-lock configuration, and CreateBucket with lock"
   click t_L3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l3-object-retention-and-legal-hold" "L3: object retention and legal hold"
@@ -399,6 +401,7 @@ flowchart LR
   click t_L5a href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l5a-the-lock-on-the-write-path-driver" "L5a: the lock on the write path, driver"
   click t_L5b href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l5b-the-lock-headers-op-and-s3" "L5b: the lock headers, op and S3"
   click t_L6 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l6-the-retention-and-legal-hold-ops-authorize-as-the-lock-headers-do" "L6: the retention and legal-hold ops authorize as the lock headers do"
+  click t_L7 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l7-a-policys-object-lock-condition-keys-constrain-the-lock-a-request-sets" "L7: a policy's object-lock condition keys constrain the lock a request sets"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_V2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v2-meta-olh-head-types-and-bucket-helpers" "V2: meta OLH head types and bucket helpers"
   click t_V6 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v6-driver-reads-follow-the-olh-attrs-on-a-version" "V6: driver, reads follow the OLH; attrs on a version"
@@ -421,6 +424,7 @@ flowchart LR
 - [L5a](L-object-lock.md#task-l5a-the-lock-on-the-write-path-driver): the lock on the write path, driver
 - [L5b](L-object-lock.md#task-l5b-the-lock-headers-op-and-s3): the lock headers, op and S3
 - [L6](L-object-lock.md#task-l6-the-retention-and-legal-hold-ops-authorize-as-the-lock-headers-do): the retention and legal-hold ops authorize as the lock headers do
+- [L7](L-object-lock.md#task-l7-a-policys-object-lock-condition-keys-constrain-the-lock-a-request-sets): a policy's object-lock condition keys constrain the lock a request sets
 
 ### C: lifecycle
 
