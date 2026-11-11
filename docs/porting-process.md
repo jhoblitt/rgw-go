@@ -767,3 +767,15 @@ Each fix below that is not this document lands on main before phase 2's tasks st
   - Whatever CI installs from the runner's OS is a dependency the repository does not pin, and its version moves with the label. A cgo project's CI builds and tests in the image it ships in, so the runner contributes only a container engine.
   - A label that moves without a pull request is an input like any unpinned version, and a workflow that depends on its packages says so.
 - **Candidate home:** go-conventions' `references/ci.md` (CI for a cgo project); github-conventions' `references/workflows.md` (runner labels).
+
+## PP-49: A request header's read belonged to neither task across a seam
+
+- **Severity:** Minor. **Status:** open.
+- **Observed:**
+  - Phase 2's write-path plan split checksums on reads in two: WP-12, the op's rules, and WP-13, the S3 handler's rendering. WP-12 added `op.GetObject.ChecksumMode` and its rule that a GET or HEAD shows a checksum only under `x-amz-checksum-mode: enabled`. WP-13's brief listed only rendering. Neither task, nor the plan's seams, named the handler change that reads the header into the field (`getObjectInput`, `internal/s3/getobject.go`).
+  - WP-12 merged with a rule no request could reach. Its op specs set the field directly, so nothing failed. WP-13 found the gap while rendering and read the header in its own PR, which also turned checksum mode on for the website endpoint and its error document, as radosgw's inherited `get_params` does.
+- **Cost:** no rework, since WP-13 caught it. A merged rule that no request reached until WP-13; a review question on whether the header read and its website consequence were WP-13's; and, in WP-13's fix round, specs on both releases for the website consequence, whose differences sentence WP-13's own commit carried.
+- **Improvement:**
+  - A seam that carries a request input names both halves: the task that adds the op's field and the task that fills it from the request. A field the op reads and no handler sets is a seam with one side.
+  - An op task whose input comes from the request either carries one spec through the handler, or its brief names the task that will, so that a field no handler sets fails a spec.
+- **Candidate home:** writing-plans (seams between layers); the plan review's seam check; subagent-driven-development (briefs that consume an op field).
