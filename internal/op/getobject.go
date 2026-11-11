@@ -54,6 +54,12 @@ type GetObject struct {
 	Secure bool
 	// ChecksumMode is x-amz-checksum-mode, "" when absent.
 	ChecksumMode string
+	// RetentionAllowed and LegalHoldAllowed are that the requester may
+	// s3:GetObjectRetention and s3:GetObjectLegalHold on the object, which
+	// VerifyPermission evaluates on a bucket with object lock
+	// (lockReadPermissions): the response shows the version's retention and
+	// legal hold only when allowed.
+	RetentionAllowed, LegalHoldAllowed bool
 	// Retarget is the website endpoint's retarget, which Init runs between
 	// its bucket load and its object read (website_get.go). It is nil for
 	// S3, and for the error document's read, which serve_errordoc makes
@@ -178,15 +184,54 @@ func readVersionID(rec *BucketRecord, key meta.ObjKey) string {
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1201-L1209 at v20.2.4);
 // radosgw refuses a missing object earlier, in read_permissions, without one.
 // A delete marker's own version is refused as such, with its Last-Modified
-// (deleteMarkerVersion).
+// (deleteMarkerVersion). On a bucket with object lock the object-lock read
+// permissions are evaluated too (lockReadPermissions).
 func (o *GetObject) VerifyPermission(ctx context.Context, r *Request) error {
 	a := o.Action()
 	err := deleteMarkerVersion(ctx, r, VerifyObjectPermission(ctx, r, a, acl.PermFor(a)), true, a)
+	o.lockReadPermissions(ctx, r, err)
 	if err == nil || IsBeforeVerify(err) || !errors.Is(err, ErrAccessDenied) ||
 		r.ObjState == nil || !r.ObjState.Exists || r.Env.Zone.Release() < denc.Tentacle {
 		return err
 	}
 	return fmt.Errorf("%w: %w", ErrAccessDenied.WithMessage("missing "+a.String()+" permission"), err)
+}
+
+// lockReadPermissions sets RetentionAllowed and LegalHoldAllowed, on a bucket
+// with object lock, to whether the requester may s3:GetObjectRetention and
+// s3:GetObjectLegalHold on the object: verify_permission's get_retention and
+// get_legal_hold, bools that refuse nothing
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1006-L1010 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1148-L1164 at v20.2.4).
+// Squid evaluates them once the read's own permission check, permErr, has
+// passed. Tentacle evaluates them before it, so a refusal there that Run lets
+// an admin through leaves them as evaluated; its refusal of a system request
+// lacking either is not made (docs/differences.md, "GET and HEAD serve a
+// system request without the object-lock permissions"). A check that fails
+// is "not allowed", and one that fails with anything but an access denial is
+// logged (lockReadAllowed).
+func (o *GetObject) lockReadPermissions(ctx context.Context, r *Request, permErr error) {
+	if !r.BucketRec.Info.ObjLockEnabled() {
+		return
+	}
+	if permErr != nil && (r.Env.Zone.Release() < denc.Tentacle || !r.Identity.Admin || IsBeforeVerify(permErr) || !isAccessDenial(permErr)) {
+		return
+	}
+	o.RetentionAllowed = lockReadAllowed(ctx, r, policy.S3GetObjectRetention)
+	o.LegalHoldAllowed = lockReadAllowed(ctx, r, policy.S3GetObjectLegalHold)
+}
+
+// lockReadAllowed is verify_object_permission of a on r's object as a bool:
+// any refusal is "not allowed", and one that is no access denial, a fault, is
+// logged.
+func lockReadAllowed(ctx context.Context, r *Request, a policy.Action) bool {
+	err := VerifyObjectPermission(ctx, r, a, acl.PermFor(a))
+	if err != nil && !isAccessDenial(err) {
+		slog.WarnContext(ctx, "an object-lock read permission check failed; its header is left out",
+			slog.String("bucket", r.BucketRec.Info.Bucket.Name), slog.String("key", r.Object.Name),
+			slog.String("action", a.String()), slog.String("code", ErrorCode(err)))
+	}
+	return err == nil
 }
 
 // Execute is RGWGetObj::execute

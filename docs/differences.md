@@ -7679,16 +7679,22 @@ does the following.
   `:400` and `:498` at v20.2.4). rgw-go reads no lifecycle configuration
   until phase 2, so it sends the header for no object; for a bucket
   without lifecycle rules the two agree.
-- **No object-lock headers.** On a bucket with object lock enabled,
-  radosgw sends `x-amz-object-lock-mode` and
-  `x-amz-object-lock-retain-until-date` from an object's retention, and
-  `x-amz-object-lock-legal-hold` from its legal hold, to a requester
-  allowed `s3:GetObjectRetention` or `s3:GetObjectLegalHold`
-  (`rgw_op.cc:1007-1010` and `rgw_rest_s3.cc:595-613` at v19.2.6;
-  `rgw_op.cc:1148-1164` and `rgw_rest_s3.cc:712-730` at v20.2.4). rgw-go
-  sends none of them until phase 2 serves object lock. Tentacle also
-  refuses a system request on such a bucket that lacks either permission
-  (`rgw_op.cc:1150-1163` at v20.2.4); rgw-go makes neither check.
+- **GET and HEAD serve a system request without the object-lock
+  permissions.** On a bucket with object lock, radosgw's GET and HEAD send
+  `x-amz-object-lock-mode` and `x-amz-object-lock-retain-until-date` from
+  the version's retention to a requester allowed s3:GetObjectRetention, and
+  `x-amz-object-lock-legal-hold` from its legal hold to one allowed
+  s3:GetObjectLegalHold
+  ([rgw_op.cc:1006-1010](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1006-L1010) and
+  [rgw_rest_s3.cc:603-621](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L603-L621);
+  [rgw_op.cc:1148-1164](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1148-L1164) and
+  [rgw_rest_s3.cc:712-730](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L712-L730)),
+  and so does rgw-go (`op.GetObject`'s `lockReadPermissions`,
+  `setObjectLockHeaders` in `internal/s3/objectlockheaders.go`). Tentacle
+  also takes every system request for multisite replication and refuses one
+  lacking either permission with 403 AccessDenied; rgw-go, which serves no
+  multisite replication (`docs/exclusions.md`, "Multisite"), serves such a
+  request, each header left to its permission.
 - **A restore attr that does not decode.** On Tentacle, rgw-go omits
   `x-amz-restore`, and the cloud tier's storage class a temporary restored
   copy reports, when `user.rgw.restore-status` or `user.rgw.restore-type`
@@ -7754,6 +7760,40 @@ does the following.
   raw](ceph-upstream-bugs.md#radosgw-stores-a-post-uploads-x-amz-website-redirect-location-with-its-cr-and-lf-and-sends-it-raw)");
   rgw-go's website endpoint sends that Location through net/http the same
   way.
+- **An object-lock header whose stored value holds a control character is
+  left out.** radosgw's GET and HEAD send a version's retention mode and
+  legal-hold status as their stored bytes
+  ([rgw_rest_s3.cc:603-621](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L603-L621),
+  [rgw_rest_s3.cc:712-730](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L712-L730)),
+  and its S3 ops store only GOVERNANCE, COMPLIANCE, ON and OFF there. A
+  bucket's default retention can hold any mode, though: v19.2.7 reads the
+  rule's `mode` from a `bucket.instance` metadata put unchecked
+  ([rgw_object_lock.cc:8-12](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_object_lock.cc#L8-L12)),
+  rgw-go reads it the same way on both releases, and each create write
+  stores the rule's mode as its retention's. rgw-go leaves out
+  `x-amz-object-lock-mode` and `x-amz-object-lock-retain-until-date` for a
+  mode holding a byte below 0x20 or 0x7f, and `x-amz-object-lock-legal-hold`
+  for such a status, as for an attr that does not decode, and logs the attr
+  (`setObjectLockHeaders`, `internal/s3/objectlockheaders.go`), where
+  radosgw sends the bytes and a CR or LF among them starts a header line of
+  its own; net/http would write a CR or LF as a space and a NUL as it
+  stands ("A stored header value's CR and LF go out as spaces").
+- **A part read sends the object's lock, not its part's.** A GET or HEAD
+  naming `partNumber` of a multipart object serves the part's head, and
+  radosgw redirects the read's state to that head with
+  `get_part_obj_state`
+  ([rgw_rados.cc:7076-7078](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7076-L7078),
+  [rgw_rados.cc:7738-7740](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7738-L7740))
+  before it hands the op that state's `attrset`
+  ([rgw_rados.cc:7118-7119](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7118-L7119),
+  [rgw_rados.cc:7780-7781](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7780-L7781)),
+  so its object-lock headers show the retention and the legal hold the
+  part's UploadPart named, which s3:PutObject alone authorizes and nothing
+  enforces ("A write's object-lock headers need s3:PutObjectRetention and
+  s3:PutObjectLegalHold"), and not the object's. rgw-go sends the object's
+  own retention and legal hold, its multipart head's, under the same
+  permissions (`setObjectLockHeaders`, `internal/s3/objectlockheaders.go`,
+  given `op.GetObject`'s `CondState`).
 - **A user metadata name that is not a valid field name is not sent.**
   A PUT takes `x-amz-meta-*` names from the query string as well as the
   headers, and radosgw url-decodes a query name before it reads it
@@ -9361,7 +9401,9 @@ does the following.
   does not decode, so `objectlock.VerifyDelete` refuses the delete with the
   error radosgw gives a short attr, -EIO, and PutObjectRetention
   (`op.PutObjectRetention`) answers such an existing retention as radosgw
-  answers a short one, 500 UnknownError. The lenient
+  answers a short one, 500 UnknownError, and GET and HEAD leave out its
+  header, as radosgw does a short one's (`setObjectLockHeaders`,
+  `internal/s3/objectlockheaders.go`). The lenient
   `objectlock.DecodeRetentionLenient` and `objectlock.DecodeLegalHoldLenient`
   read it as the two Get ops do, so GetObjectRetention and GetObjectLegalHold
   (`op.GetObjectRetention`, `op.GetObjectLegalHold`) answer no 500 for it,

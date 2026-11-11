@@ -21345,7 +21345,9 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: the strict `objectlock.DecodeRetention` and
   `objectlock.DecodeLegalHold`, for the four, take such an attr for one that
   does not decode, so `objectlock.VerifyDelete` refuses the delete as
-  radosgw refuses one whose attr is too short; the lenient
+  radosgw refuses one whose attr is too short, and GET and HEAD leave out
+  its header, as radosgw leaves out a short one's (`setObjectLockHeaders`,
+  `internal/s3/objectlockheaders.go`); the lenient
   `objectlock.DecodeRetentionLenient` and `objectlock.DecodeLegalHoldLenient`
   read it as the two Get ops do (`docs/differences.md`, "An object-lock attr
   with bytes past its encoding does not decode").
@@ -29111,6 +29113,9 @@ Every new entry adds its row to this table, in document order.
     [rgw_op.cc:8547](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8547);
     [rgw_op.cc:9391](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9391),
     [rgw_op.cc:9515](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9515)),
+    as GET and HEAD do for their object-lock headers
+    ([rgw_op.cc:1006-1010](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1006-L1010),
+    [rgw_op.cc:1148-1164](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1148-L1164)),
     so a grantee of an object's READ, AllUsers under `public-read`
     included, reads its retention and legal hold, where Amazon S3 maps an
     object ACL's READ to s3:GetObject, s3:GetObjectVersion and
