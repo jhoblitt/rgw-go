@@ -1,9 +1,7 @@
 package op
 
 import (
-	"bytes"
 	"context"
-	"crypto/md5" //nolint:gosec // SSE-C names its key by the key's MD5
 	"errors"
 	"fmt"
 	"log/slog"
@@ -660,7 +658,7 @@ func (o *GetObject) checkConditions(r *Request, since, unmodSince *time.Time) er
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2511-L2535 at v20.2.4).
 // rgw-go serves no torrent (docs/differences.md).
 func (o *GetObject) torrent(ctx context.Context, r *Request) error {
-	if string(o.State.Attrs[meta.AttrCryptMode]) == "SSE-C-AES256" {
+	if storedCryptMode(o.State.Attrs) == cryptSSEC {
 		return fmt.Errorf("%w: no torrent of %s, which is encrypted with SSE-C", ErrInvalidArgument, r.Object.Name)
 	}
 	if _, ok := o.State.Attrs[meta.AttrTorrent]; !ok {
@@ -765,83 +763,20 @@ func (o *GetObject) refuseLargeObject(ctx context.Context, r *Request) error {
 	return nil
 }
 
-// The messages rgw_s3_prepare_decrypt sets for an SSE-C request it refuses.
-const (
-	sseCAlgorithmMissing = "Requests specifying Server Side Encryption with Customer provided keys must provide a valid encryption algorithm."
-	sseCAlgorithmInvalid = "The requested encryption algorithm is not valid, must be AES256."
-	sseCKeyInvalid       = "Requests specifying Server Side Encryption with Customer provided keys must provide an appropriate secret key."
-	sseCKeyMD5Invalid    = "Requests specifying Server Side Encryption with Customer provided keys must provide an appropriate secret key md5."
-	sseCKeyMismatch      = "The calculated MD5 hash of the key did not match the hash that was provided."
-)
-
-// sseCKeySize is AES_256_CBC::AES_256_KEYSIZE.
-const sseCKeySize = 32
-
-// prepareDecrypt is rgw_s3_prepare_decrypt
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_crypt.cc#L1303-L1505 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1318-L1527 at v20.2.4),
-// which GET and HEAD call alike, by the object's stored mode. rgw-go has no
-// key server, so SSE-KMS, SSE-S3 and RGW-AUTO answer as radosgw does without
-// one (docs/exclusions.md); it does not decrypt SSE-C yet, so an SSE-C
-// request that passes every check is NotImplemented. rgw_crypt_require_ssl,
-// true when it cannot be read, refuses a request that is not secure, except
-// for SSE-S3 on Tentacle.
+// prepareDecrypt is rgw_s3_prepare_decrypt for GET and HEAD
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1303-L1505 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1318-L1527 at v20.2.4):
+// x-amz-server-side-encryption on a read is InvalidRequest, then the
+// object's stored mode is answered (storedCryptRefusal). An object of a mode
+// storedCryptRefusal does not name is NotImplemented, where radosgw serves
+// its stored bytes, ciphertext a newer radosgw wrote (docs/differences.md).
 func (o *GetObject) prepareDecrypt(ctx context.Context, r *Request) error {
 	if o.SSEHeader {
 		return fmt.Errorf("%w: x-amz-server-side-encryption on a read", ErrInvalidRequest)
 	}
-	insecure := confBool(r, "rgw_crypt_require_ssl", true) && !o.Secure
-	errInsecure := fmt.Errorf("%w: rgw_crypt_require_ssl refuses an insecure request", ErrInvalidRequest)
-	switch mode := string(o.State.Attrs[meta.AttrCryptMode]); mode {
-	case "SSE-C-AES256":
-		if insecure {
-			return errInsecure
-		}
-		return o.checkSSEC(ctx, r)
-	case "SSE-KMS":
-		if insecure {
-			return errInsecure
-		}
-		return ErrInvalidArgument.WithMessage("Failed to retrieve the actual key, kms-keyid: " + string(o.State.Attrs[meta.AttrCryptKeyID]))
-	case "RGW-AUTO":
-		// rgw_crypt_default_encryption_key, unset, does not decode to 32
-		// bytes: -EIO.
-		return fmt.Errorf("%w: no default encryption key for %s", ErrUnknown, r.Object.Name)
-	case "AES256":
-		if insecure && r.Env.Zone.Release() < denc.Tentacle {
-			return errInsecure
-		}
-		return ErrInvalidArgument.WithMessage("Failed to retrieve the actual key")
-	}
-	return nil
-}
-
-// checkSSEC is rgw_s3_prepare_decrypt's SSE-C branch: the algorithm, the key
-// and its MD5, which must match both the key and the MD5 stored with the
-// object.
-func (o *GetObject) checkSSEC(ctx context.Context, r *Request) error {
-	switch o.SSECAlgorithm {
-	case "":
-		return ErrInvalidArgument.WithMessage(sseCAlgorithmMissing)
-	case "AES256":
-	default:
-		return ErrInvalidEncryptionAlgorithm.WithMessage(sseCAlgorithmInvalid)
-	}
-	key, ok := fromBase64(o.SSECKey)
-	if !ok || len(key) != sseCKeySize {
-		return ErrInvalidArgument.WithMessage(sseCKeyInvalid)
-	}
-	keyMD5, ok := fromBase64(o.SSECKeyMD5)
-	if !ok || len(keyMD5) != md5.Size {
-		return ErrInvalidArgument.WithMessage(sseCKeyMD5Invalid)
-	}
-	sum := md5.Sum(key) //nolint:gosec // SSE-C names its key by the key's MD5
-	if !bytes.Equal(sum[:], keyMD5) || !bytes.Equal(o.State.Attrs[meta.AttrCryptKeyMD5], keyMD5) {
-		return ErrInvalidArgument.WithMessage(sseCKeyMismatch)
-	}
-	slog.InfoContext(ctx, "refusing an sse-c read: decryption is not implemented",
-		slog.String("bucket", r.Bucket), slog.String("key", r.Object.Name))
-	return fmt.Errorf("%w: SSE-C decryption is not implemented", ErrNotImplemented)
+	return storedCryptRefusal(ctx, r, o.State.Attrs, sseCRequest{
+		algorithm: o.SSECAlgorithm, key: o.SSECKey, keyMD5: o.SSECKeyMD5, secure: o.Secure,
+	})
 }
 
 // checkOverrides is send_response_data's check of the response-* parameters

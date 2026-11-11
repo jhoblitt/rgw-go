@@ -385,53 +385,33 @@ func SuppliedForComplete(in ChecksumInput) (*ChecksumRequest, error) {
 	return nil, fmt.Errorf("%w: %d checksum values, %s and %s", ErrInvalidRequest, len(found), found[0].name, found[1].name)
 }
 
-// partChecksum is the checksum request of an UploadPart of up, read once
-// the upload's info is (readUpload), as RGWPutObj::execute reads get_info's
-// multipart_cksum_type before its Factory runs
-// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4453-L4472 at v20.2.4):
-// an unknown upload is ErrNoSuchUpload before any checksum field is read.
-func partChecksum(ctx context.Context, r *Request, up *Upload, in ChecksumInput) (*ChecksumRequest, io.Reader, error) {
-	if err := readUpload(ctx, r, up); err != nil {
-		return nil, nil, err
-	}
-	return ChecksumForPart(in, up.Checksum, r.Env.Zone.Release())
-}
-
 // readUpload is get_info's read of up's upload for a part, which gives up
 // the upload's destination placement, which MultipartStore.PutPart writes
 // the part to, and its checksum type and flags, for the part's checksum
-// request or for MultipartStore.CopyPart to compute.
-func readUpload(ctx context.Context, r *Request, up *Upload) error {
+// request or for MultipartStore.CopyPart to compute. It returns the attrs of
+// the upload's meta object, whose crypt mode the part must take
+// (UploadPart.refuseEncrypted); they stay out of up, whose Attrs are the
+// part's head's.
+func readUpload(ctx context.Context, r *Request, up *Upload) (map[string][]byte, error) {
 	got, err := r.Env.Multipart.GetUpload(ctx, r.BucketRec, r.Object, up.ID)
-	if err != nil {
-		return err
+	if err != nil || got == nil {
+		return nil, err
 	}
-	if got != nil {
-		up.Placement, up.Checksum = got.Placement, got.Checksum
-	}
-	return nil
+	up.Placement, up.Checksum = got.Placement, got.Checksum
+	return got.Attrs, nil
 }
 
 // completeChecksum is the supplied checksum of a CompleteMultipartUpload of
-// upload id on Tentacle, once an upload whose type rgw-go does not compute
-// is refused with ErrNotImplemented (computableUpload). It is nil, with no
-// field read, for an upload without a checksum type, every Squid upload's
-// among them, which combines nothing and so compares nothing, as radosgw
-// compares a supplied value only with a combination
-// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7295-L7341 at v20.2.4).
-// An upload GetUpload does not find is left to MultipartStore.Complete,
-// which answers a completion retried after it succeeded.
-func completeChecksum(ctx context.Context, r *Request, id string, in ChecksumInput) (*ChecksumRequest, error) {
-	if r.Env.Zone.Release() < denc.Tentacle {
-		return nil, nil
-	}
-	up, err := r.Env.Multipart.GetUpload(ctx, r.BucketRec, r.Object, id)
-	switch {
-	case errors.Is(err, ErrNoSuchUpload):
-		return nil, nil
-	case err != nil:
-		return nil, err
-	case up == nil || up.Checksum.Type == cksum.None:
+// up, the upload as read (readCompleteUpload), on Tentacle, once an upload
+// whose type rgw-go does not compute is refused with ErrNotImplemented
+// (computableUpload). It is nil, with no field read, for an upload without a
+// checksum type, every Squid upload's among them, which combines nothing and
+// so compares nothing, as radosgw compares a supplied value only with a
+// combination
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7295-L7341 at v20.2.4),
+// and for an upload GetUpload did not find.
+func completeChecksum(r *Request, up *Upload, in ChecksumInput) (*ChecksumRequest, error) {
+	if r.Env.Zone.Release() < denc.Tentacle || up == nil || up.Checksum.Type == cksum.None {
 		return nil, nil
 	}
 	if err := computableUpload(up.Checksum); err != nil {

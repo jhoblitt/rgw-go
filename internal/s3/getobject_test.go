@@ -571,6 +571,14 @@ var _ = Describe("get_obj", func() {
 		Expect(rec.Code).To(Equal(400))
 		Expect(rec.Body.String()).To(ContainSubstring("<Code>InvalidRequest</Code>"))
 	})
+	It("answers GET and HEAD of an object of a crypt mode rgw-go does not know 501, serving none of it", func(ctx SpecContext) {
+		w.setAttrs(ctx, "small", map[string][]byte{meta.AttrCryptMode: []byte("SSE-KMS-GCM")})
+		get := do("GET", "/plain/small", nil)
+		Expect(get.Code).To(Equal(501))
+		Expect(get.Body.String()).To(ContainSubstring("<Code>NotImplemented</Code>"))
+		Expect(get.Body.String()).NotTo(ContainSubstring(string(readPayload(1024)[:16])), "no byte of the object")
+		Expect(do("HEAD", "/plain/small", nil).Code).To(Equal(501))
+	})
 	It("takes a forwarded https request as secure only under rgw_trust_forwarded_https", func(ctx SpecContext) {
 		w.setAttrs(ctx, "small", map[string][]byte{meta.AttrCryptMode: []byte("SSE-C-AES256")})
 		insecure := do("GET", "/plain/small", map[string]string{"X-Forwarded-Proto": "https"})

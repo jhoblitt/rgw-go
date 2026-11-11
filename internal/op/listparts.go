@@ -1,9 +1,7 @@
 package op
 
 import (
-	"bytes"
 	"context"
-	"crypto/md5" //nolint:gosec // SSE-C names its key by the key's MD5
 	"errors"
 	"fmt"
 
@@ -191,10 +189,10 @@ func (o *ListParts) Execute(ctx context.Context, r *Request) error {
 // shows an encrypted upload's checksums only to a requester who could read
 // its data").
 func (o *ListParts) checksumsShown(r *Request) bool {
-	switch string(o.Upload.Attrs[meta.AttrCryptMode]) {
-	case "", "AES256", "RGW-AUTO":
+	switch storedCryptMode(o.Upload.Attrs) {
+	case cryptNone, cryptSSES3, cryptRGWAuto:
 		return true
-	case "SSE-C-AES256":
+	case cryptSSEC:
 		if confBool(r, "rgw_crypt_require_ssl", true) && !o.Secure {
 			return false
 		}
@@ -204,17 +202,9 @@ func (o *ListParts) checksumsShown(r *Request) bool {
 }
 
 // sseCKeyMatches reports whether SSE-C headers name the key whose MD5 is
-// stored: the algorithm AES256, a key that decodes to 32 bytes, and a key MD5
-// that is both the key's and stored, the checks checkSSEC makes, here as a
-// yes or no.
+// stored: sseCKeyError's checks, here as a yes or no.
 func sseCKeyMatches(algorithm, key, keyMD5 string, stored []byte) bool {
-	k, ok := fromBase64(key)
-	if algorithm != "AES256" || !ok || len(k) != sseCKeySize {
-		return false
-	}
-	m, ok := fromBase64(keyMD5)
-	sum := md5.Sum(k) //nolint:gosec // SSE-C names its key by the key's MD5
-	return ok && len(stored) == md5.Size && bytes.Equal(sum[:], m) && bytes.Equal(stored, m)
+	return sseCKeyError(stored, sseCRequest{algorithm: algorithm, key: key, keyMD5: keyMD5}) == nil
 }
 
 // uploadChecksumType is how a completion of an upload of checksum uc

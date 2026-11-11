@@ -391,7 +391,9 @@ func (s *Store) putPart(ctx context.Context, up *op.Upload, n int, body io.Reade
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4471-L4472 and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.cc#L40-L72 at v20.2.4),
 // and UploadPartCopy has no checksum request header; a type rgw-go does not
-// compute is NotImplemented before anything is read or written.
+// compute is NotImplemented before anything is read or written, as is a
+// source whose crypt mode is not empty when the range holds a byte
+// (op.RefuseEncryptedPartSource), which the op has already refused.
 //
 // The copy's first draw on the memory budget is one hold for both its
 // sides: the read window, a compressed source's decoder blocks and the
@@ -399,6 +401,9 @@ func (s *Store) putPart(ctx context.Context, up *op.Upload, n int, body io.Reade
 // results, which wait in the pipe for the part's pieces, never hold a share
 // the part's pieces wait for.
 func (s *Store) CopyPart(ctx context.Context, up *op.Upload, n int, src *op.ObjectState, rng op.ByteRange) (*op.PartResult, error) {
+	if err := op.RefuseEncryptedPartSource(src, rng.Length); err != nil {
+		return nil, err
+	}
 	var req *op.ChecksumRequest
 	if t := up.Checksum.Type; t != cksum.None {
 		if !t.Writable() {

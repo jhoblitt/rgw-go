@@ -511,6 +511,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's S3 deletes naming no version remove an object under object lock when the bucket's versioning is not enabled](#radosgws-s3-deletes-naming-no-version-remove-an-object-under-object-lock-when-the-buckets-versioning-is-not-enabled) | pending | pending | ✓ |
 | [radosgw's GetObjectAttributes needs s3:GetObject or s3:GetObjectAttributes, not both](#radosgws-getobjectattributes-needs-s3getobject-or-s3getobjectattributes-not-both) | [#72915](https://tracker.ceph.com/issues/72915) | [ceph/ceph#65441](https://github.com/ceph/ceph/pull/65441) |  |
 | [radosgw shows an encrypted upload's plaintext checksums to a requester without its key](#radosgw-shows-an-encrypted-uploads-plaintext-checksums-to-a-requester-without-its-key) | none | none | ✓ |
+| [A radosgw that predates the GCM crypt modes stores a GCM upload's parts in the clear and copies GCM ciphertext as data](#a-radosgw-that-predates-the-gcm-crypt-modes-stores-a-gcm-uploads-parts-in-the-clear-and-copies-gcm-ciphertext-as-data) | none | none | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -32773,9 +32774,11 @@ Every new entry adds its row to this table, in document order.
   (`ListParts.checksumsShown`, `internal/op/listparts.go`;
   `docs/differences.md`, "ListParts shows an encrypted upload's checksums
   only to a requester who could read its data"). Its
-  CompleteMultipartUpload reads neither an SSE header nor the upload's
-  crypt mode, so it completes a radosgw-begun encrypted upload where a
-  v20.2.4 radosgw refuses or fails: an SSE-C upload without its key,
+  CompleteMultipartUpload reads no SSE header, and of the upload's crypt
+  mode refuses only one it does not know (`docs/differences.md`, "A
+  completion of an upload of a crypt mode rgw-go does not know answers
+  501"), so it completes a radosgw-begun encrypted upload where a v20.2.4
+  radosgw refuses or fails: an SSE-C upload without its key,
   which from v20.2.5 radosgw refuses only for an upload made with a
   checksum, or for SSE-C headers that do not name its key; an SSE-C or
   SSE-KMS upload over plain HTTP under `rgw_crypt_require_ssl`, the SSE-C
@@ -32788,9 +32791,8 @@ Every new entry adds its row to this table, in document order.
   "ListParts shows an encrypted upload's checksums only to a requester
   who could read its data"). Phase 2 plan task WP-26 is to make the
   completion ask for an SSE-C upload's key as Amazon S3 and a v20.2.5
-  radosgw do, refuse an SSE-KMS, SSE-S3 or RGW-AUTO upload and one of a
-  mode rgw-go does not know, and echo radosgw's encryption headers for a
-  completed SSE-C upload.
+  radosgw do, refuse an SSE-KMS, SSE-S3 or RGW-AUTO upload, and echo
+  radosgw's encryption headers for a completed SSE-C upload.
 - **Upstream:** none known for the disclosure; related:
   [ceph/ceph#71241](https://github.com/ceph/ceph/pull/71241),
   [ceph/ceph#71842](https://github.com/ceph/ceph/pull/71842) and
@@ -32800,3 +32802,129 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task WP-13's adversarial review, 2026-11-10, for
   ListParts, and its re-review the same day for CompleteMultipartUpload.
   Derived from the source, not reproduced.
+
+## A radosgw that predates the GCM crypt modes stores a GCM upload's parts in the clear and copies GCM ciphertext as data
+
+- **Kind:** defect, data corruption, which also leaves unencrypted at rest
+  data a client asked to have encrypted; it needs a zone of mixed releases
+  and an operator who opted into GCM. Unfixed through main at 37c8ccd62dd
+  (2026-11-10), where the cause remains for any later mode. Unreproduced:
+  derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - From v20.2.5, a CreateMultipartUpload or a PUT under SSE-C, SSE-KMS,
+    SSE-S3 or RGW-AUTO stores `SSE-C-AES256-GCM`, `SSE-KMS-GCM`,
+    `AES256-GCM` or `RGW-AUTO-GCM` as its `user.rgw.crypt.mode` when
+    `rgw_crypt_sse_algorithm` is `aes-256-gcm`
+    ([rgw_crypt.cc:2106-2109](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_crypt.cc#L2106-L2109),
+    [rgw_crypt.cc:2225-2228](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_crypt.cc#L2225-L2228),
+    [rgw_crypt.cc:2325-2328](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_crypt.cc#L2325-L2328),
+    [rgw_crypt.cc:2398-2401](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_crypt.cc#L2398-L2401)).
+    The option defaults to `aes-256-cbc`, "compatible with older RGW
+    versions"
+    ([rgw.yaml.in:3213-3231](https://github.com/ceph/ceph/blob/v20.2.5/src/common/options/rgw.yaml.in#L3213-L3231)),
+    and the commit that adds GCM keeps that default "for backward
+    compatibility with older RGW versions in mixed clusters. Once all
+    nodes are upgraded, administrators can enable aes-256-gcm for new
+    objects." (dfdbb84a19c on main, 1be6f3a596e on tentacle).
+  - A radosgw without GCM takes any mode it does not name for none: its
+    `rgw_s3_prepare_decrypt` returns no cipher for it
+    ([rgw_crypt.cc:1503-1504](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1503-L1504),
+    [rgw_crypt.cc:1525-1526](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1525-L1526)).
+  - Parts: such a radosgw writes each part of an upload under the
+    upload's mode, `get_encrypt_filter` running `rgw_s3_prepare_decrypt`
+    over the meta object's attrs and adding an encrypting filter only for
+    the cipher that returns
+    ([rgw_rest_s3.cc:2859-2876](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2859-L2876),
+    [rgw_rest_s3.cc:2984-3002](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2984-L3002)),
+    so a part of a GCM upload is written in the clear and the request
+    succeeds. Either release's completion gives the head the meta object's
+    attrs, the GCM mode among them
+    ([rgw_op.cc:6470](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6470),
+    [rgw_op.cc:7293-7343](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7293-L7343)),
+    and writes neither `user.rgw.crypt.original-size` nor
+    `user.rgw.crypt.part-numbers`, which a v20.2.5 completion of a GCM
+    upload writes
+    ([rgw_sal_rados.cc:4486-4500](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/driver/rados/rgw_sal_rados.cc#L4486-L4500)).
+  - Copies: such a radosgw's UploadPartCopy decrypts its source in
+    `RGWPutObj::get_data` with the same function
+    ([rgw_op.cc:4060-4070](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4060-L4070),
+    [rgw_op.cc:4269-4279](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4269-L4279)),
+    so a part copied from a GCM object holds its ciphertext as data under
+    the destination upload's own mode. From v20.2.3 its CopyObject also
+    decrypts an encrypted source
+    ([rgw_op.cc:5782-5805](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5782-L5805),
+    which 171c5100dd3 added) and drops the source's crypt attrs from the
+    copy
+    ([rgw_rados.cc:5034-5040](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5034-L5040)),
+    so a copy of a GCM object holds its ciphertext as data with no crypt
+    mode, or encrypted again if the request asks for encryption. Squid and
+    v20.2.0 to v20.2.2 refuse any encrypted CopyObject source
+    ([rgw_rados.cc:4787-4795](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L4787-L4795),
+    [rgw_rados.cc:5006-5014](https://github.com/ceph/ceph/blob/v20.2.2/src/rgw/driver/rados/rgw_rados.cc#L5006-L5014)).
+  - GCM entered tentacle with 1be6f3a596e, whose only tag is v20.2.5, and
+    the squid branch has none of it, so every squid release and v20.2.0 to
+    v20.2.4 behave as above.
+  - v21.1.2 and main read the four GCM modes but still take any other
+    mode for none
+    ([rgw_crypt.cc:2978-2979](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_crypt.cc#L2978-L2979),
+    [rgw_crypt.cc:3008-3009](https://github.com/ceph/ceph/blob/37c8ccd62dd/src/rgw/rgw_crypt.cc#L3008-L3009)),
+    so a mode a later release adds would meet the same.
+- **Impact:** in a zone where a radosgw with GCM writes under
+  `aes-256-gcm` and a radosgw without it serves too:
+  - an UploadPart of a GCM upload that the older gateway serves stores the
+    client's plaintext unencrypted at rest. If every part of the upload
+    was written so, the older gateway returns the completed object's data
+    correctly, unencrypted at rest under a head that names a GCM mode,
+    which a v20.2.5 radosgw reads as GCM ciphertext; if other parts were
+    written under GCM, neither gateway can return the object's data;
+  - an UploadPartCopy, or from v20.2.3 a CopyObject, that the older
+    gateway serves from a GCM object copies its ciphertext as the new
+    object's data, which every gateway then serves as plaintext.
+
+  It needs a rolling upgrade or rollback with `rgw_crypt_sse_algorithm`
+  set to `aes-256-gcm` while a gateway without GCM serves the zone, which
+  the option's description and the commit that adds it advise against.
+  [ceph/ceph#73739](https://github.com/ceph/ceph/pull/73739), open, makes
+  `aes-256-gcm` the default, which main at 37c8ccd62dd does not yet, with
+  umbrella and vampire backports asked for
+  ([#83012](https://tracker.ceph.com/issues/83012)), so an upgrade from a
+  release without GCM to one with that default would meet it without an
+  operator opting in.
+- **Releases:** every squid release and v20.2.0 to v20.2.4 write the
+  parts in the clear and copy the ciphertext in an UploadPartCopy;
+  v20.2.3 and v20.2.4 copy it in a CopyObject too; v20.2.5, v21.1.2 and
+  main at 37c8ccd62dd write the GCM modes.
+- **rgw-go:** writes no GCM mode. It refuses with 501 NotImplemented a
+  part of an upload of a non-empty crypt mode it does not know, before
+  writing anything (`UploadPart.refuseEncrypted`,
+  `internal/op/uploadpart.go`; `docs/differences.md`, "A part radosgw
+  would encrypt with an SSE-C key, or under a crypt mode rgw-go does not
+  know, answers 501"); a GET, HEAD or GetObjectAttributes of such an
+  object (`docs/differences.md`, "A read of an object of a crypt mode
+  rgw-go does not know answers 501"); an UploadPartCopy from such a source
+  (`docs/differences.md`, "UploadPartCopy answers 501 for an encrypted
+  copy source radosgw would decrypt"); and a CopyObject from any
+  encrypted source. Its CompleteMultipartUpload refuses such an upload
+  with 501 before writing anything, as its completion would write
+  neither `user.rgw.crypt.original-size` nor `user.rgw.crypt.part-numbers`
+  (`docs/differences.md`, "A completion of an upload of a crypt mode
+  rgw-go does not know answers 501"). Data an older radosgw already copied
+  as plaintext it cannot tell from any other.
+- **Upstream:** none known. A full-text search of tracker.ceph.com on
+  2026-11-11 for GCM (18 issues, none on mixed releases), SSE-KMS-GCM,
+  AES256-GCM, rgw_crypt_sse_algorithm, "GCM multipart", "GCM mixed",
+  "GCM upgrade", "encryption mixed version", get_encrypt_filter and
+  prepare_decrypt (which finds
+  [#55799](https://tracker.ceph.com/issues/55799), naming
+  rgw_s3_prepare_decrypt), and of ceph/ceph's pull requests for
+  rgw_crypt_sse_algorithm (which finds the two below), SSE-KMS-GCM,
+  aes-256-gcm, "GCM mixed" and "get_encrypt_filter multipart", found no
+  report. Related:
+  [ceph/ceph#67246](https://github.com/ceph/ceph/pull/67246)
+  ([#73221](https://tracker.ceph.com/issues/73221)) and its tentacle
+  backport [ceph/ceph#71238](https://github.com/ceph/ceph/pull/71238)
+  ([#79729](https://tracker.ceph.com/issues/79729)), which add the GCM
+  modes, and ceph/ceph#73739, which would make them the default.
+- **Found:** phase 2 task WP-27, 2026-11-11, while making rgw-go refuse a
+  part of an encrypted upload, and its adversarial review the same day
+  for the copies. Derived from the source, not reproduced.

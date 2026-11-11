@@ -148,6 +148,19 @@ var _ = Describe("multipart", func() {
 		_, err = store.CopyPart(ctx, up, 3, src, op.ByteRange{Offset: 12, Length: 1})
 		Expect(err).To(MatchError(op.ErrInvalidRange), "a range past the source's end")
 	})
+	It("refuses to copy a byte of a source whose crypt mode is not empty, as the driver does", func(ctx SpecContext) {
+		mustPut(ctx, store, rec, "src", "hello")
+		src, err := store.StatObject(ctx, rec, meta.ObjKey{Name: "src"})
+		Expect(err).NotTo(HaveOccurred())
+		src.Attrs[meta.AttrCryptMode] = []byte("SSE-KMS")
+		_, err = store.CopyPart(ctx, up, 1, src, op.ByteRange{Length: 5})
+		Expect(err).To(MatchError(op.ErrNotImplemented))
+		parts, err := store.ListParts(ctx, up, 0, 10)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(parts.Parts).To(BeEmpty())
+		_, err = store.CopyPart(ctx, up, 1, src, op.ByteRange{})
+		Expect(err).NotTo(HaveOccurred(), "a copy of no byte copies no ciphertext")
+	})
 	It("lists parts by number after the marker, a page at a time", func(ctx SpecContext) {
 		for _, n := range []int{3, 1, 2} {
 			_, err := store.PutPart(ctx, up, n, strings.NewReader("x"), op.PutParams{Size: 1})
