@@ -7559,6 +7559,29 @@ does the following.
   decryption, because it reads no data, and answers the attributes
   (`RGWGetObjAttrs_ObjStore_S3::get_decrypt_filter`, `rgw_rest_s3.cc:3985-3997`
   at v20.2.4). Every refusal before that is radosgw's.
+- **A read of an object of a crypt mode rgw-go does not know answers
+  501.** A GET, HEAD or GetObjectAttributes of an object whose
+  `user.rgw.crypt.mode` is not empty and names none of `SSE-C-AES256`,
+  `SSE-KMS`, `AES256` and `RGW-AUTO` answers 501 NotImplemented before a
+  byte of it is read, over any transport, as docs/exclusions.md, "Key
+  management: SSE-KMS and SSE-S3 with every backend", item 3, requires:
+  ciphertext is never served as plaintext. An empty mode is none, as
+  radosgw takes it. v20.2.5 writes four such modes, `SSE-C-AES256-GCM`,
+  `SSE-KMS-GCM`, `AES256-GCM` and `RGW-AUTO-GCM`, when
+  `rgw_crypt_sse_algorithm` is `aes-256-gcm`, and reads them back through
+  `rgw_s3_prepare_decrypt`
+  ([rgw_crypt.cc:2486-2978](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_crypt.cc#L2486-L2978) at v20.2.5).
+  A v19.2.7 or v20.2.4 radosgw takes a mode it does not name for none
+  ([rgw_crypt.cc:1503-1504](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1503-L1504) at v19.2.7,
+  [rgw_crypt.cc:1525-1526](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1525-L1526) at v20.2.4),
+  so its GET and HEAD serve such an object's stored bytes, its
+  ciphertext, as its data, and a v20.2.4 radosgw's GetObjectAttributes,
+  which reads no data, answers the object's attributes
+  (`RGWGetObjAttrs_ObjStore_S3::get_decrypt_filter`,
+  [rgw_rest_s3.cc:3985-3997](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3985-L3997) at v20.2.4),
+  where rgw-go's, which makes GetObject's checks, answers the same 501
+  (`storedCryptRefusal`, `internal/op/crypt.go`, through
+  `GetObject.prepareDecrypt`, `internal/op/getobject.go`).
 - **SSE-C key headers that are all '='.** rgw-go decodes the SSE-C customer
   key and its MD5 from base64 with a reader that returns an empty result for
   an input of only '=' (`internal/op/readconds.go`, `fromBase64`), so such a

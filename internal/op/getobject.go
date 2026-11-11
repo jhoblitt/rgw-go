@@ -768,19 +768,15 @@ func (o *GetObject) refuseLargeObject(ctx context.Context, r *Request) error {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1318-L1527 at v20.2.4):
 // x-amz-server-side-encryption on a read is InvalidRequest, then the
 // object's stored mode is answered (storedCryptRefusal). An object of a mode
-// storedCryptRefusal does not name is served as stored, as radosgw serves
-// one.
+// storedCryptRefusal does not name is NotImplemented, where radosgw serves
+// its stored bytes, ciphertext a newer radosgw wrote (docs/differences.md).
 func (o *GetObject) prepareDecrypt(ctx context.Context, r *Request) error {
 	if o.SSEHeader {
 		return fmt.Errorf("%w: x-amz-server-side-encryption on a read", ErrInvalidRequest)
 	}
-	err := storedCryptRefusal(ctx, r, o.State.Attrs, sseCRequest{
+	return storedCryptRefusal(ctx, r, o.State.Attrs, sseCRequest{
 		algorithm: o.SSECAlgorithm, key: o.SSECKey, keyMD5: o.SSECKeyMD5, secure: o.Secure,
 	})
-	if errors.Is(err, errUnknownCryptMode) {
-		return nil
-	}
-	return err
 }
 
 // checkOverrides is send_response_data's check of the response-* parameters

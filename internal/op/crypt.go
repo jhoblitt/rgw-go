@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5" //nolint:gosec // SSE-C names its key by the key's MD5
-	"errors"
 	"fmt"
 	"log/slog"
 
@@ -32,10 +31,6 @@ type sseCRequest struct {
 	secure                 bool
 }
 
-// errUnknownCryptMode marks storedCryptRefusal's refusal of a crypt mode it
-// does not name.
-var errUnknownCryptMode = errors.New("a crypt mode rgw-go does not know")
-
 // storedCryptRefusal is rgw_s3_prepare_decrypt past its refusal of
 // x-amz-server-side-encryption on a read
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1317-L1505 at v19.2.7,
@@ -49,12 +44,14 @@ var errUnknownCryptMode = errors.New("a crypt mode rgw-go does not know")
 // when it cannot be read, refuses a request that is not secure, except for
 // RGW-AUTO, and for SSE-S3 on Tentacle.
 //
-// It is nil only for attrs without a mode. A mode it does not name, one a
-// newer radosgw writes, as v20.2.5's rgw_s3_prepare_decrypt reads four GCM
+// It is nil only for attrs without a mode or with an empty one, which
+// radosgw takes for none. A mode it does not name, one a newer radosgw
+// writes, as v20.2.5's rgw_s3_prepare_decrypt reads four GCM
 // modes
 // (https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_crypt.cc#L2486-L2978 at v20.2.5),
-// is NotImplemented, matching errUnknownCryptMode too, where radosgw at
-// both releases takes it for no encryption.
+// is NotImplemented, where radosgw at both releases takes it for no
+// encryption: rgw-go neither serves its stored bytes nor writes a part of
+// it in the clear.
 func storedCryptRefusal(ctx context.Context, r *Request, attrs map[string][]byte, req sseCRequest) error {
 	insecure := confBool(r, "rgw_crypt_require_ssl", true) && !req.secure
 	errInsecure := fmt.Errorf("%w: rgw_crypt_require_ssl refuses an insecure request", ErrInvalidRequest)
@@ -81,7 +78,7 @@ func storedCryptRefusal(ctx context.Context, r *Request, attrs map[string][]byte
 		}
 		return ErrInvalidArgument.WithMessage("Failed to retrieve the actual key")
 	default:
-		return fmt.Errorf("%w: %w %q", ErrNotImplemented, errUnknownCryptMode, mode)
+		return fmt.Errorf("%w: crypt mode %q is not one rgw-go knows", ErrNotImplemented, mode)
 	}
 }
 

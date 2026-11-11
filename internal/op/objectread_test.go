@@ -647,6 +647,9 @@ var _ = Describe("GetObjectAttributes", func() {
 			Entry("SSE-C without the customer key", func(st *op.ObjectState) {
 				st.Attrs[meta.AttrCryptMode] = []byte("SSE-C-AES256")
 			}, op.ErrInvalidArgument),
+			Entry("a crypt mode rgw-go does not know, whose attributes radosgw answers", func(st *op.ObjectState) {
+				st.Attrs[meta.AttrCryptMode] = []byte("AES256-GCM")
+			}, op.ErrNotImplemented),
 			Entry("compression info without blocks", func(st *op.ObjectState) {
 				st.Compression = &meta.CompressionInfo{Type: "zlib", OrigSize: 9}
 			}, op.ErrUnknown),

@@ -646,7 +646,18 @@ var _ = Describe("the website GetObject", func() {
 				w.put(ctx, "error.html", "<p>oops</p>", map[string][]byte{meta.AttrCryptMode: []byte("SSE-KMS")})
 				w.setWebsite(ctx, withErrorDoc(site()))
 			}, "/missing.html", http.StatusNotFound, "404 Not Found", "NoSuchKey"),
+			Entry("of a crypt mode rgw-go does not know, whose stored bytes it never serves", func(ctx context.Context) {
+				w.put(ctx, "error.html", "<p>oops</p>", map[string][]byte{meta.AttrCryptMode: []byte("AES256-GCM")})
+				w.setWebsite(ctx, withErrorDoc(site()))
+			}, "/missing.html", http.StatusNotFound, "404 Not Found", "NoSuchKey"),
 		)
+		It("answers an index document of a crypt mode rgw-go does not know 501, serving none of it", func(ctx SpecContext) {
+			w.put(ctx, "index.html", "<p>ciphertext</p>", map[string][]byte{meta.AttrCryptMode: []byte("AES256-GCM")})
+			w.setWebsite(ctx, site())
+			rec := w.serve(nil, http.MethodGet, "/")
+			expectHTMLError(rec, http.StatusNotImplemented, "501 Not Implemented", "NotImplemented", "", "site")
+			Expect(rec.Body.String()).NotTo(ContainSubstring("ciphertext"))
+		})
 
 		Describe("never sees a failure of the GetObject's execute", func() {
 			BeforeEach(func(ctx SpecContext) {

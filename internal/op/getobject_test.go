@@ -642,10 +642,21 @@ var _ = Describe("GetObject", func() {
 				_, err := serve(encrypted("SSE-KMS"), func(o *op.GetObject) { o.GetData, o.Secure = false, true })
 				Expect(err).To(MatchError(op.ErrInvalidArgument))
 			})
-			It("serves an object of a mode rgw_s3_prepare_decrypt does not name as stored, as radosgw does", func() {
-				_, err := serve(encrypted("AES256-GCM"), func(o *op.GetObject) { o.Secure = true })
-				Expect(err).NotTo(HaveOccurred())
-			})
+			DescribeTable("refuses GET and HEAD of an object of a mode rgw-go does not know with NotImplemented, where radosgw serves its stored bytes",
+				func(rel denc.Release) {
+					if rel >= denc.Tentacle {
+						env.Zone = tentacle()
+					}
+					for _, getData := range []bool{true, false} {
+						_, err := serve(encrypted("AES256-GCM"), func(o *op.GetObject) { o.Secure, o.GetData = true, getData })
+						Expect(err).To(MatchError(op.ErrNotImplemented), "GetData %t", getData)
+						Expect(sink.headers).To(BeZero(), "GetData %t: no response is begun", getData)
+					}
+					Expect(objects.ReadObjectCallCount()).To(BeZero(), "no byte of it is read")
+				},
+				Entry("on Squid", denc.Squid),
+				Entry("on Tentacle", denc.Tentacle),
+			)
 			It("checks the range before the encryption", func() {
 				_, err := serve(encrypted("SSE-KMS"), func(o *op.GetObject) { o.Secure, o.Range = true, "bytes=20000000-" })
 				Expect(err).To(MatchError(op.ErrInvalidRange))
@@ -744,6 +755,13 @@ var _ = Describe("GetObject", func() {
 				_, st, rng, _ := objects.ReadObjectArgsForCall(0)
 				Expect(st).To(BeIdenticalTo(o.State))
 				Expect(rng).To(Equal(op.ByteRange{Offset: 0, Length: 8 << 20}))
+			})
+			It("refuses a part of an object of a crypt mode rgw-go does not know, which the part takes from the head, reading none of it", func() {
+				head := multipart()
+				head.Attrs[meta.AttrCryptMode] = []byte("SSE-KMS-GCM")
+				_, err := serveParts(head, partHead(true, true), func(o *op.GetObject) { part(2)(o); o.Secure = true })
+				Expect(err).To(MatchError(op.ErrNotImplemented))
+				Expect(objects.ReadObjectCallCount()).To(BeZero())
 			})
 			It("serves a part head without a manifest through the manifest get_part_obj_state builds for it", func() {
 				o, err := serveParts(multipart(), partHead(true, false), part(2))
