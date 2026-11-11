@@ -1163,6 +1163,36 @@ client's `otp_check`.
 - **Depends on:** WP-19, WP-21. **PR split:** (a) the gate cases and goldens; (b) the registry's
   reproductions. **Brief:** about 120 lines.
 
+### Task WP-25: GetObjectAttributes requires both of its permissions
+
+Found by WP-13's adversarial review (L2), and numbered here before WP-13 merged (PP-12).
+
+- **Layer:** op. **Files:** `internal/op/objectread.go` (GetObjectAttributes' permission check)
+  and its specs; `docs/differences.md`; the registry entry WP-13's PR adds. **Cluster:** no.
+- **Behaviour:**
+  1. On Tentacle, GetObjectAttributes is allowed only when both `s3:GetObject` and
+     `s3:GetObjectAttributes` are, or, for a named version, both `s3:GetObjectVersion` and
+     `s3:GetObjectVersionAttributes`, each evaluated as the op's other object permissions are,
+     so an explicit deny of either refuses the request 403 AccessDenied. An ACL READ grant
+     satisfies both. radosgw joins the two checks with `||`, though its own comment says the
+     conjunction should be `&&` and that the second should succeed for a requester with READ
+     ([rgw_op.cc:6381-6385](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6381-L6385)),
+     so a principal denied `s3:GetObject` gets the object's ETag, size, parts and, since WP-13,
+     its stored checksums. Upstream fixed it on main
+     ([ceph/ceph#65441](https://github.com/ceph/ceph/pull/65441), tracker
+     [#72915](https://tracker.ceph.com/issues/72915);
+     [rgw_op.cc:6783](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L6783) at
+     v21.1.2) without a Tentacle backport. rgw-go follows AWS, which documents that the
+     operation needs both (cite the documentation at implementation), and upstream's fix.
+  2. On Squid the check stays `s3:GetObject` alone: v19.2.7 has no GetObjectAttributes op, and
+     its policy language has no `s3:GetObjectAttributes` action to grant.
+- **Specs:** per release, a policy allowing only the read action, only the attributes action,
+  both, and an explicit deny of each, for the current object and for a named version; an ACL
+  READ grant with no policy.
+- **Exclusions and registry:** a `docs/differences.md` entry, since rgw-go refuses where radosgw
+  serves; the registry entry's rgw-go line says rgw-go requires both.
+- **Depends on:** WP-13. **PR:** one. **Brief:** about 40 lines.
+
 ## Order
 
 Everything starts after the index's deferred benchmark run and the shared tasks it names.
@@ -1175,6 +1205,7 @@ Everything starts after the index's deferred benchmark run and the shared tasks 
 | 4 | WP-6, WP-8 | WP-3 and WP-5; WP-5 and WP-10 (b) |
 | 5 | WP-7, WP-9, WP-11 | WP-6, V11 and V14a; WP-8; WP-8 and WP-10 (b) |
 | 6 | WP-12, then WP-13 | WP-9; WP-12, WP-7 and V14a |
+| 7 | WP-25 | WP-13 |
 | cluster, one at a time | WP-24, WP-15, WP-14 | WP-19 and WP-21; WP-8 to WP-11 and WP-13; WP-6 to WP-13, WP-22, T-1, and BC-34 or the POST line deselected |
 
 - Wave 1 is wider than the subagent budget allows at once; the controller starts WP-10 (a),
