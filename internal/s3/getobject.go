@@ -98,6 +98,10 @@ func (g *objectReads) runGetObject(ctx context.Context, w http.ResponseWriter, r
 		slog.WarnContext(ctx, "omitting x-amz-restore: a restore attr does not decode",
 			slog.String("bucket", r.Bucket), slog.String("key", r.Object.Name), slog.String("attr", attr))
 	}
+	for _, attr := range sink.lockOmitted {
+		slog.WarnContext(ctx, "omitting an object-lock header: its attr does not decode or holds a control character",
+			slog.String("bucket", r.Bucket), slog.String("key", r.Object.Name), slog.String("attr", attr))
+	}
 	if err != nil && sink.wrote {
 		abortAfterStart(ctx, w, r, err)
 	}
@@ -265,6 +269,9 @@ type getObjectSink struct {
 	wrote       bool
 	// undecodable names the restore attrs the headers left out.
 	undecodable []string
+	// lockOmitted names the object-lock attrs the headers left out
+	// (setObjectLockHeaders).
+	lockOmitted []string
 }
 
 // endHeaderNames are the headers end_header sends after
@@ -305,7 +312,8 @@ func (s *getObjectSink) Flush() error { return s.w.Flush() }
 // for the op's results, adding them in the order radosgw dumps them: the
 // range, the length, the dates and version, the object type, replication,
 // the parts count, the ETag, the stored checksum (setReadChecksum),
-// Tentacle's restore state, the user metadata and tagging count, then
+// Tentacle's restore state, the object lock (setObjectLockHeaders), the user
+// metadata and tagging count, then
 // response_attrs, the response-* overrides and the mapped attrs in its
 // std::map's order, and last end_header's content type.
 // net/http writes the lines sorted by name ("Header lines go out sorted by
@@ -339,6 +347,7 @@ func (s *getObjectSink) headers() http.Header {
 	if r.Env.Zone.Release() >= denc.Tentacle {
 		attrs = s.setRestoreHeader(h, attrs)
 	}
+	s.lockOmitted = setObjectLockHeaders(h, o, o.CondState.Attrs)
 	contentType, typed := o.ResponseOverrides["Content-Type"]
 	// responseAttrs is send_response_data's response_attrs: the first value
 	// set under a name stays, an override's ahead of any attr's.

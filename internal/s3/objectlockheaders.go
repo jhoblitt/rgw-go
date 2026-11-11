@@ -1,6 +1,8 @@
 package s3
 
 import (
+	"net/http"
+
 	"github.com/jhoblitt/rgw-go/internal/iso8601"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/objectlock"
@@ -82,4 +84,55 @@ func (l requestLock) addAttrs(attrs map[string][]byte) {
 	if l.legalHold != nil {
 		attrs[meta.AttrObjectLegalHold] = objectlock.EncodeLegalHold(*l.legalHold)
 	}
+}
+
+// setObjectLockHeaders adds send_response_data's object-lock headers
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L603-L621 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L712-L730 at v20.2.4)
+// from attrs, the object's own, which on a partNumber read are its multipart
+// head's (op.GetObject's CondState) where radosgw reads the part head's
+// (docs/differences.md, "A part read sends the object's lock, not its
+// part's"): x-amz-object-lock-mode and
+// x-amz-object-lock-retain-until-date, the date as iso8601.Format writes it
+// with nine fractional digits, when o.RetentionAllowed, and
+// x-amz-object-lock-legal-hold when o.LegalHoldAllowed, each only when its
+// attr is present. An attr objectlock.DecodeRetention or DecodeLegalHold
+// refuses sends nothing, as radosgw's failed decode sends nothing, bytes past
+// the encoding included, on which radosgw's decode ends its process
+// (docs/differences.md, "An object-lock attr with bytes past its encoding
+// does not decode"); and so does a mode or a status holding a control
+// character (headerSafe), which radosgw sends as its bytes
+// (docs/differences.md, "An object-lock header whose stored value holds a
+// control character is left out"). It returns the attrs it left out.
+func setObjectLockHeaders(h http.Header, o *op.GetObject, attrs map[string][]byte) []string {
+	var omitted []string
+	if b, ok := attrs[meta.AttrObjectRetention]; ok && o.RetentionAllowed {
+		r, err := objectlock.DecodeRetention(b)
+		if err == nil && headerSafe(r.Mode) {
+			addHeader(h, "x-amz-object-lock-mode", r.Mode)
+			addHeader(h, "x-amz-object-lock-retain-until-date", iso8601.Format(r.RetainUntil))
+		} else {
+			omitted = append(omitted, meta.AttrObjectRetention)
+		}
+	}
+	if b, ok := attrs[meta.AttrObjectLegalHold]; ok && o.LegalHoldAllowed {
+		l, err := objectlock.DecodeLegalHold(b)
+		if err == nil && headerSafe(l.Status) {
+			addHeader(h, "x-amz-object-lock-legal-hold", l.Status)
+		} else {
+			omitted = append(omitted, meta.AttrObjectLegalHold)
+		}
+	}
+	return omitted
+}
+
+// headerSafe reports whether v holds no control character, so no CR, LF or
+// NUL, and goes out as one header value as it stands.
+func headerSafe(v string) bool {
+	for i := range len(v) {
+		if c := v[i]; c < 0x20 || c == 0x7f {
+			return false
+		}
+	}
+	return true
 }
