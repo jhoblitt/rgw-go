@@ -77,6 +77,9 @@ var (
 	bobWriteGrant = acl.Grant{Type: acl.GranteeCanonUser, ID: "bob", Name: "Bob", Permission: acl.PermWrite}
 )
 
+// prelude is the step VerifyObjectPrelude takes in the specs' order.
+const prelude = "prelude"
+
 // markerHeads is an object store whose StatObject reads the key named name,
 // named without an instance, as a current delete marker, whose state does not
 // exist.
@@ -262,14 +265,19 @@ var _ = Describe("object retention and legal hold ops", func() {
 
 		Describe("in radosgw's order", func() {
 			var (
-				seen   []string
-				authzr *opfakes.FakeAuthorizer
-				refuse map[policy.Action]bool
+				seen       []string
+				authzr     *opfakes.FakeAuthorizer
+				refuse     map[policy.Action]bool
+				preludeErr error
 			)
 			BeforeEach(func() {
-				seen, refuse = nil, map[policy.Action]bool{}
+				seen, refuse, preludeErr = nil, map[policy.Action]bool{}, nil
 				authzr = &opfakes.FakeAuthorizer{}
-				authzr.VerifyObjectStub = func(_ context.Context, _ *op.Request, a policy.Action, _ acl.Permission) error {
+				authzr.VerifyObjectPreludeStub = func(context.Context, *op.Request) error {
+					seen = append(seen, prelude)
+					return preludeErr
+				}
+				authzr.VerifyBucketOwnerOrPolicyStub = func(_ context.Context, _ *op.Request, a policy.Action, _ acl.Permission) error {
 					seen = append(seen, "verify "+a.String())
 					if refuse[a] {
 						return op.ErrAccessDenied
@@ -288,6 +296,7 @@ var _ = Describe("object retention and legal hold ops", func() {
 				bypass = "verify s3:BypassGovernanceRetention"
 			)
 
+			preludeRefused := func(context.Context, *op.Request) { preludeErr = op.BeforeVerify(op.ErrAccessDenied) }
 			refused := func(context.Context, *op.Request) { refuse[policy.S3PutObjectRetention] = true }
 			noWrite := func(_ context.Context, r *op.Request) { r.Identity.OpMask = op.OpTypeAll &^ op.OpTypeWrite }
 			overLimit := func(context.Context, *op.Request) {
@@ -326,47 +335,50 @@ var _ = Describe("object retention and legal hold ops", func() {
 					Expect(seen).To(Equal(steps))
 					Expect(stat(ctx, lockCurrent).Epoch).To(Equal(before), "nothing written")
 				},
+				Entry("a refusal radosgw makes before verify_permission, before the action is evaluated",
+					true, preludeRefused, op.ErrAccessDenied, "", []string{prelude}),
 				Entry("a refused requester, whose body is unread and whose bypass is not evaluated, rgw_op.cc:8340-8342 at v19.2.7",
-					true, refused, op.ErrAccessDenied, "", []string{put}),
+					true, refused, op.ErrAccessDenied, "", []string{prelude, put}),
 				Entry("an op mask without write, which verify_op_mask refuses before verify_permission reads the body, rgw_process.cc:207-211 at v19.2.7",
-					true, noWrite, op.ErrAccessDenied, "", []string{put}),
+					true, noWrite, op.ErrAccessDenied, "", []string{prelude, put}),
 				Entry("a Content-Length over rgw_max_put_param_size, InvalidRange unread, before the bypass, rgw_op.cc:8343-8346 at v19.2.7",
-					true, overLimit, op.ErrInvalidRange, "", []string{put}),
-				Entry("no Content-Length, 411", true, noLength, op.ErrMissingContentLength, "", []string{put}),
+					true, overLimit, op.ErrInvalidRange, "", []string{prelude, put}),
+				Entry("no Content-Length, 411", true, noLength, op.ErrMissingContentLength, "", []string{prelude, put}),
 				Entry("a bucket without object lock, after the body is read and before it is parsed, rgw_op.cc:8360-8365 at v19.2.7",
-					false, noLock, op.ErrInvalidRequest, msgRetentionNoLock, []string{put, "read"}),
+					false, noLock, op.ErrInvalidRequest, msgRetentionNoLock, []string{prelude, put, "read"}),
 				Entry("a bucket without object lock, after the bypass is evaluated",
-					true, noLock, op.ErrInvalidRequest, msgRetentionNoLock, []string{put, "read", bypass}),
+					true, noLock, op.ErrInvalidRequest, msgRetentionNoLock, []string{prelude, put, "read", bypass}),
 				Entry("a document that does not parse, rgw_op.cc:8374-8385 at v19.2.7",
-					false, body("<Retention>"), op.ErrMalformedXML, "", []string{put, "read"}),
+					false, body("<Retention>"), op.ErrMalformedXML, "", []string{prelude, put, "read"}),
 				Entry("a Mode outside GOVERNANCE and COMPLIANCE", false, body(retentionDoc("governance", "2030-01-01T00:00:00Z")),
-					op.ErrMalformedXML, "", []string{put, "read"}),
+					op.ErrMalformedXML, "", []string{prelude, put, "read"}),
 				Entry("a retain-until date past real_time's range, which the parser refuses where radosgw wraps it",
-					false, body(retentionDoc("GOVERNANCE", "2554-07-21T23:34:34Z")), op.ErrMalformedXML, "", []string{put, "read"}),
+					false, body(retentionDoc("GOVERNANCE", "2554-07-21T23:34:34Z")), op.ErrMalformedXML, "", []string{prelude, put, "read"}),
 				Entry("a retain-until date before the clock, rgw_op.cc:8387-8392 at v19.2.7",
-					false, body(retentionDoc("GOVERNANCE", "2026-10-20T23:59:59Z")), op.ErrInvalidArgument, msgRetainUntilPast, []string{put, "read"}),
+					false, body(retentionDoc("GOVERNANCE", "2026-10-20T23:59:59Z")), op.ErrInvalidArgument, msgRetainUntilPast, []string{prelude, put, "read"}),
 				Entry("a version that does not exist, which the authorizer passes, rgw_op.cc:8397-8401 at v19.2.7",
-					false, missing, op.ErrNoSuchKey, "", []string{put, "read"}),
+					false, missing, op.ErrNoSuchKey, "", []string{prelude, put, "read"}),
 				Entry("an existing retention too short to decode, -EIO, rgw_op.cc:8405-8412 at v19.2.7",
-					false, undecodable, op.ErrUnknown, "", []string{put, "read"}),
+					false, undecodable, op.ErrUnknown, "", []string{prelude, put, "read"}),
 				Entry("an existing retention with bytes past its encoding, which decode(T&, const bufferlist&) aborts on",
-					false, bytesPast, op.ErrUnknown, "", []string{put, "read"}),
+					false, bytesPast, op.ErrUnknown, "", []string{prelude, put, "read"}),
 			)
 			It("answers a request that passes every check with nil after one check of each, the bypass last", func(ctx SpecContext) {
 				Expect(op.Run(ctx, &op.PutObjectRetention{BypassHeader: true}, request(lockCurrent, governanceTo1Doc))).To(Succeed())
-				Expect(seen).To(Equal([]string{put, "read", bypass}))
+				Expect(seen).To(Equal([]string{prelude, put, "read", bypass}))
 			})
 			It("does not evaluate s3:BypassGovernanceRetention without the header, rgw_op.cc:8347-8349 at v19.2.7", func(ctx SpecContext) {
 				Expect(op.Run(ctx, &op.PutObjectRetention{}, request(lockCurrent, governanceTo1Doc))).To(Succeed())
-				Expect(authzr.VerifyObjectCallCount()).To(Equal(1))
-				_, _, a, _ := authzr.VerifyObjectArgsForCall(0)
+				Expect(authzr.VerifyBucketOwnerOrPolicyCallCount()).To(Equal(1))
+				_, _, a, _ := authzr.VerifyBucketOwnerOrPolicyArgsForCall(0)
 				Expect(a).To(Equal(policy.S3PutObjectRetention))
 			})
-			It("evaluates s3:BypassGovernanceRetention on the version the request names, with WRITE as its ACL permission", func(ctx SpecContext) {
+			It("evaluates s3:BypassGovernanceRetention on the version the request names, with WRITE as its ACL permission and no ACL grant", func(ctx SpecContext) {
 				Expect(op.Run(ctx, &op.PutObjectRetention{BypassHeader: true}, request(lockNoncurrent, governanceTo1Doc))).To(Succeed())
-				Expect(authzr.VerifyObjectCallCount()).To(Equal(2))
+				Expect(authzr.VerifyObjectCallCount()).To(BeZero(), "no check of the object's ACL")
+				Expect(authzr.VerifyBucketOwnerOrPolicyCallCount()).To(Equal(2))
 				for i, want := range []policy.Action{policy.S3PutObjectRetention, policy.S3BypassGovernanceRetention} {
-					_, r, a, perm := authzr.VerifyObjectArgsForCall(i)
+					_, r, a, perm := authzr.VerifyBucketOwnerOrPolicyArgsForCall(i)
 					Expect(a).To(Equal(want))
 					Expect(perm).To(Equal(acl.PermWrite), "rgw_iam_policy.h op_to_perm")
 					Expect(r.ObjState.Key).To(Equal(lockNoncurrent))
@@ -375,7 +387,7 @@ var _ = Describe("object retention and legal hold ops", func() {
 			DescribeTable("takes the bypass check's error as a refusal of the bypass only when it is an access denial",
 				func(ctx SpecContext, bypassErr, want error) {
 					setAttr(ctx, lockCurrent, meta.AttrObjectRetention, retentionBytes("GOVERNANCE", day(3)))
-					authzr.VerifyObjectStub = func(_ context.Context, _ *op.Request, a policy.Action, _ acl.Permission) error {
+					authzr.VerifyBucketOwnerOrPolicyStub = func(_ context.Context, _ *op.Request, a policy.Action, _ acl.Permission) error {
 						if a == policy.S3BypassGovernanceRetention {
 							return bypassErr
 						}
@@ -397,7 +409,7 @@ var _ = Describe("object retention and legal hold ops", func() {
 					r.Identity.Admin = true
 					r.Body = failingReader{}
 					Expect(op.Run(ctx, &op.PutObjectRetention{BypassHeader: true}, r)).To(MatchError(op.ErrMalformedXML))
-					Expect(seen).To(Equal([]string{put}), "neither the body nor the bypass")
+					Expect(seen).To(Equal([]string{prelude, put}), "neither the body nor the bypass")
 				})
 		})
 
@@ -406,7 +418,7 @@ var _ = Describe("object retention and legal hold ops", func() {
 			BeforeEach(func() {
 				refuseBypass = false
 				authzr := &opfakes.FakeAuthorizer{}
-				authzr.VerifyObjectStub = func(_ context.Context, _ *op.Request, a policy.Action, _ acl.Permission) error {
+				authzr.VerifyBucketOwnerOrPolicyStub = func(_ context.Context, _ *op.Request, a policy.Action, _ acl.Permission) error {
 					if a == policy.S3BypassGovernanceRetention && refuseBypass {
 						return op.ErrAccessDenied
 					}
@@ -601,7 +613,11 @@ var _ = Describe("object retention and legal hold ops", func() {
 			BeforeEach(func() {
 				seen, refuse = nil, false
 				authzr := &opfakes.FakeAuthorizer{}
-				authzr.VerifyObjectStub = func(_ context.Context, _ *op.Request, a policy.Action, _ acl.Permission) error {
+				authzr.VerifyObjectPreludeStub = func(context.Context, *op.Request) error {
+					seen = append(seen, prelude)
+					return nil
+				}
+				authzr.VerifyBucketOwnerOrPolicyStub = func(_ context.Context, _ *op.Request, a policy.Action, _ acl.Permission) error {
 					seen = append(seen, "verify "+a.String())
 					if refuse {
 						return op.ErrAccessDenied
@@ -629,22 +645,22 @@ var _ = Describe("object retention and legal hold ops", func() {
 					Expect(seen).To(Equal(steps))
 					Expect(stat(ctx, lockCurrent).Epoch).To(Equal(before), "nothing written")
 				},
-				Entry("a refused requester", func(context.Context, *op.Request) { refuse = true }, op.ErrAccessDenied, "", []string{verify}),
+				Entry("a refused requester", func(context.Context, *op.Request) { refuse = true }, op.ErrAccessDenied, "", []string{prelude, verify}),
 				Entry("an op mask without write", func(_ context.Context, r *op.Request) { r.Identity.OpMask = op.OpTypeRead },
-					op.ErrAccessDenied, "", []string{verify}),
+					op.ErrAccessDenied, "", []string{prelude, verify}),
 				Entry("a bucket without object lock, before the body is read, rgw_op.cc:8504-8520 at v19.2.7",
 					func(ctx context.Context, _ *op.Request) { setFlags(ctx, meta.BucketVersioned) },
-					op.ErrInvalidRequest, msgLegalHoldNoLock, []string{verify}),
+					op.ErrInvalidRequest, msgLegalHoldNoLock, []string{prelude, verify}),
 				Entry("a Content-Length over rgw_max_put_param_size, InvalidRange unread",
 					func(context.Context, *op.Request) {
 						f.conf["rgw_max_put_param_size"] = strconv.Itoa(len(legalHoldOnDoc) - 1)
 					},
-					op.ErrInvalidRange, "", []string{verify}),
-				Entry("a document that does not parse", body("<LegalHold>"), op.ErrMalformedXML, "", []string{verify, "read"}),
-				Entry("a Status outside ON and OFF", body(legalHoldDoc("on")), op.ErrMalformedXML, "", []string{verify, "read"}),
+					op.ErrInvalidRange, "", []string{prelude, verify}),
+				Entry("a document that does not parse", body("<LegalHold>"), op.ErrMalformedXML, "", []string{prelude, verify, "read"}),
+				Entry("a Status outside ON and OFF", body(legalHoldDoc("on")), op.ErrMalformedXML, "", []string{prelude, verify, "read"}),
 				Entry("a version that does not exist, which both releases' attr reads answer before the write",
 					func(_ context.Context, r *op.Request) { r.Object = meta.ObjKey{Name: "k", Instance: "nope"} },
-					op.ErrNoSuchKey, "", []string{verify, "read"}),
+					op.ErrNoSuchKey, "", []string{prelude, verify, "read"}),
 			)
 			It("reads an admin's body in execute once its override lets a refusal through, and writes it", func(ctx SpecContext) {
 				refuse = true
@@ -759,8 +775,9 @@ var _ = Describe("object retention and legal hold ops", func() {
 			BeforeEach(func(ctx SpecContext) { setAttr(ctx, lockCurrent, meta.AttrObjectLegalHold, legalHoldBytes("ON")) })
 			expectUnchanged := func(ctx context.Context) {
 				GinkgoHelper()
-				Expect(stored(ctx)).To(Equal(governanceTo3))
-				Expect(stat(ctx, lockCurrent).Attrs).To(HaveKeyWithValue(meta.AttrObjectLegalHold, legalHoldBytes("ON")))
+				attrs := stat(ctx, lockCurrent).Attrs
+				Expect(attrs).To(HaveKeyWithValue(meta.AttrObjectRetention, retentionBytes("GOVERNANCE", day(3))))
+				Expect(attrs).To(HaveKeyWithValue(meta.AttrObjectLegalHold, legalHoldBytes("ON")))
 			}
 
 			DescribeTable("refuses each lock write to a grantee who is not the object's owner, writing nothing",
@@ -784,11 +801,27 @@ var _ = Describe("object retention and legal hold ops", func() {
 					op.ErrAccessDenied, msgShortens)
 				expectUnchanged(ctx)
 			})
-			It("serves the object's owner under the same ACL", func(ctx SpecContext) {
+			It("serves the bucket's owner under the same ACL", func(ctx SpecContext) {
 				grantWrite(ctx, allUsers(acl.PermWrite), bobWriteGrant)
 				for name, err := range requests(ctx, f.alice) {
 					Expect(err).NotTo(HaveOccurred(), name)
 				}
+			})
+			It("refuses each lock write to the version's owner, who does not own the bucket, with no policy, writing nothing", func(ctx SpecContext) {
+				setAttr(ctx, lockCurrent, meta.AttrACL, encodedPolicy(acl.DefaultPolicy(f.bob.Owner, "Bob")))
+				for name, err := range requests(ctx, f.bob) {
+					Expect(err).To(MatchError(op.ErrAccessDenied), name)
+				}
+				expectUnchanged(ctx)
+				Expect(op.Run(ctx, &op.PutObjectRetention{}, asBob(req(http.MethodPut, lockCurrent, retentionDoc("GOVERNANCE", "2030-01-05T00:00:00Z"))))).
+					To(MatchError(op.ErrAccessDenied), "a longer retention too")
+			})
+			It("refuses the version's owner the bypass when a policy allows him the retention alone", func(ctx SpecContext) {
+				setAttr(ctx, lockCurrent, meta.AttrACL, encodedPolicy(acl.DefaultPolicy(f.bob.Owner, "Bob")))
+				setPolicy(ctx, statement("Allow", bob, "s3:PutObjectRetention", "arn:aws:s3:::plain/k", ""))
+				expectError(op.Run(ctx, &op.PutObjectRetention{BypassHeader: true}, asBob(req(http.MethodPut, lockCurrent, governanceTo1Doc))),
+					op.ErrAccessDenied, msgShortens)
+				expectUnchanged(ctx)
 			})
 		})
 
@@ -818,6 +851,22 @@ var _ = Describe("object retention and legal hold ops", func() {
 			Entry("alice under a Deny of the bypass conditioned on a tag the object carries", true,
 				statement("Deny", alice, "s3:BypassGovernanceRetention", "arn:aws:s3:::plain/*",
 					`{"StringEquals":{"s3:ExistingObjectTag/team":"a"}}`)),
+		)
+		DescribeTable("refuses alice, the bucket's owner, an action denied her on a tag the version carries",
+			func(ctx SpecContext, action string, run func(context.Context) error) {
+				setPolicy(ctx, statement("Deny", alice, action, "arn:aws:s3:::plain/*", `{"StringEquals":{"s3:ExistingObjectTag/team":"a"}}`))
+				Expect(run(ctx)).To(MatchError(op.ErrAccessDenied))
+				Expect(stored(ctx)).To(Equal(governanceTo3))
+				Expect(stat(ctx, lockCurrent).Attrs).NotTo(HaveKey(meta.AttrObjectLegalHold))
+				setPolicy(ctx, statement("Deny", alice, action, "arn:aws:s3:::plain/*", `{"StringEquals":{"s3:ExistingObjectTag/team":"b"}}`))
+				Expect(run(ctx)).To(Succeed())
+			},
+			Entry("s3:PutObjectRetention", "s3:PutObjectRetention", func(ctx context.Context) error {
+				return putRetention(ctx, lockCurrent, retentionDoc("GOVERNANCE", "2030-01-05T00:00:00Z"), false)
+			}),
+			Entry("s3:PutObjectLegalHold", "s3:PutObjectLegalHold", func(ctx context.Context) error {
+				return putLegalHold(ctx, lockCurrent, legalHoldOnDoc)
+			}),
 		)
 		It("lets alice bypass under a Deny conditioned on a tag the object does not carry", func(ctx SpecContext) {
 			setPolicy(ctx, statement("Deny", alice, "s3:BypassGovernanceRetention", "arn:aws:s3:::plain/*",

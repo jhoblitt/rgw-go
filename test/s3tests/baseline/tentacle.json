@@ -9,7 +9,8 @@
     {"source":"462c9b0334422a0b3e6d639c7f89453b9cb62cbf","admitted":"additive"},
     {"source":"e9c8467b1145b7c82aab61288c649780b6031948","admitted":"additive"},
     {"source":"4f4a1b6719e216485fd385f6b81170080f23f30b","admitted":"base","reason":"s3-tests 4f4a1b6719e merges jhoblitt/ceph PRs 17 to 27, which change s3tests/functional/__init__.py and s3tests.conf.SAMPLE, rewrite _put_raw_public_access_block, and add module imports, helpers, constants and a class beside their tests, which the additive proof refuses"},
-    {"source":"5018895083e1b46905afe412bfa91bd2f0f4f6e9","admitted":"base","reason":"s3-tests 5018895083e merges jhoblitt/ceph PRs 28 to 35, which add the top-level helpers _cors_headers_client, _transition_kept_fields and _mfa_code_after and top-level comments beside their tests, which the additive proof refuses"}
+    {"source":"5018895083e1b46905afe412bfa91bd2f0f4f6e9","admitted":"base","reason":"s3-tests 5018895083e merges jhoblitt/ceph PRs 28 to 35, which add the top-level helpers _cors_headers_client, _transition_kept_fields and _mfa_code_after and top-level comments beside their tests, which the additive proof refuses"},
+    {"source":"358477718367e91a9959ebdf33edfe527ab1f107","admitted":"additive"}
   ],
   "tests": {
     "s3tests.functional.test_headers::test_bucket_create_bad_authorization_empty": [

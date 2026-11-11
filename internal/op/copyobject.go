@@ -133,7 +133,9 @@ func (o *CopyObject) Init(ctx context.Context, r *Request) error {
 // check, each with the source bucket's policy and the identity's, which
 // decide before either ACL (docs/differences.md). A source naming a delete
 // marker's version is refused ahead of the missing source's rule
-// (copySourceMarker).
+// (copySourceMarker). Last come the permissions the request's object-lock
+// headers need on the destination (verifyLockHeaders), which radosgw does not
+// check.
 func (o *CopyObject) VerifyPermission(ctx context.Context, r *Request) error {
 	a := policy.S3GetObject
 	if o.SrcKey.Instance != "" {
@@ -183,7 +185,10 @@ func (o *CopyObject) VerifyPermission(ctx context.Context, r *Request) error {
 	if err := VerifyObjectPermissionIn(ctx, r, a, perm, o.srcRec, o.src); err != nil {
 		return err
 	}
-	return destErr
+	if destErr != nil {
+		return destErr
+	}
+	return verifyLockHeaders(ctx, r)
 }
 
 // checkStorageClass is RGWCopyObj_ObjStore_S3::check_storage_class
@@ -215,8 +220,7 @@ func (o *CopyObject) checkStorageClass(r *Request) error {
 // before it copies under the request id as its tag, to VersionForWrite's
 // instance. First Authorized runs, and a public destination policy under the
 // destination's block of public ACLs is refused, as PutObject refuses one,
-// where radosgw makes no such check for a copy (docs/differences.md). Then a
-// destination with object lock is refused (objectLockUnserved).
+// where radosgw makes no such check for a copy (docs/differences.md).
 func (o *CopyObject) Execute(ctx context.Context, r *Request) error {
 	if o.Authorized != nil {
 		if err := o.Authorized(ctx, o); err != nil {
@@ -225,9 +229,6 @@ func (o *CopyObject) Execute(ctx context.Context, r *Request) error {
 	}
 	if blockPublicACLs(r.BucketRec) && o.ACL.IsPublic() {
 		return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
-	}
-	if err := objectLockUnserved(r.BucketRec); err != nil {
-		return err
 	}
 	if err := bucketEncryptionUnserved(r.BucketRec); err != nil {
 		return err

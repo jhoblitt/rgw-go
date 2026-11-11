@@ -411,15 +411,15 @@ var _ = Describe("multipart handlers", func() {
 		Expect(w.uploads(ctx)).To(BeEmpty())
 	})
 
-	It("does not serve the object-lock headers on a bucket with object lock", func(ctx SpecContext) {
+	It("serves the object-lock headers on a bucket with object lock", func(ctx SpecContext) {
 		id := w.initUpload(w.alice, "/plain/k")
 		w.setBucketInfo(ctx, func(i *meta.BucketInfo) { i.Flags |= meta.BucketObjLockEnabled | meta.BucketVersioned })
-		expectError(w.send(w.alice, http.MethodPost, "/plain/j?uploads", "", "X-Amz-Object-Lock-Legal-Hold", "ON"), 501, "NotImplemented")
-		expectError(w.send(w.alice, http.MethodPut, "/plain/k?uploadId="+id+"&partNumber=1", "x", "X-Amz-Object-Lock-Legal-Hold", "OFF"), 501, "NotImplemented")
-		expectError(w.send(w.alice, http.MethodPut, "/plain/k?uploadId="+id+"&partNumber=1", "x",
-			"X-Amz-Object-Lock-Mode", "COMPLIANCE", "X-Amz-Object-Lock-Retain-Until-Date", "2030-01-01T00:00:00Z"), 501, "NotImplemented")
-		Expect(w.uploads(ctx)).To(HaveLen(1))
-		Expect(w.parts(ctx, "k", id)).To(BeEmpty())
+		w.initUpload(w.alice, "/plain/j", "X-Amz-Object-Lock-Legal-Hold", "ON")
+		Expect(w.send(w.alice, http.MethodPut, "/plain/k?uploadId="+id+"&partNumber=1", "x", "X-Amz-Object-Lock-Legal-Hold", "OFF").Code).To(Equal(200))
+		Expect(w.send(w.alice, http.MethodPut, "/plain/k?uploadId="+id+"&partNumber=2", "x",
+			"X-Amz-Object-Lock-Mode", "COMPLIANCE", "X-Amz-Object-Lock-Retain-Until-Date", "2030-01-01T00:00:00Z").Code).To(Equal(200))
+		Expect(w.uploads(ctx)).To(HaveLen(2))
+		Expect(w.parts(ctx, "k", id)).To(HaveLen(2))
 	})
 
 	Describe("encryption", func() {
@@ -850,7 +850,7 @@ var _ = Describe("multipart handlers", func() {
 			func() *op.UserRecord { return w.bob }, nil, func(string) (string, string, string, []string) {
 				return http.MethodPost, "/plain/j?uploads", "", []string{"X-Amz-Tagging", "a=b&"}
 			}, 403, "AccessDenied"),
-		Entry("an UploadPart's legal hold on a bucket with object lock, refused once authorized",
+		Entry("an UploadPart's legal hold on a bucket with object lock, from a requester refused",
 			func() *op.UserRecord { return w.bob }, func(ctx context.Context) {
 				w.setBucketInfo(ctx, func(i *meta.BucketInfo) { i.Flags |= meta.BucketObjLockEnabled | meta.BucketVersioned })
 			}, func(id string) (string, string, string, []string) {

@@ -27,6 +27,10 @@ type InitMultipart struct {
 	Tags *tags.Set
 	// StorageClass is x-amz-storage-class, "" when absent.
 	StorageClass string
+	// Retention and LegalHold are the upload's, which its completion writes
+	// as the object's (UploadParams), each nil for none.
+	Retention *meta.ObjectRetention
+	LegalHold *meta.ObjectLegalHold
 	// Params, when set, is the protocol's get_params, which
 	// RGWInitMultipart::execute runs once the requester is authorized
 	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6299 at v19.2.6,
@@ -64,9 +68,15 @@ func (o *InitMultipart) Init(ctx context.Context, r *Request) error { return loa
 
 // VerifyPermission is RGWInitMultipart::verify_permission
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6271-L6286 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6941-L6956 at v20.2.4).
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6941-L6956 at v20.2.4),
+// then the permissions the request's object-lock headers need, which the
+// upload's completion stores on the object (verifyLockHeaders); radosgw
+// checks neither.
 func (o *InitMultipart) VerifyPermission(ctx context.Context, r *Request) error {
-	return VerifyBucketPermission(ctx, r, policy.S3PutObject, acl.PermFor(policy.S3PutObject))
+	if err := VerifyBucketPermission(ctx, r, policy.S3PutObject, acl.PermFor(policy.S3PutObject)); err != nil {
+		return err
+	}
+	return verifyLockHeaders(ctx, r)
 }
 
 // Execute is RGWInitMultipart::execute
@@ -85,7 +95,11 @@ func (o *InitMultipart) VerifyPermission(ctx context.Context, r *Request) error 
 // CreateMultipartUpload, whose ACL the completed object takes
 // (docs/differences.md). The upload's attrs are the request's with the policy
 // and, when the request tags the object with any tag, the tag set, and the
-// upload is created for the requester on the destination placement. radosgw
+// upload is created for the requester on the destination placement, holding
+// Retention and LegalHold, as RGWInitMultipart::execute hands obj_retention
+// and obj_legal_hold to the upload
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6336-L6338 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7004-L7012 at v20.2.4). radosgw
 // ends a request without a key there with success and no upload, where no S3
 // route reaches it; rgw-go answers InvalidArgument.
 func (o *InitMultipart) Execute(ctx context.Context, r *Request) error {
@@ -126,6 +140,7 @@ func (o *InitMultipart) Execute(ctx context.Context, r *Request) error {
 	}
 	up, err := r.Env.Multipart.CreateUpload(ctx, r.BucketRec, r.Object, UploadParams{
 		Owner: r.Identity.Owner, OwnerName: ownerName, Placement: o.dest, Attrs: attrs, Checksum: uc,
+		Retention: o.Retention, LegalHold: o.LegalHold,
 	})
 	if err != nil {
 		return err

@@ -298,18 +298,16 @@ var _ = Describe("CompleteMultipart", func() {
 		Expect(op.Run(ctx, &op.CompleteMultipart{UploadID: "2~nope"}, f.bodyReq(http.MethodPost, "k", completeDoc(xmlPart("1", "x"))))).To(MatchError(op.ErrCompletionInProgress))
 	})
 
-	DescribeTable("refuses a completion on a bucket with object lock with 501 NotImplemented before it reads the body",
+	DescribeTable("completes an upload on a bucket with object lock, its document read as on any other bucket",
 		func(ctx SpecContext, flags uint32) {
 			f.setBucketFlags(ctx, flags)
-			stub := &opfakes.FakeMultipartStore{}
-			f.env.Multipart = stub
 			Expect(op.Run(ctx, &op.CompleteMultipart{UploadID: id}, f.bodyReq(http.MethodPost, "k", "<CompleteMultipartUpload/>"))).
-				To(MatchError(op.ErrNotImplemented), "a document with no part is not MalformedXML here")
-			r := f.req(http.MethodPost, "plain", "k")
-			r.Body, r.ContentLength = failingReader{}, 1
-			r.Header.Set("Content-Length", "1")
-			Expect(op.Run(ctx, &op.CompleteMultipart{UploadID: id}, r)).To(MatchError(op.ErrNotImplemented))
-			Expect(stub.Invocations()).To(BeEmpty())
+				To(MatchError(op.ErrMalformedXML))
+			o := &op.CompleteMultipart{UploadID: id}
+			Expect(op.Run(ctx, o, f.bodyReq(http.MethodPost, "k", onePart(ctx)))).To(Succeed())
+			Expect(o.ETag).To(HaveSuffix("-1"))
+			_, err := f.upload(ctx, "k", id)
+			Expect(err).To(MatchError(op.ErrNoSuchUpload), "the completion took the upload")
 		},
 		Entry("a versioned bucket with object lock", uint32(meta.BucketVersioned|meta.BucketObjLockEnabled)),
 		Entry("the object-lock flag alone", uint32(meta.BucketObjLockEnabled)),

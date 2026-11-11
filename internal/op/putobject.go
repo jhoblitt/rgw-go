@@ -135,9 +135,14 @@ func (o *PutObject) Init(ctx context.Context, r *Request) error {
 // VerifyPermission is RGWPutObj::verify_permission for a PUT without a copy
 // source
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3982-L3985 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4191-L4194 at v20.2.4).
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4191-L4194 at v20.2.4),
+// then the permissions the request's object-lock headers need
+// (verifyLockHeaders), which radosgw does not check.
 func (o *PutObject) VerifyPermission(ctx context.Context, r *Request) error {
-	return VerifyBucketPermission(ctx, r, policy.S3PutObject, acl.PermFor(policy.S3PutObject))
+	if err := VerifyBucketPermission(ctx, r, policy.S3PutObject, acl.PermFor(policy.S3PutObject)); err != nil {
+		return err
+	}
+	return verifyLockHeaders(ctx, r)
 }
 
 // Execute first makes, in radosgw's order, the checks of stored state that
@@ -163,10 +168,12 @@ func (o *PutObject) VerifyPermission(ctx context.Context, r *Request) error {
 // and, when the request tags the object with any tag, the tag set
 // (encode_obj_tags_attr,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.h#L2247-L2255 at v19.2.6).
-// The write tag is the request id. A bucket with object lock or a default
-// encryption is refused before rgw_max_put_size (objectLockUnserved,
-// bucketEncryptionUnserved), but not to an append: radosgw refuses one on a
-// versioned bucket, as every lock bucket is, before it meets either.
+// The write tag is the request id. A bucket with a default encryption is
+// refused before rgw_max_put_size (bucketEncryptionUnserved), but not an
+// append, to which radosgw applies no encryption
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4349 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4565 at v20.2.4)
+// and which appendUnserved refuses.
 func (o *PutObject) Execute(ctx context.Context, r *Request) error {
 	if err := checkDestPlacement(r, o.StorageClass); err != nil {
 		return err
@@ -184,9 +191,6 @@ func (o *PutObject) Execute(ctx context.Context, r *Request) error {
 		return fmt.Errorf("%w: a public acl under a block of public acls", ErrAccessDenied)
 	}
 	if !o.Append {
-		if err := objectLockUnserved(r.BucketRec); err != nil {
-			return err
-		}
 		if err := bucketEncryptionUnserved(r.BucketRec); err != nil {
 			return err
 		}

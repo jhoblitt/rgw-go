@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -95,6 +96,23 @@ var _ = Describe("InitMultipart", func() {
 		up, err := f.upload(ctx, "k", o.UploadID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(up.Placement).To(Equal(meta.PlacementRule{Name: "default-placement", StorageClass: meta.StorageClassStandard}))
+	})
+	It("hands the store its retention and legal hold as the upload's, and none when it has none", func(ctx SpecContext) {
+		stub := &opfakes.FakeMultipartStore{}
+		stub.CreateUploadReturns(&op.Upload{ID: "2~x"}, nil)
+		f.env.Multipart = stub
+		retention := &meta.ObjectRetention{Mode: "COMPLIANCE", RetainUntil: time.Date(2030, 1, 2, 3, 4, 5, 6, time.UTC)}
+		hold := &meta.ObjectLegalHold{Status: "ON"}
+		o := &op.InitMultipart{ACL: acl.DefaultPolicy(f.alice.Owner, "Alice"), Retention: retention, LegalHold: hold}
+		Expect(op.Run(ctx, o, f.req(http.MethodPost, "plain", "k"))).To(Succeed())
+		Expect(op.Run(ctx, &op.InitMultipart{ACL: acl.DefaultPolicy(f.alice.Owner, "Alice")}, f.req(http.MethodPost, "plain", "j"))).To(Succeed())
+		Expect(stub.CreateUploadCallCount()).To(Equal(2))
+		_, _, _, p := stub.CreateUploadArgsForCall(0)
+		Expect(p.Retention).To(Equal(retention))
+		Expect(p.LegalHold).To(Equal(hold))
+		_, _, _, p = stub.CreateUploadArgsForCall(1)
+		Expect(p.Retention).To(BeNil())
+		Expect(p.LegalHold).To(BeNil())
 	})
 	It("authorizes s3:PutObject on the bucket with its ACL permission", func(ctx SpecContext) {
 		authz := &opfakes.FakeAuthorizer{}
