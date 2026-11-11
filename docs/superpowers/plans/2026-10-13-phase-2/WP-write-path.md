@@ -1193,6 +1193,32 @@ Found by WP-13's adversarial review (L2), and numbered here before WP-13 merged 
   serves; the registry entry's rgw-go line says rgw-go requires both.
 - **Depends on:** WP-13. **PR:** one. **Brief:** about 40 lines.
 
+### Task WP-26: CompleteMultipartUpload hides an encrypted upload's checksum from a requester without its key
+
+Found by WP-13's scoped re-review (N7), and numbered here before WP-13 merged (PP-12).
+
+- **Layer:** S3 handler and op. **Files:** `internal/s3/multipart.go` (CompleteMultipartUpload's
+  response), the decision WP-13 gives ListParts (`internal/op/listparts.go`), their specs;
+  `docs/differences.md`; the registry entry WP-13's PR adds. **Cluster:** no.
+- **Behaviour:**
+  1. CompleteMultipartUpload's response carries the upload's combined checksum and its
+     `ChecksumType` under the rule WP-13 gives ListParts: for an upload created with SSE-C only
+     when the request carries SSE-C headers whose key matches the upload's, honouring
+     `rgw_crypt_require_ssl` as GET does, and for an upload created with SSE-KMS never. The
+     completion itself is unchanged: it succeeds or fails as it does today and stores the same
+     checksum. radosgw renders the checksum whatever the request carries
+     ([rgw_rest_s3.cc:4635-4639](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4635-L4639)),
+     where AWS asks for the SSE-C key or `kms:Decrypt` on that call (cite the documentation at
+     implementation).
+  2. rgw-go answers every encryption write 501 today, so only an upload radosgw began on a
+     shared zone reaches the rule.
+- **Specs:** per release, an SSE-C upload completed with the matching key, a wrong key, no key,
+  and over plain HTTP with `rgw_crypt_require_ssl` set; an SSE-KMS upload; an unencrypted upload,
+  unchanged.
+- **Exclusions and registry:** a `docs/differences.md` entry, since rgw-go withholds what radosgw
+  shows; the registry entry's rgw-go line says rgw-go hides it.
+- **Depends on:** WP-13. **PR:** one. **Brief:** about 40 lines.
+
 ## Order
 
 Everything starts after the index's deferred benchmark run and the shared tasks it names.
@@ -1205,7 +1231,7 @@ Everything starts after the index's deferred benchmark run and the shared tasks 
 | 4 | WP-6, WP-8 | WP-3 and WP-5; WP-5 and WP-10 (b) |
 | 5 | WP-7, WP-9, WP-11 | WP-6, V11 and V14a; WP-8; WP-8 and WP-10 (b) |
 | 6 | WP-12, then WP-13 | WP-9; WP-12, WP-7 and V14a |
-| 7 | WP-25 | WP-13 |
+| 7 | WP-25, WP-26 | WP-13 |
 | cluster, one at a time | WP-24, WP-15, WP-14 | WP-19 and WP-21; WP-8 to WP-11 and WP-13; WP-6 to WP-13, WP-22, T-1, and BC-34 or the POST line deselected |
 
 - Wave 1 is wider than the subagent budget allows at once; the controller starts WP-10 (a),
