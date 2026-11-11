@@ -7,7 +7,10 @@ package goceph
 // the link names, so in the loader's global scope tcmalloc's malloc and free
 // come before libc's and every object binds to them; checkTcmalloc pins the
 // binding. --no-as-needed keeps the entry without relying on the link
-// resolving a reference to it, as an --as-needed default would.
+// resolving a reference to it, as an --as-needed default would. The -l:
+// form names the versioned file, since the library sets ship no unversioned
+// link; go1.27.4's cgo flag check refuses it unless CGO_LDFLAGS_ALLOW admits
+// it, which the Makefile and the builder image set.
 
 /*
 #cgo LDFLAGS: -Wl,--push-state -Wl,--no-as-needed -l:libtcmalloc.so.4 -Wl,--pop-state

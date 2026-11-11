@@ -7,6 +7,10 @@ MODULES ?= .
 # go-ceph's async completions and op steps rgw-go uses sit behind ceph_preview.
 # A comma-separated list, as go build -tags takes it.
 GO_TAGS ?= ceph_preview
+# go1.27.4 refuses the -l: form in a #cgo directive unless it is allowed;
+# internal/radosclient/goceph/tcmalloc.go names libtcmalloc.so.4 that way.
+CGO_LDFLAGS_ALLOW ?= -l:libtcmalloc\.so\.4
+export CGO_LDFLAGS_ALLOW
 GOBIN ?= $(shell go env GOPATH)/bin
 
 .DEFAULT_GOAL := help
