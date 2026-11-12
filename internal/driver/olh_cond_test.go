@@ -671,6 +671,31 @@ var _ = Describe("a conditional link", func() {
 			})
 		})
 
+		It("is evaluated on no head when another reader's replay clears the OLH before the follow's head op", func(ctx SpecContext) {
+			Expect(s.UnlinkObjInstanceForTest(ctx, rec, version("v1"), driver.OLHUnlink{SkipUpdate: true})).To(Succeed(),
+				"a stopped writer's unlink of the key's last version, logged and never replayed")
+			c.BeforeWrite(testDataPool, "", olhOID, func(*fakerados.Object) {
+				// The follow's apply is the first write to the OLH head;
+				// another reader applies the same log first and clears the
+				// OLH.
+				c.BeforeWrite(testDataPool, "", olhOID, nil)
+				h, err := s.ReadOLHHeadForTest(ctx, rec, version(""))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(s.UpdateOLHForTest(ctx, rec, h)).To(Succeed())
+				Expect(olhHead()).To(BeNil())
+			})
+			var seen []bool
+			cond := func(ctx context.Context, cur *op.ObjectState) (driver.OLHPass, error) {
+				seen = append(seen, cur.Exists)
+				return ifNoneMatchAny(ctx, cur)
+			}
+			Expect(link(ctx, "c", cond)).To(Succeed())
+			Expect(seen).To(Equal([]bool{false}), "evaluated once, on the head read again and found gone")
+			Expect(versionHead("v1")).To(BeNil())
+			Expect(listed()).To(Equal([]string{"c"}))
+			current("c")
+		})
+
 		It("removes its version when the context ends before an attempt's head read", func(ctx SpecContext) {
 			v := write(ctx, "c")
 			wctx, cancel := context.WithCancel(ctx)

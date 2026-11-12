@@ -187,6 +187,28 @@ func rgwRaceEntries() []TableEntry {
 	return out
 }
 
+// beforeReplayHeadOp arms fn to run once, before the first later write op on
+// the OLH head oid that meets the head holding n pending attrs: once n
+// modifications have inited and none has been applied, the replay's head op
+// of the writer that inited last.
+func beforeReplayHeadOp(c *fakerados.Cluster, oid string, n int, fn func()) {
+	c.BeforeWrite(testDataPool, "", oid, func(o *fakerados.Object) {
+		if o == nil {
+			return
+		}
+		held := 0
+		for name := range o.Xattrs {
+			if strings.HasPrefix(name, meta.AttrOLHPendingPrefix) {
+				held++
+			}
+		}
+		if held == n {
+			c.BeforeWrite(testDataPool, "", oid, nil)
+			fn()
+		}
+	})
+}
+
 // olhVerGuard is the olh.ver an apply's head op w compares, its second step.
 func olhVerGuard(w fakerados.RecordedWrite) string {
 	GinkgoHelper()
@@ -698,6 +720,19 @@ var _ = Describe("the versioned link and unlink", func() {
 			Expect(versionHead("v1")).To(BeNil())
 		})
 
+		It("succeeds when another writer's replay applies its link and removes the OLH before its own replay writes the head", func(ctx SpecContext) {
+			v := write(ctx, "v1")
+			beforeReplayHeadOp(c, olhHeadOID(version("")), 1, func() {
+				Expect(unlink(ctx, "v1", driver.OLHUnlink{})).To(Succeed(), "the delete of the version the write linked")
+				Expect(olhHead()).To(BeNil(), "the delete's replay applied the link and the unlink and cleared the OLH")
+			})
+			Expect(s.SetOLHForTest(ctx, rec, v, driver.OLHLink{})).To(Succeed())
+			settle(s)
+			Expect(versionHead("v1")).To(BeNil())
+			Expect(olhHead()).To(BeNil())
+			Expect(c.Object(rookIndexPool, "", shard).Omap).To(BeEmpty())
+		})
+
 		Describe("a link at an epoch below the OLH entry's", func() {
 			BeforeEach(func(ctx SpecContext) {
 				put(ctx, "v1")
@@ -1003,6 +1038,19 @@ var _ = Describe("the versioned link and unlink", func() {
 			Expect(unlink(ctx, "v2", driver.OLHUnlink{})).To(Succeed())
 			Expect(unlink(ctx, "v1", driver.OLHUnlink{})).To(Succeed())
 			settle(s)
+			Expect(olhHead()).To(BeNil())
+			Expect(c.Object(rookIndexPool, "", shard).Omap).To(BeEmpty())
+		})
+
+		It("succeeds when another replay applies its unlink of the key's last version and removes the OLH before its own replay writes the head", func(ctx SpecContext) {
+			Expect(unlink(ctx, "v2", driver.OLHUnlink{})).To(Succeed())
+			beforeReplayHeadOp(c, olhHeadOID(version("")), 1, func() {
+				Expect(update(ctx)).To(Succeed(), "a read's replay of the unlink")
+				Expect(olhHead()).To(BeNil(), "the read's replay cleared the OLH")
+			})
+			Expect(unlink(ctx, "v1", driver.OLHUnlink{})).To(Succeed())
+			settle(s)
+			Expect(versionHead("v1")).To(BeNil())
 			Expect(olhHead()).To(BeNil())
 			Expect(c.Object(rookIndexPool, "", shard).Omap).To(BeEmpty())
 		})

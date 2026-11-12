@@ -212,6 +212,47 @@ var _ = Describe("DeleteObjects over the RADOS store on a versioned bucket", fun
 		oneByOne(ctx, "single", inOrder()...)
 		expectSameState(ctx, groupedRec, single, false)
 	})
+	// Another request's replay can apply every delete of a name and clear its
+	// OLH between the last delete's log read and its head op, as
+	// test_versioning_concurrent_multi_object_delete's five requests do;
+	// radosgw's handle_individual_object answers the head op's ENOENT as
+	// success
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6908-L6910 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7836-L7838 at v20.2.4).
+	It("answers every key Deleted when another replay removes the OLH before the last delete's replay writes the head", func(ctx SpecContext) {
+		rec := bucket(ctx, "grouped")
+		beforeReplayHeadOp(c, rec.Info.Bucket.Marker+"_k", 3, func() {
+			st, err := s.StatObject(ctx, rec, meta.ObjKey{Name: "k"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Exists).To(BeFalse(), "the read's replay removed every version and cleared the OLH")
+			Expect(c.Object(testDataPool, "", rec.Info.Bucket.Marker+"_k")).To(BeNil())
+		})
+		results := multiDelete(ctx, "grouped", "1",
+			op.DeleteObjectsEntry{Key: meta.ObjKey{Name: "k", Instance: "v1"}},
+			op.DeleteObjectsEntry{Key: meta.ObjKey{Name: "k", Instance: "v2"}},
+			op.DeleteObjectsEntry{Key: meta.ObjKey{Name: "k", Instance: "v3"}},
+		)
+		for _, res := range results {
+			Expect(res.Err).NotTo(HaveOccurred(), "%s", res.Key)
+		}
+		Expect(listed(rec, "k")).To(BeEmpty())
+		Expect(c.Object(testDataPool, "", rec.Info.Bucket.Marker+"_k")).To(BeNil())
+	})
+	It("answers a DeleteObject of the key's last version 204 when another replay removes the OLH before its own replay writes the head", func(ctx SpecContext) {
+		rec := bucket(ctx, "single")
+		oneByOne(ctx, "single", meta.ObjKey{Name: "k", Instance: "v1"}, meta.ObjKey{Name: "k", Instance: "v2"})
+		beforeReplayHeadOp(c, rec.Info.Bucket.Marker+"_k", 1, func() {
+			Expect(s.StatObject(ctx, rec, meta.ObjKey{Name: "k"})).To(HaveField("Exists", BeFalse()), "the read's replay cleared the OLH")
+		})
+		o := &op.DeleteObject{}
+		r := &op.Request{Method: http.MethodDelete, Bucket: "single", Object: meta.ObjKey{Name: "k", Instance: "v3"}, Identity: alice, Env: env, Header: http.Header{}, Query: url.Values{}}
+		Expect(op.Run(ctx, o, r)).To(Succeed())
+		Expect(o.VersionID).To(Equal("v3"), "x-amz-version-id names the version removed, where radosgw sends none")
+		Expect(o.DeleteMarker).To(BeFalse())
+		settle(s)
+		Expect(listed(rec, "k")).To(BeEmpty())
+		Expect(c.Object(testDataPool, "", rec.Info.Bucket.Marker+"_k")).To(BeNil())
+	})
 	// handle_individual_object answers a key whose delete fails before
 	// delete_obj runs, so the skipped deletes of its name stay pending
 	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6837-L6847 at v19.2.7,

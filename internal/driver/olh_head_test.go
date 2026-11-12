@@ -736,6 +736,29 @@ var _ = Describe("the OLH head operations", func() {
 			Expect(head().Xattrs).To(HaveKeyWithValue(meta.AttrOLHVer, []byte("2")))
 		})
 
+		// Another replay applied the log, taking the writer's pending attr,
+		// and cleared the OLH, removing its head: the head op's compares
+		// meet no object.
+		It("is ECANCELED, creating nothing, when another replay removed the head since it was read", func(ctx SpecContext) {
+			olhHead("2", info("v1", false), withPending(tagP))
+			st := state()
+			c.Remove(testDataPool, "", oid)
+			_, err := s.ApplyOLHLogForTest(ctx, idx, st, map[uint64][]rgwcls.OLHLogEntry{3: {unlink(tagP), removal("v1", tagP)}}, tagP, nil)
+			Expect(err).To(MatchError(radosclient.ErrCanceled))
+			Expect(head()).To(BeNil())
+			Expect(idx.Methods()).To(Equal([]string{"removeInstance"}), "no clear or trim after the head op")
+		})
+
+		It("returns a data pool that does not open as its own ENOENT, not as a removed head", func(ctx SpecContext) {
+			olhHead("2", info("v1", false), withPending(tagP))
+			st := state()
+			c.FailPool(testDataPool)
+			_, err := s.ApplyOLHLogForTest(ctx, idx, st, map[uint64][]rgwcls.OLHLogEntry{3: {link("v2", tagP)}}, tagP, nil)
+			Expect(err).To(MatchError(radosclient.ErrNotFound))
+			Expect(err).NotTo(MatchError(radosclient.ErrCanceled))
+			Expect(head().Xattrs).To(HaveKeyWithValue(meta.AttrOLHVer, []byte("2")))
+		})
+
 		DescribeTable("replays LINK_OLH by epoch, then by instance at the head's own epoch",
 			func(ctx SpecContext, cur string, epoch uint64, instance, want string) {
 				olhHead("5", info(cur, false), nil)

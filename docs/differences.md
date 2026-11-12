@@ -10584,6 +10584,65 @@ does the following.
   that came after the deletion leaves. A versioned delete answers the same
   ENOENT NoSuchKey, as radosgw's does: the key it names has no versions
   left.
+- **A versioned write or delete whose replay finds the OLH head removed
+  succeeds.** Once a versioned link or unlink lands, its writer replays the
+  key's pending log. Another writer's replay can apply that log first, the
+  writer's own entry with it, removing every pending attr the log names,
+  and, when the log ends with the key's last version unlinked, clear the
+  OLH, which removes the key's OLH head
+  ([rgw_rados.cc:8505-8507](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8505-L8507) and
+  [rgw_rados.cc:8550-8556](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8550-L8556),
+  [rgw_rados.cc:9251-9253](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9251-L9253) and
+  [rgw_rados.cc:9296-9302](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9296-L9302)).
+  The writer's own head op then meets no object, which the OSD answers
+  ENOENT, and radosgw's `apply_olh_log` returns it
+  ([rgw_rados.cc:8543-8548](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8543-L8548),
+  [rgw_rados.cc:9289-9294](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9289-L9294)).
+  `set_olh` and `unlink_obj_instance` take the ECANCELED of the same race,
+  the other replay having moved the head on without clearing it, for
+  success, and return the ENOENT
+  ([rgw_rados.cc:8752-8759](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8752-L8759) and
+  [rgw_rados.cc:8855-8863](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8855-L8863),
+  [rgw_rados.cc:9498-9505](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9498-L9505) and
+  [rgw_rados.cc:9601-9609](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9601-L9609)).
+  So radosgw answers a PutObject whose version it wrote and linked 404
+  NoSuchKey, and fails a CopyObject or CompleteMultipartUpload likewise
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's versioned write fails when
+  another replay clears the key's OLH before its own replay writes the
+  head](ceph-upstream-bugs.md#radosgws-versioned-write-fails-when-another-replay-clears-the-keys-olh-before-its-own-replay-writes-the-head)"),
+  and a DeleteObject of the version it unlinked 204 without
+  `x-amz-version-id`, and for a delete marker's version without
+  `x-amz-delete-marker` either: `delete_obj` sets the version only after
+  the unlink succeeds, and `RGWDeleteObj::execute` keeps the version and
+  the marker flag only from a delete that succeeded
+  ([rgw_rados.cc:5944-5952](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5944-L5952) and
+  [rgw_op.cc:5291-5295](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5291-L5295),
+  [rgw_rados.cc:6556-6564](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6556-L6564) and
+  [rgw_op.cc:5680-5684](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5680-L5684)).
+  A delete marker's own creation meets the race too, when a delete of the
+  marker's version unlinks it before the marker's replay writes the head,
+  and radosgw answers that DeleteObject 204 with neither header, as
+  `delete_obj` returns `set_olh`'s error
+  ([rgw_rados.cc:5899-5904](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5899-L5904),
+  [rgw_rados.cc:6511-6516](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6511-L6516)).
+  A DeleteObjects key answers Deleted, as `handle_individual_object` turns
+  the ENOENT into success
+  ([rgw_op.cc:6908-6910](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6908-L6910),
+  [rgw_op.cc:7836-7838](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7836-L7838)),
+  and for a delete marker it removed with an empty
+  `DeleteMarkerVersionId`. rgw-go's `applyOLHLog`
+  (`internal/driver/olh_head.go`) answers that ENOENT as ECANCELED, so the
+  replay ends as it ends for the ECANCELED of the race: it reads the head
+  again, finds none, and the writer takes the ECANCELED for success. The
+  write answers with its version; the DeleteObject 204 with
+  `x-amz-version-id`, and `x-amz-delete-marker: true` for a marker's
+  version; a delete marker's creation with the marker's version id and
+  `x-amz-delete-marker: true`; and the DeleteObjects key Deleted with a
+  removed marker's version id. Both gateways answer so when the other
+  replay leaves the head in place, and the RADOS state is the other
+  replay's either way. s3-tests' test_versioning_concurrent_multi_object_delete,
+  test_versioned_concurrent_object_create_concurrent_remove and
+  test_versioned_concurrent_object_create_and_remove meet the race.
 - **A versioned link or unlink that logs nothing removes its own pending
   attr.** radosgw's `set_olh` records a pending modification on the key's
   OLH head before its link, and only the replay of the link's log entry
