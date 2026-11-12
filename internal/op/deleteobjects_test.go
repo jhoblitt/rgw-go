@@ -2,6 +2,7 @@ package op_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -405,6 +406,149 @@ var _ = Describe("DeleteObjects", func() {
 		Expect(got["race"]).To(MatchError(op.ErrConcurrentModification))
 		Expect(got["gone"]).NotTo(HaveOccurred())
 		Expect(got["boom"]).To(MatchError("boom"))
+	})
+	// The response names a failed key's code alone, so the log is where its
+	// cause goes: at the level WriteError logs a request's failure at, for at
+	// most a bounded number of keys a request, with what the client sent
+	// bounded too.
+	Describe("the log of the keys it reports failed", func() {
+		const (
+			keyMsg     = "multi-object delete failed for a key"
+			summaryMsg = "multi-object delete failed for some keys"
+		)
+		// records is the JSON records logs holds whose message is msg.
+		records := func(logs fmt.Stringer, msg string) []map[string]any {
+			GinkgoHelper()
+			var out []map[string]any
+			for line := range strings.Lines(logs.String()) {
+				var rec map[string]any
+				Expect(json.Unmarshal([]byte(line), &rec)).To(Succeed(), "%q", line)
+				if rec["msg"] == msg {
+					out = append(out, rec)
+				}
+			}
+			return out
+		}
+		// failWith makes the store fail each key the way errFor says, nil
+		// for a delete that succeeds.
+		failWith := func(errFor func(key meta.ObjKey) error) {
+			stub := &opfakes.FakeObjectStore{}
+			stub.DeleteObjectStub = func(_ context.Context, _ *op.BucketRecord, key meta.ObjKey, _ op.DeleteParams) (*op.DeleteObjectResult, error) {
+				if err := errFor(key); err != nil {
+					return nil, err
+				}
+				return &op.DeleteObjectResult{}, nil
+			}
+			f.env.Objects = stub
+		}
+
+		It("names the bucket, the key, its version, the code and the cause of each, and counts them by code", func(ctx SpecContext) {
+			logs := captureDebugLogs()
+			failWith(func(key meta.ObjKey) error {
+				switch key.Name {
+				case "boom":
+					return errors.New("the OSD went away")
+				case "stale":
+					return fmt.Errorf("the ETag differs: %w", op.ErrPreconditionFailed)
+				case "gone":
+					return fmt.Errorf("object gone: %w", op.ErrNoSuchKey)
+				}
+				return nil
+			})
+			es := entriesOf("boom", "stale", "gone", "fine", "")
+			es[0].Key.Instance = "v1"
+			Expect(op.Run(ctx, m.op(es, nil), f.multiReq("x"))).To(Succeed())
+			Expect(records(logs, keyMsg)).To(ConsistOf(
+				SatisfyAll(
+					HaveKeyWithValue("level", "ERROR"),
+					HaveKeyWithValue("bucket", "plain"),
+					HaveKeyWithValue("key", "boom"),
+					HaveKeyWithValue("key_len", BeEquivalentTo(4)),
+					HaveKeyWithValue("instance", "v1"),
+					HaveKeyWithValue("code", "InternalError"),
+					HaveKeyWithValue("error", "the OSD went away"),
+					HaveKeyWithValue("error_len", BeEquivalentTo(len("the OSD went away"))),
+				),
+				SatisfyAll(
+					HaveKeyWithValue("level", "DEBUG"),
+					HaveKeyWithValue("key", "stale"),
+					HaveKeyWithValue("instance", ""),
+					HaveKeyWithValue("code", "PreconditionFailed"),
+					HaveKeyWithValue("error", ContainSubstring("the ETag differs")),
+				),
+				SatisfyAll(
+					HaveKeyWithValue("level", "DEBUG"),
+					HaveKeyWithValue("key", ""),
+					HaveKeyWithValue("code", "InvalidArgument"),
+				),
+			), "a key answered Deleted logs nothing")
+			Expect(records(logs, summaryMsg)).To(ConsistOf(SatisfyAll(
+				HaveKeyWithValue("level", "ERROR"),
+				HaveKeyWithValue("bucket", "plain"),
+				HaveKeyWithValue("failed_by_code", Equal(map[string]any{
+					"InternalError": float64(1), "PreconditionFailed": float64(1), "InvalidArgument": float64(1),
+				})),
+			)))
+		})
+
+		It("logs at most the first few InternalErrors and UnknownErrors of a request at error level and the rest at debug", func(ctx SpecContext) {
+			logs := captureDebugLogs()
+			failWith(func(key meta.ObjKey) error {
+				if strings.HasPrefix(key.Name, "unknown") {
+					return fmt.Errorf("a name too long: %w", op.ErrUnknown)
+				}
+				return errors.New("the OSD went away")
+			})
+			var names []string
+			for i := range op.MaxKeyErrorLogsForTest {
+				names = append(names, fmt.Sprintf("boom-%d", i), fmt.Sprintf("unknown-%d", i))
+			}
+			Expect(op.Run(ctx, m.op(entriesOf(names...), nil), f.multiReq("x"))).To(Succeed())
+			levels := map[string]int{}
+			for _, rec := range records(logs, keyMsg) {
+				levels[fmt.Sprint(rec["level"])]++
+			}
+			Expect(levels).To(Equal(map[string]int{"ERROR": op.MaxKeyErrorLogsForTest, "DEBUG": op.MaxKeyErrorLogsForTest}),
+				"every failed key logged once, the first of them at error level")
+			Expect(records(logs, summaryMsg)).To(ConsistOf(SatisfyAll(
+				HaveKeyWithValue("level", "ERROR"),
+				HaveKeyWithValue("failed_by_code", HaveLen(2)),
+				HaveKeyWithValue("failed_by_code", HaveKeyWithValue("InternalError", BeEquivalentTo(op.MaxKeyErrorLogsForTest))),
+				HaveKeyWithValue("failed_by_code", HaveKeyWithValue("UnknownError", BeEquivalentTo(op.MaxKeyErrorLogsForTest))),
+			)))
+		})
+
+		It("logs the summary at debug when no key failed with an InternalError or UnknownError", func(ctx SpecContext) {
+			logs := captureDebugLogs()
+			failWith(func(meta.ObjKey) error { return op.ErrPreconditionFailed })
+			Expect(op.Run(ctx, m.op(entriesOf("a", "b"), nil), f.multiReq("x"))).To(Succeed())
+			Expect(records(logs, summaryMsg)).To(ConsistOf(SatisfyAll(
+				HaveKeyWithValue("level", "DEBUG"),
+				HaveKeyWithValue("failed_by_code", HaveKeyWithValue("PreconditionFailed", BeEquivalentTo(2))),
+			)))
+		})
+
+		It("cuts the key, its version and the cause at a rune's start within the bound, beside their lengths", func(ctx SpecContext) {
+			logs := captureDebugLogs()
+			long := "a" + strings.Repeat("é", op.MaxLoggedLenForTest)
+			failWith(func(key meta.ObjKey) error { return fmt.Errorf("writing %s: the OSD went away", key.Name) })
+			es := entriesOf(long)
+			es[0].Key.Instance = long
+			Expect(op.Run(ctx, m.op(es, nil), f.multiReq("x"))).To(Succeed())
+			cause := "writing " + long + ": the OSD went away"
+			// Nine bytes of ASCII, "writing a", then two-byte runes, each
+			// starting at an odd offset: the even bound falls inside one in
+			// both strings, and the cut leaves that rune out.
+			Expect(op.MaxLoggedLenForTest % 2).To(BeZero())
+			Expect(records(logs, keyMsg)).To(ConsistOf(SatisfyAll(
+				HaveKeyWithValue("key", long[:op.MaxLoggedLenForTest-1]),
+				HaveKeyWithValue("key_len", BeEquivalentTo(len(long))),
+				HaveKeyWithValue("instance", long[:op.MaxLoggedLenForTest-1]),
+				HaveKeyWithValue("instance_len", BeEquivalentTo(len(long))),
+				HaveKeyWithValue("error", cause[:op.MaxLoggedLenForTest-1]),
+				HaveKeyWithValue("error_len", BeEquivalentTo(len(cause))),
+			)))
+		})
 	})
 	Describe("on a bucket with MFA delete", func() {
 		var stub *opfakes.FakeObjectStore
