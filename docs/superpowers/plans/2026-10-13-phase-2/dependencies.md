@@ -224,6 +224,8 @@ flowchart LR
   t_V15c["V15c"]
   t_V16["V16"]
   t_V17["V17"]
+  t_V18["V18"]
+  t_V19["V19"]
   t_S1["S1"]:::ext
   t_S2["S2"]:::ext
   t_WP_16["WP-16"]:::ext
@@ -287,6 +289,8 @@ flowchart LR
   t_V12a --> t_V16
   t_V15a --> t_V17
   t_V16 --> t_V17
+  t_V16 --> t_V18
+  t_V16 --> t_V19
   click t_V0 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v0-a-failed-class-call-keeps-its-output" "V0: a failed class call keeps its output"
   click t_V1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v1-clsrgw-olh-methods-bi_get-and-the-index-key-encoders" "V1: cls/rgw OLH methods, `bi_get` and the index key encoders"
   click t_V2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v2-meta-olh-head-types-and-bucket-helpers" "V2: meta OLH head types and bucket helpers"
@@ -318,6 +322,8 @@ flowchart LR
   click t_V15c href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v15c-the-registry-after-the-gate" "V15c: the registry after the gate"
   click t_V16 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v16-concurrent-deleteobjects-and-writes-of-one-key" "V16: concurrent DeleteObjects and writes of one key"
   click t_V17 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v17-deleteobjects-runs-a-names-skipped-olh-updates-after-its-last-delete-fails" "V17: DeleteObjects runs a name's skipped OLH updates after its last delete fails"
+  click t_V18 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v18-a-versioned-write-whose-version-is-deleted-before-it-links-succeeds" "V18: a versioned write whose version is deleted before it links succeeds"
+  click t_V19 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v19-another-requests-replay-keeps-a-versioned-deletes-object-lock-guard" "V19: another request's replay keeps a versioned delete's object-lock guard"
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_WP_16 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-16-the-otp-class-client" "WP-16: the otp class client"
@@ -357,6 +363,8 @@ flowchart LR
 - [V15c](V-versioning.md#task-v15c-the-registry-after-the-gate): the registry after the gate
 - [V16](V-versioning.md#task-v16-concurrent-deleteobjects-and-writes-of-one-key): concurrent DeleteObjects and writes of one key
 - [V17](V-versioning.md#task-v17-deleteobjects-runs-a-names-skipped-olh-updates-after-its-last-delete-fails): DeleteObjects runs a name's skipped OLH updates after its last delete fails
+- [V18](V-versioning.md#task-v18-a-versioned-write-whose-version-is-deleted-before-it-links-succeeds): a versioned write whose version is deleted before it links succeeds
+- [V19](V-versioning.md#task-v19-another-requests-replay-keeps-a-versioned-deletes-object-lock-guard): another request's replay keeps a versioned delete's object-lock guard
 
 ### L: object lock
 

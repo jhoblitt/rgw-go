@@ -1695,11 +1695,83 @@ their default.
 - **Specs:** a name with three versions whose last delete names a missing version, and one whose
   last delete fails its precondition: after the request, the deleted versions are gone from a
   read by id and from the versions listing, and the OLH names the version that should be
-  current. A name whose last delete succeeds makes the same calls as before.
+  current. A name whose last delete succeeds makes the same calls as before. Concurrent
+  DeleteObjects of every version of one name leave no OLH head behind, whether the head would
+  have kept a pending attr or none: V16's review found heads of both kinds, the second where a
+  refused clear left the log untrimmed, which the update re-applies from its first entry.
 - **s3-tests:** `test_versioning_multi_object_delete_last_missing` and
   `_last_precondition_failed` cover it. They then pass on rgw-go and fail on radosgw at both
   floors, so each gets a line in both known-differences files.
 - **Depends on:** V16, V15a. **PR split:** one. **Brief:** about 50 lines.
+
+### Task V18: a versioned write whose version is deleted before it links succeeds
+
+- **Layer:** driver. **Files:** the driver's versioned link (`setOLH` and its callers), their
+  specs; `docs/differences.md`, `docs/ceph-upstream-bugs.md`. **Cluster:** no.
+- **Security boundary:** the versioned write is on the request path; adversarial review applies
+  (PP-14).
+- **Found by:** V16's task review (I2), from V16's exploration.
+- **Behaviour:**
+  1. A versioned PutObject, CopyObject or CompleteMultipartUpload whose version a DeleteObject or
+     DeleteObjects naming its id removes between the write's index completion and its OLH link
+     answers success with its version id, and the OLH does not name the removed version. The
+     write first and the delete second accounts for what is stored, so the write took effect and
+     its 404 is wrong; this is V16's ruling for the same shape one step later. A delete reaches
+     the window only by naming an id it knows before the link: V16 found a gateway-generated id
+     is not listed until then, which leaves the null version on a Suspended bucket. V18 first
+     reproduces the window through S3; if no S3 request reaches it, V18 says so in the registry
+     entry and changes nothing else.
+  2. radosgw answers 404 NoSuchKey: the class's link_olh refuses a link whose instance entry is
+     gone
+     ([cls_rgw.cc:1669-1688](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1669-L1688),
+     [cls_rgw.cc:1810-1829](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1810-L1829)),
+     and set_olh returns that ENOENT
+     ([rgw_rados.cc:8715-8736](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8715-L8736),
+     [rgw_rados.cc:9461-9482](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9461-L9482)).
+     rgw-go answers the same today. The difference goes in `docs/differences.md`, and the
+     registry entry V16 adds gets its rgw-go line.
+  3. Only that refusal, with the instance's entry gone, becomes success; every other link failure
+     keeps its answer. The write's tails belong to the delete that removed its version: none is
+     left without a head that names it, and none is removed twice.
+- **Specs:** the delete injected between index completion and link against the emulator, for
+  PutObject and for one of CopyObject or CompleteMultipartUpload: the write answers its version
+  id; the version is gone from a read by id and from the versions listing; the OLH names the
+  version that should be current; no tail of the write is left. A link refused for any other
+  reason answers as before.
+- **s3-tests:** none. The window lies between two RADOS operations inside one request, which a
+  client cannot hit reliably; the driver specs inject it.
+- **Depends on:** V16. **PR split:** one. **Brief:** about 45 lines.
+
+### Task V19: another request's replay keeps a versioned delete's object-lock guard
+
+- **Layer:** driver. **Files:** the OLH replay's removal of an instance, the object-lock guard
+  of a versioned delete, their specs; `docs/differences.md`, `docs/ceph-upstream-bugs.md`.
+  **Cluster:** no.
+- **Security boundary:** the versioned delete and object lock are on the request path;
+  adversarial review applies (PP-14). Triaged not security-relevant (an integrity defect: the
+  deleter was authorized when checked, and cannot time the hold).
+- **Found by:** V16's adversarial review (P1). Derived from the code, unreproduced.
+- **Behaviour:**
+  1. A versioned DeleteObject under object lock holds its removal to the version it checked:
+     its own replay refuses to remove a version whose write tag changed after the check, and the
+     delete re-checks and answers AccessDenied. Retention and legal-hold changes write a fresh
+     write tag, so this catches a hold set after the check. Another request's replay, such as a
+     GET's, applies the same delete's log entry with no guard, and removes the version with the
+     new hold in place; the delete answers 204 and the hold request has answered 200. After
+     this task, no replay removes a version the delete's guard would refuse, and the delete
+     answers as when its own replay refuses it.
+  2. The OLH log keeps radosgw's format byte for byte, so the guard cannot ride in the log
+     entry. If no byte-identical mechanism closes the window, the task narrows it as far as one
+     does, records what remains in `docs/differences.md`, and says why.
+  3. radosgw has no guard at either floor. The registry records that: extend "radosgw's
+     DeleteObject removes the head without checking its write tag" if it is the same mechanism,
+     or add an entry.
+- **Specs:** a hold set between a versioned delete's lock check and its replay, with another
+  request's replay applying the delete's entry first: the version and its hold remain, and the
+  delete answers AccessDenied. The same delete with no hold set still removes the version
+  whichever replay applies it.
+- **s3-tests:** none. The window lies inside one request's replay; the driver specs inject it.
+- **Depends on:** V16. **PR split:** one. **Brief:** about 45 lines.
 
 ### Task V15b: the cross-gateway cases
 
@@ -1774,7 +1846,7 @@ recordings land one at a time through the controller.
 | 8 | V7b, V8b, V8c | V7a, V8a, V9 |
 | 9 | V11, V12b | V7b, V8b |
 | 10 | V12a, V14a | V11, V13d |
-| 11 | V16, then V15a, then V17, then V15b, then V15c | everything above, WP-22 |
+| 11 | V16, then V15a, then V17, then V18, then V19, then V15b, then V15c | everything above, WP-22 |
 
 - V10's recording PR is a cluster task the controller schedules after its first PR merges.
 - The critical path is V1, V3b, V4, V5a, V5b, V5c, V7a, V7b, V11, V14a, V15a. L and C start
