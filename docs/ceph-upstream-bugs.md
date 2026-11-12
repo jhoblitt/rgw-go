@@ -30148,11 +30148,15 @@ Every new entry adds its row to this table, in document order.
   [rgw_rest.h:782-788](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest.h#L782-L788)).
 - **rgw-go:** differs: PutObject and CompleteMultipartUpload send
   `x-amz-version-id: null` for the null version on a bucket whose
-  versioning was ever enabled, and none on a bucket never versioned
-  (`ResponseVersionID`, `internal/op/version.go`; `docs/differences.md`,
-  "Writes name the null version's id and a copy's two versions"). Pinned in
-  `internal/s3/versionedwrite_test.go`, and by the s3-test, whose body
-  rgw-go passes on both releases.
+  versioning was ever set, Suspended alone included, and none on a
+  bucket never versioned (`ResponseVersionID`, `internal/op/version.go`;
+  `docs/differences.md`, "Writes name the null version's id and a copy's
+  two versions"). Pinned in `internal/s3/versionedwrite_test.go`, and by
+  the s3-test, whose body rgw-go passes on both releases. On a bucket set
+  Suspended without ever being Enabled, the s3-tests
+  `test_versioning_bucket_atomic_upload_return_version_id` and
+  `test_versioning_bucket_multipart_upload_return_version_id` expect
+  radosgw's none, so rgw-go fails them on both releases.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V11, 2026-10-27, serving writes on a suspended
   bucket; reproduced through its s3-test on both releases.

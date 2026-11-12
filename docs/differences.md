@@ -8668,10 +8668,10 @@ does the following.
 - **`versionId=null` names the plain object on a bucket whose versioning
   was never enabled.**
   On a bucket whose versioning was never enabled, its flags lacking
-  `BUCKET_VERSIONED`, which suspending versioning keeps set
-  (`rgw_op.cc:2837-2843` at v19.2.6, `:3069-3075` at v20.2.4) and object
-  lock needs (`driver/rados/rgw_rados.cc:2392` and `rgw_op.cc:8232` at
-  v19.2.6, `:2497` and `:9180` at v20.2.4), `versionId=null` names the
+  `BUCKET_VERSIONED`, which PutBucketVersioning sets for Suspended as for
+  Enabled (`rgw_op.cc:2837-2843` at v19.2.6, `:3069-3075` at v20.2.4) and
+  object lock needs (`driver/rados/rgw_rados.cc:2392` and `rgw_op.cc:8232`
+  at v19.2.6, `:2497` and `:9180` at v20.2.4), `versionId=null` names the
   plain object. radosgw takes the null version for it there: its head is
   the plain key's (`rgw_obj_key::get_oid`, `rgw_obj_types.h:226-254` at both
   releases), and the delete and the attr writes clear the instance before
@@ -8977,7 +8977,17 @@ does the following.
   id of the version written: its instance on a bucket whose versioning is
   enabled, `null` for the null version a suspended bucket's write makes,
   and none on a bucket whose versioning was never enabled, where an object
-  has no version (`ResponseVersionID`, `internal/op/version.go`). A
+  has no version (`ResponseVersionID`, `internal/op/version.go`). A bucket
+  set Suspended without ever being Enabled is not one of those:
+  PutBucketVersioning's Suspended sets `BUCKET_VERSIONED` with
+  `BUCKET_VERSIONS_SUSPENDED` whether or not the bucket was ever Enabled
+  ([rgw_op.cc:2842](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2842),
+  [rgw_op.cc:3074](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3074)),
+  and rgw-go names its writes' null version `null` as on any suspended
+  bucket, where radosgw names none, as the s3-tests
+  `test_versioning_bucket_atomic_upload_return_version_id` and
+  `test_versioning_bucket_multipart_upload_return_version_id` expect.
+  Whether Amazon S3 names `null` for such a bucket is not verified. A
   completion that finishes an earlier one of its upload names the version
   that one wrote ("CompleteMultipartUpload finishes an earlier completion
   of its upload instead of writing it again"), and one retried after it

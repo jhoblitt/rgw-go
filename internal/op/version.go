@@ -36,10 +36,10 @@ func writeKey(r *Request) meta.ObjKey {
 // ResponseVersionID is the version id a response names for instance, a
 // version of an object in rec: the instance itself, and for the null version,
 // an empty instance or "null", S3's id "null" on a bucket whose versioning
-// was ever enabled and none on one whose versioning never was, where an
-// object has no version. radosgw sends only a non-empty instance, so no id
-// for the null version (docs/differences.md, "Writes name the null version's
-// id and a copy's two versions").
+// was ever set, Suspended alone included, and none on one whose versioning
+// never was, where an object has no version. radosgw sends only a non-empty
+// instance, so no id for the null version (docs/differences.md, "Writes name
+// the null version's id and a copy's two versions").
 func ResponseVersionID(rec *BucketRecord, instance string) string {
 	switch {
 	case instance != "" && instance != meta.NullInstance:
