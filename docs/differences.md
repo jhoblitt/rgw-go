@@ -7821,10 +7821,15 @@ does the following.
   header where Tentacle does: `true` for a key whose current version is a
   delete marker, which the object store reports (`ObjectState.DeleteMarker`),
   on Squid too ("A key whose current version is a delete marker answers its
-  404 with x-amz-delete-marker: true on Squid too"), and `false` otherwise,
-  for a version named by a requester who may list the bucket but not read
-  the version too, a delete marker's among them, as radosgw follows no olh
-  for a key that names an instance. A requester who may read a delete
+  404 with x-amz-delete-marker: true on Squid too"), and, on Tentacle
+  alone, `false` otherwise, for a version named by a requester who may
+  list the bucket but not read the version too, a delete marker's among
+  them, as radosgw follows no olh for a key that names an instance. On
+  Squid it sends no header there, as v19.2.7 sends `x-amz-delete-marker`
+  in DeleteObject's answer alone
+  ([rgw_rest_s3.cc:3497](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3497);
+  `setMissingDeleteMarker`, `internal/s3/deletemarker.go`). A requester
+  who may read a delete
   marker's version gets 405 instead ("A read naming a delete marker's
   version answers 405 MethodNotAllowed"). A website GET of a missing key
   whose bucket's error document is missing too gets the header twice from
