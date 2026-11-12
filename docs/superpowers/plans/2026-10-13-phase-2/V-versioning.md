@@ -1620,6 +1620,37 @@ their default.
   listed".
 - **Depends on:** V9. **PR split:** one. **Brief:** about 120 lines.
 
+### Task V16: concurrent DeleteObjects and writes of one key
+
+- **Layer:** driver and op, wherever the cause lies. **Files:** the symptoms surface in
+  `internal/op/deleteobjects.go` and `internal/driver/olh_head.go`; the fix and its specs go
+  where the cause is. **Cluster:** yes, to reproduce.
+- **Security boundary:** DeleteObjects and the versioned write are on the request path;
+  adversarial review applies (PP-14).
+- **Found by:** V15a's recording. Both releases' parity runs fail
+  `test_versioning_concurrent_multi_object_delete`, which radosgw passes.
+- **Behaviour:**
+  1. Five concurrent DeleteObjects naming the same 15 versions, three of each of five keys, on
+     an Enabled bucket: every key of every request answers `Deleted`, as on radosgw, where a
+     delete that finds its object gone succeeds
+     ([rgw_op.cc:6908-6910](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6908-L6910),
+     [rgw_op.cc:7836-7838](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7836-L7838)).
+     rgw-go answers a per-key InternalError in every round on both releases, while five
+     concurrent DeleteObject calls of one version do not fail.
+  2. A per-key error that DeleteObjects reports is logged with the key and its cause;
+     `deleteOne` logs none (`internal/op/deleteobjects.go:320-348`).
+  3. The concurrent versioned writes and removes of
+     `test_versioned_concurrent_object_create_concurrent_remove` and `_and_remove` answer no
+     500. Each release's parity run logged twelve "writing the olh head of <bucket>/myobj: ...
+     no such file or directory" (`internal/driver/olh_head.go:687`), which botocore's retries
+     hid. Defect 20's retry (VD-12) is meant to absorb a head that goes before its init; find
+     why it did not. Fix it here if it shares item 1's cause, or number it as its own task.
+- **Specs:** item 1's race against the emulator, failing before the fix; item 3's race likewise
+  once its cause is known; the per-key log line.
+- **s3-tests:** `test_versioning_concurrent_multi_object_delete` covers item 1. Item 3 takes an
+  s3-test with retries off if its cause is separate and a test can reproduce it.
+- **Depends on:** V12a. **PR split:** one. **Brief:** about 50 lines.
+
 ### Task V15a: recording, the versioning s3-tests
 
 - **Layer:** tests (recording). **Files:** the area's lines in the s3-tests selection (after T's
@@ -1636,7 +1667,8 @@ their default.
   `known-differences-squid.txt`; defect 3 needs no line at v19.2.7.
 - **Specs:** the recording itself; rgw-go matches the ledgers except the listed differences.
 - **Exclusions:** none new; each known difference cites the exclusion its task wrote.
-- **Depends on:** V10, V11, V12a, V14a, V14b, WP-22. **PR split:** one. **Brief:** about 80 lines.
+- **Depends on:** V10, V11, V12a, V14a, V14b, V16, WP-22. **PR split:** one. **Brief:** about 80
+  lines.
 
 ### Task V15b: the cross-gateway cases
 
@@ -1711,7 +1743,7 @@ recordings land one at a time through the controller.
 | 8 | V7b, V8b, V8c | V7a, V8a, V9 |
 | 9 | V11, V12b | V7b, V8b |
 | 10 | V12a, V14a | V11, V13d |
-| 11 | V15a, then V15b, then V15c | everything above, WP-22 |
+| 11 | V16, then V15a, then V15b, then V15c | everything above, WP-22 |
 
 - V10's recording PR is a cluster task the controller schedules after its first PR merges.
 - The critical path is V1, V3b, V4, V5a, V5b, V5c, V7a, V7b, V11, V14a, V15a. L and C start
