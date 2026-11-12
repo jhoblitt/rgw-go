@@ -60,7 +60,7 @@ their default.
 | VD-5 | A link or unlink that definitely failed (a class or guard answer) removes the instance the write made, as VD-3 does. An unknown outcome, such as a timeout, never removes anything. | No orphaned instance entry (Review Focus 2); removing after a link that did land would leave a list entry with no head. | V5b |
 | VD-6 | S3 writes and deletes on an object-lock bucket stay 501 until L5b and L4 lift them. | Between this unit and L, a version under retention could be deleted, or written without its default retention. The driver serves every bucket, since lifecycle and the admin paths reach it with their own checks; the S3 ops hold the refusal. | V11, V12a |
 | VD-7 | `x-amz-mfa` is verified once per request in PostAuthInit, whether or not the op needs it, and never fails the request itself. | radosgw's order (§2.8): the code is consumed the same way from either gateway. | V13d |
-| VD-8 | DeleteObjects groups keys by name and skips the OLH update for all but the last of each name. | radosgw's op count, and the same final state (§2.4). | V8a, V12a |
+| VD-8 | DeleteObjects groups keys by name and skips the OLH update for all but the last of each name. When that last delete fails or finds its version gone, the skipped updates still run (V17). | radosgw's op count, and the same final state (§2.4); the floors leave the updates pending, which Ceph main fixed. | V8a, V12a, V17 |
 | VD-9 | The emulator stays Squid's class (no class-side reshard guard, no reshard log), as today. | The guard is the gateway's on both floors (§2.10). | V3a, V3b |
 | VD-10 | The OLH and `bi_get` method names live in V1's own files; `internal/cls/rgw/const.go` is not edited. | `ops_mp.go`'s pattern; no hot file. | V1 |
 | VD-11 | A read whose follow runs the update for a pending modification resolves the current version again from the head as the update left it, where radosgw's `follow_olh` answers the version current before the update; V6 records it as an exclusion. | The correct S3 answer; the second read writes nothing. radosgw's stale answer is a 404 NoSuchKey while the previous version is current, when the update replays the deletion of the current version (`docs/ceph-upstream-bugs.md`, "radosgw's follow_olh answers the version that was current before the replay it runs", which V4 adds). | V6 |
@@ -1670,6 +1670,37 @@ their default.
 - **Depends on:** V10, V11, V12a, V14a, V14b, V16, WP-22. **PR split:** one. **Brief:** about 80
   lines.
 
+### Task V17: DeleteObjects runs a name's skipped OLH updates after its last delete fails
+
+- **Layer:** op and driver. **Files:** `internal/op/deleteobjects.go`, the driver's OLH update
+  seam, their specs; `docs/differences.md`, `docs/ceph-upstream-bugs.md`, both
+  known-differences files. **Cluster:** yes, for the s3-tests.
+- **Security boundary:** DeleteObjects is on the request path; adversarial review applies
+  (PP-14).
+- **Found by:** V15a's task review (I3).
+- **Behaviour:**
+  1. When DeleteObjects deletes several versions of one name, every delete but the name's last
+     skips the OLH update (VD-8). When that last delete fails, or finds its version gone, the
+     name's skipped updates still run, so no version the request reported deleted stays
+     readable. Only names whose earlier deletes skipped the update are touched. This is Ceph
+     main's fix, [7ce6a3740c2](https://github.com/ceph/ceph/commit/7ce6a3740c2) with
+     [d1193f5341c](https://github.com/ceph/ceph/commit/d1193f5341c), merged as
+     [ceph/ceph#72130](https://github.com/ceph/ceph/pull/72130), whose first tag is v22.0.0.
+  2. Both floors leave those updates pending
+     ([rgw_op.cc:6924-6979](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6924-L6979),
+     [rgw_op.cc:7857-7891](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7857-L7891)),
+     and rgw-go reproduces that today. The difference is recorded in `docs/differences.md`,
+     replacing the entry's "as radosgw leaves them", and the registry entry V15a adds gets its
+     rgw-go line.
+- **Specs:** a name with three versions whose last delete names a missing version, and one whose
+  last delete fails its precondition: after the request, the deleted versions are gone from a
+  read by id and from the versions listing, and the OLH names the version that should be
+  current. A name whose last delete succeeds makes the same calls as before.
+- **s3-tests:** `test_versioning_multi_object_delete_last_missing` and
+  `_last_precondition_failed` cover it. They then pass on rgw-go and fail on radosgw at both
+  floors, so each gets a line in both known-differences files.
+- **Depends on:** V16, V15a. **PR split:** one. **Brief:** about 50 lines.
+
 ### Task V15b: the cross-gateway cases
 
 - **Layer:** integration tests. **Files:** the shared-zone suite beside phase 1's cases.
@@ -1743,7 +1774,7 @@ recordings land one at a time through the controller.
 | 8 | V7b, V8b, V8c | V7a, V8a, V9 |
 | 9 | V11, V12b | V7b, V8b |
 | 10 | V12a, V14a | V11, V13d |
-| 11 | V16, then V15a, then V15b, then V15c | everything above, WP-22 |
+| 11 | V16, then V15a, then V17, then V15b, then V15c | everything above, WP-22 |
 
 - V10's recording PR is a cluster task the controller schedules after its first PR merges.
 - The critical path is V1, V3b, V4, V5a, V5b, V5c, V7a, V7b, V11, V14a, V15a. L and C start
