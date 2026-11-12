@@ -10769,7 +10769,10 @@ does the following.
   through the key's OLH, and then links the marker over whatever another
   writer linked since
   ([rgw_rados.cc:5882-5901](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5882-L5901),
-  [rgw_rados.cc:6494-6513](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6494-L6513)).
+  [rgw_rados.cc:6494-6513](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6494-L6513);
+  `docs/ceph-upstream-bugs.md`, "[radosgw's conditional versioned write
+  checks its condition once and links
+  unguarded](ceph-upstream-bugs.md#radosgws-conditional-versioned-write-checks-its-condition-once-and-links-unguarded)").
   rgw-go makes them the marker link's condition (`writeDeleteMarker`,
   `internal/driver/delete_versioned.go`), checked as every conditional
   versioned write's is (`prepareOLHAttempt` and `checkOLHLink`,

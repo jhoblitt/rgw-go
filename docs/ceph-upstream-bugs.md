@@ -27289,6 +27289,15 @@ Every new entry adds its row to this table, in document order.
   concurrent `If-None-Match: *` PutObjects of a new key succeeded in the
   s3-test `test_put_object_versioned_if_none_match_concurrent`
   ([jhoblitt/ceph#27](https://github.com/jhoblitt/ceph/pull/27)).
+  A conditional DeleteObject naming no version on such a bucket writes
+  its delete marker the same way, so concurrent If-Match deletes of the
+  current version can each write a marker; not security-relevant either
+  (the controller, 2026-11-12), as every version stays under the
+  markers. Reproduced in the s3-test
+  `test_delete_object_current_if_match_concurrent`
+  ([jhoblitt/ceph#31](https://github.com/jhoblitt/ceph/pull/31)), whose
+  eight If-Match deletes all wrote a marker on v19.2.7 in both runs of
+  its recording, and on v20.2.4 in one run of two.
 - **Evidence:** paths are under `src/rgw/driver/rados/`.
   - The head write reads the version current on the key's OLH through
     `get_current_version_state`
@@ -27321,6 +27330,18 @@ Every new entry adds its row to this table, in document order.
   - So two `If-None-Match: *` writers that both check before either links
     both write and both link, the second current; and an If-Match writer
     that checks before another writer links its version links over it.
+  - A delete naming no version on a bucket whose versioning is enabled
+    reads the version current on the key's OLH, checks its If-Match,
+    `x-amz-if-match-size` and `x-amz-if-match-last-modified-time` against
+    it in `check_preconditions`, and then links its delete marker through
+    the same `set_olh` with no condition
+    ([rgw_rados.cc:5882-5901](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5882-L5901) at v19.2.7,
+    [rgw_rados.cc:6494-6513](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6494-L6513) at v20.2.4),
+    so deletes that all check before any links all write a marker, and an
+    If-Match delete that checks before another writer links a version
+    writes its marker over that version. Main at 8aa24c51928 keeps that
+    order
+    ([rgw_rados.cc:7096-7118](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_rados.cc#L7096-L7118)).
   - On main, cfe5d0f29a7, merged by
     [ceph/ceph#71584](https://github.com/ceph/ceph/pull/71584) (6483a25aed8),
     and on the tentacle branch its cherry-pick d527075bfe4, merged by
@@ -27352,9 +27373,18 @@ Every new entry adds its row to this table, in document order.
   branch on one whose versioning is suspended, can have its write accepted though another
   writer created or changed the key first. Every version written is kept,
   though on a suspended bucket the null version holds only the last head
-  write's data.
-- **Releases:** v19.2.7 and v20.2.4, for a bucket whose versioning is
-  enabled. For one whose versioning is suspended, main 8aa24c51928 and the tentacle
+  write's data. A client that relies on If-Match to delete only the
+  version it read can have its delete marker written over a version
+  another writer linked since, and concurrent such deletes each add a
+  marker.
+- **Releases:** v19.2.7, v20.2.4 and main at 8aa24c51928, for a bucket
+  whose versioning is enabled, for the PutObject and the delete marker
+  alike: main's PutObject still checks its conditions
+  ([rgw_rados.cc:3473-3483](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_rados.cc#L3473-L3483))
+  and then links through `set_olh` with no condition
+  ([rgw_rados.cc:3706-3708](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_rados.cc#L3706-L3708)),
+  and its delete marker does the same, as above. For a write
+  to one whose versioning is suspended, main 8aa24c51928 and the tentacle
   branch after v20.2.4, which no Squid or Tentacle tag carries yet, and the
   umbrella branch, whose v21.1.2 carries 19bf5e5f63f; v19.2.7 and v20.2.4
   check that write against the OLH head instead ("[radosgw checks a
@@ -27378,13 +27408,20 @@ Every new entry adds its row to this table, in document order.
   only if its condition held when it linked". Pinned in
   `internal/driver/put_versioned_test.go` and
   `internal/driver/olh_cond_test.go`, against a radosgw-shaped writer too,
-  and by the s3-test, whose body rgw-go passes on both releases.
+  and by the s3-test, whose body rgw-go passes on both releases. A
+  conditional delete marker makes its conditions its link's, checked the
+  same way (`writeDeleteMarker`, `internal/driver/delete_versioned.go`;
+  `docs/differences.md`, "A conditional delete marker is checked against
+  the version current when it links"), and rgw-go passes
+  `test_delete_object_current_if_match_concurrent` on both releases.
 - **Upstream:** pending; prior art not searched.
 - **Found:** the phase 2 versioning research, defect 4, 2026-10-13;
   recorded by phase 2 task V7a, 2026-10-22, from the source at v19.2.7 and
   v20.2.4, and extended to main and the tentacle branch by V7a's review;
   rgw-bug-reproduction verified the extension at the source. Reproduced by
-  phase 2 task V11, 2026-10-27, through its s3-test on both releases.
+  phase 2 task V11, 2026-10-27, through its s3-test on both releases. The
+  delete marker: reproduced by phase 2 task V15a's recording of the
+  versioning s3-tests, 2026-11-12, and added by its review.
 
 ## radosgw checks a suspended bucket's write conditions against the OLH head
 
