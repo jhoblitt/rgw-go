@@ -35,7 +35,7 @@ The set's files:
 | File | Unit | Tasks |
 |---|---|---|
 | `00-index.md` | this index, and the shared tasks S1 to S7 | 7 |
-| `V-versioning.md` | the OLH protocol, versioned ops, ListObjectVersions, MFA delete | V0-V15c |
+| `V-versioning.md` | the OLH protocol, versioned ops, ListObjectVersions, MFA delete | V0-V16 |
 | `L-object-lock.md` | object lock: configuration, retention, legal hold, enforcement | L1-L5b |
 | `C-lifecycle.md` | lifecycle configuration and the worker | C1-C13 |
 | `B-bucket-config.md` | CORS, website, encryption configuration, ownership controls, public access block, policy status, POST object | BC-2 to BC-35 |

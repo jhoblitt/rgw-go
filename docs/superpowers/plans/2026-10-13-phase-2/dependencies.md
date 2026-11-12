@@ -222,6 +222,7 @@ flowchart LR
   t_V15a["V15a"]
   t_V15b["V15b"]
   t_V15c["V15c"]
+  t_V16["V16"]
   t_S1["S1"]:::ext
   t_S2["S2"]:::ext
   t_WP_16["WP-16"]:::ext
@@ -278,9 +279,11 @@ flowchart LR
   t_V12a --> t_V15a
   t_V14a --> t_V15a
   t_V14b --> t_V15a
+  t_V16 --> t_V15a
   t_WP_22 --> t_V15a
   t_V15a --> t_V15c
   t_V15b --> t_V15c
+  t_V12a --> t_V16
   click t_V0 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v0-a-failed-class-call-keeps-its-output" "V0: a failed class call keeps its output"
   click t_V1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v1-clsrgw-olh-methods-bi_get-and-the-index-key-encoders" "V1: cls/rgw OLH methods, `bi_get` and the index key encoders"
   click t_V2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v2-meta-olh-head-types-and-bucket-helpers" "V2: meta OLH head types and bucket helpers"
@@ -310,6 +313,7 @@ flowchart LR
   click t_V15a href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v15a-recording-the-versioning-s3-tests" "V15a: recording, the versioning s3-tests"
   click t_V15b href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v15b-the-cross-gateway-cases" "V15b: the cross-gateway cases"
   click t_V15c href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v15c-the-registry-after-the-gate" "V15c: the registry after the gate"
+  click t_V16 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v16-concurrent-deleteobjects-and-writes-of-one-key" "V16: concurrent DeleteObjects and writes of one key"
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_WP_16 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-16-the-otp-class-client" "WP-16: the otp class client"
@@ -347,6 +351,7 @@ flowchart LR
 - [V15a](V-versioning.md#task-v15a-recording-the-versioning-s3-tests): recording, the versioning s3-tests
 - [V15b](V-versioning.md#task-v15b-the-cross-gateway-cases): the cross-gateway cases
 - [V15c](V-versioning.md#task-v15c-the-registry-after-the-gate): the registry after the gate
+- [V16](V-versioning.md#task-v16-concurrent-deleteobjects-and-writes-of-one-key): concurrent DeleteObjects and writes of one key
 
 ### L: object lock
 
