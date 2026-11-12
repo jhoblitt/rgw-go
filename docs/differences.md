@@ -8897,6 +8897,14 @@ does the following.
   runs
   ([rgw_op.cc:6837-6847](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6837-L6847),
   [rgw_op.cc:7765-7775](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7765-L7775)).
+  That is radosgw's defect, fixed on main at ab8073e1816, first tagged in
+  v22.0.0
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's DeleteObjects leaves a
+  name's skipped OLH updates pending when its last delete fails or finds
+  its version
+  gone](ceph-upstream-bugs.md#radosgws-deleteobjects-leaves-a-names-skipped-olh-updates-pending-when-its-last-delete-fails-or-finds-its-version-gone)"),
+  and plan task V17 changes rgw-go to apply a name's skipped updates
+  after its last delete, as the fix does.
   In that window rgw-go's next read answers the version current after its
   replay ("A read that replays a pending modification answers the version
   current after it", above), where a radosgw reader answers the version

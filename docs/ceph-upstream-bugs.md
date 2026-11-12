@@ -517,6 +517,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's versioned write fails when another replay clears the key's OLH before its own replay writes the head](#radosgws-versioned-write-fails-when-another-replay-clears-the-keys-olh-before-its-own-replay-writes-the-head) | [#23579](https://tracker.ceph.com/issues/23579) | none |  |
 | [radosgw's versioned PutObject answers 404 when a delete of its version lands before its link](#radosgws-versioned-putobject-answers-404-when-a-delete-of-its-version-lands-before-its-link) | none | none | ✓ |
 | [cls_rgw's bucket_clear_olh drops a pending log no replay read](#cls_rgws-bucket_clear_olh-drops-a-pending-log-no-replay-read) | none | none | ✓ |
+| [radosgw's DeleteObjects leaves a name's skipped OLH updates pending when its last delete fails or finds its version gone](#radosgws-deleteobjects-leaves-a-names-skipped-olh-updates-pending-when-its-last-delete-fails-or-finds-its-version-gone) | [#80886](https://tracker.ceph.com/issues/80886), [#81649](https://tracker.ceph.com/issues/81649), [#81650](https://tracker.ceph.com/issues/81650) | [ceph/ceph#72130](https://github.com/ceph/ceph/pull/72130), [ceph/ceph#72632](https://github.com/ceph/ceph/pull/72632) |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -33407,3 +33408,83 @@ Every new entry adds its row to this table, in document order.
   `clear_olh` finds [ceph/ceph#72605](https://github.com/ceph/ceph/pull/72605).
 - **Found:** phase 2 Task V16's review, 2026-11-12; derived from the
   source, not reproduced.
+
+## radosgw's DeleteObjects leaves a name's skipped OLH updates pending when its last delete fails or finds its version gone
+
+- **Kind:** defect, S3-correctness, fixed on main at ab8073e1816 and on the
+  umbrella branch.
+  On a bucket whose versioning was ever set, whether or not it was ever
+  Enabled, DeleteObjects skips the OLH update of every delete of a name
+  but its last, and when that last
+  delete makes no update, because it fails its conditions or names a
+  version that is gone, the earlier deletes stay pending: the versions
+  they reported deleted stay readable by their version ids. Not
+  security-relevant (rgw-bug-reproduction's triage, 2026-11-12): a version
+  left readable is readable only by a principal that could read it
+  already, and the trigger needs delete permission. Reproduced on v19.2.7
+  and v20.2.4, in both runs of each release's recording, by the s3-tests
+  `test_versioning_multi_object_delete_last_missing` and
+  `test_versioning_multi_object_delete_last_precondition_failed`: a
+  DeleteObjects removes a key's current version and then names a version
+  that does not exist, or the older version under a wrong ETag, and a GET
+  naming the removed version still succeeds
+  ([test_s3.py:9818](https://github.com/ceph/ceph/blob/358477718367e91a9959ebdf33edfe527ab1f107/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L9818) and
+  [test_s3.py:9851](https://github.com/ceph/ceph/blob/358477718367e91a9959ebdf33edfe527ab1f107/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L9851),
+  at the s3-tests pin 358477718367 on jhoblitt/ceph's rgw-go-s3tests).
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWDeleteMultiObj::handle_objects` takes the versioned path when the
+    bucket's flags hold `BUCKET_VERSIONED`
+    ([rgw_op.cc:7012](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L7012),
+    [rgw_op.cc:7914](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7914);
+    `versioned()` at
+    [rgw_common.h:1074](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L1074),
+    [rgw_common.h:1116](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1116)),
+    which PutBucketVersioning sets for Suspended as for Enabled.
+  - `RGWDeleteMultiObj::handle_versioned_objects` groups the keys by name,
+    deletes all but each name's last with `skip_olh_obj_update`, waits for
+    them, and then deletes each name's last without it
+    ([rgw_op.cc:6924-6979](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6924-L6979),
+    [rgw_op.cc:7857-7892](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7857-L7892)).
+  - A delete with `skip_olh_obj_update` unlinks its instance in the bucket
+    index, which logs the removal in the key's OLH log, and returns before
+    `update_olh`, whose replay of that log would remove the version's head
+    ([rgw_rados.cc:8820-8853](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8820-L8853),
+    [rgw_rados.cc:9566-9599](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9566-L9599)).
+  - The name's last delete answers a failed condition, or a version whose
+    index entry is gone, before it unlinks anything, so it runs no
+    `update_olh` either
+    ([rgw_rados.cc:5905-5942](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5905-L5942),
+    [rgw_rados.cc:6517-6554](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6517-L6554)).
+  - On main, 7ce6a3740c2 ("rgw: apply skipped olh updates after
+    multi-object delete") applies a name's pending OLH updates after its
+    last delete, even one that failed, for the names whose earlier deletes
+    skipped them, through the `Object::update_olh` that d1193f5341c adds to
+    the SAL. ee0bc5ea051 adds the two s3-tests. At v22.0.0 the op hands
+    that `update_olh` to its dispatch of the deletes
+    ([rgw_op.cc:8456-8471](https://github.com/ceph/ceph/blob/v22.0.0/src/rgw/rgw_op.cc#L8456-L8471)).
+- **Impact:** a client that DeleteObjects several versions of a key, one
+  of which fails or is already gone, is told the others are deleted while
+  a GET naming one of them still serves its data, until a later update of
+  the key replays its OLH log. Tracker #80886 adds that once the pending
+  entry expires under `rgw_olh_pending_timeout_sec`, a GET naming no
+  version serves it too, while a listing shows the previous version.
+- **Releases:** v19.2.7, v20.2.4 and v20.2.5, whose
+  `handle_versioned_objects` still runs no update after a name's last
+  delete. Fixed on main at ab8073e1816, first tagged in v22.0.0, and on
+  the umbrella branch after v21.2.0.
+- **rgw-go:** reproduces it deliberately, by phase 2's decision VD-8:
+  DeleteObjects groups its keys by name and skips the OLH update of all
+  but each name's last delete, as radosgw does (`groupByName`,
+  `internal/op/deleteobjects.go`; `docs/differences.md`, "DeleteObjects
+  leaves a key's skipped updates to its last delete"), and fails both
+  s3-tests on both releases, as radosgw does. Plan task V17 adopts the fix.
+- **Upstream:** [#80886](https://tracker.ceph.com/issues/80886), "rgw: DeleteObjects can leave a
+  deleted version readable", in Backporting, fixed on main by
+  [ceph/ceph#72130](https://github.com/ceph/ceph/pull/72130), from its branch wip-rgw-80886 and merged as
+  ab8073e1816, first tagged in v22.0.0. Its umbrella backport,
+  [#81650](https://tracker.ceph.com/issues/81650), is resolved by [ceph/ceph#72632](https://github.com/ceph/ceph/pull/72632),
+  merged as 8e0c13185d4; its Tentacle backport, [#81649](https://tracker.ceph.com/issues/81649), is
+  pending; no Squid backport is requested.
+- **Found:** upstream first, by #80886's reporter, 2026-09-25. Met by
+  phase 2 task V15a's recording of the versioning s3-tests, 2026-11-12,
+  and recorded by its review.
