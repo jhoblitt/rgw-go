@@ -16,10 +16,6 @@ cloud_transition
 cloud_restore
 target_by_bucket
 
-# phase 2: versioning
-versioning
-delete_marker
-
 # phase 2: object lock
 object_lock
 
