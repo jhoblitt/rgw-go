@@ -286,7 +286,7 @@ var _ = Describe("tailWriter", func() {
 	})
 
 	DescribeTable("holds no more than the window and one chunk of tail buffers while the writes are slow, however long the body",
-		func(ctx SpecContext, chunk uint64, started int32) {
+		func(ctx SpecContext, chunk uint64, started int32, stop int64) {
 			s = openPutStore(ctx, c, denc.Squid, map[string]string{"rgw_max_chunk_size": strconv.FormatUint(chunk, 10)}, time.Now())
 			release := make(chan struct{})
 			unblock := sync.OnceFunc(func() { close(release) })
@@ -306,15 +306,11 @@ var _ = Describe("tailWriter", func() {
 				_, _, err := tw.Consume(ctx, body, -1, md5.New())
 				done <- err
 			}()
-			last := int64(-1)
-			Eventually(func() bool {
-				cur := read.Load()
-				quiet := cur == last
-				last = cur
-				return quiet
-			}).WithTimeout(5*time.Second).WithPolling(20*time.Millisecond).Should(BeTrue(), "consume stops reading once the window is full")
-			Consistently(read.Load).WithTimeout(100 * time.Millisecond).WithPolling(10 * time.Millisecond).Should(Equal(last))
-			Expect(last).To(BeNumerically("<", 64<<20), "the body is not read to its end")
+			// stop is where the reading ends: the head, the pieces in the window,
+			// and the next, read before it waits for room.
+			Eventually(read.Load).WithTimeout(5*time.Second).WithPolling(time.Millisecond).Should(Equal(stop),
+				"consume stops reading once the window is full, long before the body's end")
+			Consistently(read.Load).WithTimeout(100 * time.Millisecond).WithPolling(10 * time.Millisecond).Should(Equal(stop))
 			Expect(tw.PeakBuffered()).To(BeNumerically("<=", (16<<20)+chunk),
 				"rgw_put_obj_min_window_size weighs every buffer in flight, plus the piece waiting for room")
 			Eventually(held.Load).Should(Equal(started), "the stripes whose first write the window lets start")
@@ -322,9 +318,12 @@ var _ = Describe("tailWriter", func() {
 			Eventually(done).WithTimeout(10 * time.Second).Should(Receive(BeNil()))
 			Expect(tw.Drain()).To(Succeed())
 		},
-		Entry("a stripe of one chunk: four 4 MiB writes fill the window", uint64(4<<20), int32(4)),
+		// A 4 MiB head, four pieces in flight and a fifth.
+		Entry("a stripe of one chunk: four 4 MiB writes fill the window", uint64(4<<20), int32(4), int64(24<<20)),
+		// A 3 MiB head, then three stripes of a 3 MiB and a 1 MiB piece: five in
+		// flight and the sixth.
 		Entry("a stripe that is not a multiple of the chunk, whose short pieces still hold a whole buffer: five 3 MiB buffers over three stripes",
-			uint64(3<<20), int32(3)),
+			uint64(3<<20), int32(3), int64(15<<20)),
 	)
 
 	It("sizes the head by the declared length, as get_data sizes its read", func(ctx SpecContext) {
@@ -545,14 +544,12 @@ var _ = Describe("part writer", func() {
 			_, err := tw.Consume(ctx, body, -1, md5.New())
 			done <- err
 		}()
-		last := int64(-1)
-		Eventually(func() bool {
-			cur := read.Load()
-			quiet := cur == last
-			last = cur
-			return quiet
-		}).WithTimeout(5*time.Second).WithPolling(20*time.Millisecond).Should(BeTrue(), "consume stops reading once the window is full")
-		Expect(last).To(BeNumerically("<", 64<<20))
+		// The 4 MiB first stripe, sixteen 1 MiB pieces in the window, and the
+		// next, read before it waits for room.
+		const stop = 21 << 20
+		Eventually(read.Load).WithTimeout(5*time.Second).WithPolling(time.Millisecond).Should(BeEquivalentTo(stop),
+			"consume stops reading once the window is full, long before the body's end")
+		Consistently(read.Load).WithTimeout(100 * time.Millisecond).WithPolling(10 * time.Millisecond).Should(BeEquivalentTo(stop))
 		Expect(tw.PeakBuffered()).To(BeNumerically("<=", (16<<20)+(4<<20)),
 			"the window, plus the piece waiting for room, which may be the pooled first-stripe buffer")
 		unblock()
@@ -852,24 +849,22 @@ var _ = Describe("memory budget on the write path", func() {
 			}
 			writers[i] = writer(ctx, i)
 		}
-		var read atomic.Int64
 		done := make(chan error, puts)
 		for _, tw := range writers {
 			// A byte short of three chunks, so the second piece ends the body
 			// and no probe of its end takes a share.
-			body := &countingReader{r: io.LimitReader(zeros{}, 12<<20-1), n: &read}
+			body := io.LimitReader(zeros{}, 12<<20-1)
 			go func() {
 				_, _, err := tw.Consume(ctx, body, -1, md5.New())
 				done <- err
 			}()
 		}
-		last := int64(-1)
-		Eventually(func() bool {
-			cur := read.Load()
-			quiet := cur == last
-			last = cur
-			return quiet
-		}).WithTimeout(5*time.Second).WithPolling(20*time.Millisecond).Should(BeTrue(), "every PUT stops reading once the budget is spent")
+		// A PUT reads a tail piece only once it holds the piece's share, so
+		// once each has returned or waits for a share, none reads on.
+		Eventually(func() int64 { return s.MemoryBudgetStats().PieceWaiting + int64(len(done)) }).
+			WithTimeout(5*time.Second).WithPolling(time.Millisecond).Should(BeEquivalentTo(puts), "every PUT stops reading once the budget is spent")
+		Eventually(started.Load).WithTimeout(5*time.Second).WithPolling(time.Millisecond).Should(BeEquivalentTo(8),
+			"eight 4 MiB pieces in flight spend the budget")
 		var buffered uint64
 		for _, tw := range writers {
 			buffered += tw.Buffered()
@@ -877,7 +872,6 @@ var _ = Describe("memory budget on the write path", func() {
 		Expect(buffered).To(BeNumerically("<=", budget), "five 16 MiB windows, whose tail buffers share one 32 MiB budget")
 		Expect(s.MemoryBudgetForTest()).To(And(HaveField("Held", BeEquivalentTo(buffered)), HaveField("Peak", BeEquivalentTo(budget))),
 			"every buffer carries its share")
-		Expect(started.Load()).To(BeEquivalentTo(8), "eight 4 MiB pieces in flight spend the budget")
 		unblock()
 		for range puts {
 			Eventually(done).WithTimeout(10 * time.Second).Should(Receive(BeNil()))

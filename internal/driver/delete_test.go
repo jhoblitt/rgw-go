@@ -632,6 +632,8 @@ var _ = Describe("checkDiskState's multipart-part sweep", func() {
 		st := sweepStore(ctx, pc)
 		st.SetReshardWaitForTest(time.Hour)
 		reshardAll(ctx, rgwcls.ReshardInProgress)
+		logs := gbytes.NewBuffer()
+		DeferCleanup(driver.CaptureLog(logs))
 		stop := runStore(ctx, st)
 		// retries counts the goroutines in a completion's retry.
 		retries := func() int {
@@ -644,11 +646,30 @@ var _ = Describe("checkDiskState's multipart-part sweep", func() {
 				buf = make([]byte, 2*len(buf))
 			}
 		}
+		// The count also holds still while Run or a worker waits to be
+		// scheduled, which would leave goroutines out of base, so it waits
+		// first for every worker Run starts to log its start, and for the
+		// control watches, which the control-watch worker registers from
+		// goroutines of its own. A worker logs its start before it runs, so
+		// the lifecycle workers its worker starts are left to the count
+		// holding still. There are rgw_lc_max_worker of them, 3 in conf(),
+		// inside the 4 of slack the bound below leaves beside the bucket's
+		// retrier. Every goroutine a worker starts from its own fn shares that
+		// slack, so a change that adds such goroutines, raises
+		// rgw_lc_max_worker or tightens the bound must keep them inside it or
+		// wait for them here.
+		want := []string{`"msg":"all control watches registered"`}
+		for _, name := range st.WorkerNamesForTest() {
+			want = append(want, fmt.Sprintf(`"msg":"worker started","worker":%q`, name))
+		}
+		Eventually(func() []string {
+			return slices.DeleteFunc(slices.Clone(want), func(line string) bool { return bytes.Contains(logs.Contents(), []byte(line)) })
+		}).WithTimeout(5*time.Second).WithPolling(time.Millisecond).Should(BeEmpty(), "Run's workers have started")
 		Eventually(func() bool {
 			n := runtime.NumGoroutine()
 			time.Sleep(50 * time.Millisecond)
 			return runtime.NumGoroutine() == n
-		}).WithTimeout(5*time.Second).Should(BeTrue(), "Run's workers have started")
+		}).WithTimeout(5*time.Second).Should(BeTrue(), "and the goroutines they keep")
 		base := runtime.NumGoroutine()
 		for i := 1; i <= 3; i++ {
 			listBig(ctx, st)

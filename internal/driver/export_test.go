@@ -309,6 +309,18 @@ func (s *Store) SetReshardWaitForTest(d time.Duration) { s.w.reshardWait = d }
 // and discards run under, as Run's stop does.
 func (s *Store) EndLifetimeForTest() { s.w.completions.cancel() }
 
+// WorkerNamesForTest is the names of the workers Run starts, in the order it
+// starts them.
+func (s *Store) WorkerNamesForTest() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	names := make([]string, 0, len(s.workers))
+	for _, w := range s.workers {
+		names = append(names, w.name)
+	}
+	return names
+}
+
 // PendingCompletionsForTest is the number of bucket index completions
 // submitted or queued and not yet done.
 func (s *Store) PendingCompletionsForTest() int { return s.w.completions.pending() }
