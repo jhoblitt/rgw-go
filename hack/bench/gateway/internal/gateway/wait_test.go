@@ -87,6 +87,13 @@ var _ = Describe("the run's waits", func() {
 			Expect(w.trace()).To(HavePrefix("REPO/hack/bench/elbencho-build.sh\n" + dumpLine + "sleep 5\n" + dumpLine + podIPLine))
 		})
 
+		It("goes on at once while it lists an rgw-go beside the one radosgw", func(ctx SpecContext) {
+			w := newWorld("radosgw")
+			w.rgwGos = 1
+			Expect(w.run(ctx, w.config(gateway.Settings{Smoke: "1", Profiles: []string{"list"}}))).To(Succeed())
+			Expect(w.trace()).To(HavePrefix("REPO/hack/bench/elbencho-build.sh\n" + dumpLine + podIPLine))
+		})
+
 		DescribeTable("fails after 180 s, before anything is there to undo",
 			func(ctx SpecContext, radosgws int, fail error, want string) {
 				w := newWorld("radosgw")

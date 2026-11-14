@@ -25,6 +25,7 @@ import (
 
 const (
 	radosgwEntity = "client.rgw.ceph.objectstore.a"
+	radosgwPod    = "rook-ceph-rgw-ceph-objectstore-a-568b7fb698-z74ft"
 	rgwGoEntity   = "client.rgw.rgw-go"
 	lcOption      = "rgw_enable_lc_threads"
 	site          = "ceph-objectstore"
@@ -46,8 +47,8 @@ var (
 	}
 )
 
-// instance is a radosgw daemon as the service map lists it, and the
-// rgw_enable_lc_threads it read when it built its store.
+// instance is an rgw daemon as the service map lists it, and, for a
+// radosgw, the rgw_enable_lc_threads it read when it built its store.
 type instance struct {
 	gid     int64
 	started time.Time
@@ -70,6 +71,11 @@ type world struct {
 	radosgws  []instance
 	lingering int
 	nextGID   int64
+	// registered are the rgw-gos the service map lists beside the radosgws,
+	// run on the host, so that no metadata of theirs carries pod_name;
+	// commitRegisters has one more register as a period is committed.
+	registered      []instance
+	commitRegisters bool
 	// mons are each entity's rgw_enable_lc_threads in the mons' store, and
 	// log their config log.
 	mons map[string]string
@@ -315,7 +321,16 @@ func (w *world) serviceDump() []byte {
 			"gid": r.gid, "start_stamp": stamp(r.started),
 			"metadata": map[string]string{
 				"id": "ceph.objectstore.a", "realm_name": site, "zonegroup_name": site, "zone_name": site,
-				"frontend_config#0": frontends,
+				"frontend_config#0": frontends, "pod_name": radosgwPod,
+			},
+		}
+	}
+	for _, r := range w.registered {
+		daemons[strconv.FormatInt(r.gid, 10)] = map[string]any{
+			"gid": r.gid, "start_stamp": stamp(r.started),
+			"metadata": map[string]string{
+				"id": "rgw-go", "realm_name": site, "zonegroup_name": site, "zone_name": site,
+				"frontend_config#0": "beast endpoint=127.0.0.1:7481",
 			},
 		}
 	}
@@ -476,6 +491,9 @@ func (w *world) operator(args []string) error {
 			w.periodClasses = slices.Clone(w.zonegroupClasses)
 		}
 		w.dumpErr = w.dumpErrAfterCommit
+		if w.commitRegisters {
+			w.registered = append(w.registered, instance{gid: w.gid(), started: w.clock})
+		}
 		if !w.noReload {
 			w.restart()
 		}

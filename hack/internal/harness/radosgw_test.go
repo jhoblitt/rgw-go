@@ -17,10 +17,26 @@ import (
 )
 
 // entry is a radosgw's service map entry with the gid and start_stamp given.
+// Rook runs it in a pod, whose name librados reports as pod_name.
 func entry(gid, started string) string {
+	return podEntry(gid, started, "rook-ceph-rgw-ceph-objectstore-a-568b7fb698-z74ft")
+}
+
+// podEntry is entry run with POD_NAME set to pod, which librados reports as
+// pod_name whenever it is set, empty or not.
+func podEntry(gid, started, pod string) string {
 	return `{"gid": ` + gid + `, "start_stamp": "` + started + `", "metadata": {"id": "ceph.objectstore.a",
 	  "realm_name": "ceph-objectstore", "zonegroup_name": "ceph-objectstore", "zone_name": "ceph-objectstore",
-	  "frontend_config#0": "beast port=80"}}`
+	  "frontend_config#0": "beast port=80", "pod_name": "` + pod + `"}}`
+}
+
+// rgwGoEntry is the service map entry of an rgw-go the harness runs on the
+// host, as client.rgw.<id> or client.<id>, under the gid given. No pod sets
+// its POD_NAME, so librados reports no pod_name.
+func rgwGoEntry(gid, id string) string {
+	return `{"gid": ` + gid + `, "start_stamp": "2026-11-14T12:00:00.000000+0000", "metadata": {"id": "` + id + `",
+	  "realm_name": "ceph-objectstore", "zonegroup_name": "ceph-objectstore", "zone_name": "ceph-objectstore",
+	  "frontend_config#0": "beast endpoint=127.0.0.1:7481"}}`
 }
 
 // dump is ceph service dump -f json's output listing entries by gid.
@@ -43,6 +59,13 @@ var _ = Describe("RadosgwEntries", func() {
 		Expect(got[1].StartStamp).To(Equal("2026-10-22T22:47:23.340603+0000"))
 		Expect(got[1].Metadata).To(HaveKeyWithValue("id", "ceph.objectstore.a"))
 		Expect(got[0].Raw).To(HavePrefix(`{"gid":4100,"start_stamp":"2026-10-22T22:40:00.000000+0000","metadata":{"id":`))
+	})
+
+	It("keeps only the entries whose metadata carries pod_name, empty or not, skipping every rgw-go's whatever its id", func() {
+		got, err := harness.RadosgwEntries([]byte(dump(entry("4100", "a"),
+			rgwGoEntry("4721", "rgw-go"), rgwGoEntry("4722", "admin"), podEntry("4800", "b", ""))))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(HaveExactElements(HaveField("GID", BeEquivalentTo(4100)), HaveField("GID", BeEquivalentTo(4800))))
 	})
 
 	It("lists none for a map without radosgws", func() {
@@ -126,6 +149,14 @@ var _ = Describe("Cluster's radosgw lookup", func() {
 		Expect(sleeps).To(Equal(1))
 	})
 
+	It("settles at once on the radosgw while an rgw-go's entry stays listed beside it", func(ctx SpecContext) {
+		dumps = []string{dump(rgwGoEntry("4100", "rgw-go"), entry("4721", "b"))}
+		rgw, err := cl.OneRadosgw(ctx, poll)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(rgw.GID).To(BeEquivalentTo(4721))
+		Expect(sleeps).To(BeZero())
+	})
+
 	DescribeTable("fails once the wait has passed, polling until then",
 		func(ctx SpecContext, answer, want string) {
 			dumps = []string{answer}
@@ -135,6 +166,9 @@ var _ = Describe("Cluster's radosgw lookup", func() {
 		},
 		Entry("listing none", dump(), "the service map did not settle to one radosgw in 180s (radosgw entries: []); "+
 			"the manager drops a stopped radosgw within about a minute, so none is running or more than one is"),
+		Entry("listing an rgw-go alone, which the message leaves out", dump(rgwGoEntry("4721", "rgw-go")),
+			"the service map did not settle to one radosgw in 180s (radosgw entries: []); "+
+				"the manager drops a stopped radosgw within about a minute, so none is running or more than one is"),
 		Entry("when ceph service dump fails", "fail", "the service map did not settle to one radosgw in 180s: "+
 			"ceph service dump failed, so the service map could not be read: exit status 110: timed out"),
 	)

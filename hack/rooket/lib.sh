@@ -125,7 +125,11 @@ ceph_cmd() {
 
 # wait_rgw polls Ceph's service map until the jq filter $3, given the
 # arguments after it, holds for the array of its radosgw entries, and prints
-# that array. A radosgw registers under a new gid, its librados instance id,
+# that array. They are the rgw entries whose metadata carries pod_name, as
+# hack/internal/harness's RadosgwEntries keeps them: Rook sets POD_NAME on
+# every daemon it runs and librados reports it, while every rgw-go the
+# harness starts runs on the host, so no rgw-go's entry is one, whatever its
+# id. A radosgw registers under a new gid, its librados instance id,
 # each time it starts or reloads its realm. The manager drops the old gid as
 # soon as that instance closes its session, but one that ends without closing
 # it stays until it has sent no beacon for mgr_service_beacon_grace (60 s), so
@@ -136,7 +140,8 @@ wait_rgw() {
 	local what=$1 diagnosis=$2 filter=$3 deadline=$((SECONDS + 180)) daemons
 	shift 3
 	until daemons=$(ceph_cmd service dump -f json |
-		jq -c '[.services.rgw.daemons // {} | to_entries[] | select(.key != "summary") | .value]') &&
+		jq -c '[.services.rgw.daemons // {} | to_entries[] | select(.key != "summary") | .value
+			| select(.metadata | has("pod_name"))]') &&
 		jq -e "$@" "${filter}" <<<"${daemons}" >/dev/null; do
 		if ((SECONDS >= deadline)); then
 			[[ -n "${daemons}" ]] || die "${what} in 180s: ceph service dump failed, so the service map could not be read"
