@@ -43,9 +43,16 @@ func (s *Store) ReadOLHHeadForTest(ctx context.Context, rec *op.BucketRecord, ke
 	return s.readOLHHead(ctx, rec, key)
 }
 
-// RemoveInstance is removeInstance for the external specs.
+// RemoveInstance is removeInstance, keeping no locked version, for the
+// external specs.
 func (b *OLHIndex) RemoveInstance(ctx context.Context, key meta.ObjKey, expectTag []byte) error {
-	return b.removeInstance(ctx, key, expectTag)
+	return b.removeInstance(ctx, key, expectTag, false)
+}
+
+// RemoveInstanceKeepingLocked is removeInstance with keepLocked, as a
+// replay removes another writer's version, for the external specs.
+func (b *OLHIndex) RemoveInstanceKeepingLocked(ctx context.Context, key meta.ObjKey) error {
+	return b.removeInstance(ctx, key, nil, true)
 }
 
 // RemoveFailedVersionForTest is removeFailedVersion for the external specs.

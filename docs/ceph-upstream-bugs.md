@@ -523,6 +523,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw stores a NUL from a PutObject's query-string x-amz-meta value and sends it raw on GET](#radosgw-stores-a-nul-from-a-putobjects-query-string-x-amz-meta-value-and-sends-it-raw-on-get) | pending | pending | ✓ |
 | [radosgw's format_xattr cuts a quoted-printable metadata value at its first NUL](#radosgws-format_xattr-cuts-a-quoted-printable-metadata-value-at-its-first-nul) | pending | pending | ✓ |
 | [radosgw sends a metadata put's objv tag raw in RGWX_UPDATE_VERSION](#radosgw-sends-a-metadata-puts-objv-tag-raw-in-rgwx_update_version) | pending | pending | ✓ |
+| [radosgw's replay of another request's versioned delete removes a version locked after that delete's check](#radosgws-replay-of-another-requests-versioned-delete-removes-a-version-locked-after-that-deletes-check) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -8831,6 +8832,30 @@ Every new entry adds its row to this table, in document order.
     so the replay removes a version's head unguarded too, as it reads it
     when it runs, which may be long after the delete that unlinked the
     version.
+  - The versioned delete's own replay does not read the version again: the
+    delete op works on the request's `RGWObjectCtx`
+    ([rgw_sal_rados.cc:2886-2892](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2886-L2892),
+    [rgw_sal_rados.cc:3721-3727](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3721-L3727)),
+    in which the request's object-lock check read the version and cached
+    it, the object marked atomic for the delete
+    ([rgw_op.cc:5258](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5258),
+    [rgw_op.cc:5647](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5647);
+    for each DeleteObjects key
+    [rgw_op.cc:6894](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6894),
+    [rgw_op.cc:7822](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7822)).
+    `unlink_obj_instance` invalidates only the OLH object's state
+    ([rgw_rados.cc:8789-8791](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8789-L8791),
+    [rgw_rados.cc:9535-9537](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9535-L9537)),
+    `apply_olh_log` hands the same context to `delete_obj`, and
+    `get_obj_state_impl` answers a cached state holding its attrs without
+    reading the head
+    ([rgw_rados.cc:6271-6277](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6271-L6277),
+    [rgw_rados.cc:6885-6891](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6885-L6891)).
+    So a guard on the write tag in that removal would compare the tag the
+    lock check read. Every retention and legal-hold write replaces that tag
+    through `set_attrs`
+    ([rgw_rados.cc:6852-6861](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6852-L6861),
+    [rgw_rados.cc:7464-7475](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7464-L7475)).
 - **Impact:** when a PUT replaces an object between a delete's read and its
   removal:
   - a delete with If-Match or `x-amz-if-match-size` naming the replaced
@@ -8847,6 +8872,17 @@ Every new entry adds its row to this table, in document order.
   has the same window, between its head read and its removal: a write that
   replaces the version's head there, its tails with it, leaves those tails
   queued by no one.
+
+  On a bucket with object lock the missing guard defeats a retention or a
+  legal hold too. A versioned DeleteObject or DeleteObjects key checks the
+  version's lock, and a hold written between that check and the delete's own
+  replay is removed with the version, the delete answering 204 and the hold
+  request 200; the guard on the cached tag would have refused that removal.
+  The same window through another request's replay, which reads the version
+  itself, is "[radosgw's replay of another request's versioned delete
+  removes a version locked after that delete's
+  check](#radosgws-replay-of-another-requests-versioned-delete-removes-a-version-locked-after-that-deletes-check)",
+  which no write-tag guard closes.
 - **Releases:** v19.2.7, v20.2.4 and main 8aa24c51928; ceph/ceph#65932
   brought it to squid after v19.2.6 (merge a742f50616e), and v19.2.7 is its
   first Squid tag. v19.2.6 is not affected.
@@ -8854,7 +8890,10 @@ Every new entry adds its row to this table, in document order.
   (`internal/driver/delete.go`; `docs/differences.md`, "Delete conditions
   are Tentacle's, and a delete is guarded, on both releases"), the replay's
   removal of a version included (`removeInstance`,
-  `internal/driver/olh.go`).
+  `internal/driver/olh.go`). A delete under object lock holds its own
+  replay's removal to the write tag its check read (`DeleteParams.Expect`;
+  `docs/differences.md`, "A refused versioned removal re-links the
+  version, unless a newer null write owns the null key").
 - **Upstream:** found independently upstream and filed on 2026-09-26 as
   [#80898](https://tracker.ceph.com/issues/80898) (the replacement's tails leak) and
   [#80906](https://tracker.ceph.com/issues/80906) (a conditional delete that loses
@@ -33798,3 +33837,65 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task WP-28's adversarial review, 2026-11-14; derived
   from the source, not reproduced.
+
+## radosgw's replay of another request's versioned delete removes a version locked after that delete's check
+
+- **Kind:** defect, S3-correctness of object lock: DeleteObject and
+  DeleteObjects check a named version's retention and legal hold once, on the
+  state they read, and any other request that replays the key's pending log
+  before the delete's own replay removes the version whatever retention or
+  legal hold was written after that check. The delete's own replay is the
+  other half, "[radosgw's DeleteObject removes the head without checking its
+  write
+  tag](#radosgws-deleteobject-removes-the-head-without-checking-its-write-tag)".
+  Not security-relevant: the deleter was authorized when checked, and
+  cannot time the hold. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RGWDeleteObj::execute` reads the version's state and runs
+    `verify_object_lock` on its attrs before the delete
+    ([rgw_op.cc:5186-5221](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5186-L5221),
+    [rgw_op.cc:5576-5611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5576-L5611));
+    `RGWDeleteMultiObj` does the same for each key
+    ([rgw_op.cc:6852-6879](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6852-L6879),
+    [rgw_op.cc:7780-7807](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7780-L7807)).
+  - The versioned `delete_obj` unlinks the version, which logs its removal.
+    Any request whose `follow_olh` meets the pending modification replays
+    the log first, a GET of the key among them
+    ([rgw_rados.cc:8969-9021](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8969-L9021),
+    [rgw_rados.cc:9715-9769](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9715-L9769)),
+    and its `apply_olh_log` removes each logged version through
+    `delete_obj`, which checks no lock
+    ([rgw_rados.cc:8530-8541](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8530-L8541),
+    [rgw_rados.cc:9275-9287](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9275-L9287)).
+    That request's object context holds no state of the version, so its
+    `delete_obj` reads the version when it runs: even a removal guarded on
+    the write tag that read finds compares the tag the hold wrote, and
+    removes the version.
+  - PutObjectLegalHold and PutObjectRetention write their attr through
+    `modify_obj_attrs` with no look at a pending removal
+    ([rgw_op.cc:8537](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8537) and
+    [rgw_op.cc:8432](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8432),
+    [rgw_op.cc:9505](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9505) and
+    [rgw_op.cc:9380](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9380)).
+- **Impact:** a legal hold or a retention set between a versioned delete's
+  check and another request's replay of its unlink answers 200, and the
+  version goes with it; the delete answers 204. The window runs from the
+  delete's state read to that replay's removal, the round trips of the
+  delete's unlink and of its own replay, longer under contention on the key.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
+- **rgw-go:** unaffected while the deleter runs, for a legal hold or a
+  COMPLIANCE retention: any replay of another writer's removal keeps a
+  version under a lock no delete passes, and the writer finishes the
+  removal under the write tag its check read (`docs/differences.md`, "A
+  replay keeps another writer's version whose object lock holds"). A
+  GOVERNANCE retention set after the delete was logged and before another
+  request's replay does not keep the version, which that replay removes as
+  radosgw's does: the log does not record whether the delete was
+  authorized with the bypass (the same entry, and
+  `docs/rados-format-opportunities.md`, "The OLH log's removal entry: no
+  record of a GOVERNANCE bypass"). radosgw's replays of an rgw-go
+  writer's removal on a mixed fleet remove such a version as radosgw's own.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 Task V16's adversarial review (P1), 2026-11-12, and
+  Task V19, 2026-11-14, split into its own-replay and other-request halves
+  by V19's review; derived from the source, not reproduced.

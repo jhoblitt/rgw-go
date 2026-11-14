@@ -234,7 +234,7 @@ func (s *Store) deleteMarkerCondition(p op.DeleteParams, current *op.ObjectState
 // size or a last-modified time. If-Match: * alone passes on the head
 // existing, which the removal leaves.
 func headNullData(head *op.ObjectState, p op.DeleteParams) bool {
-	if _, ok := head.Attrs[meta.AttrETag]; !ok {
+	if !holdsNullData(head) {
 		return false
 	}
 	return (p.IfMatch != "" && p.IfMatch != "*") || p.IfMatchSize != nil || !p.IfMatchLastModified.IsZero()

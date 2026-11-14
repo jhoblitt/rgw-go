@@ -3,6 +3,7 @@ package driver_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/meta"
+	"github.com/jhoblitt/rgw-go/internal/objectlock"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/testutil/fakerados"
@@ -126,6 +128,27 @@ var _ = Describe("DeleteObject and DeleteObjects over the RADOS store on a bucke
 	aclWrite := func(ctx context.Context, instance string) {
 		GinkgoHelper()
 		setAttrs(ctx, version(instance), map[string][]byte{meta.AttrACL: encode(acl.DefaultPolicy(initiator, "Alice "+instance))})
+	}
+	legalHold := func(ctx context.Context, key meta.ObjKey) {
+		GinkgoHelper()
+		setAttrs(ctx, key, map[string][]byte{meta.AttrObjectLegalHold: objectlock.EncodeLegalHold(meta.ObjectLegalHold{Status: "ON"})})
+	}
+	compliance := func(ctx context.Context, key meta.ObjKey) {
+		GinkgoHelper()
+		lockKey(ctx, key, "COMPLIANCE")
+	}
+	// getFirst is a GET of name, whose follow of its OLH replays a delete's
+	// pending entries, and trims them or clears the OLH, before that delete's
+	// own replay, with nothing of the write tag the delete's check read. Only
+	// a replay takes the entries off the key's OLH entry, or the entry itself.
+	getFirst := func(ctx context.Context, name string) {
+		GinkgoHelper()
+		_, err := s.StatObject(ctx, rec, meta.ObjKey{Name: name})
+		Expect(err).NotTo(HaveOccurred())
+		e, ok := c.OLHEntry(rookIndexPool, "", indexShardOID(rec, name), name)
+		if ok {
+			Expect(e.PendingLog).To(BeEmpty(), "the GET's replay applied the delete's entries")
+		}
 	}
 
 	// run is a DeleteObject of key, its completions left pending.
@@ -394,6 +417,173 @@ var _ = Describe("DeleteObject and DeleteObjects over the RADOS store on a bucke
 		)
 	})
 
+	Describe("when another request's replay applies the delete's removal first", func() {
+		DescribeTable("keeps a version locked since the check, with its lock, answering 403 forbidden by object lock",
+			func(ctx SpecContext, viaMulti bool, instance string, lock func(context.Context, meta.ObjKey), attr string) {
+				atUnlink(1, func() {
+					lock(ctx, version(instance))
+					getFirst(ctx, "k")
+				})
+				expectForbidden(viaMulti, deleteVia(ctx, viaMulti, version(instance), false))
+				expectKept(ctx, instance, instance == "v2")
+				Expect(head(instance).Xattrs).To(HaveKey(attr), "the lock written after the check")
+			},
+			Entry("a legal hold on a noncurrent version", false, "v1", legalHold, meta.AttrObjectLegalHold),
+			Entry("a legal hold on the current version", false, "v2", legalHold, meta.AttrObjectLegalHold),
+			Entry("a COMPLIANCE retention on the current version, DeleteObjects", true, "v2", compliance, meta.AttrObjectRetention),
+		)
+		DescribeTable("removes a version whose lock the delete passed, whichever replay applies the removal",
+			func(ctx SpecContext, viaMulti bool, instance, mode string, header, first bool) {
+				if mode != "" {
+					lockVersion(ctx, instance, mode)
+				}
+				if first {
+					atUnlink(1, func() { getFirst(ctx, "k") })
+				}
+				Expect(deleteVia(ctx, viaMulti, version(instance), header)).To(Succeed())
+				Expect(head(instance)).To(BeNil(), "the version's head")
+				Expect(instanceEntry(instance)).To(BeFalse(), "its instance entry")
+				Expect(listed()).NotTo(ContainElement(instance))
+			},
+			Entry("no lock on a noncurrent version, the GET's replay first", false, "v1", "", false, true),
+			Entry("no lock on the current version, the GET's replay first", false, "v2", "", false, true),
+			Entry("no lock on a noncurrent version, its own replay", false, "v1", "", false, false),
+			Entry("a GOVERNANCE retention bypassed, the GET's replay first", false, "v1", "GOVERNANCE", true, true),
+			Entry("a GOVERNANCE retention bypassed on the current version, the GET's replay first, DeleteObjects", true, "v2", "GOVERNANCE", true, true),
+		)
+		// The admin removals pass the store no expected state, as they check no
+		// lock (docs/differences.md, "Admin removals ignore object lock").
+		It("removes a locked version for a delete with no expected state, the GET's replay first", func(ctx SpecContext) {
+			lockVersion(ctx, "v1", "COMPLIANCE")
+			atUnlink(1, func() { getFirst(ctx, "k") })
+			Expect(s.DeleteObject(ctx, rec, version("v1"), op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "v1"}))
+			settle(s)
+			Expect(head("v1")).To(BeNil(), "the version's head")
+			Expect(instanceEntry("v1")).To(BeFalse(), "its instance entry")
+			Expect(listed()).To(Equal([]string{"v2"}))
+		})
+		// A GOVERNANCE retention is one a delete with the bypass passes, so a
+		// replay cannot tell a removal that bypassed it from one that raced it,
+		// and removes the version as radosgw's does (docs/differences.md, "A
+		// replay keeps another writer's version whose object lock holds").
+		It("removes a version a GOVERNANCE retention locked since the check, the GET's replay first", func(ctx SpecContext) {
+			atUnlink(1, func() {
+				lockVersion(ctx, "v1", "GOVERNANCE")
+				getFirst(ctx, "k")
+			})
+			_, err := del(ctx, version("v1"), false)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(head("v1")).To(BeNil(), "the version's head")
+			Expect(listed()).To(Equal([]string{"v2"}))
+		})
+		It("keeps, listed again, a key's only version held since the check, the GET's replay first clearing its OLH", func(ctx SpecContext) {
+			only := meta.ObjKey{Name: "only", Instance: "o1"}
+			body := []byte("data-o1")
+			_, err := s.PutObject(ctx, rec, only, bytes.NewReader(body), op.PutParams{Attrs: attrsWithACL(initiator), Size: int64(len(body))})
+			Expect(err).NotTo(HaveOccurred())
+			settle(s)
+			atUnlink(1, func() {
+				legalHold(ctx, only)
+				getFirst(ctx, "only")
+				_, ok := c.OLHEntry(rookIndexPool, "", indexShardOID(rec, "only"), "only")
+				Expect(ok).To(BeFalse(), "the GET's replay cleared the key's OLH")
+			})
+			_, err = del(ctx, only, false)
+			expectForbidden(false, err)
+			Expect(c.Object(testDataPool, "", rec.Info.Bucket.Marker+"_"+only.OID())).NotTo(BeNil(), "the version's head")
+			Expect(listedKey("only")).To(Equal([]string{"o1"}), "listed again")
+		})
+		// An admin removal unlinked the version, another replay kept it for its
+		// hold, and a writer linked it again before the removal's check.
+		It("leaves a version linked again since another replay kept it, for a delete with no expected state", func(ctx SpecContext) {
+			legalHold(ctx, version("v1"))
+			atUnlink(1, func() {
+				getFirst(ctx, "k")
+				Expect(s.SetOLHForTest(ctx, rec, version("v1"), driver.OLHLink{})).To(Succeed(), "a writer links the version again")
+			})
+			Expect(s.DeleteObject(ctx, rec, version("v1"), op.DeleteParams{})).Error().NotTo(HaveOccurred())
+			settle(s)
+			Expect(head("v1")).NotTo(BeNil(), "the version's head")
+			Expect(instanceEntry("v1")).To(BeTrue(), "its instance entry")
+			Expect(listed()).To(ContainElement("v1"), "listed by the later link")
+		})
+	})
+
+	// The request's context ends once the delete's unlink has landed, as
+	// net/http ends it when the client goes; the delete's replay and its
+	// check after it still run.
+	Describe("when the delete's client goes after its unlink", func() {
+		It("removes a GOVERNANCE version the delete bypassed, a GET's replay after", func(ctx SpecContext) {
+			lockVersion(ctx, "v1", "GOVERNANCE")
+			dctx, cancel := context.WithCancel(ctx)
+			atUnlink(1, cancel)
+			_, err := run(dctx, version("v1"), true)
+			Expect(err).To(Or(Not(HaveOccurred()), MatchError(context.Canceled)), "the client is gone, so either answer reaches no one")
+			settle(s)
+			getFirst(ctx, "k")
+			settle(s)
+			Expect(head("v1")).To(BeNil(), "the version's head")
+			Expect(instanceEntry("v1")).To(BeFalse(), "its instance entry")
+			Expect(listed()).To(Equal([]string{"v2"}))
+		})
+		It("keeps, listed, a version held since the check, a GET's replay after", func(ctx SpecContext) {
+			dctx, cancel := context.WithCancel(ctx)
+			atUnlink(1, func() {
+				legalHold(ctx, version("v1"))
+				cancel()
+			})
+			_, err := run(dctx, version("v1"), false)
+			Expect(err).To(HaveOccurred())
+			settle(s)
+			getFirst(ctx, "k")
+			settle(s)
+			expectKept(ctx, "v1", false)
+			Expect(head("v1").Xattrs).To(HaveKey(meta.AttrObjectLegalHold))
+		})
+	})
+
+	// An attr write after the check, which is no lock, and every pass of the
+	// delete's replay losing its head op to another writer's apply: the
+	// delete's removal stays in the log, for the next replay.
+	It("leaves to the next replay a removal its own replay could not apply", func(ctx SpecContext) {
+		appliesLog := func(w *radosclient.WriteOp) bool {
+			cmp, set := false, false
+			for _, st := range w.Steps() {
+				switch x := st.(type) {
+				case *radosclient.CmpXattrStep:
+					cmp = cmp || x.Name == meta.AttrOLHVer
+				case *radosclient.SetXattrStep:
+					set = set || (x.Name == meta.AttrOLHVer && len(x.Value) > 0)
+				}
+			}
+			return cmp && set
+		}
+		var canceled atomic.Int32
+		var armed atomic.Bool
+		ac.set(func(w *radosclient.WriteOp, send sendFunc) (uint64, error) {
+			if armed.Load() && appliesLog(w) && canceled.Load() < 11 {
+				canceled.Add(1)
+				return 0, fmt.Errorf("another writer's apply came first: %w", radosclient.ErrCanceled)
+			}
+			return hooks.around(w, send)
+		})
+		atUnlink(1, func() {
+			aclWrite(ctx, "v2")
+			armed.Store(true)
+		})
+		_, err := run(ctx, version("v2"), false)
+		armed.Store(false)
+		Expect(err).NotTo(HaveOccurred(), "the unlink landed and its removal is left to the next replay")
+		Expect(canceled.Load()).To(BeEquivalentTo(11), "every pass of the delete's replay lost its head op")
+		settle(s)
+		st, err := s.StatObject(ctx, rec, meta.ObjKey{Name: "k"})
+		Expect(err).NotTo(HaveOccurred())
+		settle(s)
+		Expect(st.Key.Instance).To(Equal("v1"), "the key resolves to the version the unlink promoted")
+		Expect(head("v2")).To(BeNil(), "the GET's replay removed the version, which no lock holds")
+		Expect(listed()).To(Equal([]string{"v1"}))
+	})
+
 	// The bucket's versioning suspended, which a bucket.instance metadata put
 	// and radosgw's PutBucketVersioning race reach on a lock bucket; k holds
 	// v1 and v2 and no null version.
@@ -467,6 +657,58 @@ var _ = Describe("DeleteObject and DeleteObjects over the RADOS store on a bucke
 			Entry("a delete naming no version, whose null delete marker would replace it", fresh("")),
 			Entry("a delete naming versionId=null", fresh(meta.NullInstance)),
 		)
+		// The null version's data is the OLH head's: a null delete marker's
+		// link logs its removal, and so does the unlink of versionId=null.
+		DescribeTable("keeps a null version held since the check, with its hold, the GET's replay first",
+			func(ctx SpecContext, key meta.ObjKey, method string) {
+				body := []byte("null-data")
+				_, err := s.PutObject(ctx, rec, version(""), bytes.NewReader(body), op.PutParams{Attrs: attrsWithACL(initiator), Size: int64(len(body))})
+				Expect(err).NotTo(HaveOccurred())
+				settle(s)
+				hooks.add(&writeHook{match: func(w *radosclient.WriteOp) bool { return callsMethod(w.Steps(), method) }, n: 1, fn: func() {
+					legalHold(ctx, version(meta.NullInstance))
+					getFirst(ctx, "k")
+				}})
+				_, err = del(ctx, key, false)
+				expectForbidden(false, err)
+				st, err := s.StatObject(ctx, rec, version(meta.NullInstance))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(st.Exists).To(BeTrue(), "the null version is kept")
+				Expect(st.Attrs).To(HaveKey(meta.AttrObjectLegalHold))
+				Expect(listed()).To(ContainElement(""), "listed again")
+			},
+			Entry("a delete naming no version, whose null delete marker would replace it", version(""), "bucket_link_olh"),
+			Entry("a delete naming versionId=null", version(meta.NullInstance), "bucket_unlink_instance"),
+		)
+		// The GET's replay trims where it would clear the OLH, whose head
+		// object holds the null data it keeps.
+		It("keeps a key's only version, a null version held since the check, with its hold, the GET's replay first", func(ctx SpecContext) {
+			body := []byte("null-data")
+			_, err := s.PutObject(ctx, rec, fresh(""), bytes.NewReader(body), op.PutParams{Attrs: attrsWithACL(initiator), Size: int64(len(body))})
+			Expect(err).NotTo(HaveOccurred())
+			settle(s)
+			atUnlink(1, func() {
+				legalHold(ctx, fresh(meta.NullInstance))
+				getFirst(ctx, "fresh")
+			})
+			_, err = del(ctx, fresh(meta.NullInstance), false)
+			expectForbidden(false, err)
+			st, err := s.StatObject(ctx, rec, fresh(meta.NullInstance))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Exists).To(BeTrue(), "the null version is kept")
+			Expect(st.Attrs).To(HaveKey(meta.AttrObjectLegalHold))
+			Expect(listedKey("fresh")).To(Equal([]string{""}), "listed again")
+		})
+		It("removes a key's only version, a locked null version, for a delete with no expected state, the GET's replay first, and clears its OLH", func(ctx SpecContext) {
+			lockedPlainNullWrite(ctx)
+			atUnlink(1, func() { getFirst(ctx, "fresh") })
+			Expect(s.DeleteObject(ctx, rec, fresh(meta.NullInstance), op.DeleteParams{})).Error().NotTo(HaveOccurred())
+			settle(s)
+			Expect(c.Object(testDataPool, "", rec.Info.Bucket.Marker+"_"+fresh("").OID())).To(BeNil(), "the head, its data and its OLH")
+			_, ok := c.OLHEntry(rookIndexPool, "", indexShardOID(rec, "fresh"), "fresh")
+			Expect(ok).To(BeFalse(), "no OLH entry")
+			Expect(listedKey("fresh")).To(BeEmpty())
+		})
 		It("writes the null delete marker for a key that never existed", func(ctx SpecContext) {
 			o, err := del(ctx, fresh(""), false)
 			Expect(err).NotTo(HaveOccurred())
