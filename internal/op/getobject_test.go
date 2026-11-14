@@ -580,9 +580,10 @@ var _ = Describe("GetObject", func() {
 				badKey       = "Requests specifying Server Side Encryption with Customer provided keys must provide an appropriate secret key."
 				badKeyMD5    = "Requests specifying Server Side Encryption with Customer provided keys must provide an appropriate secret key md5."
 				mismatch     = "The calculated MD5 hash of the key did not match the hash that was provided."
+				notAES256    = "The requested encryption algorithm is not valid, must be AES256."
 			)
 			sseC := func(k, m string) func(o *op.GetObject) {
-				return func(o *op.GetObject) { o.SSECAlgorithm, o.SSECKey, o.SSECKeyMD5 = "AES256", k, m }
+				return func(o *op.GetObject) { o.SSECAlgorithm, o.SSECKey, o.SSECKeyMD5 = new("AES256"), k, m }
 			}
 			DescribeTable("answers as rgw_s3_prepare_decrypt does",
 				func(mode string, mut func(o *op.GetObject), want error, msg string) {
@@ -598,7 +599,7 @@ var _ = Describe("GetObject", func() {
 				Entry("an x-amz-server-side-encryption header on GET", "SSE-C-AES256", func(o *op.GetObject) { o.SSEHeader = true }, op.ErrInvalidRequest, ""),
 				Entry("an x-amz-server-side-encryption header on an unencrypted object", "", func(o *op.GetObject) { o.SSEHeader = true }, op.ErrInvalidRequest, ""),
 				Entry("SSE-C without the algorithm", "SSE-C-AES256", nil, op.ErrInvalidArgument, badAlgorithm),
-				Entry("SSE-C with the wrong algorithm", "SSE-C-AES256", func(o *op.GetObject) { o.SSECAlgorithm = "AES128" }, op.ErrInvalidEncryptionAlgorithm, "The requested encryption algorithm is not valid, must be AES256."),
+				Entry("SSE-C with the wrong algorithm", "SSE-C-AES256", func(o *op.GetObject) { o.SSECAlgorithm = new("AES128") }, op.ErrInvalidEncryptionAlgorithm, notAES256),
 				Entry("SSE-C without a key", "SSE-C-AES256", sseC("", keyMD5()), op.ErrInvalidArgument, badKey),
 				Entry("SSE-C with a short key", "SSE-C-AES256", sseC("c2hvcnQ=", keyMD5()), op.ErrInvalidArgument, badKey),
 				Entry("SSE-C with a key that is not base64", "SSE-C-AES256", sseC("!"+key()[1:], keyMD5()), op.ErrInvalidArgument, badKey),
@@ -614,6 +615,43 @@ var _ = Describe("GetObject", func() {
 				Entry("SSE-S3: no vault", "AES256", nil, op.ErrInvalidArgument, "Failed to retrieve the actual key"),
 				Entry("RGW-AUTO: no default key, radosgw's -EIO", "RGW-AUTO", nil, op.ErrUnknown, ""),
 			)
+			// beast files an algorithm header sent empty as present, so
+			// rgw_s3_prepare_decrypt's strcmp refuses it as no AES256, and the
+			// algorithm is checked before the key headers are read.
+			DescribeTable("answers an SSE-C object by the algorithm header as sent, GET and HEAD, on both releases",
+				func(algorithm *string, keyed bool, want error, msg string) {
+					zones := map[denc.Release]op.ZoneInfo{denc.Squid: store, denc.Tentacle: tentacle()}
+					for rel, zone := range zones {
+						env.Zone = zone
+						for _, getData := range []bool{true, false} {
+							_, err := serve(encrypted("SSE-C-AES256"), func(o *op.GetObject) {
+								o.Secure, o.GetData, o.SSECAlgorithm = true, getData, algorithm
+								if keyed {
+									o.SSECKey, o.SSECKeyMD5 = key(), keyMD5()
+								}
+							})
+							Expect(err).To(MatchError(want), "release %d, GetData %t", rel, getData)
+							Expect(op.AsError(err).Message).To(Equal(msg), "release %d, GetData %t", rel, getData)
+						}
+					}
+				},
+				Entry("absent, no key headers", nil, false, op.ErrInvalidArgument, badAlgorithm),
+				Entry("absent, the key headers sent", nil, true, op.ErrInvalidArgument, badAlgorithm),
+				Entry("sent empty, no key headers", new(""), false, op.ErrInvalidEncryptionAlgorithm, notAES256),
+				Entry("sent empty, the key headers sent", new(""), true, op.ErrInvalidEncryptionAlgorithm, notAES256),
+				Entry("AES128, the key headers sent", new("AES128"), true, op.ErrInvalidEncryptionAlgorithm, notAES256),
+				Entry("aes256, which strcmp tells from AES256", new("aes256"), true, op.ErrInvalidEncryptionAlgorithm, notAES256),
+				Entry("AES256, no key headers", new("AES256"), false, op.ErrInvalidArgument, badKey),
+				Entry("AES256, the key headers sent: decryption is not implemented", new("AES256"), true, op.ErrNotImplemented, ""),
+			)
+			It("reads the algorithm header only for an SSE-C object, so an empty one changes no other answer", func() {
+				_, err := serve(encrypted(""), func(o *op.GetObject) { o.Secure, o.SSECAlgorithm = true, new("") })
+				Expect(err).NotTo(HaveOccurred(), "no crypt mode")
+				_, err = serve(encrypted("SSE-KMS"), func(o *op.GetObject) { o.Secure, o.SSECAlgorithm = true, new("") })
+				Expect(op.AsError(err).Message).To(Equal("Failed to retrieve the actual key, kms-keyid: kid"))
+				_, err = serve(encrypted("AES256"), func(o *op.GetObject) { o.Secure, o.SSECAlgorithm = true, new("") })
+				Expect(op.AsError(err).Message).To(Equal("Failed to retrieve the actual key"))
+			})
 			It("checks the md5 against the stored one as well as the key's", func() {
 				st := encrypted("SSE-C-AES256")
 				st.Attrs[meta.AttrCryptKeyMD5] = make([]byte, 16)

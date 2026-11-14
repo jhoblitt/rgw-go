@@ -658,6 +658,28 @@ var _ = Describe("GetObjectAttributes", func() {
 				st.Attrs[meta.AttrSLOManifest] = []byte("x")
 			}, op.ErrNotImplemented),
 		)
+		// rgw_s3_prepare_decrypt reads the algorithm header as beast files it
+		// on both releases: v19.2.7 answers ?attributes as a GET, v20.2.4's
+		// get_decrypt_filter makes the same checks without a decryption.
+		DescribeTable("reads an SSE-C object's algorithm header as sent, on both releases",
+			func(ctx SpecContext, algorithm *string, want error) {
+				zone := &opfakes.FakeZoneInfo{}
+				zone.ReleaseReturns(denc.Tentacle)
+				for rel, z := range map[denc.Release]op.ZoneInfo{denc.Squid: f.store, denc.Tentacle: zone} {
+					f.env.Zone = z
+					objects = &opfakes.FakeObjectStore{}
+					f.env.Objects = objects
+					st := &op.ObjectState{Exists: true, Size: 3, Key: meta.ObjKey{Name: "k"}, Attrs: map[string][]byte{meta.AttrCryptMode: []byte("SSE-C-AES256")}}
+					o := &op.GetObjectAttributes{}
+					o.Secure, o.SSECAlgorithm = true, algorithm
+					Expect(serve(ctx, o, st)).To(MatchError(want), "release %d", rel)
+				}
+			},
+			Entry("absent: radosgw's EINVAL", nil, op.ErrInvalidArgument),
+			Entry("sent empty, which beast files and strcmp refuses", new(""), op.ErrInvalidEncryptionAlgorithm),
+			Entry("AES128", new("AES128"), op.ErrInvalidEncryptionAlgorithm),
+			Entry("AES256 without a key", new("AES256"), op.ErrInvalidArgument),
+		)
 		It("makes no cloud-tier check on Tentacle, as a HEAD does not", func(ctx SpecContext) {
 			zone := &opfakes.FakeZoneInfo{}
 			zone.ReleaseReturns(denc.Tentacle)

@@ -25,10 +25,16 @@ const sseCKeySize = 32
 
 // sseCRequest is what rgw_s3_prepare_decrypt reads of a request: its
 // x-amz-server-side-encryption-customer-algorithm, -key and -key-MD5
-// headers, "" when absent, and whether rgw_transport_is_secure takes it.
+// headers, and whether rgw_transport_is_secure takes it. The algorithm is
+// nil when the header is not sent, and a pointer to "" when it is sent with
+// no value: beast files that as a present header, so radosgw reads it as one
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L36-L65 at v19.2.7
+// and v20.2.4). The key and the key MD5 are "" when absent, as radosgw reads
+// them with an empty default, so an empty value is an absent one for both.
 type sseCRequest struct {
-	algorithm, key, keyMD5 string
-	secure                 bool
+	algorithm   *string
+	key, keyMD5 string
+	secure      bool
 }
 
 // cryptMode is a stored crypt mode as rgw-go reads it: every caller that
@@ -168,15 +174,19 @@ func checkSSEC(ctx context.Context, r *Request, stored []byte, req sseCRequest) 
 }
 
 // sseCKeyError is rgw_s3_prepare_decrypt's checks of req's SSE-C headers: the
-// algorithm, the key and its MD5, which must match both the key and stored,
-// the MD5 the object or upload keeps. It is nil for headers that name the
-// stored key.
+// algorithm, which is InvalidArgument when the header is not sent and
+// InvalidEncryptionAlgorithmError for any value but AES256, an empty one
+// included
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1323-L1336 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1340-L1353 at v20.2.4);
+// then the key and its MD5, which must match both the key and stored, the
+// MD5 the object or upload keeps. It is nil for headers that name the stored
+// key.
 func sseCKeyError(stored []byte, req sseCRequest) error {
-	switch req.algorithm {
-	case "":
+	switch {
+	case req.algorithm == nil:
 		return ErrInvalidArgument.WithMessage(sseCAlgorithmMissing)
-	case "AES256":
-	default:
+	case *req.algorithm != "AES256":
 		return ErrInvalidEncryptionAlgorithm.WithMessage(sseCAlgorithmInvalid)
 	}
 	key, ok := fromBase64(req.key)

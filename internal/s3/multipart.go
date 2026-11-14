@@ -154,9 +154,10 @@ type copyPartResult struct {
 // requester learns nothing the store holds (docs/differences.md). The SSE-C
 // headers and the transport are what rgw_s3_prepare_decrypt reads of a part
 // of an encrypted upload and, with the copy-source SSE-C headers, of an
-// encrypted copy source; the op refuses both, and a request carrying any
-// SSE-C header does not reach that check, as uploadPartParams refuses it
-// first.
+// encrypted copy source, the algorithms as sent (headerPtr), as beast files
+// a header sent with no value as present; the op refuses both, and a request
+// carrying any SSE-C header, an empty one included, does not reach that
+// check, as uploadPartParams refuses it first.
 //
 // The success is send_response's
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2730-L2782,
@@ -173,7 +174,7 @@ func (wr *objectWrites) uploadPart(ctx context.Context, w http.ResponseWriter, r
 	o := &op.UploadPart{
 		UploadID: r.Query.Get("uploadId"), Body: r.Body, Size: r.ContentLength,
 		StorageClass: header(r, "X-Amz-Storage-Class"), CannedACL: header(r, "X-Amz-Acl"), ChecksumField: checksumField(r),
-		SSECAlgorithm: header(r, "x-amz-server-side-encryption-customer-algorithm"),
+		SSECAlgorithm: headerPtr(r, "x-amz-server-side-encryption-customer-algorithm"),
 		SSECKey:       header(r, "x-amz-server-side-encryption-customer-key"),
 		SSECKeyMD5:    header(r, "x-amz-server-side-encryption-customer-key-MD5"),
 		Secure:        secure(r),
@@ -187,7 +188,7 @@ func (wr *objectWrites) uploadPart(ctx context.Context, w http.ResponseWriter, r
 			o.IfNoneMatch = headerPtr(r, "X-Amz-Copy-Source-If-None-Match")
 			o.IfModifiedSince = headerPtr(r, "X-Amz-Copy-Source-If-Modified-Since")
 			o.IfUnmodifiedSince = headerPtr(r, "X-Amz-Copy-Source-If-Unmodified-Since")
-			o.CopySourceSSECAlgorithm = header(r, "x-amz-copy-source-server-side-encryption-customer-algorithm")
+			o.CopySourceSSECAlgorithm = headerPtr(r, "x-amz-copy-source-server-side-encryption-customer-algorithm")
 			o.CopySourceSSECKey = header(r, "x-amz-copy-source-server-side-encryption-customer-key")
 			o.CopySourceSSECKeyMD5 = header(r, "x-amz-copy-source-server-side-encryption-customer-key-MD5")
 		} else {

@@ -202,9 +202,10 @@ func (o *ListParts) checksumsShown(r *Request) bool {
 }
 
 // sseCKeyMatches reports whether SSE-C headers name the key whose MD5 is
-// stored: sseCKeyError's checks, here as a yes or no.
+// stored: sseCKeyError's checks, here as a yes or no, in which an algorithm
+// header sent empty and one not sent both say no.
 func sseCKeyMatches(algorithm, key, keyMD5 string, stored []byte) bool {
-	return sseCKeyError(stored, sseCRequest{algorithm: algorithm, key: key, keyMD5: keyMD5}) == nil
+	return sseCKeyError(stored, sseCRequest{algorithm: &algorithm, key: key, keyMD5: keyMD5}) == nil
 }
 
 // uploadChecksumType is how a completion of an upload of checksum uc

@@ -45,10 +45,12 @@ type GetObject struct {
 	ResponseOverrides map[string]string
 	// SSEHeader is that the request carries x-amz-server-side-encryption.
 	SSEHeader bool
-	// SSECAlgorithm, SSECKey and SSECKeyMD5 are the
-	// x-amz-server-side-encryption-customer-algorithm, -key and -key-MD5
+	// SSECAlgorithm is the x-amz-server-side-encryption-customer-algorithm
+	// header, nil when it is not sent: one sent with no value is present
+	// (sseCRequest). SSECKey and SSECKeyMD5 are the -key and -key-MD5
 	// headers, "" when absent.
-	SSECAlgorithm, SSECKey, SSECKeyMD5 string
+	SSECAlgorithm       *string
+	SSECKey, SSECKeyMD5 string
 	// Secure is rgw_transport_is_secure: TLS, or a forwarded protocol radosgw
 	// trusts.
 	Secure bool

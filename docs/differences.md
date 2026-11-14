@@ -7836,17 +7836,19 @@ does the following.
   NextPartNumberMarker from an unset variable when max-parts is below
   1](ceph-upstream-bugs.md#radosgw-renders-getobjectattributess-nextpartnumbermarker-from-an-unset-variable-when-max-parts-is-below-1)").
 - **An empty header reads as no header.** rgw-go takes `Range`,
-  `If-Match`, `If-None-Match`, `If-Modified-Since`, `If-Unmodified-Since`
-  and `x-amz-server-side-encryption-customer-algorithm` as absent when they
-  are sent with an empty value. radosgw takes each of them as present: an
+  `If-Match`, `If-None-Match`, `If-Modified-Since` and
+  `If-Unmodified-Since` as absent when they are sent with an empty value.
+  radosgw takes each of them as present: an
   empty `Range` turns the head's prefetch off, and on an empty object is 416
   InvalidRange (`rgw_op.cc:2176-2191` and `:2396-2401` at v19.2.6,
   `:2411-2426` and `:2629-2634` at v20.2.4); an empty `If-Match` is 412
   PreconditionFailed, as no ETag starts the empty string, and turns
   `If-Unmodified-Since` off; an empty `If-None-Match` turns
-  `If-Modified-Since` off; an empty date is 400 InvalidArgument; and an
-  empty algorithm is 400 InvalidEncryptionAlgorithmError rather than
-  InvalidArgument. radosgw reads the customer key and key-MD5 headers with
+  `If-Modified-Since` off; and an empty date is 400 InvalidArgument.
+  rgw-go reads `x-amz-server-side-encryption-customer-algorithm` as present
+  when it is sent empty, as radosgw does: a read of an SSE-C object answers
+  400 InvalidEncryptionAlgorithmError, not InvalidArgument. radosgw reads the
+  customer key and key-MD5 headers with
   an empty default (`rgw_crypt.cc:1341` and `:1359` at v19.2.6, `:1360` and
   `:1379` at v20.2.4), so for those two an empty value is an absent one on
   both gateways.
@@ -9424,6 +9426,54 @@ does the following.
   `storedCryptRefusal`, `internal/op/crypt.go`). Behind the decision, the
   stores' `CopyPart` refuse to copy a byte of a source of a non-empty mode
   (`op.RefuseEncryptedPartSource`).
+- **An SSE-C algorithm header sent empty is 501 on a write, where radosgw
+  takes it for none or refuses it as no AES256.** Beast files a header sent
+  with no value as present, with the empty string for its value
+  ([rgw_asio_client.cc:36-65](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L36-L65) at v19.2.7,
+  [rgw_asio_client.cc:36-65](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_client.cc#L36-L65) at v20.2.4),
+  and what radosgw makes of it depends on the function that reads it:
+  - a PutObject and a CreateMultipartUpload run `rgw_s3_prepare_encrypt`
+    ([rgw_rest_s3.cc:2877-2885](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2877-L2885) and
+    [rgw_rest_s3.cc:4087-4092](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4087-L4092) at v19.2.7,
+    [rgw_rest_s3.cc:3003-3011](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3003-L3011) and
+    [rgw_rest_s3.cc:4558-4563](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4558-L4563) at v20.2.4),
+    which gets the header from `CryptAttributes`, an empty view for a header
+    sent empty as for one not sent
+    ([rgw_crypt.cc:913-924](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L913-L924) at v19.2.7,
+    [rgw_crypt.cc:928-939](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L928-L939) at v20.2.4),
+    and skips its SSE-C branch for an empty one
+    ([rgw_crypt.cc:1040-1048](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1040-L1048) at v19.2.7,
+    [rgw_crypt.cc:1055-1063](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1055-L1063) at v20.2.4).
+    The branch it takes instead refuses the request, 400 InvalidArgument,
+    only when a customer key or key-MD5 header that is not empty comes with
+    the empty algorithm
+    ([rgw_crypt.cc:1123-1145](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1123-L1145) at v19.2.7,
+    [rgw_crypt.cc:1138-1160](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1138-L1160) at v20.2.4).
+    Alone, the empty header leaves radosgw to store the object, or begin the
+    upload, unencrypted unless another encryption header, the bucket's
+    default encryption or `rgw_crypt_default_encryption_key` asks for
+    encryption;
+  - an UploadPart and an UploadPartCopy run `rgw_s3_prepare_decrypt` over
+    the attrs of the upload's meta object, which reads the algorithm header
+    only for an upload whose mode is SSE-C, and finds a header sent empty no
+    AES256 there: 400 InvalidEncryptionAlgorithmError
+    ([rgw_crypt.cc:1323-1336](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1323-L1336) at v19.2.7,
+    [rgw_crypt.cc:1340-1353](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1340-L1353) at v20.2.4).
+    The part of an upload of another mode, none included, is stored, or
+    refused for that mode's own reason ("A part radosgw would encrypt with
+    an SSE-C key, or under a crypt mode rgw-go does not know, answers 501").
+    A copy's SSE-C source is decided the same way by the algorithm header
+    of the release's copy source, the request's own at v19.2.7 and the
+    `x-amz-copy-source-` one at v20.2.4 ("UploadPartCopy answers 501 for an
+    encrypted copy source radosgw would decrypt").
+
+  rgw-go refuses a write by the names of the headers it carries and not by
+  their values ("Writes that ask for encryption answer 501, SSE-S3 and
+  SSE-KMS until phase 2 and SSE-C until phase 4"), so each of these requests
+  is 501 NotImplemented before the permission check, and no part or object
+  is stored. Behind that refusal the op reads the header as sent, so that
+  the part of an SSE-C upload answers InvalidEncryptionAlgorithmError once
+  phase 4 serves SSE-C writes (`sseCRequest`, `internal/op/crypt.go`).
 - **A completion of an upload of a crypt mode rgw-go does not know
   answers 501.** A v19.2.7 or v20.2.4 radosgw completes an upload whose
   crypt mode it does not name, as it takes the mode for none

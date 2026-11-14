@@ -63,12 +63,21 @@ type UploadPart struct {
 	// neither: AWS defines no checksum request header for UploadPartCopy,
 	// and its part takes its upload's type (MultipartStore.CopyPart).
 	ChecksumField func(name string) (string, bool)
-	// SSECAlgorithm, SSECKey and SSECKeyMD5 are the
-	// x-amz-server-side-encryption-customer-algorithm, -key and -key-MD5
-	// headers, "" when absent, with which a part of an SSE-C upload names the
+	// SSECAlgorithm is the x-amz-server-side-encryption-customer-algorithm
+	// header, nil when it is not sent: one sent with no value is present
+	// (sseCRequest). SSECKey and SSECKeyMD5 are the -key and -key-MD5
+	// headers, "" when absent. With them a part of an SSE-C upload names the
 	// upload's key (refuseEncrypted), and on Squid an UploadPartCopy names an
 	// SSE-C source's key (refuseEncryptedSource).
-	SSECAlgorithm, SSECKey, SSECKeyMD5 string
+	SSECAlgorithm       *string
+	SSECKey, SSECKeyMD5 string
+	// EmptyEncryption is the protocol's refusal of a request that sent an
+	// encryption header it refuses with no value (emptyMessage in
+	// internal/s3), nil when it sent none. A part of an upload that stores a crypt mode answers by
+	// the mode and the SSE-C headers as sent, where the empty header is read
+	// as radosgw reads it; only a part of an upload without one is refused
+	// with it (refuseEmptyEncryption).
+	EmptyEncryption error
 	// Secure is rgw_transport_is_secure: TLS, or a forwarded protocol radosgw
 	// trusts.
 	Secure bool
@@ -90,11 +99,14 @@ type UploadPart struct {
 	// present with an empty value is a condition, as CopyObject takes it.
 	IfMatch, IfNoneMatch               *string
 	IfModifiedSince, IfUnmodifiedSince *string
-	// CopySourceSSECAlgorithm, CopySourceSSECKey and CopySourceSSECKeyMD5
-	// are the x-amz-copy-source-server-side-encryption-customer-algorithm,
-	// -key and -key-MD5 headers, "" when absent, with which a Tentacle
-	// request names an SSE-C source's key (refuseEncryptedSource).
-	CopySourceSSECAlgorithm, CopySourceSSECKey, CopySourceSSECKeyMD5 string
+	// CopySourceSSECAlgorithm is the
+	// x-amz-copy-source-server-side-encryption-customer-algorithm header, nil
+	// when it is not sent, as SSECAlgorithm is. CopySourceSSECKey and
+	// CopySourceSSECKeyMD5 are the -key and -key-MD5 headers, "" when absent.
+	// With them a Tentacle request names an SSE-C source's key
+	// (refuseEncryptedSource).
+	CopySourceSSECAlgorithm                 *string
+	CopySourceSSECKey, CopySourceSSECKeyMD5 string
 
 	ETag  string
 	Mtime time.Time
@@ -334,6 +346,9 @@ func (o *UploadPart) putPart(ctx context.Context, r *Request, up *Upload) (*Part
 	if err := o.refuseEncrypted(ctx, r, upAttrs); err != nil {
 		return nil, err
 	}
+	if err := o.refuseEmptyEncryption(); err != nil {
+		return nil, err
+	}
 	ck, body, err := ChecksumForPart(ChecksumInput{Field: o.ChecksumField, Trailers: r.Trailers, Body: o.Body}, up.Checksum, r.Env.Zone.Release())
 	if err != nil {
 		return nil, err
@@ -394,6 +409,9 @@ func (o *UploadPart) copyPart(ctx context.Context, r *Request, up *Upload) (*Par
 	if err := o.refuseEncryptedSource(ctx, r); err != nil {
 		return nil, err
 	}
+	if err := o.refuseEmptyEncryption(); err != nil {
+		return nil, err
+	}
 	if err := conds.check(o.src); err != nil {
 		return nil, err
 	}
@@ -421,6 +439,19 @@ func (o *UploadPart) refuseEncrypted(ctx context.Context, r *Request, upAttrs ma
 	return storedCryptRefusal(ctx, r, upAttrs, sseCRequest{
 		algorithm: o.SSECAlgorithm, key: o.SSECKey, keyMD5: o.SSECKeyMD5, secure: o.Secure,
 	})
+}
+
+// refuseEmptyEncryption is the refusal of an encryption header sent with no
+// value (EmptyEncryption), made once refuseEncrypted and refuseEncryptedSource
+// have passed, which they do for an upload and a source that store no crypt
+// mode, and for an unranged copy of a zero-byte source of any mode, which
+// decides nothing: an SSE-C upload, or a source, with such a header answers
+// by rgw_s3_prepare_decrypt's own refusal of it, where radosgw takes it for
+// no algorithm, and any other mode by its own. It must follow them, as the
+// answers they give are the ones radosgw gives and the part is refused
+// either way.
+func (o *UploadPart) refuseEmptyEncryption() error {
+	return o.EmptyEncryption
 }
 
 // refuseEncryptedSource is RGWPutObj::get_data's decryption of a copy's

@@ -136,10 +136,12 @@ func getObjectFailure(w http.ResponseWriter, o *op.GetObject, err error) error {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L836-L852 at v19.2.6)
 // over r, with the response-* parameters send_response_data reads and the SSE
 // inputs rgw_s3_prepare_decrypt reads. Each header is read by its last value,
-// as RGWEnv keeps it. x-amz-checksum-mode, which only Tentacle's get_params
-// reads, is read on Squid too (docs/differences.md, "Squid clusters show the
-// checksums they store"). A partNumber strict_strtol refuses is returned with
-// the op, for the op to answer where radosgw's execute does.
+// as RGWEnv keeps it; the SSE-C algorithm is kept as sent (headerPtr), as
+// beast files a header sent with no value as present. x-amz-checksum-mode,
+// which only Tentacle's get_params reads, is read on Squid too
+// (docs/differences.md, "Squid clusters show the checksums they store"). A
+// partNumber strict_strtol refuses is returned with the op, for the op to
+// answer where radosgw's execute does.
 func getObjectInput(r *op.Request) (*op.GetObject, error) {
 	_, sse := op.HeaderValue(r.Header, "x-amz-server-side-encryption")
 	o := &op.GetObject{
@@ -152,7 +154,7 @@ func getObjectInput(r *op.Request) (*op.GetObject, error) {
 		IfUnmodifiedSince: header(r, "If-Unmodified-Since"),
 		Torrent:           r.Query.Has("torrent"),
 		SSEHeader:         sse,
-		SSECAlgorithm:     header(r, "x-amz-server-side-encryption-customer-algorithm"),
+		SSECAlgorithm:     headerPtr(r, "x-amz-server-side-encryption-customer-algorithm"),
 		SSECKey:           header(r, "x-amz-server-side-encryption-customer-key"),
 		SSECKeyMD5:        header(r, "x-amz-server-side-encryption-customer-key-MD5"),
 		Secure:            secure(r),

@@ -21,7 +21,7 @@ func getObjectAttrs(ctx context.Context, w http.ResponseWriter, r *op.Request) e
 	o := &op.GetObjectAttributes{
 		Versioned:     r.Object.Instance != "",
 		SSEHeader:     sse,
-		SSECAlgorithm: header(r, "x-amz-server-side-encryption-customer-algorithm"),
+		SSECAlgorithm: headerPtr(r, "x-amz-server-side-encryption-customer-algorithm"),
 		SSECKey:       header(r, "x-amz-server-side-encryption-customer-key"),
 		SSECKeyMD5:    header(r, "x-amz-server-side-encryption-customer-key-MD5"),
 		Secure:        secure(r),
