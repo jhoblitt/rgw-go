@@ -6660,6 +6660,34 @@ rgw-go does the following.
   MethodNotAllowed", below). On Squid the read's action alone decides, as
   before: v19.2.7 has no GetObjectAttributes, and its policy language no
   s3:GetObjectAttributes.
+- **A Deny that names NotAction and no Action refuses every action its
+  NotAction does not name.** radosgw's `Statement::eval` passes any action
+  its `action` mask lacks
+  ([rgw_iam_policy.cc:1222](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L1222),
+  [rgw_iam_policy.cc:1226](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1226)),
+  and its parser fills that mask from an `Action` element alone
+  ([rgw_iam_policy.cc:629-643](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L629-L643),
+  [rgw_iam_policy.cc:642-656](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L642-L656)),
+  so a statement that names only `NotAction` applies to no action, and a
+  Deny written that way refuses nothing. rgw-go applies such a Deny to
+  every action its NotAction does not name, as Amazon S3 applies the
+  [NotAction element](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_notaction.html),
+  in bucket and identity policies alike, on both releases
+  (`policy.Statement.Eval`). A bucket policy that allows a user `s3:*` and
+  denies that user NotAction `s3:GetObject` serves that user's GetObject
+  and refuses its PutObject and DeleteObject, where radosgw serves all
+  three; the s3-test `test_bucket_policy_deny_notaction` checks it. Where
+  such a Deny's Resource names the bucket, it refuses `s3:ListBucket` too
+  unless its NotAction names it, so a missing object answers the
+  principal 403, not 404. An Allow that names only NotAction keeps
+  radosgw's evaluation and grants nothing, so rgw-go never grants what a
+  radosgw serving the same zone refuses. A statement that names both
+  Action and NotAction applies to the actions Action names and NotAction
+  does not, as radosgw's does, and a NotAction that names no action, `[]`,
+  counts as none.
+  docs/ceph-upstream-bugs.md records the defect ("[radosgw applies a
+  policy statement that names NotAction and no Action to no
+  action](ceph-upstream-bugs.md#radosgw-applies-a-policy-statement-that-names-notaction-and-no-action-to-no-action)").
 
 ### Bucket metadata differences
 

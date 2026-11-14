@@ -524,6 +524,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's format_xattr cuts a quoted-printable metadata value at its first NUL](#radosgws-format_xattr-cuts-a-quoted-printable-metadata-value-at-its-first-nul) | pending | pending | ✓ |
 | [radosgw sends a metadata put's objv tag raw in RGWX_UPDATE_VERSION](#radosgw-sends-a-metadata-puts-objv-tag-raw-in-rgwx_update_version) | pending | pending | ✓ |
 | [radosgw's replay of another request's versioned delete removes a version locked after that delete's check](#radosgws-replay-of-another-requests-versioned-delete-removes-a-version-locked-after-that-deletes-check) | pending | pending | ✓ |
+| [radosgw applies a policy statement that names NotAction and no Action to no action](#radosgw-applies-a-policy-statement-that-names-notaction-and-no-action-to-no-action) | [#73983](https://tracker.ceph.com/issues/73983) | none; [ceph/ceph#66099](https://github.com/ceph/ceph/pull/66099) closed unmerged |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -33899,3 +33900,55 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 Task V16's adversarial review (P1), 2026-11-12, and
   Task V19, 2026-11-14, split into its own-replay and other-request halves
   by V19's review; derived from the source, not reproduced.
+
+## radosgw applies a policy statement that names NotAction and no Action to no action
+
+- **Kind:** defect, security: a Deny statement written with `NotAction`
+  alone, which Amazon S3 applies to every action its NotAction does not
+  name, refuses nothing in radosgw, so an explicit Deny the policy states
+  is not enforced. An Allow written that way grants nothing. Unreproduced
+  on a running radosgw: derived from the source; rgw-go, which evaluated
+  statements the same way, served the requests such a Deny should refuse
+  in a scratch handler spec.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `Statement::eval` passes any action that its `action` mask lacks or
+    its `notaction` mask holds
+    ([rgw_iam_policy.cc:1222](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L1222),
+    [rgw_iam_policy.cc:1226](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1226)).
+  - The parser sets `action` for an `Action` element and `notaction` for a
+    `NotAction` one
+    ([rgw_iam_policy.cc:629-643](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L629-L643),
+    [rgw_iam_policy.cc:642-656](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L642-L656)),
+    and `action` starts empty
+    ([rgw_iam_policy.h:543](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L543),
+    [rgw_iam_policy.h:596](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L596)),
+    so a statement naming only NotAction matches no action, whatever its
+    effect.
+  - Such a policy is accepted: the parser refuses only an action string
+    that matches no action
+    ([rgw_iam_policy.cc:753](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L753),
+    [rgw_iam_policy.cc:765](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L765)).
+  - v21.1.2 splits the test in two with the same logic
+    ([rgw_iam_policy.cc:1306-1316](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_iam_policy.cc#L1306-L1316)).
+- **Impact:** a statement that names NotAction and no Action applies to no
+  action, so a Deny written so refuses nothing and an Allow written so
+  grants nothing, in a bucket policy and an identity policy alike.
+- **Releases:** v19.2.7, v20.2.4 and v21.1.2; older releases not checked.
+- **rgw-go:** applies a Deny that names NotAction and no Action to every
+  action its NotAction does not name, on both releases
+  (`policy.Statement.Eval`; docs/differences.md, "[A Deny that names
+  NotAction and no Action refuses every action its NotAction does not
+  name](differences.md#authorization-differences)"). An Allow written so
+  keeps radosgw's evaluation and grants nothing, so rgw-go never grants
+  what radosgw refuses on the same zone. The s3-test
+  `test_bucket_policy_deny_notaction`, marked `fails_on_rgw`, checks the
+  Deny's refusals.
+- **Upstream:** [#73983](https://tracker.ceph.com/issues/73983), which
+  reports NotAction not evaluated, Fix Under Review. Its fix,
+  [ceph/ceph#66099](https://github.com/ceph/ceph/pull/66099), "rgw/iam:
+  correcting evaluation of 'NotAction'", closed unmerged on 2026-10-22; it
+  tested each mask only when it holds an action, which would also have
+  made an Allow naming only NotAction grant, and a statement naming
+  neither Action nor NotAction apply to every action.
+- **Found:** phase 2 Task WP-25's adversarial review, 2026-11-14, testing
+  Deny precedence for GetObjectAttributes; fixed in rgw-go by Task S8.
