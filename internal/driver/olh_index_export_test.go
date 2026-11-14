@@ -27,7 +27,7 @@ type olhIndexFallback struct{ noRemoval }
 // noRemoval stands in for the removeInstance bucketOLHIndex does not have.
 type noRemoval struct{}
 
-func (noRemoval) removeInstance(context.Context, meta.ObjKey, []byte) error { return nil }
+func (noRemoval) removeInstance(context.Context, meta.ObjKey, []byte, bool) error { return nil }
 
 var (
 	_ olhIndex = olhIndexCheck{olhIndexFallback: olhIndexFallback{}}

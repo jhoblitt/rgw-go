@@ -847,6 +847,56 @@ var _ = Describe("the OLH head operations", func() {
 			Expect(idx.Calls[2].Writes).To(Equal(1))
 		})
 
+		DescribeTable("has the index keep a version whose lock holds on every removal but the replaying writer's own",
+			func(ctx SpecContext, opTag string, keep []bool) {
+				olhHead("2", info("v1", false), nil)
+				_, err := s.ApplyOLHLogForTest(ctx, idx, state(), map[uint64][]rgwcls.OLHLogEntry{
+					3: {link("v2", tagP), removal("v1", tagP)},
+					4: {removal("v0", tagQ)},
+				}, opTag, nil)
+				Expect(err).NotTo(HaveOccurred())
+				var got []bool
+				for _, call := range idx.Calls {
+					if call.Method == "removeInstance" {
+						got = append(got, call.KeepLocked)
+					}
+				}
+				Expect(got).To(Equal(keep), "v1's removal under tagP, then v0's under tagQ")
+			},
+			Entry("a writer's replay keeps none of its own", tagP, []bool{false, true}),
+			Entry("a reader's replay keeps any", "", []bool{true, true}),
+		)
+
+		// The writer whose entry it is checked the lock against the write tag
+		// it holds the removal to, and removes the version once its own replay
+		// finds the entry gone (checkRemoval), so the replay that kept it
+		// reports nothing.
+		DescribeTable("passes over another writer's removal of a version whose lock holds, reporting nothing",
+			func(ctx SpecContext, log map[uint64][]rgwcls.OLHLogEntry, instance string, after []string, cleared bool) {
+				olhHead("2", info("v1", false), withPending(tagQ))
+				idx.RemoveErr = map[string]error{instance: fmt.Errorf("version %q: %w", instance, driver.ErrRemovalLocked)}
+				last, err := s.ApplyOLHLogForTest(ctx, idx, state(), log, "", nil)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(last).To(BeEquivalentTo(3), "the replay landed")
+				Expect(idx.Methods()).To(Equal(after))
+				if cleared {
+					Expect(head()).To(BeNil())
+					return
+				}
+				Expect(head().Xattrs).To(HaveKeyWithValue(meta.AttrOLHVer, []byte("3")))
+				Expect(head().Xattrs).NotTo(HaveKey(meta.AttrOLHPendingPrefix + tagQ))
+			},
+			Entry("a named version, then the trim",
+				map[uint64][]rgwcls.OLHLogEntry{3: {link("v2", tagQ), removal("v1", tagQ)}}, "v1",
+				[]string{"removeInstance", "trimLog"}, false),
+			Entry("a named version whose unlink left no version, then the clear",
+				map[uint64][]rgwcls.OLHLogEntry{3: {removal("v1", tagQ), unlink(tagQ)}}, "v1",
+				[]string{"removeInstance", "clear"}, true),
+			Entry("the null version whose unlink left no version, then the trim in the clear's place, the OLH head holding its data",
+				map[uint64][]rgwcls.OLHLogEntry{3: {unlink(tagQ), removal("", tagQ)}}, "",
+				[]string{"removeInstance", "trimLog"}, false),
+		)
+
 		DescribeTable("drops a removal of the null version that a later link of null data follows",
 			func(ctx SpecContext, log map[uint64][]rgwcls.OLHLogEntry, removed []string) {
 				olhHead("2", info("v1", false), nil)

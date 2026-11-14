@@ -20,6 +20,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/meta"
+	"github.com/jhoblitt/rgw-go/internal/objectlock"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/testutil/fakerados"
@@ -659,7 +660,10 @@ var _ = Describe("the versioned link and unlink", func() {
 			settled(shard, "v2", "v1", "v2")
 		})
 
-		It("answers its context's error when it ends after the link, leaving the link for the next update", func(ctx SpecContext) {
+		// The link landed, so the version is the key's whatever its caller
+		// does, and a replay left to the next reader would be one that keeps
+		// another writer's locked version to no one.
+		It("runs its replay though its context ends after the link", func(ctx SpecContext) {
 			put(ctx, "v1")
 			v := write(ctx, "v2")
 			wctx, cancel := context.WithCancel(ctx)
@@ -669,12 +673,9 @@ var _ = Describe("the versioned link and unlink", func() {
 					cancel()
 				}
 			})
-			Expect(s.SetOLHForTest(wctx, rec, v, driver.OLHLink{})).To(MatchError(context.Canceled))
+			Expect(s.SetOLHForTest(wctx, rec, v, driver.OLHLink{})).To(Succeed())
 			c.AfterWrite(rookIndexPool, "", shard, nil)
-			Expect(versionHead("v2")).NotTo(BeNil())
-			Expect(pending()).To(HaveLen(1))
-			Expect(olhEntry(shard).PendingLog).To(HaveKey(uint64(3)))
-			Expect(update(ctx)).To(Succeed())
+			Expect(wctx.Err()).To(MatchError(context.Canceled), "the context ended after the link")
 			settled(shard, "v2", "v1", "v2")
 		})
 
@@ -1332,6 +1333,73 @@ var _ = Describe("the versioned link and unlink", func() {
 			en, ok := c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k", Instance: "v1"})
 			Expect(ok).To(BeTrue())
 			Expect(en.PendingMap).To(BeEmpty(), "the prepare was canceled")
+		})
+
+		// A replay removing a version another writer logged for removal keeps
+		// one whose object lock holds: that writer held the removal to the
+		// write tag its check read, which this replay does not know.
+		Describe("for another writer, keeping a version whose lock holds", func() {
+			retention := func(mode string, until time.Duration) func() []byte {
+				return func() []byte {
+					return objectlock.EncodeRetention(meta.ObjectRetention{Mode: mode, RetainUntil: now().Add(until)})
+				}
+			}
+			hold := func(status string) func() []byte {
+				return func() []byte { return objectlock.EncodeLegalHold(meta.ObjectLegalHold{Status: status}) }
+			}
+			removeKeeping := func(ctx context.Context) error {
+				return s.NewOLHIndexForTest(rec, version("v1")).RemoveInstanceKeepingLocked(ctx, version("v1"))
+			}
+			BeforeEach(func() { rec.Info.Flags |= meta.BucketObjLockEnabled })
+
+			DescribeTable("keeps, writing nothing, a version no delete may remove, the governance bypass included",
+				func(ctx SpecContext, name string, value func() []byte) {
+					write(ctx, "v1")
+					versionHead("v1").Xattrs[name] = value()
+					c.ResetCounters()
+					Expect(removeKeeping(ctx)).To(MatchError(driver.ErrRemovalLocked))
+					Expect(c.Writes(rookIndexPool, "", shard)).To(BeZero(), "nothing written to the index")
+					Expect(c.Writes(testDataPool, "", instanceHeadOID(version("v1")))).To(BeZero(), "nothing written to the head")
+				},
+				Entry("a legal hold ON", meta.AttrObjectLegalHold, hold("ON")),
+				Entry("a COMPLIANCE retention", meta.AttrObjectRetention, retention("COMPLIANCE", time.Hour)),
+				Entry("a lock attr that does not decode", meta.AttrObjectLegalHold, func() []byte { return []byte{0xff} }),
+			)
+			DescribeTable("removes a version a delete may remove",
+				func(ctx SpecContext, name string, value func() []byte) {
+					write(ctx, "v1")
+					versionHead("v1").Xattrs[name] = value()
+					Expect(removeKeeping(ctx)).To(Succeed())
+					Expect(versionHead("v1")).To(BeNil())
+				},
+				Entry("a legal hold OFF", meta.AttrObjectLegalHold, hold("OFF")),
+				Entry("a retention lapsed", meta.AttrObjectRetention, retention("COMPLIANCE", -time.Second)),
+				Entry("a GOVERNANCE retention, which a delete with the bypass passes", meta.AttrObjectRetention, retention("GOVERNANCE", time.Hour)),
+			)
+			// Object lock can be turned on for a versioned bucket while a request
+			// holds the record it read before, and a lock attr is written only
+			// once it is on.
+			It("keeps a held version though the replaying request's bucket record shows no object lock", func(ctx SpecContext) {
+				rec.Info.Flags &^= meta.BucketObjLockEnabled
+				write(ctx, "v1")
+				versionHead("v1").Xattrs[meta.AttrObjectLegalHold] = hold("ON")()
+				Expect(removeKeeping(ctx)).To(MatchError(driver.ErrRemovalLocked))
+				Expect(versionHead("v1")).NotTo(BeNil())
+			})
+			It("guards the removal of a head without a write tag on its absence, so a lock written as the removal lands keeps it", func(ctx SpecContext) {
+				write(ctx, "v1")
+				delete(versionHead("v1").Xattrs, meta.AttrIDTag)
+				c.BeforeWrite(testDataPool, "", instanceHeadOID(version("v1")), func(o *fakerados.Object) {
+					o.Xattrs[meta.AttrIDTag] = []byte("tag-of-the-hold")
+					o.Xattrs[meta.AttrObjectLegalHold] = hold("ON")()
+				})
+				Expect(removeKeeping(ctx)).To(MatchError(radosclient.ErrCanceled))
+				settle(s)
+				Expect(versionHead("v1")).NotTo(BeNil(), "the version and its hold")
+				en, ok := c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k", Instance: "v1"})
+				Expect(ok).To(BeTrue(), "its instance entry")
+				Expect(en.PendingMap).To(BeEmpty(), "the prepare was canceled")
+			})
 		})
 
 		It("guards on the write tag it read without an expected one", func(ctx SpecContext) {

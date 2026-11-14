@@ -44,13 +44,22 @@ var errRemovalRefused = errors.New("the version's write tag is not the one expec
 // still in the pending log of an OLH entry another writer's link re-tagged.
 var errRefusalUnsettled = errors.New("the refused removal is still in an OLH log under another writer's tag, whose replay can remove the version")
 
+// errRemovalLocked marks an olhIndex.removeInstance that kept a version its
+// object lock holds, for a replay removing it on another writer's behalf.
+var errRemovalLocked = errors.New("the version's object lock holds; a removal logged by another writer is left to that writer")
+
 // olhIndex is what the OLH head operations ask of the bucket index, on the
 // shard of the head's name and with the head's OLH tag: the pending log's
 // read after marker, its trim up to ver, the clear of the name's OLH entry,
 // and bi_get of that entry, which answers not found when the name has none.
 // removeInstance removes the version key names as the unversioned delete
 // does, guarded on its head's write tag or, when expectTag is not nil, on
-// expectTag; a version already gone answers not found.
+// expectTag; a version already gone answers not found. With keepLocked a
+// version under a lock no delete passes, the governance bypass included
+// (lockHolds), is kept, answering an error wrapping errRemovalLocked, and any
+// other is removed guarded on the write tag its head carries as read, absent
+// read as empty, so that a lock written since that read refuses the
+// removal.
 //
 // A removal that expectTag refuses removes nothing and answers an error
 // wrapping errRemovalRefused: the version's head and instance entry stay,
@@ -70,17 +79,19 @@ var errRefusalUnsettled = errors.New("the refused removal is still in an OLH log
 //     that writer's replay can remove the version.
 //
 // Once the writer's own replay has landed with its trim or clear, no later
-// replay meets the entry. Until then the version can still go, guarded only
-// on the write tag a replay reads, as radosgw's replay removes it: a replay
-// by another reader running alongside the writer's own does not know
-// expectTag, neither does one that runs after the writer's head op failed
-// and its retry never landed, and neither does the replay of a re-tagged
-// entry's kept log.
+// replay meets the entry. Until then another replay can meet it, one by a
+// reader running alongside the writer's own, one after the writer's head op
+// failed and its retry never landed, the replay of a re-tagged entry's kept
+// log, none of which knows expectTag. Such a replay keeps a version under a
+// lock no delete passes (keepLocked), so a legal hold or a COMPLIANCE
+// retention written after the writer's check is not removed with it, and
+// removes any other guarded only on the write tag it reads, as radosgw's
+// replay removes it.
 type olhIndex interface {
 	readLog(ctx context.Context, head *op.ObjectState, marker uint64) (rgw.ReadOLHLogRet, error)
 	trimLog(ctx context.Context, head *op.ObjectState, ver uint64) error
 	clear(ctx context.Context, head *op.ObjectState) error
-	removeInstance(ctx context.Context, key meta.ObjKey, expectTag []byte) error
+	removeInstance(ctx context.Context, key meta.ObjKey, expectTag []byte, keepLocked bool) error
 	getOLH(ctx context.Context, head *op.ObjectState) (rgw.OLHEntry, error)
 }
 
@@ -386,12 +397,13 @@ func (s *Store) followOLH(ctx context.Context, head *op.ObjectState, update func
 // or when its own instance sorts before the current one; an UNLINK_OLH marks
 // the OLH for removal until a later link; a REMOVE_INSTANCE names a version
 // to remove. Those versions are removed through idx before the head op, the
-// entries carrying opTag guarded on expectTag when it is not nil; one already
-// gone is passed over, and any other failure stops the replay before the head
-// op, as radosgw's does. A removal of the null version that a later LINK_OLH
-// of null data follows, in log or, with nullLinkLater, on a later page of the
-// replay (replayPass), is dropped: the null version's removal names its key,
-// not the data it replaced
+// entries carrying opTag guarded on expectTag when it is not nil and every
+// other writer's with keepLocked; one already gone is passed over, and any
+// other failure stops the replay before the head op, as radosgw's does. A
+// removal of the null version that a later LINK_OLH of null data follows, in
+// log or, with nullLinkLater, on a later page of the replay (replayPass), is
+// dropped: the null version's removal names its key, not the data it
+// replaced
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1806-L1810 and
 // https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1970-L1971 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1947-L1951 and
@@ -411,6 +423,15 @@ func (s *Store) followOLH(ctx context.Context, head *op.ObjectState, update func
 // entry stays in the log for the retry, or the head is gone, below. A tail
 // that did not finish is returned joined with the refusal, which is then not
 // final.
+//
+// Another writer's removal of a version under a lock no delete passes
+// (errRemovalLocked) is passed over in the same way, logged at Info so that
+// an operator can find a version no writer comes back for, and reported to
+// no one: that writer checked the lock and the write tag it holds the
+// removal to, which this replay does not know, and its own check after its
+// replay finishes the removal (checkRemoval). radosgw's replay removes such
+// a version (docs/differences.md, "A replay keeps another writer's version
+// whose object lock holds").
 //
 // The head op is guarded on head's OLH tag and on olh.ver equal to the bytes
 // head was read with, where radosgw compares olh.ver in the OSD's u64 mode,
@@ -491,16 +512,22 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 	var refused error
 	var keepHead bool
 	for _, e := range removals {
+		own := opTag != "" && e.OpTag == opTag
 		var guard []byte
-		if expectTag != nil && e.OpTag == opTag {
+		if expectTag != nil && own {
 			guard = expectTag
 		}
 		key := indexToObjKey(e.Key)
-		err := idx.removeInstance(ctx, key, guard)
+		err := idx.removeInstance(ctx, key, guard, !own)
 		switch {
 		case err == nil, errors.Is(err, radosclient.ErrNotFound), errors.Is(err, op.ErrNoSuchKey):
 		case guard != nil && errors.Is(err, errRemovalRefused):
 			refused = errors.Join(refused, fmt.Errorf("replaying the olh log of %s: removing version %q: %w", what, key.Instance, err))
+			keepHead = keepHead || key.Instance == ""
+		case !own && errors.Is(err, errRemovalLocked):
+			slog.InfoContext(ctx, "a replay keeps another writer's version under a lock no delete passes, leaving its removal to that writer",
+				slog.String("bucket", head.Bucket.Info.Bucket.Name), slog.String("key", key.Name), slog.String("instance", key.Instance),
+				slog.String("op_tag", e.OpTag))
 			keepHead = keepHead || key.Instance == ""
 		default:
 			return 0, fmt.Errorf("replaying the olh log of %s: removing version %q: %w", what, key.Instance, err)
@@ -508,14 +535,16 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 	}
 	if err := s.writeOLHHead(ctx, head, w); err != nil {
 		if errors.Is(err, errOLHHeadMissing) {
-			// The replay that cleared the OLH removed, unguarded, every
-			// version this one's expectTag refused, so the refusal dropped
-			// here leaves no version stored, unless this writer's pending
-			// attr expired first: that replay then never applied this
-			// one's entries, and the refused version stays
-			// (docs/ceph-upstream-bugs.md, "cls_rgw's bucket_clear_olh drops
-			// a pending log no replay read"). Only a delete given
-			// DeleteParams.Expect sets expectTag.
+			// The replay that cleared the OLH removed every version this
+			// one's expectTag refused but one whose object lock it kept,
+			// which the writer's check after its replay finds
+			// (checkRemoval), so the refusal dropped here leaves no other
+			// version stored, unless this writer's pending attr expired
+			// first: that replay then never applied this one's entries,
+			// and the refused version stays (docs/ceph-upstream-bugs.md,
+			// "cls_rgw's bucket_clear_olh drops a pending log no replay
+			// read"). Only a delete given DeleteParams.Expect sets
+			// expectTag.
 			return 0, fmt.Errorf("replaying the olh log of %s: another replay removed its head: %w", what, radosclient.ErrCanceled)
 		}
 		return 0, err
@@ -530,9 +559,10 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 // olhLogTail is the step that ends a replay once its head op has written
 // last to olh.ver: the clear of an OLH the replay left without a version,
 // or otherwise the log's trim to last. keep is set while a removal the
-// writer's expected write tag refused is pending, keepHead when that removal
-// was the null version's, whose data is the OLH head's, and opTag is the
-// writer's op tag, which its entries in the log carry.
+// writer's expected write tag refused is pending, keepHead when that removal,
+// or another writer's the replay passed over for its object lock, was the
+// null version's, whose data is the OLH head's, and opTag is the writer's op
+// tag, which its entries in the log carry.
 type olhLogTail struct {
 	last     uint64
 	clear    bool
@@ -569,8 +599,8 @@ func (e *olhTailError) Unwrap() error { return e.err }
 // otherwise, the clear's expiry included, returns an olhTailError naming
 // the step left: the clear, or the trim. With t.keepHead the trim takes the
 // clear's place: the clear removes the OLH head object, which holds the null
-// version's data the refusal kept, where radosgw's replay has removed that
-// data before its clear.
+// version's data the refusal or its object lock kept, where radosgw's replay
+// has removed that data before its clear.
 func (s *Store) finishOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectState, t olhLogTail) error {
 	what := head.Bucket.Info.Bucket.Name + "/" + head.Key.Name
 	if t.keepHead {

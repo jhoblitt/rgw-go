@@ -14,6 +14,7 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/meta"
+	"github.com/jhoblitt/rgw-go/internal/objectlock"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
@@ -136,8 +137,9 @@ type olhInited struct {
 // tag the replay's removal of the version must find. Marker is set for a
 // delete marker's unlink, whose ExpectTag no head carries
 // (markerRemovalTag): nothing compares it before the unlink, and the replay
-// guards on it as it is. MarkerCmp, when not nil, is the null delete
-// marker the unlink must find (olhMarkerCmp).
+// guards on it as it is. Any other unlink logs the version's removal, which
+// is checked after the replay (checkRemoval). MarkerCmp, when not nil, is
+// the null delete marker the unlink must find (olhMarkerCmp).
 type olhUnlink struct {
 	Epoch       uint64
 	NullVersion bool
@@ -215,7 +217,9 @@ func (s *Store) stopsAfterLink() bool { return olhStopAfterLink != nil && olhSto
 //     OLH tag repairs the head from the index's OLH entry and tries again;
 //     any other runs a best-effort update unless p.SkipUpdate, and is
 //     returned.
-//   - The replay is finishOLHModification's, whose ECANCELED is success.
+//   - The replay is finishOLHModification's, whose ECANCELED is success. A
+//     null delete marker linked over null data, whose removal the class logs
+//     with the link, has that removal checked after it (checkRemoval).
 //   - p.ExpectTag, p.Cond and p.Relink add their checks to each attempt
 //     before its init (prepareOLHAttempt), and a conditional link is
 //     checked after it lands, before the replay (checkOLHLink). Each backoff
@@ -296,7 +300,12 @@ func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKe
 					return cerr
 				}
 			}
-			return s.finishOLHModification(ctx, idx, head, opTag, p.SkipUpdate, olhReplayTag(p.ExpectTag, head, tagged))
+			expect := olhReplayTag(p.ExpectTag, head, tagged)
+			var rm *olhRemoval
+			if p.DeleteMarker && key.Instance == "" && p.Relink == nil && holdsNullData(head) {
+				rm = loggedRemoval(key, head, expect)
+			}
+			return s.finishOLHModification(ctx, idx, head, opTag, p.SkipUpdate, expect, rm)
 		}
 		if !outcomeUnknown(err) {
 			s.olhCancelModification(ctx, head, opTag)
@@ -347,7 +356,10 @@ func takeInitedTag(head *op.ObjectState, inited **olhInited) string {
 // update unless p.SkipUpdate, and is returned; one whose outcome is unknown
 // keeps its pending attr, as setOLH's link does. The class's ENOENT, the
 // version not there, and init's, the head its read found gone, answer
-// NoSuchKey. The unlink makes no version, so a failed one removes none.
+// NoSuchKey. The unlink makes no version, so a failed one removes none. A
+// version another replay kept for its object lock, the unlink's entries
+// applied by that replay first, is removed after the unlink's own replay
+// finds them gone, as checkRemoval says.
 // p.ExpectTag guards the replay's removal of a named version alone, the init
 // comparing no write tag: its caller checks the version's head before the
 // unlink. The null version's head is the OLH head, which init gives a fresh
@@ -416,10 +428,14 @@ func (s *Store) unlinkVersion(ctx context.Context, rec *op.BucketRecord, key met
 		err = idx.unlinkInstance(ctx, head, key, opTag, f)
 		if err == nil {
 			expect := p.ExpectTag
-			if key.Instance == "" && !p.Marker {
-				expect = olhReplayTag(p.ExpectTag, head, tagged)
+			var rm *olhRemoval
+			if !p.Marker {
+				if key.Instance == "" {
+					expect = olhReplayTag(p.ExpectTag, head, tagged)
+				}
+				rm = loggedRemoval(key, head, expect)
 			}
-			return unlinkLanded, slices.Clone(head.Attrs[meta.AttrOLHIDTag]), s.finishOLHModification(ctx, idx, head, opTag, p.SkipUpdate, expect)
+			return unlinkLanded, slices.Clone(head.Attrs[meta.AttrOLHIDTag]), s.finishOLHModification(ctx, idx, head, opTag, p.SkipUpdate, expect, rm)
 		}
 		unknown := outcomeUnknown(err)
 		if !unknown {
@@ -466,7 +482,21 @@ func unlinkError(what string, err error) error {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9498-L9501 at v20.2.4).
 // The replay guards the removals the log names under opTag on expectTag,
 // when it is not nil, and returns any refusal of them after the error, if
-// there is one.
+// there is one. rm, when not nil, is the version the link or unlink logged
+// for removal: when the replay found none of the writer's entries left to
+// apply, another replay having applied them, it is checked with
+// checkRemoval, whose refusal is returned as the replay's would be. A replay
+// that did not read the whole log, having run out of passes or met an OLH
+// entry another replay cleared, proves nothing of the writer's entries, so
+// the key's OLH entry is read: while its pending log still holds opTag the
+// removal is left to the next replay, which keeps a version under a lock no
+// delete passes and removes any other, and a refusal acted on there would
+// re-link a version that replay then removes.
+//
+// The link or unlink has landed, so the replay and the check run whatever
+// the caller's context does, as a PutObject's head write outlives its
+// client: a writer that stopped here would leave a version another replay
+// keeps to no one. Each is bounded, the replay by olhReplayRetries.
 //
 // When the replay read the whole log and found nothing under opTag, the
 // modification's pending attr is removed as olhCancelModification removes
@@ -481,10 +511,11 @@ func unlinkError(what string, err error) error {
 // An entry another writer applied and trimmed had its attr removed by that
 // apply, so the removal finds nothing, and an entry still in the log keeps
 // its attr, which makes the next follow apply it.
-func (s *Store) finishOLHModification(ctx context.Context, idx *bucketOLHIndex, head *op.ObjectState, opTag string, skip bool, expectTag []byte) error {
+func (s *Store) finishOLHModification(ctx context.Context, idx *bucketOLHIndex, head *op.ObjectState, opTag string, skip bool, expectTag []byte, rm *olhRemoval) error {
 	if skip || s.stopsAfterLink() {
 		return nil
 	}
+	ctx = context.WithoutCancel(ctx)
 	r := olhReplay{opTag: opTag, expectTag: expectTag}
 	refused, err := s.replayOLH(ctx, idx, head, &r)
 	if r.readAll && !r.own {
@@ -493,7 +524,29 @@ func (s *Store) finishOLHModification(ctx context.Context, idx *bucketOLHIndex, 
 	if errors.Is(err, radosclient.ErrCanceled) {
 		err = nil
 	}
-	return errors.Join(err, refused)
+	if err = errors.Join(err, refused); err != nil || rm == nil || r.readAll && r.own {
+		return err
+	}
+	if !r.readAll {
+		logged, lerr := ownEntriesLogged(ctx, idx, head, opTag)
+		if lerr != nil || logged {
+			return lerr
+		}
+	}
+	return s.checkRemoval(ctx, idx, rm)
+}
+
+// ownEntriesLogged reports whether the OLH entry of head's name still holds,
+// in its pending log, an entry under opTag; an entry gone holds none.
+func ownEntriesLogged(ctx context.Context, idx *bucketOLHIndex, head *op.ObjectState, opTag string) (bool, error) {
+	e, err := idx.getOLH(ctx, head)
+	switch {
+	case errors.Is(err, radosclient.ErrNotFound):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("reading the olh entry of %s/%s after its replay: %w", head.Bucket.Info.Bucket.Name, head.Key.Name, err)
+	}
+	return logHolds(e.PendingLog, opTag), nil
 }
 
 // updateOLHAfterFailure is the best-effort update_olh after a failed link
@@ -799,7 +852,10 @@ func versionName(rec *op.BucketRecord, key meta.ObjKey) string {
 // and the removal is guarded on the write tag that read found, or on
 // expectTag when it is not nil, on both releases (docs/differences.md,
 // "Delete conditions are Tentacle's, and a delete is guarded, on both
-// releases"); removeHead then keeps the head's OLH attrs. Its index calls
+// releases"); removeHead then keeps the head's OLH attrs. With keepLocked a
+// version under a lock no delete passes is kept (lockHolds) and any other is
+// guarded on its write tag even when the head has none, as olhIndex says,
+// where radosgw's removal reads no lock. Its index calls
 // carry the bilog flags apply_olh_log's delete_obj gives them, VERSIONED_OP,
 // with NULL_VERSION for the null version alone, where radosgw adds
 // NULL_VERSION to every removal of a replay whose caller's null_verid is set
@@ -816,7 +872,7 @@ func versionName(rec *op.BucketRecord, key meta.ObjKey) string {
 // head whose write tag is not expectTag, as read or as the removal lands,
 // keeps the version, its pending index DEL canceled, and answers
 // errRemovalRefused.
-func (b *bucketOLHIndex) removeInstance(ctx context.Context, key meta.ObjKey, expectTag []byte) error {
+func (b *bucketOLHIndex) removeInstance(ctx context.Context, key meta.ObjKey, expectTag []byte, keepLocked bool) error {
 	if err := b.ofName(key); err != nil {
 		return err
 	}
@@ -835,6 +891,11 @@ func (b *bucketOLHIndex) removeInstance(ctx context.Context, key meta.ObjKey, ex
 			return errRemovalRefused
 		}
 		w.CmpXattr(meta.AttrIDTag, radosclient.CmpEQ, expectTag)
+	case keepLocked:
+		if s.lockHolds(st) {
+			return fmt.Errorf("%s: %w", versionName(rec, key), errRemovalLocked)
+		}
+		w.CmpXattr(meta.AttrIDTag, radosclient.CmpEQ, st.Attrs[meta.AttrIDTag])
 	case st.WriteTag != "":
 		w.CmpXattr(meta.AttrIDTag, radosclient.CmpEQ, st.Attrs[meta.AttrIDTag])
 	}
@@ -872,12 +933,169 @@ func (s *Store) removeUnlinkedVersion(ctx context.Context, rec *op.BucketRecord,
 	if key.Instance == "" {
 		return
 	}
-	err := s.newOLHIndex(rec, key).removeInstance(ctx, key, nil)
+	err := s.newOLHIndex(rec, key).removeInstance(ctx, key, nil, false)
 	if err != nil && !errors.Is(err, op.ErrNoSuchKey) {
 		slog.WarnContext(ctx, "removing a version whose link failed failed; it stays for bucket check",
 			slog.String("bucket", rec.Info.Bucket.Name), slog.String("key", key.Name), slog.String("instance", key.Instance),
 			slog.Any("cause", cause), slog.Any("error", err))
 	}
+}
+
+// lockHolds reports whether st, a version's head as read, carries a lock no
+// delete passes, the governance bypass included: a legal hold ON, a
+// COMPLIANCE retention whose date is still ahead, or a lock attr that does
+// not decode. A GOVERNANCE retention keeps nothing because the pending log
+// does not record whether the delete that logged the removal was authorized
+// with the bypass: a replay cannot tell a removal that bypassed it from one
+// that raced it, and keeping it would leave every bypassing delete another
+// replay applies first a version no one removes
+// (docs/rados-format-opportunities.md, "The OLH log's removal entry: no
+// record of a GOVERNANCE bypass"). The version's own attrs decide, not its
+// bucket's flag: a request may hold a bucket record read before object lock
+// was turned on, and a lock attr is written only once it is.
+func (s *Store) lockHolds(st *op.ObjectState) bool {
+	return objectlock.VerifyDelete(st.Attrs, s.now(), true, true) != nil
+}
+
+// olhRemoval is the version a link or unlink logged for removal: key, with
+// an empty instance for the null version, tag, the write tag its removal is
+// guarded on, nil for none, and guarded, set when the writer holds the
+// removal to tag, as a delete given DeleteParams.Expect does. A writer that
+// is not guarded removes the version whatever it carries, as an admin
+// removal does, and for the null version only the data its op saw, tag
+// being the OLH head's write tag then.
+type olhRemoval struct {
+	key     meta.ObjKey
+	tag     []byte
+	guarded bool
+}
+
+// loggedRemoval is the olhRemoval of key, a version a link or unlink logged
+// for removal, head being the OLH head as the attempt's init left it and
+// expect the write tag the writer holds the removal to, nil for none.
+func loggedRemoval(key meta.ObjKey, head *op.ObjectState, expect []byte) *olhRemoval {
+	rm := &olhRemoval{key: key, tag: expect, guarded: expect != nil}
+	if expect == nil && key.Instance == "" {
+		rm.tag = expectTag(head)
+	}
+	return rm
+}
+
+// holdsNullData reports whether st, a key's OLH head as read, holds the null
+// version's data, as its ETag shows: the null version's removal leaves the
+// head its OLH attrs alone (removeHeadFlagged).
+func holdsNullData(st *op.ObjectState) bool {
+	_, ok := st.Attrs[meta.AttrETag]
+	return st.Exists && ok
+}
+
+// unlistedVersion reports whether st, the head of key's version as read,
+// the OLH head for the null version, whose data it must hold, is a version
+// whose record no listing shows: one an unlink, or a null delete marker's
+// link, took off the listing and no replay removed. A version listed is one
+// a writer's link listed again since; for the null version, a later null
+// write's, which its link lists, the replay having dropped the removal it
+// follows (applyOLHLog).
+func (s *Store) unlistedVersion(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, st *op.ObjectState) (bool, error) {
+	read := s.getInstanceEntry
+	if key.Instance == "" {
+		if !holdsNullData(st) {
+			return false, nil
+		}
+		read = s.nullDataEntry
+	}
+	en, err := read(ctx, rec, key)
+	switch {
+	case errors.Is(err, radosclient.ErrNotFound):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	listed, err := s.listed(ctx, rec, key, en)
+	return !listed && err == nil, err
+}
+
+// checkRemoval finishes rm, the removal a writer's link or unlink logged,
+// once the writer's replay has found the writer's entries applied by another
+// replay, which keeps a version under a lock no delete passes (applyOLHLog).
+// The version's head is read again, the OLH head for the null version, and a
+// version still stored and still unlisted (unlistedVersion) is removed
+// through idx:
+//   - guarded, under rm.tag, the write tag the writer's check read, whose
+//     refusal is final, as its own replay's is (refusedRemoval);
+//   - otherwise only when lockHolds, the one case another replay keeps a
+//     version, and the null version's data only while it carries rm.tag, so
+//     that null data written since stays.
+//
+// A null version so removed whose name's OLH entry is left with no version
+// has its OLH cleared, as the replay that kept it would have
+// (clearVersionlessOLH).
+func (s *Store) checkRemoval(ctx context.Context, idx *bucketOLHIndex, rm *olhRemoval) error {
+	rec := idx.x.rec
+	what := versionName(rec, rm.key)
+	st, err := s.readOLHHead(ctx, rec, rm.key)
+	if err != nil {
+		return fmt.Errorf("reading the head of %s again after another replay: %w", what, err)
+	}
+	if !st.Exists {
+		return nil
+	}
+	kept, kerr := s.unlistedVersion(ctx, rec, rm.key, st)
+	switch {
+	case kerr != nil:
+		return fmt.Errorf("reading the index entry of %s again after another replay: %w", what, kerr)
+	case !kept:
+		return nil
+	}
+	if !rm.guarded && !s.lockHolds(st) {
+		return nil
+	}
+	err = idx.removeInstance(ctx, rm.key, rm.tag, false)
+	switch {
+	case errors.Is(err, radosclient.ErrNotFound), errors.Is(err, op.ErrNoSuchKey):
+		return nil
+	case errors.Is(err, errRemovalRefused) && rm.guarded:
+		return fmt.Errorf("removing %s after another replay kept it: %w", what, err)
+	case errors.Is(err, errRemovalRefused):
+		return nil
+	case err != nil:
+		return fmt.Errorf("removing %s after another replay kept it: %w", what, err)
+	case rm.key.Instance == "":
+		return s.clearVersionlessOLH(ctx, idx, rm.key)
+	}
+	return nil
+}
+
+// clearVersionlessOLH clears the OLH of key's name, as a replay's tail does
+// (clearOLHHead), when its index entry holds no version. The head is read
+// before the entry and the clear guarded on the head as read, its OLH tag,
+// its olh.ver and no pending attr, so a writer whose init lands after the
+// read refuses it, as does one whose link landed before it, whose pending
+// attr the read finds or whose version the entry holds.
+func (s *Store) clearVersionlessOLH(ctx context.Context, idx *bucketOLHIndex, key meta.ObjKey) error {
+	head, err := s.readOLHHead(ctx, idx.x.rec, olhHeadKey(key))
+	if err != nil || !head.Exists {
+		return err
+	}
+	e, err := idx.getOLH(ctx, head)
+	switch {
+	case errors.Is(err, radosclient.ErrNotFound):
+		return nil
+	case err != nil:
+		return fmt.Errorf("reading the olh entry of %s/%s: %w", idx.x.rec.Info.Bucket.Name, key.Name, err)
+	case e.Exists:
+		return nil
+	}
+	ver, perr := strconv.ParseUint(string(head.Attrs[meta.AttrOLHVer]), 10, 64)
+	if perr != nil {
+		slog.DebugContext(ctx, "a versionless olh whose olh.ver no apply wrote is left for its next update",
+			slog.String("bucket", idx.x.rec.Info.Bucket.Name), slog.String("key", key.Name), slog.Any("error", perr))
+		return nil
+	}
+	if err = s.clearOLHHead(ctx, idx, head, ver); errors.Is(err, radosclient.ErrCanceled) {
+		return nil
+	}
+	return err
 }
 
 // outcomeUnknown reports whether err leaves unknown whether the op it ended

@@ -16,13 +16,14 @@ import (
 // spec's WritesBefore had seen when the call came, so a spec can tell
 // whether a call came before or after a head op.
 type OLHIndexCall struct {
-	Method    string
-	Head      *op.ObjectState
-	Marker    uint64
-	Ver       uint64
-	Key       meta.ObjKey
-	ExpectTag []byte
-	Writes    int
+	Method     string
+	Head       *op.ObjectState
+	Marker     uint64
+	Ver        uint64
+	Key        meta.ObjKey
+	ExpectTag  []byte
+	KeepLocked bool
+	Writes     int
 }
 
 // FakeOLHIndex is an olhIndex for the specs, which records each call and
@@ -52,6 +53,9 @@ var _ olhIndex = (*FakeOLHIndex)(nil)
 
 // ErrRemovalRefused is errRemovalRefused for the external specs.
 var ErrRemovalRefused = errRemovalRefused
+
+// ErrRemovalLocked is errRemovalLocked for the external specs.
+var ErrRemovalLocked = errRemovalLocked
 
 func (f *FakeOLHIndex) record(c OLHIndexCall) {
 	if f.WritesBefore != nil {
@@ -91,8 +95,8 @@ func (f *FakeOLHIndex) clear(_ context.Context, head *op.ObjectState) error {
 	return f.ClearErr
 }
 
-func (f *FakeOLHIndex) removeInstance(_ context.Context, key meta.ObjKey, expectTag []byte) error {
-	f.record(OLHIndexCall{Method: "removeInstance", Key: key, ExpectTag: slices.Clone(expectTag)})
+func (f *FakeOLHIndex) removeInstance(_ context.Context, key meta.ObjKey, expectTag []byte, keepLocked bool) error {
+	f.record(OLHIndexCall{Method: "removeInstance", Key: key, ExpectTag: slices.Clone(expectTag), KeepLocked: keepLocked})
 	return f.RemoveErr[key.Instance]
 }
 

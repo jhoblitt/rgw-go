@@ -8823,9 +8823,12 @@ does the following.
   Past the third the refusal stands as radosgw's lost race: 204 for
   DeleteObject, and the key's ConcurrentModification for DeleteObjects.
   radosgw checks once and removes the version whatever is written after its
-  check. The window that refusal leaves, another reader's replay of the
-  unlink removing the head after the check, is radosgw's own, and the
-  delete had passed its check by then.
+  check. Another request's replay of the unlink, which does not know the
+  state the check read, keeps a version under a legal hold or a COMPLIANCE
+  retention and leaves it to the delete, which removes it or answers as
+  above; a GOVERNANCE retention written after the check it removes, as
+  radosgw does ("A replay keeps another writer's version whose object lock
+  holds").
 - **No ACL grant authorizes a delete's governance bypass.** radosgw
   evaluates a delete's s3:BypassGovernanceRetention through
   `verify_bucket_permission`, which, where no policy decides, falls back to
@@ -10711,9 +10714,12 @@ does the following.
   as radosgw's does, guarded only on the write tag it reads: one by another
   reader running alongside the writer's own, one after the writer's head op
   failed and its retry never landed, every later replay after a trim that
-  kept failing, and the replay of a re-tagged entry's kept log. That is the window the
-  versioned delete with `Expect` keeps as radosgw's own, where a replay by
-  another reader, which does not know `Expect`, removes what it reads.
+  kept failing, and the replay of a re-tagged entry's kept log. Such a
+  replay, which does not know `Expect`, keeps a version under a lock no
+  delete passes for the writer to finish ("A replay keeps another writer's
+  version whose object lock holds"), and removes any other as radosgw's
+  does: that is the window the versioned delete with `Expect` keeps as
+  radosgw's own.
   radosgw has no `Expect`, so a radosgw writer never meets this case.
 - **A replay keeps the null data a later null link names.** The null
   version's removal is logged for the key with an empty instance, not for
@@ -11234,11 +11240,111 @@ does the following.
     own replay has landed with its trim or clear, a replay by another reader
     running alongside the own one, and one after the own head op failed and
     its retry never landed, removes the version guarded only on the write
-    tag it reads.
+    tag it reads, unless a lock no delete passes holds it ("A replay keeps
+    another writer's version whose object lock holds").
 
   The object store's delete does this, and the S3 deletes pass `Expect`
   on a bucket with object lock ("DeleteObjects checks
   s3:BypassGovernanceRetention for each key, on the key's ARN").
+- **A replay keeps another writer's version whose object lock holds.**
+  radosgw's `apply_olh_log` removes each version its pending log names
+  through `delete_obj`, which reads the version when it runs and checks no
+  lock
+  ([rgw_rados.cc:8530-8541](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8530-L8541),
+  [rgw_rados.cc:9275-9287](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9275-L9287)),
+  so the replay any request runs, a GET following the key's OLH among them,
+  removes a version a versioned delete unlinked after its object-lock check,
+  whatever retention or legal hold was written since
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's replay of another request's
+  versioned delete removes a version locked after that delete's
+  check](ceph-upstream-bugs.md#radosgws-replay-of-another-requests-versioned-delete-removes-a-version-locked-after-that-deletes-check)").
+  rgw-go's replay, removing a version logged under another writer's op tag,
+  keeps it when its lock is one no delete passes, the governance bypass
+  included: a legal hold ON, an unexpired COMPLIANCE retention, or a lock
+  attr that does not decode (`applyOLHLog` and `removeInstance`,
+  `internal/driver/olh_head.go` and `internal/driver/olh.go`). It reads the
+  version's own lock attrs, whatever the replaying request's bucket record
+  says of object lock: a request may hold a record read before the lock was
+  turned on, a lock attr is written only once it is on, and it is never
+  turned off. Each keep is logged at Info with the bucket, the key and the
+  version. The replay removes any other version guarded on the write tag it
+  read, absent read as empty, so a lock written between that read and the
+  removal refuses it and the replay runs again. It passes over the kept
+  version as over a refused removal, trimming the log where it would clear
+  the key's OLH when the version is the null version, whose data the OLH
+  head holds, and reports nothing. The OLH log and every RADOS format stay
+  radosgw's: the writer's guard is not in the log, whose op tags are
+  radosgw's random ones.
+
+  The writer whose removal it was finishes it. Once its link or unlink has
+  landed, its replay and the check after it run to their end whatever its
+  client does, as a PutObject's head write does. When its own replay finds
+  its entries applied by another, and the key's OLH entry no longer holds
+  them, it reads the version again and, when the version is still stored
+  and unlisted, removes it under its own guard (`checkRemoval`). While the
+  OLH entry still holds them, every pass of its replay having lost its head
+  op to other writers, it leaves them to the next replay, which keeps a
+  locked version and removes any other. A version listed again since, by a
+  writer's link, is left as it is. A delete given `Expect` removes the
+  version under `Expect`'s write tag and answers a refusal as its own
+  replay's refusal ("A refused versioned removal re-links the version,
+  unless a newer null write owns the null key"): the version is listed
+  again and the delete answers 409, which a delete under object lock checks
+  again, answering 403 AccessDenied for a hold written after its check. A
+  writer with no `Expect`, an admin removal or the unlink of a void
+  conditional write, removes the version when its lock is one a replay
+  keeps, the null version's data only while it carries the write tag the
+  writer's op saw, and clears the key's OLH when the null version it
+  removed was the key's last. What stays:
+  - A GOVERNANCE retention set after a delete was logged and before the
+    replay does not keep the version: another request's replay of that
+    removal removes it, as radosgw's does. One set after the delete's check
+    and before its unlink is the same; the delete's own replay still
+    refuses either. The pending log does not record whether the delete was
+    authorized with the governance bypass, so a replay cannot tell a
+    removal that bypassed the retention from one that raced it, and keeping
+    every GOVERNANCE version would leave each bypassing delete that radosgw
+    serves, or that an rgw-go writer killed before its replay made, a
+    version nothing reclaims (below; `docs/rados-format-opportunities.md`,
+    "The OLH log's removal entry: no record of a GOVERNANCE bypass").
+  - radosgw's replays check no lock, and on a mixed fleet remove an rgw-go
+    writer's version as they remove radosgw's own.
+  - radosgw's own removal of a version under a legal hold or a COMPLIANCE
+    retention that an rgw-go replay applies first stays unlisted with its
+    head and instance entry, after radosgw answered it success: its writer
+    checks nothing after its replay. That is an admin removal or purge, a
+    delete whose check came before the hold, or a COMPLIANCE retention whose
+    end radosgw's clock puts past and rgw-go's does not. The rate grows with
+    reads of the keys being so removed. Nothing reclaims such a version.
+    No listing shows it, so lifecycle never expires it. `radosgw-admin
+    bucket check unlinked` takes only instance entries at versioned_epoch 0
+    ([rgw_bucket.cc:741](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L741),
+    [rgw_bucket.cc:892](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L892)),
+    and a once-linked version keeps its epoch. radosgw's bucket-empty check
+    lists the index without the namespace instance entries live in
+    ([rgw_rados.cc:5259-5301](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5259-L5301),
+    [rgw_rados.cc:5723-5765](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5723-L5765);
+    [cls_rgw.cc:194-244](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L194-L244),
+    [cls_rgw.cc:244-294](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L244-L294)),
+    so a purged bucket whose last versions these are is removed with their
+    heads left in the data pool. The version stays readable by its id.
+  - A writer whose gateway dies between its unlink and its replay leaves a
+    locked version the same way, where radosgw's next replay removes it.
+    When that version is the key's only one and the null version, the key's
+    OLH still names it, so a GET of the key answers it until the key's next
+    write.
+  - A writer with no `Expect` whose version another replay kept, and whose
+    lock ended before the writer's check, a hold removed or a retention
+    run out in between, leaves it the same way: its check removes only a
+    version under a lock a replay keeps.
+  - A version whose write tag changed for any other reason, an ACL or a
+    tagging write, is removed by another replay as radosgw's removes it,
+    where the delete's own replay would have refused it. A delete under
+    object lock, checking again, would have removed it too, but lifecycle,
+    which skips a version changed since its read, would have kept one whose
+    new tags its rule's filter no longer matches. Nothing that replay can
+    read tells a write after the delete's check from one before it without
+    the delete's write tag, which only the log could carry.
 - **A conditional write to a versioned bucket commits only if its condition
   held when it linked.** radosgw checks a versioned write's If-Match and
   If-None-Match once, before its head write, and then links the version
