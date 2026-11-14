@@ -124,3 +124,7 @@
 
 # A ListObjectVersions page that ended on a null delete marker, resumed after it by its version-id-marker null; radosgw resumes past the key's older versions (differences: "A versions listing resumes after the null delete marker its version-id-marker names")
 ^s3tests\.functional\.test_s3::test_versioning_list_versions_paginated_null_delete_marker$
+
+# GetObjectAttributes refused 403 AccessDenied to a requester a policy denies s3:GetObject, or allows s3:GetObject alone; Tentacle's radosgw serves it on either action (differences: "GetObjectAttributes needs both of its actions on Tentacle")
+^s3tests\.functional\.test_s3::test_get_object_attributes_needs_get_object$
+^s3tests\.functional\.test_s3::test_get_object_attributes_needs_get_object_attributes$
