@@ -10258,6 +10258,176 @@ does the following.
   PutObject permissions the AWS SDK for Go v2 documents name s3:PutObject,
   s3:PutObjectAcl and s3:PutObjectTagging and no lock action
   ([api_op_PutObject.go:78-90](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_PutObject.go#L78-L90)).
+- **A write's ACL and tag headers need s3:PutObjectAcl and
+  s3:PutObjectTagging.** radosgw's PutObject, CopyObject,
+  CreateMultipartUpload and POST object upload build the object's ACL from
+  the request's `x-amz-acl` and `x-amz-grant-*` headers, or the form's `acl`
+  field
+  ([rgw_rest_s3.cc:2626](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2626),
+  [rgw_rest_s3.cc:3505](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3505),
+  [rgw_rest_s3.cc:4009](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4009) and
+  [rgw_rest_s3.cc:3243](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3243),
+  [rgw_rest_s3.cc:2779](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2779),
+  [rgw_rest_s3.cc:3755](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3755),
+  [rgw_rest_s3.cc:4460](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4460) and
+  [rgw_rest_s3.cc:3379](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3379)),
+  and all but CopyObject read the object's tags from `x-amz-tagging`, or the
+  form's `tagging` field
+  ([rgw_rest_s3.cc:2634](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2634),
+  [rgw_rest_s3.cc:4013](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4013),
+  [rgw_rest_s3.cc:3083](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3083),
+  [rgw_rest_s3.cc:2787](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2787),
+  [rgw_rest_s3.cc:4464](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4464),
+  [rgw_rest_s3.cc:3219](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3219)),
+  having checked s3:PutObject alone
+  ([rgw_op.cc:3983](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3983),
+  [rgw_op.cc:5491](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5491),
+  [rgw_op.cc:6284](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6284),
+  [rgw_op.cc:4600](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4600),
+  [rgw_op.cc:4192](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4192),
+  [rgw_op.cc:6054](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6054),
+  [rgw_op.cc:6951](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6951),
+  [rgw_op.cc:4893](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4893)),
+  where only PutObjectAcl and PutObjectTagging evaluate s3:PutObjectAcl and
+  s3:PutObjectTagging
+  ([rgw_op.cc:5749](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5749),
+  [rgw_op.cc:1079-1080](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1079-L1080),
+  [rgw_op.cc:6324](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6324),
+  [rgw_op.cc:1278-1279](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1278-L1279);
+  `docs/ceph-upstream-bugs.md`, "[radosgw's PutObject sets the object ACL
+  and tags its headers name under s3:PutObject
+  alone](ceph-upstream-bugs.md#radosgws-putobject-sets-the-object-acl-and-tags-its-headers-name-under-s3putobject-alone)").
+  Amazon S3's PutObject reference, as the AWS SDK for Go v2 documents it,
+  requires both for the headers that set them: "s3:PutObjectAcl - To
+  successfully change the objects ACL of your PutObject request, you must
+  have the s3:PutObjectAcl" and "s3:PutObjectTagging - To successfully set
+  the tag-set with your PutObject request, you must have the
+  s3:PutObjectTagging"
+  ([api_op_PutObject.go:78-90](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_PutObject.go#L78-L90)).
+  Amazon's user guide table "Required permissions for Amazon S3 API
+  operations" lists both as conditionally required for CopyObject's
+  destination, "if you want to put the copied object with the object access
+  control list (ACL) to the destination bucket" and "with object tagging",
+  and for CreateMultipartUpload, "if you want to set the object access control
+  list (ACL) permissions for the uploaded object" and "to add object
+  tagging(s) to the uploaded object", as for PutObject
+  (https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-with-s3-policy-actions.html,
+  retrieved 2026-11-14). The SDK's references to those two operations list
+  only s3:GetObject and s3:PutObject for CopyObject and the KMS permissions
+  for CreateMultipartUpload
+  ([api_op_CopyObject.go:71-82](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_CopyObject.go#L71-L82),
+  [api_op_CreateMultipartUpload.go:59-69](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_CreateMultipartUpload.go#L59-L69)).
+  Only the POST object upload has no Amazon text: the table has no row for
+  it and the SDK no operation. rgw-go applies the rule to all four, since the
+  ACL and the tag set they store are the same, and a policy that denies
+  either action, to keep objects from being shared or re-tagged, would
+  otherwise be stepped round by choosing another write.
+
+  rgw-go evaluates s3:PutObjectAcl on the object's ARN for a write whose
+  request names an ACL other than the private one, an `x-amz-acl` that is
+  none of empty, `private` and `bucket-owner-full-control`, or any
+  `x-amz-grant-*` header, as CreateBucket takes its ACL headers but for
+  `bucket-owner-full-control` ("CreateBucket with an ACL other than private
+  is authorized as s3:PutBucketAcl too"), and s3:PutObjectTagging for one that
+  carries an `x-amz-tagging` header with any value, once s3:PutObject and the
+  object-lock headers' actions have passed. It refuses the write with 403
+  AccessDenied before it writes or creates anything
+  (`verifyACLAndTags`, `internal/op/writeacltags.go`), where radosgw stores
+  the ACL and the tags. The identity's and the bucket's policies decide. An
+  explicit Deny of either action refuses the write, named by Action or by
+  NotAction, on both releases. An account's user and a role in an account,
+  whom every action needs a policy to allow, need one that allows each
+  action their request sets; another account's user needs its own identity
+  policy's Allow, and the resource side then passes unless the bucket's
+  policy denies it, while another account's root needs none, as it passes
+  the identity side as a root; the account's own root passes, as it passes
+  every action. Where no policy decides, no ACL permission is asked of anyone
+  outside an account: a user, a role and the anonymous user are refused only
+  by a Deny. This is how CreateBucket's s3:PutBucketAcl is judged for a user
+  outside an account, and how s3:PutObject itself judges a role outside an
+  account, whom radosgw refuses only in its user-ACL check
+  ([rgw_common.cc:1286](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1286),
+  [rgw_common.cc:1299](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1299)).
+  So a requester outside an account whom radosgw lets write, by the bucket's
+  ACL or by a policy, sets the ACL and the tags unless a Deny refuses it, as
+  the s3-tests expect of a grantee of the bucket's WRITE that writes with
+  `bucket-owner-read` (`test_object_acl_canned_bucketownerread`) and of a
+  user a bucket policy allows s3:PutObject alone that writes with
+  `x-amz-grant-full-control` (`test_bucket_policy_put_obj_grant`). An admin
+  passes, as through any permission check. The PutObjectAcl check carries
+  `s3:x-amz-acl` and the grant headers' keys, and the PutObjectTagging check
+  `s3:RequestObjectTag/<key>` for each tag the header sets, so a policy that
+  conditions an action on them judges the write's own.
+
+  An `x-amz-acl` of `private`, or an empty one, builds the ACL a write
+  without it gets, so it needs s3:PutObject alone, as CreateBucket's
+  reference says of a bucket's. The PutObject reference does not say so of
+  an object's, and if Amazon S3 asks for the action there, rgw-go serves a
+  header Amazon S3 refuses, which changes no ACL.
+
+  An `x-amz-acl` of `bucket-owner-full-control` needs s3:PutObject alone as
+  well, though the table lists s3:PutObjectAcl as conditionally required for
+  an ACL without exempting any canned one. No Amazon text says the
+  action is required for it, and Amazon's own policies grant s3:PutObject
+  alone under an `s3:x-amz-acl` condition naming it: the user guide's policy
+  that lets another account upload objects while the bucket's owner keeps full
+  control
+  (https://docs.aws.amazon.com/AmazonS3/latest/userguide/example-bucket-policies.html,
+  retrieved 2026-11-14), the same pattern in the S3 developer guide, which tests
+  it with `aws s3api put-object --acl bucket-owner-full-control` as the other
+  account's user
+  ([amazon-s3-policy-keys.md](https://github.com/awsdocs/amazon-s3-developer-guide/blob/e5e6bbd2771d39e8ce3736849548a94b98d5094b/doc_source/amazon-s3-policy-keys.md),
+  [example-bucket-policies.md](https://github.com/awsdocs/amazon-s3-developer-guide/blob/e5e6bbd2771d39e8ce3736849548a94b98d5094b/doc_source/example-bucket-policies.md)),
+  and the delivery policies of CloudTrail and Config
+  (awsdocs/aws-cloudtrail-user-guide, `create-s3-bucket-policy-for-cloudtrail.md`,
+  and awsdocs/aws-config-developer-guide, `s3-bucket-policy.md`, neither
+  pinned to a commit). The canned ACL gives the bucket's owner control of the
+  object and no one else access. If Amazon S3 does ask for s3:PutObjectAcl,
+  rgw-go serves a write that it refuses, which a Deny of s3:PutObjectAcl does
+  not reach either. A policy that conditions s3:PutObject on `s3:x-amz-acl`,
+  a grant key or a request tag binds a PutObject but not a CopyObject or a
+  CreateMultipartUpload, whose s3:PutObject checks carry none of them, in
+  rgw-go as in radosgw (`docs/ceph-upstream-bugs.md`, "[radosgw's CopyObject
+  and CreateMultipartUpload evaluate s3:PutObject without the request's ACL
+  and tag condition
+  keys](ceph-upstream-bugs.md#radosgws-copyobject-and-createmultipartupload-evaluate-s3putobject-without-the-requests-acl-and-tag-condition-keys)"):
+  plan task S13 adds the keys. CreateBucket still counts the canned ACL,
+  whose reference says of it as of any other ACL it does not name. An
+  `x-amz-grant-*` header
+  stays counted when it names the bucket's owner alone, the pattern the same
+  guide shows with `x-amz-grant-full-control`: exempting it needs the owner's id
+  parsed from the header, so an account's user allowed s3:PutObject alone under
+  that pattern is refused, an over-check radosgw does not make.
+
+  An `x-amz-tagging` header sent empty is checked as one that names tags,
+  since the request's attrs hold the header as sent under the tag attr's
+  name, whatever it holds, and a write leaves it there unless a tag set
+  replaces it
+  ([rgw_op.h:2175-2237](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2175-L2237),
+  [rgw_op.h:2338-2408](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2338-L2408)):
+  a CopyObject that replaces its metadata keeps any value as sent, which
+  the tag set's decode reads as the text older objects stored
+  ([rgw_tag.h:32-62](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.h#L32-L62),
+  [rgw_tag.h:32-62](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.h#L32-L62)),
+  though radosgw and rgw-go read no `x-amz-tagging-directive`
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's CopyObject ignores
+  x-amz-tagging-directive](ceph-upstream-bugs.md#radosgws-copyobject-ignores-x-amz-tagging-directive)").
+  A CopyObject under the default COPY directive carries its source's tag set
+  to the destination with no `x-amz-tagging` header, so with no
+  s3:PutObjectTagging check; Amazon's table lists the action "if you want to
+  put the copied object with object tagging" and says nothing of a tag set
+  copied by COPY, so whether it counts is undecided, and plan task WP-31,
+  which serves `x-amz-tagging-directive`, decides it. An UploadPart's
+  headers, which only its part's head stores and nothing enforces, need
+  s3:PutObject alone.
+
+  A requester refused the action is told 403 AccessDenied whatever its
+  headers would have answered when parsed, those that rgw-go parses once the
+  requester is authorized: a canned ACL radosgw refuses, and the ACL and
+  tags of a CreateMultipartUpload. A PutObject's `x-amz-tagging` that does
+  not parse is 400 InvalidArgument for every requester, as its get_params
+  reads it before the permission check. The POST object upload is not served
+  yet; its form's `acl` and `tagging` fields are to need the same actions.
 - **A date whose time names a conversion rgw-go does not run is refused.**
   radosgw reads DeleteObject's `x-amz-delete-if-unmodified-since` and the
   admin API's date arguments, such as the usage API's `start` and `end`,

@@ -75,14 +75,14 @@ func (o *InitMultipart) Init(ctx context.Context, r *Request) error { return loa
 // VerifyPermission is RGWInitMultipart::verify_permission
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6271-L6286 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6941-L6956 at v20.2.4),
-// then the permissions the request's object-lock headers need, which the
-// upload's completion stores on the object (verifyLockHeaders); radosgw
-// checks neither.
+// then the permissions the request's object-lock, ACL and tag headers need,
+// which the upload's completion stores on the object (verifyWriteHeaders);
+// radosgw checks none.
 func (o *InitMultipart) VerifyPermission(ctx context.Context, r *Request) error {
 	if err := VerifyBucketPermission(ctx, r, policy.S3PutObject, acl.PermFor(policy.S3PutObject)); err != nil {
 		return err
 	}
-	return verifyLockHeaders(ctx, r)
+	return verifyWriteHeaders(ctx, r)
 }
 
 // Execute is RGWInitMultipart::execute

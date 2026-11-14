@@ -442,6 +442,27 @@ var _ = Describe("BuildEnv", func() {
 		})
 	})
 
+	Describe("PutObjectTagging", func() {
+		It("adds the tags a write sets, for the check an object write makes of the action", func() {
+			r := envRequest(http.MethodPut, "b", "o", "", "X-Amz-Tagging", "k=b&k=a&k2=v2")
+			pairs, tagsFirst := authz.EnvPairs(cfg, r, policy.S3PutObjectTagging)
+			Expect(pairs).To(Equal(with(baseFor(""),
+				"s3:RequestObjectTag/k", "b", "s3:RequestObjectTag/k", "a", "s3:RequestObjectTag/k2", "v2")))
+			Expect(tagsFirst).To(BeFalse())
+			r = envRequest(http.MethodPost, "b", "o", "uploads", "X-Amz-Tagging", "k=v")
+			Expect(pairsOf(cfg, r, policy.S3PutObjectTagging)).To(Equal(with(baseFor(""), "s3:RequestObjectTag/k", "v")), "an upload")
+		})
+
+		It("adds none without tags, for a header the write refuses, or for the op's own request", func() {
+			Expect(pairsOf(cfg, envRequest(http.MethodPut, "b", "o", ""), policy.S3PutObjectTagging)).To(Equal(baseFor("")), "no header")
+			r := envRequest(http.MethodPut, "b", "o", "", "X-Amz-Tagging", "k=v&")
+			Expect(pairsOf(cfg, r, policy.S3PutObjectTagging)).To(Equal(baseFor("")), "tags that do not parse")
+			r = envRequest(http.MethodPut, "b", "o", "tagging", "X-Amz-Tagging", "k=v")
+			Expect(pairsOf(cfg, r, policy.S3PutObjectTagging)).To(Equal(baseFor("")),
+				"RGWPutObjTags adds none, whatever header the request carries")
+		})
+	})
+
 	It("adds only the base keys for an op that adds none", func() {
 		r := envRequest(http.MethodGet, "b", "o", "prefix=a", "X-Amz-Acl", "private", "X-Amz-Copy-Source", "/s/k")
 		Expect(pairsOf(cfg, r, policy.S3GetObject)).To(Equal(baseFor("")))
