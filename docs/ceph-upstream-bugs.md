@@ -520,6 +520,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's DeleteObjects leaves a name's skipped OLH updates pending when its last delete fails or finds its version gone](#radosgws-deleteobjects-leaves-a-names-skipped-olh-updates-pending-when-its-last-delete-fails-or-finds-its-version-gone) | [#80886](https://tracker.ceph.com/issues/80886), [#81649](https://tracker.ceph.com/issues/81649), [#81650](https://tracker.ceph.com/issues/81650) | [ceph/ceph#72130](https://github.com/ceph/ceph/pull/72130), [ceph/ceph#72632](https://github.com/ceph/ceph/pull/72632) |  |
 | [librados keeps a service registration it answers EBUSY](#librados-keeps-a-service-registration-it-answers-ebusy) | pending | pending | ✓ |
 | [librados's rados_connect leaves the handle connecting when its monitor bootstrap fails](#libradoss-rados_connect-leaves-the-handle-connecting-when-its-monitor-bootstrap-fails) | pending | pending | ✓ |
+| [radosgw stores a NUL from a PutObject's query-string x-amz-meta value and sends it raw on GET](#radosgw-stores-a-nul-from-a-putobjects-query-string-x-amz-meta-value-and-sends-it-raw-on-get) | pending | pending | ✓ |
+| [radosgw's format_xattr cuts a quoted-printable metadata value at its first NUL](#radosgws-format_xattr-cuts-a-quoted-printable-metadata-value-at-its-first-nul) | pending | pending | ✓ |
+| [radosgw sends a metadata put's objv tag raw in RGWX_UPDATE_VERSION](#radosgw-sends-a-metadata-puts-objv-tag-raw-in-rgwx_update_version) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -33639,3 +33642,159 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** by the review of phase 2 task SM1, 2026-11-14, tracing the
   service registration's `EBUSY` to a single-threaded trigger.
+
+## radosgw stores a NUL from a PutObject's query-string x-amz-meta value and sends it raw on GET
+
+- **Kind:** defect, possibly security-relevant. Unreproduced: derived from
+  the source. GET and HEAD send a response header holding a NUL, which RFC
+  9110 forbids in a field value (section 5.5).
+- **Evidence:**
+  - `RGWPutObj_ObjStore_S3::get_params` calls `map_qs_metadata`
+    ([rgw_rest_s3.cc:2619](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2619),
+    [rgw_rest_s3.cc:2772](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2772)),
+    which adds each `x-amz-meta-*` query parameter, as `RGWHTTPArgs`
+    url-decodes it, to `x_meta_map`
+    ([rgw_rest_s3.cc:2589-2603](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2589-L2603),
+    [rgw_rest_s3.cc:2742-2756](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2742-L2756)),
+    so `%00` in a value is a NUL.
+  - `RGWPutObj::execute` stores it through `rgw_get_request_metadata`
+    ([rgw_op.cc:4526](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4526),
+    [rgw_op.cc:4794](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4794)),
+    whose `format_xattr` quoted-printable-encodes a value that fails
+    `check_utf8` or holds a byte `is_control_character` matches
+    ([rgw_op.h:2145-2164](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2145-L2164),
+    [rgw_op.h:2308-2327](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2308-L2327)).
+    Neither catches a NUL: `check_utf8` takes 0x00 as a one-byte character
+    and `is_control_character` excludes 0
+    ([utf8.c:143-209](https://github.com/ceph/ceph/blob/v19.2.7/src/common/utf8.c#L143-L209),
+    [utf8.c:216-219](https://github.com/ceph/ceph/blob/v19.2.7/src/common/utf8.c#L216-L219);
+    [utf8.c:143-209](https://github.com/ceph/ceph/blob/v20.2.4/src/common/utf8.c#L143-L209),
+    [utf8.c:216-219](https://github.com/ceph/ceph/blob/v20.2.4/src/common/utf8.c#L216-L219)).
+    The value is stored whole with a NUL after it
+    ([rgw_op.h:2232](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2232),
+    [rgw_op.h:2403](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2403)).
+  - A GET or HEAD writes each user metadata attr through `dump_header`
+    ([rgw_rest_s3.cc:589-593](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L589-L593),
+    [rgw_rest_s3.cc:698-702](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L698-L702)),
+    whose `rgw_sanitized_hdrval` drops only a trailing NUL
+    ([rgw_rest.h:29-47](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.h#L29-L47),
+    [rgw_rest.h:29-47](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.h#L29-L47)),
+    and `ClientIO::send_header` writes the rest as it is
+    ([rgw_asio_client.cc:167-181](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L167-L181),
+    [rgw_asio_client.cc:167-181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_client.cc#L167-L181)).
+- **Trigger:** `PUT /bucket/key?x-amz-meta-a=b%00c`, SigV4-signed (its
+  canonical query string covers the parameter), or anonymous to a bucket
+  that grants public writes; then a GET or HEAD of the key, which carries
+  `x-amz-meta-a: b`, a NUL and `c`. A header cannot carry the NUL, only the
+  query string. A PutObject signed with SigV2 in its Authorization header
+  leaves the parameter unsigned, and radosgw stores it all the same
+  ("[radosgw takes query meta and encryption settings a SigV2 request does
+  not sign](#radosgw-takes-query-meta-and-encryption-settings-a-sigv2-request-does-not-sign)").
+  A value that also holds another control byte, or bytes that are not
+  UTF-8, takes `format_xattr`'s quoted-printable path instead, which keeps
+  only the bytes before the NUL ("[radosgw's format_xattr cuts a
+  quoted-printable metadata value at its first
+  NUL](#radosgws-format_xattr-cuts-a-quoted-printable-metadata-value-at-its-first-nul)").
+  A POST upload's form fields store every byte, CR and LF included
+  ("[radosgw stores a POST upload's x-amz-meta fields with their CR and LF
+  and sends them raw on GET](#radosgw-stores-a-post-uploads-x-amz-meta-fields-with-their-cr-and-lf-and-sends-them-raw-on-get)").
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** stores the same attr (`ReadsQueryMeta`,
+  `internal/op/identity.go`; `formatXattr`, `internal/s3/requestattrs.go`)
+  and sends each control byte of a header value but HTAB as a space, the
+  NUL included (`fieldValue`, `internal/s3/headers.go`;
+  `docs/differences.md`, "A stored header value's NUL and other control
+  bytes go out as spaces").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task WP-28, 2026-11-14, tracing whether a client can
+  store the NUL that GET sends; derived from the source, not reproduced.
+
+## radosgw's format_xattr cuts a quoted-printable metadata value at its first NUL
+
+- **Kind:** defect, S3-correctness, not security-relevant. Unreproduced:
+  derived from the source.
+- **Evidence:**
+  - `format_xattr` re-encodes a metadata value that fails `check_utf8`, or
+    holds a byte `is_control_character` matches, over the value's whole
+    length, as quoted-printable text inside `=?UTF-8?Q?` and `?=`, and
+    stores that in the value's place
+    ([rgw_op.h:2145-2164](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2145-L2164),
+    [rgw_op.h:2308-2327](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2308-L2327)).
+  - It hands `mime_encode_as_qp` the value as a C string, `xattr.c_str()`
+    ([rgw_op.h:2156-2159](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2156-L2159),
+    [rgw_op.h:2319-2322](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2319-L2322)),
+    and that encoder stops at the first NUL
+    ([mime.c:24-28](https://github.com/ceph/ceph/blob/v19.2.7/src/common/mime.c#L24-L28),
+    [mime.c:24-28](https://github.com/ceph/ceph/blob/v20.2.4/src/common/mime.c#L24-L28)).
+  - So every byte after the value's first NUL is dropped, with no error. A
+    NUL reaches the value through a PutObject's url-decoded query string
+    ("[radosgw stores a NUL from a PutObject's query-string x-amz-meta value
+    and sends it raw on GET](#radosgw-stores-a-nul-from-a-putobjects-query-string-x-amz-meta-value-and-sends-it-raw-on-get)").
+- **Trigger:** `PUT /bucket/key?x-amz-meta-a=b%00%01c`. The `0x01` after
+  the NUL sends the value down the quoted-printable path, which stores
+  `=?UTF-8?Q?b?=` and loses the `0x01` and the `c`.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it byte for byte (`formatXattr`,
+  internal/s3/requestattrs.go:300-319), so `docs/differences.md` needs
+  nothing.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task WP-28's review, 2026-11-14; derived from the
+  source, not reproduced.
+
+## radosgw sends a metadata put's objv tag raw in RGWX_UPDATE_VERSION
+
+- **Kind:** defect, possibly security-relevant, admin-only. Unreproduced:
+  derived from the source. A metadata put writes its version's tag into
+  the RGWX_UPDATE_VERSION response header as its bytes, so a CR LF in the
+  tag ends the header line and the bytes after it go out as further
+  header lines.
+- **Evidence:**
+  - The put is `RGWOp_Metadata_Put`, which needs the `metadata=write` cap
+    ([rgw_rest_metadata.h:61-63](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_metadata.h#L61-L63),
+    [rgw_rest_metadata.h:61-63](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_metadata.h#L61-L63)).
+  - `RGWMetadataManager::put` decodes the document's `ver` into its
+    version tracker's `write_version`
+    ([rgw_metadata.cc:521-533](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_metadata.cc#L521-L533),
+    [rgw_metadata.cc:316-328](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_metadata.cc#L316-L328)).
+    `obj_version::decode_json` takes `tag` as a string
+    ([cls_version_types.cc:9-13](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/version/cls_version_types.cc#L9-L13),
+    [cls_version_types.cc:9-13](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/version/cls_version_types.cc#L9-L13)).
+    ceph's JSON parser keeps a string's decoded value (`JSONObj::init`,
+    [ceph_json.cc:169-181](https://github.com/ceph/ceph/blob/v19.2.7/src/common/ceph_json.cc#L169-L181),
+    [ceph_json.cc:169-181](https://github.com/ceph/ceph/blob/v20.2.4/src/common/ceph_json.cc#L169-L181)),
+    and json_spirit decodes the `\n` and `\r` escapes to the bytes
+    ([json_spirit_reader_template.h:109-110](https://github.com/ceph/ceph/blob/v19.2.7/src/json_spirit/json_spirit_reader_template.h#L109-L110),
+    [json_spirit_reader_template.h:109-110](https://github.com/ceph/ceph/blob/v20.2.4/src/json_spirit/json_spirit_reader_template.h#L109-L110)),
+    so `"tag":"a\r\nb"` is a tag holding a CR and an LF.
+  - The put hands back the tracker's `read_version`
+    ([rgw_metadata.cc:544-547](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_metadata.cc#L544-L547),
+    [rgw_metadata.cc:339-342](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_metadata.cc#L339-L342)):
+    the `write_version`, which `RGWObjVersionTracker::apply_write` moves
+    there once a write that named it lands
+    ([rgw_rados.cc:186-197](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L186-L197),
+    [rgw_rados.cc:221-232](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L221-L232)),
+    or else the version the put read, which v19.2.7's `put_pre` records
+    ([rgw_metadata.cc:255-278](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_metadata.cc#L255-L278)).
+  - `send_response` writes `ver:<ver>,tag:<tag>` through
+    `dump_header_if_nonempty`
+    ([rgw_rest_metadata.cc:282-286](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_metadata.cc#L282-L286),
+    [rgw_rest_metadata.cc:282-286](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_metadata.cc#L282-L286);
+    [rgw_rest.h:779-786](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.h#L779-L786),
+    [rgw_rest.h:791-798](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.h#L791-L798))
+    and `dump_header`
+    ([rgw_rest.cc:347-357](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L347-L357),
+    [rgw_rest.cc:347-357](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L347-L357)),
+    and `ClientIO::send_header` writes the bytes unchecked
+    ([rgw_asio_client.cc:167-181](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L167-L181),
+    [rgw_asio_client.cc:167-181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_client.cc#L167-L181)).
+- **Trigger:** a holder of `metadata=write` puts a document whose `ver`
+  holds a `tag` with `\r\n` in it. The tag reaches RGWX_UPDATE_VERSION of
+  the put whose write applies it, or of a later put of the key that reads
+  it back as the stored version.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** not affected: its admin API writes the header through
+  `s3.SetHeader`, whose `fieldValue` writes each control byte but HTAB as
+  a space (internal/admin/metadata.go, internal/s3/headers.go).
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task WP-28's adversarial review, 2026-11-14; derived
+  from the source, not reproduced.
