@@ -8,4 +8,3 @@
 # that need the feature.
 
 TestRadosGWTestSuite/TestBucket/enable_versioning # PutBucketVersioning
-TestRadosGWTestSuite/TestBucket/enable_bucket_object_lock # CreateBucket with object lock

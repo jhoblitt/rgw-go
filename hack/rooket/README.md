@@ -1216,14 +1216,14 @@ which appends a base pin at the new tag, carrying it, to each.
 
 `go test` skips, on both gateways, the subtests
 `hack/admin/deselect-phase2.txt` names: subtests that set up what they read
-through the admin API with a phase 2 S3 feature, `PutBucketVersioning` or a
-CreateBucket with object lock, which rgw-go answers 501 until phase 2. Each
-line is a test id as `go test -json` reports it; `run.sh` turns the lines
-into one `-skip` pattern, stops before the run when a line names no method
-or subtest of the checkout, and after it when the run still reports one.
-`run.sh --print-deselect` prints a digest of the listed ids, which each
-recorded entry carries in its meta. The PR that lands a feature deletes its
-lines and records both ledgers, which enters the subtests it frees.
+through the admin API with a phase 2 S3 feature, at present
+`PutBucketVersioning`. Each line is a test id as `go test -json` reports it;
+`run.sh` turns the lines into one `-skip` pattern, stops before the run when a
+line names no method or subtest of the checkout, and after it when the run
+still reports one. `run.sh --print-deselect` prints a digest of the listed
+ids, which each recorded entry carries in its meta. The PR that lands a
+feature deletes its lines and records both ledgers, which enters the subtests
+it frees.
 
 `go test` runs the suite with `-tags ceph_preview`, which the account tests
 need, and with `CEPH_CONF` naming `out/<release>/ceph.conf`, since

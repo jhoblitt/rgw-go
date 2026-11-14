@@ -3529,6 +3529,159 @@
       {"outcome":"passed","source":"4f4a1b6719e216485fd385f6b81170080f23f30b","ceph_version":"19.2.7","recorded":"2026-10-27T22:44:05Z","runs":2,"unstable":false,"meta":{"deselect":"94d276f54f1c","gateway":"radosgw","lc":"off","pytest_freeze":"83c73bf65850"}},
       {"outcome":"passed","source":"5018895083e1b46905afe412bfa91bd2f0f4f6e9","ceph_version":"19.2.7","recorded":"2026-11-11T00:47:31Z","runs":2,"unstable":false,"meta":{"deselect":"81d0d5265464","gateway":"radosgw","lc":"off","pytest_freeze":"f1f5b2da6f99"}}
     ],
+    "s3tests.functional.test_s3::test_object_lock_changing_mode_from_compliance": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_changing_mode_from_governance_with_bypass": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_changing_mode_from_governance_without_bypass": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_default_retention_copy_object": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_default_retention_multipart_no_lock": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_default_retention_multipart_upload_legal_hold": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_default_retention_multipart_upload_retention": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_default_retention_put_object": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_delete_bypass_by_bucket_write_grantee": [
+      {"outcome":"failed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_delete_multipart_object_with_legal_hold_on": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_delete_multipart_object_with_retention": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_delete_object_with_legal_hold_off": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_delete_object_with_legal_hold_on": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_delete_object_with_retention": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_delete_object_with_retention_and_marker": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_get_legal_hold": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_get_legal_hold_invalid_bucket": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_get_obj_lock": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_get_obj_lock_invalid_bucket": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_get_obj_metadata": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_get_obj_retention": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_get_obj_retention_invalid_bucket": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_get_obj_retention_iso8601": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_multi_delete_bypass_denied": [
+      {"outcome":"failed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_multi_delete_object_with_retention": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_put_legal_hold": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_put_legal_hold_invalid_bucket": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_put_legal_hold_invalid_status": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_put_obj_lock": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_put_obj_lock_enable_after_create": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_put_obj_lock_headers_without_put_retention": [
+      {"outcome":"error","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_put_obj_lock_invalid_bucket": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_put_obj_lock_invalid_days": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_put_obj_lock_invalid_mode": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_put_obj_lock_invalid_status": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_put_obj_lock_invalid_years": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_put_obj_lock_with_days_and_years": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_put_obj_retention": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_put_obj_retention_by_object_owner_without_put_retention": [
+      {"outcome":"failed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_put_obj_retention_increase_period": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_put_obj_retention_invalid_bucket": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_put_obj_retention_invalid_mode": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_put_obj_retention_override_default_retention": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_put_obj_retention_shorten_period": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_put_obj_retention_shorten_period_bypass": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_put_obj_retention_versionid": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_retention_bypass_by_write_grantee": [
+      {"outcome":"failed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_retention_bypass_denied": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_retention_in_the_past": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_suspend_versioning": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_object_lock_uploading_obj": [
+      {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"19.2.7","recorded":"2026-11-14T17:11:54Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
     "s3tests.functional.test_s3::test_object_metadata_query_string_nul_not_in_header": [
       {"outcome":"failed","source":"036521df3e36cfb57ab37fc62f8eff9e9c18db5e","ceph_version":"19.2.7","recorded":"2026-11-14T16:48:37Z","runs":2,"unstable":false,"meta":{"deselect":"797e37178457","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
     ],
