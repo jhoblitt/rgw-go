@@ -20817,6 +20817,21 @@ Every new entry adds its row to this table, in document order.
     and beast's `write_data` writes what it is given
     ([rgw_asio_frontend.cc:131-149](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L131-L149),
     [rgw_asio_frontend.cc:132-150](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L132-L150)).
+  - Nothing in the frontend closes the connection for it. beast answers
+    an HTTP/1.1 request that does not ask to close with
+    `Connection: Keep-Alive`
+    (`ClientIO::complete_header`,
+    [rgw_asio_client.cc:152-158](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L152-L158),
+    [rgw_asio_client.cc:152-158](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_client.cc#L152-L158)).
+    Once `process_request` returns, `handle_connection` ends the connection
+    only for a stream error or a request that asked to close, and otherwise
+    reads the next request on it
+    ([rgw_asio_frontend.cc:351-363](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L351-L363),
+    [rgw_asio_frontend.cc:362-374](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L362-L374)).
+    So the source has the block wait on the connection ahead of the next
+    response. The public access block gate,
+    `test/integration/phase2_publicaccess_test.go`, sends that next request
+    on the same connection on each release.
 - **Impact:** GetPublicAccessBlock on a bucket that never had a block is
   an ordinary request: a client asks it to learn whether a bucket has one,
   and a requester can send it on any bucket whose block the permission
