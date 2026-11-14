@@ -42,7 +42,8 @@ import (
 // Accept-Ranges that dump_content_length sends
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2747,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2911),
-// x-amz-version-id (setVersionHeaders), the checksum the store computed
+// x-amz-version-id (setVersionHeaders), x-amz-expiration
+// (setWriteExpiration), the checksum the store computed
 // (setChecksumHeaders), Rgwx-Mtime for a system request, and the status
 // rgw_s3_success_create_obj_status names. The checksum request is read from
 // the headers (checksumField).
@@ -69,6 +70,7 @@ func (wr *objectWrites) putObject(ctx context.Context, w http.ResponseWriter, r 
 	SetHeader(h, "ETag", `"`+o.ETag+`"`)
 	SetContentLength(h, 0)
 	setVersionHeaders(h, o.VersionID, "")
+	setWriteExpiration(h, r, o.Tags, o.Mtime)
 	setChecksumHeaders(h, o.Checksum)
 	setSystemMtime(h, r, o.Mtime)
 	w.WriteHeader(successStatus(r))

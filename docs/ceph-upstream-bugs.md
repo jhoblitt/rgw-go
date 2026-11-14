@@ -530,6 +530,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw leaves a key's version marker and OLH entry when a delete takes the key's first version before its link](#radosgw-leaves-a-keys-version-marker-and-olh-entry-when-a-delete-takes-the-keys-first-version-before-its-link) | pending | pending | ✓ |
 | [radosgw's replay that reads the head between another replay's head op and its trim makes an older version current](#radosgws-replay-that-reads-the-head-between-another-replays-head-op-and-its-trim-makes-an-older-version-current) | none | [ceph/ceph#67774](https://github.com/ceph/ceph/pull/67774) |  |
 | [radosgw's DeleteObjects leaves an OLH head with no version when a skipped delete's pending attr refuses another replay's clear](#radosgws-deleteobjects-leaves-an-olh-head-with-no-version-when-a-skipped-deletes-pending-attr-refuses-another-replays-clear) | pending | pending | ✓ |
+| [radosgw's x-amz-abort-date counts from 1970](#radosgws-x-amz-abort-date-counts-from-1970) | pending | pending | ✓ |
+| [radosgw's lifecycle headers depart from S3's response model](#radosgws-lifecycle-headers-depart-from-s3s-response-model) | pending | pending | ✓ |
+| [radosgw's PutObject x-amz-expiration matches a tag rule against the bucket's tags](#radosgws-putobject-x-amz-expiration-matches-a-tag-rule-against-the-buckets-tags) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -15358,8 +15361,14 @@ Every new entry adds its row to this table, in document order.
   NoncurrentVersionExpiration rule as the object's x-amz-expiration, and
   not its Expiration rule. That holds whether the request names the
   version or reaches it as the current one. A null current version reached
-  without a versionId is judged by its Expiration rule. The objects
-  themselves expire as their rules say.
+  without a versionId is judged by its Expiration rule. A PutObject to a
+  versioning-enabled bucket is judged as a request for a noncurrent
+  version too: it writes the new version's instance into the object's key
+  before its response
+  ([rgw_op.cc:4491-4497](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4491-L4497)),
+  so its x-amz-expiration names a NoncurrentVersionExpiration rule, and
+  under Expiration rules alone it has none. The objects themselves expire
+  as their rules say.
 - **Releases:** v19.2.6 and v20.2.4. Fixed in v19.2.7 by 4dac1850993 (squid
   ceph/ceph#70493, merge f70cd9b3af8, 2026-07-30); on the tentacle branch by
   30daa120099 (merge 4da10a4c072, 2026-08-20), which no tag carries (checked
@@ -15372,10 +15381,15 @@ Every new entry adds its row to this table, in document order.
   versionId, which "gives none for a current object under a noncurrent-only
   rule" and "gives none for a request that names a version"
   (`internal/lifecycle/headers_test.go`) pin (`docs/differences.md`,
-  "x-amz-expiration names the Expiration rule alone on Tentacle"). Until
-  GET, HEAD and PutObject send it, rgw-go sends x-amz-expiration for no
-  object (`docs/differences.md`, "Object read differences", "No
-  x-amz-expiration").
+  "x-amz-expiration names the Expiration rule alone on Tentacle"). GET,
+  HEAD and PutObject send it, passing the request's own versionId and not
+  the instance a read resolves or a write creates, which "takes the
+  request's versionId, not the instance the read resolves", "names no
+  NoncurrentVersionExpiration rule for the current version, where
+  Tentacle's radosgw does" and "takes the Expiration rule for the version
+  a PutObject writes on a versioning-enabled bucket, where Tentacle's
+  radosgw takes its NoncurrentVersionExpiration"
+  (`internal/s3/lifecycleheaders_test.go`) pin on both releases.
 - **Upstream:** [#77564](https://tracker.ceph.com/issues/77564), named by
   the fix commits' `Tracker:` trailer; the fix is
   [ceph/ceph#69642](https://github.com/ceph/ceph/pull/69642) on main (still
@@ -21764,9 +21778,15 @@ Every new entry adds its row to this table, in document order.
   class, which "keeps an object under a stored Transition Date past
   real_time, which radosgw wraps to 2015-06-14 and transitions at once"
   (`internal/driver/lc_transition_test.go`) pins (`docs/differences.md`, "A
-  lifecycle transition never acts on a stored Date past real_time"). Task
-  C8 records the header's answer
-  (`docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md`).
+  lifecycle transition never acts on a stored Date past real_time"). Its
+  x-amz-expiration takes no date from such a rule, where radosgw's
+  `s3_expiration_header` names the wrapped instant
+  ([rgw_lc.cc:2854-2857](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2854-L2857),
+  [rgw_lc.cc:2918-2921](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2918-L2921)),
+  which "gives a stored Date real_time cannot hold no date, so another
+  rule's Days give the header" (`internal/s3/lifecycleheaders_test.go`)
+  pins (`docs/differences.md`, "x-amz-expiration takes no date from a
+  stored Date real_time cannot hold").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task C1's review, 2026-10-20, which compiled
   `from_iso_8601` and `check_date`. Not reproduced on a running radosgw.
@@ -22361,13 +22381,14 @@ Every new entry adds its row to this table, in document order.
   - `s3_expiration_header` writes the ID into the header's value as it is
     ([rgw_lc.cc:2882-2883](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2882-L2883),
     [rgw_lc.cc:2946-2947](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2946-L2947)),
-    which GET, HEAD and PutObject send
+    which GET, HEAD and PutObject send, PutObject's response also answering
+    UploadPart
     ([rgw_rest_s3.cc:470](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L470),
     [rgw_rest_s3.cc:498](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L498);
     [rgw_rest_s3.cc:2757](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2757),
     [rgw_rest_s3.cc:2913](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2913)),
-    and PutObject's copy-source branch too, so a CopyObject response
-    carries it
+    and PutObject's copy-source branch too, which answers UploadPartCopy, so
+    a copied part's response carries it
     ([rgw_rest_s3.cc:2763](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2763),
     [rgw_rest_s3.cc:2921](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2921)),
     and CreateMultipartUpload sends the abort rule's ID as
@@ -22396,9 +22417,9 @@ Every new entry adds its row to this table, in document order.
 - **Trigger:** whoever may put the bucket's lifecycle configuration gives a
   rule with an Expiration or an AbortIncompleteMultipartUpload an ID such
   as `a&#13;&#10;Set-Cookie: k=v`, within its 255 bytes.
-- **Impact:** every GET, HEAD, PutObject and CopyObject of an object the
-  rule covers, and every CreateMultipartUpload under its prefix, by any
-  requester,
+- **Impact:** every GET, HEAD and PutObject of an object the rule covers,
+  every UploadPart and UploadPartCopy of an upload of one, and every
+  CreateMultipartUpload under its prefix, by any requester,
   carries the writer's headers, or ends the header section early and
   starts the body with the writer's text. A shared or public bucket hands
   that response to its other users.
@@ -22410,10 +22431,13 @@ Every new entry adds its row to this table, in document order.
   ([rgw_lc.cc:3451-3452](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_lc.cc#L3451-L3452))
   and `send_header`
   ([rgw_asio_client.cc:170-184](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_asio_client.cc#L170-L184)).
-- **rgw-go:** not affected once it sends these headers: net/http writes a
-  CR or LF in a header value as a space (`docs/differences.md`, "A stored
-  header value's CR and LF go out as spaces"). `lifecycle.ExpirationHeader`
-  (`internal/lifecycle/headers.go`) writes the ID as radosgw does.
+- **rgw-go:** not affected: it sends both headers through net/http, which
+  writes a CR or LF in a header value as a space (`docs/differences.md`, "A
+  stored header value's CR and LF go out as spaces"), and
+  `lifecycle.ExpirationHeader` (`internal/lifecycle/headers.go`) writes the
+  ID as radosgw does. "sends a stored rule ID's CR and LF as spaces in both
+  headers, starting no header of its own"
+  (`internal/s3/lifecycleheaders_test.go`) pins it through a server.
 - **Upstream:** pending: sent to rgw-bug-reproduction, which takes it to
   security@ceph.io as an addendum to the thread of "[radosgw stores a POST upload's x-amz-meta fields with their CR and LF and sends them raw on GET](#radosgw-stores-a-post-uploads-x-amz-meta-fields-with-their-cr-and-lf-and-sends-them-raw-on-get)" and "[radosgw sends a query-string x-amz-meta name's CR and LF raw in GET's headers](#radosgw-sends-a-query-string-x-amz-meta-names-cr-and-lf-raw-in-gets-headers)".
   Their filed fixes refuse the bad bytes where each input arrives, so
@@ -22422,8 +22446,10 @@ Every new entry adds its row to this table, in document order.
   `ClientIO::send_header`. Prior art for the lifecycle path not searched.
 - **Found:** task C2, 2026-10-20, reading the header builders at both
   tags; the copy-source site, the character-reference note and the guard
-  added by C2's review and rgw-bug-reproduction's triage, 2026-10-20. Not
-  reproduced on a running radosgw.
+  added by C2's review and rgw-bug-reproduction's triage, 2026-10-20; the
+  copy-source site's op corrected from CopyObject to UploadPartCopy, and
+  UploadPart added, by task C8's review, 2026-11-14. Not reproduced on a
+  running radosgw.
 
 ## radosgw's lifecycle transitions share their class check across work-pool threads
 
@@ -34397,3 +34423,173 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V16's emulator exploration, 2026-11-12;
   recorded by phase 2 task V17, 2026-11-14.
+
+## radosgw's x-amz-abort-date counts from 1970
+
+- **Kind:** defect, S3-correctness, cosmetic: CreateMultipartUpload's
+  x-amz-abort-date names a day in January 1970, not the day the upload
+  becomes eligible for an abort. Not security-relevant. Unreproduced:
+  derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWInitMultipart_ObjStore_S3::send_response` passes the op's `mtime`
+    to `get_s3_multipart_abort_header` and sends the date and the rule ID it
+    gives, whatever `op_ret` is
+    ([rgw_rest_s3.cc:4059-4072](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4059-L4072),
+    [rgw_rest_s3.cc:4526-4539](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4526-L4539)).
+  - `RGWInitMultipart` declares `mtime`
+    ([rgw_op.h:1851](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L1851),
+    [rgw_op.h:2012](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2012))
+    and nothing assigns it: within the op's and its S3 subclass's functions
+    in `rgw_op.cc`, `rgw_op.h`, `rgw_rest_s3.cc` and `rgw_rest_s3.h`, its
+    one other mention is that call. A default real_time is the epoch.
+  - `s3_multipart_abort_header` gives `mtime + days × 86400 -
+    to_time_t(mtime) % 86400 + 86400` seconds
+    ([rgw_lc.cc:2932-2935](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2932-L2935),
+    [rgw_lc.cc:2996-2999](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2996-L2999)),
+    so from the epoch the rule's days and one more past 1970-01-01:
+    `Sat, 03 Jan 1970 00:00:00 GMT` for a DaysAfterInitiation of 1.
+  - The worker aborts an upload by its meta object's index mtime
+    ([rgw_lc.cc:907](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L907),
+    [rgw_lc.cc:928](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L928)),
+    and S3's header "indicates when the initiated multipart upload becomes
+    eligible for an abort operation"
+    ([api_op_CreateMultipartUpload.go:789-801](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_CreateMultipartUpload.go#L789-L801)).
+- **Impact:** a client that reads the header, an SDK's AbortDate among
+  them, takes every upload under an abort rule for one long past its abort
+  date. A CreateMultipartUpload refused in execute, as one whose
+  x-amz-tagging set_from_string refuses is, carries the headers too. The
+  worker aborts as the rule says.
+- **Releases:** v19.2.7 and v20.2.4, and main at 8aa24c51928 (2026-10-30),
+  where `mtime` is still only declared and passed
+  ([rgw_op.h:2090](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_op.h#L2090),
+  [rgw_rest_s3.cc:4795](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L4795)).
+- **rgw-go:** counts from the upload's initiation and sends the headers
+  only with the upload it created, which "name the earliest
+  DaysAfterInitiation date from the upload's initiation, and its rule" and
+  "are not sent on a refusal, which radosgw's send_response sends them
+  with" (`internal/s3/lifecycleheaders_test.go`) pin (`docs/differences.md`,
+  "x-amz-abort-date counts from the upload's initiation").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C8, 2026-11-14, reading the call site at both
+  tags. Not reproduced on a running radosgw.
+
+## radosgw's lifecycle headers depart from S3's response model
+
+- **Kind:** defect, S3-correctness, cosmetic: radosgw sends x-amz-expiration
+  on the part responses S3 sends none on, sends it on neither CopyObject nor
+  CompleteMultipartUpload, which S3 sends it on, sends no abort headers on
+  ListParts, and writes the rule ID raw where S3 URL-encodes it. Not
+  security-relevant on its own; the raw rule ID is how a stored CR and LF
+  reach the response ("[radosgw sends a lifecycle rule ID's CR and LF raw in
+  x-amz-expiration and
+  x-amz-abort-rule-id](#radosgw-sends-a-lifecycle-rule-ids-cr-and-lf-raw-in-x-amz-expiration-and-x-amz-abort-rule-id)").
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWPutObj_ObjStore_S3::send_response` sends x-amz-expiration on every
+    success, from the mtime of what it wrote
+    ([rgw_rest_s3.cc:2750-2763](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2750-L2763),
+    [rgw_rest_s3.cc:2903-2921](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2903-L2921)),
+    and RGWPutObj serves UploadPart and UploadPartCopy: `op_put` makes an
+    RGWCopyObj only when the handler set a copy source's bucket, which it
+    does for `x-amz-copy-source` without `x-amz-copy-source-range` and
+    without `uploadId`
+    ([rgw_rest_s3.cc:4863-4879](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4863-L4879)
+    and [rgw_rest_s3.cc:5056-5071](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5056-L5071),
+    [rgw_rest_s3.cc:5390-5406](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5390-L5406)
+    and [rgw_rest_s3.cc:5586-5601](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5586-L5601)).
+    So a part's response names a date counted from the part's mtime.
+  - The headers' only other call sites are GET's and HEAD's
+    `send_response_data` and CreateMultipartUpload's `send_response`
+    ([rgw_rest_s3.cc:397](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L397)
+    and [rgw_rest_s3.cc:4068](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4068),
+    [rgw_rest_s3.cc:400](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L400)
+    and [rgw_rest_s3.cc:4535](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4535)),
+    so CopyObject, CompleteMultipartUpload and ListParts send none.
+  - `s3_expiration_header` writes the rule's ID into `rule-id="..."` as
+    stored
+    ([rgw_lc.cc:2882-2883](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2882-L2883),
+    [rgw_lc.cc:2946-2947](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2946-L2947)).
+  - S3's model, in aws-sdk-go-v2's service/s3 v1.114.7, reads
+    x-amz-expiration from CompleteMultipartUpload, CopyObject, GetObject,
+    HeadObject and PutObject, and x-amz-abort-date and x-amz-abort-rule-id
+    from CreateMultipartUpload and ListParts, and neither from UploadPart or
+    UploadPartCopy
+    ([deserializers.go:271](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/deserializers.go#L271),
+    [:666](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/deserializers.go#L666),
+    [:7190](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/deserializers.go#L7190),
+    [:9231](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/deserializers.go#L9231),
+    [:14225](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/deserializers.go#L14225);
+    [:1157-1166](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/deserializers.go#L1157-L1166),
+    [:12156-12165](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/deserializers.go#L12156-L12165)),
+    and its documentation of the GetObject, HeadObject and PutObject header
+    says "The value of rule-id is URL-encoded"
+    ([api_op_GetObject.go:556-558](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_GetObject.go#L556-L558),
+    [api_op_HeadObject.go:506-508](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_HeadObject.go#L506-L508),
+    [api_op_PutObject.go:870-871](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_PutObject.go#L870-L871)).
+- **Impact:** a client reads an expiry date on a part, which names no
+  object's expiry; finds none on a copy or a completed upload whose rules
+  give one, or on a ListParts of an upload an abort rule covers; and reads a
+  rule ID holding a character S3 would have encoded as it is. The worker
+  acts as its rules say.
+- **Releases:** v19.2.7 and v20.2.4, and main at 8aa24c51928 (2026-10-30),
+  where the call sites are still those three
+  ([rgw_rest_s3.cc:418](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L418),
+  [rgw_rest_s3.cc:3038](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L3038),
+  [rgw_rest_s3.cc:4795](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L4795)).
+- **rgw-go:** sends x-amz-expiration on PutObject and not on UploadPart or
+  UploadPartCopy, which "is not sent on UploadPart or UploadPartCopy, as S3
+  sends none there" (`internal/s3/lifecycleheaders_test.go`) pins
+  (`docs/differences.md`, "UploadPart and UploadPartCopy send no
+  x-amz-expiration"). It reproduces the rest: no header on CopyObject,
+  CompleteMultipartUpload or ListParts, and the rule ID as stored
+  (`lifecycle.ExpirationHeader`, `internal/lifecycle/headers.go`).
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C8, 2026-11-14, reading the call sites at both
+  tags and aws-sdk-go-v2's model. Not reproduced on a running radosgw.
+
+## radosgw's PutObject x-amz-expiration matches a tag rule against the bucket's tags
+
+- **Kind:** defect, S3-correctness, cosmetic; not security-relevant: under
+  a policy that conditions on `s3:ResourceTag`, a PutObject without tags
+  gets the x-amz-expiration of a tag-filtered rule its bucket's tags match.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWPutObj::verify_permission`, when a policy's condition names
+    `s3:ResourceTag`, decodes the bucket's tags into `s->tagset`
+    ([rgw_op.cc:3977-3980](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3977-L3980),
+    [rgw_op.cc:4186-4189](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4186-L4189);
+    `rgw_iam_add_tags_from_bl`,
+    [rgw_op.cc:708-725](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L708-L725),
+    [rgw_op.cc:738-755](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L738-L755)).
+  - `RGWPutObj::execute` replaces it with the object's tags only when the
+    request's x-amz-tagging holds one: `encode_obj_tags_attr` writes no attr
+    for an empty set, and `rgw_cond_decode_objtags` leaves `s->tagset`
+    alone without the attr
+    ([rgw_op.cc:4531-4532](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4531-L4532),
+    [rgw_op.cc:4799-4800](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4799-L4800);
+    [rgw_op.h:2251-2259](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2251-L2259);
+    [rgw_op.cc:2198-2212](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2198-L2212),
+    [rgw_op.cc:2433-2447](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2433-L2447)).
+  - `send_response` hands `s->tagset` to `s3_expiration_header`, which
+    matches each tag-filtered rule against it
+    ([rgw_rest_s3.cc:112-126](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L112-L126)
+    and [rgw_rest_s3.cc:2750](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2750),
+    [rgw_rest_s3.cc:117-123](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L117-L123)
+    and [rgw_rest_s3.cc:2903](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2903)).
+- **Impact:** the header names an expiry the object never has: the worker
+  matches the object's own tags.
+- **Releases:** v19.2.7 and v20.2.4, and main at 8aa24c51928 (2026-10-30),
+  where verify_permission still adds the bucket's tags and execute still
+  decodes the object's after them
+  ([rgw_op.cc:4676](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_op.cc#L4676),
+  [rgw_op.cc:5314-5315](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_op.cc#L5314-L5315)).
+- **rgw-go:** matches the tags the request gives the object and none
+  without them (`setWriteExpiration`, `internal/s3/lifecycleheaders.go`),
+  which "matches a PutObject's own x-amz-tagging, the set
+  rgw_cond_decode_objtags reads back from the attrs it writes"
+  (`internal/s3/lifecycleheaders_test.go`) pins (`docs/differences.md`, "A
+  PutObject's x-amz-expiration matches the object's own tags").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C8, 2026-11-14, following `s->tagset` from
+  verify_permission to the header at both tags. Not reproduced on a running
+  radosgw.

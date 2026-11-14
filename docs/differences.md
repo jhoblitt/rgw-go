@@ -7740,12 +7740,6 @@ does the following.
   alone, so where that attr is later, it answers 304 Not Modified where
   Tentacle serves the object, and serves it where Tentacle answers 412
   PreconditionFailed. Squid has no such attr.
-- **No x-amz-expiration.** radosgw computes `x-amz-expiration` for a GET
-  or HEAD from the bucket's lifecycle rules (`get_s3_expiration_header`,
-  `rgw_rest_s3.cc:112-118`, `:389` and `:462` at v19.2.6; `:117-123`,
-  `:400` and `:498` at v20.2.4). rgw-go reads no lifecycle configuration
-  until phase 2, so it sends the header for no object; for a bucket
-  without lifecycle rules the two agree.
 - **GET and HEAD serve a system request without the object-lock
   permissions.** On a bucket with object lock, radosgw's GET and HEAD send
   `x-amz-object-lock-mode` and `x-amz-object-lock-retain-until-date` from
@@ -9835,11 +9829,6 @@ does the following.
   PutObject permissions the AWS SDK for Go v2 documents name s3:PutObject,
   s3:PutObjectAcl and s3:PutObjectTagging and no lock action
   ([api_op_PutObject.go:78-90](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_PutObject.go#L78-L90)).
-- **No x-amz-expiration on a write.** radosgw sends `x-amz-expiration`
-  from the bucket's lifecycle rules on a PutObject's success too
-  (`get_s3_expiration_header`, `rgw_rest_s3.cc:2742` at v19.2.6, `:2903`
-  at v20.2.4). rgw-go reads no lifecycle configuration until phase 2 ("No
-  x-amz-expiration", above).
 - **A date whose time names a conversion rgw-go does not run is refused.**
   radosgw reads DeleteObject's `x-amz-delete-if-unmodified-since` and the
   admin API's date arguments, such as the usage API's `start` and `end`,
@@ -12976,9 +12965,9 @@ the abort of its expired multipart uploads (`internal/driver/lc_bucket.go`,
 `lc_actions.go` and `lc_transition.go`); it leaves a bucket whose rules
 transition to a cloud tier unclaimed for radosgw's workers ("An rgw-go-only
 zone never processes a bucket whose rules transition to a cloud tier",
-below). It does not yet send the headers
-("No x-amz-expiration", under "Object read differences"). The decision
-entries describe what both will do.
+below). GET, HEAD and PutObject send `x-amz-expiration`, and
+CreateMultipartUpload `x-amz-abort-date` and `x-amz-abort-rule-id`
+(`internal/s3/lifecycleheaders.go`).
 Where rgw-go differs, it does the following, as the design's compatibility
 rule asks (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:284-298`):
 the correct S3 result, in RADOS state radosgw reads as its own.
@@ -13183,8 +13172,10 @@ the correct S3 result, in RADOS state radosgw reads as its own.
 - **x-amz-expiration names the Expiration rule alone on Tentacle.**
   v20.2.4's `s3_expiration_header` gives a request that names a version a
   header, and for a key with an instance, which a GET or HEAD of a current
-  version with a version ID also passes, takes the date from the rule's
-  NoncurrentVersionExpiration
+  version with a version ID also passes, and a PutObject to a
+  versioning-enabled bucket for the version it writes
+  ([rgw_op.cc:4491-4497](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4491-L4497)),
+  takes the date from the rule's NoncurrentVersionExpiration
   ([rgw_lc.cc:2817-2952](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2817-L2952);
   docs/ceph-upstream-bugs.md, "[radosgw's x-amz-expiration reports a
   NoncurrentVersionExpiration
@@ -13227,6 +13218,69 @@ the correct S3 result, in RADOS state radosgw reads as its own.
   rgw-go names the first midnight UTC at least the days past the mtime's
   second, the one a worker in UTC acts at, so for that object it names a
   day earlier than radosgw. Every other mtime gets radosgw's date.
+- **x-amz-expiration takes no date from a stored Date real_time cannot
+  hold.** radosgw's `s3_expiration_header` reads a rule's Date with
+  `from_iso_8601`
+  ([rgw_lc.cc:2854-2857](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2854-L2857),
+  [rgw_lc.cc:2918-2921](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2918-L2921)),
+  which wraps a time past 2554-07-21T23:34:33.709551615Z into another
+  instant, so for a stored `2600-01-01T23:34:33.709551616Z` the header names
+  2015-06-14 (docs/ceph-upstream-bugs.md, "[radosgw's lifecycle Date wraps
+  past 2554 and expires at
+  once](ceph-upstream-bugs.md#radosgws-lifecycle-date-wraps-past-2554-and-expires-at-once)").
+  rgw-go's header takes no date from such a rule, as its prefix map holds
+  none ("The lifecycle prefix map reads a stored negative object size by
+  its sign, and no Date past real_time"): another rule that matches gives
+  the header, and without one there is none. rgw-go's
+  PutBucketLifecycleConfiguration stores no such Date, so only a
+  configuration radosgw stored holds one.
+- **x-amz-abort-date counts from the upload's initiation.** radosgw's
+  CreateMultipartUpload computes `x-amz-abort-date` from the op's `mtime`
+  ([rgw_rest_s3.cc:4066-4072](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4066-L4072),
+  [rgw_rest_s3.cc:4533-4539](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4533-L4539)),
+  which RGWInitMultipart declares and never sets
+  ([rgw_op.h:1851](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L1851),
+  [rgw_op.h:2012](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2012)),
+  so the date is the rule's days and one more past 1970-01-01; and its
+  `send_response` computes the headers whatever the op's result, so a
+  refusal in execute carries them too (docs/ceph-upstream-bugs.md,
+  "[radosgw's x-amz-abort-date counts from
+  1970](ceph-upstream-bugs.md#radosgws-x-amz-abort-date-counts-from-1970)").
+  S3's header "indicates when the initiated multipart upload becomes
+  eligible for an abort operation"
+  ([api_op_CreateMultipartUpload.go:789-801](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_CreateMultipartUpload.go#L789-L801)).
+  rgw-go counts from the upload's initiation, the meta object's mtime the
+  lifecycle worker's abort counts from too, and sends the headers only with
+  the upload it created (`setAbortHeaders`,
+  `internal/s3/lifecycleheaders.go`).
+- **UploadPart and UploadPartCopy send no x-amz-expiration.** radosgw
+  answers a part with PutObject's `send_response`, which sends
+  `x-amz-expiration` computed from the part's mtime
+  ([rgw_rest_s3.cc:2750-2763](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2750-L2763),
+  [rgw_rest_s3.cc:2903-2921](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2903-L2921)),
+  as a request naming an upload id is an RGWPutObj, a copy source or not
+  ([rgw_rest_s3.cc:5056-5071](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5056-L5071),
+  [rgw_rest_s3.cc:5586-5601](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5586-L5601);
+  docs/ceph-upstream-bugs.md, "[radosgw's lifecycle headers depart from
+  S3's response
+  model](ceph-upstream-bugs.md#radosgws-lifecycle-headers-depart-from-s3s-response-model)").
+  S3 sends none on a part. rgw-go sends none there either: the header is
+  PutObject's alone (`setWriteExpiration`, `internal/s3/lifecycleheaders.go`).
+- **A PutObject's x-amz-expiration matches the object's own tags.**
+  radosgw matches a tag-filtered rule against `s->tagset`, which a
+  PutObject sets from its `x-amz-tagging` only when that holds a tag
+  ([rgw_op.cc:4531-4532](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4531-L4532),
+  [rgw_op.cc:4799-4800](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4799-L4800)).
+  Under a policy whose condition names `s3:ResourceTag`, its
+  verify_permission has already decoded the bucket's tags there
+  ([rgw_op.cc:3977-3980](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3977-L3980),
+  [rgw_op.cc:4186-4189](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4186-L4189)),
+  so a PutObject without tags gets the header of a rule the bucket's tags
+  match (docs/ceph-upstream-bugs.md, "[radosgw's PutObject x-amz-expiration
+  matches a tag rule against the bucket's
+  tags](ceph-upstream-bugs.md#radosgws-putobject-x-amz-expiration-matches-a-tag-rule-against-the-buckets-tags)").
+  rgw-go matches the tags the request gives the object, and none without
+  them (`setWriteExpiration`, `internal/s3/lifecycleheaders.go`).
 - **The lifecycle work window must scan as four numbers.** With
   `rgw_enable_lc_threads` on, rgw-go refuses to start on an
   `rgw_lifecycle_work_time` that does not hold four numbers of `int` in the
