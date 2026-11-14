@@ -9010,7 +9010,9 @@ does the following.
   whose condition fails or one naming a version that does not exist, is
   followed by the name's own update when an earlier delete of the name
   passed its key's checks, so no version the request reported deleted
-  stays readable (`updateSkipped`, `internal/op/deleteobjects.go`), as
+  stays readable but one whose object lock the replay finds holding ("A
+  replay keeps another writer's version whose object lock holds")
+  (`updateSkipped`, `internal/op/deleteobjects.go`), as
   Ceph main does from
   [7ce6a3740c2](https://github.com/ceph/ceph/commit/7ce6a3740c2) with
   [d1193f5341c](https://github.com/ceph/ceph/commit/d1193f5341c), merged

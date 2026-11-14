@@ -34286,7 +34286,9 @@ Every new entry adds its row to this table, in document order.
 - **Impact:** GET and HEAD of the key serve the older version the head
   names while every listing shows the newer one current, until the key's
   next link. Instance ids are random, so an older link sorts first about
-  half the time.
+  half the time. A log holding an UNLINK_OLH before its last link instead
+  has the OLH cleared over the version the index lists current, so GET and
+  HEAD answer 404 while the listing shows that version.
 - **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4. Not on
   main at 90b50e9b879, which v22.0.0 tags: since 8ef9dd9ab27 the replay
   moves the epoch it compares with to each link it takes, so applying the
