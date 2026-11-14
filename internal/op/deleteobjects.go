@@ -153,12 +153,13 @@ func (o *DeleteObjects) VerifyPermission(ctx context.Context, r *Request) error 
 // On a bucket whose versioning was ever enabled, bucket->versioned(), the
 // keys go by name, as handle_versioned_objects groups them
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6924-L6979 at v19.2.7,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7857-L7892 at v20.2.4):
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7857-L7891 at v20.2.4):
 // every delete of a name but its last skips the key's OLH update, and the
 // last of each name starts once every other delete has returned, so that
 // its update replays the deletes of its name before it, one update a name
-// where each delete would make its own. Any other bucket's keys go in the
-// request's order.
+// where each delete would make its own. A last delete that makes no update
+// is followed by the name's own (updateSkipped). Any other bucket's keys go
+// in the request's order.
 func (o *DeleteObjects) Execute(ctx context.Context, r *Request) error {
 	objects, err := o.checkRequest(r)
 	if err != nil {
@@ -187,29 +188,76 @@ func (o *DeleteObjects) Execute(ctx context.Context, r *Request) error {
 	}
 	defer failed.summarize(ctx, &kr)
 	if !kr.BucketRec.Info.Versioned() {
-		return o.deleteAll(ctx, &kr, objects, false, report)
+		return o.deleteAll(&kr, objects, func(e DeleteObjectsEntry) {
+			res, _ := o.deleteOne(ctx, &kr, e, false)
+			report(res)
+		})
 	}
 	rest, last := groupByName(objects)
-	if err := o.deleteAll(ctx, &kr, rest, true, report); err != nil {
+	// skipped holds the names a skipped delete of which passed its key's
+	// checks; the last deletes read it unlocked, as none starts before every
+	// skipped delete has returned.
+	var (
+		skipMu  sync.Mutex
+		skipped = map[string]bool{}
+	)
+	skip := func(e DeleteObjectsEntry) {
+		res, out := o.deleteOne(ctx, &kr, e, true)
+		if out != deleteRefused {
+			skipMu.Lock()
+			skipped[e.Key.Name] = true
+			skipMu.Unlock()
+		}
+		report(res)
+	}
+	if err := o.deleteAll(&kr, rest, skip); err != nil {
 		return err
 	}
-	return o.deleteAll(ctx, &kr, last, false, report)
+	return o.deleteAll(&kr, last, func(e DeleteObjectsEntry) {
+		res, out := o.deleteOne(ctx, &kr, e, false)
+		report(res)
+		if skipped[e.Key.Name] && out != deleteDone {
+			o.updateSkipped(ctx, &kr, e.Key)
+		}
+	})
 }
 
-// deleteAll deletes entries, at most maxAIO at once, each skipping its key's
-// OLH update when skipOLHUpdate is set, and reports each outcome as it
-// completes. It returns once every delete has. r is the request as Execute
-// copied it before the keys, which every key reads and none writes.
-func (o *DeleteObjects) deleteAll(ctx context.Context, r *Request, entries []DeleteObjectsEntry, skipOLHUpdate bool, report func(DeleteResult)) error {
+// deleteAll runs del on each of entries, at most maxAIO at once, and returns
+// once every one has returned. r is the request as Execute copied it before
+// the keys, which every key reads and none writes.
+func (o *DeleteObjects) deleteAll(r *Request, entries []DeleteObjectsEntry, del func(DeleteObjectsEntry)) error {
 	var g errgroup.Group
 	g.SetLimit(o.maxAIO(r))
 	for _, e := range entries {
 		g.Go(func() error {
-			report(o.deleteOne(ctx, r, e, skipOLHUpdate))
+			del(e)
 			return nil
 		})
 	}
 	return g.Wait()
+}
+
+// updateSkipped runs the OLH update of key's name in r's bucket after the
+// name's last delete made none, its earlier deletes having skipped theirs, as
+// Ceph main's dispatch runs Object::update_olh after a name's last delete
+// whatever that delete answered
+// (https://github.com/ceph/ceph/blob/v22.0.0/src/rgw/rgw_multi_del.cc#L153-L167),
+// where both floors leave those updates pending, a version the request
+// reported deleted readable by its id (docs/differences.md, "DeleteObjects
+// leaves a key's skipped updates to its last delete"). The update finishes
+// the request's own deletes, so a client gone does not stop it. Its failure
+// changes no key's answer, as main's dispatch ignores it, and is logged at
+// debug, as the store's best-effort update after a failed index call is: the
+// pending modifications stay for the name's next update.
+func (o *DeleteObjects) updateSkipped(ctx context.Context, r *Request, key meta.ObjKey) {
+	key.Instance = ""
+	if err := r.Env.Objects.UpdateOLH(context.WithoutCancel(ctx), r.BucketRec, key); err != nil {
+		cause := err.Error()
+		slog.DebugContext(ctx, "multi-object delete failed to update a key's olh after its last delete",
+			slog.String("bucket", r.BucketRec.Info.Bucket.Name),
+			slog.String("key", clipForLog(key.Name)), slog.Int("key_len", len(key.Name)),
+			slog.String("error", clipForLog(cause)), slog.Int("error_len", len(cause)))
+	}
 }
 
 // groupByName is handle_versioned_objects' grouping: entries by their key's
@@ -325,12 +373,13 @@ func (o *DeleteObjects) maxAIO(r *Request) int {
 // the key on a read that fails otherwise than with ENOENT; the store's
 // delete makes the reads it needs, whose failure fails the key alike, and
 // the op reads the key only for its object-lock check (deleteUnderLock),
-// whose refusal is the key's error, rendered as an AccessDenied key is.
-func (o *DeleteObjects) deleteOne(ctx context.Context, r *Request, e DeleteObjectsEntry, skipOLHUpdate bool) DeleteResult {
+// whose refusal is the key's error, rendered as an AccessDenied key is. It
+// reports as well how far the delete went.
+func (o *DeleteObjects) deleteOne(ctx context.Context, r *Request, e DeleteObjectsEntry, skipOLHUpdate bool) (DeleteResult, deleteOutcome) {
 	res := DeleteResult{Key: e.Key}
 	if e.Key.Name == "" {
 		res.Err = ErrInvalidArgument
-		return res
+		return res, deleteRefused
 	}
 	a := policy.S3DeleteObject
 	if e.Key.Instance != "" {
@@ -339,7 +388,7 @@ func (o *DeleteObjects) deleteOne(ctx context.Context, r *Request, e DeleteObjec
 	if err := VerifyBucketPermissionIn(ctx, r, a, acl.PermFor(a), r.BucketRec, e.Key); err != nil {
 		// -EACCES whatever the authorizer's reason, which it has logged.
 		res.Err = ErrAccessDenied
-		return res
+		return res, deleteRefused
 	}
 	p := DeleteParams{
 		IfMatch: storeCondition(e.IfMatch), IfMatchSize: e.IfMatchSize, IfMatchLastModified: e.IfMatchLastModified,
@@ -349,13 +398,31 @@ func (o *DeleteObjects) deleteOne(ctx context.Context, r *Request, e DeleteObjec
 	d, err := deleteUnderLock(ctx, r, e.Key, p, o.BypassHeader)
 	switch {
 	case errors.Is(err, ErrNoSuchKey):
+		return res, deleteUndone
 	case err != nil:
 		res.Err = err
+		return res, deleteUndone
 	case d != nil && d.DeleteMarker:
 		res.DeleteMarker, res.MarkerVersionID = true, d.VersionID
 	}
-	return res
+	return res, deleteDone
 }
+
+// deleteOutcome is how far a key's delete went.
+type deleteOutcome int
+
+const (
+	// deleteRefused: the key's own checks, its name and its permission,
+	// refused it, and nothing reached the store.
+	deleteRefused deleteOutcome = iota
+	// deleteUndone: the delete passed those checks and made no change, or
+	// none known: it failed, or found its version gone. A versioned delete
+	// that fails may still have left its modification pending.
+	deleteUndone
+	// deleteDone: the store's delete succeeded, and made its own OLH update
+	// unless it skipped it.
+	deleteDone
+)
 
 // maxKeyErrorLogs bounds the per-key lines one DeleteObjects logs at error
 // level, and maxLoggedLen the bytes of a key, a version or a cause any of its

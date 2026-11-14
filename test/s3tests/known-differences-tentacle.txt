@@ -124,3 +124,7 @@
 
 # A ListObjectVersions page that ended on a null delete marker, resumed after it by its version-id-marker null; radosgw resumes past the key's older versions (differences: "A versions listing resumes after the null delete marker its version-id-marker names")
 ^s3tests\.functional\.test_s3::test_versioning_list_versions_paginated_null_delete_marker$
+
+# A DeleteObjects whose last delete of a key names a version that does not exist or fails its condition, the key's skipped OLH updates applied after it, so the version it removed first is gone; radosgw leaves them pending and serves that version by its id (differences: "DeleteObjects leaves a key's skipped updates to its last delete")
+^s3tests\.functional\.test_s3::test_versioning_multi_object_delete_last_missing$
+^s3tests\.functional\.test_s3::test_versioning_multi_object_delete_last_precondition_failed$

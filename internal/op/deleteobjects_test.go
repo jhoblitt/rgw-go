@@ -732,24 +732,138 @@ var _ = Describe("DeleteObjects", func() {
 			Expect(maxInFlight.Load()).To(BeNumerically(">", 1), "the deletes overlap")
 			Expect(maxInFlight.Load()).To(BeNumerically("<=", 4))
 		})
-		// handle_individual_object answers a refused key before delete_obj, so
-		// nothing replays its name's skipped deletes
-		// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6837-L6847 at v19.2.7,
-		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7765-L7775 at v20.2.4).
-		It("sends no update for a name whose last delete the permission refuses, leaving its skipped deletes pending", func(ctx SpecContext) {
-			f.conf["rgw_multi_obj_del_max_aio"] = "1"
-			authz := &opfakes.FakeAuthorizer{}
-			authz.VerifyBucketInStub = func(_ context.Context, _ *op.Request, _ policy.Action, _ acl.Permission, _ *op.BucketRecord, key meta.ObjKey) error {
-				if key.Instance == "v2" {
-					return op.ErrAccessDenied
+		// Ceph main runs a name's update after its last delete, whatever that
+		// delete answered, once the key's response is sent
+		// (https://github.com/ceph/ceph/blob/v22.0.0/src/rgw/rgw_multi_del.cc#L153-L167);
+		// both floors run none
+		// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6924-L6979 at v19.2.7,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7857-L7891 at v20.2.4).
+		Describe("a name whose last delete makes no update", func() {
+			BeforeEach(func() {
+				f.conf["rgw_multi_obj_del_max_aio"] = "1"
+				stub.UpdateOLHStub = func(_ context.Context, _ *op.BucketRecord, key meta.ObjKey) error {
+					m.record("update " + key.Name + "@" + key.Instance)
+					return nil
 				}
-				return nil
+			})
+			// lastFails makes the store's delete of each name's last key, the
+			// one that does not skip its update, answer err, recording each
+			// delete as it returns.
+			lastFails := func(err error) {
+				stub.DeleteObjectStub = func(_ context.Context, _ *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) (*op.DeleteObjectResult, error) {
+					m.record("delete " + key.Name + "@" + key.Instance)
+					if !p.SkipOLHUpdate {
+						return nil, err
+					}
+					return &op.DeleteObjectResult{}, nil
+				}
 			}
-			f.env.Authz = authz
-			Expect(op.Run(ctx, m.op(keys("k@v1", "k@v3", "k@v2"), nil), f.multiReq("x"))).To(Succeed())
-			Expect(calls).To(Equal([]call{{meta.ObjKey{Name: "k", Instance: "v1"}, true}, {meta.ObjKey{Name: "k", Instance: "v3"}, true}}),
-				"the skipped deletes alone reach the store")
-			Expect(m.results).To(ContainElement(op.DeleteResult{Key: meta.ObjKey{Name: "k", Instance: "v2"}, Err: op.ErrAccessDenied}))
+			DescribeTable("gets the name's update once its last delete has returned and its result is reported",
+				func(ctx SpecContext, err, reported error) {
+					lastFails(err)
+					Expect(op.Run(ctx, m.op(keys("k@v3", "k@v1", "k@v2"), nil), f.multiReq("x"))).To(Succeed())
+					Expect(m.events[2:]).To(Equal([]string{
+						"delete k@v3", "result", "delete k@v1", "result", "delete k@v2", "result", "update k@",
+					}), "the update names the key's name alone")
+					Expect(m.results[2]).To(Equal(op.DeleteResult{Key: meta.ObjKey{Name: "k", Instance: "v2"}, Err: reported}))
+				},
+				Entry("a version gone, answered Deleted", fmt.Errorf("version gone: %w", op.ErrNoSuchKey), nil),
+				Entry("a failed condition", op.ErrPreconditionFailed, op.ErrPreconditionFailed),
+			)
+			It("gets the name's update after a store failure, whose key keeps its error though the update fails too", func(ctx SpecContext) {
+				boom := errors.New("the OSD went away")
+				lastFails(boom)
+				stub.UpdateOLHReturns(errors.New("the OSD is still away"))
+				Expect(op.Run(ctx, m.op(keys("k@v3", "k@v2"), nil), f.multiReq("x"))).To(Succeed())
+				Expect(stub.UpdateOLHCallCount()).To(Equal(1))
+				Expect(m.results).To(Equal([]op.DeleteResult{
+					{Key: meta.ObjKey{Name: "k", Instance: "v3"}},
+					{Key: meta.ObjKey{Name: "k", Instance: "v2"}, Err: boom},
+				}))
+			})
+			// handle_individual_object answers a refused key before delete_obj
+			// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6837-L6847 at v19.2.7,
+			// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7765-L7775 at v20.2.4).
+			It("gets the name's update when the permission refuses its last delete", func(ctx SpecContext) {
+				lastFails(nil)
+				authz := &opfakes.FakeAuthorizer{}
+				authz.VerifyBucketInStub = func(_ context.Context, _ *op.Request, _ policy.Action, _ acl.Permission, _ *op.BucketRecord, key meta.ObjKey) error {
+					if key.Instance == "v2" {
+						return op.ErrAccessDenied
+					}
+					return nil
+				}
+				f.env.Authz = authz
+				Expect(op.Run(ctx, m.op(keys("k@v1", "k@v3", "k@v2"), nil), f.multiReq("x"))).To(Succeed())
+				Expect(m.events[2:]).To(Equal([]string{"delete k@v1", "result", "delete k@v3", "result", "result", "update k@"}),
+					"the skipped deletes alone reach the store, and the update follows the refusal")
+				Expect(m.results).To(ContainElement(op.DeleteResult{Key: meta.ObjKey{Name: "k", Instance: "v2"}, Err: op.ErrAccessDenied}))
+			})
+			It("gets one update for each such name, and none for a name whose last delete succeeds", func(ctx SpecContext) {
+				stub.DeleteObjectStub = func(_ context.Context, _ *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) (*op.DeleteObjectResult, error) {
+					if !p.SkipOLHUpdate && key.Name != "fine" {
+						return nil, op.ErrPreconditionFailed
+					}
+					return &op.DeleteObjectResult{}, nil
+				}
+				Expect(op.Run(ctx, m.op(keys("k@v1", "j@v1", "fine@v1", "k@v2", "j", "fine@v2"), nil), f.multiReq("x"))).To(Succeed())
+				var updated []meta.ObjKey
+				for i := range stub.UpdateOLHCallCount() {
+					_, rec, key := stub.UpdateOLHArgsForCall(i)
+					Expect(rec.Info.Bucket.Name).To(Equal("plain"))
+					updated = append(updated, key)
+				}
+				Expect(updated).To(ConsistOf(meta.ObjKey{Name: "k"}, meta.ObjKey{Name: "j"}))
+			})
+			DescribeTable("gets no update for a name no earlier delete of which reached the store",
+				func(ctx SpecContext, es []op.DeleteObjectsEntry, deletes int) {
+					lastFails(op.ErrPreconditionFailed)
+					authz := &opfakes.FakeAuthorizer{}
+					authz.VerifyBucketInStub = func(_ context.Context, _ *op.Request, _ policy.Action, _ acl.Permission, _ *op.BucketRecord, key meta.ObjKey) error {
+						if key.Instance == "denied" {
+							return op.ErrAccessDenied
+						}
+						return nil
+					}
+					f.env.Authz = authz
+					Expect(op.Run(ctx, m.op(es, nil), f.multiReq("x"))).To(Succeed())
+					Expect(stub.DeleteObjectCallCount()).To(Equal(deletes))
+					Expect(stub.UpdateOLHCallCount()).To(BeZero())
+				},
+				Entry("a name of one key", keys("k@v1"), 1),
+				Entry("earlier deletes all refused by the permission", keys("k@denied", "k@denied", "k@v1"), 1),
+				Entry("earlier deletes of the empty name, each InvalidArgument", keys("", "", "@v1"), 0),
+			)
+			It("runs the update to its end after the request's context ends", func(ctx SpecContext) {
+				rctx, cancel := context.WithCancel(ctx)
+				defer cancel()
+				stub.DeleteObjectStub = func(ctx context.Context, _ *op.BucketRecord, _ meta.ObjKey, p op.DeleteParams) (*op.DeleteObjectResult, error) {
+					if !p.SkipOLHUpdate {
+						cancel()
+						return nil, ctx.Err()
+					}
+					return &op.DeleteObjectResult{}, nil
+				}
+				var updateErr error
+				stub.UpdateOLHStub = func(ctx context.Context, _ *op.BucketRecord, _ meta.ObjKey) error {
+					updateErr = ctx.Err()
+					return nil
+				}
+				Expect(op.Run(rctx, m.op(keys("k@v3", "k@v2"), nil), f.multiReq("x"))).To(Succeed())
+				Expect(stub.UpdateOLHCallCount()).To(Equal(1))
+				Expect(updateErr).NotTo(HaveOccurred(), "the update's context outlives the request's")
+			})
+		})
+		It("gets no update when each name's last delete succeeds, its own update replaying the skipped deletes", func(ctx SpecContext) {
+			stub.DeleteObjectStub = func(_ context.Context, _ *op.BucketRecord, key meta.ObjKey, _ op.DeleteParams) (*op.DeleteObjectResult, error) {
+				if key.Instance == "" {
+					return &op.DeleteObjectResult{VersionID: "m1", DeleteMarker: true}, nil
+				}
+				return &op.DeleteObjectResult{VersionID: key.Instance}, nil
+			}
+			Expect(op.Run(ctx, m.op(keys("k@v1", "k@v2", "j@v1", "j"), nil), f.multiReq("x"))).To(Succeed())
+			Expect(stub.DeleteObjectCallCount()).To(Equal(4))
+			Expect(stub.UpdateOLHCallCount()).To(BeZero())
 		})
 		It("skips no update on a bucket whose versioning was never enabled, deleting in the request's order", func(ctx SpecContext) {
 			f = newWriteFixture(ctx, denc.Squid)

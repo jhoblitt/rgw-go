@@ -8895,26 +8895,50 @@ does the following.
   `groupByName`, `internal/op/deleteobjects.go`). The last delete's update
   replays the others, so the key ends as one update a delete would leave
   it. A last delete that makes no update, one the permission refuses, one
-  whose condition fails or one naming a version that does not exist,
-  leaves the skipped deletes' modifications pending until the key's next
-  read or write replays them, as radosgw leaves them:
+  whose condition fails or one naming a version that does not exist, is
+  followed by the name's own update when an earlier delete of the name
+  passed its key's checks, so no version the request reported deleted
+  stays readable (`updateSkipped`, `internal/op/deleteobjects.go`), as
+  Ceph main does from
+  [7ce6a3740c2](https://github.com/ceph/ceph/commit/7ce6a3740c2) with
+  [d1193f5341c](https://github.com/ceph/ceph/commit/d1193f5341c), merged
+  as [ceph/ceph#72130](https://github.com/ceph/ceph/pull/72130), whose
+  first tag is v22.0.0. Both floors leave those updates pending
+  ([rgw_op.cc:6924-6979](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6924-L6979),
+  [rgw_op.cc:7857-7891](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7857-L7891))
+  until the key's next read or write replays them:
   `handle_individual_object` answers a refused key before `delete_obj`
   runs
   ([rgw_op.cc:6837-6847](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6837-L6847),
-  [rgw_op.cc:7765-7775](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7765-L7775)).
-  That is radosgw's defect, fixed on main at ab8073e1816, first tagged in
-  v22.0.0
-  (`docs/ceph-upstream-bugs.md`, "[radosgw's DeleteObjects leaves a
+  [rgw_op.cc:7765-7775](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7765-L7775)),
+  and a delete whose condition fails or whose version is gone unlinks
+  nothing (`docs/ceph-upstream-bugs.md`, "[radosgw's DeleteObjects leaves a
   name's skipped OLH updates pending when its last delete fails or finds
   its version
-  gone](ceph-upstream-bugs.md#radosgws-deleteobjects-leaves-a-names-skipped-olh-updates-pending-when-its-last-delete-fails-or-finds-its-version-gone)"),
-  and plan task V17 changes rgw-go to apply a name's skipped updates
-  after its last delete, as the fix does.
-  In that window rgw-go's next read answers the version current after its
-  replay ("A read that replays a pending modification answers the version
-  current after it", above), where a radosgw reader answers the version
-  current before it (`docs/ceph-upstream-bugs.md`, "[radosgw's follow_olh
-  answers the version that was current before the replay it
+  gone](ceph-upstream-bugs.md#radosgws-deleteobjects-leaves-a-names-skipped-olh-updates-pending-when-its-last-delete-fails-or-finds-its-version-gone)").
+  rgw-go's update differs from main's in three ways. It also replays a
+  head that carries no pending attr when the name's OLH entry is pending
+  removal, where main's `update_olh` returns without replaying such a head
+  ([rgw_sal_rados.cc:3211-3215](https://github.com/ceph/ceph/blob/v22.0.0/src/rgw/driver/rados/rgw_sal_rados.cc#L3211-L3215)),
+  so it also clears the OLH that concurrent DeleteObjects of every version
+  can leave with no version and no pending attr
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's DeleteObjects leaves an OLH
+  head with no version when a skipped delete's pending attr refuses
+  another replay's
+  clear](ceph-upstream-bugs.md#radosgws-deleteobjects-leaves-an-olh-head-with-no-version-when-a-skipped-deletes-pending-attr-refuses-another-replays-clear)").
+  It skips a name whose earlier deletes were all refused by their keys'
+  own checks, of the name and the permission, where main's updates every
+  name the request names more than once. And
+  it makes no update after a last delete that succeeded, whose own update
+  replayed the others, where main's makes one after every such name's
+  last delete
+  ([rgw_multi_del.cc:153-167](https://github.com/ceph/ceph/blob/v22.0.0/src/rgw/rgw_multi_del.cc#L153-L167)).
+  An update that fails leaves the modifications pending until the key's
+  next read or write, which on rgw-go answers the version current after
+  its replay ("A read that replays a pending modification answers the
+  version current after it", above), where a radosgw reader answers the
+  version current before it (`docs/ceph-upstream-bugs.md`, "[radosgw's
+  follow_olh answers the version that was current before the replay it
   runs](ceph-upstream-bugs.md#radosgws-follow_olh-answers-the-version-that-was-current-before-the-replay-it-runs)").
   A name's skipped deletes run together, up to
   `rgw_multi_obj_del_max_aio` at once, so the epochs the class gives a

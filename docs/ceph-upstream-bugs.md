@@ -519,6 +519,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [cls_rgw's bucket_clear_olh drops a pending log no replay read](#cls_rgws-bucket_clear_olh-drops-a-pending-log-no-replay-read) | none | none | ✓ |
 | [radosgw's DeleteObjects leaves a name's skipped OLH updates pending when its last delete fails or finds its version gone](#radosgws-deleteobjects-leaves-a-names-skipped-olh-updates-pending-when-its-last-delete-fails-or-finds-its-version-gone) | [#80886](https://tracker.ceph.com/issues/80886), [#81649](https://tracker.ceph.com/issues/81649), [#81650](https://tracker.ceph.com/issues/81650) | [ceph/ceph#72130](https://github.com/ceph/ceph/pull/72130), [ceph/ceph#72632](https://github.com/ceph/ceph/pull/72632) |  |
 | [radosgw's replay of a log a failed trim left takes back an older link whose instance sorts first](#radosgws-replay-of-a-log-a-failed-trim-left-takes-back-an-older-link-whose-instance-sorts-first) | pending | pending | ✓ |
+| [radosgw's DeleteObjects leaves an OLH head with no version when a skipped delete's pending attr refuses another replay's clear](#radosgws-deleteobjects-leaves-an-olh-head-with-no-version-when-a-skipped-deletes-pending-attr-refuses-another-replays-clear) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -33473,12 +33474,20 @@ Every new entry adds its row to this table, in document order.
   `handle_versioned_objects` still runs no update after a name's last
   delete. Fixed on main at ab8073e1816, first tagged in v22.0.0, and on
   the umbrella branch after v21.2.0.
-- **rgw-go:** reproduces it deliberately, by phase 2's decision VD-8:
-  DeleteObjects groups its keys by name and skips the OLH update of all
-  but each name's last delete, as radosgw does (`groupByName`,
-  `internal/op/deleteobjects.go`; `docs/differences.md`, "DeleteObjects
-  leaves a key's skipped updates to its last delete"), and fails both
-  s3-tests on both releases, as radosgw does. Plan task V17 adopts the fix.
+- **rgw-go:** differs, as main's fix at 7ce6a3740c2 does: DeleteObjects
+  groups its keys by name and skips the OLH update of all but each name's
+  last delete, as radosgw does, and when that last delete makes no update
+  it runs the name's update itself, for a name an earlier delete of which
+  passed its key's checks (`updateSkipped`, `internal/op/deleteobjects.go`,
+  through the store's `UpdateOLH`, `internal/driver/olh_update.go`;
+  `docs/differences.md`, "DeleteObjects leaves a key's skipped updates to
+  its last delete"). Both s3-tests are known differences in both
+  releases' files, radosgw failing them. Its update also replays a head
+  that carries no pending attr when the name's OLH entry is pending
+  removal, which main's passes over ("[radosgw's DeleteObjects leaves an
+  OLH head with no version when a skipped delete's pending attr refuses
+  another replay's
+  clear](#radosgws-deleteobjects-leaves-an-olh-head-with-no-version-when-a-skipped-deletes-pending-attr-refuses-another-replays-clear)").
 - **Upstream:** [#80886](https://tracker.ceph.com/issues/80886), "rgw: DeleteObjects can leave a
   deleted version readable", in Backporting, fixed on main by
   [ceph/ceph#72130](https://github.com/ceph/ceph/pull/72130), from its branch wip-rgw-80886 and merged as
@@ -33544,3 +33553,75 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task V17, 2026-11-14, deciding which heads without a
   pending attr DeleteObjects' update replays; derived from the source, not
   reproduced.
+
+## radosgw's DeleteObjects leaves an OLH head with no version when a skipped delete's pending attr refuses another replay's clear
+
+- **Kind:** defect, cosmetic: a RADOS object and an index entry left behind,
+  with every S3 answer as it should be. When concurrent DeleteObjects
+  remove every version of a key, one request's skipped delete can init its
+  modification on the key's OLH head between another request's replay head
+  op and its `clear_olh`. Its pending attr refuses the clear, which ends
+  that replay without a trim; its unlink then finds its version gone,
+  cancels the pending attr and runs no update, and its request's last
+  delete finds its version gone too. The key's OLH head stays, with no
+  pending attr and no version under it, and so does the name's OLH entry
+  in the bucket index, its log untrimmed and its removal pending, and no
+  read replays them. Not security-relevant: the trigger needs delete
+  permission on the key, and what stays is one head and one index entry
+  for the name. Derived from the source; reproduced in rgw-go's RADOS
+  emulator, whose class is Squid's, on rgw-go before it adopted the fix
+  below; not reproduced on radosgw.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `clear_olh` removes the head only while no pending attr is on it, and
+    answers ECANCELED before it clears the index entry
+    ([rgw_rados.cc:8614-8623](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8614-L8623),
+    [rgw_rados.cc:9360-9369](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9360-L9369)),
+    which `apply_olh_log` takes for success, with no trim
+    ([rgw_rados.cc:8550-8556](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8550-L8556),
+    [rgw_rados.cc:9296-9302](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9296-L9302)).
+  - The class answers an unlink whose instance entry a replay has removed
+    ENOENT
+    ([cls_rgw.cc:1888-1894](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1888-L1894),
+    [cls_rgw.cc:2035-2041](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2035-L2041)),
+    and `unlink_obj_instance` then cancels its pending modification and,
+    with `skip_olh_obj_update`, runs no best-effort update
+    ([rgw_rados.cc:8820-8840](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8820-L8840),
+    [rgw_rados.cc:9566-9586](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9566-L9586)).
+  - DeleteObjects runs no update after a name's last delete
+    ([rgw_op.cc:6924-6979](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6924-L6979),
+    [rgw_op.cc:7857-7891](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7857-L7891)),
+    and a last delete whose version is gone runs none itself ("[radosgw's
+    DeleteObjects leaves a name's skipped OLH updates pending when its last
+    delete fails or finds its version
+    gone](#radosgws-deleteobjects-leaves-a-names-skipped-olh-updates-pending-when-its-last-delete-fails-or-finds-its-version-gone)").
+  - A read replays the log only while a pending attr remains
+    ([rgw_rados.cc:8984-8997](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8984-L8997),
+    [rgw_rados.cc:9730-9743](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9730-L9743)).
+  - Main at 90b50e9b879, which v22.0.0 tags, fixes that entry and leaves
+    this one: the `update_olh` it runs after a name's last delete returns
+    without replaying a head that carries no pending attr
+    ([rgw_sal_rados.cc:3211-3215](https://github.com/ceph/ceph/blob/v22.0.0/src/rgw/driver/rados/rgw_sal_rados.cc#L3211-L3215)),
+    and `unlink_obj_instance` still runs no best-effort update with
+    `skip_olh_obj_update`
+    ([rgw_rados.cc:10437-10446](https://github.com/ceph/ceph/blob/v22.0.0/src/rgw/driver/rados/rgw_rados.cc#L10437-L10446)).
+- **Impact:** the head stays in the data pool and the OLH entry in the
+  bucket index until the name's next versioned write, whose replay reads
+  the log from marker 0
+  ([rgw_rados.cc:8651](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8651),
+  [rgw_rados.cc:9397](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9397))
+  and applies the old entries with its own. A GET of the key follows the
+  head's `olh.info` to a version that is gone and answers 404 NoSuchKey.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4, and main
+  at 90b50e9b879, which v22.0.0 tags, as above.
+- **rgw-go:** differs: after a name's last delete in a DeleteObjects makes
+  no update, its update replays an OLH head that carries no pending attr
+  when the name's OLH entry is pending removal, from marker 0, so it
+  applies the untrimmed log again and clears the OLH (`UpdateOLH`,
+  `internal/driver/olh_update.go`; `docs/differences.md`, "DeleteObjects
+  leaves a key's skipped updates to its last delete"). It replays no other
+  head without a pending attr ("[radosgw's replay of a log a failed trim
+  left takes back an older link whose instance sorts
+  first](#radosgws-replay-of-a-log-a-failed-trim-left-takes-back-an-older-link-whose-instance-sorts-first)").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task V16's emulator exploration, 2026-11-12;
+  recorded by phase 2 task V17, 2026-11-14.
