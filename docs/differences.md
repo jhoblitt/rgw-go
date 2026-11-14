@@ -9289,8 +9289,10 @@ does the following.
     ([rgw_crypt.cc:1450-1453](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1450-L1453),
     [rgw_crypt.cc:1518-1520](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1518-L1520) at v20.2.4);
     the key id goes out with each byte below 0x20 but a tab, and 0x7f, as
-    a space, and net/http trims the spaces and tabs that leaves at either
-    end, where radosgw sends it as stored. A v20.2.4 radosgw without a
+    a space, as every stored header value does ("A stored header value's
+    NUL and other control bytes go out as spaces"), and net/http trims the
+    spaces and tabs that leaves at either end, where radosgw sends it as
+    stored. A v20.2.4 radosgw without a
     key server refuses both with 400 InvalidArgument, as it fetches the key
     whose headers it echoes
     ([rgw_crypt.cc:1429-1437](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1429-L1437),

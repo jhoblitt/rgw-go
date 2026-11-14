@@ -424,8 +424,8 @@ func sendsSSEC(r *op.Request) bool {
 //     holding a control byte other than a tab, so it cannot split the
 //     response;
 //   - x-amz-server-side-encryption, and an SSE-KMS upload's key id as
-//     stored, its control bytes as spaces (echoField), where radosgw sends
-//     it as it is (docs/differences.md).
+//     stored, its control bytes as spaces as SetHeader writes every stored
+//     value, where radosgw sends it as it is (docs/differences.md).
 func setCryptEcho(h http.Header, e op.CryptEcho) {
 	if e.SSECKeyMD5 != "" {
 		SetHeader(h, "x-amz-server-side-encryption-customer-algorithm", "AES256")
@@ -435,24 +435,8 @@ func setCryptEcho(h http.Header, e op.CryptEcho) {
 		SetHeader(h, "x-amz-server-side-encryption", e.SSE)
 	}
 	if e.KMSKeyID != "" {
-		SetHeader(h, "x-amz-server-side-encryption-aws-kms-key-id", echoField(e.KMSKeyID))
+		SetHeader(h, "x-amz-server-side-encryption-aws-kms-key-id", e.KMSKeyID)
 	}
-}
-
-// echoField is a stored value v as an echoed header carries it: each byte
-// below 0x20 but HTAB, and 0x7f, written as a space. RFC 9110's
-// field-content leaves those bytes out (section 5.5), a sender must not
-// generate a field that does not match the grammar (section 2.2), and
-// net/http rewrites only CR and LF. Every other byte, one from 0x80
-// included, is kept as it is.
-func echoField(v string) string {
-	b := []byte(v)
-	for i, c := range b {
-		if c < 0x20 && c != '\t' || c == 0x7f {
-			b[i] = ' '
-		}
-	}
-	return string(b)
 }
 
 // completeLocation is RGWCompleteMultipart_ObjStore_S3::send_response's
