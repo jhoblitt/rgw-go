@@ -524,6 +524,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's format_xattr cuts a quoted-printable metadata value at its first NUL](#radosgws-format_xattr-cuts-a-quoted-printable-metadata-value-at-its-first-nul) | pending | pending | ✓ |
 | [radosgw sends a metadata put's objv tag raw in RGWX_UPDATE_VERSION](#radosgw-sends-a-metadata-puts-objv-tag-raw-in-rgwx_update_version) | pending | pending | ✓ |
 | [radosgw's replay of another request's versioned delete removes a version locked after that delete's check](#radosgws-replay-of-another-requests-versioned-delete-removes-a-version-locked-after-that-deletes-check) | pending | pending | ✓ |
+| [radosgw applies a policy statement that names NotAction and no Action to no action](#radosgw-applies-a-policy-statement-that-names-notaction-and-no-action-to-no-action) | [#73983](https://tracker.ceph.com/issues/73983) | none; [ceph/ceph#66099](https://github.com/ceph/ceph/pull/66099) closed unmerged |  |
+| [radosgw's PutObject sets the object ACL and tags its headers name under s3:PutObject alone](#radosgws-putobject-sets-the-object-acl-and-tags-its-headers-name-under-s3putobject-alone) | [#24131](https://tracker.ceph.com/issues/24131) (the tagging half) | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -4501,7 +4503,9 @@ Every new entry adds its row to this table, in document order.
 - **Impact:** an Allow statement whose Action starts with `*` grants every
   action, not only those its pattern names, a privilege escalation; a Deny
   statement denies every action. A Principal that starts with `*` names
-  everyone.
+  everyone. A NotAction string starting with `*` gives the statement every
+  action in its NotAction, so a statement naming only such a NotAction
+  applies to no action.
 - **Releases:** v19.2.6, v20.2.4 and main (8aa24c51928, 2026-10-30,
   [rgw_iam_policy.cc:785](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_iam_policy.cc#L785),
   [rgw_iam_policy.cc:787](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_iam_policy.cc#L787)
@@ -33899,3 +33903,114 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 Task V16's adversarial review (P1), 2026-11-12, and
   Task V19, 2026-11-14, split into its own-replay and other-request halves
   by V19's review; derived from the source, not reproduced.
+
+## radosgw applies a policy statement that names NotAction and no Action to no action
+
+- **Kind:** defect, security: a Deny statement written with `NotAction`
+  alone, which Amazon S3 applies to every action its NotAction does not
+  name, refuses nothing in radosgw, so an explicit Deny the policy states
+  is not enforced. An Allow written that way grants nothing. Unreproduced
+  on a running radosgw: derived from the source; rgw-go, which evaluated
+  statements the same way, served the requests such a Deny should refuse
+  in a scratch handler spec.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `Statement::eval` passes any action that its `action` mask lacks or
+    its `notaction` mask holds
+    ([rgw_iam_policy.cc:1222](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L1222),
+    [rgw_iam_policy.cc:1226](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1226)).
+  - The parser sets `action` for an `Action` element and `notaction` for a
+    `NotAction` one
+    ([rgw_iam_policy.cc:629-643](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L629-L643),
+    [rgw_iam_policy.cc:642-656](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L642-L656)),
+    and `action` starts empty
+    ([rgw_iam_policy.h:543](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L543),
+    [rgw_iam_policy.h:596](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L596)),
+    so a statement naming only NotAction matches no action, whatever its
+    effect.
+  - Such a policy is accepted: the parser refuses only an action string
+    that matches no action
+    ([rgw_iam_policy.cc:753](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L753),
+    [rgw_iam_policy.cc:765](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L765)).
+  - v21.1.2 splits the test in two with the same logic
+    ([rgw_iam_policy.cc:1306-1316](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_iam_policy.cc#L1306-L1316)).
+- **Impact:** a statement that names NotAction and no Action applies to no
+  action, so a Deny written so refuses nothing and an Allow written so
+  grants nothing, in a bucket policy and an identity policy alike.
+- **Releases:** v19.2.7, v20.2.4 and v21.1.2; older releases not checked.
+- **rgw-go:** applies a Deny that names NotAction and no Action to every
+  action its NotAction does not name, on both releases
+  (`policy.Statement.Eval`; docs/differences.md, "[A Deny that names
+  NotAction and no Action refuses every action its NotAction does not
+  name](differences.md#authorization-differences)"). An Allow written so
+  keeps radosgw's evaluation and grants nothing, so rgw-go never grants
+  what radosgw refuses on the same zone. The s3-test
+  `test_bucket_policy_deny_notaction`, marked `fails_on_rgw`, checks the
+  Deny's refusals.
+- **Upstream:** [#73983](https://tracker.ceph.com/issues/73983), which
+  reports NotAction not evaluated, Fix Under Review. Its fix,
+  [ceph/ceph#66099](https://github.com/ceph/ceph/pull/66099), "rgw/iam:
+  correcting evaluation of 'NotAction'", closed unmerged on 2026-10-22; it
+  tested each mask only when it holds an action, which would also have
+  made an Allow naming only NotAction grant, and a statement naming
+  neither Action nor NotAction apply to every action.
+- **Found:** upstream first, by #73983's reporter; met by phase 2 Task
+  WP-25's adversarial review, 2026-11-14, testing Deny precedence for
+  GetObjectAttributes; fixed in rgw-go by Task S8.
+
+## radosgw's PutObject sets the object ACL and tags its headers name under s3:PutObject alone
+
+- **Kind:** defect, possibly security-relevant. Unreproduced: derived from
+  the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWPutObj::verify_permission` evaluates s3:PutObject on the object it
+    writes and, when a copy source is named, s3:GetObject or
+    s3:GetObjectVersion on the source, and no other action
+    ([rgw_op.cc:3982-3983](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3982-L3983),
+    [rgw_op.cc:4191-4192](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4191-L4192)).
+    The request's `x-amz-acl`, grant headers and tags enter it only as
+    condition keys
+    ([rgw_op.cc:3966-3971](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3966-L3971),
+    [rgw_op.cc:4175-4180](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4175-L4180)).
+  - `get_params` builds the object's ACL from the request's ACL headers
+    (`create_s3_policy`) and reads `x-amz-tagging`
+    ([rgw_rest_s3.cc:2626-2634](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2626-L2634),
+    [rgw_rest_s3.cc:2779-2787](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2779-L2787)),
+    and `execute` stores the ACL and the tags
+    ([rgw_op.cc:4488](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4488),
+    [rgw_op.cc:4531](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4531);
+    [rgw_op.cc:4720](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4720),
+    [rgw_op.cc:4799](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4799)).
+  - `RGWInitMultipart` and `RGWPostObj` evaluate s3:PutObject alone as well
+    ([rgw_op.cc:6283-6284](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6283-L6284),
+    [rgw_op.cc:4599-4600](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4599-L4600);
+    [rgw_op.cc:6950-6951](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6950-L6951),
+    [rgw_op.cc:4892-4893](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4892-L4893)).
+  - Under `src/rgw`, s3:PutObjectAcl and s3:PutObjectVersionAcl are
+    evaluated only by `RGWPutACLs`
+    ([rgw_op.cc:5749](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5749),
+    [rgw_op.cc:6324](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6324)),
+    and s3:PutObjectTagging and s3:PutObjectVersionTagging only by
+    `RGWPutObjTags`
+    ([rgw_op.cc:1079-1080](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1079-L1080),
+    [rgw_op.cc:1278-1279](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1278-L1279)).
+  - Amazon S3 requires s3:PutObjectAcl to change the ACL in a PutObject
+    request and s3:PutObjectTagging to set its tag-set: "s3:PutObjectAcl -
+    To successfully change the objects ACL of your PutObject request, you
+    must have the s3:PutObjectAcl" and "s3:PutObjectTagging - To
+    successfully set the tag-set with your PutObject request, you must
+    have the s3:PutObjectTagging"
+    ([api_op_PutObject.go:86-90](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_PutObject.go#L86-L90)).
+- **Releases:** v19.2.7 and v20.2.4; older releases not checked.
+- **rgw-go:** matches it until plan task S12 lands. PutObject evaluates
+  s3:PutObject, then the permissions its object-lock headers need, and
+  never s3:PutObjectAcl or s3:PutObjectTagging, which only the
+  PutObjectAcl and PutObjectTagging ops evaluate
+  (`internal/op/putobject.go:141-146`, `internal/op/objectattrs.go:37-39`
+  and `:188-190`); CreateMultipartUpload does the same
+  (`internal/op/initmultipart.go:75-80`).
+- **Upstream:** [#24131](https://tracker.ceph.com/issues/24131), Fix Under
+  Review since 2018, covers the tagging half; the ACL half: pending: sent
+  to rgw-bug-reproduction.
+- **Found:** upstream first for the tagging half, by #24131's reporter;
+  met by phase 2 Task S8's adversarial review, 2026-11-14, comparing the
+  actions the PutObject ops evaluate with Amazon S3's.
