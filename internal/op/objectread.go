@@ -2,7 +2,6 @@ package op
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -360,31 +359,47 @@ func (o *GetObjectAttributes) Init(ctx context.Context, r *Request) error {
 	return g.Init(ctx, r)
 }
 
-// VerifyPermission is RGWGetObjAttrs::verify_permission
-// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6361-L6393):
-// s3:GetObject, or failing it s3:GetObjectAttributes, each for the version
-// when one is named. A refusal radosgw makes before verify_permission, such
-// as a missing object's, and an error that is no access denial come from the
-// first check alone. A Squid radosgw has no such op, so there the first
-// check decides: Squid knows no s3:GetObjectAttributes, and no Deny a Squid
-// policy states could refuse it. A delete marker's own version is refused as
-// such to a requester who holds either version action, without the
-// Last-Modified only GET and HEAD carry (deleteMarkerVersion).
-func (o *GetObjectAttributes) VerifyPermission(ctx context.Context, r *Request) error {
-	a := o.Action()
-	actions := []policy.Action{a}
-	if r.Env.Zone.Release() >= denc.Tentacle {
-		actions = append(actions, policy.S3GetObjectVersionAttributes)
-	}
-	err := deleteMarkerVersion(ctx, r, VerifyObjectPermission(ctx, r, a, acl.PermFor(a)), false, actions...)
-	if err == nil || IsBeforeVerify(err) || !errors.Is(err, ErrAccessDenied) || r.Env.Zone.Release() < denc.Tentacle {
-		return err
-	}
-	a = policy.S3GetObjectAttributes
+// attributesAction is the second action RGWGetObjAttrs::verify_permission
+// authorizes.
+func (o *GetObjectAttributes) attributesAction() policy.Action {
 	if o.Versioned {
-		a = policy.S3GetObjectVersionAttributes
+		return policy.S3GetObjectVersionAttributes
 	}
-	return VerifyObjectPermission(ctx, r, a, acl.PermFor(a))
+	return policy.S3GetObjectAttributes
+}
+
+// VerifyPermission is RGWGetObjAttrs::verify_permission
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6361-L6393)
+// with v21.1.2's conjunction
+// (https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L6783-L6784):
+// s3:GetObject and then s3:GetObjectAttributes, or s3:GetObjectVersion and
+// then s3:GetObjectVersionAttributes for a named version, as Amazon S3
+// requires
+// (https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectAttributes.html).
+// A v20.2.4 radosgw allows either, so a requester refused the read gets the
+// object's ETag, size, parts and checksums (docs/differences.md,
+// "GetObjectAttributes needs both of its actions on Tentacle"). Each is an
+// object permission like any other, which an ACL READ grant satisfies, as
+// op_to_perm maps both to READ
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L247-L265).
+// A refusal of the read, of any kind, is returned without the second check,
+// as && evaluates none. A Squid radosgw has no such op, so there the read
+// decides: Squid knows no s3:GetObjectAttributes, and no Deny a Squid policy
+// states could refuse it. A delete marker's own version is refused as such
+// to a requester who holds both version actions on Tentacle, and
+// s3:GetObjectVersion on Squid, without the Last-Modified only GET and HEAD
+// carry (deleteMarkerVersion).
+func (o *GetObjectAttributes) VerifyPermission(ctx context.Context, r *Request) error {
+	read := o.Action()
+	err := VerifyObjectPermission(ctx, r, read, acl.PermFor(read))
+	if r.Env.Zone.Release() < denc.Tentacle {
+		return deleteMarkerVersion(ctx, r, err, false, read)
+	}
+	attrs := o.attributesAction()
+	if err != nil {
+		return deleteMarkerVersion(ctx, r, err, false, read, attrs)
+	}
+	return VerifyObjectPermission(ctx, r, attrs, acl.PermFor(attrs))
 }
 
 // Execute is RGWGetObjAttrs::execute, which is RGWGetObj::execute without

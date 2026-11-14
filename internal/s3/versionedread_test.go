@@ -301,8 +301,34 @@ var _ = Describe("reads of a versioned key", func() {
 					}
 				})
 				if rel >= denc.Tentacle {
-					It("answer GetObjectAttributes 405 by Tentacle's s3:GetObjectVersionAttributes too", func() {
-						policy([3]string{"Allow", "s3:GetObjectVersionAttributes", "plain/*"})
+					// markerCase is the actions plain's policy allows bob and
+					// whether the marker is answered 405.
+					type markerCase struct {
+						allowed  []string
+						answered bool
+					}
+					DescribeTable("answer GetObjectAttributes 405 only to a requester allowed both s3:GetObjectVersion and Tentacle's s3:GetObjectVersionAttributes",
+						func(c markerCase) {
+							stmts := make([][3]string, 0, len(c.allowed))
+							for _, a := range c.allowed {
+								stmts = append(stmts, [3]string{"Allow", a, "plain/*"})
+							}
+							policy(stmts...)
+							rec := w.send(w.bob, http.MethodGet, "/plain/k?attributes&versionId=m1", "", "X-Amz-Object-Attributes", "ETag")
+							if c.answered {
+								expectMarkerVersion(rec, http.MethodGet, false)
+								return
+							}
+							Expect(rec.Code).To(Equal(http.StatusForbidden), rec.Body.String())
+							Expect(rec.Header()).NotTo(haveHeaderAnyCase("x-amz-delete-marker"))
+						},
+						Entry("both", markerCase{allowed: []string{"s3:GetObjectVersion", "s3:GetObjectVersionAttributes"}, answered: true}),
+						Entry("s3:GetObjectVersion alone", markerCase{allowed: []string{"s3:GetObjectVersion"}}),
+						Entry("s3:GetObjectVersionAttributes alone", markerCase{allowed: []string{"s3:GetObjectVersionAttributes"}}),
+					)
+				} else {
+					It("answer GetObjectAttributes 405 by s3:GetObjectVersion alone", func() {
+						policy([3]string{"Allow", "s3:GetObjectVersion", "plain/*"})
 						expectMarkerVersion(w.send(w.bob, http.MethodGet, "/plain/k?attributes&versionId=m1", "", "X-Amz-Object-Attributes", "ETag"), http.MethodGet, false)
 					})
 				}

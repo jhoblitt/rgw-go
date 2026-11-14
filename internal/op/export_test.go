@@ -10,3 +10,7 @@ const (
 	MaxKeyErrorLogsForTest = maxKeyErrorLogs
 	MaxLoggedLenForTest    = maxLoggedLen
 )
+
+// DeleteMarkerVersionForTest is deleteMarkerVersion, so that a spec can give
+// it more than one action.
+var DeleteMarkerVersionForTest = deleteMarkerVersion

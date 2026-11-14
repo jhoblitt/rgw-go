@@ -26151,8 +26151,10 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** differs: the five reads naming a delete marker's version
   answer 405 MethodNotAllowed with `x-amz-delete-marker: true` on both
   releases, a GET or HEAD with the marker's `Last-Modified`, to a requester
-  allowed the read's own version action on it, whether or not it may list
-  the bucket; any other requester gets radosgw's 404 or 403. The object
+  allowed the read's own version actions on it, both s3:GetObjectVersion
+  and s3:GetObjectVersionAttributes for GetObjectAttributes on Tentacle,
+  whether or not it may list the bucket; any other requester gets
+  radosgw's 404 or 403. The object
   store tells a listed marker from a missing version (`namedVersion`,
   `internal/driver/stat.go`), and the op answers it (`deleteMarkerVersion`,
   `internal/op/deletemarker.go`; `docs/differences.md`, "A read naming a
@@ -32753,15 +32755,16 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v20.2.4 and the tentacle branch at 062b5668b5f. Fixed in
   v21.0.0 onward, v21.1.2 among them (`git tag --contains d4b46f37c5a`).
   v19.2.7 has no GetObjectAttributes.
-- **rgw-go:** reproduces it, to match radosgw:
-  `GetObjectAttributes.VerifyPermission` allows s3:GetObject or, when that
-  is refused with AccessDenied on Tentacle, s3:GetObjectAttributes, and
-  their version actions for a version (`internal/op/objectread.go:373-388`),
-  as the op spec "allows a request s3:GetObject refuses when
-  s3:GetObjectAttributes allows it" pins
-  (`internal/op/objectread_test.go`). Since phase 2 task WP-13 the
-  response carries the stored checksums too. Phase 2 plan task WP-25 makes
-  rgw-go require both, as Amazon S3 and v21.1.2 do.
+- **rgw-go:** does not reproduce it: on Tentacle
+  `GetObjectAttributes.VerifyPermission` requires both, s3:GetObject and
+  then s3:GetObjectAttributes, or s3:GetObjectVersion and then
+  s3:GetObjectVersionAttributes for a version, as Amazon S3 and v21.1.2
+  do, each an object permission an ACL READ grant satisfies
+  (`internal/op/objectread.go`; `docs/differences.md`,
+  "GetObjectAttributes needs both of its actions on Tentacle"), pinned by
+  the op specs "by the policies and ACL grants that decide"
+  (`internal/op/objectread_test.go`). On Squid s3:GetObject alone
+  decides, as Squid's policy language has no s3:GetObjectAttributes.
 - **Upstream:** [#72915](https://tracker.ceph.com/issues/72915), Resolved;
   fixed by [ceph/ceph#65441](https://github.com/ceph/ceph/pull/65441)
   (16ab79dacbf, "rgw: fix policy enforcement for GetObjectAttributes",
