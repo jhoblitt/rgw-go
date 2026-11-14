@@ -83,7 +83,9 @@ type headWrite struct {
 	// keepLock marks a write that keeps the version's lock state as it is,
 	// a lifecycle transition's: no default retention is added
 	// (finalizeHeadAttrs; docs/differences.md, "A lifecycle transition adds no
-	// default retention").
+	// default retention"). It also marks the transition for linkVersion,
+	// whose link then keeps the refusal of a version a delete took first, so
+	// a writer that sets it for another reason takes that answer too.
 	keepLock bool
 	// incompressible marks data radosgw's compressor made: its write_full is
 	// followed by the incompressible hint, as _do_write_meta follows it for
@@ -238,7 +240,7 @@ func (s *Store) writeMeta(ctx context.Context, hw *headWrite, x *indexOp) (headR
 		return s.doWriteMeta(ctx, hw, x, missing, missing, mtime, true, nil)
 	}
 	if hw.expect != nil {
-		return s.doWriteMeta(ctx, hw, x, hw.expect, hw.expect, mtime, false, nil)
+		return s.doWriteMeta(ctx, hw, x, hw.expect, hw.expect, mtime, false, s.unguardedNullInit(hw, hw.expect))
 	}
 	assumeNoent := hw.ifMatch == "" && hw.ifNoneMatch == ""
 	if assumeNoent {
@@ -258,7 +260,20 @@ func (s *Store) writeMeta(ctx context.Context, hw *headWrite, x *indexOp) (headR
 	if err != nil {
 		return headResult{}, err
 	}
-	return s.doWriteMeta(ctx, hw, x, st, cur, mtime, false, nil)
+	return s.doWriteMeta(ctx, hw, x, st, cur, mtime, false, s.unguardedNullInit(hw, st))
+}
+
+// unguardedNullInit is the init an unconditional write of the null
+// version's data over st, the key's OLH head as read, carries in its head
+// write (nullInit), nil for any other write. Its failure is judged as the
+// head write's own, a lost race being success as radosgw judges it
+// (cancelWrite), since its guard, on the OLH tag, refuses only what another
+// writer's replacement of the head refuses too.
+func (s *Store) unguardedNullInit(hw *headWrite, st *op.ObjectState) *nullInit {
+	if !nullDataWrite(hw, st) {
+		return nil
+	}
+	return s.newNullInit(st, nil)
 }
 
 // doWriteMeta is one pass of _do_write_meta
@@ -270,9 +285,9 @@ func (s *Store) writeMeta(ctx context.Context, hw *headWrite, x *indexOp) (headR
 // VERSIONED_OP on its index op, sets the OLH tag of an OLH head it writes
 // over again, and once its head write lands adds to the quota cache and
 // links its version (linkVersion); any other write completes its index entry
-// unawaited. in, when not nil, is the init of a conditional null write's
-// modification on st, which the head write's op carries (nullInit): its
-// guards come first, its sets after the reset, a refusal of its guards
+// unawaited. in, when not nil, is the init of a null write's modification on
+// st, which the head write's op carries (nullInit): its guards come first,
+// its sets after the reset, a refusal of a conditional write's init's guards
 // answers errOLHGuardRefused with nothing written, and the link is made under
 // its op tag.
 func (s *Store) doWriteMeta(ctx context.Context, hw *headWrite, x *indexOp, st, cur *op.ObjectState, mtime time.Time, assumeNoent bool, in *nullInit) (headResult, error) {
@@ -377,7 +392,7 @@ func (s *Store) doWriteMeta(ctx context.Context, hw *headWrite, x *indexOp, st, 
 		if assumeNoent && !hw.nonAtomic && errors.Is(err, radosclient.ErrExists) {
 			return headResult{}, errRetryGuarded
 		}
-		if in != nil && s.olhGuardRefused(ctx, hw, st, err) {
+		if in != nil && in.guard != nil && s.olhGuardRefused(ctx, hw, st, err) {
 			return headResult{}, errOLHGuardRefused
 		}
 		return s.cancelWrite(hw, x, err)
@@ -439,11 +454,14 @@ func (s *Store) headWriteRef(ctx context.Context, hw *headWrite) (objRef, error)
 // radosgw did not fake (tagGuarded). Both releases guard alike: neither
 // compares the tag for If-None-Match: *, which the exclusive create guards,
 // or for a versioned instance. in, when not nil, puts the guards of the
-// init the head write carries on the OLH head st is ahead of that guard
-// (nullInit).
+// init the head write carries on the OLH head st ahead of that guard and of
+// an expected head's (nullInit).
 func (s *Store) guardHead(w *radosclient.WriteOp, hw *headWrite, st, cur *op.ObjectState, in *nullInit) error {
 	if err := s.checkPreconditions(cur, hw.ifMatch, hw.ifNoneMatch); err != nil {
 		return err
+	}
+	if in != nil {
+		in.addGuards(w, st, s.release)
 	}
 	if hw.expect != nil {
 		// The expected head is always compared: on its write tag, or, for a
@@ -455,9 +473,6 @@ func (s *Store) guardHead(w *radosclient.WriteOp, hw *headWrite, st, cur *op.Obj
 			w.CmpXattr(meta.AttrManifest, radosclient.CmpEQ, st.Attrs[meta.AttrManifest])
 		}
 		return nil
-	}
-	if in != nil {
-		in.addGuards(w, st, s.release)
 	}
 	if tagGuarded(hw, st) {
 		w.CmpXattr(meta.AttrIDTag, radosclient.CmpEQ, st.Attrs[meta.AttrIDTag])

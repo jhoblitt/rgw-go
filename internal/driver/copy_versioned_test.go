@@ -339,6 +339,50 @@ var _ = Describe("a versioned CopyObject", func() {
 			Expect(readBack(ctx, dst(""))).To(Equal(body))
 		})
 
+		// A DeleteObject without a versionId names the null version on a
+		// suspended bucket: its null delete marker replaces it, and the class's
+		// link_olh then finds no null data entry to link
+		// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1668-L1688 at v19.2.7,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1809-L1829 at v20.2.4).
+		It("answers success when a delete's null delete marker replaces the null version it writes before its link, the delete's removal queuing its tail references", func(ctx SpecContext) {
+			putVersion(ctx, src("v1"), body, "tag-v1", putPrefix)
+			putVersion(ctx, dst("d1"), []byte("old"), "tag-d1", reprefix)
+			suspend()
+			v1Tails := tailStripes(head(src("v1")))
+			afterOLHInit(c, olhHeadOID(dst("")), func() {
+				res, err := s.DeleteObject(ctx, rec, dst(""), op.DeleteParams{})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(res.DeleteMarker).To(BeTrue(), "the null delete marker")
+			})
+			res, err := copyTo(ctx, prefetch(ctx, src("v1")), dst(""), op.CopyParams{})
+			Expect(err).NotTo(HaveOccurred())
+			// CopyObject's op names the version from the key it wrote
+			// (ResponseVersionID), the null version here.
+			Expect([]any{res.ETag, res.Version}).To(Equal([]any{md5hex(body), ""}), "the copy's answer")
+			settle(s)
+
+			st, err := s.StatObject(ctx, rec, dst(""))
+			Expect(err).NotTo(HaveOccurred())
+			Expect([]any{st.Key.Instance, st.DeleteMarker}).To(Equal([]any{"", true}), "the OLH names the null delete marker")
+			null, err := s.StatObject(ctx, rec, dst(meta.NullInstance))
+			Expect(err).NotTo(HaveOccurred())
+			Expect([]any{null.Exists, null.DeleteMarker}).To(Equal([]any{false, true}), "versionId=null reads the delete marker, not the copy")
+			var versions []string
+			for _, en := range c.ListEntries(rookIndexPool, "", indexShardOID(rec, "dst"), "dst") {
+				versions = append(versions, fmt.Sprintf("%q marker=%t", en.Key.Instance, en.Flags&rgwcls.FlagDeleteMarker != 0))
+			}
+			Expect(versions).To(Equal([]string{`"" marker=true`, `"d1" marker=false`}), "the copy's null version is not listed")
+			olh := c.Object(testDataPool, "", olhHeadOID(dst("")))
+			Expect(olh.Xattrs).NotTo(HaveKey(meta.AttrManifest), "the OLH head holds no null data")
+			Expect(olh.Xattrs).NotTo(HaveKey(meta.AttrIDTag))
+			Expect(pending("dst")).To(BeEmpty())
+			entries := c.GCEntries(gcPoolName, gcNS, fmt.Sprintf("gc.%d", driver.GCShardForTest(s, "tx-copy\x00")))
+			Expect(entries).To(HaveLen(1), "the delete's removal queues the tails under the copy's tag, which drops its reference")
+			Expect(chainOIDs(entries)).To(ConsistOf(v1Tails))
+			Expect(chainOIDs(allGCEntries(c))).To(ConsistOf(v1Tails), "and nothing else queues them")
+			Expect(readBack(ctx, src("v1"))).To(Equal(body))
+		})
+
 		It("copies its key's current version onto the null version under references of its own, so the version keeps its tails", func(ctx SpecContext) {
 			putVersion(ctx, src("v1"), body, "tag-v1", putPrefix)
 			suspend()

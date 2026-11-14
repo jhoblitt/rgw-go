@@ -143,12 +143,19 @@ type olhCondWait struct {
 //     version's data in the OLH head requires the null version listed as
 //     well (olhPass). A null link is not checked, so on
 //     a null version, the null delete marker's link included, the condition
-//     holds only as far as the init's guard serializes rgw-go's conditional
-//     writers: its link replaces the previous null version's list entry,
-//     and a null delete marker's logs the null data's removal
+//     holds only as far as the init's guard serializes it with rgw-go's
+//     writers of the null version's data, each of which carries its init in
+//     its head write (nullInit): its link replaces the previous null
+//     version's list entry, and a null delete marker's logs the null data's
+//     removal
 //     (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1712-L1731 at v19.2.7,
 //     https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1853-L1872 at v20.2.4),
-//     so no unlink can restore what the link replaced.
+//     so no unlink can restore what the link replaced. A null delete marker
+//     whose wait passed its bound with such a write still in flight answers
+//     ConcurrentModification (nullWriteInFlight), and its own replay removes
+//     the null data only if the head still holds the write tag the attempt
+//     followed (olhLink.ExpectHead), so that replay keeps a write that
+//     reaches the head after the init.
 func (s *Store) prepareOLHAttempt(ctx context.Context, idx *bucketOLHIndex, head *op.ObjectState, key meta.ObjKey, p olhLink, w *olhCondWait) (olhAttempt, error) {
 	if p.Cond != nil {
 		if key.Instance == "" && !p.DeleteMarker {
@@ -175,6 +182,9 @@ func (s *Store) prepareOLHAttempt(ctx context.Context, idx *bucketOLHIndex, head
 	if err != nil || e.wait {
 		return olhAttempt{wait: e.wait}, err
 	}
+	if p.DeleteMarker && key.Instance == "" && s.nullWriteInFlight(ctx, head, e, w) {
+		return olhAttempt{}, errNullWriteInFlight
+	}
 	a := olhAttempt{guard: e.guard}
 	if key.Instance != "" {
 		a.check = &olhLinkCheck{v0: olhVerEpoch(head), null: e.pass.Null}
@@ -183,6 +193,34 @@ func (s *Store) prepareOLHAttempt(ctx context.Context, idx *bucketOLHIndex, head
 		}
 	}
 	return a, nil
+}
+
+// errNullWriteInFlight ends a conditional null delete marker that would
+// remove a null write in flight (nullWriteInFlight).
+var errNullWriteInFlight = fmt.Errorf("%w: a write of the null version is in flight, which the condition was not checked on", op.ErrConcurrentModification)
+
+// nullWriteInFlight reports whether a conditional null delete marker's
+// attempt, its condition passed as e says on head, would remove a null write
+// still in flight: the attempt's wait has passed its bound with a writer's
+// modification still pending that was young when first read, and head holds
+// null data the pass did not rest on. Every rgw-go write of the null
+// version's data carries its init in its head write (nullInit), so such data
+// with a young pending attr is a write that has not linked yet, and the
+// marker's link would log its removal
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1712-L1731 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1853-L1872 at v20.2.4).
+// A condition checked without the write orders the marker first, which
+// leaves the write to stand over it, so the marker answers
+// ConcurrentModification with nothing written rather than link unchecked.
+func (s *Store) nullWriteInFlight(ctx context.Context, head *op.ObjectState, e olhCondEval, w *olhCondWait) bool {
+	if !w.pastBound || e.pass.Null || e.cur.Exists && !e.cur.DeleteMarker && e.cur.Key.Instance == "" {
+		return false
+	}
+	if _, ok := head.Attrs[meta.AttrETag]; !ok {
+		return false
+	}
+	_, pending := s.checkPendingOLHEntries(ctx, head)
+	return w.young(ctx, head, pending, s.now()) > 0
 }
 
 // olhCondEval is a conditional attempt's evaluation on the OLH head it

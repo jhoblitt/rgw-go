@@ -527,6 +527,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw applies a policy statement that names NotAction and no Action to no action](#radosgw-applies-a-policy-statement-that-names-notaction-and-no-action-to-no-action) | [#73983](https://tracker.ceph.com/issues/73983) | none; [ceph/ceph#66099](https://github.com/ceph/ceph/pull/66099) closed unmerged |  |
 | [radosgw's PutObject sets the object ACL and tags its headers name under s3:PutObject alone](#radosgws-putobject-sets-the-object-acl-and-tags-its-headers-name-under-s3putobject-alone) | [#24131](https://tracker.ceph.com/issues/24131) (the tagging half) | pending |  |
 | [radosgw-admin's object stat shows an attr it does not decode only up to its first NUL](#radosgw-admins-object-stat-shows-an-attr-it-does-not-decode-only-up-to-its-first-nul) | pending | pending | ✓ |
+| [radosgw leaves a key's version marker and OLH entry when a delete takes the key's first version before its link](#radosgw-leaves-a-keys-version-marker-and-olh-entry-when-a-delete-takes-the-keys-first-version-before-its-link) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -29614,7 +29615,15 @@ Every new entry adds its row to this table, in document order.
   `internal/driver/lc_transition.go`; `docs/differences.md`, "A lifecycle
   transition judges a null version by its index entry"), which "rewrites a
   null version whose OLH head's mtime a radosgw gateway's removal of a
-  pending attr moved" (`internal/driver/lc_transition_test.go`) pins.
+  pending attr moved" (`internal/driver/lc_transition_test.go`) pins. A
+  `versionId=null` delete judges a settled head, one with no unexpired
+  pending attr, by its index entry too, and compares the head's mtime only
+  while a pending attr stands (`headShows`,
+  `internal/driver/delete_versioned.go`; `docs/differences.md`, "A versioned
+  write whose version a delete removes before its link succeeds"), which
+  "passes a conditional delete by last-modified time for a head whose mtime
+  radosgw moved" and its expired-attr twin
+  (`internal/driver/delete_expect_test.go`) pin.
 - **Upstream:** [#81668](https://tracker.ceph.com/issues/81668), named by
   both fix commits' `Fixes:` trailers. Fixed on main by c35ba014080, "rgw:
   try to preserve head mtime in olh_cancel_modification()", and
@@ -33385,7 +33394,7 @@ Every new entry adds its row to this table, in document order.
   between the write's index completion and its link answers 404
   NoSuchKey, though its write went right and the delete that removed it
   did too. Not security-relevant. Unreproduced on radosgw: derived from
-  the source. rgw-go answers the same (below).
+  the source. rgw-go answers the write success (below).
 - **Evidence:** paths are under `src/`.
   - The class's `bucket_link_olh` reads the version's instance entry and,
     for a link that is not a delete marker's, returns its ENOENT
@@ -33412,9 +33421,34 @@ Every new entry adds its row to this table, in document order.
     ([cls_rgw.cc:1410-1426](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1410-L1426),
     [cls_rgw.cc:1537-1553](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1537-L1553));
     the index completion writes the instance entry alone. The null
-    version, which `versionId=null` names, and a request that names its
-    own version are the cases left; which of them reach the window was not
-    traced.
+    version is open to it, on a suspended bucket whose key is versioned, as
+    a PutObject, CopyObject or CompleteMultipartUpload there writes the null
+    version and links it. Two deletes reach the window. A DeleteObject
+    without a versionId links the null delete marker, which logs the
+    removal of the null data
+    ([cls_rgw.cc:1712-1731](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1712-L1731) and
+    [cls_rgw.cc:1806-1810](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1806-L1810),
+    [cls_rgw.cc:1853-1872](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1853-L1872) and
+    [cls_rgw.cc:1947-1951](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1947-L1951)),
+    and needs no id. A DeleteObject of `versionId=null` unlinks the
+    completed null data entry. Either delete's replay then removes the
+    null data and its entry before the write's link. A delete of
+    `versionId=null` that lands between the write's head write and its
+    index completion, an earlier null version giving it an entry to name,
+    reaches it too: its removal leaves the entry pending the write's own
+    op, and the class turns the write's completion, older than the
+    removal's, into a cancel that removes the entry
+    ([cls_rgw.cc:1082-1109](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1082-L1109),
+    [cls_rgw.cc:1217-1244](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1217-L1244)).
+    radosgw also keeps a PutObject's `versionId` on a bucket whose
+    versioning is not enabled: the request's key takes it from the query
+    ([rgw_rest_s3.cc:4976-4985](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4976-L4985),
+    [rgw_rest_s3.cc:5506-5515](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5506-L5515)),
+    and `RGWPutObj::execute` replaces it only when versioning is enabled
+    ([rgw_op.cc:4278-4285](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4278-L4285),
+    [rgw_op.cc:4491-4498](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4491-L4498)),
+    so on a suspended bucket a delete naming that id reaches the window
+    too; rgw-go ignores a write's `versionId`.
   - The PutObject also deletes the tails it wrote ("[radosgw's versioned
     PutObject deletes its tails when its link
     fails](#radosgws-versioned-putobject-deletes-its-tails-when-its-link-fails)");
@@ -33422,18 +33456,20 @@ Every new entry adds its row to this table, in document order.
 - **Impact:** a PutObject racing a delete of the version it is writing
   fails though both requests did what they asked; its client retries a
   write that happened, writing a second version. The window is the round
-  trip between the write's index completion and its link.
+  trip between the write's index completion and its link, and for a
+  delete of `versionId=null` it opens at the write's head write.
 - **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
-- **rgw-go:** reproduces it: `setOLH` returns the class's ENOENT after its
-  cancel and best-effort update (`internal/driver/olh.go:301-313`), which
-  the versioned write maps to NoSuchKey
-  (`internal/driver/put_versioned.go:329`). An emulator run of driver
-  puts and deletes of the same named versions at once, which no S3 client
-  can name in advance, answered such a put "NoSuchKey: linking
-  <bucket>/myobj version "vN": ... no such file or directory", before and
-  after the fix of "radosgw's versioned write fails when another replay
-  clears the key's OLH before its own replay writes the head". Plan task
-  V18 makes it answer success.
+- **rgw-go:** answers the write success with its version id, removing
+  nothing: `setOLH` takes the class's ENOENT for a link of a client's write
+  whose version's entry is gone and whose head no longer holds the write as
+  a delete that took the version first (`versionTaken`,
+  `internal/driver/olh.go`); `docs/differences.md`, "A versioned write
+  whose version a delete removes before its link succeeds". It answered
+  404 NoSuchKey before: emulator runs through the op layer of a suspended
+  bucket's PutObject with a DeleteObject of the key, and with one of
+  `versionId=null`, run between its index completion and its link,
+  answered "NoSuchKey: linking b/k version "": ... no such file or
+  directory" (`internal/driver/put_versioned_op_test.go`).
 - **Upstream:** none found. Searches of tracker.ceph.com's full text for
   `link_olh ENOENT`, `bucket_index_link_olh ENOENT`, `versioned put
   NoSuchKey concurrent delete` and `put 404 versioned concurrent`, and of
@@ -34065,3 +34101,115 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task WP-15, writing the write-path gate, 2026-11-14;
   derived from the source, not reproduced.
+
+## radosgw leaves a key's version marker and OLH entry when a delete takes the key's first version before its link
+
+- **Kind:** defect, possibly security-relevant. Unreproduced: derived from
+  the source. A versioned write that creates a key's OLH head, whose
+  version a delete removes between the write's index completion and its
+  link, leaves the key a version marker and an OLH entry marked for
+  removal, with no OLH head. A later PutObject of the key without a
+  `versionId` on a Suspended bucket then completes its index entry behind
+  the version marker: the object reads back by its name and the bucket's
+  stats count it, but neither ListObjects nor ListObjectVersions shows it.
+- **Evidence:** paths are under `src/`; each pair of links is v19.2.7's,
+  then v20.2.4's.
+  - On a Suspended bucket a PutObject keeps the `versionId` its request
+    names: the request's key takes it from the query
+    ([rgw_rest_s3.cc:4976-4985](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4976-L4985),
+    [rgw_rest_s3.cc:5506-5515](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5506-L5515)),
+    and `RGWPutObj::execute` replaces the instance only when versioning
+    is enabled
+    ([rgw_op.cc:4278-4285](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4278-L4285),
+    [rgw_op.cc:4491-4498](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4491-L4498)).
+    A key with an instance is a versioned target, so the write links it
+    ([rgw_rados.cc:3312-3315](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3312-L3315),
+    [rgw_rados.cc:3433-3436](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3433-L3436)).
+    On a key with no OLH head, the link's init creates the head, with
+    fresh OLH and write tags and no `olh.info`
+    ([rgw_rados.cc:7799-7866](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7799-L7866),
+    [rgw_rados.cc:8462-8529](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8462-L8529)).
+  - A DeleteObject naming that `versionId` between the write's index
+    completion and its link unlinks the version. The class finds no OLH
+    entry, converts the key, which writes the version marker
+    ([cls_rgw.cc:1903-1913](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1903-L1913) and
+    [cls_rgw.cc:1628](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1628),
+    [cls_rgw.cc:2050-2060](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2050-L2060) and
+    [cls_rgw.cc:1757](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1757)),
+    and, the version being the key's only one, logs UNLINK_OLH and marks
+    the OLH entry for removal
+    ([cls_rgw.cc:1960-1967](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1960-L1967),
+    [cls_rgw.cc:2107-2114](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2107-L2114)).
+  - The delete's replay removes the version, and then `clear_olh`'s
+    removal of the head is refused by the write's pending attr, so the
+    index's OLH entry is not cleared
+    ([rgw_rados.cc:8615-8628](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8615-L8628),
+    [rgw_rados.cc:9361-9374](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9361-L9374)).
+  - The write's link answers ENOENT ("[radosgw's versioned PutObject
+    answers 404 when a delete of its version lands before its
+    link](#radosgws-versioned-putobject-answers-404-when-a-delete-of-its-version-lands-before-its-link)").
+    `set_olh`'s cancel then removes the head its init created, which no
+    apply gave `olh.info`
+    ([rgw_rados.cc:7782-7792](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7782-L7792),
+    [rgw_rados.cc:8445-8455](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8445-L8455)),
+    and its best-effort update's head op, guarded on the head's xattrs,
+    meets no head and clears nothing
+    ([rgw_rados.cc:8434-8435](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8434-L8435),
+    [rgw_rados.cc:9180-9181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9180-L9181)).
+    The key is left the version marker and the OLH entry, and no head.
+  - A later versioned link takes that OLH entry over
+    ([cls_rgw.cc:1768-1776](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1768-L1776),
+    [cls_rgw.cc:1909-1918](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1909-L1918)).
+    A PutObject without a `versionId` on the Suspended bucket is not a
+    versioned op, the key having no OLH head and no instance (the
+    `_do_write_meta` lines above). Its prepare and its completion read
+    the key through the version marker to the null data key
+    ([cls_rgw.cc:946-978](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L946-L978),
+    [cls_rgw.cc:839](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L839) and
+    [cls_rgw.cc:1047](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1047);
+    [cls_rgw.cc:1076-1108](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1076-L1108),
+    [cls_rgw.cc:971](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L971) and
+    [cls_rgw.cc:1182](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1182)),
+    and the completion's ADD writes the entry there and counts it in the
+    bucket's stats
+    ([cls_rgw.cc:1168-1189](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1168-L1189),
+    [cls_rgw.cc:1301-1323](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1301-L1323)).
+  - The listing skips the 0x80 namespace the null data key lies in
+    ([cls_rgw.cc:188-250](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L188-L250),
+    [cls_rgw.cc:244-300](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L244-L300))
+    and the version marker, which is not valid for listing
+    ([cls_rgw.cc:604-608](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L604-L608),
+    [cls_rgw.cc:654-658](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L654-L658);
+    [cls_rgw_types.h:458-460](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_types.h#L458-L460),
+    [cls_rgw_types.h:458-460](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_types.h#L458-L460)).
+    The object's head is a plain head, so a GetObject of the key reads it.
+    It stays unlisted until a later delete's null delete marker replaces
+    it, through the link's handling of the null version
+    ([cls_rgw.cc:1712-1731](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1712-L1731),
+    [cls_rgw.cc:1853-1872](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1853-L1872)).
+- **Impact:** an object written to the key after the race is stored,
+  readable and counted, but no listing of the bucket shows it.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
+- **rgw-go:** reaches it only through the driver, which can name a version before
+  its link, or by meeting radosgw's state in a mixed fleet: rgw-go ignores
+  a write's `versionId` (`docs/differences.md`, "A write's versionId is
+  ignored"), and its write over a key with no OLH head on a Suspended
+  bucket links nothing. Through the driver its write answers success
+  where radosgw's answers 404 ("[radosgw's versioned PutObject answers 404
+  when a delete of its version lands before its
+  link](#radosgws-versioned-putobject-answers-404-when-a-delete-of-its-version-lands-before-its-link)"),
+  and the state is radosgw's: `setOLH`'s cancel removes the head its init
+  created (`olhCancelModification`, `internal/driver/olh_head.go`). An
+  emulator run on a Suspended bucket, a driver PutObject of `k` version
+  `X` with a DeleteObject of `X` between its index completion and its link,
+  left the key a version marker and an OLH entry, not existing and marked
+  for removal, with no OLH head; a PutObject of `k` without a version then
+  answered 200, read back, and raised the bucket's stats to one object of
+  5 bytes, while ListObjects and ListObjectVersions both listed nothing.
+  Plan task V20, merged in [#600](https://github.com/jhoblitt/rgw-go/pull/600),
+  decides the repair.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task V18, 2026-11-14, in an emulator run of a delete
+  between a key's first versioned write and its link; its consequence
+  traced in V18's review; derived from the source, not reproduced on
+  radosgw.

@@ -1212,6 +1212,35 @@ var _ = Describe("the lifecycle bucket pass", func() {
 			Entry("a version current, no null version", []string{"v1"}, false, []string{"DM@null*", "v1"}),
 		)
 
+		// A null write that has not linked leaves the version before it
+		// current, which the expiration's null delete marker is checked on;
+		// the write's head write carries its pending modification, which the
+		// marker waits on.
+		It("leaves a null write that lands between its read of the key and its marker's link, its marker waiting out the write and expiring nothing", func(ctx SpecContext) {
+			driver.SetCondSleepForTest(s, func(context.Context, time.Duration) error { return nil })
+			rec := suspended(ctx, "suspended", 0, "v1")
+			clk.Advance(lcDay)
+			settle(s)
+			olh := rec.Info.Bucket.Marker + "_k"
+			body := strings.Repeat("N", 6<<20)
+			written[md5hex(body)] = "null-write"
+			ran := false
+			c.AfterWrite(testDataPool, "", olh, func() {
+				if o := c.Object(testDataPool, "", olh); o == nil || len(o.Data) == 0 || o.Data[0] != 'N' {
+					return
+				}
+				c.AfterWrite(testDataPool, "", olh, nil)
+				h.Pass(ctx)
+				ran = true
+			})
+			a := map[string][]byte{meta.AttrACL: encode(acl.DefaultPolicy(attrsOwner, "Alice"))}
+			_, err := s.PutObject(ctx, rec, meta.ObjKey{Name: "k"}, strings.NewReader(body), op.PutParams{Attrs: a, Size: int64(len(body))})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ran).To(BeTrue(), "the pass ran after the write's head write")
+			Expect(versions(ctx, rec, "k")).To(Equal([]string{"null-write@null*", "v1"}))
+			Expect(notes.NotifyCallCount()).To(BeZero(), "nothing expired")
+		})
+
 		It("replaces a noncurrent null version too, as the null delete marker does wherever the null version sits", func(ctx SpecContext) {
 			rec, _ := create(ctx, "suspended", 0, lcAttr(expireRule("expire", "")))
 			putVersion(ctx, rec, "k", "old")

@@ -694,6 +694,33 @@ var _ = Describe("the lifecycle transition", func() {
 			}),
 		)
 
+		It("leaves a version a delete takes between its rewrite's index completion and its link to the delete, notifying no transition, where a client's write would succeed", func(ctx SpecContext) {
+			rel = denc.Tentacle
+			open(ctx)
+			rec, _ = create(ctx, "versioned", meta.BucketVersioned, transitionTo("cold", "", "COLD"))
+			v1 := put(ctx, rec, "k", "v1", nil, "")
+			olhHead, v1Head := headOID(rec, meta.ObjKey{Name: "k"}), headOID(rec, v1)
+			clk.Advance(lcDay)
+			var once sync.Once
+			c.AfterWrite(testDataPool, "", v1Head, func() {
+				once.Do(func() {
+					afterOLHInit(c, olhHead, func() {
+						defer GinkgoRecover()
+						Expect(s.DeleteObject(ctx, rec, v1, op.DeleteParams{})).Error().To(Succeed())
+					})
+				})
+			})
+			logs := &syncBuffer{}
+			restore := driver.CaptureDebugLog(logs)
+			pass(ctx)
+			restore()
+			c.AfterWrite(testDataPool, "", v1Head, nil)
+			Expect(logs.String()).To(ContainSubstring("lifecycle leaves an object written since its read for a later pass"))
+			Expect(notes.NotifyCallCount()).To(BeZero())
+			Expect(versions(ctx, rec, "k")).To(BeEmpty())
+			Expect(c.Object(testDataPool, "", v1Head)).To(BeNil(), "the delete removed the rewritten head")
+		})
+
 		It("keeps the current version current once a noncurrent version's removal raised its OLH entry's epoch, linking it at that epoch where radosgw links at the version's own and hides it", func(ctx SpecContext) {
 			open(ctx)
 			rec, _ = create(ctx, "versioned", meta.BucketVersioned, transitionTo("cold", "", "COLD"))
@@ -766,13 +793,17 @@ var _ = Describe("the lifecycle transition", func() {
 			Expect(versions(ctx, rec, "k")).To(Equal([]string{"COLD@null*"}), "listed current again after the removal raised the OLH entry's epoch")
 			Expect(currentNames(ctx, rec)).To(Equal([]string{"k"}))
 			Expect(body(ctx, rec, meta.ObjKey{Name: "k"})).To(Equal("null"))
-			var olhSets []string
+			var olhSets, pendingSets []string
 			for _, w := range c.WritesTo(testDataPool, "", olhHead) {
 				if set := names(w.Steps()); slices.Contains(set, meta.AttrManifest) {
-					olhSets = slices.DeleteFunc(set, func(n string) bool { return !strings.HasPrefix(n, meta.AttrOLHPrefix) })
+					olhSets = slices.DeleteFunc(slices.Clone(set), func(n string) bool {
+						return !strings.HasPrefix(n, meta.AttrOLHPrefix) || strings.HasPrefix(n, meta.AttrOLHPendingPrefix)
+					})
+					pendingSets = slices.DeleteFunc(set, func(n string) bool { return !strings.HasPrefix(n, meta.AttrOLHPendingPrefix) })
 				}
 			}
 			Expect(olhSets).To(Equal([]string{meta.AttrOLHIDTag}), "the head write sets the OLH tag again and none of the OLH attrs it read")
+			Expect(pendingSets).To(HaveLen(1), "and the pending attr of its own modification, which its link takes")
 			Expect(pendingAttrs(rec, "k")).To(BeEmpty())
 		})
 
