@@ -250,6 +250,10 @@ func (s *Store) DeleteObject(_ context.Context, rec *op.BucketRecord, key meta.O
 	return &op.DeleteObjectResult{}, nil
 }
 
+// UpdateOLH implements op.ObjectStore: memstore keeps no versions, so no
+// name has an OLH to update.
+func (s *Store) UpdateOLH(context.Context, *op.BucketRecord, meta.ObjKey) error { return nil }
+
 // deleteAllowed reports whether st passes a delete's conditions.
 func deleteAllowed(st *op.ObjectState, p op.DeleteParams) bool {
 	mtime := st.Mtime.Truncate(time.Second)

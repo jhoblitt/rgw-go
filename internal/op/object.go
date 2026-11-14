@@ -309,6 +309,13 @@ type ObjectStore interface {
 	// A store that keeps no versions answers such a bucket ErrNotImplemented.
 	// The result is nil with an error.
 	DeleteObject(ctx context.Context, rec *BucketRecord, key meta.ObjKey, p DeleteParams) (*DeleteObjectResult, error)
+	// UpdateOLH replays the pending OLH log of key's name, its instance
+	// ignored: the update a versioned delete given DeleteParams.SkipOLHUpdate
+	// leaves to the name's next one, as Object::update_olh does on Ceph main
+	// (https://github.com/ceph/ceph/blob/v22.0.0/src/rgw/driver/rados/rgw_sal_rados.cc#L3198-L3224).
+	// A name without an OLH head is left as it is, and a store that keeps no
+	// versions does nothing.
+	UpdateOLH(ctx context.Context, rec *BucketRecord, key meta.ObjKey) error
 	// CopyObject writes src's data to dstKey in dst with src's ETag.
 	CopyObject(ctx context.Context, src *ObjectState, dst *BucketRecord, dstKey meta.ObjKey, p CopyParams) (*PutResult, error)
 	// SetObjectAttrs sets and removes head xattrs.

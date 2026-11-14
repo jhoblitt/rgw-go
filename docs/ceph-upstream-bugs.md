@@ -518,6 +518,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's versioned PutObject answers 404 when a delete of its version lands before its link](#radosgws-versioned-putobject-answers-404-when-a-delete-of-its-version-lands-before-its-link) | none | none | ✓ |
 | [cls_rgw's bucket_clear_olh drops a pending log no replay read](#cls_rgws-bucket_clear_olh-drops-a-pending-log-no-replay-read) | none | none | ✓ |
 | [radosgw's DeleteObjects leaves a name's skipped OLH updates pending when its last delete fails or finds its version gone](#radosgws-deleteobjects-leaves-a-names-skipped-olh-updates-pending-when-its-last-delete-fails-or-finds-its-version-gone) | [#80886](https://tracker.ceph.com/issues/80886), [#81649](https://tracker.ceph.com/issues/81649), [#81650](https://tracker.ceph.com/issues/81650) | [ceph/ceph#72130](https://github.com/ceph/ceph/pull/72130), [ceph/ceph#72632](https://github.com/ceph/ceph/pull/72632) |  |
+| [radosgw's replay of a log a failed trim left takes back an older link whose instance sorts first](#radosgws-replay-of-a-log-a-failed-trim-left-takes-back-an-older-link-whose-instance-sorts-first) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -33488,3 +33489,58 @@ Every new entry adds its row to this table, in document order.
 - **Found:** upstream first, by #80886's reporter, 2026-09-25. Met by
   phase 2 task V15a's recording of the versioning s3-tests, 2026-11-12,
   and recorded by its review.
+
+## radosgw's replay of a log a failed trim left takes back an older link whose instance sorts first
+
+- **Kind:** defect, S3-correctness of versioning under an honest failure:
+  once a replay's trim fails after its head op, the next replay of the key
+  reads the applied links again, and the oldest whose instance sorts
+  before the current version's takes the head back, so GET serves an older
+  version while the bucket index keeps the newer one current. No data is
+  lost. Not security-relevant: it takes an OSD error, or the gateway's
+  death, between a replay's head op and its trim. Unreproduced: derived
+  from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `apply_olh_log` removes each entry's pending attr in its head op, then
+    trims the log to its last epoch and returns a trim's failure
+    ([rgw_rados.cc:8505-8507](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8505-L8507) and
+    [rgw_rados.cc:8557-8563](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8557-L8563),
+    [rgw_rados.cc:9251-9253](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9251-L9253) and
+    [rgw_rados.cc:9303-9309](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9303-L9309)),
+    so a failed trim leaves applied entries in the log and no pending attr
+    for them.
+  - `update_olh` reads the log from marker 0
+    ([rgw_rados.cc:8651](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8651),
+    [rgw_rados.cc:9397](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9397)),
+    and `apply_olh_log` takes a LINK_OLH when the current instance sorts
+    after the entry's, whatever the entry's epoch, never moving the epoch
+    it compares with
+    ([rgw_rados.cc:8452-8458](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8452-L8458) and
+    [rgw_rados.cc:8482-8496](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8482-L8496),
+    [rgw_rados.cc:9198-9204](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9198-L9204) and
+    [rgw_rados.cc:9228-9242](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9228-L9242)),
+    though its comment allows that only at the same epoch. A later replay
+    whose own entries link nothing above the old links, such as the
+    unlink of a noncurrent version, ends on that older link.
+- **Impact:** after the failed trim and such a modification, GET and HEAD
+  of the key serve the older version while ListObjects and
+  ListObjectVersions show the newer one as current, until the key's next
+  link. Instance ids are random, so an older link sorts first about half
+  the time.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4. Not on
+  main at 90b50e9b879, which v22.0.0 tags: its replay moves the epoch it
+  compares with to each link it takes, so the newest link takes the head
+  again
+  ([rgw_rados.cc:10063-10078](https://github.com/ceph/ceph/blob/v22.0.0/src/rgw/driver/rados/rgw_rados.cc#L10063-L10078)).
+- **rgw-go:** reproduces it on a replay that a new modification starts, a
+  writer's or a reader's: `applyOLHLog` takes a link as `apply_olh_log`
+  does (`internal/driver/olh_head.go`), and `replayPass` reads the log from
+  marker 0 (`internal/driver/olh.go`). It runs a failed trim again within
+  `olhReplayRetries` (`rerunOLHTail`), so the log stays only when every run
+  fails or the gateway dies. The store's update of a name on request
+  replays no head without a pending attr unless the name's OLH entry is
+  pending removal (`UpdateOLH`, `internal/driver/olh_update.go`).
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task V17, 2026-11-14, deciding which heads without a
+  pending attr DeleteObjects' update replays; derived from the source, not
+  reproduced.

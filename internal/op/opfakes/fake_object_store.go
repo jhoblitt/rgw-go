@@ -119,6 +119,19 @@ type FakeObjectStore struct {
 		result1 *op.ObjectState
 		result2 error
 	}
+	UpdateOLHStub        func(context.Context, *op.BucketRecord, meta.ObjKey) error
+	updateOLHMutex       sync.RWMutex
+	updateOLHArgsForCall []struct {
+		arg1 context.Context
+		arg2 *op.BucketRecord
+		arg3 meta.ObjKey
+	}
+	updateOLHReturns struct {
+		result1 error
+	}
+	updateOLHReturnsOnCall map[int]struct {
+		result1 error
+	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
 }
@@ -589,6 +602,69 @@ func (fake *FakeObjectStore) StatObjectReturnsOnCall(i int, result1 *op.ObjectSt
 		result1 *op.ObjectState
 		result2 error
 	}{result1, result2}
+}
+
+func (fake *FakeObjectStore) UpdateOLH(arg1 context.Context, arg2 *op.BucketRecord, arg3 meta.ObjKey) error {
+	fake.updateOLHMutex.Lock()
+	ret, specificReturn := fake.updateOLHReturnsOnCall[len(fake.updateOLHArgsForCall)]
+	fake.updateOLHArgsForCall = append(fake.updateOLHArgsForCall, struct {
+		arg1 context.Context
+		arg2 *op.BucketRecord
+		arg3 meta.ObjKey
+	}{arg1, arg2, arg3})
+	stub := fake.UpdateOLHStub
+	fakeReturns := fake.updateOLHReturns
+	fake.recordInvocation("UpdateOLH", []interface{}{arg1, arg2, arg3})
+	fake.updateOLHMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *FakeObjectStore) UpdateOLHCallCount() int {
+	fake.updateOLHMutex.RLock()
+	defer fake.updateOLHMutex.RUnlock()
+	return len(fake.updateOLHArgsForCall)
+}
+
+func (fake *FakeObjectStore) UpdateOLHCalls(stub func(context.Context, *op.BucketRecord, meta.ObjKey) error) {
+	fake.updateOLHMutex.Lock()
+	defer fake.updateOLHMutex.Unlock()
+	fake.UpdateOLHStub = stub
+}
+
+func (fake *FakeObjectStore) UpdateOLHArgsForCall(i int) (context.Context, *op.BucketRecord, meta.ObjKey) {
+	fake.updateOLHMutex.RLock()
+	defer fake.updateOLHMutex.RUnlock()
+	argsForCall := fake.updateOLHArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+}
+
+func (fake *FakeObjectStore) UpdateOLHReturns(result1 error) {
+	fake.updateOLHMutex.Lock()
+	defer fake.updateOLHMutex.Unlock()
+	fake.UpdateOLHStub = nil
+	fake.updateOLHReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeObjectStore) UpdateOLHReturnsOnCall(i int, result1 error) {
+	fake.updateOLHMutex.Lock()
+	defer fake.updateOLHMutex.Unlock()
+	fake.UpdateOLHStub = nil
+	if fake.updateOLHReturnsOnCall == nil {
+		fake.updateOLHReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.updateOLHReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
 }
 
 func (fake *FakeObjectStore) Invocations() map[string][][]interface{} {
