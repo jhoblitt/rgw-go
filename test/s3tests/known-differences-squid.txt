@@ -175,3 +175,6 @@
 
 # A NUL that a PutObject's query-string x-amz-meta value stores, sent by a GET and a HEAD as a space; radosgw v19.2.7 sends the NUL (differences: "A stored header value's NUL and other control bytes go out as spaces")
 ^s3tests\.functional\.test_s3::test_object_metadata_query_string_nul_not_in_header$
+
+# A Deny naming NotAction and no Action, applied to every action its NotAction does not name; radosgw's refuses nothing (differences: "A Deny that names NotAction and no Action refuses every action its NotAction does not name")
+^s3tests\.functional\.test_s3::test_bucket_policy_deny_notaction$
