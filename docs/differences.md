@@ -7821,10 +7821,15 @@ does the following.
   header where Tentacle does: `true` for a key whose current version is a
   delete marker, which the object store reports (`ObjectState.DeleteMarker`),
   on Squid too ("A key whose current version is a delete marker answers its
-  404 with x-amz-delete-marker: true on Squid too"), and `false` otherwise,
-  for a version named by a requester who may list the bucket but not read
-  the version too, a delete marker's among them, as radosgw follows no olh
-  for a key that names an instance. A requester who may read a delete
+  404 with x-amz-delete-marker: true on Squid too"), and, on Tentacle
+  alone, `false` otherwise, for a version named by a requester who may
+  list the bucket but not read the version too, a delete marker's among
+  them, as radosgw follows no olh for a key that names an instance. On
+  Squid it sends no header there, as v19.2.7 sends `x-amz-delete-marker`
+  in DeleteObject's answer alone
+  ([rgw_rest_s3.cc:3497](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3497);
+  `setMissingDeleteMarker`, `internal/s3/deletemarker.go`). A requester
+  who may read a delete
   marker's version gets 405 instead ("A read naming a delete marker's
   version answers 405 MethodNotAllowed"). A website GET of a missing key
   whose bucket's error document is missing too gets the header twice from
@@ -8668,10 +8673,10 @@ does the following.
 - **`versionId=null` names the plain object on a bucket whose versioning
   was never enabled.**
   On a bucket whose versioning was never enabled, its flags lacking
-  `BUCKET_VERSIONED`, which suspending versioning keeps set
-  (`rgw_op.cc:2837-2843` at v19.2.6, `:3069-3075` at v20.2.4) and object
-  lock needs (`driver/rados/rgw_rados.cc:2392` and `rgw_op.cc:8232` at
-  v19.2.6, `:2497` and `:9180` at v20.2.4), `versionId=null` names the
+  `BUCKET_VERSIONED`, which PutBucketVersioning sets for Suspended as for
+  Enabled (`rgw_op.cc:2837-2843` at v19.2.6, `:3069-3075` at v20.2.4) and
+  object lock needs (`driver/rados/rgw_rados.cc:2392` and `rgw_op.cc:8232`
+  at v19.2.6, `:2497` and `:9180` at v20.2.4), `versionId=null` names the
   plain object. radosgw takes the null version for it there: its head is
   the plain key's (`rgw_obj_key::get_oid`, `rgw_obj_types.h:226-254` at both
   releases), and the delete and the attr writes clear the instance before
@@ -8897,6 +8902,14 @@ does the following.
   runs
   ([rgw_op.cc:6837-6847](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6837-L6847),
   [rgw_op.cc:7765-7775](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7765-L7775)).
+  That is radosgw's defect, fixed on main at ab8073e1816, first tagged in
+  v22.0.0
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's DeleteObjects leaves a
+  name's skipped OLH updates pending when its last delete fails or finds
+  its version
+  gone](ceph-upstream-bugs.md#radosgws-deleteobjects-leaves-a-names-skipped-olh-updates-pending-when-its-last-delete-fails-or-finds-its-version-gone)"),
+  and plan task V17 changes rgw-go to apply a name's skipped updates
+  after its last delete, as the fix does.
   In that window rgw-go's next read answers the version current after its
   replay ("A read that replays a pending modification answers the version
   current after it", above), where a radosgw reader answers the version
@@ -8977,7 +8990,17 @@ does the following.
   id of the version written: its instance on a bucket whose versioning is
   enabled, `null` for the null version a suspended bucket's write makes,
   and none on a bucket whose versioning was never enabled, where an object
-  has no version (`ResponseVersionID`, `internal/op/version.go`). A
+  has no version (`ResponseVersionID`, `internal/op/version.go`). A bucket
+  set Suspended without ever being Enabled is not one of those:
+  PutBucketVersioning's Suspended sets `BUCKET_VERSIONED` with
+  `BUCKET_VERSIONS_SUSPENDED` whether or not the bucket was ever Enabled
+  ([rgw_op.cc:2842](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2842),
+  [rgw_op.cc:3074](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3074)),
+  and rgw-go names its writes' null version `null` as on any suspended
+  bucket, where radosgw names none, as the s3-tests
+  `test_versioning_bucket_atomic_upload_return_version_id` and
+  `test_versioning_bucket_multipart_upload_return_version_id` expect.
+  Whether Amazon S3 names `null` for such a bucket is not verified. A
   completion that finishes an earlier one of its upload names the version
   that one wrote ("CompleteMultipartUpload finishes an earlier completion
   of its upload instead of writing it again"), and one retried after it
@@ -10759,7 +10782,10 @@ does the following.
   through the key's OLH, and then links the marker over whatever another
   writer linked since
   ([rgw_rados.cc:5882-5901](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5882-L5901),
-  [rgw_rados.cc:6494-6513](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6494-L6513)).
+  [rgw_rados.cc:6494-6513](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6494-L6513);
+  `docs/ceph-upstream-bugs.md`, "[radosgw's conditional versioned write
+  checks its condition once and links
+  unguarded](ceph-upstream-bugs.md#radosgws-conditional-versioned-write-checks-its-condition-once-and-links-unguarded)").
   rgw-go makes them the marker link's condition (`writeDeleteMarker`,
   `internal/driver/delete_versioned.go`), checked as every conditional
   versioned write's is (`prepareOLHAttempt` and `checkOLHLink`,

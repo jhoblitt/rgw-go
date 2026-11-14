@@ -86,3 +86,41 @@
 # The bucket configuration writes, and DeleteObjects' refusal before its first key, sent the CORS headers; radosgw sends none (differences: "Every S3 response carries CORS headers once its bucket is loaded")
 ^s3tests\.functional\.test_s3::test_cors_headers_on_bucket_config_writes$
 ^s3tests\.functional\.test_s3::test_cors_headers_on_delete_objects_refusal$
+
+# A PutObject, CompleteMultipartUpload or CopyObject on a bucket whose versioning was ever set, Suspended alone included, naming the version it wrote, null for the null version, and a CopyObject naming its source's version too; radosgw names no null version and sends neither copy header (differences: "Writes name the null version's id and a copy's two versions")
+^s3tests\.functional\.test_s3::test_versioning_bucket_atomic_upload_return_version_id$
+^s3tests\.functional\.test_s3::test_versioning_bucket_multipart_upload_return_version_id$
+^s3tests\.functional\.test_s3::test_versioning_copy_object_version_ids$
+^s3tests\.functional\.test_s3::test_versioning_null_version_write_names_null$
+
+# A PutObject, CopyObject or CompleteMultipartUpload naming a versionId, written at the instance the bucket's versioning gives; radosgw writes the instance named (differences: "A write's versionId is ignored")
+^s3tests\.functional\.test_s3::test_versioning_write_version_id_ignored$
+
+# A GET or HEAD of the null version on a bucket whose versioning was ever enabled, naming it null; radosgw names none (differences: "GET, HEAD and GetObjectAttributes name the version they read, null for the null version")
+^s3tests\.functional\.test_s3::test_versioning_read_names_null_version$
+
+# A read naming a delete marker's version, answered 405 MethodNotAllowed with x-amz-delete-marker: true; radosgw answers 404 NoSuchKey (differences: "A read naming a delete marker's version answers 405 MethodNotAllowed")
+^s3tests\.functional\.test_s3::test_versioning_read_delete_marker_version$
+
+# A CopyObject or UploadPartCopy whose source names a delete marker's version, answered 400 InvalidRequest; radosgw answers 404 NoSuchKey (differences: "A copy source naming a delete marker's version answers 400 InvalidRequest")
+^s3tests\.functional\.test_s3::test_versioning_copy_object_source_delete_marker_version$
+^s3tests\.functional\.test_s3::test_versioning_upload_part_copy_source_delete_marker_version$
+
+# A delete of versionId=null checked against the null version's own entry, and its removal of the null delete marker answered with x-amz-delete-marker: true; radosgw checks the key's version marker, answering 412 to an If-Match, size or mtime the null version meets, and sends no x-amz-delete-marker (differences: "A versioned delete of versionId=null checks the null version itself")
+^s3tests\.functional\.test_s3::test_delete_marker_suspended_null_removal_reports_marker$
+^s3tests\.functional\.test_s3::test_versioning_obj_plain_null_version_removal_if_match$
+^s3tests\.functional\.test_s3::test_versioning_obj_plain_null_version_removal_if_match_size_and_mtime$
+
+# Concurrent If-None-Match: * writes of a new key to a versioned bucket, of which at most one succeeds; radosgw lets several succeed (differences: "A conditional write to a versioned bucket commits only if its condition held when it linked")
+^s3tests\.functional\.test_s3::test_put_object_versioned_if_none_match_concurrent$
+
+# A suspended bucket's conditional PutObject and CompleteMultipartUpload checked against the key's current version; radosgw checks the OLH head, refusing If-None-Match: * over a current delete marker and comparing an ETag with the null version's (differences: "A suspended bucket's conditional write is checked against the current version")
+^s3tests\.functional\.test_s3::test_multipart_put_object_suspended_if_none_match$
+^s3tests\.functional\.test_s3::test_put_object_suspended_if_match$
+^s3tests\.functional\.test_s3::test_put_object_suspended_if_match_current_version$
+
+# A ListObjectVersions key-marker given alone, starting after every version of that key; radosgw lists its versions again (differences: "A versions listing starts after every version of a key-marker given alone")
+^s3tests\.functional\.test_s3::test_versioning_list_versions_key_marker_alone$
+
+# A ListObjectVersions page that ended on a null delete marker, resumed after it by its version-id-marker null; radosgw resumes past the key's older versions (differences: "A versions listing resumes after the null delete marker its version-id-marker names")
+^s3tests\.functional\.test_s3::test_versioning_list_versions_paginated_null_delete_marker$
