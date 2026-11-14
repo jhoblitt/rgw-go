@@ -357,6 +357,22 @@ var _ = Describe("Configurer.EnsureClasses", func() {
 			"restart it with 'ROOKET_NAME=rgw-go-squid rooket kubectl -n rook-ceph delete pod -l app=rook-ceph-rgw'")))
 	})
 
+	It("goes on waiting for the reload while only an rgw-go has registered under a new gid", func(ctx SpecContext) {
+		w.noReload = true
+		w.commitRegisters = true
+		_, err := ensure(ctx)
+		Expect(err).To(MatchError(ContainSubstring("the radosgw did not finish reloading the committed period in 180s; ")))
+	})
+
+	It("ends the wait at once on the radosgw's new gid, an rgw-go's listed beside it", func(ctx SpecContext) {
+		w.commitRegisters = true
+		gid := w.radosgws[0].gid
+		_, err := ensure(ctx)
+		Expect(err).NotTo(HaveOccurred(), w.trace())
+		Expect(w.radosgws[len(w.radosgws)-1].gid).NotTo(Equal(gid), "the radosgw reloaded the period")
+		Expect(w.events).NotTo(ContainElement(HavePrefix("sleep ")))
+	})
+
 	It("fails with the service map's last error, not a hung reload, when the map cannot be read", func(ctx SpecContext) {
 		w.noReload = true
 		w.dumpErrAfterCommit = errors.New("exit status 110: timed out")

@@ -56,7 +56,14 @@ type Radosgw struct {
 }
 
 // RadosgwEntries are the radosgw entries of ceph service dump -f json's
-// output, in the order of their gids; its summary is none.
+// output, in the order of their gids; its summary is none. They are the rgw
+// entries whose metadata carries pod_name, which leaves out every rgw-go's,
+// whatever its id: Rook sets POD_NAME on every daemon it runs
+// (https://github.com/rook/rook/blob/v1.21.1/pkg/operator/k8sutil/pod.go#L223-L226),
+// librados reports it as pod_name whenever it is set
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/common/util.cc#L288-L291,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/util.cc#L288-L291),
+// and every rgw-go the harness starts runs on the host.
 func RadosgwEntries(dump []byte) ([]Radosgw, error) {
 	var sm struct {
 		Services struct {
@@ -80,6 +87,9 @@ func RadosgwEntries(dump []byte) ([]Radosgw, error) {
 		var rgw Radosgw
 		if err := json.Unmarshal(compact.Bytes(), &rgw); err != nil {
 			return nil, fmt.Errorf("decoding the service map entry %s: %w", gid, err)
+		}
+		if _, ok := rgw.Metadata["pod_name"]; !ok {
+			continue
 		}
 		rgw.Raw = compact.String()
 		entries = append(entries, rgw)

@@ -95,6 +95,10 @@ type world struct {
 	// and queued how many entries each gc list does, the last from then on.
 	radosgws []int
 	queued   []int
+	// rgwGos is how many rgw-go entries each service dump lists beside the
+	// radosgws, run on the host, so that no metadata of theirs carries
+	// pod_name.
+	rgwGos int
 	// frontends are the radosgw's, as the service map and config show give
 	// them.
 	frontends string
@@ -378,12 +382,17 @@ func (w *world) ceph(args []string) ([]byte, error) {
 	case slices.Contains(args, "service"):
 		md, err := json.Marshal(map[string]string{
 			"id": "ceph.objectstore.a", "realm_name": "ceph-objectstore", "zonegroup_name": "ceph-objectstore",
-			"zone_name": "ceph-objectstore", "frontend_config#0": w.frontends,
+			"zone_name": "ceph-objectstore", "frontend_config#0": w.frontends, "pod_name": pod,
 		})
 		Expect(err).NotTo(HaveOccurred())
 		daemons := []string{`"summary":""`}
 		for gid := range next(&w.radosgws) {
 			daemons = append(daemons, fmt.Sprintf(`"%d":{"start_stamp":"2026-10-12T21:00:00.000000+0000","metadata":%s}`, 4242+gid, md))
+		}
+		for i := range w.rgwGos {
+			daemons = append(daemons, fmt.Sprintf(`"%d":{"start_stamp":"2026-10-12T21:00:00.000000+0000","metadata":{`+
+				`"id":"rgw-go","realm_name":"ceph-objectstore","zonegroup_name":"ceph-objectstore",`+
+				`"zone_name":"ceph-objectstore","frontend_config#0":"beast endpoint=127.0.0.1:7482"}}`, 4800+i))
 		}
 		return fmt.Appendf(nil, `{"services":{"rgw":{"daemons":{%s}}}}`, strings.Join(daemons, ",")), nil
 	case slices.Contains(args, "rgw_frontends"):
