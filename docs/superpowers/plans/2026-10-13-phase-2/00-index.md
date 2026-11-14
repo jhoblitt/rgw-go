@@ -37,7 +37,7 @@ The set's files:
 | `00-index.md` | this index, and the shared tasks S1 to S7 | 7 |
 | `V-versioning.md` | the OLH protocol, versioned ops, ListObjectVersions, MFA delete | V0-V19 |
 | `L-object-lock.md` | object lock: configuration, retention, legal hold, enforcement | L1-L5b |
-| `C-lifecycle.md` | lifecycle configuration and the worker | C1-C13 |
+| `C-lifecycle.md` | lifecycle configuration and the worker | C1-C15 |
 | `B-bucket-config.md` | CORS, website, encryption configuration, ownership controls, public access block, policy status, POST object | BC-2 to BC-35 |
 | `WP-write-path.md` | checksums, compression and placement on writes, `?layout`, admin otp | WP-1 to WP-21, WP-24 to WP-29 |
 | `T-gate-tooling.md` | the s3-tests selection in Go, the include list, the harness, the phase 2 gate | T-tasks, with WP-22 and WP-23 |

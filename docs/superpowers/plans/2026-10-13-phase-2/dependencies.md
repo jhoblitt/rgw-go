@@ -462,6 +462,8 @@ flowchart LR
   t_C11["C11"]
   t_C12["C12"]
   t_C13["C13"]
+  t_C14["C14"]
+  t_C15["C15"]
   t_S1["S1"]:::ext
   t_S2["S2"]:::ext
   t_V5b["V5b"]:::ext
@@ -519,6 +521,8 @@ flowchart LR
   t_C10b --> t_C13
   t_C11 --> t_C13
   t_T_2 --> t_C13
+  t_C8 --> t_C14
+  t_C8 --> t_C15
   click t_C1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md#task-c1-lifecycle-types-encodings-and-xml" "C1: lifecycle types, encodings and XML"
   click t_C2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md#task-c2-lifecycle-evaluation" "C2: lifecycle evaluation"
   click t_C3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md#task-c3-the-cls_rgw-lc-client" "C3: the cls_rgw lc client"
@@ -533,6 +537,8 @@ flowchart LR
   click t_C11 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md#task-c11-in-cluster-transition" "C11: in-cluster transition"
   click t_C12 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md#task-c12-the-lifecycle-and-object-lock-parity-set" "C12: the lifecycle and object-lock parity set"
   click t_C13 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md#task-c13-the-cross-gateway-and-mixed-worker-gates" "C13: the cross-gateway and mixed-worker gates"
+  click t_C14 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md#task-c14-x-amz-expirations-rule-id-url-encoded" "C14: x-amz-expiration's rule-id URL-encoded"
+  click t_C15 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md#task-c15-the-lifecycle-headers-on-copyobject-completemultipartupload-and-listparts" "C15: the lifecycle headers on CopyObject, CompleteMultipartUpload and ListParts"
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_V5b href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v5b-driver-setolh-unlinkobjinstance-and-the-races" "V5b: driver, `setOLH`, `unlinkObjInstance` and the races"
@@ -566,6 +572,8 @@ flowchart LR
 - [C11](C-lifecycle.md#task-c11-in-cluster-transition): in-cluster transition
 - [C12](C-lifecycle.md#task-c12-the-lifecycle-and-object-lock-parity-set): the lifecycle and object-lock parity set
 - [C13](C-lifecycle.md#task-c13-the-cross-gateway-and-mixed-worker-gates): the cross-gateway and mixed-worker gates
+- [C14](C-lifecycle.md#task-c14-x-amz-expirations-rule-id-url-encoded): x-amz-expiration's rule-id URL-encoded
+- [C15](C-lifecycle.md#task-c15-the-lifecycle-headers-on-copyobject-completemultipartupload-and-listparts): the lifecycle headers on CopyObject, CompleteMultipartUpload and ListParts
 
 ### B: bucket config
 
