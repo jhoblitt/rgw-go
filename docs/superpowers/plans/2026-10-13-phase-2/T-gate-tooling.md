@@ -465,6 +465,36 @@ Found by T-6's task review (I-1), and numbered here before T-6 merged (PP-12).
   tooling's specs.
 - **Depends on:** T-6. **PR:** one. **Brief:** about 50 lines.
 
+### Task T-8: the venv freeze compared on its packages and Python's minor version
+
+Found by T-7's task review (Concern 1), and numbered here before T-7 merged (PP-12).
+
+- **Layer:** test tooling. **Files:** the parity comparison and its command in `hack/parity`, the
+  Makefile's candidate record, `hack/s3tests/run.sh`'s early check, their specs. **Cluster:** no.
+- **Behaviour:**
+  1. The parity candidate's record carries two candidate-only meta keys beside `pytest_freeze`:
+     the digest of its freeze's package lines alone, and the venv's Python major.minor. No ledger
+     entry changes, and no recorded digest moves.
+  2. The comparison takes the constraints file as an optional input. It accepts a candidate whose
+     whole-freeze digest differs from the ledger head's only when two things hold: its package
+     lines equal the constraints' lines, and its Python major.minor equals the one the
+     constraints' `# Python` line names. It prints a note naming both Python versions. Any other
+     freeze difference still fails as a tooling mismatch, before any outcome is compared.
+  3. run.sh's early check refuses at the start what the comparison would refuse at the end, and
+     nothing else. It calls Go for the check rather than growing the script.
+  4. The record path stays strict. The first record under another interpreter is a venv move,
+     as T-7 defines one, since recording is when the ledgers should say which venv judged them.
+- **Why:** T-7 hashes the whole freeze, and its first line is the runner's Python version. CI
+  takes `python3` from the runner image, which moves under its label (PP-60). A Python patch
+  release on the runner would fail every pull request's parity job until a full record.
+- **Specs:**
+  - A candidate that differs only in Python's patch version passes, with the note.
+  - One that differs in a package line fails, naming the line.
+  - One that differs in Python's minor version fails.
+  - Without the constraints input, the comparison is T-7's.
+  - The ledgers at this task's head equal main's.
+- **Depends on:** T-7. **PR:** one. **Brief:** about 40 lines.
+
 ## Order
 
 The unit starts at once (index, Order 2).
@@ -479,6 +509,7 @@ The unit starts at once (index, Order 2).
 | any time | T-5 | nothing |
 | after its inputs (a cluster slot) | T-6 | BC-8, WP-7, L4, V12a |
 | after its input | T-7 | T-6 |
+| after its input | T-8 | T-7 |
 | last | T-gate (a), (b), (c) | every task of every unit |
 
 The cluster tasks share the plan's one-at-a-time slot with every unit's.

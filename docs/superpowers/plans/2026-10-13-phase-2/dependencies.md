@@ -19,7 +19,7 @@ flowchart LR
   u_C["C: lifecycle<br/>14 tasks"]
   u_B["B: bucket config<br/>41 tasks"]
   u_WP["WP: write path<br/>24 tasks"]
-  u_T["T: gate tooling<br/>8 tasks"]
+  u_T["T: gate tooling<br/>9 tasks"]
   u_CL["CL: citation links<br/>6 tasks"]
   u_SM["SM: service map<br/>5 tasks"]
   u_S -->|4| u_V
@@ -1036,6 +1036,7 @@ flowchart LR
   t_T_5["T-5"]
   t_T_6["T-6"]
   t_T_7["T-7"]
+  t_T_8["T-8"]
   t_V7a["V7a"]:::ext
   t_V11["V11"]:::ext
   t_WP_7["WP-7"]:::ext
@@ -1061,6 +1062,7 @@ flowchart LR
   t_L4 --> t_T_6
   t_V12a --> t_T_6
   t_T_6 --> t_T_7
+  t_T_7 --> t_T_8
   click t_WP_22 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/T-gate-tooling.md#task-wp-22-the-s3-tests-selection-in-go" "WP-22: the s3-tests selection in Go"
   click t_WP_23 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/T-gate-tooling.md#task-wp-23-the-include-list" "WP-23: the include list"
   click t_T_1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/T-gate-tooling.md#task-t-1-the-per-pr-and-gate-sets" "T-1: the per-PR and gate sets"
@@ -1071,6 +1073,7 @@ flowchart LR
   click t_T_5 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/T-gate-tooling.md#task-t-5-s3-tests-_has_target_object_key_format-reports-what-it-probes" "T-5: s3-tests, `_has_target_object_key_format` reports what it probes"
   click t_T_6 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/T-gate-tooling.md#task-t-6-the-combined-s3-tests-pin-bump" "T-6: the combined s3-tests pin bump"
   click t_T_7 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/T-gate-tooling.md#task-t-7-the-s3-tests-venv-pinned-and-its-freeze-compared" "T-7: the s3-tests venv pinned and its freeze compared"
+  click t_T_8 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/T-gate-tooling.md#task-t-8-the-venv-freeze-compared-on-its-packages-and-pythons-minor-version" "T-8: the venv freeze compared on its packages and Python's minor version"
   click t_V7a href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v7a-driver-versioned-putobject" "V7a: driver, versioned PutObject"
   click t_V11 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v11-op-and-s3-versioned-writes" "V11: op and s3, versioned writes"
   click t_WP_7 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-7-checksum-headers-on-writes" "WP-7: checksum headers on writes"
@@ -1092,6 +1095,7 @@ flowchart LR
 - [T-5](T-gate-tooling.md#task-t-5-s3-tests-_has_target_object_key_format-reports-what-it-probes): s3-tests, `_has_target_object_key_format` reports what it probes
 - [T-6](T-gate-tooling.md#task-t-6-the-combined-s3-tests-pin-bump): the combined s3-tests pin bump
 - [T-7](T-gate-tooling.md#task-t-7-the-s3-tests-venv-pinned-and-its-freeze-compared): the s3-tests venv pinned and its freeze compared
+- [T-8](T-gate-tooling.md#task-t-8-the-venv-freeze-compared-on-its-packages-and-pythons-minor-version): the venv freeze compared on its packages and Python's minor version
 
 ### CL: citation links
 
