@@ -1243,16 +1243,31 @@ var _ = Describe("GetObject", func() {
 					Entry("GetObjectTagging", &op.GetObjectTagging{}, policy.S3GetObjectVersionTagging),
 					Entry("GetObjectAttributes, by s3:GetObjectVersion", &op.GetObjectAttributes{}, policy.S3GetObjectVersion),
 				)
-				It("checks GetObjectAttributes' s3:GetObjectVersionAttributes on Tentacle alone", func(ctx SpecContext) {
+				It("checks GetObjectAttributes' s3:GetObjectVersion alone on Squid", func(ctx SpecContext) {
 					resolve(ctx, meta.BucketVersioned, marker("m1"))
 					authz.VerifyMarkerInReturns(op.ErrAccessDenied)
 					Expect(read(ctx, &op.GetObjectAttributes{}, "m1")).To(MatchError(op.ErrNoSuchKey), "Squid knows no s3:GetObjectVersionAttributes")
 					Expect(checked("m1")).To(Equal([]policy.Action{policy.S3GetObjectVersion}))
-					env.Zone = tentacle()
-					authz.VerifyMarkerInReturnsOnCall(2, nil)
-					expectMarker(read(ctx, &op.GetObjectAttributes{}, "m1"), "m1", false)
-					Expect(checked("m1")).To(Equal([]policy.Action{policy.S3GetObjectVersion, policy.S3GetObjectVersion, policy.S3GetObjectVersionAttributes}))
 				})
+				DescribeTable("answers GetObjectAttributes 405 on Tentacle only to a requester allowed both of its version actions",
+					func(ctx SpecContext, versionErr, attrsErr error, want ...policy.Action) {
+						env.Zone = tentacle()
+						resolve(ctx, meta.BucketVersioned, marker("m1"))
+						authz.VerifyMarkerInReturnsOnCall(0, versionErr)
+						authz.VerifyMarkerInReturnsOnCall(1, attrsErr)
+						err := read(ctx, &op.GetObjectAttributes{}, "m1")
+						if versionErr == nil && attrsErr == nil {
+							expectMarker(err, "m1", false)
+						} else {
+							Expect(err).To(MatchError(op.ErrNoSuchKey))
+							Expect(errors.As(err, new(*op.MarkerVersionError))).To(BeFalse(), "no MarkerVersionError: %v", err)
+						}
+						Expect(checked("m1")).To(Equal(want))
+					},
+					Entry("both allowed", nil, nil, policy.S3GetObjectVersion, policy.S3GetObjectVersionAttributes),
+					Entry("s3:GetObjectVersion refused, never asking for the other", op.ErrAccessDenied, nil, policy.S3GetObjectVersion),
+					Entry("s3:GetObjectVersionAttributes refused", nil, op.ErrAccessDenied, policy.S3GetObjectVersion, policy.S3GetObjectVersionAttributes),
+				)
 			})
 		})
 	})

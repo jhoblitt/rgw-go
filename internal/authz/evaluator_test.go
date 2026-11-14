@@ -1928,14 +1928,22 @@ var _ = Describe("Evaluator", func() {
 				f = newFixture(denc.Tentacle)
 			})
 
-			It("asks for s3:GetObjectAttributes when an explicit Deny refuses s3:GetObject", func() {
+			It("refuses under an explicit Deny of s3:GetObject, though s3:GetObjectAttributes is allowed", func() {
 				f.setPolicy("priv", doc(
 					stmt("Deny", awsPrincipal("arn:aws:iam:::user/bob"), "s3:GetObject", "arn:aws:s3:::priv/*", ""),
 					stmt("Allow", awsPrincipal("arn:aws:iam:::user/bob"), "s3:GetObjectAttributes", "arn:aws:s3:::priv/*", "")))
-				err := f.getObject(bob(), "priv", "shared")
-				Expect(err).To(MatchError(op.ErrAccessDenied), "the first arm")
-				Expect(op.IsBeforeVerify(err)).To(BeFalse(), "the first arm, unmarked")
-				Expect(attrs(bob(), "shared")).To(Succeed(), "the second arm")
+				err := attrs(bob(), "shared")
+				Expect(err).To(MatchError(op.ErrAccessDenied))
+				Expect(op.IsBeforeVerify(err)).To(BeFalse(), "unmarked")
+			})
+
+			It("serves an ACL READ grantee, whose READ satisfies both actions, until a Deny of s3:GetObjectAttributes", func() {
+				Expect(attrs(bob(), "shared")).To(Succeed())
+				f.setPolicy("priv", doc(stmt("Deny", awsPrincipal("arn:aws:iam:::user/bob"), "s3:GetObjectAttributes", "arn:aws:s3:::priv/*", "")))
+				Expect(f.getObject(bob(), "priv", "shared")).To(Succeed(), "s3:GetObject is still allowed")
+				err := attrs(bob(), "shared")
+				Expect(err).To(MatchError(op.ErrAccessDenied))
+				Expect(op.IsBeforeVerify(err)).To(BeFalse(), "unmarked")
 			})
 
 			It("refuses under a Deny of s3:* or s3:Get*", func() {
@@ -1951,9 +1959,11 @@ var _ = Describe("Evaluator", func() {
 				Expect(op.IsBeforeVerify(err)).To(BeTrue())
 			})
 
-			It("evaluates existing-object-tag conditions on the second arm", func() {
-				f.setPolicy("priv", doc(stmt("Allow", awsPrincipal("arn:aws:iam:::user/bob"), "s3:GetObjectAttributes",
-					"arn:aws:s3:::priv/*", `{"StringEquals": {"s3:ExistingObjectTag/env": "prod"}}`)))
+			It("evaluates existing-object-tag conditions on the second action", func() {
+				f.setPolicy("priv", doc(
+					stmt("Allow", awsPrincipal("arn:aws:iam:::user/bob"), "s3:GetObject", "arn:aws:s3:::priv/*", ""),
+					stmt("Allow", awsPrincipal("arn:aws:iam:::user/bob"), "s3:GetObjectAttributes",
+						"arn:aws:s3:::priv/*", `{"StringEquals": {"s3:ExistingObjectTag/env": "prod"}}`)))
 				Expect(attrs(bob(), "tagged")).To(Succeed(), "tagged")
 				Expect(attrs(bob(), "o")).To(MatchError(op.ErrAccessDenied), "untagged")
 			})

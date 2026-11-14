@@ -6628,6 +6628,38 @@ rgw-go does the following.
   followed by a NUL and more is the field `key`. rgw-go compares the
   whole name (`postpolicy.Env`), so such a field is one of its own, which
   a condition must name.
+- **GetObjectAttributes needs both of its actions on Tentacle.** A v20.2.4
+  radosgw serves a GetObjectAttributes that either s3:GetObject or
+  s3:GetObjectAttributes allows, s3:GetObjectVersion or
+  s3:GetObjectVersionAttributes for a named version, beneath its own
+  comment that the conjunction should be `&&`
+  ([rgw_op.cc:6369-6385](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6369-L6385)),
+  so a requester refused the read and allowed the attributes action gets
+  the object's ETag, size, storage class, parts and stored checksums
+  (`docs/ceph-upstream-bugs.md`,
+  "[radosgw's GetObjectAttributes needs s3:GetObject or
+  s3:GetObjectAttributes, not
+  both](ceph-upstream-bugs.md#radosgws-getobjectattributes-needs-s3getobject-or-s3getobjectattributes-not-both)").
+  Amazon S3 needs both
+  (https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObjectAttributes.html),
+  and v21.1.2 joins them with `&&`
+  ([rgw_op.cc:6783-6784](https://github.com/ceph/ceph/blob/v21.1.2/src/rgw/rgw_op.cc#L6783-L6784)).
+  rgw-go requires both on Tentacle, the read's action first, each
+  evaluated as any other object permission is
+  (`GetObjectAttributes.VerifyPermission`, `internal/op/objectread.go`).
+  An ACL READ grant satisfies both, as `op_to_perm` maps both to READ
+  ([rgw_iam_policy.h:247-265](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L247-L265)),
+  so the owner and a READ grantee no policy refuses are served as by
+  radosgw. rgw-go answers 403 AccessDenied where radosgw serves a
+  requester allowed one of the two actions and neither allowed nor
+  granted READ for the other, such as one a policy allows s3:GetObject
+  alone, and a requester an explicit Deny of either refuses, whatever
+  allows the other. A delete marker's version is answered 405
+  MethodNotAllowed only to a requester allowed both version actions on it
+  ("A read naming a delete marker's version answers 405
+  MethodNotAllowed", below). On Squid the read's action alone decides, as
+  before: v19.2.7 has no GetObjectAttributes, and its policy language no
+  s3:GetObjectAttributes.
 
 ### Bucket metadata differences
 
@@ -8393,24 +8425,26 @@ does the following.
   the marker's `Last-Modified`
   (https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeleteMarker.html).
   rgw-go answers so on both releases to a
-  requester allowed the read's own version action on the marker's version:
-  `s3:GetObjectVersion` for GET, HEAD and GetObjectAttributes, with
-  Tentacle's `s3:GetObjectVersionAttributes` for GetObjectAttributes too,
+  requester allowed each of the read's own version actions on the marker's
+  version: `s3:GetObjectVersion` for GET, HEAD and GetObjectAttributes, and
+  Tentacle's `s3:GetObjectVersionAttributes` as well for GetObjectAttributes,
   `s3:GetObjectVersionAcl` for GetObjectAcl and `s3:GetObjectVersionTagging`
-  for GetObjectTagging (`deleteMarkerVersion`, `internal/op/deletemarker.go`).
+  for GetObjectTagging (`deleteMarkerVersion`, `internal/op/deletemarker.go`,
+  which GetObjectAttributes' `VerifyPermission`, `internal/op/objectread.go`,
+  hands both of its actions on Tentacle).
   A delete marker has no ACL, so that permission is decided by the
   identity's and the bucket's policies alone, and where no policy decides
   by the bucket's owner and an admin, who pass, and no one else
   (`VerifyMarkerIn`, `internal/authz/evaluator.go`). Each requester gets:
-  - allowed the version action, whether or not it may list the bucket: 405
+  - allowed the version actions, whether or not it may list the bucket: 405
     and `x-amz-delete-marker: true`, and on a GET or HEAD the marker's
     `Last-Modified`, its index entry's mtime;
-  - allowed `s3:ListBucket` and not the version action, a Deny of it
+  - allowed `s3:ListBucket` and not every version action, a Deny of one
     included: radosgw's 404 NoSuchKey, with Tentacle's `false`;
   - allowed neither: radosgw's 403 AccessDenied, without the header.
 
   A requester who may not read the version so learns no more of a marker
-  than of a version that does not exist. One allowed the version action
+  than of a version that does not exist. One allowed the version actions
   who may not list learns that the version is a marker, as S3 tells it, and
   gets radosgw's 403 for a version that does not exist. The 405 names no
   version in `x-amz-version-id`. A marker counts as one only while it is

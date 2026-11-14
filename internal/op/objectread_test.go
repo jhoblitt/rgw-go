@@ -15,6 +15,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
+	authzpkg "github.com/jhoblitt/rgw-go/internal/authz"
 	"github.com/jhoblitt/rgw-go/internal/cephconf"
 	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/denc"
@@ -694,24 +695,68 @@ var _ = Describe("GetObjectAttributes", func() {
 				authz = &opfakes.FakeAuthorizer{}
 				f.env.Authz = authz
 			})
-			It("allows a request s3:GetObject refuses when s3:GetObjectAttributes allows it", func(ctx SpecContext) {
-				deny(policy.S3GetObject)
+			It("allows a request both s3:GetObject and s3:GetObjectAttributes allow, asking for them in that order", func(ctx SpecContext) {
 				Expect(op.Run(ctx, &op.GetObjectAttributes{}, f.req("small"))).To(Succeed())
 				Expect(actions()).To(Equal([]policy.Action{policy.S3GetObject, policy.S3GetObjectAttributes}))
 			})
-			It("asks for the version actions for a version", func(ctx SpecContext) {
-				deny(policy.S3GetObjectVersion)
-				r := f.req("small")
-				r.Object.Instance = "null"
-				Expect(op.Run(ctx, &op.GetObjectAttributes{}, r)).To(Succeed())
-				Expect(actions()).To(Equal([]policy.Action{policy.S3GetObjectVersion, policy.S3GetObjectVersionAttributes}))
-			})
-			It("refuses with the second action's plain denial when both refuse", func(ctx SpecContext) {
-				deny(policy.S3GetObject, policy.S3GetObjectAttributes)
+			It("refuses a request s3:GetObject refuses without asking for s3:GetObjectAttributes, which would allow it", func(ctx SpecContext) {
+				deny(policy.S3GetObject)
 				err := op.Run(ctx, &op.GetObjectAttributes{}, f.req("small"))
 				Expect(err).To(MatchError(op.ErrAccessDenied))
 				Expect(op.AsError(err).Message).To(BeEmpty(), "unlike GetObject, it names no missing permission")
-				Expect(actions()).To(HaveLen(2))
+				Expect(actions()).To(Equal([]policy.Action{policy.S3GetObject}))
+			})
+			It("refuses a request s3:GetObjectAttributes refuses though s3:GetObject allows it", func(ctx SpecContext) {
+				deny(policy.S3GetObjectAttributes)
+				err := op.Run(ctx, &op.GetObjectAttributes{}, f.req("small"))
+				Expect(err).To(MatchError(op.ErrAccessDenied))
+				Expect(op.IsBeforeVerify(err)).To(BeFalse())
+				Expect(op.AsError(err).Message).To(BeEmpty())
+				Expect(actions()).To(Equal([]policy.Action{policy.S3GetObject, policy.S3GetObjectAttributes}))
+			})
+			// versionCase is the actions the authorizer refuses, whether the
+			// request is refused, and the actions it is asked for, in order.
+			type versionCase struct {
+				denied  []policy.Action
+				refused bool
+				asked   []policy.Action
+			}
+			DescribeTable("asks for both version actions for a version, and refuses when either refuses",
+				func(ctx SpecContext, c versionCase) {
+					deny(c.denied...)
+					r := f.req("small")
+					r.Object.Instance = "null"
+					err := op.Run(ctx, &op.GetObjectAttributes{}, r)
+					if c.refused {
+						Expect(err).To(MatchError(op.ErrAccessDenied))
+					} else {
+						Expect(err).NotTo(HaveOccurred())
+					}
+					Expect(actions()).To(Equal(c.asked))
+				},
+				Entry("both allowed", versionCase{asked: []policy.Action{policy.S3GetObjectVersion, policy.S3GetObjectVersionAttributes}}),
+				Entry("s3:GetObjectVersion refused", versionCase{
+					denied: []policy.Action{policy.S3GetObjectVersion}, refused: true, asked: []policy.Action{policy.S3GetObjectVersion},
+				}),
+				Entry("s3:GetObjectVersionAttributes refused", versionCase{
+					denied: []policy.Action{policy.S3GetObjectVersionAttributes}, refused: true,
+					asked: []policy.Action{policy.S3GetObjectVersion, policy.S3GetObjectVersionAttributes},
+				}),
+				Entry("the current object's actions, which a version does not ask for, refused", versionCase{
+					denied: []policy.Action{policy.S3GetObject, policy.S3GetObjectAttributes},
+					asked:  []policy.Action{policy.S3GetObjectVersion, policy.S3GetObjectVersionAttributes},
+				}),
+			)
+			It("returns an error of the second action that is no access denial", func(ctx SpecContext) {
+				authz.VerifyObjectReturnsOnCall(1, op.ErrUnknown)
+				Expect(op.Run(ctx, &op.GetObjectAttributes{}, f.req("small"))).To(MatchError(op.ErrUnknown))
+				Expect(actions()).To(Equal([]policy.Action{policy.S3GetObject, policy.S3GetObjectAttributes}))
+			})
+			It("lets an admin through a refusal of the second action, as Run lets one through any access denial", func(ctx SpecContext) {
+				deny(policy.S3GetObjectAttributes)
+				r := f.req("small")
+				r.Identity.Admin = true
+				Expect(op.Run(ctx, &op.GetObjectAttributes{}, r)).To(Succeed())
 			})
 			It("returns a refusal made before verify_permission, such as a missing object's, from the first action alone", func(ctx SpecContext) {
 				authz.VerifyObjectReturns(op.BeforeVerify(op.ErrAccessDenied))
@@ -730,10 +775,149 @@ var _ = Describe("GetObjectAttributes", func() {
 				authz = &opfakes.FakeAuthorizer{}
 				f.env.Authz = authz
 			})
-			It("lets s3:GetObject alone decide, never asking for the action Squid lacks", func(ctx SpecContext) {
+			It("lets the read action alone decide, for the current object and a version, never asking for the actions Squid lacks", func(ctx SpecContext) {
 				deny(policy.S3GetObject)
 				Expect(op.Run(ctx, &op.GetObjectAttributes{}, f.req("small"))).To(MatchError(op.ErrAccessDenied))
 				Expect(actions()).To(Equal([]policy.Action{policy.S3GetObject}))
+				authz.VerifyObjectCalls(nil)
+				authz.VerifyObjectReturns(nil)
+				r := f.req("small")
+				r.Object.Instance = "null"
+				Expect(op.Run(ctx, &op.GetObjectAttributes{}, r)).To(Succeed())
+				Expect(actions()).To(Equal([]policy.Action{policy.S3GetObject, policy.S3GetObjectVersion}))
+			})
+		})
+
+		// These run the evaluator, so each action is decided as any other
+		// object permission is: the identity's and the bucket's policies, then
+		// the object's ACL, where op_to_perm maps both actions to READ
+		// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L247-L265).
+		Describe("by the policies and ACL grants that decide", func() {
+			var bob op.Identity
+			// objectKey is the object a spec reads: plain's small, or the
+			// version v1 of v when versioned.
+			objectKey := func(versioned bool) meta.ObjKey {
+				if versioned {
+					return meta.ObjKey{Name: "v", Instance: "v1"}
+				}
+				return meta.ObjKey{Name: "small"}
+			}
+			setUp := func(ctx context.Context, release denc.Release) {
+				GinkgoHelper()
+				f = newObjectReadFixture(ctx, release)
+				f.env.Authz = authzpkg.New(authzpkg.DefaultConfig(release))
+				b := f.store.AddUser(meta.UserInfo{UserID: meta.UserID{ID: "bob"}, DisplayName: "Bob", OpMask: op.OpTypeAll})
+				bob = op.Identity{User: &b.Info, Owner: meta.UserOwner(b.Info.UserID), OpMask: op.OpTypeAll}
+				_, err := f.store.PutObject(ctx, f.rec, objectKey(true), bytes.NewReader(payload(16)), op.PutParams{
+					Size: 16, Attrs: map[string][]byte{meta.AttrACL: encodedPolicy(acl.DefaultPolicy(f.alice.Owner, "Alice"))},
+				})
+				Expect(err).NotTo(HaveOccurred())
+			}
+			// bobMay sets plain's bucket policy to statements naming bob, each
+			// an effect and an action on every object of plain.
+			bobMay := func(ctx context.Context, stmts ...[2]string) {
+				GinkgoHelper()
+				parts := make([]string, 0, len(stmts))
+				for _, st := range stmts {
+					parts = append(parts, `{"Effect":"`+st[0]+`","Principal":{"AWS":["arn:aws:iam:::user/bob"]},"Action":"`+st[1]+`","Resource":"arn:aws:s3:::plain/*"}`)
+				}
+				doc := `{"Version":"2012-10-17","Statement":[` + strings.Join(parts, ",") + `]}`
+				Expect(f.store.PutBucketAttrs(ctx, f.rec, map[string][]byte{op.AttrIAMPolicy: []byte(doc)}, nil)).To(Succeed())
+			}
+			// grantBobRead gives bob READ in key's ACL.
+			grantBobRead := func(ctx context.Context, key meta.ObjKey) {
+				GinkgoHelper()
+				p := acl.DefaultPolicy(f.alice.Owner, "Alice")
+				p.ACL.AddGrant(acl.Grant{Type: acl.GranteeCanonUser, ID: "bob", Name: "Bob", Permission: acl.PermRead})
+				st, err := f.store.StatObject(ctx, f.rec, key)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(f.store.SetObjectAttrs(ctx, st, map[string][]byte{meta.AttrACL: encodedPolicy(p)}, nil)).To(Succeed())
+			}
+			bobReads := func(ctx context.Context, key meta.ObjKey) error {
+				r := f.req(key.Name)
+				r.Object, r.Identity = key, bob
+				return op.Run(ctx, &op.GetObjectAttributes{Requested: op.AttrETag | op.AttrObjectSize}, r)
+			}
+			// access is one spec's case: what bob holds on the object it reads,
+			// and whether GetObjectAttributes serves him.
+			type access struct {
+				// versioned reads the version v1 of v, not plain's small.
+				versioned bool
+				// aclRead grants bob READ in the object's ACL.
+				aclRead bool
+				// policy is plain's bucket policy for bob; none when empty.
+				policy [][2]string
+				served bool
+			}
+			decide := func(ctx context.Context, c access) {
+				GinkgoHelper()
+				key := objectKey(c.versioned)
+				if len(c.policy) > 0 {
+					bobMay(ctx, c.policy...)
+				}
+				if c.aclRead {
+					grantBobRead(ctx, key)
+				}
+				err := bobReads(ctx, key)
+				if c.served {
+					Expect(err).NotTo(HaveOccurred())
+					return
+				}
+				Expect(err).To(MatchError(op.ErrAccessDenied))
+				Expect(op.IsBeforeVerify(err)).To(BeFalse())
+			}
+			allows := func(a string) [2]string { return [2]string{"Allow", a} }
+			denies := func(a string) [2]string { return [2]string{"Deny", a} }
+			// actionPair is the two actions a request needs, and the pair the
+			// other kind of request needs.
+			type actionPair struct {
+				name                  string
+				versioned             bool
+				read, attrs           string
+				otherRead, otherAttrs string
+			}
+
+			// v20.2.4 serves every request here that either action allows.
+			Context("on Tentacle, needing both actions as Amazon S3 does", func() {
+				BeforeEach(func(ctx SpecContext) { setUp(ctx, denc.Tentacle) })
+				for _, p := range []actionPair{
+					{"for the current object", false, "s3:GetObject", "s3:GetObjectAttributes", "s3:GetObjectVersion", "s3:GetObjectVersionAttributes"},
+					{"for a named version", true, "s3:GetObjectVersion", "s3:GetObjectVersionAttributes", "s3:GetObject", "s3:GetObjectAttributes"},
+				} {
+					DescribeTable(p.name+", "+p.read+" and "+p.attrs,
+						func(ctx SpecContext, c access) {
+							c.versioned = p.versioned
+							decide(ctx, c)
+						},
+						Entry("a policy allowing "+p.read+" alone is refused", access{policy: [][2]string{allows(p.read)}}),
+						Entry("a policy allowing "+p.attrs+" alone is refused", access{policy: [][2]string{allows(p.attrs)}}),
+						Entry("a policy allowing both is served", access{policy: [][2]string{allows(p.read), allows(p.attrs)}, served: true}),
+						Entry("a policy allowing "+p.otherRead+" and "+p.otherAttrs+" is refused",
+							access{policy: [][2]string{allows(p.otherRead), allows(p.otherAttrs)}}),
+						Entry("a Deny of "+p.read+" refuses what both are allowed",
+							access{policy: [][2]string{allows(p.read), allows(p.attrs), denies(p.read)}}),
+						Entry("a Deny of "+p.attrs+" refuses what both are allowed",
+							access{policy: [][2]string{allows(p.read), allows(p.attrs), denies(p.attrs)}}),
+						Entry("an ACL READ grant with no policy satisfies both", access{aclRead: true, served: true}),
+						Entry("a Deny of "+p.read+" refuses an ACL READ grantee", access{aclRead: true, policy: [][2]string{denies(p.read)}}),
+						Entry("a Deny of "+p.attrs+" refuses an ACL READ grantee", access{aclRead: true, policy: [][2]string{denies(p.attrs)}}),
+						Entry("neither a grant nor a policy is refused", access{}),
+					)
+				}
+			})
+			Context("on Squid, needing the read action alone, as it has no s3:GetObjectAttributes", func() {
+				BeforeEach(func(ctx SpecContext) { setUp(ctx, denc.Squid) })
+				DescribeTable("for the current object and for a named version",
+					func(ctx SpecContext, c access) { decide(ctx, c) },
+					Entry("a policy allowing s3:GetObject alone is served", access{policy: [][2]string{allows("s3:GetObject")}, served: true}),
+					Entry("a Deny of s3:GetObject refuses an ACL READ grantee", access{aclRead: true, policy: [][2]string{denies("s3:GetObject")}}),
+					Entry("an ACL READ grant with no policy is served", access{aclRead: true, served: true}),
+					Entry("a policy allowing s3:GetObjectVersion alone is served for a version",
+						access{versioned: true, policy: [][2]string{allows("s3:GetObjectVersion")}, served: true}),
+					Entry("a Deny of s3:GetObjectVersion refuses an ACL READ grantee of a version",
+						access{versioned: true, aclRead: true, policy: [][2]string{denies("s3:GetObjectVersion")}}),
+					Entry("an ACL READ grant with no policy is served for a version", access{versioned: true, aclRead: true, served: true}),
+				)
 			})
 		})
 	})

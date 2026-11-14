@@ -36,37 +36,38 @@ func markerVersion(st *ObjectState, key meta.ObjKey) bool {
 	return st != nil && !st.Exists && st.DeleteMarker && key.Instance != ""
 }
 
-// mayReadMarker reports whether r's requester holds one of actions on key in
-// bucket, a delete marker's version (VerifyMarkerIn). A refusal of any kind,
-// a policy's or a fault's, is no permission.
-func mayReadMarker(ctx context.Context, r *Request, bucket *BucketRecord, key meta.ObjKey, actions ...policy.Action) bool {
-	for _, a := range actions {
-		if VerifyMarkerPermissionIn(ctx, r, a, acl.PermFor(a), bucket, key) == nil {
-			return true
+// mayReadMarker reports whether r's requester holds a and every one of more
+// on key in bucket, a delete marker's version (VerifyMarkerIn), each checked
+// in turn until one is refused. A refusal of any kind, a policy's or a
+// fault's, is no permission.
+func mayReadMarker(ctx context.Context, r *Request, bucket *BucketRecord, key meta.ObjKey, a policy.Action, more ...policy.Action) bool {
+	for _, action := range append([]policy.Action{a}, more...) {
+		if VerifyMarkerPermissionIn(ctx, r, action, acl.PermFor(action), bucket, key) != nil {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 // deleteMarkerVersion is err, a read's refusal of r's object made before
 // verify_permission, as read_obj_policy makes it for a missing object, with a
 // delete marker's own version answered 405 MethodNotAllowed (MarkerVersionError)
-// to a requester who holds one of actions, the read's own version actions,
-// on it: Amazon S3 checks the read's permission and then answers the marker,
-// where radosgw finds no head for the marker and answers it as a missing
-// version, 404 to an admin or to a requester allowed s3:ListBucket and 403 to
-// any other (docs/ceph-upstream-bugs.md, "radosgw answers a read naming a
-// delete marker's version 404 NoSuchKey"; docs/differences.md, "A read naming
-// a delete marker's version answers 405 MethodNotAllowed"). A requester who
-// holds none keeps radosgw's answer, and learns no more of a marker than of
-// a missing version. With lastModified the answer carries the marker's
-// mtime.
-func deleteMarkerVersion(ctx context.Context, r *Request, err error, lastModified bool, actions ...policy.Action) error {
+// to a requester who holds a and every one of more, the read's own version
+// actions, on it: Amazon S3 checks the read's permission and then answers the
+// marker, where radosgw finds no head for the marker and answers it as a
+// missing version, 404 to an admin or to a requester allowed s3:ListBucket and
+// 403 to any other (docs/ceph-upstream-bugs.md, "radosgw answers a read naming
+// a delete marker's version 404 NoSuchKey"; docs/differences.md, "A read
+// naming a delete marker's version answers 405 MethodNotAllowed"). A
+// requester refused any of them keeps radosgw's answer, and learns no more of
+// a marker than of a missing version. With lastModified the answer carries
+// the marker's mtime.
+func deleteMarkerVersion(ctx context.Context, r *Request, err error, lastModified bool, a policy.Action, more ...policy.Action) error {
 	if !markerVersion(r.ObjState, r.Object) || !IsBeforeVerify(err) ||
 		!errors.Is(err, ErrNoSuchKey) && !errors.Is(err, ErrAccessDenied) {
 		return err
 	}
-	if !mayReadMarker(ctx, r, r.BucketRec, r.Object, actions...) {
+	if !mayReadMarker(ctx, r, r.BucketRec, r.Object, a, more...) {
 		return err
 	}
 	me := &MarkerVersionError{Key: r.Object}
