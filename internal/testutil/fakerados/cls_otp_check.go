@@ -1,16 +1,13 @@
 package fakerados
 
 import (
-	"crypto/hmac"
-	"crypto/sha1" //nolint:gosec // RFC 6238 TOTP, as liboath computes it for the otp class, is HMAC-SHA1
-	"encoding/binary"
-	"fmt"
 	"slices"
 	"syscall"
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/cls/otp"
 	"github.com/jhoblitt/rgw-go/internal/rgwtext"
+	"github.com/jhoblitt/rgw-go/internal/testutil/otptest"
 )
 
 // otpCheckMethods are the methods OTPClassAt emulates of those that check a
@@ -194,31 +191,14 @@ func oathTOTPValidate2(secret []byte, now, step uint32, startOffset int32, windo
 	}
 	nts := uint64((int64(now) - int64(startOffset)) / int64(step)) //nolint:gosec // liboath stores the signed quotient in a uint64_t
 	for iter := uint32(0); ; iter++ {
-		if oathHOTP(secret, nts+uint64(iter), len(code)) == code {
+		if otptest.HOTP(secret, nts+uint64(iter), len(code)) == code {
 			return int32(iter) //nolint:gosec // liboath returns its unsigned iter as an int
 		}
-		if iter > 0 && oathHOTP(secret, nts-uint64(iter), len(code)) == code {
+		if iter > 0 && otptest.HOTP(secret, nts-uint64(iter), len(code)) == code {
 			return int32(iter) //nolint:gosec // liboath returns its unsigned iter as an int
 		}
 		if iter == window {
 			return oathInvalidOTP
 		}
 	}
-}
-
-// oathHOTP is liboath's _oath_hotp_generate2 for HMAC-SHA1: RFC 4226's
-// dynamic truncation of the HMAC of the big-endian counter, as digits
-// decimal digits
-// (https://github.com/jas4711/oath-toolkit/blob/oath-toolkit-2.6.9/liboath/hotp.c#L75-L155).
-func oathHOTP(secret []byte, counter uint64, digits int) string {
-	mac := hmac.New(sha1.New, secret)
-	mac.Write(binary.BigEndian.AppendUint64(nil, counter))
-	hs := mac.Sum(nil)
-	offset := hs[len(hs)-1] & 0x0f
-	s := binary.BigEndian.Uint32(hs[offset:offset+4]) & 0x7fffffff
-	mod := uint32(1)
-	for range digits {
-		mod *= 10
-	}
-	return fmt.Sprintf("%0*d", digits, s%mod)
 }

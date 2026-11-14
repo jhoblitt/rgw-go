@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -281,4 +282,81 @@ var _ = Describe("ObjectLayout", func() {
 		Expect(err).To(MatchError(op.ErrUnknown))
 		Expect(doc).To(BeEmpty())
 	})
+
+	// testdata/layout/<release>/<shape>.bin is the user.rgw.manifest of the head
+	// of an object of the integration gate's, as RADOS held it on a cluster of
+	// that release, and <shape>.json the document `?layout` answered for it:
+	// radosgw's, byte for byte, where rgw-go's equalled it. The two shapes that
+	// name a cloud tier hold the secret in their .bin and rgw-go's masked
+	// document in their .json, where radosgw's body carries the secret. Squid's
+	// are v19.2.7's radosgw and Tentacle's v20.2.4's. <release>.jsonl beside
+	// them is the capture they were made from: hack/layoutgolden makes them
+	// again from a new one, as hack/rooket/README.md says.
+	Describe("the layouts of the integration gate's objects", func() {
+		goldenPath := func(dir, shape, ext string) string {
+			return filepath.Join("testdata", "layout", dir, shape+ext)
+		}
+		shapes := func(dir string) []string {
+			names, err := filepath.Glob(goldenPath(dir, "*", ".bin"))
+			if err != nil || len(names) == 0 {
+				panic(fmt.Sprintf("no layout goldens in testdata/layout/%s: %v", dir, err))
+			}
+			for i, n := range names {
+				names[i] = strings.TrimSuffix(filepath.Base(n), ".bin")
+			}
+			return names
+		}
+		var entries []TableEntry
+		for _, r := range layoutGoldenReleases {
+			for _, shape := range shapes(r.dir) {
+				entries = append(entries, Entry(r.dir+" "+shape, r.rel, r.dir, shape))
+			}
+		}
+
+		DescribeTable("lays an object out as the cluster's radosgw did",
+			func(ctx SpecContext, rel denc.Release, dir, shape string) {
+				bin, err := os.ReadFile(goldenPath(dir, shape, ".bin"))
+				Expect(err).NotTo(HaveOccurred())
+				want, err := os.ReadFile(goldenPath(dir, shape, ".json"))
+				Expect(err).NotTo(HaveOccurred())
+				d := denc.NewDecoder(bin)
+				m := meta.DecodeManifest(d)
+				Expect(d.Err()).NotTo(HaveOccurred(), "decoding %s's manifest", shape)
+				var doc struct {
+					Head struct {
+						OID string `json:"oid"`
+					} `json:"head"`
+					Manifest struct {
+						HeadSize uint64 `json:"head_size"`
+					} `json:"manifest"`
+				}
+				Expect(json.Unmarshal(want, &doc)).To(Succeed())
+				rec := &op.BucketRecord{Info: meta.BucketInfo{
+					Bucket:        m.Obj.Bucket,
+					PlacementRule: meta.ParsePlacementRule("default-placement"),
+				}}
+				// radosgw dumps the manifest with its head_size patched from the
+				// head's stored size, as the driver does, so the document's is
+				// the length of the head the cluster held.
+				put(doc.Head.OID, make([]byte, doc.Manifest.HeadSize), map[string][]byte{meta.AttrManifest: bin})
+				got, err := layout(ctx, open(ctx, rel), rec, m.Obj.Key.Name)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(got).To(Equal(string(want)))
+			},
+			entries,
+		)
+
+		It("holds a golden for every shape the gate prints, on each release", func() {
+			for _, r := range layoutGoldenReleases {
+				Expect(shapes(r.dir)).To(HaveLen(24), r.dir)
+			}
+		})
+	})
 })
+
+// layoutGoldenReleases are the releases testdata/layout holds captures of,
+// each by its directory.
+var layoutGoldenReleases = []struct {
+	dir string
+	rel denc.Release
+}{{"squid", denc.Squid}, {"tentacle", denc.Tentacle}}
