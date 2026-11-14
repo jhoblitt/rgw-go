@@ -793,13 +793,17 @@ var _ = Describe("the lifecycle transition", func() {
 			Expect(versions(ctx, rec, "k")).To(Equal([]string{"COLD@null*"}), "listed current again after the removal raised the OLH entry's epoch")
 			Expect(currentNames(ctx, rec)).To(Equal([]string{"k"}))
 			Expect(body(ctx, rec, meta.ObjKey{Name: "k"})).To(Equal("null"))
-			var olhSets []string
+			var olhSets, pendingSets []string
 			for _, w := range c.WritesTo(testDataPool, "", olhHead) {
 				if set := names(w.Steps()); slices.Contains(set, meta.AttrManifest) {
-					olhSets = slices.DeleteFunc(set, func(n string) bool { return !strings.HasPrefix(n, meta.AttrOLHPrefix) })
+					olhSets = slices.DeleteFunc(slices.Clone(set), func(n string) bool {
+						return !strings.HasPrefix(n, meta.AttrOLHPrefix) || strings.HasPrefix(n, meta.AttrOLHPendingPrefix)
+					})
+					pendingSets = slices.DeleteFunc(set, func(n string) bool { return !strings.HasPrefix(n, meta.AttrOLHPendingPrefix) })
 				}
 			}
 			Expect(olhSets).To(Equal([]string{meta.AttrOLHIDTag}), "the head write sets the OLH tag again and none of the OLH attrs it read")
+			Expect(pendingSets).To(HaveLen(1), "and the pending attr of its own modification, which its link takes")
 			Expect(pendingAttrs(rec, "k")).To(BeEmpty())
 		})
 

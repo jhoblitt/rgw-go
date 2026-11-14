@@ -230,10 +230,16 @@ const (
 //     The null delete marker carries the OLH head as read as Expect, whose
 //     write tag, the null version's, or the one its OLH's first init gave a
 //     key without one, its init checks on the OLH head and its replay before
-//     it removes the null version's data, so a null write since refuses it;
-//     and no UnmodifiedSince: the class compares that with the null
-//     version's own entry and, finding it no older, would write nothing. A
-//     failed condition or Expect, or a version gone, is a skip.
+//     it removes the null version's data, so a null write whose head write
+//     lands after that read refuses it. A null write whose head write landed
+//     before it, its link still to come, carries its modification from that
+//     head write (nullInit), so the marker's condition waits on it and is
+//     evaluated on the write once it links, or the marker answers
+//     ConcurrentModification once its wait has passed (nullWriteInFlight):
+//     either is a skip. The marker carries no UnmodifiedSince: the class
+//     compares that with the null version's own entry and, finding it no
+//     older, would write nothing. A failed condition or Expect, or a version
+//     gone, is a skip.
 //
 // Then the notification of radosgw's ObjectExpirationCurrent and
 // LifecycleExpirationDelete (docs/differences.md, "Lifecycle removes an object

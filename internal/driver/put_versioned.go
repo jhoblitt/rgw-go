@@ -78,22 +78,39 @@ func (s *Store) condState(ctx context.Context, hw *headWrite, st *op.ObjectState
 // guards of the init it carries refused.
 var errOLHGuardRefused = errors.New("driver: the key's OLH changed after the write's condition was checked")
 
-// nullCondWrite reports whether hw over st, its head as read, is a
-// conditional write of the null version's data over the key's OLH head,
-// which writeNullVersion makes.
-func nullCondWrite(hw *headWrite, st *op.ObjectState) bool {
-	return hw.olhEpoch != nil && hw.key.Instance == "" && (hw.ifMatch != "" || hw.ifNoneMatch != "") && isOLHHead(st)
+// nullDataWrite reports whether hw over st, its head as read, is a write of
+// the null version's data over the key's OLH head, a versioned op whose
+// head write carries the init of its modification (nullInit).
+func nullDataWrite(hw *headWrite, st *op.ObjectState) bool {
+	return hw.olhEpoch != nil && hw.key.Instance == "" && isOLHHead(st)
 }
 
-// nullInit is the init of a modification that a conditional write of the
-// null version's data sends in its head write's op (writeNullAttempt), the
-// op olhInitModification sends on an existing head: guard is the
-// conditional init's guard, on the olh.info the condition's check read and,
-// while the wait allows it, on no pending attr; opTag and pending are the
-// modification's op tag and its pending attr's value; olhTag is the OLH tag
-// a head without one is given, nil for a head with one; and left is the OLH
-// head as the op leaves it, which a cancel of the modification is guarded on
-// and setOLH links under (olhLink.Inited).
+// nullCondWrite reports whether hw over st is a conditional write of the
+// null version's data over the key's OLH head, which writeNullVersion makes.
+func nullCondWrite(hw *headWrite, st *op.ObjectState) bool {
+	return nullDataWrite(hw, st) && (hw.ifMatch != "" || hw.ifNoneMatch != "")
+}
+
+// nullInit is the init of a modification that a write of the null
+// version's data over the key's OLH head sends in its head write's op, the
+// op olhInitModification sends on an existing head, so that its pending attr
+// stands from its head write to its link's replay: there a conditional
+// writer's attempt, a conditional delete marker's lifecycle's included,
+// waits on it (waitOLHPending) and then evaluates its condition on the
+// version the write made current, where radosgw's writer inits only after
+// its index completion
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3369-L3375 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8694-L8706 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3490-L3496 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9440-L9452 at v20.2.4).
+// The state it writes is radosgw's init's, a moment sooner. guard is a
+// conditional write's init's guard, on the olh.info the condition's check
+// read and, while the wait allows it, on no pending attr; an unconditional
+// write's is nil, its init guarded on the OLH tag alone, as radosgw's is.
+// opTag and pending are the modification's op tag and its pending attr's
+// value; olhTag is the OLH tag a head without one is given, nil for a head
+// with one; and left is the OLH head as the op leaves it, which a cancel of
+// the modification is guarded on and setOLH links under (olhLink.Inited).
 type nullInit struct {
 	guard   *olhCondGuard
 	opTag   string
@@ -102,8 +119,8 @@ type nullInit struct {
 	left    *op.ObjectState
 }
 
-// newNullInit is the init a conditional null write's head write over head,
-// the OLH head as the attempt followed it, carries, under guard. A head
+// newNullInit is the init a null write's head write over head, the OLH head
+// as the attempt read or followed it, carries, under guard. A head
 // without an OLH tag gets olhInitModification's fresh one, olh.info naming
 // itself and an empty olh.ver, as a plain object becoming versioned does.
 func (s *Store) newNullInit(head *op.ObjectState, guard *olhCondGuard) *nullInit {
@@ -129,14 +146,18 @@ func olhSelfInfo(head *op.ObjectState, r denc.Release) []byte {
 
 // addGuards adds to w, ahead of every other step of the head write, the
 // guards olhInitModification's op carries on st, the OLH head as read: its
-// OLH tag, or its having none, then in.guard. The OSD runs an op's steps in
-// order and applies all of them or none, so they see the head as it was
-// before the op, the head write's own pending attr not yet set.
+// OLH tag, or its having none, then in.guard when there is one. The OSD runs
+// an op's steps in order and applies all of them or none, so they see the
+// head as it was before the op, the head write's own pending attr not yet
+// set.
 func (in *nullInit) addGuards(w *radosclient.WriteOp, st *op.ObjectState, r denc.Release) {
 	if in.olhTag == nil {
 		guardOLHTag(w, st)
 	} else {
 		w.CmpXattr(meta.AttrOLHIDTag, radosclient.CmpEQ, nil)
+	}
+	if in.guard == nil {
+		return
 	}
 	w.CmpXattr(meta.AttrOLHInfo, radosclient.CmpEQ, in.guard.info)
 	if in.guard.noPending {

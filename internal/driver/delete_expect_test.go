@@ -807,6 +807,24 @@ var _ = Describe("DeleteObject with an expected state", func() {
 			settledOn(ctx, "")
 		})
 
+		// The conditions passed on the null version's entry, and the key's head
+		// held its data when the delete read it; a null write landing after that
+		// read replaces the head, so the unlink must not take what it finds.
+		It("answers a conditional delete ConcurrentModification when a null write lands between its read of the head and its unlink, keeping the write", func(ctx SpecContext) {
+			put(ctx, "v1")
+			suspend()
+			nullPut(ctx, "tag-old", "old")
+			before(inits, 1, func() { nullPut(ctx, "tag-new", "new") })
+			_, err := del(ctx, "null", op.DeleteParams{IfMatch: md5hex("old")})
+			concurrent(err)
+			settle(s)
+			Expect(olhHead().Data).To(Equal([]byte("new")), "the new null version's data")
+			_, ok := instanceEntry("")
+			Expect(ok).To(BeTrue(), "its instance entry")
+			Expect(listed()).To(Equal([]string{"", "v1"}))
+			settledOn(ctx, "")
+		})
+
 		// nullMarkerOverV1 is a suspended bucket whose current version is the
 		// null delete marker, over v1, and that marker's state read by its
 		// version.
@@ -1040,10 +1058,16 @@ var _ = Describe("DeleteObject with an expected state", func() {
 		// of the null version in the log, so the replay drops that removal and
 		// the delete succeeds: it came first, and the write's data survives.
 		DescribeTable("a null write after the marker's init and before its link ends current, with no marker",
-			func(ctx SpecContext, r denc.Release, linkFirst, alongside bool) {
+			func(ctx SpecContext, r denc.Release, linkFirst, alongside, conditional bool) {
 				open(ctx, r)
 				nullCurrent(ctx)
 				expect := head(ctx, "")
+				// A marker with conditions and no Expect takes the write tag of
+				// the head its attempt followed (olhLink.ExpectHead).
+				params := op.DeleteParams{Expect: expect}
+				if conditional {
+					params = op.DeleteParams{IfMatch: md5hex("old")}
+				}
 				var rw *rgwWriter
 				if linkFirst {
 					at(inits, 1, func() { nullPut(ctx, "tag-new", "new") })
@@ -1063,7 +1087,7 @@ var _ = Describe("DeleteObject with an expected state", func() {
 						}
 					})
 				}
-				res, err := del(ctx, "", op.DeleteParams{Expect: expect})
+				res, err := del(ctx, "", params)
 				want := []byte("new")
 				if linkFirst {
 					concurrent(err)
@@ -1083,11 +1107,15 @@ var _ = Describe("DeleteObject with an expected state", func() {
 				Expect(listed()).To(Equal([]string{"", "v1"}))
 				settledOn(ctx, "")
 			},
-			Entry("the null write linking first, on squid", denc.Squid, true, false),
-			Entry("the null write linking first, on tentacle", denc.Tentacle, true, false),
-			Entry("the marker linking first, on squid", denc.Squid, false, false),
-			Entry("the marker linking first, on tentacle", denc.Tentacle, false, false),
-			Entry("the marker linking first, another replay running alongside the marker's own", denc.Squid, false, true),
+			Entry("the null write linking first, on squid", denc.Squid, true, false, false),
+			Entry("the null write linking first, on tentacle", denc.Tentacle, true, false, false),
+			Entry("the marker linking first, on squid", denc.Squid, false, false, false),
+			Entry("the marker linking first, on tentacle", denc.Tentacle, false, false, false),
+			Entry("the marker linking first, another replay running alongside the marker's own", denc.Squid, false, true, false),
+			Entry("a marker with conditions, the null write linking first, on squid", denc.Squid, true, false, true),
+			Entry("a marker with conditions, the null write linking first, on tentacle", denc.Tentacle, true, false, true),
+			Entry("a marker with conditions, the marker linking first, on squid", denc.Squid, false, false, true),
+			Entry("a marker with conditions, the marker linking first, on tentacle", denc.Tentacle, false, false, true),
 		)
 
 		DescribeTable("another replay removes the refused null version before the re-link, which re-links nothing",
@@ -1243,10 +1271,11 @@ var _ = Describe("DeleteObject with an expected state", func() {
 			nullCurrent(ctx)
 			expect := head(ctx, "")
 			at(inits, 1, func() { nullPut(ctx, "tag-p1", "p1") })
-			// The inits are the marker's, P1's, then the epoch-0 re-link's. The
-			// delete of v1 moves the OLH entry's epoch past P2's, so a reset of
-			// P2's record and a link at its epoch would leave it non-current.
-			before(inits, 3, func() {
+			// The inits are the marker's, then the epoch-0 re-link's: P1's
+			// rides in its head write. The delete of v1 moves the OLH entry's
+			// epoch past P2's, so a reset of P2's record and a link at its
+			// epoch would leave it non-current.
+			before(inits, 2, func() {
 				nullPut(ctx, "tag-p2", "p2")
 				Expect(del(ctx, "v1", op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "v1"}))
 			})

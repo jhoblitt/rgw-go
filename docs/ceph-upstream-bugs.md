@@ -34198,7 +34198,8 @@ Every new entry adds its row to this table, in document order.
   for removal, with no OLH head; a PutObject of `k` without a version then
   answered 200, read back, and raised the bucket's stats to one object of
   5 bytes, while ListObjects and ListObjectVersions both listed nothing.
-  A plan task decides the repair.
+  Plan task V20, merged in [#600](https://github.com/jhoblitt/rgw-go/pull/600),
+  decides the repair.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task V18, 2026-11-14, in an emulator run of a delete
   between a key's first versioned write and its link; its consequence

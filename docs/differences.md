@@ -10923,7 +10923,9 @@ does the following.
   lands before its
   link](ceph-upstream-bugs.md#radosgws-versioned-putobject-answers-404-when-a-delete-of-its-version-lands-before-its-link)").
   Both requests did what they asked, the write first: what is stored is
-  what the delete leaves after a write that linked. rgw-go's `setOLH`
+  what the delete leaves after a write that linked, as long as the delete's
+  decision rests on the write's own state or on none (a delete that
+  carries conditions is below). rgw-go's `setOLH`
   (`internal/driver/olh.go`) answers that refusal success, removing
   nothing, when the version's entry, read as the class reads it for a
   version's data, is gone and the version's head no longer holds the write
@@ -10932,11 +10934,12 @@ does the following.
   delete, whose removal queued them for the GC. Through S3 only the null
   version meets this, on a suspended bucket whose key is versioned: a
   DeleteObject or DeleteObjects key without a versionId, whose null delete
-  marker replaces the null version, or one naming `versionId=null`. The
-  latter reaches it from the write's head write on, too, where an earlier
-  null version gives it an entry to name: the class turns the write's
-  completion, older than the delete's removal, into a cancel that removes
-  the entry
+  marker replaces the null version, lifecycle's expiration of the current
+  version, which writes the same marker, or a delete naming
+  `versionId=null`. The latter reaches it from the write's head write on,
+  too, where an earlier null version gives it an entry to name: the class
+  turns the write's completion, older than the delete's removal, into a
+  cancel that removes the entry
   ([cls_rgw.cc:1082-1109](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1082-L1109),
   [cls_rgw.cc:1217-1244](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1217-L1244)).
   A version id rgw-go generates is not listed before its link, and rgw-go
@@ -10947,12 +10950,61 @@ does the following.
   other link failure keeps its answer: an ENOENT while the version's entry
   stays; an entry gone while the head still holds the write; a named
   version's conditional link, whose condition is known to hold only for a
-  link that lands; a lifecycle transition's, whose success would notify a
-  transition of a version that is gone; and the link of a
-  CompleteMultipartUpload that finishes an earlier completion, which
-  answers InternalError, as it answers when it finds the version's entry
-  gone before its link (entry "A CompleteMultipartUpload records itself on
-  the meta object before its head write").
+  link that lands; a lifecycle transition's, whose success would run
+  `keepCurrent` and, on Tentacle, notify a transition of a version that is
+  gone; and the link of a CompleteMultipartUpload that finishes an earlier
+  completion, which answers InternalError, as it answers when it finds the
+  version's entry gone before its link (entry "A CompleteMultipartUpload
+  records itself on the meta object before its head write").
+
+  A delete that carries conditions on the version it replaces has no
+  write-first order: If-Match, `x-amz-if-match-size` or
+  `x-amz-if-match-last-modified-time`, or lifecycle's expiration, whose
+  marker carries the listed version's ETag and mtime. Written first, the
+  write would have failed them; deleted first, it would have stood. rgw-go
+  does not let such a delete take a write that is in flight:
+  - Every write of the null version's data over the key's OLH head, the
+    unconditional ones too, sends the init of its pending modification in
+    its head write's op, as a conditional write does (entry "A conditional
+    write to a versioned bucket commits only if its condition held when it
+    linked"), where radosgw inits after the index completion
+    ([rgw_rados.cc:3369-3375](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3369-L3375) and
+    [rgw_rados.cc:8694-8706](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8694-L8706) at v19.2.7,
+    [rgw_rados.cc:3490-3496](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3490-L3496) and
+    [rgw_rados.cc:9440-9452](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9440-L9452) at v20.2.4).
+    The pending attr stands from the head write to the link, and it is the
+    one `olh_init_modification_impl` sets, its name and value alike, a
+    moment sooner
+    ([rgw_rados.cc:7799-7897](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7799-L7897),
+    [rgw_rados.cc:8462-8560](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8462-L8560)).
+    The init is guarded on the OLH tag alone, as radosgw's is.
+  - A conditional null delete marker, lifecycle's included, whose attempt
+    follows such a head write waits on that pending attr within the bound
+    and checks its conditions on the write once it links, as a delete after
+    the write would. One whose wait is spent with the write still in flight
+    answers ConcurrentModification with nothing written
+    (`nullWriteInFlight`, `internal/driver/olh_cond.go`): DeleteObject
+    renders it as a lost race, 204 with neither header
+    ([rgw_op.cc:5305-5307](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5305-L5307),
+    [rgw_op.cc:5701-5703](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5701-L5703)),
+    a DeleteObjects key reports it as the key's error, and lifecycle skips
+    the key. A marker whose init came before the write's head write waits
+    on nothing; its replay removes the null data only under the write tag
+    of the head its attempt followed, so the write is kept (entry "A
+    conditional delete marker is checked against the version current when
+    it links").
+  - A delete of `versionId=null` whose conditions compare the null
+    version's data, with an ETag, a size or a last-modified time, checks
+    them on the version's index entry, and then requires the key's OLH head
+    to hold that data, by its ETag. It answers ConcurrentModification with
+    nothing written when the head holds other data, a write's head write
+    having landed before its index completion (`nullDataJudged`,
+    `internal/driver/delete_versioned.go`). The head's write tag then
+    guards the unlink and its replay's removal, so a write landing after
+    that read is refused the same way.
+
+  The windows that entry "A conditional delete marker is checked against
+  the version current when it links" names stay.
 - **A versioned link or unlink that logs nothing removes its own pending
   attr.** radosgw's `set_olh` records a pending modification on the key's
   OLH head before its link, and only the replay of the link's log entry
@@ -11094,14 +11146,29 @@ does the following.
   removal of its data
   ([cls_rgw.cc:1712-1731](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1712-L1731),
   [cls_rgw.cc:1853-1872](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1853-L1872)),
-  which no unlink restores. So it is not checked after its link: its init's
-  guard serializes it against rgw-go's conditional writers alone, and a
-  radosgw writer, or an unconditional rgw-go one, that links between its
-  init and its link stays under the marker, as through radosgw. For the
-  same reason no link of the null version is checked after it; what the
-  null version's data adds, its head write carrying its init before its
-  link, is in entry "A conditional write to a versioned bucket commits
-  only if its condition held when it linked".
+  which no unlink restores. So it is not checked after its link, and the
+  null data it takes is guarded instead. A write of the null version's
+  data from rgw-go carries its init in its head write, so a marker whose
+  attempt follows that head write waits on the write's pending attr and
+  checks its conditions on the write once it links (entry "A versioned
+  write whose version a delete removes before its link succeeds"), and the
+  marker's init is guarded against rgw-go's conditional writers. A null
+  write that reaches the head after the attempt read it, radosgw's and
+  rgw-go's unconditional writers alike, is not waited for, and a marker
+  with conditions and no `DeleteParams.Expect` takes the write tag of the
+  head each attempt follows in place of one (`olhLink.ExpectHead`,
+  entry "A null delete marker can be conditional on the null version it
+  replaces"): its init compares that tag, and the replay of its link,
+  which removes whatever null data the head holds, removes it only under
+  that tag. The marker then either answers ConcurrentModification with the
+  write standing, or, when its link came first, succeeds with the write
+  linking after it, which radosgw's marker does not: it removes the write.
+  A version of another instance that links between the marker's init and
+  its link stays under the marker, as through radosgw. For the same reason
+  no link of the null version is checked after it; what the null version's
+  data adds, its head write carrying its init before its link, is in entry
+  "A conditional write to a versioned bucket commits only if its condition
+  held when it linked".
 
   When no version is current, a delete marker being current or no link
   having reached the key's head, the conditions are checked against the
@@ -11152,9 +11219,14 @@ does the following.
   that replay refuses is answered as the entry "A refused versioned
   removal re-links the version, unless a newer null write owns the null
   key" says. The delete runs its own replay even when told to skip it,
-  since the guard is in that replay. On a bucket whose versioning is
-  enabled the marker removes nothing and `Expect` is not read. The
-  windows that entry names stay. The object store's delete does this;
+  since the guard is in that replay. A marker with conditions and no
+  `Expect`, which is every conditional S3 delete of a suspended bucket's
+  key that names no version, guards the same way on the write tag of the OLH head each of its
+  attempts follows, the head its condition was evaluated on (`ExpectHead`):
+  a null write that reached the head after the attempt read it refuses the
+  init or the replay's removal, and the write stands. On a bucket whose
+  versioning is enabled the marker removes nothing and `Expect` is not
+  read. The windows that entry names stay. The object store's delete does this;
   the S3 deletes pass `Expect` on a bucket with object lock ("A delete that
   removes a version for good on an object-lock bucket checks its lock").
 - **A refused versioned removal re-links the version, unless a newer null
@@ -11522,7 +11594,21 @@ does the following.
     unlinked too and the listing's error answered, a 5xx. An unlink whose
     outcome is unknown answers its error, and one that fails leaves the
     version linked and answers 500 InternalError.
-  - Unconditional writes keep radosgw's guards exactly.
+  - Unconditional writes keep radosgw's guards exactly, but for the init
+    of a write of the null version's data over the key's OLH head. That
+    write sends its init in its head write's op too, guarded on the OLH tag
+    alone, as radosgw's init is, so that its pending attr stands from its
+    head write to its link (entry "A versioned write whose version a delete
+    removes before its link succeeds"). radosgw's head write compares the
+    write tag alone and sets the OLH tag it read again
+    ([rgw_rados.cc:3201-3203](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3201-L3203) and
+    [rgw_rados.cc:3223-3225](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3223-L3225) at v19.2.7,
+    [rgw_rados.cc:3298-3300](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3298-L3300) and
+    [rgw_rados.cc:3320-3322](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3320-L3322) at v20.2.4),
+    so the one race rgw-go's op adds a refusal to is a head replaced since
+    the write read it, under an OLH tag the write did not read: the write
+    is answered as a lost race on the write tag is, success with nothing
+    written, where radosgw writes its data over the new head.
 
   The check after the link is conservative: a write whose condition held
   when it linked answers 412 when the version its condition rested on is
@@ -13361,8 +13447,15 @@ the correct S3 result, in RADOS state radosgw reads as its own.
     version's, or, on a key with no null data, the one the key's first OLH
     init gave it, so a null write or an attr write since refuses the marker
     ("A null delete marker can be conditional on the null version it
-    replaces"). It carries no `unmod_since`: the class compares that with the
-    null version's own entry and, finding it no older, would write nothing.
+    replaces"). A null write whose head write landed before that read, its
+    link still to come, carries its pending modification in the head write
+    ("A versioned write whose version a delete removes before its link
+    succeeds"): the marker waits on it and checks its conditions, the listed
+    version's ETag among them, on the write once it links, and answers
+    ConcurrentModification, a skip, once its wait is spent with the write
+    still in flight. It carries no `unmod_since`: the class compares that
+    with the null version's own entry and, finding it no older, would write
+    nothing.
   - A delete marker is removed by its version only while its index entry is
     a marker at the listed versioned_epoch, which tells one marker from
     another, and its removal carries the marker as read again, its

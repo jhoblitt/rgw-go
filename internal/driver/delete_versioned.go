@@ -56,10 +56,12 @@ func (s *Store) deleteVersioned(ctx context.Context, rec *op.BucketRecord, key m
 // it linked: the check after the link requires the version they passed on,
 // or the current delete marker and, when they passed on the null version's
 // data in the OLH head, the null version, still listed, and no other version
-// or marker linked in between (checkOLHLink). A null marker gets the init's guard
-// alone, which holds against rgw-go's conditional writers only: its link
-// replaces the null version's list entry, which no unlink restores
-// (prepareOLHAttempt). With no version current, a delete marker or a head no
+// or marker linked in between (checkOLHLink). A null marker is not checked
+// after its link, which replaces the null version's list entry and logs its
+// data's removal, and no unlink restores either: it gets the init's guard,
+// which holds it against the writers of the null version's data that init
+// before their link, and the replay's guard on the data (prepareOLHAttempt,
+// olhLink.ExpectHead). With no version current, a delete marker or a head no
 // link has reached, the conditions are checked against the key's head as
 // read without following it, the OLH head object, as radosgw's are
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5882-L5897 at v19.2.7,
@@ -78,7 +80,10 @@ func (s *Store) deleteVersioned(ctx context.Context, rec *op.BucketRecord, key m
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1853-L1872 and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1947-L1951 at v20.2.4).
 // The replay runs whatever p.SkipOLHUpdate says, as the guard is in it. A
-// removal it refuses is answered as refusedRemoval says. On an enabled
+// removal it refuses is answered as refusedRemoval says. A marker with
+// conditions and no Expect takes the write tag of the head each attempt
+// follows instead (olhLink.ExpectHead), so it removes only the null data its
+// condition was evaluated on, or none. On an enabled
 // bucket the marker removes nothing, and p.Expect is the version its caller
 // read as current, which the marker's condition requires current when the
 // marker links (deleteMarkerCondition).
@@ -103,18 +108,21 @@ func (s *Store) writeDeleteMarker(ctx context.Context, rec *op.BucketRecord, key
 		SkipUpdate:   p.SkipOLHUpdate,
 		Cond:         s.deleteMarkerCondition(p, current),
 	}
-	if suspended && p.Expect != nil {
+	switch {
+	case suspended && p.Expect != nil:
 		tag, err := s.nullMarkerExpect(ctx, rec, key, p.Expect)
 		if err != nil {
 			return nil, err
 		}
 		link.ExpectTag, link.SkipUpdate = tag, false
+	case suspended && link.Cond != nil:
+		link.ExpectHead, link.SkipUpdate = true, false
 	}
 	err := s.setOLH(ctx, rec, marker, link)
 	switch {
 	case err == nil:
 		return res, nil
-	case link.ExpectTag != nil && finalRefusal(err):
+	case (link.ExpectTag != nil || link.ExpectHead) && finalRefusal(err):
 		return nil, s.refusedRemoval(ctx, rec, key, err, s.relistNull)
 	}
 	return nil, err
@@ -237,7 +245,7 @@ func headNullData(head *op.ObjectState, p op.DeleteParams) bool {
 	if !holdsNullData(head) {
 		return false
 	}
-	return (p.IfMatch != "" && p.IfMatch != "*") || p.IfMatchSize != nil || !p.IfMatchLastModified.IsZero()
+	return comparesData(p)
 }
 
 // removeVersion is the versioned branch for a key that names a version
@@ -266,8 +274,10 @@ func headNullData(head *op.ObjectState, p op.DeleteParams) bool {
 // written; the unlink's replay then removes the head only under the write
 // tag it carries, running whatever p.SkipOLHUpdate says. For the null delete
 // marker the unlink's op compares the marker's instance entry with the raw
-// entry this read returned (olhMarkerCmp). A removal the replay refuses is
-// answered as refusedRemoval says.
+// entry this read returned (olhMarkerCmp). Without p.Expect, conditions on
+// the null version's data must find that data in the key's OLH head
+// (nullDataJudged), its write tag then guarding the removal as Expect's
+// does. A removal the replay refuses is answered as refusedRemoval says.
 func (s *Store) removeVersion(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) (*op.DeleteObjectResult, error) {
 	v := key
 	null := key.Instance == meta.NullInstance
@@ -295,6 +305,12 @@ func (s *Store) removeVersion(ctx context.Context, rec *op.BucketRecord, key met
 		if u.Marker && v.Instance == "" {
 			u.MarkerCmp = &olhMarkerCmp{bi: bi, en: en}
 		}
+	} else if null && en.Flags&rgw.FlagDeleteMarker == 0 && comparesData(p) {
+		tag, jerr := s.nullDataJudged(ctx, rec, v, en)
+		if jerr != nil {
+			return nil, fmt.Errorf("deleting %s: %w", versionName(rec, key), jerr)
+		}
+		u.ExpectTag, u.SkipUpdate = tag, false
 	}
 	_, olhTag, err := s.unlinkVersion(ctx, rec, v, u)
 	switch {
@@ -358,6 +374,37 @@ func (s *Store) expectRemoval(ctx context.Context, rec *op.BucketRecord, v meta.
 		return nil, fmt.Errorf("%w: its head's write tag is not the one expected", op.ErrConcurrentModification)
 	}
 	return tag, nil
+}
+
+// comparesData reports whether p's conditions compare a version's data: an
+// If-Match with an ETag, x-amz-if-match-size or
+// x-amz-if-match-last-modified-time.
+func comparesData(p op.DeleteParams) bool {
+	return p.IfMatch != "" && p.IfMatch != "*" || p.IfMatchSize != nil || !p.IfMatchLastModified.IsZero()
+}
+
+// nullDataJudged checks, for a delete of v, the null version of rec's
+// bucket, whose conditions passed on en, its index entry, that the key's OLH
+// head holds en's data, by its ETag, and returns the head's write tag, which
+// the unlink then compares on the head and the replay's removal is guarded
+// on (olhUnlink.ExpectTag). A null write's head write lands on the OLH head
+// before its index completion, so in between the entry is the previous null
+// version's while the head holds the write's data, which the removal would
+// take on the strength of the previous one's conditions; the class then
+// cancels the write's completion as older than the removal's
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1082-L1109 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1217-L1244 at v20.2.4).
+// A head that holds other data is ConcurrentModification with nothing
+// written, as an Expect the head no longer matches is (expectRemoval).
+func (s *Store) nullDataJudged(ctx context.Context, rec *op.BucketRecord, v meta.ObjKey, en rgw.DirEntry) ([]byte, error) {
+	head, err := s.readOLHHead(ctx, rec, v)
+	if err != nil {
+		return nil, fmt.Errorf("reading its head: %w", err)
+	}
+	if !head.Exists || rgwBlStr(head.Attrs[meta.AttrETag]) != en.Meta.ETag {
+		return nil, fmt.Errorf("%w: the key's head holds other data than the null version its conditions were checked on", op.ErrConcurrentModification)
+	}
+	return expectTag(head), nil
 }
 
 // markerRemovalTag is the write tag a delete marker's unlink guards its

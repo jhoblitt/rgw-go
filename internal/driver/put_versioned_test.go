@@ -696,6 +696,37 @@ var _ = Describe("a versioned PutObject", func() {
 			Entry("If-Match the current version's ETag, with radosgw's write-tag guard", suspendedCurrent, md5hex("one"), "", true),
 		)
 
+		It("sends an unconditional write's init in its head write's op too, guarded on the OLH tag alone, and links under its op tag", func(ctx SpecContext) {
+			suspendedCurrent(ctx)
+			before := olhHead().Xattrs
+			c.ResetCounters()
+			_, err := put(ctx, "", "new", op.PutParams{Tag: "tag-null"})
+			Expect(err).NotTo(HaveOccurred())
+			writes := c.WritesTo(testDataPool, "", olhOID)
+			Expect(writes).To(HaveLen(3), "the assume-no-entry pass's exclusive create, the head write carrying the init, then the replay's apply")
+			Expect(writes[0].Steps()[0]).To(Equal(&radosclient.CreateStep{Exclusive: true}))
+			Expect(initsOLHSteps(writes[2].Steps()) || writesDataSteps(writes[2].Steps())).To(BeFalse())
+			steps := writes[1].Steps()
+			Expect(initsOLHSteps(steps)).To(BeTrue(), "the head write records the pending modification")
+			Expect(writesDataSteps(steps)).To(BeTrue())
+			Expect(steps[:3]).To(Equal([]radosclient.Step{
+				&radosclient.CmpXattrStep{Name: meta.AttrOLHIDTag, Op: radosclient.CmpEQ, Value: before[meta.AttrOLHIDTag]},
+				&radosclient.CmpXattrStep{Name: meta.AttrIDTag, Op: radosclient.CmpEQ, Value: before[meta.AttrIDTag]},
+				&radosclient.CreateStep{Exclusive: false},
+			}), "the init's guard on the OLH tag, as radosgw's init's, then radosgw's write-tag guard and the head write")
+			var initTag string
+			for _, st := range steps {
+				if x, ok := st.(*radosclient.SetXattrStep); ok && strings.HasPrefix(x.Name, meta.AttrOLHPendingPrefix) {
+					initTag = strings.TrimPrefix(x.Name, meta.AttrOLHPendingPrefix)
+				}
+			}
+			linked := shardWrites("bucket_link_olh")
+			Expect(linked).To(HaveLen(1))
+			Expect(linkOpTag(linked[0])).To(Equal(initTag), "the link is made under the init's op tag")
+			Expect(pending()).To(BeEmpty())
+			Expect(target().Target.Key).To(Equal(version("")))
+		})
+
 		It("folds the init of an OLH head without an OLH tag too, guarded on its having none, as olh_init_modification inits one", func(ctx SpecContext) {
 			plain := testBucket(putBucketID, 11)
 			_, err := s.PutObject(ctx, plain, version(""), strings.NewReader("old"), op.PutParams{Attrs: attrs, Size: 3, Tag: "tag-old"})

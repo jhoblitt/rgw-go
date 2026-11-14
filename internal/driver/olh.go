@@ -50,12 +50,15 @@ const (
 // when not nil, is the user.rgw.idtag the OLH head must hold, absent read as
 // empty, checked on the head each attempt reads and in its init, and the
 // write tag the replay's removal of a version the link logged for removal
-// must find. Inited, when set, is a modification the caller inited on the
-// OLH head in the op that wrote the version's head (writeNullVersion): the
-// first attempt links under its op tag, with no init of its own, when the
-// head it reads still holds that modification's pending attr; a link with a
-// Cond is refused, as that attempt checks nothing. Relink, when set, links
-// a version already written and once listed (olhRelink). KeepVersion keeps
+// must find. ExpectHead, for a conditional null delete marker, makes that the
+// write tag of the OLH head each attempt followed, the one its condition was
+// evaluated on, in place of a caller's ExpectTag. Inited, when set, is a
+// modification the caller inited on the OLH head in the op that wrote the
+// version's head (writeNullVersion): the first attempt links under its op
+// tag, with no init of its own, when the head it reads still holds that
+// modification's pending attr; a link with a Cond is refused, as that
+// attempt checks nothing. Relink, when set, links a version already written
+// and once listed (olhRelink). KeepVersion keeps
 // the version when no link of it lands, for a caller whose version names
 // data it must not lose, a completion's parts; a link the check after it
 // voids is still unlinked. WriteTag, when not nil, is the user.rgw.idtag the
@@ -70,6 +73,7 @@ type olhLink struct {
 	SkipUpdate    bool
 	Cond          olhCondition
 	ExpectTag     []byte
+	ExpectHead    bool
 	Inited        *olhInited
 	Relink        *olhRelink
 	KeepVersion   bool
@@ -233,6 +237,12 @@ func (s *Store) stopsAfterLink() bool { return olhStopAfterLink != nil && olhSto
 //     checked after it lands, before the replay (checkOLHLink). Each backoff
 //     of a conditional link waiting for other writers is one of the
 //     olhAttempts.
+//   - p.ExpectHead takes the write tag of the head an attempt followed, after
+//     its condition was evaluated on it, as that attempt's expected tag: the
+//     init compares it, so a write that reached the head since sends the
+//     attempt round again to evaluate the condition anew, and the replay
+//     removes the null version's data the link logged only under it, so a
+//     null write that reaches the head after the init is kept.
 //   - p.Inited stands for the first attempt's init while the head holds its
 //     pending attr (takeInitedTag); a later attempt inits its own. One the
 //     first attempt never took, setOLH ending before it, is canceled.
@@ -282,6 +292,7 @@ func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKe
 			return beforeInit(err)
 		}
 		var a olhAttempt
+		expect := p.ExpectTag
 		opTag, tagged := takeInitedTag(head, &inited), true
 		if opTag == "" {
 			a, err = s.prepareOLHAttempt(ctx, idx, head, key, p, &wait)
@@ -291,9 +302,12 @@ func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKe
 			case a.wait:
 				continue
 			}
+			if p.ExpectHead {
+				expect = expectTag(head)
+			}
 			found := head.Exists
 			tagged = olhTagged(head)
-			opTag, _, err = s.olhInitModification(ctx, head, a.guard, p.ExpectTag)
+			opTag, _, err = s.olhInitModification(ctx, head, a.guard, expect)
 			switch {
 			case errors.Is(err, radosclient.ErrCanceled), found && errors.Is(err, radosclient.ErrNotFound):
 				continue
@@ -308,7 +322,7 @@ func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKe
 					return cerr
 				}
 			}
-			expect := olhReplayTag(p.ExpectTag, head, tagged)
+			expect = olhReplayTag(expect, head, tagged)
 			var rm *olhRemoval
 			if p.DeleteMarker && key.Instance == "" && p.Relink == nil && holdsNullData(head) {
 				rm = loggedRemoval(key, head, expect)
