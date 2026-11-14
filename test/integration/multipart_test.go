@@ -145,21 +145,22 @@ func mpClient(url string) *awss3.Client {
 	})
 }
 
-// createUpload starts an upload of key through c.
-func createUpload(ctx context.Context, c *awss3.Client, key string) string {
+// createUpload starts an upload of key in bucket through c, into the
+// storage class class, or the bucket's default for "".
+func createUpload(ctx context.Context, c *awss3.Client, bucket, key string, class s3types.StorageClass) string {
 	GinkgoHelper()
-	out, err := c.CreateMultipartUpload(ctx, &awss3.CreateMultipartUploadInput{Bucket: aws.String(mpBucket), Key: aws.String(key)})
+	out, err := c.CreateMultipartUpload(ctx, &awss3.CreateMultipartUploadInput{Bucket: aws.String(bucket), Key: aws.String(key), StorageClass: class})
 	Expect(err).NotTo(HaveOccurred(), "CreateMultipartUpload %s", key)
 	id := aws.ToString(out.UploadId)
 	Expect(id).To(MatchRegexp(uploadIDShape), "%s's upload id", key)
 	return id
 }
 
-// uploadPart uploads body as part n of upload id of key through c.
-func uploadPart(ctx context.Context, c *awss3.Client, key, id string, n int32, body []byte) s3types.CompletedPart {
+// uploadPart uploads body as part n of upload id of key in bucket through c.
+func uploadPart(ctx context.Context, c *awss3.Client, bucket, key, id string, n int32, body []byte) s3types.CompletedPart {
 	GinkgoHelper()
 	out, err := c.UploadPart(ctx, &awss3.UploadPartInput{
-		Bucket: aws.String(mpBucket), Key: aws.String(key), UploadId: aws.String(id), PartNumber: aws.Int32(n),
+		Bucket: aws.String(bucket), Key: aws.String(key), UploadId: aws.String(id), PartNumber: aws.Int32(n),
 		Body: bytes.NewReader(body), ContentLength: aws.Int64(int64(len(body))),
 	})
 	Expect(err).NotTo(HaveOccurred(), "UploadPart %s part %d", key, n)
@@ -168,28 +169,28 @@ func uploadPart(ctx context.Context, c *awss3.Client, key, id string, n int32, b
 }
 
 // uploadParts uploads bodies as parts 1 to len(bodies) of upload id.
-func uploadParts(ctx context.Context, c *awss3.Client, key, id string, bodies [][]byte) []s3types.CompletedPart {
+func uploadParts(ctx context.Context, c *awss3.Client, bucket, key, id string, bodies [][]byte) []s3types.CompletedPart {
 	GinkgoHelper()
 	parts := make([]s3types.CompletedPart, 0, len(bodies))
 	for i, b := range bodies {
-		parts = append(parts, uploadPart(ctx, c, key, id, int32(i+1), b)) //nolint:gosec // a handful of parts
+		parts = append(parts, uploadPart(ctx, c, bucket, key, id, int32(i+1), b)) //nolint:gosec // a handful of parts
 	}
 	return parts
 }
 
-// completeUpload completes upload id of key through c with parts.
-func completeUpload(ctx context.Context, c *awss3.Client, key, id string, parts []s3types.CompletedPart) (*awss3.CompleteMultipartUploadOutput, error) {
+// completeUpload completes upload id of key in bucket through c with parts.
+func completeUpload(ctx context.Context, c *awss3.Client, bucket, key, id string, parts []s3types.CompletedPart) (*awss3.CompleteMultipartUploadOutput, error) {
 	return c.CompleteMultipartUpload(ctx, &awss3.CompleteMultipartUploadInput{
-		Bucket: aws.String(mpBucket), Key: aws.String(key), UploadId: aws.String(id),
+		Bucket: aws.String(bucket), Key: aws.String(key), UploadId: aws.String(id),
 		MultipartUpload: &s3types.CompletedMultipartUpload{Parts: parts},
 	})
 }
 
 // mustComplete is completeUpload, which must succeed with the ETag the
 // bodies make.
-func mustComplete(ctx context.Context, c *awss3.Client, key, id string, parts []s3types.CompletedPart, bodies ...[]byte) string {
+func mustComplete(ctx context.Context, c *awss3.Client, bucket, key, id string, parts []s3types.CompletedPart, bodies ...[]byte) string {
 	GinkgoHelper()
-	out, err := completeUpload(ctx, c, key, id, parts)
+	out, err := completeUpload(ctx, c, bucket, key, id, parts)
 	Expect(err).NotTo(HaveOccurred(), "CompleteMultipartUpload %s", key)
 	etag := mpETag(bodies...)
 	Expect(aws.ToString(out.ETag)).To(Equal(`"`+etag+`"`), "%s's completed ETag", key)
@@ -404,16 +405,19 @@ func expectRadosgwReads(ctx context.Context, key, etag string, body []byte) {
 	Expect(got).To(Equal(body), "%s read back through radosgw", key)
 }
 
-// expectRGWGoReads requires rgw-go to serve key as the object body with
-// ETag etag.
-func expectRGWGoReads(ctx context.Context, c *awss3.Client, key, etag string, body []byte) {
+// expectReads requires a GET of key in bucket through c, a client of the
+// gateway who, to serve body with ETag etag. It compares the bytes by their
+// MD5, so that a mismatch of a large body fails with a readable message.
+func expectReads(ctx context.Context, c *awss3.Client, who, bucket, key, etag string, body []byte) {
 	GinkgoHelper()
-	out, err := c.GetObject(ctx, &awss3.GetObjectInput{Bucket: aws.String(mpBucket), Key: aws.String(key)})
-	Expect(err).NotTo(HaveOccurred(), "GetObject %s through rgw-go", key)
+	out, err := c.GetObject(ctx, &awss3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	Expect(err).NotTo(HaveOccurred(), "GetObject %s/%s through %s", bucket, key, who)
 	got, err := io.ReadAll(out.Body)
-	Expect(errors.Join(err, out.Body.Close())).NotTo(HaveOccurred(), "reading %s through rgw-go", key)
-	Expect(aws.ToString(out.ETag)).To(Equal(`"`+etag+`"`), "rgw-go's ETag of %s", key)
-	Expect(got).To(Equal(body), "%s read back through rgw-go", key)
+	Expect(errors.Join(err, out.Body.Close())).NotTo(HaveOccurred(), "reading %s/%s through %s", bucket, key, who)
+	Expect(aws.ToInt64(out.ContentLength)).To(BeEquivalentTo(len(body)), "%s's Content-Length of %s", who, key)
+	Expect(got).To(HaveLen(len(body)), "the bytes %s read of %s", who, key)
+	Expect(md5Hex(got)).To(Equal(md5Hex(body)), "the MD5 of what %s read of %s", who, key)
+	Expect(aws.ToString(out.ETag)).To(Equal(`"`+etag+`"`), "%s's ETag of %s", who, key)
 }
 
 // expectMultipartObject requires radosgw-admin object stat of key to show
@@ -566,10 +570,10 @@ var _ = Describe("the multipart oracle against radosgw and radosgw-admin", Order
 
 	It("1: serves through radosgw an upload rgw-go writes", func(ctx SpecContext) {
 		const key = "k1"
-		id := createUpload(ctx, viaGo, key)
+		id := createUpload(ctx, viaGo, mpBucket, key, "")
 		bodies := [][]byte{randBytes(8 * mib), randBytes(8 * mib), randBytes(4 * mib)}
-		parts := uploadParts(ctx, viaGo, key, id, bodies)
-		etag := mustComplete(ctx, viaGo, key, id, parts, bodies...)
+		parts := uploadParts(ctx, viaGo, mpBucket, key, id, bodies)
+		etag := mustComplete(ctx, viaGo, mpBucket, key, id, parts, bodies...)
 
 		expectRadosgwReads(ctx, key, etag, slices.Concat(bodies...))
 		expectMultipartObject(ctx, rec, key, etag, key+"."+id, map[uint64]mpRule{
@@ -587,9 +591,9 @@ var _ = Describe("the multipart oracle against radosgw and radosgw-admin", Order
 
 	It("2: completes through rgw-go an upload radosgw starts", func(ctx SpecContext) {
 		const key = "k2"
-		id := createUpload(ctx, viaRGW, key)
+		id := createUpload(ctx, viaRGW, mpBucket, key, "")
 		bodies := [][]byte{randBytes(6 * mib), randBytes(6 * mib)}
-		parts := uploadParts(ctx, viaRGW, key, id, bodies)
+		parts := uploadParts(ctx, viaRGW, mpBucket, key, id, bodies)
 
 		lp := expectSameListing(ctx, rgwgo.url, "ListParts", "/"+mpBucket+"/"+key+"?uploadId="+id)
 		Expect(lp).To(ContainSubstring("<StorageClass>STANDARD</StorageClass>"), "rgw-go's ListParts")
@@ -610,7 +614,7 @@ var _ = Describe("the multipart oracle against radosgw and radosgw-admin", Order
 		Expect(aws.ToString(u.Initiator.ID)).To(Equal(alice().ID()), "rgw-go's ListMultipartUploads initiator")
 		Expect(aws.ToString(u.Owner.ID)).To(Equal(alice().ID()), "rgw-go's ListMultipartUploads owner")
 
-		etag := mustComplete(ctx, viaGo, key, id, parts, bodies...)
+		etag := mustComplete(ctx, viaGo, mpBucket, key, id, parts, bodies...)
 		expectRadosgwReads(ctx, key, etag, slices.Concat(bodies...))
 		expectMultipartObject(ctx, rec, key, etag, key+"."+id, map[uint64]mpRule{
 			0: {StartPartNum: 1, StartOfs: 0, PartSize: 6 * mib, StripeMaxSize: 4 * mib},
@@ -665,7 +669,7 @@ var _ = Describe("the multipart oracle against radosgw and radosgw-admin", Order
 				Expect(aws.ToString(p.ChecksumCRC32)).To(Equal(crc32Armor(cbodies[i])), "rgw-go's ListParts checksum of part %d", i+1)
 			}
 			Expect(metaInfo(ctx, metaOID(rec, ckey, cid)).CksumType).NotTo(BeZero(), "the checksum type radosgw stored with the upload")
-			cout, err := completeUpload(ctx, viaGo, ckey, cid, cparts)
+			cout, err := completeUpload(ctx, viaGo, mpBucket, ckey, cid, cparts)
 			Expect(err).NotTo(HaveOccurred(), "CompleteMultipartUpload of a CRC32 upload through rgw-go")
 			cetag := mpETag(cbodies...)
 			Expect(aws.ToString(cout.ETag)).To(Equal(`"`+cetag+`"`), "%s's completed ETag", ckey)
@@ -698,7 +702,7 @@ var _ = Describe("the multipart oracle against radosgw and radosgw-admin", Order
 				HaveField("ChecksumCRC32", HaveValue(Equal(want))), HaveField("ChecksumType", Equal(s3types.ChecksumTypeFullObject)),
 			), "rgw-go's checksum-mode HEAD of the object it completed")
 			tid, tparts := crc32Upload(twinKey)
-			mustComplete(ctx, viaRGW, twinKey, tid, tparts, cbodies...)
+			mustComplete(ctx, viaRGW, mpBucket, twinKey, tid, tparts, cbodies...)
 			theirs := headCksum(ctx, rec, twinKey)
 			Expect(theirs.Type).To(Equal(cksum.CRC32), "the checksum type of radosgw's completion")
 			Expect(stored).To(Equal(theirs), "rgw-go's completed checksum record against radosgw's of the same parts")
@@ -708,9 +712,9 @@ var _ = Describe("the multipart oracle against radosgw and radosgw-admin", Order
 
 	It("3: completes through radosgw an upload rgw-go starts", func(ctx SpecContext) {
 		const key = "k3"
-		id := createUpload(ctx, viaGo, key)
+		id := createUpload(ctx, viaGo, mpBucket, key, "")
 		bodies := [][]byte{randBytes(6 * mib), randBytes(6 * mib)}
-		parts := uploadParts(ctx, viaGo, key, id, bodies)
+		parts := uploadParts(ctx, viaGo, mpBucket, key, id, bodies)
 
 		moid := metaOID(rec, key, id)
 		Expect(metaObjects(ctx, rec)).To(ContainElement(moid), "the meta object in the data-extra pool")
@@ -731,8 +735,8 @@ var _ = Describe("the multipart oracle against radosgw and radosgw-admin", Order
 		Expect(aws.ToString(u.Initiator.ID)).To(Equal(alice().ID()), "radosgw's ListMultipartUploads initiator")
 		Expect(aws.ToString(u.Owner.ID)).To(Equal(alice().ID()), "radosgw's ListMultipartUploads owner")
 
-		etag := mustComplete(ctx, viaRGW, key, id, parts, bodies...)
-		expectRGWGoReads(ctx, viaGo, key, etag, slices.Concat(bodies...))
+		etag := mustComplete(ctx, viaRGW, mpBucket, key, id, parts, bodies...)
+		expectReads(ctx, viaGo, "rgw-go", mpBucket, key, etag, slices.Concat(bodies...))
 		expectMultipartObject(ctx, rec, key, etag, key+"."+id, map[uint64]mpRule{
 			0: {StartPartNum: 1, StartOfs: 0, PartSize: 6 * mib, StripeMaxSize: 4 * mib},
 		})
@@ -760,12 +764,12 @@ var _ = Describe("the multipart oracle against radosgw and radosgw-admin", Order
 		}
 		ups := []*reupload{{key: "k4", c: viaGo}, {key: "k4-radosgw", c: viaRGW}}
 		for _, u := range ups {
-			u.id = createUpload(ctx, u.c, u.key)
+			u.id = createUpload(ctx, u.c, mpBucket, u.key, "")
 			u.second, u.last = randBytes(5*mib), randBytes(2*mib)
-			uploadPart(ctx, u.c, u.key, u.id, 1, randBytes(6*mib))
+			uploadPart(ctx, u.c, mpBucket, u.key, u.id, 1, randBytes(6*mib))
 			u.firstObjs = partObjects(ctx, rec, u.key+"."+u.id)
 			Expect(u.firstObjs).To(HaveLen(2), "the first part 1's head and stripe of %s", u.key)
-			u.parts = []s3types.CompletedPart{uploadPart(ctx, u.c, u.key, u.id, 1, u.second), uploadPart(ctx, u.c, u.key, u.id, 2, u.last)}
+			u.parts = []s3types.CompletedPart{uploadPart(ctx, u.c, mpBucket, u.key, u.id, 1, u.second), uploadPart(ctx, u.c, mpBucket, u.key, u.id, 2, u.last)}
 		}
 		listed := bucketList(ctx, mpBucket)
 		var reuploaded []string
@@ -790,7 +794,7 @@ var _ = Describe("the multipart oracle against radosgw and radosgw-admin", Order
 		expectBucketCheckInvalid(ctx, mpBucket, reuploaded)
 
 		for _, u := range ups {
-			etag := mustComplete(ctx, u.c, u.key, u.id, u.parts, u.second, u.last)
+			etag := mustComplete(ctx, u.c, mpBucket, u.key, u.id, u.parts, u.second, u.last)
 			expectRadosgwReads(ctx, u.key, etag, slices.Concat(u.second, u.last))
 			// The first part's manifest is adopted whole, so the object's
 			// prefix is the re-uploaded part's random one, and part 2's rule
@@ -825,8 +829,8 @@ var _ = Describe("the multipart oracle against radosgw and radosgw-admin", Order
 
 	It("5: queues an aborted upload's parts under the upload id", func(ctx SpecContext) {
 		const key = "k5"
-		id := createUpload(ctx, viaGo, key)
-		uploadParts(ctx, viaGo, key, id, [][]byte{randBytes(5 * mib), randBytes(5 * mib), randBytes(1 * mib)})
+		id := createUpload(ctx, viaGo, mpBucket, key, "")
+		uploadParts(ctx, viaGo, mpBucket, key, id, [][]byte{randBytes(5 * mib), randBytes(5 * mib), randBytes(1 * mib)})
 		objs := partObjects(ctx, rec, key+"."+id)
 		Expect(objs).To(HaveLen(5), "three part heads and two stripes")
 		moid := metaOID(rec, key, id)
@@ -855,17 +859,17 @@ var _ = Describe("the multipart oracle against radosgw and radosgw-admin", Order
 			{"k6", viaGo, viaRGW, "radosgw"},
 			{"k7", viaRGW, viaGo, "rgw-go"},
 		} {
-			id := createUpload(ctx, c.starts, c.key)
-			parts := uploadParts(ctx, c.starts, c.key, id, bodies)
+			id := createUpload(ctx, c.starts, mpBucket, c.key, "")
+			parts := uploadParts(ctx, c.starts, mpBucket, c.key, id, bodies)
 			unlock := holdCompleteLock(ctx, metaOID(rec, c.key, id))
-			_, err := completeUpload(ctx, c.comps, c.key, id, parts)
+			_, err := completeUpload(ctx, c.comps, mpBucket, c.key, id, parts)
 			expectCompletionInProgress(err, c.who)
 			expectBucketCheckClean(ctx, mpBucket)
 			Expect(entriesOf(bucketList(ctx, mpBucket), c.key)).To(ContainElement(HaveSuffix(".meta")), "%s's upload survives the refusal", c.key)
 			unlock()
-			etag := mustComplete(ctx, c.comps, c.key, id, parts, bodies...)
+			etag := mustComplete(ctx, c.comps, mpBucket, c.key, id, parts, bodies...)
 			expectRadosgwReads(ctx, c.key, etag, slices.Concat(bodies...))
-			expectRGWGoReads(ctx, viaGo, c.key, etag, slices.Concat(bodies...))
+			expectReads(ctx, viaGo, "rgw-go", mpBucket, c.key, etag, slices.Concat(bodies...))
 			expectListedAlone(ctx, c.key, etag, 6*mib)
 			expectBucketCheckClean(ctx, mpBucket)
 		}
@@ -873,7 +877,7 @@ var _ = Describe("the multipart oracle against radosgw and radosgw-admin", Order
 
 	It("7: costs rgw-go seven RADOS operations for a 5 MiB part", func(ctx SpecContext) {
 		const key = "k8"
-		id := createUpload(ctx, viaGo, key)
+		id := createUpload(ctx, viaGo, mpBucket, key, "")
 		DeferCleanup(func(ctx context.Context) {
 			_, err := viaGo.AbortMultipartUpload(ctx, &awss3.AbortMultipartUploadInput{Bucket: aws.String(mpBucket), Key: aws.String(key), UploadId: aws.String(id)})
 			Expect(err).NotTo(HaveOccurred(), "aborting %s", key)
@@ -881,14 +885,14 @@ var _ = Describe("the multipart oracle against radosgw and radosgw-admin", Order
 		body := randBytes(5 * mib)
 		// The first part puts the bucket, the user and the access key in
 		// rgw-go's caches, so the parts measured cost their own operations.
-		uploadPart(ctx, viaGo, key, id, 1, body)
+		uploadPart(ctx, viaGo, mpBucket, key, id, 1, body)
 		// A worker's operation between the two settled counts can only add
 		// to a measurement, so the part's own cost is the least of five, and
 		// at least two must find it.
 		var counts []uint64
 		for n := int32(2); n <= 6; n++ {
 			before := settledOps(ctx, rgwgo)
-			uploadPart(ctx, viaGo, key, id, n, body)
+			uploadPart(ctx, viaGo, mpBucket, key, id, n, body)
 			counts = append(counts, settledOps(ctx, rgwgo)-before)
 		}
 		AddReportEntry("RADOS operations of a 5 MiB UploadPart through rgw-go", counts)

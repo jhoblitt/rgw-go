@@ -526,6 +526,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's replay of another request's versioned delete removes a version locked after that delete's check](#radosgws-replay-of-another-requests-versioned-delete-removes-a-version-locked-after-that-deletes-check) | pending | pending | ✓ |
 | [radosgw applies a policy statement that names NotAction and no Action to no action](#radosgw-applies-a-policy-statement-that-names-notaction-and-no-action-to-no-action) | [#73983](https://tracker.ceph.com/issues/73983) | none; [ceph/ceph#66099](https://github.com/ceph/ceph/pull/66099) closed unmerged |  |
 | [radosgw's PutObject sets the object ACL and tags its headers name under s3:PutObject alone](#radosgws-putobject-sets-the-object-acl-and-tags-its-headers-name-under-s3putobject-alone) | [#24131](https://tracker.ceph.com/issues/24131) (the tagging half) | pending |  |
+| [radosgw-admin's object stat shows an attr it does not decode only up to its first NUL](#radosgw-admins-object-stat-shows-an-attr-it-does-not-decode-only-up-to-its-first-nul) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -16806,6 +16807,9 @@ Every new entry adds its row to this table, in document order.
   Tentacle radosgw renders as `<crc>-<parts>` with COMPOSITE
   (`internal/cksum/combine.go`; `docs/differences.md`, "A multipart upload's
   combined CRC follows its checksum type").
+  The write-path gate (`test/integration/phase2_writepath_test.go`) holds
+  radosgw's half: it asserts the full-object CRC a Tentacle radosgw stores
+  for a COMPOSITE upload, so a radosgw that stores the composite fails it.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** the phase 2 write-path research, 2026-10-13
   (`docs/superpowers/plans/2026-10-13-phase-2/research/research-writepath.md`,
@@ -16882,6 +16886,10 @@ Every new entry adds its row to this table, in document order.
   (`objectReadChecksum`, `internal/op/getobject.go`; `cksum.Cksum.ObjectType`,
   `internal/cksum/record.go`), since the record alone does not say it is
   not a composite.
+  The write-path gate (`test/integration/phase2_writepath_test.go`) holds
+  radosgw's half: it asserts the bare CRC a Tentacle radosgw's completion
+  answers and the `<crc>-1` its reads show, so a radosgw that answers
+  FULL_OBJECT fails it.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** the phase 2 write-path research, 2026-10-13
   (`docs/superpowers/plans/2026-10-13-phase-2/research/research-writepath.md`,
@@ -21932,6 +21940,9 @@ Every new entry adds its row to this table, in document order.
   (`internal/op/checksumreq.go`; `docs/differences.md`, "A checksum value
   without an algorithm header names its algorithm and is verified" and "A
   checksum algorithm rgw-go does not compute is refused at write").
+  The write-path gate (`test/integration/phase2_writepath_test.go`) holds
+  radosgw's half: it asserts a Tentacle radosgw takes a CRC64NVME part's
+  wrong lone value, so a radosgw that verifies it fails it.
 - **Upstream:** pending; prior art not searched.
 - **Found:** the phase 2 write-path research, 2026-10-13
   (`docs/superpowers/plans/2026-10-13-phase-2/research/research-writepath.md`,
@@ -23287,6 +23298,9 @@ Every new entry adds its row to this table, in document order.
   (`internal/op/checksumreq.go`), and its completion compares it
   (`combineChecksums`, `internal/driver/mp_cksum.go`; `docs/differences.md`,
   "CompleteMultipartUpload reads one checksum header, of any type").
+  The write-path gate (`test/integration/phase2_writepath_test.go`) holds
+  radosgw's half: it asserts a Tentacle radosgw completes under a wrong
+  supplied CRC64NVME value, so a radosgw that compares it fails it.
 - **Upstream:** fixed on main by
   [ceph/ceph#71484](https://github.com/ceph/ceph/pull/71484) (ee6894210c6),
   in no tag through v21.3.0; no tracker issue searched.
@@ -34014,3 +34028,40 @@ Every new entry adds its row to this table, in document order.
 - **Found:** upstream first for the tagging half, by #24131's reporter;
   met by phase 2 Task S8's adversarial review, 2026-11-14, comparing the
   actions the PutObject ops evaluate with Amazon S3's.
+
+## radosgw-admin's object stat shows an attr it does not decode only up to its first NUL
+
+- **Kind:** defect, cosmetic: `radosgw-admin object stat` prints each attr
+  it has no decoder for as a string cut at its first NUL byte, so a binary
+  attr shows only its leading bytes. Tentacle's `user.rgw.cksum`, whose
+  record begins with its encoding's version, compat and little-endian
+  length, shows as those first three bytes and nothing of its type or
+  digest. No stored data is affected, and it is not security-relevant.
+  Unreproduced: derived from the source.
+- **Evidence:**
+  - `dump_string` prints `bl.to_str().c_str()`, which ends at the first
+    NUL, a form whose comment says it hides a string attr's encoded NUL
+    terminator
+    ([rgw_admin.cc:1350-1356](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L1350-L1356),
+    [radosgw-admin.cc:1409-1415](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L1409-L1415)).
+  - object stat decodes the manifest, the policy, the compression info and
+    a few others under names of their own, and passes every other attr to
+    `dump_string` under `attrs`
+    ([rgw_admin.cc:8580-8642](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L8580-L8642),
+    [radosgw-admin.cc:9014-9100](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L9014-L9100)).
+    Neither tag decodes `user.rgw.cksum` there.
+  - `Cksum::encode` writes `ENCODE_START(2, 1)`, a version byte, a compat
+    byte and a little-endian u32 length whose high bytes are zero for every
+    type, before the type and the digest
+    ([rgw_cksum.h:258-266](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum.h#L258-L266)).
+- **Impact:** an admin cannot read an object's stored checksum, or any
+  other binary attr that holds a NUL, through object stat, and two records
+  of the same length show alike.
+- **Releases:** v19.2.7 and v20.2.4. On a Squid cluster only rgw-go writes
+  `user.rgw.cksum`.
+- **rgw-go:** unaffected: rgw-go ships no radosgw-admin. The write-path
+  gate reads the attr's bytes as RADOS holds them, and checks object stat's
+  view of it only up to that NUL (`test/integration/phase2_writepath_test.go`).
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task WP-15, writing the write-path gate, 2026-11-14;
+  derived from the source, not reproduced.

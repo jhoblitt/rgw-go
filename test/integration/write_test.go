@@ -153,7 +153,7 @@ var _ = Describe("the write path against radosgw-admin and the coexisting radosg
 
 				expectBucketCheckClean(ctx, name)
 				usage := bucketUsage(ctx, name)
-				Expect(usage).To(Equal(adminUsage{Size: 2 * uint64(size), SizeActual: 2 * roundedSize(uint64(size)), NumObjects: 2}),
+				Expect(usage).To(Equal(adminUsage{Size: 2 * uint64(size), SizeActual: 2 * roundedSize(uint64(size)), SizeUtilized: 2 * uint64(size), NumObjects: 2}),
 					"bucket stats")
 				Expect(store.BucketStats(ctx, freshBucket(ctx, rec))).To(Equal(op.Stats{Size: usage.Size, SizeRounded: usage.SizeActual, NumObjects: usage.NumObjects}),
 					"rgw-go's BucketStats")

@@ -308,11 +308,17 @@ func nonZeroUsage(header json.RawMessage) map[string]map[string]json.Number {
 	return out
 }
 
-// adminUsage is radosgw-admin bucket stats' rgw.main usage of bucket.
+// adminUsage is radosgw-admin bucket stats' rgw.main usage of bucket, as
+// RGWStorageStats::dump writes it
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L3108-L3121 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L3164-L3177 at v20.2.4).
+// SizeUtilized is the stored size, which is Size for an object that is not
+// compressed.
 type adminUsage struct {
-	Size       uint64 `json:"size"`
-	SizeActual uint64 `json:"size_actual"`
-	NumObjects uint64 `json:"num_objects"`
+	Size         uint64 `json:"size"`
+	SizeActual   uint64 `json:"size_actual"`
+	SizeUtilized uint64 `json:"size_utilized"`
+	NumObjects   uint64 `json:"num_objects"`
 }
 
 func bucketUsage(ctx context.Context, bucket string) adminUsage {
