@@ -67,8 +67,8 @@ github.com/google/pprof v0.0.0-20261105003125-4bf881d7fb0b h1:5NKFt6kcAJNVt3XBOf
 github.com/google/pprof v0.0.0-20261105003125-4bf881d7fb0b/go.mod h1:yUo1AMMpsPIDFGuwDK8nLcf8+vvAd5l2O6JDZ6hpwrM=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
-github.com/jhoblitt/go-ceph v0.0.0-20261019213543-2bd6901ea775 h1:wE7tbxOVVszyBTK5HjczF21eq5glLyoUXk8VpLPSwlw=
-github.com/jhoblitt/go-ceph v0.0.0-20261019213543-2bd6901ea775/go.mod h1:ELOumVcu1pE6LbWzaCvlndpGCmEh0W2EYQOzpEC7JBM=
+github.com/jhoblitt/go-ceph v0.0.0-20261114105431-74ee6687b69e h1:XfBzPPUopsqxvEmY7R9L3h723+v1hV7ob3af/wbwj38=
+github.com/jhoblitt/go-ceph v0.0.0-20261114105431-74ee6687b69e/go.mod h1:ELOumVcu1pE6LbWzaCvlndpGCmEh0W2EYQOzpEC7JBM=
 github.com/joshdk/go-junit v1.0.0 h1:S86cUKIdwBHWwA6xCmFlf3RTLfVXYQfvanM5Uh+K6GE=
 github.com/joshdk/go-junit v1.0.0/go.mod h1:TiiV0PqkaNfFXjEiyjWM3XXrhVyCa1K4Zfga6W52ung=
 github.com/klauspost/compress v1.20.3 h1:zWNoFqq/lSuYQRim3dUXlXeA0IqwuZGicdG5ZTfY5j4=
