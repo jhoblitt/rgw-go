@@ -80,8 +80,9 @@ func (wr *objectWrites) putObject(ctx context.Context, w http.ResponseWriter, r 
 // putObjectParams is the part of get_params that reads the request alone,
 // in its order, and then the two checks RGWPutObj::execute makes of the
 // request alone: a body without a Content-Length that is not chunked is
-// MissingContentLength; a request that asks for encryption is refused
-// (refuseEncryption); x-amz-tagging that set_from_string refuses is
+// MissingContentLength; a request that asks for encryption is refused, as
+// are names that do not go together and an encryption header sent with no
+// value (checkEncryption); x-amz-tagging that set_from_string refuses is
 // InvalidArgument, as radosgw answers any such refusal on a PUT
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2626-L2637,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2787-L2798);
@@ -99,7 +100,7 @@ func (wr *objectWrites) putObjectParams(r *op.Request, o *op.PutObject) error {
 	if r.ContentLength == 0 && r.Header.Get("Content-Length") == "" {
 		return op.ErrMissingContentLength
 	}
-	if err := refuseEncryption(r, true); err != nil {
+	if err := checkEncryption(r, true); err != nil {
 		return err
 	}
 	if v, ok := op.HeaderValue(r.Header, "X-Amz-Tagging"); ok {
@@ -238,34 +239,242 @@ func newObjectACL(ctx context.Context, r *op.Request) (acl.Policy, error) {
 	return p, nil
 }
 
-// refuseEncryption answers NotImplemented for a write that asks for
-// encryption: one carrying an X-Amz- header that init_meta_info files in
-// crypt_attribute_map
+// cryptRequest is a write's encryption headers and query parameters as
+// radosgw files them: the names of crypt_attribute_map, which
+// req_info::init_meta_info fills from the headers whose x_meta_map name
+// starts x-amz-server-side-en, and map_qs_metadata from the query parameters
+// whose lowercased name starts x-amz-server-side-encryption when query is set
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L413-L464 at v19.2.7,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L426-L477 at v20.2.4),
-// X-Amz-Server-Side-Encryption among them; one naming a copy source's SSE-C
-// key; and, when query is set, a query parameter map_qs_metadata files
-// there for a PutObject
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2591-L2593 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2752-L2754 at v20.2.4).
-// radosgw encrypts SSE-C and fails SSE-S3 and SSE-KMS without a key server;
-// rgw-go encrypts nothing in phase 1, and must not store in the clear what
-// a client asked to have encrypted (docs/exclusions.md). A bucket's default
-// encryption is the op's to refuse, once the requester is authorized.
-func refuseEncryption(r *op.Request, query bool) error {
-	for name := range headerMeta(r.Header) {
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L426-L477 at v20.2.4;
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2589-L2603 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2742-L2756 at v20.2.4).
+// Beast files a header sent with no value as present
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L36-L65 at v19.2.7
+// and v20.2.4), so such a name is in the map.
+//
+// radosgw's environment keeps the last value of a header sent twice
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_env.cc#L22-L25 at v19.2.7
+// and v20.2.4), and the query's parameter overrides the header's. rgw-go
+// judges every instance instead, so that an empty one sent after a value
+// never hides it, and a value anywhere asks for encryption.
+type cryptRequest struct {
+	names map[string]struct{}
+	// asked is whether any instance of a header or parameter holds a value:
+	// any of the names above, or a header naming a copy source's SSE-C key.
+	asked bool
+	// empty holds the message (emptyMessage) of each name an instance of
+	// which holds no value and which emptyRefusal refuses so.
+	empty map[string]struct{}
+}
+
+// cryptRequestOf reads every instance of r's encryption headers and, when
+// query is set, every pair of its query string.
+func cryptRequestOf(r *op.Request, query bool) cryptRequest {
+	c := cryptRequest{names: map[string]struct{}{}, empty: map[string]struct{}{}}
+	for name, values := range headerMetaValues(r.Header) {
 		if isCryptName(name) {
-			return fmt.Errorf("%w: server-side encryption is not served yet", op.ErrNotImplemented)
+			if strings.HasPrefix(name, cryptPrefix) {
+				c.names[name] = struct{}{}
+			}
+			noteCrypt(&c, name, values...)
 		}
 	}
 	if query {
-		for k := range r.Query {
-			if strings.HasPrefix(lowerASCIIString(k), "x-amz-server-side-encryption") {
-				return fmt.Errorf("%w: server-side encryption is not served yet", op.ErrNotImplemented)
+		for k, v := range argPairs(r.RawQuery) {
+			low := lowerASCIIString(k)
+			if !strings.HasPrefix(low, cryptQueryPrefix) {
+				continue
 			}
+			c.names[low] = struct{}{}
+			noteCrypt(&c, low, v)
+		}
+	}
+	return c
+}
+
+// noteCrypt records the values sent under name in c: one with a value asks for
+// encryption, and one with none under a name emptyMessage covers is the empty
+// header emptyRefusal refuses. An empty copy-source name is neither.
+func noteCrypt(c *cryptRequest, name string, values ...string) {
+	for _, v := range values {
+		if v != "" {
+			c.asked = true
+		} else if m := emptyMessage(name); m != "" {
+			c.empty[m] = struct{}{}
+		}
+	}
+}
+
+// refuseEncryption answers a write's encryption headers, for the writes
+// radosgw's get_encryption_defaults does not precede: askedRefusal's, then
+// emptyRefusal's. A bucket's default encryption is the op's to refuse, once
+// the requester is authorized.
+func refuseEncryption(r *op.Request, query bool) error {
+	c := cryptRequestOf(r, query)
+	if err := c.askedRefusal(); err != nil {
+		return err
+	}
+	return c.emptyRefusal()
+}
+
+// askedRefusal answers NotImplemented for a write that asks for encryption:
+// one carrying a value in an X-Amz- header that init_meta_info files in
+// crypt_attribute_map, X-Amz-Server-Side-Encryption among them; in one
+// naming a copy source's SSE-C key; and, when query is set, in a query
+// parameter map_qs_metadata files there for a PutObject. radosgw encrypts
+// SSE-C and fails SSE-S3 and SSE-KMS without a key server; rgw-go encrypts
+// nothing in phase 1, and must not store in the clear what a client asked to
+// have encrypted (docs/exclusions.md). A value anywhere wins over an empty
+// instance of the same or another name (emptyRefusal).
+func (c cryptRequest) askedRefusal() error {
+	if c.asked {
+		return fmt.Errorf("%w: server-side encryption is not served yet", op.ErrNotImplemented)
+	}
+	return nil
+}
+
+// The messages emptyRefusal answers with. sseEmptyMessage is v20.2.5's for
+// an x-amz-server-side-encryption that is neither aws:kms nor AES256, which
+// an empty one is
+// (https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_crypt.cc#L2280-L2285 at v20.2.5),
+// and kmsEmptyMessage v20.2.5's for an empty KMS key id
+// (https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_crypt.cc#L2200-L2204 at v20.2.5);
+// sseCEmptyMessage is rgw-go's own, as v20.2.5 takes an empty SSE-C name for
+// none.
+const (
+	sseEmptyMessage  = "Server Side Encryption with KMS managed key requires HTTP header x-amz-server-side-encryption : aws:kms or AES256"
+	kmsEmptyMessage  = "Server Side Encryption with KMS managed key requires HTTP header x-amz-server-side-encryption-aws-kms-key-id"
+	sseCEmptyMessage = "Requests specifying Server Side Encryption with Customer provided keys must not send a server-side-encryption-customer header with no value."
+)
+
+// emptyMessage is the message emptyRefusal answers an empty value of the
+// encryption name with, and "" for a name whose empty value is accepted. This
+// is the rule, stated once: an empty value is refused for an SSE-C name, any
+// name starting x-amz-server-side-encryption-customer-, and for a name that
+// sets a policy condition key, since a name sent empty adds its key to the
+// environment a bucket policy's Null condition reads, and so passes a Deny
+// written to require it (rgw_iam_add_crypt_attrs,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L760-L774 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L790-L810 at v20.2.4):
+// x-amz-server-side-encryption and x-amz-server-side-encryption-aws-kms-key-id.
+// The context and the bucket key set no condition key and stay accepted, as
+// does any name only the first 20 bytes of the prefix match.
+func emptyMessage(name string) string {
+	switch {
+	case name == sseName:
+		return sseEmptyMessage
+	case name == sseKMSKeyIDName:
+		return kmsEmptyMessage
+	case strings.HasPrefix(name, sseCNamePrefix):
+		return sseCEmptyMessage
+	}
+	return ""
+}
+
+// emptyRefusal answers InvalidArgument for a write that sent a name
+// emptyMessage covers with no value, which askedRefusal has not already
+// refused for a value. radosgw at v19.2.7 and v20.2.4 takes an empty one for
+// none and stores the object unencrypted (rgw_s3_prepare_encrypt skips its
+// SSE-C branch for an empty algorithm and ignores an empty
+// x-amz-server-side-encryption,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1040-L1048 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1148-L1150 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1055-L1063 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1163-L1165 at v20.2.4),
+// which a Null condition on the key the name adds counts as encrypted.
+// v20.2.5 refuses an empty x-amz-server-side-encryption
+// (https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_crypt.cc#L2182-L2184 at v20.2.5),
+// and rgw-go refuses it on both releases, and the rest of what emptyMessage
+// covers too, an empty SSE-C name among them, which v20.2.5 does not
+// (docs/differences.md). get_encryption_defaults refuses an empty KMS key
+// id without x-amz-server-side-encryption by its name alone first, so this
+// is the only refusal of it for a CopyObject, which does not run it.
+func (c cryptRequest) emptyRefusal() error {
+	for _, m := range []string{sseEmptyMessage, kmsEmptyMessage, sseCEmptyMessage} {
+		if _, ok := c.empty[m]; ok {
+			return op.ErrInvalidArgument.WithMessage(m)
 		}
 	}
 	return nil
+}
+
+// The names get_encryption_defaults tells apart. sseName is the whole name
+// x-amz-server-side-encryption, which is the KMS group's prefix there and
+// cryptQueryPrefix, where init_meta_info files a header by its first 20 bytes
+// (cryptPrefix).
+const (
+	sseName          = cryptQueryPrefix
+	sseCNamePrefix   = sseName + "-customer-"
+	sseKMSKeyIDName  = sseName + "-aws-kms-key-id"
+	sseBucketKeyName = sseName + "-bucket-key-enabled"
+	sseContextName   = sseName + "-context"
+)
+
+// encryptionDefaultsError is get_encryption_defaults' refusal of a request
+// whose encryption names cannot go together
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L154-L272 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L151-L269 at v20.2.4),
+// which it makes by the names alone, whatever their values: an SSE-C name and
+// another is 400 InvalidArgument; without an SSE-C name,
+// x-amz-server-side-encryption-aws-kms-key-id, -bucket-key-enabled or
+// -context without x-amz-server-side-encryption is too, the first in that
+// order. It runs for PutObject, UploadPart and UploadPartCopy,
+// CreateMultipartUpload and POST, not for CopyObject, and before anything that
+// reads a value, so a request it refuses is never 501.
+func encryptionDefaultsError(r *op.Request, query bool) error {
+	return cryptRequestOf(r, query).defaultsError()
+}
+
+// defaultsError is encryptionDefaultsError's answer for c.
+func (c cryptRequest) defaultsError() error {
+	var sseC, kms bool
+	for name := range c.names {
+		switch {
+		case strings.HasPrefix(name, sseCNamePrefix):
+			sseC = true
+		case strings.HasPrefix(name, sseName):
+			kms = true
+		}
+	}
+	switch {
+	case sseC && kms:
+		return op.ErrInvalidArgument.WithMessage("Server side error - can't do sse-c & sse-kms|sse-s3")
+	case sseC:
+		return nil
+	}
+	if _, ok := c.names[sseName]; ok {
+		return nil
+	}
+	for _, name := range []string{sseKMSKeyIDName, sseBucketKeyName, sseContextName} {
+		if _, ok := c.names[name]; ok {
+			return op.ErrInvalidArgument.WithMessage("incomplete rest sse parms: " + name + " not valid without kms")
+		}
+	}
+	return nil
+}
+
+// readEncryption is what get_params makes of a write's encryption headers
+// and parameters up to the refusal of an empty one: get_encryption_defaults'
+// refusal of names that do not go together, which comes first, then the
+// refusal of a request that asks for encryption. It returns the request, so
+// that a caller that cannot refuse an empty header yet (UploadPart, which
+// must read its upload first) asks it for emptyRefusal.
+func readEncryption(r *op.Request, query bool) (cryptRequest, error) {
+	c := cryptRequestOf(r, query)
+	if err := c.defaultsError(); err != nil {
+		return c, err
+	}
+	return c, c.askedRefusal()
+}
+
+// checkEncryption is readEncryption and then emptyRefusal, for the writes
+// that decide the request alone.
+func checkEncryption(r *op.Request, query bool) error {
+	c, err := readEncryption(r, query)
+	if err != nil {
+		return err
+	}
+	return c.emptyRefusal()
 }
 
 // objectLock is PutObject's get_params refusal of a retention or legal hold

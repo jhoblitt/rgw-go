@@ -9327,13 +9327,28 @@ does the following.
   without a key server (item 2 there); an SSE-C write keeps the 501 until
   phase 4 encrypts it. The 501 comes:
   - before the permission check and before reading the body, to a PutObject
-    or CopyObject carrying any `X-Amz-` header that radosgw takes for an
-    encryption header, one whose name starts `x-amz-server-side-en`
-    (`rgw_common.cc:413-464` at v19.2.6, `:426-477` at v20.2.4), and to one
+    or CopyObject carrying a value in any `X-Amz-` header that radosgw takes
+    for an encryption header, one whose name starts `x-amz-server-side-en`
+    (`rgw_common.cc:413-464` at v19.2.6, `:426-477` at v20.2.4), and in one
     naming a copy source's SSE-C key; and to a PutObject carrying such a
-    query parameter, which `map_qs_metadata` reads (`rgw_rest_s3.cc:2591-2593`
-    at v19.2.6, `:2752-2754` at v20.2.4). No such header is stored as an
-    attr. radosgw takes the same header under its six other meta prefixes,
+    query parameter with a value, which `map_qs_metadata` reads
+    (`rgw_rest_s3.cc:2591-2593` at v19.2.6, `:2752-2754` at v20.2.4). Any
+    instance of the header or parameter with a value asks, whichever
+    instance comes last ("A write that sends `x-amz-server-side-encryption`,
+    its KMS key id or an SSE-C header with no value is refused 400"). A
+    request whose
+    encryption names cannot go together, an SSE-C name beside another
+    encryption name or a KMS key id, bucket key or context without
+    `x-amz-server-side-encryption`, is answered 400 first, as radosgw
+    answers it, whatever the names hold, and an instance with no value
+    asks for nothing but is refused 400 too when it is
+    `x-amz-server-side-encryption`, its KMS key id or an SSE-C name and no
+    instance holds a value. No such header with a value is stored as an attr. radosgw acts on
+    the value of a header in `execute`, for a PutObject, an UploadPart and,
+    on Tentacle, a CopyObject, after `verify_permission`, so a requester it
+    would refuse 403 is answered 501 here, which shows only that no
+    encryption is served, as docs/exclusions.md says of every request. radosgw takes the same
+    header under its six other meta prefixes,
     `X-Goog-Server-Side-Encryption-Customer-Key` among them, which rgw-go's
     S3 API does not read, so a write naming encryption under one of them is
     stored unencrypted ("The S3 API reads X-Amz- headers only");
@@ -9363,14 +9378,17 @@ does the following.
   mode is not empty before a byte of it is read or stored, rather than
   store it in the clear under a completed head that carries the upload's
   crypt attrs; an empty mode is none, as radosgw takes it. A part of an
-  SSE-C upload whose request carries an SSE-C header
+  SSE-C upload whose request carries a value in an SSE-C header
   answers 501 NotImplemented before the permission check, as every SSE-C
   write does ("Writes that ask for encryption answer 501, SSE-S3 and
   SSE-KMS until phase 2 and SSE-C until phase 4"), where radosgw encrypts
   the part with the key the headers name, or refuses headers that do not
-  name the upload's; one whose request carries none answers radosgw's
-  refusal, InvalidRequest over plain HTTP under `rgw_crypt_require_ssl`
-  and InvalidArgument otherwise. A part of an upload of a non-empty mode
+  name the upload's; one whose request carries none, or only headers sent
+  empty, answers radosgw's refusal, InvalidRequest over plain HTTP under
+  `rgw_crypt_require_ssl` and otherwise InvalidArgument for an algorithm
+  not sent and InvalidEncryptionAlgorithmError for one sent empty ("A write
+  that sends `x-amz-server-side-encryption`, its KMS key id or an SSE-C
+  header with no value is refused 400"). A part of an upload of a non-empty mode
   rgw-go does not know answers 501 NotImplemented too: v20.2.5 adds
   `SSE-C-AES256-GCM`, `SSE-KMS-GCM`, `AES256-GCM` and `RGW-AUTO-GCM`,
   written when `rgw_crypt_sse_algorithm` is `aes-256-gcm`
@@ -9382,7 +9400,11 @@ does the following.
   stores in the clear. The part of an SSE-KMS, SSE-S3 or RGW-AUTO upload
   answers as a radosgw without a key server answers it (docs/exclusions.md,
   "Key management: SSE-KMS and SSE-S3 with every backend", item 3), and
-  one of an upload without a crypt mode is stored as before. The refusal
+  one of an upload without a crypt mode is stored as before, unless the
+  request sends `x-amz-server-side-encryption`, its KMS key id or an SSE-C
+  header with no value, which refuses it ("A write that sends
+  `x-amz-server-side-encryption`, its KMS key id or an SSE-C header with no
+  value is refused 400"). The refusal
   comes where `get_encrypt_filter` runs: after the upload is read and, for
   an unranged copy, after the source's cloud tier and existence are
   checked, which rgw-go checks first for a ranged copy too, and before the
@@ -9411,9 +9433,13 @@ does the following.
   key the headers name answers 501 NotImplemented, where radosgw decrypts
   it, and a source of a non-empty mode rgw-go does not know, such as
   v20.2.5's GCM modes, answers 501 where a v19.2.7 or v20.2.4 radosgw
-  copies its stored bytes. A request naming any SSE-C key is refused 501
-  before the permission check ("Writes that ask for encryption answer
-  501, SSE-S3 and SSE-KMS until phase 2 and SSE-C until phase 4"). The
+  copies its stored bytes. A request naming an SSE-C key with a value is
+  refused 501 before the permission check ("Writes that ask for encryption
+  answer 501, SSE-S3 and SSE-KMS until phase 2 and SSE-C until phase 4"); a
+  copy-source algorithm sent empty is the decision's, which a Tentacle
+  radosgw makes of an SSE-C source with InvalidEncryptionAlgorithmError ("A
+  write that sends `x-amz-server-side-encryption`, its KMS key id or an
+  SSE-C header with no value is refused 400"). The
   decision comes after the upload's own crypt mode is checked and before
   the range and the copy-source conditions, and a refusal writes nothing.
   An unranged copy of an empty source decides nothing, as radosgw's copy
@@ -9426,54 +9452,260 @@ does the following.
   `storedCryptRefusal`, `internal/op/crypt.go`). Behind the decision, the
   stores' `CopyPart` refuse to copy a byte of a source of a non-empty mode
   (`op.RefuseEncryptedPartSource`).
-- **An SSE-C algorithm header sent empty is 501 on a write, where radosgw
-  takes it for none or refuses it as no AES256.** Beast files a header sent
-  with no value as present, with the empty string for its value
+- **A write that sends `x-amz-server-side-encryption`, its KMS key id or
+  an SSE-C header with no value is refused 400, and an encryption header
+  sent more than once is judged on every value.** Beast files a header sent with no value
+  as present, with the empty string for its value
   ([rgw_asio_client.cc:36-65](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L36-L65) at v19.2.7,
   [rgw_asio_client.cc:36-65](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_client.cc#L36-L65) at v20.2.4),
-  and what radosgw makes of it depends on the function that reads it:
+  and `req_info::init_meta_info` files its name in `crypt_attribute_map`
+  ([rgw_common.cc:455-457](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L455-L457) at v19.2.7,
+  [rgw_common.cc:468-470](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L468-L470) at v20.2.4).
+  `RGWEnv::set` keeps the last value of a header sent twice
+  ([rgw_env.cc:22-25](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_env.cc#L22-L25) at v19.2.7,
+  [rgw_env.cc:22-25](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_env.cc#L22-L25) at v20.2.4),
+  and `map_qs_metadata` lets a query parameter overwrite the header of its
+  name
+  ([rgw_rest_s3.cc:2599-2601](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2599-L2601) at v19.2.7,
+  [rgw_rest_s3.cc:2752-2754](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2752-L2754) at v20.2.4).
+  A v19.2.7 or v20.2.4 radosgw takes a header sent with no value for none
+  and stores the object unencrypted, and takes the last value of a header
+  sent twice for the header's, so `AES256` followed by an empty one is
+  stored unencrypted too:
   - a PutObject and a CreateMultipartUpload run `rgw_s3_prepare_encrypt`
     ([rgw_rest_s3.cc:2877-2885](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2877-L2885) and
     [rgw_rest_s3.cc:4087-4092](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4087-L4092) at v19.2.7,
     [rgw_rest_s3.cc:3003-3011](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3003-L3011) and
     [rgw_rest_s3.cc:4558-4563](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4558-L4563) at v20.2.4),
-    which gets the header from `CryptAttributes`, an empty view for a header
+    which gets each header from `CryptAttributes`, an empty view for a header
     sent empty as for one not sent
     ([rgw_crypt.cc:913-924](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L913-L924) at v19.2.7,
-    [rgw_crypt.cc:928-939](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L928-L939) at v20.2.4),
-    and skips its SSE-C branch for an empty one
+    [rgw_crypt.cc:928-939](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L928-L939) at v20.2.4).
+    It skips its SSE-C branch for an empty algorithm
     ([rgw_crypt.cc:1040-1048](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1040-L1048) at v19.2.7,
-    [rgw_crypt.cc:1055-1063](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1055-L1063) at v20.2.4).
-    The branch it takes instead refuses the request, 400 InvalidArgument,
-    only when a customer key or key-MD5 header that is not empty comes with
-    the empty algorithm
+    [rgw_crypt.cc:1055-1063](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1055-L1063) at v20.2.4),
+    and takes an empty `x-amz-server-side-encryption` for none
+    ([rgw_crypt.cc:1148-1150](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1148-L1150) at v19.2.7,
+    [rgw_crypt.cc:1163-1165](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1163-L1165) at v20.2.4).
+    The object is stored, or the upload begun, unencrypted, and each other
+    empty encryption name that is not an SSE-C name is stored as an attr,
+    since radosgw blocklists only the SSE-C names
+    ([rgw_op.h:2181-2186](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2181-L2186) at v19.2.7,
+    [rgw_op.h:2344-2357](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2344-L2357) at v20.2.4).
+    An empty algorithm beside a key or key MD5 that has a value is 400
+    InvalidArgument there
     ([rgw_crypt.cc:1123-1145](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1123-L1145) at v19.2.7,
-    [rgw_crypt.cc:1138-1160](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1138-L1160) at v20.2.4).
-    Alone, the empty header leaves radosgw to store the object, or begin the
-    upload, unencrypted unless another encryption header, the bucket's
-    default encryption or `rgw_crypt_default_encryption_key` asks for
-    encryption;
+    [rgw_crypt.cc:1138-1160](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1138-L1160) at v20.2.4),
+    which stays a difference below;
+  - a header sent empty is a header present to the bucket policy:
+    `rgw_iam_add_crypt_attrs` adds `s3:x-amz-server-side-encryption` to the
+    request's environment whenever its name is in the map, and on Tentacle
+    `s3:x-amz-server-side-encryption-customer-algorithm` too
+    ([rgw_op.cc:760-774](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L760-L774) at v19.2.7,
+    [rgw_op.cc:790-810](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L790-L810) at v20.2.4).
+    A `Deny` whose condition is `{"Null": {"s3:x-amz-server-side-encryption":
+    "true"}}`, written to require encryption, does not apply to a write that
+    sends the header empty, which radosgw then stores unencrypted. rgw-go's
+    policy environment adds the same keys for the same writes, a
+    PutObject, its parts, a CreateMultipartUpload and a
+    CompleteMultipartUpload, and none for a CopyObject, as radosgw's does
+    not (`cryptKeys`, `internal/authz/env.go`);
+  - v20.2.5 refuses an empty `x-amz-server-side-encryption` in
+    `rgw_s3_prepare_encrypt` alone, which gates on the header's presence
+    and answers an empty one 400 InvalidArgument, "Server Side Encryption
+    with KMS managed key requires HTTP header
+    x-amz-server-side-encryption : aws:kms or AES256"
+    ([rgw_crypt.cc:1756-1759](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_crypt.cc#L1756-L1759),
+    [rgw_crypt.cc:2182-2184](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_crypt.cc#L2182-L2184) and
+    [rgw_crypt.cc:2280-2285](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_crypt.cc#L2280-L2285) at v20.2.5,
+    [ceph/ceph#71535](https://github.com/ceph/ceph/pull/71535)), and so does
+    main (at main 203e7c52025d,
+    [rgw_crypt.cc:2213-2215](https://github.com/ceph/ceph/blob/203e7c52025d/src/rgw/rgw_crypt.cc#L2213-L2215)).
+    That function runs for a PutObject, a CopyObject and a
+    CreateMultipartUpload. A part goes through `rgw_s3_prepare_decrypt`
+    ([rgw_rest_s3.cc:3004-3019](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_rest_s3.cc#L3004-L3019)),
+    and a completion's `verify_encryption` calls only that
+    ([rgw_rest_s3.cc:4622-4634](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_rest_s3.cc#L4622-L4634) at v20.2.5),
+    while `RGWPutObj::verify_permission` and
+    `RGWCompleteMultipart::verify_permission` still add the key for the
+    empty header
+    ([rgw_op.cc:4277-4278](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_op.cc#L4277-L4278) and
+    [rgw_op.cc:7210-7211](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_op.cc#L7210-L7211) at v20.2.5),
+    so at v20.2.5 a part and a completion of an upload without a crypt mode
+    still pass a `Null` Deny with the header empty and are stored
+    unencrypted. v20.2.5 also takes an empty algorithm for none, and so a
+    request whose SSE-C names are all empty is stored unencrypted
+    ([rgw_crypt.cc:2032-2034](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_crypt.cc#L2032-L2034) at v20.2.5).
+
+  rgw-go refuses, on both releases, a PutObject, a CopyObject, a
+  CreateMultipartUpload, an UploadPart, an UploadPartCopy and a
+  CompleteMultipartUpload that sends an encryption header with no value
+  when it is one of these, 400 InvalidArgument, and refuses a PutObject's or
+  a part's query parameter of those names with none the same way. The rule, stated once
+  (`emptyMessage`, `internal/s3/putobject.go`): an empty value is refused
+  for an SSE-C name, any name starting
+  `x-amz-server-side-encryption-customer-`, and for a name that sets a
+  policy condition key, `x-amz-server-side-encryption` and
+  `x-amz-server-side-encryption-aws-kms-key-id`. A name sent empty adds its
+  key to the environment a `Null` condition reads, so each would let a
+  `Deny` written to require it pass, as above; the context and the bucket key set
+  no condition key, so an empty one asks for nothing and stays accepted, as
+  does a name only the first 20 bytes of the prefix match. The first name's
+  answer is v20.2.5's, with v20.2.5's message; the KMS key id's message is
+  v20.2.5's for an empty key id under `aws:kms`
+  ([rgw_crypt.cc:2200-2204](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_crypt.cc#L2200-L2204) at v20.2.5),
+  and refusing an empty key id without `x-amz-server-side-encryption` is
+  rgw-go's own, which a CopyObject needs, as radosgw reads the key id only
+  under `aws:kms`. The SSE-C names are rgw-go's own choice too, which fails
+  closed: radosgw at every release stores the write unencrypted, and a
+  `Null` condition counts it as encrypted. An empty
+  instance is refused only when no instance of any encryption header or
+  parameter holds a value, which asks for encryption and is 501 whatever
+  else the request sends ("Writes that ask for encryption answer 501,
+  SSE-S3 and SSE-KMS until phase 2 and SSE-C until phase 4"). An empty
+  copy-source header asks for nothing and is not refused. No empty name the
+  refusal covers is stored as an attr. For the writes that run
+  `get_encryption_defaults`, an empty KMS key id without
+  `x-amz-server-side-encryption` is refused by its name first, as below, so
+  the refusal of its value is the CopyObject's. The refusal comes:
+  - for a PutObject before the permission check and before the body is
+    read, after the refusal of names that do not go together and the 501
+    for a value, since it is made with them;
+  - for a CreateMultipartUpload once the requester is authorized and the
+    destination placement is checked, after a bucket's default encryption's
+    501, and after the ACL, the tags and the object-lock headers are read,
+    with the 501 for a value, where `rgw_s3_prepare_encrypt` runs after
+    `get_params`; a refused upload creates no upload. radosgw skips a
+    bucket's default encryption for a request that carries the header
+    ([rgw_rest_s3.cc:205-212](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L205-L212) at v20.2.4),
+    so v20.2.5 answers an empty `x-amz-server-side-encryption` into such a
+    bucket 400, where rgw-go answers the default's 501 first; both refuse,
+    and nothing is stored;
+  - for a CopyObject with the 501 for a value, before the permission check;
+  - for an UploadPart and an UploadPartCopy once the requester is
+    authorized and the upload is read, and for a copy once the source is
+    read and its crypt mode decided, since the header is refused when the
+    upload and the source store no crypt mode, or when the copy is an
+    unranged one of a zero-byte source of any mode, which decides nothing: a
+    part of an SSE-C upload answers `rgw_s3_prepare_decrypt`'s refusal below, which refuses
+    it either way, and a part of an upload of another mode that mode's
+    own. An upload that is not found is NoSuchUpload first. A part is
+    written under the upload's mode through `rgw_s3_prepare_decrypt`, never
+    `rgw_s3_prepare_encrypt`, at v20.2.5 too
+    ([rgw_rest_s3.cc:3004-3019](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_rest_s3.cc#L3004-L3019) at v20.2.5),
+    so radosgw stores a part of an upload without a crypt mode whatever
+    empty header it sends. rgw-go's refusal needs the upload's mode, to keep
+    the exception above, so it comes after authorization, where
+    `get_encryption_defaults`' refusal of names comes before it; it stores
+    nothing either way;
+  - for a CompleteMultipartUpload once the upload is read and its crypt
+    mode's decision has passed ("CompleteMultipartUpload asks for an SSE-C
+    upload's key as Amazon S3 and v20.2.5 do, ..."), before a part is
+    assembled and before anything is written: a completion of an SSE-C
+    upload answers that decision's refusal of its headers first, an
+    algorithm sent empty included, and a refusal echoes none of the headers
+    the decision gathers. The query is not read, as neither the policy's
+    environment nor rgw-go's completion reads it
+    (`cryptKeys`, `internal/authz/env.go`). An upload that is not found is
+    the store's to answer, as it answers a completion retried after it
+    succeeded, and the refusal does not apply. The rule's valued half is
+    not asked of a completion, which asks for no encryption: a completion
+    that sends `x-amz-server-side-encryption: AES256`, or a KMS key id with a
+    value, passes a `Null` Deny on its key and completes an upload without a
+    crypt mode, as radosgw's does. That is rgw-go's current behaviour, and
+    the scope of "Writes that ask for encryption answer 501, SSE-S3 and
+    SSE-KMS until phase 2 and SSE-C until phase 4", not of this rule.
+
+  A header or parameter sent more than once is judged on every instance,
+  where radosgw reads the last and the query's over the header's: any
+  instance with a value asks for encryption, 501, and an empty instance
+  after it, before it or in another place changes nothing. The SSE-C
+  algorithm header a part of an SSE-C upload is decided by is its last
+  value, as radosgw's environment keeps it. A PutObject's or a part's query
+  is read as the raw query's pairs, each of them.
+
+  Past that refusal the ops answer as radosgw does:
+  - `get_encryption_defaults` runs first for a PutObject, an UploadPart and
+    an UploadPartCopy, a CreateMultipartUpload and a POST object, and not
+    for a CopyObject
+    ([rgw_rest_s3.cc:2620](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2620),
+    [rgw_rest_s3.cc:2981](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2981) and
+    [rgw_rest_s3.cc:4003](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4003) at v19.2.7,
+    [rgw_rest_s3.cc:2773](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2773),
+    [rgw_rest_s3.cc:3118](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3118) and
+    [rgw_rest_s3.cc:4454](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4454) at v20.2.4),
+    and refuses names whatever their values: an SSE-C name beside
+    `x-amz-server-side-encryption` or another name that starts with it is
+    400 InvalidArgument, and without an SSE-C name an
+    `x-amz-server-side-encryption-aws-kms-key-id`, `-bucket-key-enabled` or
+    `-context` without `x-amz-server-side-encryption` is too
+    ([rgw_rest_s3.cc:154-272](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L154-L272) at v19.2.7,
+    [rgw_rest_s3.cc:151-269](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L151-L269) at v20.2.4).
+    rgw-go refuses the same names, whatever their values, the same way and
+    at the same place: before the permission check for a PutObject, an
+    UploadPart and an UploadPartCopy; for a CreateMultipartUpload once the
+    requester is authorized and the destination placement is checked, ahead
+    of a bucket's default encryption's 501, which radosgw reaches only when
+    it prepares the encryption, after `get_params`. It is made before any
+    value is read, so a request it refuses is 400 and never 501, and a
+    CopyObject is not asked;
   - an UploadPart and an UploadPartCopy run `rgw_s3_prepare_decrypt` over
     the attrs of the upload's meta object, which reads the algorithm header
     only for an upload whose mode is SSE-C, and finds a header sent empty no
     AES256 there: 400 InvalidEncryptionAlgorithmError
     ([rgw_crypt.cc:1323-1336](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1323-L1336) at v19.2.7,
     [rgw_crypt.cc:1340-1353](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1340-L1353) at v20.2.4).
-    The part of an upload of another mode, none included, is stored, or
-    refused for that mode's own reason ("A part radosgw would encrypt with
-    an SSE-C key, or under a crypt mode rgw-go does not know, answers 501").
-    A copy's SSE-C source is decided the same way by the algorithm header
-    of the release's copy source, the request's own at v19.2.7 and the
-    `x-amz-copy-source-` one at v20.2.4 ("UploadPartCopy answers 501 for an
-    encrypted copy source radosgw would decrypt").
+    rgw-go answers the same, for the last value of the algorithm header
+    (`UploadPart.refuseEncrypted`, `internal/op/uploadpart.go`), and a part
+    of an upload of another mode, none included, is refused for that mode's
+    own reason ("A part radosgw would encrypt with an SSE-C key, or under a
+    crypt mode rgw-go does not know, answers 501"), or for a header sent
+    empty as above. A copy's SSE-C source is decided the same way by the
+    algorithm header of the release's copy source, the request's own at
+    v19.2.7 and the `x-amz-copy-source-` one at v20.2.4 ("UploadPartCopy
+    answers 501 for an encrypted copy source radosgw would decrypt"); a
+    copy-source header sent empty asks for nothing, and is only that
+    decision's.
 
-  rgw-go refuses a write by the names of the headers it carries and not by
-  their values ("Writes that ask for encryption answer 501, SSE-S3 and
-  SSE-KMS until phase 2 and SSE-C until phase 4"), so each of these requests
-  is 501 NotImplemented before the permission check, and no part or object
-  is stored. Behind that refusal the op reads the header as sent, so that
-  the part of an SSE-C upload answers InvalidEncryptionAlgorithmError once
-  phase 4 serves SSE-C writes (`sseCRequest`, `internal/op/crypt.go`).
+  Three differences remain, and a fourth is a service not yet offered:
+  - radosgw applies a bucket's default encryption only inside
+    `get_encryption_defaults`, which returns before applying it for a
+    request that carries any SSE-C name, and takes the value of an
+    `x-amz-server-side-encryption` header, an empty one included, for the
+    algorithm in place of the bucket's
+    ([rgw_rest_s3.cc:194-198](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L194-L198) and
+    [rgw_rest_s3.cc:208-215](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L208-L215) at v19.2.7,
+    [rgw_rest_s3.cc:191-195](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L191-L195) and
+    [rgw_rest_s3.cc:205-212](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L205-L212) at v20.2.4),
+    so a write into a bucket with a default encryption that sends either
+    empty is stored unencrypted (`docs/ceph-upstream-bugs.md`, "[radosgw
+    skips a bucket's default encryption for a write that sends an empty
+    encryption header](ceph-upstream-bugs.md#radosgw-skips-a-buckets-default-encryption-for-a-write-that-sends-an-empty-encryption-header)").
+    rgw-go refuses the header sent empty 400, as above, and a write into
+    such a bucket without it 501, once the requester is authorized, as
+    "Writes that ask for encryption answer 501, SSE-S3 and SSE-KMS until
+    phase 2 and SSE-C until phase 4" says;
+  - radosgw lets a query parameter overwrite the header of its name, so a
+    PutObject or an UploadPart with `x-amz-server-side-encryption: AES256`
+    in the header and the same name with no value in the query takes the
+    empty value and stores the object unencrypted. rgw-go refuses it 501
+    for the header's value, as it judges every instance;
+  - an empty algorithm beside a key or key MD5 that has a value, which
+    `rgw_s3_prepare_encrypt` refuses 400 InvalidArgument for a PutObject and a
+    CreateMultipartUpload, and `rgw_s3_prepare_decrypt` refuses 400
+    InvalidEncryptionAlgorithmError for a part of an SSE-C upload, is 501 in
+    rgw-go, as any SSE-C header with a value is until phase 4 validates the
+    request's key;
+  - a POST object takes its encryption names from the form fields, trimmed,
+    through the same two functions
+    ([rgw_rest_s3.cc:3099-3123](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3099-L3123) at v20.2.4).
+    rgw-go serves no POST object yet; its route answers an empty field as
+    this entry says when it is added.
+
+  s3-tests' `test_sse_empty_algorithm`, pinned and marked `encryption`,
+  expects the 400 for an empty `x-amz-server-side-encryption`, so it
+  passes against rgw-go on both releases for the SSE header, where the
+  floors store the object; phase 4 keeps it passing when it serves SSE-C.
 - **A completion of an upload of a crypt mode rgw-go does not know
   answers 501.** A v19.2.7 or v20.2.4 radosgw completes an upload whose
   crypt mode it does not name, as it takes the mode for none

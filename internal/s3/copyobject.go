@@ -91,7 +91,8 @@ func (wr *objectWrites) copyObject(ctx context.Context, w http.ResponseWriter, r
 // x-amz-metadata-directive, COPY or REPLACE in any case and anything else
 // InvalidArgument, "Unknown metadata directive."; the storage-class check of
 // a copy onto itself that does not replace the metadata
-// (need_to_check_storage_class); a request that asks for encryption refused
+// (need_to_check_storage_class); a request that asks for encryption refused,
+// and one that sends a header emptyMessage covers with no value
 // (refuseEncryption); and the attrs, the headers' alone (requestAttrs), with
 // the retention's and the legal hold's (requestLock.addAttrs), which the copy
 // keeps under COPY and REPLACE alike in place of its source's.

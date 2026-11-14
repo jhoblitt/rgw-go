@@ -15,6 +15,9 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/s3"
 )
 
+// sseReleases are the releases the encryption specs run on, the floors.
+var sseReleases = []denc.Release{denc.Squid, denc.Tentacle}
+
 const (
 	sseCAlgorithmHeader = "X-Amz-Server-Side-Encryption-Customer-Algorithm"
 	sseCCopyAlgorithm   = "X-Amz-Copy-Source-Server-Side-Encryption-Customer-Algorithm"
@@ -51,7 +54,7 @@ var _ = Describe("the SSE-C algorithm header of a read", func() {
 	// so its status alone is checked.
 	DescribeTable("is answered as rgw_s3_prepare_decrypt answers it, per release, for GET, HEAD and GetObjectAttributes",
 		func(ctx SpecContext, hdr []string, status int, code string) {
-			for _, rel := range []denc.Release{denc.Squid, denc.Tentacle} {
+			for _, rel := range sseReleases {
 				_, h := sseCObject(ctx, rel)
 				for i, rec := range sseCReads(h, hdr...) {
 					Expect(rec.Code).To(Equal(status), "release %d, read %d: %s", rel, i, rec.Body.String())
@@ -73,7 +76,7 @@ var _ = Describe("the SSE-C algorithm header of a read", func() {
 	)
 
 	It("is read only for an object of mode SSE-C, so an object without a crypt mode is served and an SSE-KMS object answers its own refusal", func(ctx SpecContext) {
-		for _, rel := range []denc.Release{denc.Squid, denc.Tentacle} {
+		for _, rel := range sseReleases {
 			w := newReadWorld(ctx, rel)
 			h := w.handler(w.env(nil), w.alice)
 			for i, rec := range sseCReads(h, sseCAlgorithmHeader, "") {
@@ -104,49 +107,4 @@ var _ = Describe("the SSE-C algorithm header of a read", func() {
 		Expect(resp.StatusCode).To(Equal(400), string(body))
 		Expect(string(body)).To(ContainSubstring("<Code>InvalidEncryptionAlgorithmError</Code>"))
 	})
-})
-
-var _ = Describe("an SSE-C algorithm header sent empty on a write", func() {
-	// A write refuses a header by its name, whatever its value, so the empty
-	// one that radosgw's rgw_s3_prepare_encrypt takes for none is 501 here,
-	// as is the one an UploadPart sends to an upload whose prepare_decrypt
-	// reads it only for an SSE-C upload.
-	DescribeTable("answers a part 501 before the permission check, per release, whatever the upload's mode, storing nothing",
-		func(ctx SpecContext, mode string, copied bool, hdr string) {
-			for _, rel := range []denc.Release{denc.Squid, denc.Tentacle} {
-				w := newWriteWorld(ctx, rel)
-				var id string
-				if mode == "" {
-					id = w.initUpload(w.alice, "/plain/k")
-				} else {
-					id = w.beganEncrypted(ctx, mode)
-				}
-				target := overTLS + "/plain/k?uploadId=" + id + "&partNumber=1"
-				if copied {
-					expectError(w.send(w.alice, http.MethodPut, target, "", "Content-Length", "0", "X-Amz-Copy-Source", "/plain/src", hdr, ""), 501, "NotImplemented")
-				} else {
-					expectError(w.send(w.alice, http.MethodPut, target, "x", hdr, ""), 501, "NotImplemented")
-				}
-				Expect(w.parts(ctx, "k", id)).To(BeEmpty(), "release %d", rel)
-			}
-		},
-		Entry("UploadPart of an upload without a crypt mode, which radosgw stores", "", false, sseCAlgorithmHeader),
-		Entry("UploadPart of an SSE-C upload, which radosgw refuses as no AES256", "SSE-C-AES256", false, sseCAlgorithmHeader),
-		Entry("UploadPartCopy of an upload without a crypt mode, the request's own header", "", true, sseCAlgorithmHeader),
-		Entry("UploadPartCopy of an upload without a crypt mode, the copy-source header", "", true, sseCCopyAlgorithm),
-		Entry("UploadPartCopy of an SSE-C upload, the copy-source header", "SSE-C-AES256", true, sseCCopyAlgorithm),
-	)
-
-	DescribeTable("answers PutObject and CreateMultipartUpload 501, storing nothing",
-		func(ctx SpecContext, method, target, body string) {
-			for _, rel := range []denc.Release{denc.Squid, denc.Tentacle} {
-				w := newWriteWorld(ctx, rel)
-				expectError(w.send(w.alice, method, overTLS+target, body, sseCAlgorithmHeader, ""), 501, "NotImplemented")
-				Expect(w.stat(ctx, "k").Exists).To(BeFalse(), "release %d", rel)
-				Expect(w.uploads(ctx)).To(BeEmpty(), "release %d", rel)
-			}
-		},
-		Entry("PutObject", http.MethodPut, "/plain/k", "x"),
-		Entry("CreateMultipartUpload", http.MethodPost, "/plain/k?uploads", ""),
-	)
 })

@@ -217,6 +217,25 @@ var _ = Describe("InitMultipart", func() {
 			Expect(calls).To(BeZero())
 			Expect(stub.CreateUploadCallCount()).To(BeZero())
 		})
+		It("runs Defaults once the requester is authorized and the placement checked, ahead of a bucket's default encryption and of Params", func(ctx SpecContext) {
+			var order []string
+			defaults := func(context.Context, *op.InitMultipart) error {
+				order = append(order, "defaults")
+				return op.ErrInvalidRequest
+			}
+			params := func(context.Context, *op.InitMultipart) error { order = append(order, "params"); return nil }
+			f.setBucketAttrs(ctx, map[string][]byte{op.AttrBucketEncryption: {1}})
+			r := f.req(http.MethodPost, "plain", "k")
+			r.Identity = f.bob
+			Expect(op.Run(ctx, &op.InitMultipart{Defaults: defaults, Params: params}, r)).To(MatchError(op.ErrAccessDenied))
+			Expect(op.Run(ctx, &op.InitMultipart{StorageClass: "NOPE", Defaults: defaults, Params: params}, f.req(http.MethodPost, "plain", "k"))).
+				To(MatchError(op.ErrInvalidArgument), "the placement is checked first")
+			Expect(order).To(BeEmpty())
+			Expect(op.Run(ctx, &op.InitMultipart{Defaults: defaults, Params: params}, f.req(http.MethodPost, "plain", "k"))).
+				To(MatchError(op.ErrInvalidRequest), "not the bucket's NotImplemented")
+			Expect(order).To(Equal([]string{"defaults"}))
+			Expect(stub.CreateUploadCallCount()).To(BeZero())
+		})
 		It("answers a refused requester 403 whatever the bucket holds", func(ctx SpecContext) {
 			f.setBucketAttrs(ctx, map[string][]byte{
 				op.AttrBucketEncryption: {1},

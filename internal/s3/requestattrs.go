@@ -193,6 +193,22 @@ func headerMeta(h http.Header) map[string]string {
 	return xmeta
 }
 
+// headerMetaValues is headerMeta's names with every value the request sent
+// under each, where headerMeta keeps the last, as RGWEnv::set does: a name
+// sent twice holds both, and two header keys that file under one name, as
+// beast would, hold both.
+func headerMetaValues(h http.Header) map[string][]string {
+	out := map[string][]string{}
+	for k, vs := range h {
+		env := envName(k)
+		if len(vs) > 0 && strings.HasPrefix(env, amzEnvPrefix) {
+			name := lowercaseDash(strings.TrimPrefix(env, "HTTP_"))
+			out[name] = append(out[name], vs...)
+		}
+	}
+	return out
+}
+
 // cryptPrefix is the prefix init_meta_info files an x_meta_map name into
 // crypt_attribute_map under: its first 20 bytes, as strncmp compares them
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_common.cc#L455-L457 at v19.2.6,
@@ -202,6 +218,10 @@ const cryptPrefix = "x-amz-server-side-en"
 // copySourceCryptPrefix is the prefix of the copy source's SSE-C headers,
 // which v20.2.4 reads to decrypt a copy's source.
 const copySourceCryptPrefix = "x-amz-copy-source-server-side-encryption"
+
+// cryptQueryPrefix is the prefix map_qs_metadata files a query parameter into
+// crypt_attribute_map under, whole where the header's is cut at 20 bytes.
+const cryptQueryPrefix = "x-amz-server-side-encryption"
 
 // isCryptName reports whether an x_meta_map name asks for encryption or
 // names a copy source's encryption.
@@ -228,9 +248,12 @@ func isCryptName(name string) bool {
 //     x-amz-meta-* query parameter; a name reached twice joins its values
 //     with a comma;
 //   - each such name metaBlocklist does not list is the attr user.rgw. and
-//     the name, its value through formatXattr; a name that asks for
-//     encryption is never stored, as refuseEncryption refuses every write
-//     carrying one.
+//     the name, its value through formatXattr; an encryption name with a
+//     value is never stored, as refuseEncryption refuses every write
+//     carrying one, and one sent empty is, as radosgw stores it (only the
+//     SSE-C names are blocklisted), though a write that sends a name
+//     emptyMessage covers empty is refused (emptyRefusal) and does not
+//     reach it.
 //
 // Every value gets a trailing NUL. In the names' order, an attr name longer
 // than rgw_max_attr_name_len is ErrMetadataNameTooLong (-ENAMETOOLONG), a
@@ -259,7 +282,7 @@ func requestAttrs(r *op.Request, generic []genericAttr, query bool) (map[string]
 	maxNum := confUint(r, "rgw_max_attrs_num_in_req", (*cephconf.Options).Uint64)
 	var count uint64
 	for _, name := range slices.Sorted(maps.Keys(xmeta)) {
-		if metaBlocklist[name] || isCryptName(name) {
+		if metaBlocklist[name] || isCryptName(name) && xmeta[name] != "" {
 			continue
 		}
 		v := formatXattr(xmeta[name])
