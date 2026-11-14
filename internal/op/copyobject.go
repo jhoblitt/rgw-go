@@ -203,7 +203,7 @@ func (o *CopyObject) VerifyPermission(ctx context.Context, r *Request) error {
 func (o *CopyObject) checkStorageClass(r *Request) error {
 	srcRule := meta.PlacementRule{StorageClass: o.src.StorageClass}.InheritFrom(o.srcRec.Info.PlacementRule)
 	dstRule := meta.PlacementRule{StorageClass: o.StorageClass}.InheritFrom(r.BucketRec.Info.PlacementRule)
-	if srcRule.Name == dstRule.Name && srcRule.CanonicalStorageClass() == dstRule.CanonicalStorageClass() {
+	if srcRule.Equal(dstRule) {
 		return ErrInvalidRequest.WithMessage(copyOntoItselfMsg)
 	}
 	return nil

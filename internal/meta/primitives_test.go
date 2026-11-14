@@ -98,6 +98,21 @@ var _ = It("PlacementRule omits the STANDARD class from its string form", func()
 	Expect(meta.PlacementRule{Name: "p"}.CanonicalStorageClass()).To(Equal("STANDARD"))
 })
 
+var _ = DescribeTable("PlacementRule.Equal is rgw_placement_rule's ==",
+	func(a, b meta.PlacementRule, want bool) {
+		Expect(a.Equal(b)).To(Equal(want), "%+v against %+v", a, b)
+		Expect(b.Equal(a)).To(Equal(want), "%+v against %+v", b, a)
+	},
+	Entry("the same name and class", meta.PlacementRule{Name: "p", StorageClass: "COLD"}, meta.PlacementRule{Name: "p", StorageClass: "COLD"}, true),
+	Entry("the same name, both classes empty", meta.PlacementRule{Name: "p"}, meta.PlacementRule{Name: "p"}, true),
+	Entry("an empty class and STANDARD", meta.PlacementRule{Name: "p"}, meta.PlacementRule{Name: "p", StorageClass: "STANDARD"}, true),
+	Entry("another name", meta.PlacementRule{Name: "p"}, meta.PlacementRule{Name: "q"}, false),
+	Entry("another name and the same class", meta.PlacementRule{Name: "p", StorageClass: "COLD"}, meta.PlacementRule{Name: "q", StorageClass: "COLD"}, false),
+	Entry("an empty class and another class", meta.PlacementRule{Name: "p"}, meta.PlacementRule{Name: "p", StorageClass: "COLD"}, false),
+	Entry("STANDARD and another class", meta.PlacementRule{Name: "p", StorageClass: "STANDARD"}, meta.PlacementRule{Name: "p", StorageClass: "COLD"}, false),
+	Entry("two other classes", meta.PlacementRule{Name: "p", StorageClass: "COLD"}, meta.PlacementRule{Name: "p", StorageClass: "WARM"}, false),
+)
+
 var _ = It("Pool splits name and namespace at the colon", func() {
 	Expect(meta.ParsePool("default.rgw.meta:root")).To(Equal(meta.Pool{Name: "default.rgw.meta", NS: "root"}))
 	Expect(meta.Pool{Name: "default.rgw.control"}.String()).To(Equal("default.rgw.control"))

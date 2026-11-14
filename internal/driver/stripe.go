@@ -94,7 +94,7 @@ func (s *Store) planPut(ctx context.Context, rec *op.BucketRecord, _ meta.ObjKey
 	headChunk := alignedSize(s.w.opts.chunkSize, align)
 	l.headPool, l.tailPool, l.chunk = headPool, headPool, headChunk
 	samePool := true
-	if l.tailRule.Name != l.headRule.Name || l.tailRule.CanonicalStorageClass() != l.headRule.CanonicalStorageClass() {
+	if !l.tailRule.Equal(l.headRule) {
 		tailPool, tailName, err := s.dataPoolHandle(ctx, l.tailRule, bucket)
 		if err != nil {
 			return layout{}, err

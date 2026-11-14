@@ -491,7 +491,7 @@ func (o *CreateBucket) checkExisting(ctx context.Context, r *Request, existing *
 	if !r.Identity.System && zonegroup != info.Zonegroup {
 		return ErrBucketAlreadyExists.WithMessage("Cannot modify existing bucket's zonegroup")
 	}
-	if rule.Name != info.PlacementRule.Name || rule.CanonicalStorageClass() != info.PlacementRule.CanonicalStorageClass() {
+	if !rule.Equal(info.PlacementRule) {
 		return ErrBucketAlreadyExists.WithMessage("Cannot modify existing bucket's placement rule")
 	}
 	if old, err := BucketACLFor(ctx, existing); err == nil && !samePolicy(old, o.ACL) {
