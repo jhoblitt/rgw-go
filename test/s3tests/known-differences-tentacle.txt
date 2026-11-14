@@ -154,3 +154,15 @@
 
 # A Deny naming NotAction and no Action, applied to every action its NotAction does not name; radosgw's refuses nothing (differences: "A Deny that names NotAction and no Action refuses every action its NotAction does not name")
 ^s3tests\.functional\.test_s3::test_bucket_policy_deny_notaction$
+# An anonymous DeleteObject of a GOVERNANCE version sent with x-amz-bypass-governance-retention, on a bucket whose ACL is public-read-write, refused 403 AccessDenied with the version kept; radosgw passes the bypass on the bucket ACL's WRITE and removes the version (differences: "No ACL grant authorizes a delete's governance bypass")
+^s3tests\.functional\.test_s3::test_object_lock_delete_bypass_by_bucket_write_grantee$
+
+# A DeleteObjects key naming a GOVERNANCE version, sent with x-amz-bypass-governance-retention under a bucket policy that denies s3:BypassGovernanceRetention on the bucket's objects, refused AccessDenied with the version kept; radosgw checks the bypass once, on the bucket's ARN, and removes the version (differences: "DeleteObjects checks s3:BypassGovernanceRetention for each key, on the key's ARN")
+^s3tests\.functional\.test_s3::test_object_lock_multi_delete_bypass_denied$
+
+# A PutObjectRetention no policy allows, refused 403 AccessDenied with the retention unchanged, from the anonymous user shortening a GOVERNANCE retention with x-amz-bypass-governance-retention on a version written public-read-write and from another user on the version it wrote; radosgw grants both through the version ACL's WRITE and stores the retention (differences: "No ACL grant authorizes PutObjectRetention, PutObjectLegalHold or their governance bypass")
+^s3tests\.functional\.test_s3::test_object_lock_retention_bypass_by_write_grantee$
+^s3tests\.functional\.test_s3::test_object_lock_put_obj_retention_by_object_owner_without_put_retention$
+
+# Another user's PutObject naming a COMPLIANCE retention in its object-lock headers, under a bucket policy that allows s3:PutObject alone, refused 403 AccessDenied with no version stored; radosgw checks s3:PutObject alone and stores the version with its retention (differences: "A write's object-lock headers need s3:PutObjectRetention and s3:PutObjectLegalHold")
+^s3tests\.functional\.test_s3::test_object_lock_put_obj_lock_headers_without_put_retention$

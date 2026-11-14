@@ -16,9 +16,6 @@ cloud_transition
 cloud_restore
 target_by_bucket
 
-# phase 2: object lock
-object_lock
-
 # phase 2: ownership controls
 object_ownership
 
