@@ -152,10 +152,10 @@ type olhCondWait struct {
 //     https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1853-L1872 at v20.2.4),
 //     so no unlink can restore what the link replaced. A null delete marker
 //     whose wait passed its bound with such a write still in flight answers
-//     ConcurrentModification (nullWriteInFlight), and its replay removes the
-//     null data only if the head still holds the write tag the attempt
-//     followed (olhLink.ExpectHead), so a write that reaches the head after
-//     the init is kept.
+//     ConcurrentModification (nullWriteInFlight), and its own replay removes
+//     the null data only if the head still holds the write tag the attempt
+//     followed (olhLink.ExpectHead), so that replay keeps a write that
+//     reaches the head after the init.
 func (s *Store) prepareOLHAttempt(ctx context.Context, idx *bucketOLHIndex, head *op.ObjectState, key meta.ObjKey, p olhLink, w *olhCondWait) (olhAttempt, error) {
 	if p.Cond != nil {
 		if key.Instance == "" && !p.DeleteMarker {

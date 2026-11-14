@@ -825,6 +825,126 @@ var _ = Describe("DeleteObject with an expected state", func() {
 			settledOn(ctx, "")
 		})
 
+		// A null write that has landed its head and not yet its index
+		// completion leaves the entry the previous null version's while the head
+		// shows the write's data. A delete's conditions passed on the entry, so
+		// the head must still show what they judged: a write of the same bytes
+		// has the ETag the entry has, and only its mtime tells it from the
+		// version the condition checked. The write's init stands on the head
+		// from its head write, which is what marks it in flight (headShows).
+		It("answers a conditional delete by last-modified time ConcurrentModification when the same bytes were written again, keeping the write", func(ctx SpecContext) {
+			put(ctx, "v1")
+			suspend()
+			nullPut(ctx, "tag-old", "old")
+			settle(s)
+			judged := listEntry("").Meta.Mtime
+			clock.Add(int64(time.Hour))
+			var (
+				res  *op.DeleteObjectResult
+				derr error
+				ran  bool
+			)
+			at(func(w *radosclient.WriteOp) bool { return initsOLHSteps(w.Steps()) && writesData(w) }, 1, func() {
+				ran = true
+				Expect(pending()).NotTo(BeEmpty(), "the write's init stands on the head")
+				res, derr = del(ctx, "null", op.DeleteParams{IfMatchLastModified: judged})
+			})
+			nullPut(ctx, "tag-new", "old")
+			Expect(ran).To(BeTrue(), "the delete ran after the write's head write")
+			Expect(res).To(BeNil())
+			concurrent(derr)
+			settle(s)
+			Expect(olhHead().Data).To(Equal([]byte("old")), "the new null version's data")
+			en, ok := instanceEntry("")
+			Expect(ok).To(BeTrue(), "its instance entry")
+			Expect(en.Meta.Mtime).To(BeTemporally(">", judged), "the write's, not the one the condition judged")
+			Expect(listed()).To(Equal([]string{"", "v1"}))
+			settledOn(ctx, "")
+		})
+
+		// radosgw's cancel of a modification and its expiry of a pending attr are
+		// removals that set no mtime, so the head takes the client's clock while
+		// the entry, which the delete's conditions and radosgw's listing judge,
+		// keeps the write's. With no pending attr standing nothing is in flight,
+		// and the listing's last-modified time deletes the version.
+		It("passes a conditional delete by last-modified time for a head whose mtime radosgw moved", func(ctx SpecContext) {
+			put(ctx, "v1")
+			suspend()
+			nullPut(ctx, "tag-old", "old")
+			settle(s)
+			judged := listEntry("").Meta.Mtime
+			clock.Add(int64(time.Hour))
+			pool, err := c.Pool(ctx, testDataPool, "")
+			Expect(err).NotTo(HaveOccurred())
+			attr := meta.AttrOLHPendingPrefix + "canceled-by-radosgw"
+			w := radosclient.NewWriteOp()
+			w.SetXattr(attr, []byte("x"))
+			_, err = pool.Write(ctx, olhOID, w, radosclient.OpFlagNone)
+			Expect(err).NotTo(HaveOccurred())
+			w = radosclient.NewWriteOp()
+			w.RmXattr(attr)
+			_, err = pool.Write(ctx, olhOID, w, radosclient.OpFlagNone)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pending()).To(BeEmpty(), "no write in flight")
+			Expect(head(ctx, "").Mtime).To(BeTemporally(">", judged), "the head's mtime moved")
+			Expect(del(ctx, "null", op.DeleteParams{IfMatchLastModified: judged})).To(Equal(&op.DeleteObjectResult{VersionID: "null"}))
+			settle(s)
+			Expect(olhHead().Data).To(BeEmpty(), "the null version's data is gone")
+			_, ok := instanceEntry("")
+			Expect(ok).To(BeFalse(), "its instance entry")
+			Expect(listed()).To(Equal([]string{"v1"}))
+			settledOn(ctx, "v1")
+		})
+
+		// A pending attr that radosgw's removal of another attr left behind, or
+		// whose writer died, expires after rgw_olh_pending_timeout_sec, an hour,
+		// and an expired one marks no write in flight: the check that reads the
+		// head's pending attrs counts it as none (checkPendingOLHEntries).
+		It("passes a conditional delete by last-modified time for a head whose mtime moved under an expired pending attr", func(ctx SpecContext) {
+			put(ctx, "v1")
+			suspend()
+			nullPut(ctx, "tag-old", "old")
+			settle(s)
+			judged := listEntry("").Meta.Mtime
+			clock.Add(int64(2 * time.Hour))
+			pool, err := c.Pool(ctx, testDataPool, "")
+			Expect(err).NotTo(HaveOccurred())
+			w := radosclient.NewWriteOp()
+			w.SetXattr(meta.AttrOLHPendingPrefix+meta.NewOLHOpTag(judged), encode(meta.OLHPendingInfo{Time: judged}))
+			_, err = pool.Write(ctx, olhOID, w, radosclient.OpFlagNone)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(pending()).To(HaveLen(1), "the pending attr stands, two hours old")
+			Expect(head(ctx, "").Mtime).To(BeTemporally(">", judged), "the head's mtime moved")
+			Expect(del(ctx, "null", op.DeleteParams{IfMatchLastModified: judged})).To(Equal(&op.DeleteObjectResult{VersionID: "null"}))
+			settle(s)
+			Expect(olhHead().Data).To(BeEmpty(), "the null version's data is gone")
+			_, ok := instanceEntry("")
+			Expect(ok).To(BeFalse(), "its instance entry")
+			Expect(listed()).To(Equal([]string{"v1"}))
+		})
+
+		// Only the size differs between the head and the entry here, which no
+		// writer produces under one ETag, so the head is written under it.
+		It("answers a conditional delete by size ConcurrentModification when the head holds another size under the entry's ETag", func(ctx SpecContext) {
+			put(ctx, "v1")
+			suspend()
+			put(ctx, "")
+			settle(s)
+			p, err := c.Pool(ctx, testDataPool, "")
+			Expect(err).NotTo(HaveOccurred())
+			w := radosclient.NewWriteOp()
+			w.WriteFull([]byte("data-longer"))
+			w.SetXattr(meta.AttrIDTag, []byte("idtag-other"))
+			w.SetXattr(meta.AttrETag, []byte("etag-"))
+			_, err = p.Write(ctx, olhOID, w, radosclient.OpFlagNone)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = del(ctx, "null", op.DeleteParams{IfMatchSize: new(versionMeta(version("")).Size)})
+			concurrent(err)
+			settle(s)
+			Expect(olhHead().Data).To(Equal([]byte("data-longer")))
+			Expect(listed()).To(Equal([]string{"", "v1"}))
+		})
+
 		// nullMarkerOverV1 is a suspended bucket whose current version is the
 		// null delete marker, over v1, and that marker's state read by its
 		// version.

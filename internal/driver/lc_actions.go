@@ -236,10 +236,14 @@ const (
 //     head write (nullInit), so the marker's condition waits on it and is
 //     evaluated on the write once it links, or the marker answers
 //     ConcurrentModification once its wait has passed (nullWriteInFlight):
-//     either is a skip. The marker carries no UnmodifiedSince: the class
-//     compares that with the null version's own entry and, finding it no
-//     older, would write nothing. A failed condition or Expect, or a version
-//     gone, is a skip.
+//     either is a skip. A write whose pending attr is older than
+//     olhCondStale when the marker first reads it is not waited on, and
+//     another request's replay of the marker's log applies its removal of the
+//     null data without the marker's guard (docs/differences.md, "A versioned
+//     write whose version a delete removes before its link succeeds"). The
+//     marker carries no UnmodifiedSince: the class compares that with the
+//     null version's own entry and, finding it no older, would write nothing.
+//     A failed condition or Expect, or a version gone, is a skip.
 //
 // Then the notification of radosgw's ObjectExpirationCurrent and
 // LifecycleExpirationDelete (docs/differences.md, "Lifecycle removes an object

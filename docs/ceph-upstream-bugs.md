@@ -29615,7 +29615,15 @@ Every new entry adds its row to this table, in document order.
   `internal/driver/lc_transition.go`; `docs/differences.md`, "A lifecycle
   transition judges a null version by its index entry"), which "rewrites a
   null version whose OLH head's mtime a radosgw gateway's removal of a
-  pending attr moved" (`internal/driver/lc_transition_test.go`) pins.
+  pending attr moved" (`internal/driver/lc_transition_test.go`) pins. A
+  `versionId=null` delete judges a settled head, one with no unexpired
+  pending attr, by its index entry too, and compares the head's mtime only
+  while a pending attr stands (`headShows`,
+  `internal/driver/delete_versioned.go`; `docs/differences.md`, "A versioned
+  write whose version a delete removes before its link succeeds"), which
+  "passes a conditional delete by last-modified time for a head whose mtime
+  radosgw moved" and its expired-attr twin
+  (`internal/driver/delete_expect_test.go`) pin.
 - **Upstream:** [#81668](https://tracker.ceph.com/issues/81668), named by
   both fix commits' `Fixes:` trailers. Fixed on main by c35ba014080, "rgw:
   try to preserve head mtime in olh_cancel_modification()", and

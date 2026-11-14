@@ -240,9 +240,12 @@ func (s *Store) stopsAfterLink() bool { return olhStopAfterLink != nil && olhSto
 //   - p.ExpectHead takes the write tag of the head an attempt followed, after
 //     its condition was evaluated on it, as that attempt's expected tag: the
 //     init compares it, so a write that reached the head since sends the
-//     attempt round again to evaluate the condition anew, and the replay
-//     removes the null version's data the link logged only under it, so a
-//     null write that reaches the head after the init is kept.
+//     attempt round again to evaluate the condition anew, and the link's own
+//     replay removes the null version's data the link logged only under it,
+//     so that replay keeps a null write that reaches the head after the init.
+//     Another request's replay of the log applies the removal as logged
+//     (docs/differences.md, "A versioned write whose version a delete
+//     removes before its link succeeds").
 //   - p.Inited stands for the first attempt's init while the head holds its
 //     pending attr (takeInitedTag); a later attempt inits its own. One the
 //     first attempt never took, setOLH ending before it, is canceled.

@@ -71,3 +71,54 @@ Add an entry whenever work meets a format cost, and update it when a measurement
 - **Status:** idea.
 - **Found:** phase 2 task V19's fix round, from a security review of the
   replay's keep rule, 2026-11-14.
+
+## An OLH log entry carries no guard on its removal: only the delete's own replay can honor its condition
+
+- **Format element:** `rgw_bucket_olh_log_entry`, the entries of a key's
+  pending OLH log in its bucket index shard: an epoch, an op, an op tag, a
+  key and a delete-marker flag
+  ([cls_rgw_types.h:520-554](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_types.h#L520-L554),
+  [cls_rgw_types.h:519-553](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_types.h#L519-L553)).
+  `apply_olh_log` collects the key of every removal entry and removes that
+  instance, the null version's data being the key's OLH head, whichever
+  request reads the log
+  ([rgw_rados.cc:8479-8480](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8479-L8480) and
+  [rgw_rados.cc:8529-8541](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8529-L8541) at v19.2.7,
+  [rgw_rados.cc:9225-9226](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9225-L9226) and
+  [rgw_rados.cc:9275-9287](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9275-L9287) at v20.2.4).
+- **Cost:** reasoning from the code, in correctness and in requests. A
+  delete that removes the null version's data on the strength of a
+  condition, an If-Match marker or lifecycle's, guards the removal on the
+  head it judged, and the guard can live only in the replay of that
+  delete, because the log cannot carry it. So the replay of any other
+  request between the delete's link and its own replay removes whatever
+  data the head holds then, a write's that landed after the delete judged
+  the head included. And such a delete must run its own replay even when
+  told to skip it, which costs a replay per conditional marker that
+  DeleteObjects' grouping of a name's deletes would have saved
+  (`docs/differences.md`, "A versioned write whose version a delete
+  removes before its link succeeds").
+- **Proposal:** carry the guard the removing delete judged, the head's
+  write tag or its ETag, in the removal's log entry, so that `apply_olh_log`
+  removes the instance's head only while the head still carries it,
+  whichever request replays the entry. An unconditional delete carries no
+  guard and replays as today. The field would be appended beside the
+  governance-bypass flag that entry "The OLH log's removal entry: no record
+  of a GOVERNANCE bypass" proposes.
+- **S3 compliance:** the guard withholds only a removal whose condition no
+  longer holds, a write having replaced the data the condition judged; an
+  unconditional delete is unchanged.
+- **Coexistence:** the entries are written by cls_rgw on the OSDs and
+  applied by whichever gateway replays them. A field added to the entry
+  under a newer struct version with compat 1 is skipped by a gateway that
+  does not know it
+  ([encoding.h:1635-1642](https://github.com/ceph/ceph/blob/v19.2.7/src/include/encoding.h#L1635-L1642),
+  [encoding.h:1651-1658](https://github.com/ceph/ceph/blob/v20.2.4/src/include/encoding.h#L1651-L1658)),
+  but its replay would not honor the guard, so the guard binds only where
+  every gateway that replays the key honors it, and rgw-go cannot write the
+  field without the class carrying it. The path is an upstream change to
+  cls_rgw and `apply_olh_log` together.
+- **Status:** idea.
+- **Found:** phase 2 task V18's re-review, 2026-11-14, in an emulator run
+  of a third request's replay between a conditional marker's link and its
+  own replay.
