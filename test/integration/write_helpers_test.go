@@ -29,6 +29,8 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/cls/gc"
 	"github.com/jhoblitt/rgw-go/internal/cls/lock"
+	"github.com/jhoblitt/rgw-go/internal/cls/refcount"
+	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
@@ -472,6 +474,18 @@ func rawXattrs(ctx context.Context, oid string) map[string][]byte {
 	Expect(err).NotTo(HaveOccurred(), "reading %s's xattrs", oid)
 	Expect(x.Err).NotTo(HaveOccurred())
 	return x.Xattrs
+}
+
+// refcountOf is the references the refcount class holds on oid in the data
+// pool, by tag; the empty tag is the wildcard of the write that made oid.
+func refcountOf(ctx context.Context, oid string) map[string]bool {
+	GinkgoHelper()
+	b := rawXattrs(ctx, oid)[refcount.XattrName]
+	Expect(b).NotTo(BeEmpty(), "%s's refcount", oid)
+	d := denc.NewDecoder(b)
+	rc := refcount.DecodeRefcount(d)
+	Expect(d.Err()).NotTo(HaveOccurred(), "decoding %s's refcount", oid)
+	return rc.Refs
 }
 
 // rawStat stats oid in the data pool; a missing object is ErrNotFound.

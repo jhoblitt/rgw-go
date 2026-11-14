@@ -436,16 +436,8 @@ var _ = Describe("the write path against radosgw-admin and the coexisting radosg
 			Expect(o.ETag).To(Equal(so.ETag), "the copy's etag")
 			dstTag := string(rawXattrs(ctx, headOID(stat(ctx, rec, "dst")))[meta.AttrTailTag])
 			Expect(dstTag).To(HaveSuffix("\x00"), "the copy's tail tag")
-			refs := func(oid string) map[string]bool {
-				b := rawXattrs(ctx, oid)[refcount.XattrName]
-				Expect(b).NotTo(BeEmpty(), "%s's refcount", oid)
-				d := denc.NewDecoder(b)
-				rc := refcount.DecodeRefcount(d)
-				Expect(d.Err()).NotTo(HaveOccurred(), "decoding %s's refcount", oid)
-				return rc.Refs
-			}
 			for _, t := range srcTails {
-				Expect(refs(t)).To(Equal(map[string]bool{"": true, dstTag: true}), "%s's references", t)
+				Expect(refcountOf(ctx, t)).To(Equal(map[string]bool{"": true, dstTag: true}), "%s's references", t)
 			}
 			_, got := getRadosgw(ctx, name, "dst")
 			Expect(got).To(Equal(body), "the copy read back through radosgw")
@@ -453,7 +445,7 @@ var _ = Describe("the write path against radosgw-admin and the coexisting radosg
 			Expect(store.DeleteObject(ctx, rec, meta.ObjKey{Name: "src"}, op.DeleteParams{})).Error().To(Succeed())
 			gcProcess(ctx)
 			for _, t := range srcTails {
-				Expect(refs(t)).To(Equal(map[string]bool{dstTag: true}), "%s's reference left once the source is collected", t)
+				Expect(refcountOf(ctx, t)).To(Equal(map[string]bool{dstTag: true}), "%s's reference left once the source is collected", t)
 			}
 			_, got = getRadosgw(ctx, name, "dst")
 			Expect(got).To(Equal(body), "the copy read back once the source is gone")
@@ -461,6 +453,38 @@ var _ = Describe("the write path against radosgw-admin and the coexisting radosg
 			Expect(store.DeleteObject(ctx, rec, meta.ObjKey{Name: "dst"}, op.DeleteParams{})).Error().To(Succeed())
 			gcProcess(ctx)
 			Expect(dataOIDs(ctx, rec)).To(BeEmpty(), "the shared tails once both are collected")
+		})
+
+		It("shares a default-class source's tails with a copy that names STANDARD, as radosgw does", func(ctx SpecContext) {
+			body := randBytes(10 * mib)
+			putRGWGo(ctx, rec, "src", body, op.PutParams{Attrs: rgwgoAttrs(http.Header{})})
+			src := prefetch(ctx, rec, "src")
+			srcTails := tails(src)
+			_, err := store.CopyObject(ctx, src, rec, meta.ObjKey{Name: "dst-rgwgo"},
+				op.CopyParams{Attrs: map[string][]byte{meta.AttrACL: aliceACL()}, StorageClass: "STANDARD"})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = s3Client(alice()).CopyObject(ctx, &awss3.CopyObjectInput{
+				Bucket: aws.String(name), Key: aws.String("dst-radosgw"), CopySource: aws.String(name + "/src"),
+				StorageClass: s3types.StorageClassStandard,
+			})
+			Expect(err).NotTo(HaveOccurred(), "CopyObject through radosgw")
+
+			// A tail holds the wildcard of the write that made it and one
+			// reference per copy that shares it.
+			want := map[string]bool{"": true}
+			prefix := objectStat(ctx, name, "src").manifest().Prefix
+			for _, dst := range []string{"dst-rgwgo", "dst-radosgw"} {
+				Expect(objectStat(ctx, name, dst).manifest().Prefix).To(Equal(prefix), "%s names the source's tails", dst)
+				want[string(rawXattrs(ctx, headOID(stat(ctx, rec, dst)))[meta.AttrTailTag])] = true
+			}
+			Expect(want).To(HaveLen(3), "the wildcard and one tail tag for each copy")
+			for _, t := range srcTails {
+				Expect(refcountOf(ctx, t)).To(Equal(want), "%s's references", t)
+			}
+			for _, dst := range []string{"dst-rgwgo", "dst-radosgw"} {
+				_, got := getRadosgw(ctx, name, dst)
+				Expect(got).To(Equal(body), "%s read back through radosgw", dst)
+			}
 		})
 
 		It("stores a REPLACE copy's request headers as radosgw does", func(ctx SpecContext) {
