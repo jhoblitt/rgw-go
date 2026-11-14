@@ -229,6 +229,7 @@ flowchart LR
   t_V17["V17"]
   t_V18["V18"]
   t_V19["V19"]
+  t_V20["V20"]
   t_S1["S1"]:::ext
   t_S2["S2"]:::ext
   t_WP_16["WP-16"]:::ext
@@ -294,6 +295,7 @@ flowchart LR
   t_V16 --> t_V17
   t_V16 --> t_V18
   t_V16 --> t_V19
+  t_V18 --> t_V20
   click t_V0 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v0-a-failed-class-call-keeps-its-output" "V0: a failed class call keeps its output"
   click t_V1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v1-clsrgw-olh-methods-bi_get-and-the-index-key-encoders" "V1: cls/rgw OLH methods, `bi_get` and the index key encoders"
   click t_V2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v2-meta-olh-head-types-and-bucket-helpers" "V2: meta OLH head types and bucket helpers"
@@ -327,6 +329,7 @@ flowchart LR
   click t_V17 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v17-deleteobjects-runs-a-names-skipped-olh-updates-after-its-last-delete-fails" "V17: DeleteObjects runs a name's skipped OLH updates after its last delete fails"
   click t_V18 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v18-a-versioned-write-whose-version-is-deleted-before-it-links-succeeds" "V18: a versioned write whose version is deleted before it links succeeds"
   click t_V19 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v19-another-requests-replay-keeps-a-versioned-deletes-object-lock-guard" "V19: another request's replay keeps a versioned delete's object-lock guard"
+  click t_V20 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v20-a-key-left-with-an-olh-entry-pending-removal-stays-listable" "V20: a key left with an OLH entry pending removal stays listable"
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_WP_16 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-16-the-otp-class-client" "WP-16: the otp class client"
@@ -368,6 +371,7 @@ flowchart LR
 - [V17](V-versioning.md#task-v17-deleteobjects-runs-a-names-skipped-olh-updates-after-its-last-delete-fails): DeleteObjects runs a name's skipped OLH updates after its last delete fails
 - [V18](V-versioning.md#task-v18-a-versioned-write-whose-version-is-deleted-before-it-links-succeeds): a versioned write whose version is deleted before it links succeeds
 - [V19](V-versioning.md#task-v19-another-requests-replay-keeps-a-versioned-deletes-object-lock-guard): another request's replay keeps a versioned delete's object-lock guard
+- [V20](V-versioning.md#task-v20-a-key-left-with-an-olh-entry-pending-removal-stays-listable): a key left with an OLH entry pending removal stays listable
 
 ### L: object lock
 
