@@ -1773,6 +1773,34 @@ their default.
 - **s3-tests:** none. The window lies inside one request's replay; the driver specs inject it.
 - **Depends on:** V16. **PR split:** one. **Brief:** about 45 lines.
 
+### Task V20: a key left with an OLH entry pending removal stays listable
+
+Found by V18's task review (Important 1), and numbered here before V18 merged (PP-12).
+
+- **Layer:** driver. **Files:** the driver's unversioned and null-version write and its index
+  completion, their specs; `docs/differences.md`; the registry entry V18 adds. **Cluster:** no.
+- **Security boundary:** the versioned write is on the request path; adversarial review applies
+  (PP-14).
+- **Behaviour:**
+  1. A write that creates a key's OLH head, whose version a delete removes before its link,
+     leaves the key's OLH index entry marked for removal and a version marker; radosgw leaves the
+     same state, which it reaches through S3 (`PUT k?versionId=X` racing `DELETE k?versionId=X`).
+     A later unversioned PUT of the key on a Suspended bucket then completes its index entry
+     behind the version marker, where no listing reads: the object reads back and is counted,
+     and neither ListObjects nor ListObjectVersions shows it (V18's review: `read_key_entry`,
+     `complete_op`'s ADD and `get_obj_vals` in cls_rgw.cc; verify each at both tags at
+     implementation).
+  2. rgw-go's write that meets that state, its own or radosgw's, leaves the key listable: it
+     clears or replaces the leftover entry and marker through the class operations radosgw's own
+     clear uses, so the bucket index stays byte-identical to a state radosgw writes. If no such
+     sequence exists, the task records why in the registry entry and changes nothing.
+- **Specs:** the leftover state built in the emulator, then an unversioned PUT on a Suspended
+  bucket: the object is listed by ListObjects and ListObjectVersions and reads back; the same
+  with the state radosgw leaves; a key without the leftover behaves as before.
+- **Exclusions and registry:** a `docs/differences.md` entry where rgw-go lists what radosgw does
+  not; the registry entry's rgw-go line.
+- **Depends on:** V18. **PR split:** one. **Brief:** about 40 lines.
+
 ### Task V15b: the cross-gateway cases
 
 - **Layer:** integration tests. **Files:** the shared-zone suite beside phase 1's cases.
@@ -1846,7 +1874,7 @@ recordings land one at a time through the controller.
 | 8 | V7b, V8b, V8c | V7a, V8a, V9 |
 | 9 | V11, V12b | V7b, V8b |
 | 10 | V12a, V14a | V11, V13d |
-| 11 | V16, then V15a, then V17, then V18, then V19, then V15b, then V15c | everything above, WP-22 |
+| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c | everything above, WP-22 |
 
 - V10's recording PR is a cluster task the controller schedules after its first PR merges.
 - The critical path is V1, V3b, V4, V5a, V5b, V5c, V7a, V7b, V11, V14a, V15a. L and C start
