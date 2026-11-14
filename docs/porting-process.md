@@ -810,6 +810,15 @@ Each fix below that is not this document lands on main before phase 2's tasks st
     carries" and that the completion is unchanged. radosgw v20.2.4 runs its decrypt check on an
     SSE-C upload before completing, and rgw-go reads no crypt mode at all; WP-26 was amended twice
     (#580, #581).
+  - It recurred on 2026-11-14, in plan text and in a controller ruling:
+    - WP-29's brief said UploadPart answers 400 for an empty SSE-C algorithm, and that UploadPart
+      is the encrypt path. Neither held; the implementer's reading cost investigation only.
+    - The controller's ruling on V18's fix round 3 had a conditional `versionId=null` delete
+      compare the head's RADOS mtime, assuming only a write of data moves it. radosgw's pending-attr
+      cancel and expiry are `rmxattr` ops that move it, while radosgw judges the condition by the
+      index entry's mtime. A fix round implemented the ruling, bent an existing spec's fixture to
+      fit it, and the re-review overturned it, which cost a fourth round. A ruling's premise is a
+      claim about the code like any other.
 - **Cost:** two plan PRs to amend WP-26, one to correct C12 and T-6, a second MFA commit merged
   into the s3-tests branch unsquashed, and a review round in WP-13 that judged sentences against
   WP-26's wrong text.
@@ -1000,6 +1009,10 @@ Each fix below that is not this document lands on main before phase 2's tasks st
     holds Ubuntu's `librados2` 20.2.0-0ubuntu2.1. The action's own install does not bring it, and
     #594's parity, 80 minutes after #593's, ran on image 20261111.196.1 under the same label and
     passed.
+  - It recurred the same afternoon: twice on #613, once each on #614 and SM3's integration run.
+    A ship script started before a PR's runs existed skipped its retries and stopped at the first
+    fault, so the controller's ship wrapper now reads a failed run's job logs and re-runs only
+    runs that show this fault.
 - **Cost:** a re-run of each failed job, and a log reading of each to rule out the change under
   test; three merges delayed.
 - **Fix:** #602 purges the packages the image brought and fails only when one survives the purge.
@@ -1009,3 +1022,59 @@ Each fix below that is not this document lands on main before phase 2's tasks st
   builds, not one image.
 - **Candidate home:** the cluster action's runner check; PP-48; github-conventions'
   `references/workflows.md` (runner labels).
+
+## PP-61: radosgw's concurrency s3-tests flip between record runs
+
+- **Severity:** Minor. **Status:** open; carried to the next T task.
+- **Observed:**
+  - A record-baseline run records every gate test twice against radosgw. The `_concurrent`
+    tests (such as `test_delete_object_current_if_match_concurrent`) race inside radosgw, and their
+    outcome can differ between the runs and from the ledger's last entry.
+  - The run then appends an unstable re-observation of a test it was not asked to record. That
+    test's known-differences line matches nothing, or reads "no longer differs", and the parity
+    job fails.
+  - BC-22, WP-28 and T-3 each had to fold only their own tests' entries by hand and leave the
+    re-observation out.
+- **Cost:** a hand fold and a parity failure to read on each of BC-22's, WP-28's and T-3's record
+  runs.
+- **Improvement:** a record step appends entries only for the tests it was asked to record. Or the
+  concurrency tests carry a known-unstable list the comparison honours, rather than a
+  known-differences line their flips break.
+- **Candidate home:** `hack/parity`'s record and append; the next T task.
+
+## PP-62: Stopping a ship chain mid-way left the pull request's head moved
+
+- **Severity:** Minor. **Status:** open.
+- **Observed:**
+  - `ship-chain.sh` starts with update-branch, which merges main into the pull request's head when
+    it is behind.
+  - On 2026-11-14 the controller stopped WP-28's chain after that step, rewrote the branch, and
+    pushed with a lease taken before the chain ran. The lease refused the push (2a0ea5b, then
+    0748d97 had moved the head). That was correct, and the controller compared the trees before
+    pushing again.
+  - The same day, #613 stopped on "mergeable CONFLICTING" after #614 merged first, and needed a
+    rebase by hand.
+- **Cost:** a refused push, a tree comparison and a re-ship; one rebase and re-ship.
+- **Improvement:** after any ship chain has run, fetch the head and compare trees before a lease
+  push. A rebase helper resolves the registries' append-only conflicts main-first and stops on any
+  other conflict.
+- **Candidate home:** the controller's ship tools; subagent-driven-development's finishing step.
+
+## PP-63: An s3-tests change merged into the pinned branch before its pin proof ran
+
+- **Severity:** Minor. **Status:** fixed for C8 (jhoblitt/ceph#42); open as a rule.
+- **Observed:**
+  - C8's s3-tests change (jhoblitt/ceph#40) re-signed an existing helper and its six calls, and
+    added non-test helpers and top-level comments. It merged into `rgw-go-s3tests` before
+    `make s3tests-pin` was run against it, and the proof then refused the pin move.
+  - The follow-up, #42, restored the helper and calls and moved each new test's helpers into its
+    own body. The proof admits the cumulative diff from the old pin. Before the merge it was run
+    against a scratch repository standing in for the branch.
+  - The same day, L7's s3-tests commit was found on no branch, reachable only from the Ceph
+    clone's reflog, after its task's fix rounds had amended it.
+- **Cost:** one more task and fork pull request, and C8's pull request delayed until they merged;
+  L7's test was nearly lost to garbage collection.
+- **Improvement:** an s3-tests pull request merges into `rgw-go-s3tests` only after
+  `make s3tests-pin` admits its head, run against a scratch `PARITY_CEPH_REPO` before the merge.
+  Every s3-tests commit an implementer hands back sits on a pushed `s3t-*` branch.
+- **Candidate home:** PP-19's flow in the project CLAUDE.md; the implementer brief template.
