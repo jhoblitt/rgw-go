@@ -172,3 +172,6 @@
 
 # A PutPublicAccessBlock naming the misspelled BlockPublicACLs, refused 400 MalformedXML; radosgw answers 200 and stores the setting false (differences: "A PutPublicAccessBlock document is held to S3's schema")
 ^s3tests\.functional\.test_s3::test_public_block_misspelled_setting_refused$
+
+# A NUL that a PutObject's query-string x-amz-meta value stores, sent by a GET and a HEAD as a space; radosgw v19.2.7 sends the NUL (differences: "A stored header value's NUL and other control bytes go out as spaces")
+^s3tests\.functional\.test_s3::test_object_metadata_query_string_nul_not_in_header$
