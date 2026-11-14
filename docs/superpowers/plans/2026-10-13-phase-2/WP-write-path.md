@@ -1212,11 +1212,22 @@ before WP-13 merged (PP-12).
      v20.2.4 asks for the key on every SSE-C completion
      ([rgw_rest_s3.cc:4591-4598](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4591-L4598)),
      and rgw-go follows AWS where the status differs (D16).
-  2. An SSE-KMS, SSE-S3 or RGW-AUTO upload is refused as a radosgw without a key server refuses
-     or fails it (Key management, item 3, in `docs/exclusions.md`), the SSE-KMS one first with
-     radosgw's `rgw_crypt_require_ssl` refusal over an insecure transport
-     ([rgw_crypt.cc:1424-1428](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1424-L1428)).
-     Verify each mode's answer at both tags at implementation.
+  2. An SSE-KMS, SSE-S3 or RGW-AUTO upload is completed where its completion needs no key, as
+     Amazon S3 completes it, and refused where it needs one, as a radosgw without a key server
+     refuses it (Key management, item 3, in `docs/exclusions.md`; D16). A completion reads no
+     part data, so completing one serves no ciphertext and writes the attrs radosgw writes.
+     - On Squid every such upload completes: v19.2.7's completion reads no crypt attr and fetches
+       no key.
+     - On Tentacle an SSE-S3 upload and an SSE-KMS upload without a checksum complete, and the
+       response echoes `x-amz-server-side-encryption` and, for SSE-KMS,
+       `x-amz-server-side-encryption-aws-kms-key-id` from the upload's stored attrs. v20.2.4
+       without a key server refuses both; each difference goes in `docs/differences.md`.
+     - An SSE-KMS upload with a checksum, which Amazon S3 completes only for a requester with
+       `kms:Decrypt`, and an RGW-AUTO upload are refused with radosgw's answer, the SSE-KMS one
+       first with radosgw's `rgw_crypt_require_ssl` refusal over an insecure transport
+       ([rgw_crypt.cc:1424-1428](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1424-L1428)).
+     Verify each mode's answer at both tags at implementation. This item was amended by the
+     task's review, which found the first text's Tentacle refusals against D16.
   3. A crypt mode rgw-go does not know, such as v20.2.5's GCM modes, is refused. This item
      lands early, in WP-27's PR: completing such an upload writes neither
      `user.rgw.crypt.original-size` nor `user.rgw.crypt.part-numbers`, so no gateway can
@@ -1282,6 +1293,36 @@ Found while implementing L5b, and numbered here before L5b (a) merged (PP-12).
   radosgw's.
 - **Depends on:** nothing. **PR:** one. **Brief:** about 35 lines.
 
+### Task WP-29: an empty SSE-C algorithm header answers as radosgw does on every SSE-C path
+
+Found by WP-26's task review (I1), and numbered here before WP-26 merged (PP-12).
+
+- **Layer:** S3 handler and op. **Files:** the SSE-C header reads in `internal/s3/getobject.go`,
+  `internal/s3/getobjattrs.go` and `internal/s3/multipart.go` (UploadPart, UploadPartCopy's
+  copy-source headers), `sseCKeyError` in `internal/op/crypt.go`, their specs;
+  `docs/differences.md`. **Cluster:** no.
+- **Behaviour:**
+  1. A request whose `x-amz-server-side-encryption-customer-algorithm` header, or the copy-source
+     form, is sent with an empty value answers what radosgw answers for that op at both tags.
+     Today the handlers read the header with `header()`, which drops whether it was sent, so
+     `sseCKeyError` takes the empty value for an absent header and answers 400 InvalidArgument
+     at GetObject and HeadObject, GetObjectAttributes, UploadPart and UploadPartCopy. WP-26
+     fixes the same read for CompleteMultipartUpload.
+  2. radosgw's answer differs by path, to verify per op at implementation: beast files an empty
+     header as present, so `rgw_s3_prepare_decrypt`'s `strcmp` answers
+     InvalidEncryptionAlgorithmError on a read
+     ([rgw_crypt.cc:1323-1336](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1323-L1336),
+     [rgw_crypt.cc:1340-1353](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1340-L1353)),
+     while `rgw_s3_prepare_encrypt` treats an empty value as absent
+     ([rgw_crypt.cc:1041-1048](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1041-L1048),
+     [rgw_crypt.cc:1056-1063](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1056-L1063)).
+     An answer that differs from radosgw's goes in `docs/differences.md`.
+- **Specs:** per release and per op, the algorithm header absent, empty, `AES256` and another
+  value, with and without the key headers; the copy-source form for UploadPartCopy.
+- **Exclusions and registry:** a `docs/differences.md` entry where rgw-go's answer differs; the
+  op entries whose text describes the old answer are corrected.
+- **Depends on:** WP-26. **PR:** one. **Brief:** about 40 lines.
+
 ## Order
 
 Everything starts after the index's deferred benchmark run and the shared tasks it names.
@@ -1297,6 +1338,7 @@ Everything starts after the index's deferred benchmark run and the shared tasks 
 | 7 | WP-25, WP-26 | WP-13 |
 | any time, first | WP-27 | nothing |
 | any time | WP-28 | nothing |
+| after WP-26 | WP-29 | WP-26 |
 | cluster, one at a time | WP-24, WP-15, WP-14 | WP-19 and WP-21; WP-8 to WP-11 and WP-13; WP-6 to WP-13, WP-22, T-1, and BC-34 or the POST line deselected |
 
 - Wave 1 is wider than the subagent budget allows at once; the controller starts WP-10 (a),
