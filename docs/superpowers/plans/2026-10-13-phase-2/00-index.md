@@ -34,7 +34,7 @@ The set's files:
 
 | File | Unit | Tasks |
 |---|---|---|
-| `00-index.md` | this index, and the shared tasks S1 to S11 | 11 |
+| `00-index.md` | this index, and the shared tasks S1 to S12 | 12 |
 | `V-versioning.md` | the OLH protocol, versioned ops, ListObjectVersions, MFA delete | V0-V20 |
 | `L-object-lock.md` | object lock: configuration, retention, legal hold, enforcement | L1-L5b |
 | `C-lifecycle.md` | lifecycle configuration and the worker | C1-C15 |
@@ -388,9 +388,40 @@ Found by L7's adversarial review (F5), and numbered here before L7 merged (PP-12
 - **Exclusions and registry:** a `docs/differences.md` entry.
 - **Depends on:** nothing. **PR:** one. **Brief:** about 35 lines.
 
+### Task S12: the object writes authorize the ACL and tags they set as Amazon S3 does
+
+Found by S8's adversarial review (B-I1), and numbered here before S8 merged (PP-12).
+
+- **Layer:** op (`internal/op`) and authz. **Files:** the permission checks of PutObject,
+  CreateMultipartUpload, CopyObject's destination and the POST upload, and their specs;
+  `docs/differences.md`; `docs/ceph-upstream-bugs.md`. **Cluster:** no.
+- **Security boundary:** request authorization; adversarial review applies (PP-14).
+- **Behaviour:**
+  1. A write that sets an object ACL (`x-amz-acl` or a grant header, or the POST form's `acl`) is
+     also authorized as s3:PutObjectAcl, and one that sets tags (`x-amz-tagging`, or the POST
+     form's `tagging`) as s3:PutObjectTagging, where Amazon S3's references require it (cited at
+     implementation from the SDK's operation documentation, for each of the four operations; the
+     PutObject reference requires both). radosgw evaluates s3:PutObject alone in each
+     ([rgw_op.cc:3983](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3983), [rgw_op.cc:4192](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4192) for PutObject;
+     [rgw_op.cc:6284](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6284), [rgw_op.cc:6951](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6951) for CreateMultipartUpload;
+     [rgw_op.cc:5491](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5491), [rgw_op.cc:6054](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6054) for CopyObject;
+     [rgw_op.cc:4600](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4600), [rgw_op.cc:4893](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4893) for the POST upload), and rgw-go
+     copies it today.
+  2. This follows rgw-go's CreateBucket, which already authorizes its ACL headers as
+     s3:PutBucketAcl too (the registry's "radosgw's CreateBucket takes an ACL other than private
+     without s3:PutBucketAcl"). It refuses on rgw-go writes radosgw serves, on both the Allow and
+     the Deny side, so it is recorded as a difference.
+- **Specs:** per release and per operation, a requester allowed s3:PutObject alone setting an ACL
+  and setting tags; the same with the second action allowed; an explicit Deny of s3:PutObjectAcl
+  or s3:PutObjectTagging, by Action and by NotAction; a write that sets neither, unchanged.
+- **Exclusions and registry:** a `docs/differences.md` entry; the rgw-go line of the registry
+  entry S8 adds ("radosgw's PutObject sets the object ACL and tags its headers name under
+  s3:PutObject alone").
+- **Depends on:** S8. **PR:** one. **Brief:** about 40 lines.
+
 ## Order
 
-1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, S6 once V2 lands, S7 once V10, BC-17, BC-23, BC-10 and BC-28a land, S8 and S11 at once, and S9 and S10 once L7 lands.
+1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, S6 once V2 lands, S7 once V10, BC-17, BC-23, BC-10 and BC-28a land, S8 and S11 at once, S9 and S10 once L7 lands, and S12 once S8 lands.
 2. **Then the units in parallel**, each in its own file's waves. V's foundation (V0 to V3b) comes first among the units, because L and C consume its OLH seams. B and WP start with S2, and the T and SM units start at once. Within the waves:
    - The cluster tasks of every unit run one at a time.
    - The recording tasks, which append to the parity ledgers, land one at a time through the controller.
