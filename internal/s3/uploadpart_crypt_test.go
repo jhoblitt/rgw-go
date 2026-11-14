@@ -24,6 +24,13 @@ import (
 // every write that asks for encryption 501, so only the store makes one.
 func (w *writeWorld) beganEncrypted(ctx context.Context, mode string) string {
 	GinkgoHelper()
+	return w.beganEncryptedWith(ctx, mode, op.UploadChecksum{})
+}
+
+// beganEncryptedWith is beganEncrypted of an upload created with checksum
+// uc, which the store keeps on Tentacle alone.
+func (w *writeWorld) beganEncryptedWith(ctx context.Context, mode string, uc op.UploadChecksum) string {
+	GinkgoHelper()
 	owner := meta.UserOwner(w.alice.Info.UserID)
 	keySel := bytes.Repeat([]byte{9}, 32)
 	attrs := map[string][]byte{meta.AttrACL: encodeACL(acl.DefaultPolicy(owner, "Alice")), meta.AttrCryptMode: []byte(mode)}
@@ -39,7 +46,7 @@ func (w *writeWorld) beganEncrypted(ctx context.Context, mode string) string {
 		attrs[meta.AttrCryptPrefix+"keysel"] = keySel
 	}
 	up, err := w.store.CreateUpload(ctx, w.bucket(ctx), meta.ObjKey{Name: "k"}, op.UploadParams{
-		Owner: owner, OwnerName: "Alice", Placement: meta.PlacementRule{Name: "default-placement"}, Attrs: attrs,
+		Owner: owner, OwnerName: "Alice", Placement: meta.PlacementRule{Name: "default-placement"}, Attrs: attrs, Checksum: uc,
 	})
 	Expect(err).NotTo(HaveOccurred())
 	return up.ID

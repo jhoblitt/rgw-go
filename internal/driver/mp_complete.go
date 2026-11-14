@@ -269,7 +269,8 @@ func sameCompletion(st *op.ObjectState, a *assembly) bool {
 //     cookie of this completion's own (newLockCookie), whose ENOENT, when
 //     the key already carries the parts' ETag (checkPreviouslyCompleted), is
 //     radosgw's re-sent completion, answered with that stored ETag and
-//     checksum
+//     checksum, and with the head's crypt attrs, which the op decides
+//     (PutResult.Crypt)
 //     (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6438-L6441;
 //     v19.2.7
 //     https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6584,
@@ -347,7 +348,10 @@ func (s *Store) Complete(ctx context.Context, up *op.Upload, parts []op.Complete
 		if errors.Is(err, radosclient.ErrNotFound) {
 			if st, ok := s.checkPreviouslyCompleted(ctx, rec, key, parts); ok {
 				slog.InfoContext(ctx, "multipart completion already completed", slog.String("upload", up.ID))
-				return &op.PutResult{ETag: st.ETag, Size: st.Size, Mtime: st.Mtime, Epoch: st.Epoch, Version: versionID(st.Key), Checksum: st.Checksum}, nil
+				return &op.PutResult{
+					ETag: st.ETag, Size: st.Size, Mtime: st.Mtime, Epoch: st.Epoch, Version: versionID(st.Key),
+					Checksum: st.Checksum, Crypt: op.CryptAttrs(st.Attrs),
+				}, nil
 			}
 		}
 		return nil, fmt.Errorf("%w: locking upload %s: %w", op.ErrCompletionInProgress, up.ID, err)

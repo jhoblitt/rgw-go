@@ -89,19 +89,17 @@ func storedCryptMode(attrs map[string][]byte) cryptMode {
 // encryption: rgw-go neither serves its stored bytes nor writes a part of
 // it in the clear.
 func storedCryptRefusal(ctx context.Context, r *Request, attrs map[string][]byte, req sseCRequest) error {
-	insecure := confBool(r, "rgw_crypt_require_ssl", true) && !req.secure
-	errInsecure := fmt.Errorf("%w: rgw_crypt_require_ssl refuses an insecure request", ErrInvalidRequest)
 	switch storedCryptMode(attrs) {
 	case cryptNone:
 		return nil
 	case cryptSSEC:
-		if insecure {
-			return errInsecure
+		if err := requireSSL(r, req.secure); err != nil {
+			return err
 		}
 		return checkSSEC(ctx, r, attrs[meta.AttrCryptKeyMD5], req)
 	case cryptSSEKMS:
-		if insecure {
-			return errInsecure
+		if err := requireSSL(r, req.secure); err != nil {
+			return err
 		}
 		return ErrInvalidArgument.WithMessage("Failed to retrieve the actual key, kms-keyid: " + string(attrs[meta.AttrCryptKeyID]))
 	case cryptRGWAuto:
@@ -109,13 +107,25 @@ func storedCryptRefusal(ctx context.Context, r *Request, attrs map[string][]byte
 		// bytes: -EIO.
 		return fmt.Errorf("%w: no default encryption key for %s", ErrUnknown, r.Object.Name)
 	case cryptSSES3:
-		if insecure && r.Env.Zone.Release() < denc.Tentacle {
-			return errInsecure
+		if r.Env.Zone.Release() < denc.Tentacle {
+			if err := requireSSL(r, req.secure); err != nil {
+				return err
+			}
 		}
 		return ErrInvalidArgument.WithMessage("Failed to retrieve the actual key")
 	default:
 		return fmt.Errorf("%w: crypt mode %q is not one rgw-go knows", ErrNotImplemented, attrs[meta.AttrCryptMode])
 	}
+}
+
+// requireSSL is rgw_crypt_require_ssl's refusal, InvalidRequest, of a
+// request rgw_transport_is_secure does not take, secure saying whether it
+// does; the option is true when it cannot be read, as its default is.
+func requireSSL(r *Request, secure bool) error {
+	if secure || !confBool(r, "rgw_crypt_require_ssl", true) {
+		return nil
+	}
+	return fmt.Errorf("%w: rgw_crypt_require_ssl refuses an insecure request", ErrInvalidRequest)
 }
 
 // RefuseEncryptedSource is CopyObject's refusal of a source that carries a

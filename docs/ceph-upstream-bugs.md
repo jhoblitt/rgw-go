@@ -32785,9 +32785,10 @@ Every new entry adds its row to this table, in document order.
   checksum. ListParts gives every part's checksum of an SSE-C or SSE-KMS
   upload to a requester who sends no key, and CompleteMultipartUpload
   gives an SSE-KMS upload's combined checksum to any requester allowed to
-  complete it over a transport `rgw_crypt_require_ssl` accepts, where
-  Amazon S3 needs the SSE-C key or `kms:Decrypt`. Unreproduced: derived
-  from the source.
+  complete it over a transport `rgw_crypt_require_ssl` accepts, and any
+  encrypted object's to a completion whose upload id names no upload,
+  where Amazon S3 needs the SSE-C key or `kms:Decrypt`. Unreproduced:
+  derived from the source.
 - **Evidence:** paths are under `src/rgw/`, at v20.2.4 unless a link names
   another tag.
   - An upload's part checksums, and the combination completion makes of
@@ -32811,8 +32812,9 @@ Every new entry adds its row to this table, in document order.
     For SSE-C that refuses a request without the upload's key, or over an
     insecure transport under `rgw_crypt_require_ssl`
     ([rgw_crypt.cc:1333-1421](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1333-L1421)),
-    so an SSE-C upload's combined checksum reaches only a holder of its
-    key. For SSE-KMS it refuses an insecure transport under
+    so a completion of the upload gives its combined checksum only to a
+    holder of its key, but for the path the next point names. For SSE-KMS
+    it refuses an insecure transport under
     `rgw_crypt_require_ssl` too
     ([rgw_crypt.cc:1424-1428](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1424-L1428)),
     then fetches the key with radosgw's own access to the key server,
@@ -32823,6 +32825,24 @@ Every new entry adds its row to this table, in document order.
     ([rgw_rest_s3.cc:4610-4611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4610-L4611))
     and renders the combined checksum
     ([rgw_rest_s3.cc:4635-4639](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4635-L4639)).
+  - A completion whose upload id names no meta object, a retry of a
+    completion that succeeded or an id made up, decides no encryption at
+    all. `get_params` skips `rgw_s3_prepare_decrypt` when the meta
+    object's attrs read is -ENOENT
+    ([rgw_rest_s3.cc:4584-4599](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4584-L4599)),
+    and `execute`'s lock then fails with -ENOENT and answers 200 from
+    `check_previously_completed`
+    ([rgw_op.cc:7248-7256](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7248-L7256)),
+    which compares the current object's ETag with the one the request's
+    parts make and sets the combined checksum from its `RGW_ATTR_CKSUM`
+    ([rgw_op.cc:7433-7504](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7433-L7504)),
+    which `send_response` renders. v20.2.5 answers it from the same check
+    before `verify_encryption` runs
+    ([rgw_op.cc:7431-7443](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_op.cc#L7431-L7443),
+    [rgw_op.cc:7662-7689](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_op.cc#L7662-L7689),
+    [rgw_rest_s3.cc:4668-4673](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_rest_s3.cc#L4668-L4673)).
+    No key and no secure transport is asked for on that path at either
+    tag, whatever the object's mode.
   - From v20.2.5 the completion asks for the SSE-C key only for an
     upload created with a checksum, or when SSE-C headers are sent: its
     `verify_encryption` skips the check for any other SSE-C upload
@@ -32856,9 +32876,13 @@ Every new entry adds its row to this table, in document order.
   `kms:Decrypt`, learns a CRC or digest of each part's plaintext, and one
   allowed to complete an SSE-KMS upload, over a transport
   `rgw_crypt_require_ssl` accepts, learns its combined checksum. A
-  checksum confirms a guess at low-entropy data; it does not give the
-  data. The same ListParts already gives each part's ETag, the MD5 of its
-  plaintext.
+  requester allowed s3:PutObject on the key who knows the parts' ETags,
+  which the same ListParts gives, learns any SSE-C or SSE-KMS object's
+  combined checksum, over any transport and without the key, by
+  completing it again under any upload id that names no upload; that
+  completes nothing. A checksum confirms a guess at low-entropy data; it
+  does not give the data. The same ListParts already gives each part's
+  ETag, the MD5 of its plaintext.
 - **Releases:** v20.2.4, and still in v20.2.5 and v21.1.2. v19.2.7
   renders no checksum.
 - **rgw-go:** differs for ListParts: it shows an encrypted upload's
@@ -32866,25 +32890,20 @@ Every new entry adds its row to this table, in document order.
   (`ListParts.checksumsShown`, `internal/op/listparts.go`;
   `docs/differences.md`, "ListParts shows an encrypted upload's checksums
   only to a requester who could read its data"). Its
-  CompleteMultipartUpload reads no SSE header, and of the upload's crypt
-  mode refuses only one it does not know (`docs/differences.md`, "A
-  completion of an upload of a crypt mode rgw-go does not know answers
-  501"), so it completes a radosgw-begun encrypted upload where a v20.2.4
-  radosgw refuses or fails: an SSE-C upload without its key,
-  which from v20.2.5 radosgw refuses only for an upload made with a
-  checksum, or for SSE-C headers that do not name its key; an SSE-C or
-  SSE-KMS upload over plain HTTP under `rgw_crypt_require_ssl`, the SSE-C
-  one from v20.2.5 only for an upload made with a checksum or a request
-  that sends SSE-C headers; and an SSE-KMS, SSE-S3 or RGW-AUTO upload
-  with no key server or default key to fetch its key from. It echoes
-  none of radosgw's encryption response headers, and it answers an
-  encrypted upload's combined checksum to its requester
-  (`completeChecksum`, `internal/s3/checksum.go`; `docs/differences.md`,
-  "ListParts shows an encrypted upload's checksums only to a requester
-  who could read its data"). Phase 2 plan task WP-26 is to make the
-  completion ask for an SSE-C upload's key as Amazon S3 and a v20.2.5
-  radosgw do, refuse an SSE-KMS, SSE-S3 or RGW-AUTO upload, and echo
-  radosgw's encryption headers for a completed SSE-C upload.
+  CompleteMultipartUpload differs too: it asks for an SSE-C upload's key as
+  v20.2.5's `verify_encryption` does, Amazon S3's rule, for one made with
+  a checksum or a request that sends SSE-C headers, and on Tentacle refuses
+  an SSE-KMS upload made with a checksum, whose `kms:Decrypt` it cannot
+  evaluate. It decides an answer from the object already completed the same
+  way, over that head's crypt attrs, so it gives an SSE-C object's
+  combined checksum only to a holder of its key and an SSE-KMS object's to
+  no Tentacle requester, an upload id that names no upload included
+  (`verifyEncryption` and `completedHead`,
+  `internal/op/completemultipart.go`; `docs/differences.md`,
+  "CompleteMultipartUpload asks for an SSE-C upload's key as Amazon S3 and
+  v20.2.5 do, and completes a key-server upload where Amazon S3 needs no
+  key"). It answers an SSE-S3 object's to any requester allowed to complete
+  it, as Amazon S3 does.
 - **Upstream:** none known for the disclosure; related:
   [ceph/ceph#71241](https://github.com/ceph/ceph/pull/71241),
   [ceph/ceph#71842](https://github.com/ceph/ceph/pull/71842) and
@@ -32892,8 +32911,10 @@ Every new entry adds its row to this table, in document order.
   s3-test `test_multipart_sse_c_checksum_complete` keeps the key required
   to complete an SSE-C upload made with a checksum.
 - **Found:** phase 2 task WP-13's adversarial review, 2026-11-10, for
-  ListParts, and its re-review the same day for CompleteMultipartUpload.
-  Derived from the source, not reproduced.
+  ListParts, and its re-review the same day for CompleteMultipartUpload;
+  WP-26's adversarial review, 2026-11-14, for the path through
+  `check_previously_completed`, whose rgw-go half it ran against the
+  memstore. Derived from the source, not reproduced on a radosgw.
 
 ## A radosgw that predates the GCM crypt modes stores a GCM upload's parts in the clear and copies GCM ciphertext as data
 

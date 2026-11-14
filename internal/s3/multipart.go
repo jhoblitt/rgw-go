@@ -364,16 +364,27 @@ type completeMultipartUploadResult struct {
 // send_response's
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4076-L4108,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4604-L4644):
-// 200, x-amz-version-id (setVersionHeaders), and the document, whose length
-// radosgw's frontend adds, the ETag in the quotes dump_format adds and the
-// checksum after it (completeChecksum). The value a completion supplies is
-// read from the headers (checksumField).
+// 200, x-amz-version-id (setVersionHeaders), the encryption headers the
+// op's decision gathered (setCryptEcho), which an error after the decision
+// carries too, and the document, whose length radosgw's frontend adds, the
+// ETag in the quotes dump_format adds and the checksum after it
+// (completeChecksum). The value a completion supplies is read from the
+// headers (checksumField); the SSE-C headers, the algorithm's nil when it
+// is not sent, whether any header of their prefix is sent (sendsSSEC), and
+// the transport are what the op's decision reads.
 func completeMultipart(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.CompleteMultipart{
 		UploadID: r.Query.Get("uploadId"), IfMatch: headerPtr(r, "If-Match"), IfNoneMatch: headerPtr(r, "If-None-Match"),
 		ChecksumField: checksumField(r),
+		SSECAlgorithm: headerPtr(r, "x-amz-server-side-encryption-customer-algorithm"),
+		SSECKey:       header(r, "x-amz-server-side-encryption-customer-key"),
+		SSECKeyMD5:    header(r, "x-amz-server-side-encryption-customer-key-MD5"),
+		SSECSent:      sendsSSEC(r),
+		Secure:        secure(r),
 	}
-	if err := op.Run(ctx, o, r); err != nil {
+	err := op.Run(ctx, o, r)
+	setCryptEcho(w.Header(), o.Echo)
+	if err != nil {
 		return err
 	}
 	setVersionHeaders(w.Header(), o.VersionID, "")
@@ -384,6 +395,64 @@ func completeMultipart(ctx context.Context, w http.ResponseWriter, r *op.Request
 	doc.Checksum, doc.ChecksumType = completeChecksum(r, o.Checksum, len(o.Parts))
 	WriteXML(w, r, http.StatusOK, doc)
 	return nil
+}
+
+// sseCEnvPrefix is the environment name prefix v20.2.5's verify_encryption
+// asks exists_prefix for
+// (https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_rest_s3.cc#L4627-L4629 at v20.2.5).
+const sseCEnvPrefix = "HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION_CUSTOMER_"
+
+// sendsSSEC reports whether the request sends a header beast files under a
+// name starting sseCEnvPrefix (envName), whatever its value, as
+// RGWEnv::exists_prefix tests the names it holds
+// (https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_env.cc#L128-L138 at v20.2.5).
+func sendsSSEC(r *op.Request) bool {
+	for name := range r.Header {
+		if strings.HasPrefix(envName(name), sseCEnvPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// setCryptEcho is the crypt_http_responses send_response echoes
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4610-L4611 at v20.2.4),
+// under radosgw's names:
+//   - for an SSE-C key the op checked, the algorithm, AES256, and the key
+//     MD5 as the request sent it. It passed fromBase64, which takes only
+//     base64 bytes and white space, and net/http refuses a request header
+//     holding a control byte other than a tab, so it cannot split the
+//     response;
+//   - x-amz-server-side-encryption, and an SSE-KMS upload's key id as
+//     stored, its control bytes as spaces (echoField), where radosgw sends
+//     it as it is (docs/differences.md).
+func setCryptEcho(h http.Header, e op.CryptEcho) {
+	if e.SSECKeyMD5 != "" {
+		SetHeader(h, "x-amz-server-side-encryption-customer-algorithm", "AES256")
+		SetHeader(h, "x-amz-server-side-encryption-customer-key-MD5", e.SSECKeyMD5)
+	}
+	if e.SSE != "" {
+		SetHeader(h, "x-amz-server-side-encryption", e.SSE)
+	}
+	if e.KMSKeyID != "" {
+		SetHeader(h, "x-amz-server-side-encryption-aws-kms-key-id", echoField(e.KMSKeyID))
+	}
+}
+
+// echoField is a stored value v as an echoed header carries it: each byte
+// below 0x20 but HTAB, and 0x7f, written as a space. RFC 9110's
+// field-content leaves those bytes out (section 5.5), a sender must not
+// generate a field that does not match the grammar (section 2.2), and
+// net/http rewrites only CR and LF. Every other byte, one from 0x80
+// included, is kept as it is.
+func echoField(v string) string {
+	b := []byte(v)
+	for i, c := range b {
+		if c < 0x20 && c != '\t' || c == 0x7f {
+			b[i] = ' '
+		}
+	}
+	return string(b)
 }
 
 // completeLocation is RGWCompleteMultipart_ObjStore_S3::send_response's

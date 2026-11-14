@@ -408,7 +408,7 @@ func checkSupplied(ck *cksum.Cksum, req *op.ChecksumRequest, n int) error {
 // before the completion gives it an instance, carries the ETag the parts
 // make, and the retried
 // completion is a 200 for that object with its stored ETag, which the check
-// sets
+// sets, and the head's crypt attrs, which the op decides (PutResult.Crypt)
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6584 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7472 at v20.2.4).
 // The caller holds s.mu.
@@ -428,7 +428,9 @@ func (s *Store) previouslyCompleted(up *op.Upload, parts []op.CompletePart) (*op
 	if err != nil || o.state.ETag != want {
 		return nil, false
 	}
-	return completeResult(o, storedChecksum(o.state.Attrs)), true
+	res := completeResult(o, storedChecksum(o.state.Attrs))
+	res.Crypt = op.CryptAttrs(o.state.Attrs)
+	return res, true
 }
 
 // Abort implements op.MultipartStore.
