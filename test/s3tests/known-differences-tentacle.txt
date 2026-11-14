@@ -128,3 +128,23 @@
 # GetObjectAttributes refused 403 AccessDenied to a requester a policy denies s3:GetObject, or allows s3:GetObject alone; Tentacle's radosgw serves it on either action (differences: "GetObjectAttributes needs both of its actions on Tentacle")
 ^s3tests\.functional\.test_s3::test_get_object_attributes_needs_get_object$
 ^s3tests\.functional\.test_s3::test_get_object_attributes_needs_get_object_attributes$
+
+# A grant to everyone under Bool aws:SecureTransport true, refused 403 AccessDenied under BlockPublicPolicy; radosgw stores it (differences: "A bucket policy is public as Amazon S3 judges it")
+^s3tests\.functional\.test_s3::test_block_public_condition_on_unlisted_key$
+
+# GetBucketPolicyStatus's IsPublic false for a grant to everyone from 1.1.1.1/32 alone; radosgw reports it public, judging it against its fixed 1.1.1.1 (differences: "A bucket policy is public as Amazon S3 judges it")
+^s3tests\.functional\.test_s3::test_get_fixed_source_ip_bucket_policy_status$
+
+# A bucket policy granting arn:aws:iam:::root, which admits the anonymous requester, judged public: refused 403 AccessDenied under BlockPublicPolicy, and its anonymous GetObject refused under RestrictPublicBuckets; v20.2.4's is_public misses the principal, so radosgw stores the policy and serves the GetObject (differences: "A bucket policy is public as Amazon S3 judges it"; docs/ceph-upstream-bugs.md, "Tentacle's is_public misses a fixed principal that admits the anonymous requester")
+^s3tests\.functional\.test_s3::test_block_public_anonymous_root_principal$
+^s3tests\.functional\.test_s3::test_restrict_public_anonymous_root_principal$
+
+# IgnorePublicAcls setting aside the user anonymous's grant and ownership on an object an anonymous request wrote, so that its anonymous GetObject and GetObjectAcl are refused 403 AccessDenied; radosgw still serves them (differences: "IgnorePublicAcls sets aside grants to the user anonymous and its ownership")
+^s3tests\.functional\.test_s3::test_anon_canned_write_ignore_public_acls$
+^s3tests\.functional\.test_s3::test_anon_owned_object_acl_ignore_public_acls$
+
+# A PutObjectAcl that keeps the user anonymous the owner of the object, refused 403 AccessDenied under BlockPublicAcls; radosgw stores it (differences: "BlockPublicAcls counts grants to the user anonymous and its ownership, but for an anonymous writer's own")
+^s3tests\.functional\.test_s3::test_anon_owned_object_acl_block_public_acls$
+
+# A PutPublicAccessBlock naming the misspelled BlockPublicACLs, refused 400 MalformedXML; radosgw answers 200 and stores the setting false (differences: "A PutPublicAccessBlock document is held to S3's schema")
+^s3tests\.functional\.test_s3::test_public_block_misspelled_setting_refused$

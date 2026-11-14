@@ -148,3 +148,27 @@
 
 # A ListObjectVersions page that ended on a null delete marker, resumed after it by its version-id-marker null; radosgw resumes past the key's older versions (differences: "A versions listing resumes after the null delete marker its version-id-marker names")
 ^s3tests\.functional\.test_s3::test_versioning_list_versions_paginated_null_delete_marker$
+
+# A grant to everyone under Bool aws:SecureTransport true, refused 403 AccessDenied under BlockPublicPolicy; radosgw stores it (differences: "A bucket policy is public as Amazon S3 judges it")
+^s3tests\.functional\.test_s3::test_block_public_condition_on_unlisted_key$
+
+# A grant to one fixed account, stored under BlockPublicPolicy; Squid's radosgw refuses it, counting every Allow statement whose NotPrincipal is not the wildcard (differences: "A bucket policy is public as Amazon S3 judges it")
+^s3tests\.functional\.test_s3::test_block_public_policy_with_principal$
+
+# GetBucketPolicyStatus's IsPublic false for a grant to everyone from 1.1.1.1/32 alone and for a grant to one fixed account; Squid's radosgw reports both public, judging the first against its fixed 1.1.1.1 and counting every Allow statement whose NotPrincipal is not the wildcard (differences: "A bucket policy is public as Amazon S3 judges it")
+^s3tests\.functional\.test_s3::test_get_fixed_source_ip_bucket_policy_status$
+^s3tests\.functional\.test_s3::test_get_nonpublicpolicy_principal_bucket_policy_status$
+
+# RestrictPublicBuckets enforced on Squid too, so that an anonymous GetObject a public bucket policy grants, to everyone or to arn:aws:iam:::root, is refused 403 AccessDenied; Squid's radosgw never enforces the setting and serves it (differences: "Squid clusters get Tentacle's checks outside the policy language")
+^s3tests\.functional\.test_s3::test_restrict_public_anonymous_root_principal$
+^s3tests\.functional\.test_s3::test_block_public_restrict_public_buckets$
+
+# IgnorePublicAcls setting aside the user anonymous's grant and ownership on an object an anonymous request wrote, so that its anonymous GetObject and GetObjectAcl are refused 403 AccessDenied; radosgw still serves them (differences: "IgnorePublicAcls sets aside grants to the user anonymous and its ownership")
+^s3tests\.functional\.test_s3::test_anon_canned_write_ignore_public_acls$
+^s3tests\.functional\.test_s3::test_anon_owned_object_acl_ignore_public_acls$
+
+# A PutObjectAcl that keeps the user anonymous the owner of the object, refused 403 AccessDenied under BlockPublicAcls; radosgw stores it (differences: "BlockPublicAcls counts grants to the user anonymous and its ownership, but for an anonymous writer's own")
+^s3tests\.functional\.test_s3::test_anon_owned_object_acl_block_public_acls$
+
+# A PutPublicAccessBlock naming the misspelled BlockPublicACLs, refused 400 MalformedXML; radosgw answers 200 and stores the setting false (differences: "A PutPublicAccessBlock document is held to S3's schema")
+^s3tests\.functional\.test_s3::test_public_block_misspelled_setting_refused$
