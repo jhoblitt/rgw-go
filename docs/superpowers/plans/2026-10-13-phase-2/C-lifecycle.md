@@ -997,6 +997,44 @@ the controller's ruling that splits C10 (C-D16).
   **PR split:** (a) the lock cases 2 to 4; (b) the configuration and side-effect cases 1 and
   8; (c) the worker cases 5 to 7 and 9. **Brief:** about 200 lines.
 
+### Task C14: x-amz-expiration's rule-id URL-encoded
+
+Found by C8's task review, and numbered here before C8 merged (PP-12).
+
+- **Layer:** lifecycle library (`internal/lifecycle/headers.go`, `ExpirationHeader`) and its
+  specs; `docs/differences.md`. **Cluster:** no.
+- **Behaviour:** the `rule-id` in `x-amz-expiration` is URL-encoded, as Amazon S3's PutObject
+  reference says of the header ("The value of the rule-id is URL-encoded"; aws-sdk-go-v2
+  `service/s3` v1.99.0 `api_op_PutObject.go:773`). radosgw writes the ID raw
+  ([rgw_rest_s3.cc:112-126](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L112-L126),
+  [rgw_rest_s3.cc:117-123](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L117-L123)),
+  as C2's `ExpirationHeader` does today. The encoding (which bytes, which form) is verified
+  against Amazon S3's documentation and SDKs at implementation, and the difference is recorded.
+- **Specs:** a rule ID with spaces, quotes, commas, `=`, `%`, non-ASCII and control bytes, on
+  every response that carries the header; a plain ID unchanged.
+- **Exclusions and registry:** a `docs/differences.md` entry.
+- **Depends on:** C8. **PR:** one. **Brief:** about 30 lines.
+
+### Task C15: the lifecycle headers on CopyObject, CompleteMultipartUpload and ListParts
+
+Found by C8's task review, and numbered here before C8 merged (PP-12).
+
+- **Layer:** S3 handler. **Files:** one call line each in the CopyObject, CompleteMultipartUpload
+  and ListParts handlers, through C8's `internal/s3/lifecycleheaders.go`; their specs;
+  `docs/differences.md`. **Cluster:** no.
+- **Behaviour:** Amazon S3 answers CopyObject and CompleteMultipartUpload with
+  `x-amz-expiration` and ListParts with `x-amz-abort-date` and `x-amz-abort-rule-id` (the
+  `Expiration` fields of `CopyObjectOutput` and `CompleteMultipartUploadOutput` and the
+  `AbortDate` and `AbortRuleId` fields of `ListPartsOutput`, aws-sdk-go-v2 `service/s3`
+  v1.99.0). radosgw sends none of them at those sites at either floor, as C8's review found;
+  the implementation verifies it at both tags. rgw-go
+  sends each as C8 computes it for the object or upload the response names, and records the
+  differences.
+- **Specs:** per release, each response with a matching rule, without one, and for a named
+  version where C8 sends none.
+- **Exclusions and registry:** `docs/differences.md` entries.
+- **Depends on:** C8. **PR:** one. **Brief:** about 40 lines.
+
 ## Order
 
 The owner asked for lifecycle early, so C6, C9 and C10a sit in the earliest waves their
@@ -1012,6 +1050,7 @@ dependencies allow; none of them waits on versioning.
 | 6 | C10b (a), then (b) | C10a, V6, V8a, V8c and V9 (V's wave 8; V9 is in V's wave 5) |
 | 7 | C11; C8 | C10a, V7a, V9, WP-11 and L5a for C11, and C10b for versioned transitions; C2, C6, L5b and WP-13 for C8 (L's wave 6) |
 | 8, one at a time | C12 (a), (b), (c); C13 (a), (b), (c) | each PR's own dependencies; T-2 |
+| after C8 | C14, C15 | C8 |
 
 - C12 and C13 are this unit's cluster tasks. They run one at a time with every other unit's
   cluster tasks, and C12's recordings land one at a time through the controller. C12 (b) can
