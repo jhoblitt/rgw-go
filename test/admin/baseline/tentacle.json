@@ -30,6 +30,9 @@
     "TestRadosGWTestSuite/TestAccount/try_to_create_account_that_already_exists": [
       {"outcome":"passed","source":"v0.39.0","ceph_version":"20.2.4","recorded":"2026-10-12T08:41:48Z","runs":2,"unstable":false,"meta":{"deselect":"fc08dbada56c","gateway":"radosgw"}}
     ],
+    "TestRadosGWTestSuite/TestBucket/enable_bucket_object_lock": [
+      {"outcome":"passed","source":"v0.39.0","ceph_version":"20.2.4","recorded":"2026-11-14T18:31:33Z","runs":2,"unstable":false,"meta":{"deselect":"8e76a2aaded7","gateway":"radosgw"}}
+    ],
     "TestRadosGWTestSuite/TestBucket/existing_bucket_has_valid_creation_date": [
       {"outcome":"passed","source":"v0.39.0","ceph_version":"20.2.4","recorded":"2026-10-12T08:41:48Z","runs":2,"unstable":false,"meta":{"deselect":"fc08dbada56c","gateway":"radosgw"}}
     ],
