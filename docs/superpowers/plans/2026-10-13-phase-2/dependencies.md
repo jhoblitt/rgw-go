@@ -851,6 +851,7 @@ flowchart LR
   t_WP_26["WP-26"]
   t_WP_27["WP-27"]
   t_WP_28["WP-28"]
+  t_WP_29["WP-29"]
   t_S1["S1"]:::ext
   t_S2["S2"]:::ext
   t_S4["S4"]:::ext
@@ -913,6 +914,7 @@ flowchart LR
   t_WP_21 --> t_WP_24
   t_WP_13 --> t_WP_25
   t_WP_13 --> t_WP_26
+  t_WP_26 --> t_WP_29
   click t_WP_1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-1-checksum-types-and-record" "WP-1: checksum types and record"
   click t_WP_2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-2-digests-and-combiners" "WP-2: digests and combiners"
   click t_WP_3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-3-trailer-values" "WP-3: trailer values"
@@ -940,6 +942,7 @@ flowchart LR
   click t_WP_26 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-26-completemultipartupload-treats-an-encrypted-upload-as-radosgw-does" "WP-26: CompleteMultipartUpload treats an encrypted upload as radosgw does"
   click t_WP_27 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-27-uploadpart-and-uploadpartcopy-refuse-a-part-of-an-encrypted-upload" "WP-27: UploadPart and UploadPartCopy refuse a part of an encrypted upload"
   click t_WP_28 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-28-a-stored-metadata-value-never-puts-a-nul-into-a-response-header" "WP-28: a stored metadata value never puts a NUL into a response header"
+  click t_WP_29 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-29-an-empty-sse-c-algorithm-header-answers-as-radosgw-does-on-every-sse-c-path" "WP-29: an empty SSE-C algorithm header answers as radosgw does on every SSE-C path"
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_S4 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s4-fakerados-refuses-an-unregistered-class-method-at-op-setup" "S4: fakerados refuses an unregistered class method at op setup"
@@ -979,6 +982,7 @@ flowchart LR
 - [WP-26](WP-write-path.md#task-wp-26-completemultipartupload-treats-an-encrypted-upload-as-radosgw-does): CompleteMultipartUpload treats an encrypted upload as radosgw does
 - [WP-27](WP-write-path.md#task-wp-27-uploadpart-and-uploadpartcopy-refuse-a-part-of-an-encrypted-upload): UploadPart and UploadPartCopy refuse a part of an encrypted upload
 - [WP-28](WP-write-path.md#task-wp-28-a-stored-metadata-value-never-puts-a-nul-into-a-response-header): a stored metadata value never puts a NUL into a response header
+- [WP-29](WP-write-path.md#task-wp-29-an-empty-sse-c-algorithm-header-answers-as-radosgw-does-on-every-sse-c-path): an empty SSE-C algorithm header answers as radosgw does on every SSE-C path
 
 ### T: gate tooling
 
