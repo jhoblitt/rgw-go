@@ -250,10 +250,10 @@ func setNotModifiedHeaders(h http.Header, st *op.ObjectState) {
 	h.Set("Last-Modified", httpDate(st.Mtime))
 	setETag(h, st.Attrs)
 	if v, ok := st.Attrs[meta.AttrCacheControl]; ok {
-		h.Set("Cache-Control", sanitizedHdrval(v))
+		SetHeader(h, "Cache-Control", sanitizedHdrval(v))
 	}
 	if v, ok := st.Attrs[meta.AttrExpires]; ok {
-		h.Set("Expires", sanitizedHdrval(v))
+		SetHeader(h, "Expires", sanitizedHdrval(v))
 	}
 }
 
@@ -373,8 +373,11 @@ func (s *getObjectSink) headers() http.Header {
 			}
 			responseAttrs[hdr] = val
 		case name == meta.AttrContentType:
+			// end_header sends the type as a C string, so to its first NUL
+			// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L633-L635 at v19.2.7,
+			// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L638-L640 at v20.2.4).
 			if !typed {
-				contentType, typed = string(bytes.TrimRight(v, "\x00")), true
+				contentType, typed = rgwtext.CString(string(v)), true
 			}
 		case name == attrSLOIndicator:
 			h.Add("X-Object-Meta-Static-Large-Object", "True")
@@ -392,7 +395,7 @@ func (s *getObjectSink) headers() http.Header {
 	if !typed {
 		contentType = "binary/octet-stream"
 	}
-	h.Add("Content-Type", contentType)
+	addHeader(h, "Content-Type", contentType)
 	return h
 }
 

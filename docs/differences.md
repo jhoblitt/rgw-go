@@ -7792,6 +7792,75 @@ does the following.
   raw](ceph-upstream-bugs.md#radosgw-stores-a-post-uploads-x-amz-website-redirect-location-with-its-cr-and-lf-and-sends-it-raw)");
   rgw-go's website endpoint sends that Location through net/http the same
   way.
+- **A stored header value's NUL and other control bytes go out as spaces.**
+  radosgw writes a header value's bytes as they are: `dump_header` drops
+  one trailing NUL from an attr
+  ([rgw_rest.h:29-47](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.h#L29-L47),
+  [rgw_rest.h:29-47](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.h#L29-L47))
+  and beast's `ClientIO::send_header` writes every other byte
+  ([rgw_asio_client.cc:167-181](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L167-L181),
+  [rgw_asio_client.cc:167-181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_client.cc#L167-L181)).
+  So a NUL, or another byte below 0x20 or 0x7F, that a stored value holds
+  reaches the client in a GET's or HEAD's x-amz-version-id,
+  x-amz-replication-status, x-rgw-replicated-from, user metadata and the
+  attrs `rgw_to_http_attrs` maps, and a 304's Cache-Control and Expires
+  ([rgw_rest_s3.cc:469-644](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L469-L644),
+  [rgw_rest_s3.cc:497-753](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L497-L753)),
+  in Tentacle's x-rgw-bucket-placement-target
+  ([rgw_rest_s3.cc:2230-2235](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2230-L2235)),
+  and in the admin metadata put's RGWX_UPDATE_VERSION, whose tag is the
+  stored version's
+  ([rgw_rest_metadata.cc:282-286](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_metadata.cc#L282-L286),
+  [rgw_rest_metadata.cc:282-286](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_metadata.cc#L282-L286)).
+  Content-Type, the ETag and the website endpoint's Location end at their
+  first NUL on both gateways, as radosgw reads each as a C string
+  (end_header,
+  [rgw_rest.cc:633-635](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L633-L635),
+  [rgw_rest.cc:638-640](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L638-L640);
+  `dump_etag`'s `dump_header_quoted`, whose `snprintf` stops at the NUL,
+  [rgw_rest.cc:413-426](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L413-L426),
+  [rgw_rest.h:769-777](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.h#L769-L777),
+  [rgw_rest.cc:413-426](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L413-L426),
+  [rgw_rest.h:781-789](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.h#L781-L789);
+  `RGWGetObj_ObjStore_S3Website::send_response_data`,
+  [rgw_rest_s3.cc:274-288](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L274-L288),
+  [rgw_rest_s3.cc:271-285](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L271-L285)),
+  and radosgw sends their other control bytes raw. rgw-go writes each byte
+  below 0x20 but HTAB, and 0x7F, as a space in every value it writes
+  through `SetHeader` and `addHeader` (`fieldValue`,
+  `internal/s3/headers.go`), each of these among them, and net/http then
+  trims spaces and tabs off the value's ends
+  (`net/http/header.go:206-207` at go1.27.3). They are the bytes RFC 9110's
+  field-content leaves out (section 5.5), which a sender must not generate
+  (section 2.2) and which net/textproto refuses in every header it reads, a
+  response's to a Go client included (`net/textproto/reader.go:567-571` and
+  `:721-744` at go1.27.3); a recipient of a NUL, CR or LF in a field value
+  must reject the message or replace each with a space (section 5.5). HTAB
+  and the bytes from 0x80 go out as they are on both gateways, and CR and LF
+  already went out as spaces ("A stored header value's CR and LF go out as
+  spaces"). The rule reaches every header rgw-go writes, the version ids
+  among them: DeleteObject's x-amz-version-id, which radosgw also sends
+  raw
+  ([rgw_rest_s3.cc:3485-3495](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3485-L3495),
+  [rgw_rest_s3.cc:3735-3745](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3735-L3745)),
+  Tentacle's GetObjectAttributes'
+  ([rgw_rest_s3.cc:3999-4010](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3999-L4010)),
+  and CopyObject's x-amz-copy-source-version-id, which radosgw does not send
+  ("Writes name the null version's id and a copy's two versions"). A
+  version whose stored id holds a control byte, which only a RADOS writer
+  can name, is named in these headers with a space in its place, an id
+  that does not name the version. A client can store such a value through S3: a
+  PutObject takes `x-amz-meta-*` from its url-decoded query string
+  ([rgw_rest_s3.cc:2589-2603](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2589-L2603),
+  [rgw_rest_s3.cc:2742-2756](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2742-L2756)),
+  and `format_xattr` re-encodes a value holding a control byte but stores
+  one holding only a NUL whole, as `is_control_character` excludes NUL
+  ([rgw_op.h:2145-2164](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2145-L2164),
+  [rgw_op.h:2308-2327](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2308-L2327);
+  [utf8.c:216-219](https://github.com/ceph/ceph/blob/v19.2.7/src/common/utf8.c#L216-L219),
+  [utf8.c:216-219](https://github.com/ceph/ceph/blob/v20.2.4/src/common/utf8.c#L216-L219)).
+  So `?x-amz-meta-a=b%00c` stores `b`, a NUL and `c` on both gateways, which
+  radosgw sends with the NUL and rgw-go as `b c`.
 - **An object-lock header whose stored value holds a control character is
   left out.** radosgw's GET and HEAD send a version's retention mode and
   legal-hold status as their stored bytes
@@ -7808,8 +7877,8 @@ does the following.
   for such a status, as for an attr that does not decode, and logs the attr
   (`setObjectLockHeaders`, `internal/s3/objectlockheaders.go`), where
   radosgw sends the bytes and a CR or LF among them starts a header line of
-  its own; net/http would write a CR or LF as a space and a NUL as it
-  stands ("A stored header value's CR and LF go out as spaces").
+  its own; addHeader would write a CR, LF or NUL as a space ("A stored
+  header value's NUL and other control bytes go out as spaces").
 - **A part read sends the object's lock, not its part's.** A GET or HEAD
   naming `partNumber` of a multipart object serves the part's head, and
   radosgw redirects the read's state to that head with
@@ -9220,8 +9289,10 @@ does the following.
     ([rgw_crypt.cc:1450-1453](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1450-L1453),
     [rgw_crypt.cc:1518-1520](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1518-L1520) at v20.2.4);
     the key id goes out with each byte below 0x20 but a tab, and 0x7f, as
-    a space, and net/http trims the spaces and tabs that leaves at either
-    end, where radosgw sends it as stored. A v20.2.4 radosgw without a
+    a space, as every stored header value does ("A stored header value's
+    NUL and other control bytes go out as spaces"), and net/http trims the
+    spaces and tabs that leaves at either end, where radosgw sends it as
+    stored. A v20.2.4 radosgw without a
     key server refuses both with 400 InvalidArgument, as it fetches the key
     whose headers it echoes
     ([rgw_crypt.cc:1429-1437](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1429-L1437),

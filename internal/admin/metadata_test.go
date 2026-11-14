@@ -261,6 +261,19 @@ var _ = Describe("admin metadata routes", func() {
 		Expect(res.Header.Get("RGWX_UPDATE_STATUS")).To(Equal("skipped"))
 		Expect(res.Header.Get("RGWX_UPDATE_VERSION")).To(Equal("ver:0,tag:"))
 	})
+	for _, rel := range []denc.Release{denc.Squid, denc.Tentacle} {
+		It("reports a stored version tag's control bytes as spaces on "+rel.String()+", which radosgw sends as they are", func() {
+			fx = newFixtureAt(rel, admin.Config{})
+			ctx := context.Background()
+			rec, err := fx.store.GetUser(ctx, meta.UserID{ID: "admin"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(fx.store.PutUser(ctx, rec, op.PutUserOptions{WriteVersion: meta.ObjVersion{Ver: 1, Tag: "t\x00a\x01g"}})).To(Succeed())
+			doc := putDoc("user", "admin", 1)
+			res := serve(http.MethodPut, "/admin/metadata/user?key=admin", strings.NewReader(string(doc)), int64(len(doc)), "admin")
+			Expect(res.Code).To(Equal(204), res.Body.String())
+			Expect(wireHeader(res.Header(), "RGWX_UPDATE_VERSION")).To(Equal([]string{"ver:1,tag:t a g"}))
+		})
+	}
 	It("lets update-type decide on Tentacle too, whose radosgw applies every put", func() {
 		fx = newFixtureAt(denc.Tentacle, admin.Config{})
 		doc := string(putDoc("user", "admin", 0))

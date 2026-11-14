@@ -138,17 +138,49 @@ func setCORSHeaders(h http.Header, c cors.Headers) {
 	}
 }
 
-// SetHeader sets name to v under name's own spelling. radosgw's dump_header
-// hands the name to the frontend, which writes its bytes as they are
+// SetHeader sets name to v under name's own spelling, v as fieldValue
+// writes it. radosgw's dump_header hands the name to the frontend, which
+// writes its bytes as they are
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest.cc#L347-L357,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_asio_client.cc#L167-L178 at v19.2.6
 // and v20.2.4), and an SDK reads a user metadata key back case and all.
 // http.Header.Set would send net/http's canonical form instead; net/http
 // writes a key set directly as it stands.
-func SetHeader(h http.Header, name, v string) { h[name] = []string{v} }
+func SetHeader(h http.Header, name, v string) { h[name] = []string{fieldValue(v)} }
 
 // addHeader is SetHeader that keeps the values already under name.
-func addHeader(h http.Header, name, v string) { h[name] = append(h[name], v) }
+func addHeader(h http.Header, name, v string) { h[name] = append(h[name], fieldValue(v)) }
+
+// fieldValue is v with each byte below 0x20 but HTAB, and 0x7f, written as a
+// space: the bytes RFC 9110's field-content leaves out (section 5.5), which
+// net/textproto refuses in a request's header value. A sender must not
+// generate a field that does not match the grammar (RFC 9110 section 2.2),
+// and a recipient of a NUL, CR or LF in a field value must reject the
+// message or replace each with a space (section 5.5). radosgw's frontend
+// writes a value's bytes as they are
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L167-L181 at v19.2.7 and v20.2.4),
+// and net/http rewrites only CR and LF, so a NUL or another control byte an
+// object's attrs hold would otherwise reach the client (docs/differences.md,
+// "A stored header value's NUL and other control bytes go out as spaces").
+func fieldValue(v string) string {
+	i := 0
+	for i < len(v) && !fieldControl(v[i]) {
+		i++
+	}
+	if i == len(v) {
+		return v
+	}
+	b := []byte(v)
+	for ; i < len(b); i++ {
+		if fieldControl(b[i]) {
+			b[i] = ' '
+		}
+	}
+	return string(b)
+}
+
+// fieldControl reports whether a header value may not hold c.
+func fieldControl(c byte) bool { return c < 0x20 && c != '\t' || c == 0x7f }
 
 // isOwnerOf is LocalApplier::is_owner_of's match_owner
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_auth.cc#L67-L75 at v19.2.6
