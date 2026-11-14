@@ -505,3 +505,67 @@ var _ = Describe("Repin", func() {
 		}),
 	)
 })
+
+var _ = Describe("pin and the constraints file", func() {
+	var (
+		repo *gitRepo
+		old  string
+		dir  string
+	)
+
+	BeforeEach(func() {
+		repo = newGitRepo()
+		old = repo.seed()
+		repo.serveTrusted()
+		dir = GinkgoT().TempDir()
+	})
+
+	// pin runs the pin command over the fixture's files.
+	pin := func(ctx SpecContext, opts parity.RepinOptions) (status int, stdout, stderr string) {
+		return run(ctx, "pin", "--clone", repo.dir, "--new", opts.New, "--run-sh", opts.RunSh, "--pin-file", opts.PinFile,
+			"--ledger", opts.Ledgers[0], "--ledger", opts.Ledgers[1])
+	}
+
+	// stands is what pin prints once the pin has moved, for the constraints
+	// file beside opts' PIN file.
+	stands := func(opts parity.RepinOptions) string {
+		return "requirements.txt is unchanged, so " + filepath.Join(filepath.Dir(opts.PinFile), "constraints.txt") +
+			" still names the venv's packages\n"
+	}
+
+	It("says a move that only adds tests leaves requirements.txt, so the constraints beside PIN still name the venv", func(ctx SpecContext) {
+		repo.write("s3tests/functional/test_headers.py", "def test_headers_one():\n    assert True\n\n\ndef test_headers_two():\n    assert True\n")
+		opts := pinFiles(dir, repo.dir, old, repo.commit("add a test"))
+		status, stdout, stderr := pin(ctx, opts)
+		Expect(status).To(Equal(0), stderr)
+		Expect(stdout).To(ContainSubstring("additive: " + opts.New + " over " + old))
+		Expect(stdout).To(ContainSubstring(stands(opts)))
+	})
+
+	It("says so of a reworded commit, whose tree is the pin's", func(ctx SpecContext) {
+		unchanged := old
+		repo.write("s3tests/functional/test_headers.py", "def test_headers_one():\n    assert True\n\n\ndef test_headers_two():\n    assert 1\n")
+		old = repo.commit("unsigned")
+		next := repo.git("commit-tree", old+"^{tree}", "-p", unchanged, "-m", "signed")
+		repo.trust(next)
+		opts := pinFiles(dir, repo.dir, old, next)
+		status, stdout, stderr := pin(ctx, opts)
+		Expect(status).To(Equal(0), stderr)
+		Expect(stdout).To(ContainSubstring("reworded: " + next + " over " + old))
+		Expect(stdout).To(ContainSubstring(stands(opts)))
+	})
+
+	It("refuses a move that changes requirements.txt, naming the constraints that move with the full record, and writes nothing",
+		func(ctx SpecContext) {
+			repo.write("requirements.txt", "boto3\nmoto\n")
+			opts := pinFiles(dir, repo.dir, old, repo.commit("add a requirement"))
+			before := snapshot(opts)
+			status, stdout, stderr := pin(ctx, opts)
+			Expect(status).To(Equal(1))
+			Expect(stdout).NotTo(ContainSubstring("still names"))
+			Expect(stderr).To(ContainSubstring("requirements.txt: changed; only a test module or pytest.ini may change"))
+			Expect(stderr).To(ContainSubstring("requirements.txt: changed; constraints.txt beside the PIN file must name the packages it installs, " +
+				"which a full record under the changed constraints settles"))
+			Expect(snapshot(opts)).To(Equal(before))
+		})
+})

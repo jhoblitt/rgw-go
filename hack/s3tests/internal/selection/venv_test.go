@@ -2,6 +2,8 @@ package selection_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -80,13 +82,16 @@ type venvRun struct {
 	root, bin, pipLog, freeze, reached string
 	python                             string
 	repo, commit                       string
+	// gateway is the gateway the run is of, radosgw unless a spec says
+	// another, and baseline the ledger S3TESTS_BASELINE names, if any.
+	gateway, baseline string
 }
 
 // newVenvRun lays a run.sh tree with constraints, the stubs, and a repository
 // the pin is fetched from, for a venv whose pip freeze lists packages. The
 // tree links hack/parity, which run.sh builds to check the venv.
 func newVenvRun(constraints, packages string) *venvRun {
-	v := &venvRun{root: runShTree(true, lists0239625), bin: GinkgoT().TempDir(), python: "3.14.4"}
+	v := &venvRun{root: runShTree(true, lists0239625), bin: GinkgoT().TempDir(), python: "3.14.4", gateway: "radosgw"}
 	parity, err := filepath.Abs(filepath.Join(repoRoot, "hack/parity"))
 	Expect(err).NotTo(HaveOccurred())
 	Expect(os.Symlink(parity, filepath.Join(v.root, "hack/parity"))).To(Succeed())
@@ -109,16 +114,20 @@ func (v *venvRun) setFreeze(packages string) {
 	Expect(os.WriteFile(v.freeze, []byte(packages), 0o600)).To(Succeed())
 }
 
-// run runs run.sh for a radosgw run of the pr set, which builds the venv and
-// then, at the cluster, ends in the stub rooket, and returns what it printed.
+// run runs run.sh for a run of the pr set against the gateway, which builds
+// the venv and then, at the cluster, ends in the stub rooket, and returns what
+// it printed.
 func (v *venvRun) run(ctx context.Context) (stdout, stderr string) {
 	Expect(os.Remove(v.reached)).To(Or(Succeed(), MatchError(os.ErrNotExist)))
-	cmd := exec.CommandContext(ctx, "bash", filepath.Join(v.root, "hack/s3tests/run.sh"), "squid", "radosgw", "r1", "pr")
+	cmd := exec.CommandContext(ctx, "bash", filepath.Join(v.root, "hack/s3tests/run.sh"), "squid", v.gateway, "r1", "pr")
 	cmd.Env = append(os.Environ(),
 		"PATH="+v.bin+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"ROOKET="+filepath.Join(v.bin, "rooket"),
 		"S3TESTS_REPO="+v.repo, "S3TESTS_COMMIT="+v.commit,
 		"STUB_PYTHON="+v.python, "STUB_PIP_LOG="+v.pipLog, "STUB_FREEZE="+v.freeze, "STUB_REACHED="+v.reached)
+	if v.baseline != "" {
+		cmd.Env = append(cmd.Env, "S3TESTS_BASELINE="+v.baseline)
+	}
 	// The stub rooket ends the process group, which holds every subshell
 	// run.sh started.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -189,6 +198,60 @@ var _ = Describe("run.sh's venv", func() {
 			filepath.Join(v.root, "hack/s3tests/constraints.txt") + " names Python 3.14.4: this run's pytest_freeze will differ from the ledgers'"))
 		Expect(v.reachedCluster()).To(BeTrue())
 	}, SpecTimeout(5*time.Minute))
+
+	Describe("of rgw-go, whose run diff compares with the ledger", func() {
+		// current is the repository's constraints, which both ledgers' newest
+		// entries were recorded under, and its Python.
+		var current, python, packages, ledger string
+
+		BeforeEach(func() {
+			current = readFile(filepath.Join(repoRoot, "hack/s3tests/constraints.txt"))
+			header, rest, _ := strings.Cut(current, "\n")
+			python, packages = strings.TrimPrefix(header, "# Python "), rest
+			ledger = filepath.Join(repoRoot, "test/s3tests/baseline/squid.json")
+		})
+
+		// newRgwGoRun lays a run of rgw-go in a venv under the repository's
+		// constraints, built by the Python python.
+		newRgwGoRun := func(python string) *venvRun {
+			v := newVenvRun(current, packages)
+			v.gateway, v.baseline, v.python = "rgw-go", ledger, python
+			return v
+		}
+
+		It("goes on when the venv is the one the ledger's newest entries were recorded under", func(ctx SpecContext) {
+			v := newRgwGoRun(python)
+			_, stderr := v.run(ctx)
+			Expect(stderr).NotTo(ContainSubstring("parity:"))
+			Expect(v.reachedCluster()).To(BeTrue(), "run.sh went on past the venv to the cluster")
+		}, SpecTimeout(5*time.Minute))
+
+		It("stops at its start, as diff would at its end, when the Python is another, naming both digests", func(ctx SpecContext) {
+			v := newRgwGoRun("3.14.0")
+			_, stderr := v.run(ctx)
+			sum := func(text string) string { sha := sha256.Sum256([]byte(text)); return hex.EncodeToString(sha[:])[:12] }
+			Expect(stderr).To(ContainSubstring("parity: diff would refuse this run against " + ledger + " before it compared any outcome: " +
+				"pytest_freeze: baseline " + sum(current) + ", candidate " + sum("# Python 3.14.0\n"+packages)))
+			Expect(v.reachedCluster()).To(BeFalse())
+		}, SpecTimeout(5*time.Minute))
+
+		It("takes the ledger from the tree's committed ones unless S3TESTS_BASELINE names another", func(ctx SpecContext) {
+			v := newRgwGoRun("3.14.0")
+			v.baseline = ""
+			_, stderr := v.run(ctx)
+			Expect(stderr).To(ContainSubstring("parity: reading the ledger: open " +
+				filepath.Join(v.root, "test/s3tests/baseline/squid.json")))
+			Expect(v.reachedCluster()).To(BeFalse())
+		}, SpecTimeout(5*time.Minute))
+
+		It("lets another Python through under PARITY_ALLOW_META_DRIFT, which diff reads too", func(ctx SpecContext) {
+			GinkgoT().Setenv("PARITY_ALLOW_META_DRIFT", "true")
+			v := newRgwGoRun("3.14.0")
+			_, stderr := v.run(ctx)
+			Expect(stderr).NotTo(ContainSubstring("parity:"))
+			Expect(v.reachedCluster()).To(BeTrue())
+		}, SpecTimeout(5*time.Minute))
+	})
 
 	It("builds the venv once for a commit and constraints, and again when the constraints change", func(ctx SpecContext) {
 		v := newVenvRun(venvConstraints, venvPackages)

@@ -2,6 +2,7 @@ package parity
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -239,7 +241,8 @@ func newRecordCmd(v *viper.Viper) *cobra.Command {
 		"and a base pin --pin-reason gives none, gets \""+DraftMarker+" NOTE\", which diff accepts and validate and "+
 		"check refuse; command line only")
 	f.String("pin-reason", "", "why a full record at a source the ledger does not pin re-stamps every outcome there, "+
-		"rather than a proven pin joining the chain; command line only")
+		"rather than a proven pin joining the chain, or why a full record at the head under another pytest_freeze "+
+		"re-stamps every test under a new venv; command line only")
 	f.StringArray("meta", nil, "a k=v pair to record with the result; repeatable, command line only")
 	return cmd
 }
@@ -292,10 +295,15 @@ func appendToLedger(w io.Writer, path, reasons string, res Result, runs int, opt
 		}
 	}
 	pins := 0
+	var mv venvMove
 	if l != nil {
 		pins = len(l.Pins)
+		var err error
+		if mv, err = l.freezeMove(res.Meta[metaFreeze]); err != nil {
+			return err
+		}
 	}
-	out, appended, err := AppendRecord(l, res, opts)
+	out, appended, err := appendRecord(l, res, opts, mv)
 	if err != nil {
 		return err
 	}
@@ -309,6 +317,9 @@ func appendToLedger(w io.Writer, path, reasons string, res Result, runs int, opt
 			line += ": " + p.Reason
 		}
 		fmt.Fprintln(w, SafeLine(line))
+	} else if mv.moved() {
+		fmt.Fprintln(w, SafeLine(fmt.Sprintf("moved the venv, %s %s to %s: %s", metaFreeze, mv.from, mv.to,
+			cmp.Or(opts.PinReason, DraftMarker+" "+opts.Draft))))
 	}
 	var reasoned []string
 	for i := range appended {
@@ -410,7 +421,7 @@ func newDiffCmd(v *viper.Viper) *cobra.Command {
 	f.String("baseline", "", "the baseline ledger (PARITY_BASELINE)")
 	f.String("candidate", "", "the candidate result file (PARITY_CANDIDATE)")
 	f.String("known", "", "a file of regular expressions over test ids whose outcomes are expected to differ, or after \"~ \" may differ (PARITY_KNOWN)")
-	f.Bool("allow-meta-drift", false, "compare even when the candidate ran at another source, release or Ceph version (PARITY_ALLOW_META_DRIFT)")
+	f.Bool("allow-meta-drift", false, "compare even when the candidate ran at another source, release, venv or Ceph version (PARITY_ALLOW_META_DRIFT)")
 	// --selection and --gate-only are never bound into viper, so that no
 	// stray PARITY_ variable or config file narrows a comparison that names
 	// neither.
@@ -596,6 +607,10 @@ func newValidateCmd() *cobra.Command {
 	}
 }
 
+// constraintsName is the file beside the PIN file that names the packages of
+// the venv the ledgers were recorded under.
+const constraintsName = "constraints.txt"
+
 // Where the pin command finds run.sh and the s3-tests ledgers by default:
 // the repository root, where make runs it.
 var (
@@ -633,6 +648,8 @@ func newPinCmd(v *viper.Viper) *cobra.Command {
 				fmt.Fprintln(w, SafeLine("  "+line))
 			}
 			fmt.Fprintf(w, "pinned %s, admitted %s, in %s and %s\n", res.New, res.Admitted, v.GetString("pin-file"), strings.Join(ledgers, ", "))
+			fmt.Fprintf(w, "requirements.txt is unchanged, so %s still names the venv's packages\n",
+				filepath.Join(filepath.Dir(v.GetString("pin-file")), constraintsName))
 			if res.Admitted != AdmitAdditive {
 				return nil
 			}
