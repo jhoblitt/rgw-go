@@ -1,5 +1,7 @@
 package op
 
+import "time"
+
 // NumAuthRoutesForTest is the number of AuthRoute values, so that a spec can
 // require an entry for each.
 const NumAuthRoutesForTest = numAuthRoutes
@@ -14,3 +16,11 @@ const (
 // DeleteMarkerVersionForTest is deleteMarkerVersion, so that a spec can give
 // it more than one action.
 var DeleteMarkerVersionForTest = deleteMarkerVersion
+
+// SkippedUpdateGraceForTest is skippedUpdateGrace, the bound on DeleteObjects'
+// OLH updates once its client has gone.
+const SkippedUpdateGraceForTest = skippedUpdateGrace
+
+// SetUpdateGraceForTest makes o's OLH updates end d after the request's
+// context, in place of skippedUpdateGrace.
+func SetUpdateGraceForTest(o *DeleteObjects, d time.Duration) { o.updateGrace = d }

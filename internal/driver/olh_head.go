@@ -392,9 +392,18 @@ func (s *Store) followOLH(ctx context.Context, head *op.ObjectState, update func
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9155-L9312 at v20.2.4):
 // it replays log, the pending log by epoch, onto head in one op that sets
 // olh.ver to the last epoch, keeps the head's mtime (keepHeadMtime) and
-// removes each entry's pending attr. In epoch order a LINK_OLH takes the current version when its
-// epoch is above head's olh.ver, when the current version has no instance,
-// or when its own instance sorts before the current one; an UNLINK_OLH marks
+// removes each entry's pending attr. In epoch order a LINK_OLH takes the
+// current version when its epoch is above that of the link last taken, at
+// first head's olh.ver, when the current version has no instance, or when its
+// own instance sorts before the current one, and always after an UNLINK_OLH.
+// The epoch compared with moves to each link taken, as main's does since
+// 8ef9dd9ab27, and main takes every link after an unlink since 75c7b8ece79
+// (https://github.com/ceph/ceph/blob/v22.0.0/src/rgw/driver/rados/rgw_rados.cc#L10063-L10078),
+// where both floors compare every link with olh.ver, so that a replay of
+// links another replay has applied and not yet trimmed ends on the newest
+// rather than on an older one whose instance sorts first
+// (docs/differences.md, "A replay compares each link with the epoch of the
+// last link it took"). An UNLINK_OLH marks
 // the OLH for removal until a later link; a REMOVE_INSTANCE names a version
 // to remove. Those versions are removed through idx before the head op, the
 // entries carrying opTag guarded on expectTag when it is not nil and every
@@ -490,9 +499,9 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 				if nullDataLink(e) {
 					removals = slices.DeleteFunc(removals, func(r rgw.OLHLogEntry) bool { return r.Key.Instance == "" })
 				}
-				if linkEpoch < epoch || cur.Instance == "" || cur.Instance > e.Key.Instance {
+				if remove || linkEpoch < epoch || cur.Instance == "" || cur.Instance > e.Key.Instance {
 					link, remove = true, false
-					cur, deleteMarker = e.Key, e.DeleteMarker
+					cur, deleteMarker, linkEpoch = e.Key, e.DeleteMarker, epoch
 				}
 			case rgw.OLHOpUnlinkOLH:
 				link, remove = false, true

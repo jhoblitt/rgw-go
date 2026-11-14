@@ -190,3 +190,6 @@
 
 # Another user's PutObject naming a COMPLIANCE retention in its object-lock headers, under a bucket policy that allows s3:PutObject alone, refused 403 AccessDenied with no version stored; radosgw checks s3:PutObject alone and stores the version with its retention (differences: "A write's object-lock headers need s3:PutObjectRetention and s3:PutObjectLegalHold")
 ^s3tests\.functional\.test_s3::test_object_lock_put_obj_lock_headers_without_put_retention$
+# A DeleteObjects whose last delete of a key names a version that does not exist or fails its condition, the key's skipped OLH updates applied after it, so the version it removed first is gone; radosgw leaves them pending and serves that version by its id (differences: "DeleteObjects leaves a key's skipped updates to its last delete")
+^s3tests\.functional\.test_s3::test_versioning_multi_object_delete_last_missing$
+^s3tests\.functional\.test_s3::test_versioning_multi_object_delete_last_precondition_failed$
