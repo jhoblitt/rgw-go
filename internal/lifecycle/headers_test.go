@@ -40,7 +40,7 @@ func abort(id, days string) lifecycle.Rule {
 var _ = Describe("ExpirationHeader", func() {
 	DescribeTable("names the first midnight UTC at least Days after the mtime's second, when the worker first acts",
 		func(mtime, want string) {
-			Expect(lifecycle.ExpirationHeader(rules(expire("r", "1", "")), plain, "", tags.Set{}, utc(mtime))).To(Equal(header(want, "r")))
+			Expect(lifecycle.ExpirationHeader(rules(expire("r", "1", "")), plain, "", tags.Set{}, utc(mtime), 0)).To(Equal(header(want, "r")))
 		},
 		Entry("a second before midnight", "2026-06-14T23:59:59Z", "Tue, 16 Jun 2026 00:00:00 GMT"),
 		Entry("its fraction, which the header drops", "2026-06-14T23:59:59.9Z", "Tue, 16 Jun 2026 00:00:00 GMT"),
@@ -51,7 +51,7 @@ var _ = Describe("ExpirationHeader", func() {
 
 	DescribeTable("names the day a UTC gateway's worker first finds the object due",
 		func(mtime string) {
-			got := lifecycle.ExpirationHeader(rules(expire("r", "3", "")), plain, "", tags.Set{}, utc(mtime))
+			got := lifecycle.ExpirationHeader(rules(expire("r", "3", "")), plain, "", tags.Set{}, utc(mtime), 0)
 			date, err := time.Parse(`expiry-date="`+http.TimeFormat+`", rule-id="r"`, got)
 			Expect(err).NotTo(HaveOccurred(), got)
 			Expect(lifecycle.Expired(utc(mtime), 3, date, 0, time.UTC)).To(BeTrue(), "due at the named midnight")
@@ -64,40 +64,40 @@ var _ = Describe("ExpirationHeader", func() {
 	)
 
 	It("gives a Date as it is", func() {
-		Expect(lifecycle.ExpirationHeader(rules(expire("r", "", "2026-07-01T00:00:00Z")), plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"))).To(
+		Expect(lifecycle.ExpirationHeader(rules(expire("r", "", "2026-07-01T00:00:00Z")), plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"), 0)).To(
 			Equal(header("Wed, 01 Jul 2026 00:00:00 GMT", "r")))
 	})
 
 	It("names the rule whose date is earliest", func() {
 		Expect(lifecycle.ExpirationHeader(rules(expire("a", "30", ""), expire("b", "10", ""), expire("c", "", "2026-12-01T00:00:00Z")),
-			plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"))).To(Equal(header("Thu, 25 Jun 2026 00:00:00 GMT", "b")))
+			plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"), 0)).To(Equal(header("Thu, 25 Jun 2026 00:00:00 GMT", "b")))
 	})
 
 	It("gives a tie to the first rule by ID", func() {
-		Expect(lifecycle.ExpirationHeader(rules(expire("b", "10", ""), expire("a", "10", "")), plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"))).To(
+		Expect(lifecycle.ExpirationHeader(rules(expire("b", "10", ""), expire("a", "10", "")), plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"), 0)).To(
 			Equal(header("Thu, 25 Jun 2026 00:00:00 GMT", "a")))
 	})
 
 	It("compares a Days date with the mtime's fraction, as radosgw's real_time does", func() {
 		mtime := utc("2026-06-14T12:00:00.5Z")
-		Expect(lifecycle.ExpirationHeader(rules(expire("a", "1", ""), expire("b", "", "2026-06-16T00:00:00Z")), plain, "", tags.Set{}, mtime)).To(
+		Expect(lifecycle.ExpirationHeader(rules(expire("a", "1", ""), expire("b", "", "2026-06-16T00:00:00Z")), plain, "", tags.Set{}, mtime, 0)).To(
 			Equal(header("Tue, 16 Jun 2026 00:00:00 GMT", "b")), "b's date is half a second before a's")
 	})
 
 	It("takes the request's versionId, not the instance the read resolves, so a versioned bucket's current version gets the header", func() {
-		Expect(lifecycle.ExpirationHeader(rules(expire("r", "1", "")), plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"))).To(
+		Expect(lifecycle.ExpirationHeader(rules(expire("r", "1", "")), plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"), 0)).To(
 			Equal(header("Tue, 16 Jun 2026 00:00:00 GMT", "r")))
 	})
 
 	It("gives none for a current object under a noncurrent-only rule", func() {
 		r := lifecycle.Rule{ID: "r", NoncurExpiration: lifecycle.Expiration{Days: "1"}}
-		Expect(lifecycle.ExpirationHeader(rules(r), plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"))).To(BeEmpty())
+		Expect(lifecycle.ExpirationHeader(rules(r), plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"), 0)).To(BeEmpty())
 	})
 
 	DescribeTable("gives none for a request that names a version",
 		func(versionID string) {
 			Expect(lifecycle.ExpirationHeader(rules(expire("r", "1", "")), "logs/a", versionID, tags.Set{},
-				utc("2026-06-14T12:00:00Z"))).To(BeEmpty())
+				utc("2026-06-14T12:00:00Z"), 0)).To(BeEmpty())
 		},
 		Entry("a version id", "v1"),
 		Entry("null", "null"),
@@ -106,8 +106,8 @@ var _ = Describe("ExpirationHeader", func() {
 	It("gives none without an enabled rule", func() {
 		r := expire("r", "1", "")
 		r.Status = "Disabled"
-		Expect(lifecycle.ExpirationHeader(lifecycle.Configuration{Rules: []lifecycle.Rule{r}}, plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"))).To(BeEmpty())
-		Expect(lifecycle.ExpirationHeader(lifecycle.Configuration{}, plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"))).To(BeEmpty())
+		Expect(lifecycle.ExpirationHeader(lifecycle.Configuration{Rules: []lifecycle.Rule{r}}, plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"), 0)).To(BeEmpty())
+		Expect(lifecycle.ExpirationHeader(lifecycle.Configuration{}, plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"), 0)).To(BeEmpty())
 	})
 
 	It("matches the key's prefix, the filter's over the rule's", func() {
@@ -118,7 +118,7 @@ var _ = Describe("ExpirationHeader", func() {
 		filtered.Filter.Prefix = "data/"
 		mine := expire("mine", "3", "")
 		mine.Prefix = "logs/"
-		Expect(lifecycle.ExpirationHeader(rules(other, filtered, mine), plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"))).To(
+		Expect(lifecycle.ExpirationHeader(rules(other, filtered, mine), plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"), 0)).To(
 			Equal(header("Thu, 18 Jun 2026 00:00:00 GMT", "mine")))
 	})
 
@@ -126,7 +126,7 @@ var _ = Describe("ExpirationHeader", func() {
 		func(obj tags.Set, matches bool) {
 			r := expire("r", "1", "")
 			r.Filter.Tags = tagSet(tags.Tag{Key: "k", Value: "v"}, tags.Tag{Key: "z", Value: "1"})
-			got := lifecycle.ExpirationHeader(rules(r), plain, "", obj, utc("2026-06-14T12:00:00Z"))
+			got := lifecycle.ExpirationHeader(rules(r), plain, "", obj, utc("2026-06-14T12:00:00Z"), 0)
 			if matches {
 				Expect(got).To(Equal(header("Tue, 16 Jun 2026 00:00:00 GMT", "r")))
 			} else {
@@ -143,13 +143,47 @@ var _ = Describe("ExpirationHeader", func() {
 
 	It("gives no date for a rule whose Date the prefix map holds as nil, so another rule's Days give it", func() {
 		Expect(lifecycle.ExpirationHeader(rules(expire("a", "", "2600-01-01T23:34:33.709551616Z"), expire("b", "5", "")),
-			plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"))).To(Equal(header("Sat, 20 Jun 2026 00:00:00 GMT", "b")))
-		Expect(lifecycle.ExpirationHeader(rules(expire("a", "", "never")), plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"))).To(BeEmpty())
+			plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"), 0)).To(Equal(header("Sat, 20 Jun 2026 00:00:00 GMT", "b")))
+		Expect(lifecycle.ExpirationHeader(rules(expire("a", "", "never")), plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"), 0)).To(BeEmpty())
+	})
+
+	DescribeTable("counts a rule only for an object whose size passes its size filter, which S3 and the worker compare strictly",
+		func(gt, lt string, size uint64, counted bool) {
+			r := expire("r", "1", "")
+			r.Filter.SizeGT, r.Filter.SizeLT = gt, lt
+			got := lifecycle.ExpirationHeader(rules(r), plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"), size)
+			Expect(counted).To(Equal(rules(r).PrefixMap()[0].Op.SizeMatches(size)), "the worker's check agrees")
+			if counted {
+				Expect(got).To(Equal(header("Tue, 16 Jun 2026 00:00:00 GMT", "r")))
+			} else {
+				Expect(got).To(BeEmpty())
+			}
+		},
+		Entry("larger than ObjectSizeGreaterThan", "100", "", uint64(101), true),
+		Entry("equal to ObjectSizeGreaterThan", "100", "", uint64(100), false),
+		Entry("smaller than ObjectSizeGreaterThan", "100", "", uint64(99), false),
+		Entry("smaller than ObjectSizeLessThan", "", "100", uint64(99), true),
+		Entry("equal to ObjectSizeLessThan", "", "100", uint64(100), false),
+		Entry("larger than ObjectSizeLessThan", "", "100", uint64(101), false),
+		Entry("between both", "10", "100", uint64(50), true),
+		Entry("below both", "10", "100", uint64(5), false),
+		Entry("a stored negative ObjectSizeGreaterThan, which every object passes", "-1", "", uint64(0), true),
+		Entry("a stored ObjectSizeLessThan of 0, which no object passes", "", "0", uint64(0), false),
+	)
+
+	It("names the unfiltered rule for an object a filtered rule beside it excludes, and the filtered one for an object it covers", func() {
+		large := expire("large", "1", "")
+		large.Filter.SizeGT = "1000"
+		mtime := utc("2026-06-14T12:00:00Z")
+		c := rules(large, expire("every", "30", ""))
+		Expect(lifecycle.ExpirationHeader(c, plain, "", tags.Set{}, mtime, 10)).To(Equal(header("Wed, 15 Jul 2026 00:00:00 GMT", "every")),
+			"radosgw names large's day for the 10-byte object, which its worker removes on day 30")
+		Expect(lifecycle.ExpirationHeader(c, plain, "", tags.Set{}, mtime, 2000)).To(Equal(header("Tue, 16 Jun 2026 00:00:00 GMT", "large")))
 	})
 
 	It("gives the date Days past real_time's range name, where radosgw's arithmetic wraps", func() {
 		want := time.Date(2026, 6, 14+200001, 0, 0, 0, 0, time.UTC).Format(http.TimeFormat)
-		Expect(lifecycle.ExpirationHeader(rules(expire("r", "200000", "")), plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"))).To(Equal(header(want, "r")))
+		Expect(lifecycle.ExpirationHeader(rules(expire("r", "200000", "")), plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"), 0)).To(Equal(header(want, "r")))
 	})
 })
 

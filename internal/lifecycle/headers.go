@@ -14,30 +14,33 @@ const expiryDateLayout = "Mon, 02 Jan 2006 15:04:05 GMT"
 // ExpirationHeader is s3_expiration_header at v19.2.7
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2750-L2888 at v19.2.7),
 // the x-amz-expiration value for a request for the object name, whose stored
-// tags are objTags and whose mtime is mtime, or "" for none. versionID is
-// the request's own versionId, never the instance a read resolves through the
-// OLH: get_s3_expiration_header passes the requested one, since the resolved
-// instance would make every response of a versioned bucket look like a
-// request for a version
+// tags are objTags, whose mtime is mtime and whose size, uncompressed, is
+// size, or "" for none. versionID is the request's own versionId, never the
+// instance a read resolves through the OLH: get_s3_expiration_header passes
+// the requested one, since the resolved instance would make every response of
+// a versioned bucket look like a request for a version
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L112-L126 at v19.2.7).
 // Over the enabled rules in rule_map order, whose prefix, the filter's when
-// it has one and else the rule's, begins name, and whose tags the object
-// holds, each rule's
-// Expiration gives a date: its Date as the prefix map reads it, so none for
-// one it holds as nil, or else the first midnight UTC at least its Days after
-// mtime's whole second, the pass at which a worker on UTC first finds the
-// object due. The earliest date wins,
-// the first rule on a tie, and the value is `expiry-date="<the date, RFC
-// 1123 in GMT>", rule-id="<the rule's ID>"`. A request that names a version,
-// "null" included, gets none.
+// it has one and else the rule's, begins name, whose tags the object holds
+// and whose object-size filter size passes as the worker's Op.SizeMatches
+// reads it, each rule's Expiration gives a date: its Date as the prefix map
+// reads it, so none for one it holds as nil, or else the first midnight UTC
+// at least its Days after mtime's whole second, the pass at which a worker on
+// UTC first finds the object due. The earliest date wins, the first rule on a
+// tie, and the value is `expiry-date="<the date, RFC 1123 in GMT>",
+// rule-id="<the rule's ID>"`. A request that names a version, "null"
+// included, gets none.
 //
 // That is v19.2.7's form, on both releases. v20.2.4's s3_expiration_header
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2817-L2952 at v20.2.4)
 // gives a request that names a version a header, and takes the date of a key
 // with an instance, a current version's among them, from the rule's
 // NoncurrentVersionExpiration (docs/differences.md, "x-amz-expiration names
-// the Expiration rule alone on Tentacle").
-func ExpirationHeader(c Configuration, name, versionID string, objTags tags.Set, mtime time.Time) string {
+// the Expiration rule alone on Tentacle"). Neither release reads a rule's
+// size filter for the header, which both workers apply before they expire an
+// object (docs/differences.md, "x-amz-expiration leaves out a rule whose
+// size filter excludes the object").
+func ExpirationHeader(c Configuration, name, versionID string, objTags tags.Set, mtime time.Time, size uint64) string {
 	if versionID != "" {
 		return ""
 	}
@@ -47,7 +50,7 @@ func ExpirationHeader(c Configuration, name, versionID string, objTags tags.Set,
 	rules := c.ordered()
 	for i := range rules {
 		r := &rules[i]
-		if !r.matches(name) || r.Filter.Tags.Len() > 0 && !hasAllTags(r.Filter.Tags, objTags) {
+		if !r.matches(name) || r.Filter.Tags.Len() > 0 && !hasAllTags(r.Filter.Tags, objTags) || !r.sizeMatches(size) {
 			continue
 		}
 		var date time.Time
@@ -105,6 +108,13 @@ func (r Rule) matches(name string) bool {
 		prefix = r.Filter.Prefix
 	}
 	return r.Status == "Enabled" && strings.HasPrefix(name, prefix)
+}
+
+// sizeMatches is the worker's size filter for r, Op.SizeMatches over the
+// bounds the prefix map reads, for an object of size bytes.
+func (r Rule) sizeMatches(size uint64) bool {
+	gt, lt := sizeBounds(&r)
+	return Op{SizeGT: gt, SizeLT: lt}.SizeMatches(size)
 }
 
 // dayAfter is the first midnight UTC at or after mtime's whole second plus

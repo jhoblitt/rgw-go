@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -256,6 +257,64 @@ var _ = Describe("the lifecycle response headers", func() {
 					head := w.send(w.alice, http.MethodHead, "/plain/k", "")
 					Expect(head.Code).To(Equal(http.StatusOK))
 					Expect(head.Header()).NotTo(haveHeaderAnyCase("x-amz-expiration"), "rgw_lc.cc:2773-2781 at v19.2.7")
+				})
+
+				Describe("under a rule with an object-size filter", func() {
+					// sizeRule is rule1's Days 1 for objects whose size is above
+					// gt and below lt, either "" for no bound, as botocore writes it.
+					sizeRule := func(gt, lt string) string {
+						var b strings.Builder
+						if gt != "" {
+							b.WriteString("<ObjectSizeGreaterThan>" + gt + "</ObjectSizeGreaterThan>")
+						}
+						if lt != "" {
+							b.WriteString("<ObjectSizeLessThan>" + lt + "</ObjectSizeLessThan>")
+						}
+						return `<Rule><Expiration><Days>1</Days></Expiration><ID>rule1</ID><Filter><Prefix></Prefix>` + b.String() +
+							`</Filter><Status>Enabled</Status></Rule>`
+					}
+					// written answers each of PutObject, GET and HEAD for an
+					// object k holding body.
+					written := func(body string) map[string]*httptest.ResponseRecorder {
+						GinkgoHelper()
+						put := w.send(w.alice, http.MethodPut, "/plain/k", body)
+						Expect(put.Code).To(Equal(http.StatusOK), put.Body.String())
+						return map[string]*httptest.ResponseRecorder{
+							"PutObject": put,
+							"GET":       w.send(w.alice, http.MethodGet, "/plain/k", ""),
+							"HEAD":      w.send(w.alice, http.MethodHead, "/plain/k", ""),
+						}
+					}
+
+					DescribeTable("counts the rule only for an object whose size it admits, strictly, as the worker does",
+						func(gt, lt, body string, counted bool) {
+							w.putLifecycle(sizeRule(gt, lt))
+							for name, rec := range written(body) {
+								Expect(rec.Code).To(Equal(http.StatusOK), name)
+								if counted {
+									Expect(exactValues(rec.Header(), "x-amz-expiration")).To(Equal([]string{day1Expiry}), name)
+								} else {
+									Expect(rec.Header()).NotTo(haveHeaderAnyCase("x-amz-expiration"), "%s: radosgw names rule1 for any size", name)
+								}
+							}
+						},
+						Entry("4 bytes, over an ObjectSizeGreaterThan of 3", "3", "", "abcd", true),
+						Entry("3 bytes, at it", "3", "", "abc", false),
+						Entry("2 bytes, under it", "3", "", "ab", false),
+						Entry("2 bytes, under an ObjectSizeLessThan of 3", "", "3", "ab", true),
+						Entry("3 bytes, at it", "", "3", "abc", false),
+						Entry("4 bytes, over it", "", "3", "abcd", false),
+						Entry("3 bytes, between 2 and 4", "2", "4", "abc", true),
+					)
+
+					It("names the unfiltered rule for an object the filtered rule beside it excludes", func() {
+						month := `<Rule><Expiration><Days>30</Days></Expiration><ID>month</ID><Prefix></Prefix><Status>Enabled</Status></Rule>`
+						w.putLifecycle(sizeRule("1000", ""), month)
+						for name, rec := range written("small") {
+							Expect(exactValues(rec.Header(), "x-amz-expiration")).To(Equal([]string{`expiry-date="Thu, 29 Oct 2026 00:00:00 GMT", rule-id="month"`}),
+								"%s: radosgw names rule1's day, and its worker removes the object on day 30", name)
+						}
+					})
 				})
 
 				It("is not sent on UploadPart or UploadPartCopy, as S3 sends none there", func() {

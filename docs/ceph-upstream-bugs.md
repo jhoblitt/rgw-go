@@ -533,6 +533,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's x-amz-abort-date counts from 1970](#radosgws-x-amz-abort-date-counts-from-1970) | pending | pending | ✓ |
 | [radosgw's lifecycle headers depart from S3's response model](#radosgws-lifecycle-headers-depart-from-s3s-response-model) | pending | pending | ✓ |
 | [radosgw's PutObject x-amz-expiration matches a tag rule against the bucket's tags](#radosgws-putobject-x-amz-expiration-matches-a-tag-rule-against-the-buckets-tags) | pending | pending | ✓ |
+| [radosgw's x-amz-expiration ignores a rule's object-size filter](#radosgws-x-amz-expiration-ignores-a-rules-object-size-filter) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -22666,7 +22667,13 @@ Every new entry adds its row to this table, in document order.
     second, from 00:00:00 to 00:00:00.999999999, is due at that midnight
     plus days, the day before the headers name.
 - **Impact:** the headers name a day late for such an object, which the
-  worker removes or aborts a day earlier than they say.
+  worker removes or aborts a day earlier than they say. Both headers also
+  assume a worker in UTC: on a gateway in another zone the worker acts at
+  the first local midnight at or after the object is due, which, by the
+  mtime's time of day, is the zone's offset before the date named or a day
+  less that offset after it east of UTC, and a day less the offset before
+  it or the offset after it west of UTC (`docs/differences.md`, "Lifecycle
+  days and the work window are read in the gateway's local time zone").
 - **Releases:** v19.2.7 and v20.2.4, and main at 8aa24c51928 (2026-10-30),
   where the four lines cited above are unchanged
   ([rgw_lc.cc:3428-3432](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_lc.cc#L3428-L3432),
@@ -34529,8 +34536,11 @@ Every new entry adds its row to this table, in document order.
 - **Impact:** a client reads an expiry date on a part, which names no
   object's expiry; finds none on a copy or a completed upload whose rules
   give one, or on a ListParts of an upload an abort rule covers; and reads a
-  rule ID holding a character S3 would have encoded as it is. The worker
-  acts as its rules say.
+  rule ID holding a character S3 would have encoded as it is. Quotes and
+  commas in an ID let its writer add a second `expiry-date` to the value,
+  as an ID of `x", expiry-date="Fri, 01 Jan 2100 00:00:00 GMT` does, on
+  radosgw and on rgw-go, which writes the ID raw too until its plan task
+  C14 encodes it. The worker acts as its rules say.
 - **Releases:** v19.2.7 and v20.2.4, and main at 8aa24c51928 (2026-10-30),
   where the call sites are still those three
   ([rgw_rest_s3.cc:418](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L418),
@@ -34593,3 +34603,50 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task C8, 2026-11-14, following `s->tagset` from
   verify_permission to the header at both tags. Not reproduced on a running
   radosgw.
+
+## radosgw's x-amz-expiration ignores a rule's object-size filter
+
+- **Kind:** defect, S3-correctness; not security-relevant: the header names
+  a rule whose ObjectSizeGreaterThan or ObjectSizeLessThan excludes the
+  object, so it errs early, or names a date for an object no rule will
+  expire, and never a later date than the worker acts at. Unreproduced:
+  derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `s3_expiration_header` counts an enabled rule whose prefix begins the
+    key and whose tags the object holds, and no line of it names a size
+    ([rgw_lc.cc:2750-2888](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2750-L2888),
+    [rgw_lc.cc:2817-2952](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2817-L2952)).
+  - The worker's current expiration holds only when `pass_size_limit_checks`
+    passes, which compares the object's size strictly greater than the
+    rule's ObjectSizeGreaterThan and less than its ObjectSizeLessThan
+    ([rgw_lc.cc:1159-1166](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1159-L1166)
+    with [rgw_lc.cc:516-545](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L516-L545),
+    [rgw_lc.cc:1179-1186](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1179-L1186)
+    with [rgw_lc.cc:524-552](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L524-L552)).
+  - S3's filters give the "Minimum object size to which the rule applies"
+    and the maximum
+    ([types.go:3061-3065](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/types/types.go#L3061-L3065)
+    in aws-sdk-go-v2's service/s3 v1.114.7).
+- **Impact:** under a rule `Expiration Days 1, ObjectSizeGreaterThan
+  1073741824`, every GET, HEAD and PutObject of an object under its prefix
+  names tomorrow, whatever the object's size; the worker removes only the
+  objects over 1 GiB. Beside an unfiltered 30-day rule, a small object is
+  removed on day 30 while its responses name day 1.
+- **Releases:** v19.2.7 and v20.2.4, and main at 8aa24c51928 (2026-10-30),
+  where `s3_expiration_header` still names no size
+  ([rgw_lc.cc:3319-3457](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_lc.cc#L3319-L3457))
+  and the current expiration still checks it
+  ([rgw_lc.cc:1336](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_lc.cc#L1336)).
+- **rgw-go:** counts a rule for the header only when the object's size
+  passes its filter, by the worker's comparison and with the size the worker
+  reads, which "counts a rule only for an object whose size passes its size
+  filter, which S3 and the worker compare strictly"
+  (`internal/lifecycle/headers_test.go`) and "counts the rule only for an
+  object whose size it admits, strictly, as the worker does"
+  (`internal/s3/lifecycleheaders_test.go`) pin (`docs/differences.md`,
+  "x-amz-expiration leaves out a rule whose size filter excludes the
+  object").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task C8's adversarial review, 2026-11-14, comparing
+  the header's rule checks with the worker's at both tags. Not reproduced on
+  a running radosgw.

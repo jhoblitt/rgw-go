@@ -13217,7 +13217,13 @@ the correct S3 result, in RADOS state radosgw reads as its own.
   second](ceph-upstream-bugs.md#radosgws-lifecycle-headers-name-the-day-after-the-worker-acts-for-an-object-written-in-a-days-first-second)").
   rgw-go names the first midnight UTC at least the days past the mtime's
   second, the one a worker in UTC acts at, so for that object it names a
-  day earlier than radosgw. Every other mtime gets radosgw's date.
+  day earlier than radosgw. Every other mtime gets radosgw's date. Both
+  gateways' headers assume a worker in UTC: on a gateway in another zone
+  the worker acts at the first local midnight at or after the object is
+  due ("Lifecycle days and the work window are read in the gateway's local
+  time zone"), which, by the mtime's time of day, is the zone's offset
+  before the date named or a day less that offset after it east of UTC,
+  and a day less the offset before it or the offset after it west of UTC.
 - **x-amz-expiration takes no date from a stored Date real_time cannot
   hold.** radosgw's `s3_expiration_header` reads a rule's Date with
   `from_iso_8601`
@@ -13281,6 +13287,32 @@ the correct S3 result, in RADOS state radosgw reads as its own.
   tags](ceph-upstream-bugs.md#radosgws-putobject-x-amz-expiration-matches-a-tag-rule-against-the-buckets-tags)").
   rgw-go matches the tags the request gives the object, and none without
   them (`setWriteExpiration`, `internal/s3/lifecycleheaders.go`).
+- **x-amz-expiration leaves out a rule whose size filter excludes the
+  object.** radosgw's `s3_expiration_header` reads a rule's prefix and tags
+  and never its ObjectSizeGreaterThan or ObjectSizeLessThan
+  ([rgw_lc.cc:2750-2888](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2750-L2888),
+  [rgw_lc.cc:2817-2952](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2817-L2952)),
+  while its worker expires an object only when `pass_size_limit_checks`
+  admits its size
+  ([rgw_lc.cc:1159-1166](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1159-L1166)
+  with [rgw_lc.cc:516-545](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L516-L545),
+  [rgw_lc.cc:1179-1186](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1179-L1186)
+  with [rgw_lc.cc:524-552](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L524-L552)),
+  so the header names a rule's date for an object the rule never expires
+  (docs/ceph-upstream-bugs.md, "[radosgw's x-amz-expiration ignores a
+  rule's object-size
+  filter](ceph-upstream-bugs.md#radosgws-x-amz-expiration-ignores-a-rules-object-size-filter)").
+  S3's filters give the "Minimum object size to which the rule applies" and
+  the maximum
+  ([types.go:3061-3065](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/types/types.go#L3061-L3065)).
+  rgw-go counts a rule for the header only when the object's size passes
+  its filter by the worker's own comparison, strictly greater and less than
+  (`Op.SizeMatches`, `internal/lifecycle/prefixmap.go`), with the size the
+  worker reads: the uncompressed size of the object, a partNumber read's
+  whole object rather than its part, and the bytes a PutObject wrote
+  (`lifecycle.ExpirationHeader`; `setReadExpiration` and
+  `setWriteExpiration`, `internal/s3/lifecycleheaders.go`). For an object no
+  size filter excludes, the two agree.
 - **The lifecycle work window must scan as four numbers.** With
   `rgw_enable_lc_threads` on, rgw-go refuses to start on an
   `rgw_lifecycle_work_time` that does not hold four numbers of `int` in the

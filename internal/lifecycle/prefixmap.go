@@ -144,13 +144,20 @@ func newOp(r *Rule) Op {
 	if r.Filter.Tags.Len() > 0 {
 		op.Tags = &tags.Set{Tags: slices.Clone(r.Filter.Tags.Tags)}
 	}
+	op.SizeGT, op.SizeLT = sizeBounds(r)
+	return op
+}
+
+// sizeBounds is r's ObjectSizeGreaterThan and ObjectSizeLessThan as the
+// prefix map's Op holds them, each nil where r sets none.
+func sizeBounds(r *Rule) (gt, lt *int64) {
 	if r.Filter.SizeGT != "" {
-		op.SizeGT = new(signedSize(r.Filter.SizeGT))
+		gt = new(signedSize(r.Filter.SizeGT))
 	}
 	if r.Filter.SizeLT != "" {
-		op.SizeLT = new(signedSize(r.Filter.SizeLT))
+		lt = new(signedSize(r.Filter.SizeLT))
 	}
-	return op
+	return gt, lt
 }
 
 // SizeMatches is pass_size_limit_checks

@@ -18,12 +18,14 @@ import (
 // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L470 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L400 and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L498 at v20.2.4)
-// for st, the state served: its mtime is the Last-Modified the read sends,
-// and its tags attr is the one RGWGetObj::execute decodes into s->tagset
-// before every read rgw-go serves (storedTags).
-func setReadExpiration(h http.Header, r *op.Request, st *op.ObjectState) {
+// for o's read. The state served, o.State, gives the mtime, the Last-Modified
+// the read sends, and the tags attr RGWGetObj::execute decodes into s->tagset
+// before every read rgw-go serves (storedTags). The size is the object's own,
+// o.CondState's, which a partNumber read keeps apart from its part's, as the
+// worker's size filter reads it (lifecycleSize).
+func setReadExpiration(h http.Header, r *op.Request, o *op.GetObject) {
 	if c, ok := storedLifecycle(r); ok {
-		addExpiration(h, r, c, storedTags(st.Attrs[tags.Attr]), st.Mtime)
+		addExpiration(h, r, c, storedTags(o.State.Attrs[tags.Attr]), o.State.Mtime, lifecycleSize(o.CondState))
 	}
 }
 
@@ -39,7 +41,10 @@ func setReadExpiration(h http.Header, r *op.Request, st *op.ObjectState) {
 // Without request tags radosgw matches the tags verify_permission left in
 // s->tagset, the bucket's under a policy naming s3:ResourceTag; rgw-go
 // matches none (docs/differences.md, "A PutObject's x-amz-expiration matches
-// the object's own tags").
+// the object's own tags"). The size is the bytes the op read, r.BytesIn,
+// known for a body of unknown length too: the plaintext the store wrote,
+// which the worker's size filter reads back as the object's size or, for an
+// object the store compressed, as its compression info's orig_size.
 func setWriteExpiration(h http.Header, r *op.Request, requested *tags.Set, mtime time.Time) {
 	c, ok := storedLifecycle(r)
 	if !ok {
@@ -49,7 +54,7 @@ func setWriteExpiration(h http.Header, r *op.Request, requested *tags.Set, mtime
 	if requested != nil {
 		objTags = *requested
 	}
-	addExpiration(h, r, c, objTags, mtime)
+	addExpiration(h, r, c, objTags, mtime, uint64(max(r.BytesIn, 0)))
 }
 
 // addExpiration adds the x-amz-expiration lifecycle.ExpirationHeader gives c
@@ -59,10 +64,20 @@ func setWriteExpiration(h http.Header, r *op.Request, requested *tags.Set, mtime
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L112-L126 at v19.2.7):
 // the query's, which a website read keeps when its retarget gives r.Object
 // another key and no instance.
-func addExpiration(h http.Header, r *op.Request, c lifecycle.Configuration, objTags tags.Set, mtime time.Time) {
-	if v := lifecycle.ExpirationHeader(c, r.Object.Name, r.Query.Get("versionId"), objTags, mtime); v != "" {
+func addExpiration(h http.Header, r *op.Request, c lifecycle.Configuration, objTags tags.Set, mtime time.Time, size uint64) {
+	if v := lifecycle.ExpirationHeader(c, r.Object.Name, r.Query.Get("versionId"), objTags, mtime, size); v != "" {
 		addHeader(h, "x-amz-expiration", v)
 	}
+}
+
+// lifecycleSize is st's size as the lifecycle worker's size filter reads it,
+// lcProbe.Size's (internal/driver/lc_actions.go:540-551): a compressed
+// object's uncompressed size, and any other object's size.
+func lifecycleSize(st *op.ObjectState) uint64 {
+	if st.Compression != nil {
+		return st.Compression.OrigSize
+	}
+	return st.Size
 }
 
 // setAbortHeaders adds RGWInitMultipart_ObjStore_S3::send_response's
