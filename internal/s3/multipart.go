@@ -57,9 +57,9 @@ type initiateMultipartUploadResult struct {
 // The success is send_response's
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4029-L4055,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4526-L4556):
-// 200, the upload's checksum algorithm and type (setUploadChecksum) and the
-// document, whose length radosgw's frontend adds, without x-amz-abort-date
-// while lifecycle is not served. The checksum fields are the headers'
+// 200, the upload's checksum algorithm and type (setUploadChecksum), the
+// lifecycle abort headers (setAbortHeaders) and the document, whose length
+// radosgw's frontend adds. The checksum fields are the headers'
 // (checksumField).
 func (wr *objectWrites) initMultipart(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.InitMultipart{StorageClass: header(r, "X-Amz-Storage-Class"), ChecksumField: checksumField(r)}
@@ -68,6 +68,7 @@ func (wr *objectWrites) initMultipart(ctx context.Context, w http.ResponseWriter
 		return err
 	}
 	setUploadChecksum(w.Header(), o.Upload.Checksum)
+	setAbortHeaders(w.Header(), r, o.Upload.Initiated)
 	WriteXML(w, r, http.StatusOK, initiateMultipartUploadResult{
 		Xmlns: xmlnsS3, Tenant: xmltext.Text(r.Tenant), Bucket: xmltext.Text(r.Bucket),
 		Key: xmltext.Text(r.Object.Name), UploadID: xmltext.Text(o.UploadID),

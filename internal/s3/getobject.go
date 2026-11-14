@@ -331,6 +331,7 @@ func (s *getObjectSink) headers() http.Header {
 	if o.VersionID != "" {
 		addHeader(h, "x-amz-version-id", o.VersionID)
 	}
+	setReadExpiration(h, r, o)
 	if _, ok := st.Attrs[meta.AttrAppendPartNum]; ok {
 		addHeader(h, "x-rgw-object-type", "Appendable")
 		addHeader(h, "x-rgw-next-append-position", strconv.FormatUint(o.ObjSize, 10))
