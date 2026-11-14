@@ -17806,8 +17806,12 @@ Every new entry adds its row to this table, in document order.
   expansion on any existing bucket.
   Unreproduced on radosgw: derived from the source, with expat's reading
   checked in the floors' own expat.
+  A second route is the tree the parser builds: one `XMLObj` for every
+  element, kept until the parser is destroyed, with no bound on their
+  number (the third Evidence bullet). Unreproduced on radosgw: derived from
+  the source.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
-  `rgw_xml.cc` is identical at the two tags.
+  `rgw_xml.cc` and `rgw_xml.h` are identical at the two tags.
   - `RGWXMLParser` creates its parser with `XML_ParserCreate(nullptr)` and
     sets only the element and character-data handlers and its user data
     ([rgw_xml.cc:155-159](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L155-L159),
@@ -17823,6 +17827,24 @@ Every new entry adds its row to this table, in document order.
     which lives until the parser is destroyed
     ([rgw_xml.cc:161-172](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L161-L172),
     [rgw_xml.cc:161-172](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L161-L172)).
+  - The tree is a second route. `call_xml_start` makes an `XMLObj` for every
+    start tag, from `alloc_obj` or, when that returns none, in
+    `unallocated_objs`, links it into its parent's `children` multimap and
+    appends it to `objs`
+    ([rgw_xml.cc:174-195](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L174-L195),
+    [rgw_xml.cc:174-195](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L174-L195);
+    [rgw_xml.h:99-110](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.h#L99-L110),
+    [rgw_xml.h:99-110](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.h#L99-L110)).
+    An `XMLObj` holds the element's name, its text, a `children` multimap
+    and an `attr_map` that `xml_start` fills with every attribute of the tag
+    ([rgw_xml.h:39-48](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.h#L39-L48),
+    [rgw_xml.h:39-48](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.h#L39-L48);
+    [rgw_xml.cc:66-73](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L66-L73),
+    [rgw_xml.cc:66-73](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L66-L73)). The objects
+    live until the parser is destroyed (the destructor cited above), and the
+    parser sets no limit on their number or their depth
+    ([rgw_xml.cc:219-221](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L219-L221),
+    [rgw_xml.cc:219-221](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L219-L221)).
   - The floors link expat 2.5.0: the quay.io/ceph/ceph:v19.2.7 image holds
     expat-2.5.0-9.el9 beside ceph-radosgw-19.2.7-0.el9, and v20.2.4's
     expat-2.5.0-7.el9 beside ceph-radosgw-20.2.4-0.el9. With
@@ -17923,11 +17945,15 @@ Every new entry adds its row to this table, in document order.
   request bodies are read with Go's `encoding/xml`, not expat"), and
   `acl.ParsePublicAccessBlockXML` refuses a DTD outright
   (docs/differences.md, "A PutPublicAccessBlock document is held to S3's
-  schema").
+  schema"). The tree route is bounded: `xmltext.Parse` refuses a document
+  past 131,072 elements and attributes or 64 levels, and a start tag past
+  16 KiB (docs/differences.md, "An XML request body is held to 131,072
+  elements and attributes, 64 levels and 16 KiB a start tag").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task BC-17, 2026-10-15, recording what radosgw does
   with a DTD in a PutPublicAccessBlock body; its bound and its
-  pre-authorization reach corrected by the task's review the same day.
+  pre-authorization reach corrected by the task's review the same day. The
+  tree route was added by phase 2 task S11's review, 2026-11-14.
 
 ## radosgw's PutBucketEncryption stores any SSEAlgorithm, and a KMS key id with any algorithm
 

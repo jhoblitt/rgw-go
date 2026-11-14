@@ -2914,6 +2914,76 @@ following.
   whitespace; a malformed document type declaration, which Go's decoder
   passes through unparsed; and a character reference to a surrogate code
   point, which Go's decoder reads as U+FFFD.
+- **An XML request body is held to 131,072 elements and attributes, 64
+  levels and 16 KiB a start tag.**
+  `RGWXMLParser` sets no bound on expat, installing only its element and
+  character-data handlers
+  ([rgw_xml.cc:219-221](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L219-L221),
+  [rgw_xml.cc:219-221](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L219-L221)),
+  and holds an `XMLObj` for every element, its attributes in a map, until
+  the parser is destroyed
+  ([rgw_xml.cc:174-196](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L174-L196),
+  [rgw_xml.cc:174-196](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L174-L196);
+  [rgw_xml.cc:161-172](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L161-L172),
+  [rgw_xml.cc:161-172](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L161-L172)).
+  Only the body's length bounds the tree, `rgw_max_put_param_size`, 1 MiB by
+  default
+  ([rgw.yaml.in:138-145](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L138-L145),
+  [rgw.yaml.in:144-151](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L144-L151)),
+  which holds 262,144 empty elements, 349,525 nested ones or a start tag of
+  262,142 attributes, and some of radosgw's ops parse a body before they
+  authorize its sender (docs/ceph-upstream-bugs.md, "[radosgw's XML parser
+  expands the entities a request body
+  declares](ceph-upstream-bugs.md#radosgws-xml-parser-expands-the-entities-a-request-body-declares)"
+  records that order and the tree). In rgw-go DeleteObjects does, and the
+  others parse in `Execute`, once the requester is authorized.
+  rgw-go's `xmltext.Parse` and `xmltext.ParseFunc`, which every op that
+  builds a tree from its body calls, refuse a document at the start tag that
+  would take its elements and attributes, each attribute counting as one
+  element, past 131,072, or open a 65th level, before building it. `Parse`
+  and `xmltext.Scan` refuse a start tag of more than 16 KiB, "<" to ">", as
+  the decoder reads it, before the decoder builds the tag's attributes, which
+  it does before it returns the tag. Each op answers a refusal with the error
+  it gives a body it cannot parse: MalformedXML, or InvalidArgument for
+  CreateBucket, the ACL ops and, on Squid, DeleteObjects.
+
+  Measured on one host with go1.27.3, a 1 MiB body took 107 ms of CPU and 115
+  MiB of allocation to read and refuse as nested elements, 58 ms and 86 MiB
+  as one start tag of 262,142 four-byte attributes, and 55 ms and 65 MiB as
+  116,508 elements of one attribute each. The first two are now refused after
+  a few hundred allocations and 0.6 MiB. What fits under the bounds is the
+  worst a body costs: through `Parse`, 38 MiB of allocation and 33 ms of CPU
+  for elements that each declare a namespace, or 45 ms and 35 MiB for 131,071
+  elements holding text, and 37 MiB for elements of one attribute each.
+  PutBucketVersioning, whose lenient table is scanned and then parsed, costs
+  an authorized requester up to 86 MiB of allocation, for start tags at the
+  cap of about 3,300 distinct attributes each, and 88 ms of CPU, for elements
+  holding text. It keeps the scan, because radosgw parses this body only after
+  `verify_permission` too and builds an unbounded tree from it, so rgw-go is
+  below parity
+  ([rgw_op.cc:2759-2780](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L2759-L2780),
+  [rgw_op.cc:2991-3012](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L2991-L3012)).
+  A body read with `xmltext.Scan` alone builds no tree and keeps its table's
+  limits.
+
+  The bounds sit past the largest document radosgw's limits allow at their
+  defaults, which a spec of each op builds and parses: a lifecycle rule of
+  the 23,000 tags 1 MiB holds, 69,000 elements and attributes, and 1,000
+  rules of S3's ten tags, 43,000; an ACL of the 5,588 grants a body holds,
+  39,000, each grantee carrying two attributes; a CompleteMultipartUpload of
+  `rgw_multipart_part_upload_limit` parts, 10,000, 30,000; a PutBucketCors
+  of `rgw_cors_rules_max_num` rules of the most headers a body holds,
+  33,000; a DeleteObjects of `rgw_delete_multi_obj_max_num` keys with every
+  element, 6,000; six levels at most, a lifecycle rule's tag key; and start
+  tags of under 100 bytes, an ACL grantee's. The element bound is 1.9 times
+  the densest of these and 3 times the largest an S3 client writes. An
+  operator who raises `rgw_lc_max_rules` past 3,000 rules of 43 elements,
+  `rgw_delete_multi_obj_max_num` past 21,000 keys of 6, or
+  `rgw_multipart_part_upload_limit` past 32,000 parts of 4, with
+  `rgw_max_put_param_size` raised to hold them, sends documents radosgw reads
+  and rgw-go refuses. So does a client that pads a body past the bound with
+  131,073 elements radosgw ignores, which fit in 512 KiB, or writes a start
+  tag longer than 16 KiB.
 - **A PutPublicAccessBlock document is held to S3's schema.** radosgw
   looks up a mandatory `PublicAccessBlockConfiguration` root and its four
   optional booleans, and answers 400 MalformedXML only to a body expat

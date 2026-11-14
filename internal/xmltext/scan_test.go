@@ -354,34 +354,34 @@ var _ = Describe("Scan", func() {
 			Expect(se.Refusal).To(Equal(want))
 			Expect(se).To(MatchError(why + " at byte " + strconv.Itoa(strings.Index(body, marker))))
 		},
-		Entry("ten thousand distinct attributes, one local name among them also under a prefix",
-			`<Doc xmlns:p="`+s3NS+`"><Name`+attrs(10000)+` p:a0=""/></Doc>`, "", xmltext.Refusal(0), ""),
-		Entry("the first of ten thousand attributes, repeated after them",
-			`<Doc><Name`+attrs(10000)+` a0="x"/></Doc>`, "<Name", xmltext.RefusedRepeatedAttribute, `the attribute "a0" twice on "Name"`),
-		Entry("one in the middle of ten thousand, repeated after them",
-			`<Doc><Name`+attrs(10000)+` a5000="x"/></Doc>`, "<Name", xmltext.RefusedRepeatedAttribute, `the attribute "a5000" twice on "Name"`),
-		Entry("the last of ten thousand, repeated at once",
-			`<Doc><Name`+attrs(10000)+` a9999="x"/></Doc>`, "<Name", xmltext.RefusedRepeatedAttribute, `the attribute "a9999" twice on "Name"`),
-		Entry("a prefixed attribute repeated after ten thousand",
-			`<Doc><Name`+attrs(10000)+` p:a0="" p:a0=""/></Doc>`, "<Name", xmltext.RefusedRepeatedAttribute, `the attribute "p:a0" twice on "Name"`),
-		Entry("the root's namespace declaration, repeated after ten thousand attributes",
-			`<Doc xmlns="`+s3NS+`"`+attrs(10000)+` xmlns="`+s3NS+`"/>`, "<Doc", xmltext.RefusedRepeatedAttribute, `the attribute "xmlns" twice on "Doc"`),
+		Entry("fifteen hundred distinct attributes, one local name among them also under a prefix",
+			`<Doc xmlns:p="`+s3NS+`"><Name`+attrs(1500)+` p:a0=""/></Doc>`, "", xmltext.Refusal(0), ""),
+		Entry("the first of fifteen hundred attributes, repeated after them",
+			`<Doc><Name`+attrs(1500)+` a0="x"/></Doc>`, "<Name", xmltext.RefusedRepeatedAttribute, `the attribute "a0" twice on "Name"`),
+		Entry("one in the middle of fifteen hundred, repeated after them",
+			`<Doc><Name`+attrs(1500)+` a750="x"/></Doc>`, "<Name", xmltext.RefusedRepeatedAttribute, `the attribute "a750" twice on "Name"`),
+		Entry("the last of fifteen hundred, repeated at once",
+			`<Doc><Name`+attrs(1500)+` a1499="x"/></Doc>`, "<Name", xmltext.RefusedRepeatedAttribute, `the attribute "a1499" twice on "Name"`),
+		Entry("a prefixed attribute repeated after fifteen hundred",
+			`<Doc><Name`+attrs(1500)+` p:a0="" p:a0=""/></Doc>`, "<Name", xmltext.RefusedRepeatedAttribute, `the attribute "p:a0" twice on "Name"`),
+		Entry("the root's namespace declaration, repeated after fifteen hundred attributes",
+			`<Doc xmlns="`+s3NS+`"`+attrs(1500)+` xmlns="`+s3NS+`"/>`, "<Doc", xmltext.RefusedRepeatedAttribute, `the attribute "xmlns" twice on "Doc"`),
 		Entry("a namespace the table does not list, then a repeat, refused at the namespace",
-			`<Doc><Name`+attrs(10000)+` xmlns="urn:x" a0=""/></Doc>`, "<Name", xmltext.RefusedNamespace, `the namespace "urn:x" on "Name"`),
+			`<Doc><Name`+attrs(1500)+` xmlns="urn:x" a0=""/></Doc>`, "<Name", xmltext.RefusedNamespace, `the namespace "urn:x" on "Name"`),
 		Entry("a repeat, then a namespace the table does not list, refused at the repeat",
-			`<Doc><Name`+attrs(10000)+` a0="" xmlns="urn:x"/></Doc>`, "<Name", xmltext.RefusedRepeatedAttribute, `the attribute "a0" twice on "Name"`),
+			`<Doc><Name`+attrs(1500)+` a0="" xmlns="urn:x"/></Doc>`, "<Name", xmltext.RefusedRepeatedAttribute, `the attribute "a0" twice on "Name"`),
 	)
 
 	It("judges repeats among a tag of many distinct attributes in a few comparisons, under a lenient table", func() {
-		// Comparing each of 32,768 attributes with every one before it takes
-		// 536,854,528 comparisons; past the first eight a set takes none, so
-		// only the 28 among those eight are left.
-		body, s := []byte(`<Doc`+attrs(1<<15)+`/>`), docSchema(true)
+		// Comparing each of 1,500 attributes with every one before it takes
+		// 1,124,250 comparisons; past the first eight a set takes none, so only
+		// the 28 among those eight are left.
+		body, s := []byte(`<Doc`+attrs(1500)+`/>`), docSchema(true)
 		var err error
 		n := xmltext.CountAttrComparisons(func() { err = xmltext.Scan(body, s, nil) })
 		Expect(err).NotTo(HaveOccurred())
 		Expect(n).To(BeNumerically(">", 0), "the count sees the comparisons")
-		Expect(n).To(BeNumerically("<=", 28), "comparisons for 32,768 attributes")
+		Expect(n).To(BeNumerically("<=", 28), "comparisons for 1,500 attributes")
 	})
 
 	It("refuses a body nested a hundred thousand deep, building no tree, in a few allocations", func() {
