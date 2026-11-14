@@ -212,12 +212,12 @@ var _ = Describe("object retention and legal hold routes", func() {
 		Entry("PUT ?retention", "/plain/k?retention", retentionInForce),
 		Entry("PUT ?legal-hold", "/plain/k?legal-hold", legalHoldBody("ON")),
 	)
-	It("refuses bob, whom nothing grants the actions, 403 AccessDenied before it reads the body", func(ctx SpecContext) {
+	It("refuses bob, whom nothing grants the actions, 403 AccessDenied, having read the body for the object-lock keys", func(ctx SpecContext) {
 		for _, target := range []string{"/plain/k?retention", "/plain/k?legal-hold"} {
 			counted := &countingBody{r: strings.NewReader(retentionInForce)}
 			rec := serveReq(s3.NewHandler(w.env, authAs(w.bob), testConfig(s3.Config{})), http.MethodPut, target, counted)
 			Expect(rec.Code).To(Equal(http.StatusForbidden), target)
-			Expect(counted.n).To(BeZero(), target)
+			Expect(counted.n).To(BeEquivalentTo(len(retentionInForce)), target)
 		}
 		Expect(attrs(ctx, meta.ObjKey{Name: "k"})).NotTo(Or(HaveKey(meta.AttrObjectRetention), HaveKey(meta.AttrObjectLegalHold)))
 	})

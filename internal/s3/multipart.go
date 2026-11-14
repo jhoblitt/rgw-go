@@ -53,7 +53,9 @@ type initiateMultipartUploadResult struct {
 // requester is authorized; the rest of get_params runs through
 // initMultipartParams then too, as RGWInitMultipart::execute calls it
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6299 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6968 at v20.2.4).
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6968 at v20.2.4),
+// but for the object-lock headers, which are read first for the policies'
+// object-lock keys (r.Lock), their refusal kept for initMultipartParams.
 // The success is send_response's
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4029-L4055,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4526-L4556):
@@ -63,7 +65,13 @@ type initiateMultipartUploadResult struct {
 // (checksumField).
 func (wr *objectWrites) initMultipart(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.InitMultipart{StorageClass: header(r, "X-Amz-Storage-Class"), ChecksumField: checksumField(r)}
-	o.Params = func(ctx context.Context, o *op.InitMultipart) error { return wr.initMultipartParams(ctx, r, o) }
+	lock, lerr := objectLockHeaders(r, false)
+	if lerr == nil {
+		r.Lock = lock.conditions()
+	}
+	o.Params = func(ctx context.Context, o *op.InitMultipart) error {
+		return wr.initMultipartParams(ctx, r, o, lock, lerr)
+	}
 	if err := op.Run(ctx, o, r); err != nil {
 		return err
 	}
@@ -86,12 +94,13 @@ func (wr *objectWrites) initMultipart(ctx context.Context, w http.ResponseWriter
 // get_encryption_defaults comes first: the ACL, create_s3_policy's for the
 // requester, its bucket-owner grants naming the bucket's ACL owner;
 // x-amz-tagging, any refusal InvalidArgument; the object-lock headers'
-// retention and legal hold (objectLockHeaders), refused on a bucket without
-// object lock (objectLock) and otherwise the upload's, which its completion
-// writes as the object's; a request that asks for encryption, which
-// prepare_encryption reads; and the attrs, the headers' alone, as no
-// map_qs_metadata runs.
-func (wr *objectWrites) initMultipartParams(ctx context.Context, r *op.Request, o *op.InitMultipart) error {
+// retention and legal hold, lock or the refusal lerr, as objectLockHeaders
+// read them before the op ran, so that r.Lock gave the policies' object-lock
+// keys to its check, refused on a bucket without object lock (objectLock) and
+// otherwise the upload's, which its completion writes as the object's; a
+// request that asks for encryption, which prepare_encryption reads; and the
+// attrs, the headers' alone, as no map_qs_metadata runs.
+func (wr *objectWrites) initMultipartParams(ctx context.Context, r *op.Request, o *op.InitMultipart, lock requestLock, lerr error) error {
 	p, aclErr := newObjectACL(ctx, r)
 	if aclErr != nil {
 		return aclErr
@@ -104,7 +113,6 @@ func (wr *objectWrites) initMultipartParams(ctx context.Context, r *op.Request, 
 		}
 		o.Tags = &set
 	}
-	lock, lerr := objectLockHeaders(r, false)
 	if lerr != nil {
 		return lerr
 	}

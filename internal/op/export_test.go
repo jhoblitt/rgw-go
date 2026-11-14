@@ -24,3 +24,11 @@ const SkippedUpdateGraceForTest = skippedUpdateGrace
 // SetUpdateGraceForTest makes o's OLH updates end d after the request's
 // context, in place of skippedUpdateGrace.
 func SetUpdateGraceForTest(o *DeleteObjects, d time.Duration) { o.updateGrace = d }
+
+// ParseErrForTest is the error Init kept of parsing the document, nil when
+// the document was not parsed or parsed.
+func (o *PutObjectRetention) ParseErrForTest() error { return o.parseErr }
+
+// ParseErrForTest is the error Init kept of parsing the document, nil when
+// the document was not parsed or parsed.
+func (o *PutObjectLegalHold) ParseErrForTest() error { return o.parseErr }
