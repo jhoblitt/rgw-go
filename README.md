@@ -14,11 +14,18 @@ what is out of scope, and why, is in [docs/exclusions.md](docs/exclusions.md).
 
 ## Install
 
-Nothing to install yet. rgw-go is in its foundations phase.
+There is no release yet. rgw-go runs as `/usr/bin/radosgw` in a container
+image derived from a Ceph release's image (`hack/image/build.sh`), which is
+how its gates and Rook's object-store suite run it.
 
 ## Usage
 
-Not yet usable. The first runnable milestone is the phase 1 gateway described in the design spec.
+Phase 1 of the design spec, the S3 data path, authentication and core admin,
+has passed its gates, and phase 2, versioning, object lock, lifecycle and
+bucket configuration, is in progress. Rook's object-store suite, less the
+tests of features not yet implemented ([hack/rook/README.md](hack/rook/README.md)),
+passes nightly against the derived image. rgw-go is not ready for production
+use.
 
 How rgw-go sizes its memory, and the settings that tune it, are in [docs/memory.md](docs/memory.md).
 

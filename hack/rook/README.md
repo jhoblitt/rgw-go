@@ -9,10 +9,8 @@ Squid or Tentacle, and one of the suite's two passes, `TestWithoutTLS` or
 `TestWithTLS`, run as Rook's CI runs them: Rook checked out at `ROOK_COMMIT`,
 Rook's cluster setup action on kind, and Rook's `go test` invocation.
 
-No run has passed yet. The first showed that the derived image builds, that
-the operator accepts it, and that the object store and its canary user
-become Ready; everything past that is checked only against Rook's sources at
-the pin.
+The phase 1 subset below has passed every nightly run since 2026-10-12 but
+one, on 2026-10-24. The full, unpatched suite has not run yet.
 
 A failed or cancelled job uploads Rook's logs as the artifact
 `rook-<release>-<pass>`. The artifact is public, and a failed suite leaves
