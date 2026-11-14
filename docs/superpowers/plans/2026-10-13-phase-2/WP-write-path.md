@@ -1323,6 +1323,26 @@ Found by WP-26's task review (I1), and numbered here before WP-26 merged (PP-12)
   op entries whose text describes the old answer are corrected.
 - **Depends on:** WP-26. **PR:** one. **Brief:** about 40 lines.
 
+### Task WP-30: a copy within one placement shares the source's tails, comparing the canonical class
+
+Found by T-3 (its copy tests over T-2's classes), and numbered here before T-3 merged (PP-12).
+
+- **Layer:** driver. **Files:** the copy's placement comparison in `internal/driver/copy.go` and
+  its specs; `docs/differences.md` if any difference remains. **Cluster:** no.
+- **Behaviour:** CopyObject decides whether the destination can share the source's tails by
+  comparing the two placement rules as radosgw's `rgw_placement_rule::operator==` does: the
+  rule's name and its canonical storage class, an empty class standing for STANDARD
+  ([rgw_placement_types.h:71-78](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_placement_types.h#L71-L78),
+  [rgw_placement_types.h:71-78](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_placement_types.h#L71-L78)). Today rgw-go compares the rules as Go
+  structs, so a source stored under a rule whose class is empty and a destination naming
+  STANDARD differ, and rgw-go copies the data where radosgw takes references on the source's
+  tails. The objects read back the same either way; the stored state differs (copied tails
+  against shared, refcounted ones).
+- **Specs:** a copy between the empty class and STANDARD on one rule shares the tails (each tail
+  holds a reference), in both directions; a copy to another class or rule still copies. T-3's
+  report carries a reproduction spec to start from.
+- **Depends on:** nothing. **PR:** one. **Brief:** about 25 lines.
+
 ## Order
 
 Everything starts after the index's deferred benchmark run and the shared tasks it names.
@@ -1339,6 +1359,7 @@ Everything starts after the index's deferred benchmark run and the shared tasks 
 | any time, first | WP-27 | nothing |
 | any time | WP-28 | nothing |
 | after WP-26 | WP-29 | WP-26 |
+| any time | WP-30 | nothing |
 | cluster, one at a time | WP-24, WP-15, WP-14 | WP-19 and WP-21; WP-8 to WP-11 and WP-13; WP-6 to WP-13, WP-22, T-1, and BC-34 or the POST line deselected |
 
 - Wave 1 is wider than the subagent budget allows at once; the controller starts WP-10 (a),
