@@ -83,7 +83,9 @@ type headWrite struct {
 	// keepLock marks a write that keeps the version's lock state as it is,
 	// a lifecycle transition's: no default retention is added
 	// (finalizeHeadAttrs; docs/differences.md, "A lifecycle transition adds no
-	// default retention").
+	// default retention"). It also marks the transition for linkVersion,
+	// whose link then keeps the refusal of a version a delete took first, so
+	// a writer that sets it for another reason takes that answer too.
 	keepLock bool
 	// incompressible marks data radosgw's compressor made: its write_full is
 	// followed by the incompressible hint, as _do_write_meta follows it for

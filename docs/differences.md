@@ -10901,6 +10901,58 @@ does the following.
   replay's either way. s3-tests' test_versioning_concurrent_multi_object_delete,
   test_versioned_concurrent_object_create_concurrent_remove and
   test_versioned_concurrent_object_create_and_remove meet the race.
+- **A versioned write whose version a delete removes before its link
+  succeeds.** A versioned PutObject, CopyObject or CompleteMultipartUpload
+  completes its version's index entry, then links the version under the
+  key's OLH (entry "A versioned write awaits its index completion"). A
+  delete of that version can land in between, its unlink and then its
+  replay's removal of the version's head and index entry. The class's
+  `bucket_link_olh` then answers ENOENT, as it answers any link whose
+  instance entry is gone, a delete marker's aside
+  ([cls_rgw.cc:1668-1688](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1668-L1688),
+  [cls_rgw.cc:1809-1829](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1809-L1829)).
+  radosgw's `set_olh` cancels its modification, runs its best-effort
+  update and returns that ENOENT
+  ([rgw_rados.cc:8715-8736](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8715-L8736),
+  [rgw_rados.cc:9461-9482](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9461-L9482)),
+  and `_do_write_meta` returns it
+  ([rgw_rados.cc:3369-3375](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3369-L3375),
+  [rgw_rados.cc:3490-3496](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3490-L3496)),
+  so the write answers 404 NoSuchKey (`docs/ceph-upstream-bugs.md`,
+  "[radosgw's versioned PutObject answers 404 when a delete of its version
+  lands before its
+  link](ceph-upstream-bugs.md#radosgws-versioned-putobject-answers-404-when-a-delete-of-its-version-lands-before-its-link)").
+  Both requests did what they asked, the write first: what is stored is
+  what the delete leaves after a write that linked. rgw-go's `setOLH`
+  (`internal/driver/olh.go`) answers that refusal success, removing
+  nothing, when the version's entry, read as the class reads it for a
+  version's data, is gone and the version's head no longer holds the write
+  (`versionTaken`). The write answers with its version id, the OLH names
+  what the delete made current, and the write's tails belong to the
+  delete, whose removal queued them for the GC. Through S3 only the null
+  version meets this, on a suspended bucket whose key is versioned: a
+  DeleteObject or DeleteObjects key without a versionId, whose null delete
+  marker replaces the null version, or one naming `versionId=null`. The
+  latter reaches it from the write's head write on, too, where an earlier
+  null version gives it an entry to name: the class turns the write's
+  completion, older than the delete's removal, into a cancel that removes
+  the entry
+  ([cls_rgw.cc:1082-1109](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1082-L1109),
+  [cls_rgw.cc:1217-1244](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1217-L1244)).
+  A version id rgw-go generates is not listed before its link, and rgw-go
+  ignores a write's `versionId` (entry "A write's versionId is ignored").
+  A conditional write of the null version succeeds the same way: its
+  condition is checked at its head write, whose op carries the write's
+  modification, so its link carries no condition (`linkCond`). Every
+  other link failure keeps its answer: an ENOENT while the version's entry
+  stays; an entry gone while the head still holds the write; a named
+  version's conditional link, whose condition is known to hold only for a
+  link that lands; a lifecycle transition's, whose success would notify a
+  transition of a version that is gone; and the link of a
+  CompleteMultipartUpload that finishes an earlier completion, which
+  answers InternalError, as it answers when it finds the version's entry
+  gone before its link (entry "A CompleteMultipartUpload records itself on
+  the meta object before its head write").
 - **A versioned link or unlink that logs nothing removes its own pending
   attr.** radosgw's `set_olh` records a pending modification on the key's
   OLH head before its link, and only the replay of the link's log entry

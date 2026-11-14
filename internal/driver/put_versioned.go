@@ -310,7 +310,9 @@ func (s *Store) linkCond(hw *headWrite) olhCondition {
 // though radosgw's processor then deletes the tails the head names
 // (docs/ceph-upstream-bugs.md, "radosgw's versioned PutObject deletes its
 // tails when its link fails"). The head and its tails stay otherwise,
-// whatever is answered.
+// whatever is answered. A link the class refuses because a delete took the
+// version after its head write succeeds, the delete owning the tails, as
+// setOLH says for a link with olhLink.WriteTag.
 func (s *Store) linkVersion(ctx context.Context, hw *headWrite, x *indexOp, ver rgw.EntryVer, m rgw.DirEntryMeta, in *nullInit) error {
 	rewrite := hw.expect != nil
 	if err := x.completeSync(ctx, ver, m); err != nil {
@@ -326,5 +328,13 @@ func (s *Store) linkVersion(ctx context.Context, hw *headWrite, x *indexOp, ver 
 		return op.FromRADOS(fmt.Errorf("completing the index entry of %s: %w", versionName(x.rec, hw.key), err), op.ScopeObject)
 	}
 	l := olhLink{Epoch: *hw.olhEpoch, Cond: s.linkCond(hw), Inited: in.inited(), KeepVersion: rewrite}
+	if !hw.keepLock {
+		// keepLock marks a lifecycle transition, whose raw copy alone sets
+		// it (headWrite.keepLock). A transition keeps the refusal of a link
+		// whose version a delete took first: its success would run
+		// keepCurrent and, on Tentacle, notify a transition of a version
+		// that is gone (lcBucket.transition).
+		l.WriteTag = []byte(hw.tag + "\x00")
+	}
 	return op.FromRADOS(s.setOLH(ctx, x.rec, hw.key, l), op.ScopeObject)
 }

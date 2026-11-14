@@ -58,7 +58,9 @@ const (
 // a version already written and once listed (olhRelink). KeepVersion keeps
 // the version when no link of it lands, for a caller whose version names
 // data it must not lose, a completion's parts; a link the check after it
-// voids is still unlinked.
+// voids is still unlinked. WriteTag, when not nil, is the user.rgw.idtag the
+// head write that made the version stored, for the link of a client's write,
+// which succeeds when a delete took its version first (versionTaken).
 type olhLink struct {
 	DeleteMarker  bool
 	Meta          rgw.DirEntryMeta
@@ -71,6 +73,7 @@ type olhLink struct {
 	Inited        *olhInited
 	Relink        *olhRelink
 	KeepVersion   bool
+	WriteTag      []byte
 }
 
 // olhRelink is a link that lists again a version a refused removal left
@@ -216,7 +219,12 @@ func (s *Store) stopsAfterLink() bool { return olhStopAfterLink != nil && olhSto
 //     unknown keeps its pending attr"). One the index refused for the head's
 //     OLH tag repairs the head from the index's OLH entry and tries again;
 //     any other runs a best-effort update unless p.SkipUpdate, and is
-//     returned.
+//     returned, but for the class's ENOENT on a link with p.WriteTag and no
+//     p.Cond whose version versionTaken finds a delete took first, which
+//     is success with nothing removed (docs/differences.md, "A versioned
+//     write whose version a delete removes before its link succeeds"). A
+//     conditional link keeps the refusal, as its condition is known to hold
+//     only once its link lands (checkOLHLink).
 //   - The replay is finishOLHModification's, whose ECANCELED is success. A
 //     null delete marker linked over null data, whose removal the class logs
 //     with the link, has that removal checked after it (checkRemoval).
@@ -319,9 +327,41 @@ func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKe
 		if !p.SkipUpdate {
 			s.updateOLHAfterFailure(ctx, idx, head)
 		}
+		if p.WriteTag != nil && p.Cond == nil && !p.DeleteMarker && p.Relink == nil &&
+			errors.Is(err, radosclient.ErrNotFound) && s.versionTaken(ctx, idx.x.rec, key, p.WriteTag) {
+			slog.DebugContext(ctx, "a delete took the version before its link; the write stands",
+				slog.String("bucket", rec.Info.Bucket.Name), slog.String("key", key.Name), slog.String("instance", key.Instance))
+			return nil
+		}
 		return unlinked(fmt.Errorf("linking %s: %w", what, err))
 	}
 	return unlinked(fmt.Errorf("%w: linking %s: every one of %d attempts lost to another writer", op.ErrUnknown, what, olhAttempts))
+}
+
+// versionTaken reports whether a delete took key's version, of rec's
+// bucket, after the head write that stored writeTag and before a link the
+// class then refused with ENOENT: the version's index entry, read as the
+// link reads a version's data
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1668-L1688 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1809-L1829 at v20.2.4),
+// the null version's behind the version marker but for the null delete
+// marker's (nullDataEntry), is gone, and the version's head, the OLH head
+// for the null version, no longer holds that write. A delete's replay
+// removes the head, the null version's OLH attrs alone kept, then its
+// entry, and queues the tails the head named for the GC
+// (removeHeadFlagged), so the delete owns the write's tails. An entry gone
+// while the head still holds the write was removed by no delete, and a
+// read that fails proves nothing: both answer false.
+func (s *Store) versionTaken(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, writeTag []byte) bool {
+	read := s.getInstanceEntry
+	if key.Instance == "" {
+		read = s.nullDataEntry
+	}
+	if _, err := read(ctx, rec, key); !errors.Is(err, radosclient.ErrNotFound) {
+		return false
+	}
+	head, err := s.readOLHHead(ctx, rec, key)
+	return err == nil && (!head.Exists || !bytes.Equal(head.Attrs[meta.AttrIDTag], writeTag))
 }
 
 // errInitedCond refuses a link given both an inited modification and a

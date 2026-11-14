@@ -408,6 +408,81 @@ var _ = Describe("a versioned PutObject", func() {
 			Expect(listed()).To(BeEmpty())
 		})
 
+		// The class's link_olh refuses a version whose instance entry is gone
+		// with ENOENT
+		// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1668-L1688 at v19.2.7,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1809-L1829 at v20.2.4).
+		Describe("when the class refuses its link for a version whose entry is gone", func() {
+			big := func() []byte { return bytes.Repeat([]byte("t"), 6<<20) }
+			// v2Tail is the tail stripe of v2's 6 MiB body, in the shadow
+			// namespace under v2's instance.
+			const v2Tail = putBucketID + "__shadow:v2_." + secondPrefix + "_1"
+
+			It("answers success when a delete of its version took it first, the version gone and its tails queued once, by the delete", func(ctx SpecContext) {
+				mustPut(ctx, "v1", "one")
+				s.SetRandForTest(fixedRand(secondPrefix))
+				afterOLHInit(c, olhOID, func() {
+					_, err := s.DeleteObject(ctx, rec, version("v2"), op.DeleteParams{})
+					Expect(err).NotTo(HaveOccurred(), "the delete of v2, completed and not yet linked")
+				})
+				res, err := putBytes(ctx, "v2", big(), op.PutParams{})
+				Expect(err).NotTo(HaveOccurred())
+				// PutObject's op names the version from the key it wrote
+				// (ResponseVersionID), v2 here.
+				Expect([]any{res.ETag, res.Version}).To(Equal([]any{md5hex(big()), ""}), "the write's answer")
+				settle(s)
+				Expect(versionHead("v2")).To(BeNil())
+				_, ok := instanceEntry("v2")
+				Expect(ok).To(BeFalse(), "v2's instance entry")
+				st, err := s.StatObject(ctx, rec, version("v2"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(st.Exists).To(BeFalse(), "a read of v2 by its id")
+				Expect(listed()).To(Equal([]string{"v1"}))
+				Expect(target().Target.Key).To(Equal(version("v1")), "the OLH names v1, current again")
+				Expect(pending()).To(BeEmpty())
+				Expect(chainOIDs(allGCEntries(c))).To(ConsistOf(v2Tail), "v2's tail, queued by the delete's removal and by nothing else")
+			})
+
+			It("answers NoSuchKey when the class's ENOENT comes with the version's entry in place, though its head is gone", func(ctx SpecContext) {
+				mustPut(ctx, "v1", "one")
+				afterOLHInit(c, olhOID, func() {
+					c.Remove(testDataPool, "", instanceHeadOID(version("v2")))
+					ac.set(onFirst("bucket_link_olh", failWith(syscall.ENOENT)))
+				})
+				_, err := put(ctx, "v2", "two", op.PutParams{})
+				Expect(err).To(MatchError(op.ErrNoSuchKey))
+				settle(s)
+				Expect(listed()).To(Equal([]string{"v1"}))
+				Expect(target().Target.Key).To(Equal(version("v1")))
+			})
+
+			It("answers NoSuchKey and removes the version when its entry is gone but its head still holds the write", func(ctx SpecContext) {
+				mustPut(ctx, "v1", "one")
+				s.SetRandForTest(fixedRand(secondPrefix))
+				afterOLHInit(c, olhOID, func() {
+					delete(c.Object(rookIndexPool, "", shard).Omap, rgwcls.InstanceIndexKey(rgwcls.ObjKey{Name: "k", Instance: "v2"}, false))
+				})
+				_, err := putBytes(ctx, "v2", big(), op.PutParams{})
+				Expect(err).To(MatchError(op.ErrNoSuchKey))
+				settle(s)
+				Expect(versionHead("v2")).To(BeNil(), "removed as any version whose link the class refused")
+				Expect(chainOIDs(allGCEntries(c))).To(ConsistOf(v2Tail), "its tail, queued by that removal")
+				Expect(target().Target.Key).To(Equal(version("v1")))
+			})
+
+			It("answers a conditional write's link NoSuchKey when a delete took its version first, as its condition holds only for a link that lands", func(ctx SpecContext) {
+				mustPut(ctx, "v1", "one")
+				afterOLHInit(c, olhOID, func() {
+					_, err := s.DeleteObject(ctx, rec, version("v2"), op.DeleteParams{})
+					Expect(err).NotTo(HaveOccurred())
+				})
+				_, err := put(ctx, "v2", "two", op.PutParams{IfMatch: md5hex("one")})
+				Expect(err).To(MatchError(op.ErrNoSuchKey))
+				gone("v2")
+				Expect(target().Target.Key).To(Equal(version("v1")))
+			})
+		})
+
 		It("never links before its completion's reply", func(ctx SpecContext) {
 			arrived, release := make(chan struct{}), make(chan struct{})
 			var once sync.Once
@@ -1368,6 +1443,7 @@ var _ = Describe("a versioned PutObject", func() {
 				Expect(chain).To(ConsistOf(tails), "the removal sends the tails to the GC")
 			},
 			Entry("on a refusal, which removes the version", syscall.EIO, op.ErrUnknown, true),
+			Entry("on an ENOENT while the version's entry stays, which removes it as any refusal does", syscall.ENOENT, op.ErrNoSuchKey, true),
 			Entry("on a timeout, which leaves it", syscall.ETIMEDOUT, op.ErrRequestTimedOut, false),
 		)
 	})
