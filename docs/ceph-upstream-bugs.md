@@ -518,6 +518,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's versioned PutObject answers 404 when a delete of its version lands before its link](#radosgws-versioned-putobject-answers-404-when-a-delete-of-its-version-lands-before-its-link) | none | none | ✓ |
 | [cls_rgw's bucket_clear_olh drops a pending log no replay read](#cls_rgws-bucket_clear_olh-drops-a-pending-log-no-replay-read) | none | none | ✓ |
 | [radosgw's DeleteObjects leaves a name's skipped OLH updates pending when its last delete fails or finds its version gone](#radosgws-deleteobjects-leaves-a-names-skipped-olh-updates-pending-when-its-last-delete-fails-or-finds-its-version-gone) | [#80886](https://tracker.ceph.com/issues/80886), [#81649](https://tracker.ceph.com/issues/81649), [#81650](https://tracker.ceph.com/issues/81650) | [ceph/ceph#72130](https://github.com/ceph/ceph/pull/72130), [ceph/ceph#72632](https://github.com/ceph/ceph/pull/72632) |  |
+| [librados keeps a service registration it answers EBUSY](#librados-keeps-a-service-registration-it-answers-ebusy) | pending | pending | ✓ |
+| [librados's rados_connect leaves the handle connecting when its monitor bootstrap fails](#libradoss-rados_connect-leaves-the-handle-connecting-when-its-monitor-bootstrap-fails) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -33488,3 +33490,113 @@ Every new entry adds its row to this table, in document order.
 - **Found:** upstream first, by #80886's reporter, 2026-09-25. Met by
   phase 2 task V15a's recording of the versioning s3-tests, 2026-11-12,
   and recorded by its review.
+
+## librados keeps a service registration it answers EBUSY
+
+- **Kind:** defect, reproduced with librados 20.2.4 through go-ceph a81d09b
+  on a single thread, by a connect whose monitor bootstrap failed; the
+  two-thread race and v19.2.7 by the source. Not security-relevant: it costs
+  only the caller's own registration. A `rados_service_register` made while
+  the handle is connecting is answered `-EBUSY`, but librados has already
+  taken it: a retry is refused with `-EEXIST`, and whether the manager ever
+  hears of the registration depends on how far the connect had got.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `service_daemon_register` refuses any registration once `service_daemon`
+    is set
+    ([RadosClient.cc:1074-1076](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/RadosClient.cc#L1074-L1076),
+    [RadosClient.cc:1076-1078](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/RadosClient.cc#L1076-L1078)),
+    and sets it, the names and the metadata before it answers `-EBUSY` to a
+    handle that is connecting
+    ([RadosClient.cc:1089-1102](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/RadosClient.cc#L1089-L1102),
+    [RadosClient.cc:1091-1104](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/RadosClient.cc#L1091-L1104)).
+  - `connect` sets `CONNECTING` first and hands the manager client the
+    registration only if `service_daemon` is set when it gets there
+    ([RadosClient.cc:215-224](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/RadosClient.cc#L215-L224),
+    [RadosClient.cc:217-226](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/RadosClient.cc#L217-L226);
+    [RadosClient.cc:303-308](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/RadosClient.cc#L303-L308),
+    [RadosClient.cc:305-310](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/RadosClient.cc#L305-L310)).
+    It takes the client's lock only to set `CONNECTED`
+    ([RadosClient.cc:313-318](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/RadosClient.cc#L313-L318),
+    [RadosClient.cc:315-320](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/RadosClient.cc#L315-L320)),
+    and `service_daemon_register` takes none, so the two race on `state`,
+    `service_daemon` and the metadata.
+  - The manager learns of a registration only from the manager client's open,
+    which carries the manager client's own registration, set only by its
+    `service_daemon_register`
+    ([MgrClient.cc:626-648](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/MgrClient.cc#L626-L648),
+    [MgrClient.cc:620-642](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/MgrClient.cc#L620-L642);
+    [MgrClient.cc:237-255](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/MgrClient.cc#L237-L255),
+    [MgrClient.cc:238-256](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/MgrClient.cc#L238-L256)).
+    A registration that lands after `connect`'s check is never handed over, so
+    no reconnect sends it either.
+- **Trigger:** either of two.
+  - A caller registers from one thread while another runs `rados_connect` on
+    the same handle.
+  - A caller registers, on any thread, after a `rados_connect` that failed in
+    its monitor bootstrap, which leaves the handle connecting for good
+    ([librados's rados_connect leaves the handle connecting when its monitor bootstrap fails](#libradoss-rados_connect-leaves-the-handle-connecting-when-its-monitor-bootstrap-fails)).
+- **Reproduction:** by the review of phase 2 task SM1, 2026-11-14: a
+  hermetic Go test on go-ceph a81d09b with librados 20.2.4 and no cluster.
+  A new handle whose `monmap` option names a file that does not exist
+  answers `rados_connect` with -2 (ENOENT), then `rados_service_register`
+  with -16 (EBUSY), a second `rados_service_register` with -17 (EEXIST), a
+  second `rados_connect` with -115 (EINPROGRESS), and
+  `rados_service_update_status` with -107 (ENOTCONN).
+- **Impact:** the caller sees `EBUSY`, which reads as "try again", and every
+  retry sees `EEXIST`. Registered before `connect`'s check, the daemon appears
+  in the service map although the call failed; registered after it, or on a
+  handle whose bootstrap failed, the daemon never appears, and no call reports
+  that, for the life of the handle.
+- **Releases:** v19.2.7 and v20.2.4 by the source, reproduced with 20.2.4.
+  Main at ec322a5e95eb (2026-11-14) still sets the registration before it
+  answers `-EBUSY`
+  ([RadosClient.cc:1099-1112](https://github.com/ceph/ceph/blob/ec322a5e95ebcb46dec7d6a9d7813a34543c64ad/src/librados/RadosClient.cc#L1099-L1112)).
+- **rgw-go:** not affected. It registers nothing today, and phase 2 plan task
+  SM4, which makes it register, does so once, after its connect has returned
+  (`docs/superpowers/plans/2026-10-13-phase-2/SM-service-map.md`, SM-D5).
+  goceph shuts a handle down when its connect fails or is cancelled, without
+  connecting it again (internal/radosclient/goceph/cluster.go:150-164), so no
+  registration can meet a connecting handle.
+- **Upstream:** pending; prior art not searched.
+- **Found:** reading librados for go-ceph's `Conn.ServiceRegister` binding,
+  phase 2 task SM1, 2026-11-14; reproduced, and the single-threaded trigger
+  found, by that task's review the same day.
+
+## librados's rados_connect leaves the handle connecting when its monitor bootstrap fails
+
+- **Kind:** defect, reproduced with librados 20.2.4 through go-ceph a81d09b;
+  v19.2.7 by the source. Not security-relevant: it affects only the caller's
+  own handle. A `rados_connect` whose monitor bootstrap fails returns the
+  error but leaves the handle `CONNECTING`, so the handle can never connect.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `connect` answers a `CONNECTING` handle with `-EINPROGRESS`, then sets
+    `CONNECTING`
+    ([RadosClient.cc:220-224](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/RadosClient.cc#L220-L224),
+    [RadosClient.cc:222-226](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/RadosClient.cc#L222-L226)).
+  - It returns any `get_monmap_and_config` error at once
+    ([RadosClient.cc:230-235](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/RadosClient.cc#L230-L235),
+    [RadosClient.cc:232-237](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/RadosClient.cc#L232-L237)).
+    That skips the `out:` path, which resets the state to `DISCONNECTED` on
+    every other failure
+    ([RadosClient.cc:323-325](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/RadosClient.cc#L323-L325),
+    [RadosClient.cc:325-327](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/RadosClient.cc#L325-L327)).
+- **Trigger:** any failure of the monitor bootstrap, reproduced with a
+  `monmap` option naming a file that does not exist.
+- **Reproduction:** the probe under
+  [librados keeps a service registration it answers EBUSY](#librados-keeps-a-service-registration-it-answers-ebusy):
+  after the failed `rados_connect` (-2, ENOENT), a second one answers -115
+  (EINPROGRESS).
+- **Impact:** every later `rados_connect` on the handle answers
+  `-EINPROGRESS`, so a client that retries a failed connect on the same handle
+  never connects, and `rados_service_register` answers `-EBUSY` while keeping
+  the registration. Only `rados_shutdown` and a new handle recover.
+- **Releases:** v19.2.7 and v20.2.4 by the source, reproduced with 20.2.4.
+  Main at ec322a5e95eb (2026-11-14) still returns before `out:`
+  ([RadosClient.cc:235-237](https://github.com/ceph/ceph/blob/ec322a5e95ebcb46dec7d6a9d7813a34543c64ad/src/librados/RadosClient.cc#L235-L237)).
+- **rgw-go:** not affected: goceph shuts a handle down when its connect fails
+  (internal/radosclient/goceph/cluster.go:150-157), and when a cancelled
+  connect returns (internal/radosclient/goceph/cluster.go:158-164), and never
+  connects a handle twice.
+- **Upstream:** pending; prior art not searched.
+- **Found:** by the review of phase 2 task SM1, 2026-11-14, tracing the
+  service registration's `EBUSY` to a single-threaded trigger.
