@@ -782,6 +782,27 @@ var _ = Describe("the OLH head operations", func() {
 			Expect(head().Xattrs).To(HaveKeyWithValue(meta.AttrOLHInfo, info("z", false)))
 		})
 
+		// Main compares each link with the epoch of the link it last took
+		// (https://github.com/ceph/ceph/blob/v22.0.0/src/rgw/driver/rados/rgw_rados.cc#L10063-L10078),
+		// where both floors compare every link with the head's olh.ver
+		// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8482-L8496 at v19.2.7,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9228-L9242 at v20.2.4).
+		DescribeTable("compares each link with the epoch of the last link it took",
+			func(ctx SpecContext, ver string, log map[uint64][]rgwcls.OLHLogEntry, want string) {
+				olhHead(ver, info("v5", false), nil)
+				_, err := s.ApplyOLHLogForTest(ctx, idx, state(), log, "", nil)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(head()).NotTo(BeNil(), "the replay ends on a link, keeping the OLH")
+				Expect(head().Xattrs).To(HaveKeyWithValue(meta.AttrOLHInfo, info(want, false)))
+			},
+			Entry("a log another replay applied and has not trimmed, applied again, ends on its newest link",
+				"6", map[uint64][]rgwcls.OLHLogEntry{5: {link("v4", tagP)}, 6: {link("v5", tagQ)}}, "v5"),
+			Entry("two links at one epoch above the head's end on the one whose instance sorts first, as the class makes current",
+				"5", map[uint64][]rgwcls.OLHLogEntry{6: {link("a", tagP), link("b", tagQ)}}, "a"),
+			Entry("a link after an unlink at the epoch of the link last taken takes the current version",
+				"5", map[uint64][]rgwcls.OLHLogEntry{6: {link("a", tagP), unlink(tagQ), link("b", "r")}}, "b"),
+		)
+
 		It("links a delete marker as removed", func(ctx SpecContext) {
 			olhHead("2", info("v1", false), nil)
 			_, err := s.ApplyOLHLogForTest(ctx, idx, state(), map[uint64][]rgwcls.OLHLogEntry{3: {marker("dm", tagP)}}, "", nil)

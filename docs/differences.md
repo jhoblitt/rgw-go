@@ -10649,10 +10649,11 @@ does the following.
   ECANCELED is success, as radosgw takes it, and the pending attrs wait for
   the next reader's replay. The attrs written are radosgw's, with two
   differences.
-  - The retry compares the log's links with the fresh `olh.ver`. When
-    another writer has applied a link at an epoch two links share, the
-    retry keeps the version the class made current, where radosgw's pass,
-    comparing with the `olh.ver` it read, writes the link logged last
+  - At an epoch two links share, every pass, the retry's included, keeps
+    the version the class made current, comparing each link with the epoch
+    of the last link it took ("A replay compares each link with the epoch
+    of the last link it took", below), where radosgw's pass, comparing with
+    the `olh.ver` it read, writes the link logged last
     (`docs/ceph-upstream-bugs.md`, "[radosgw's apply_olh_log applies a
     same-epoch link the class did not make
     current](ceph-upstream-bugs.md#radosgws-apply_olh_log-applies-a-same-epoch-link-the-class-did-not-make-current)").
@@ -10706,6 +10707,41 @@ does the following.
   A read of a versioned key runs this replay, retry included, when it
   meets a pending modification, and so do the versioned writes and
   deletes.
+- **A replay compares each link with the epoch of the last link it took.**
+  At both floors `apply_olh_log` compares every LINK_OLH it replays with
+  the epoch it decoded once from the head's `olh.ver`, and takes one whose
+  instance sorts before the current version's whatever its epoch
+  ([rgw_rados.cc:8452-8458](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8452-L8458) and
+  [rgw_rados.cc:8482-8496](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8482-L8496),
+  [rgw_rados.cc:9198-9204](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9198-L9204) and
+  [rgw_rados.cc:9228-9242](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9228-L9242)).
+  A replay that reads the head after another replay's head op and before
+  its trim applies that replay's links again and ends on an older one,
+  and its head op writes the head naming that older version while the
+  bucket index keeps the newer one current. A log that holds an
+  UNLINK_OLH before its last link fails the same test at that link, the
+  version the head names, and the replay clears the OLH over the version
+  the index lists current, so GET and HEAD of the key answer 404 while the
+  listings show it (`docs/ceph-upstream-bugs.md`,
+  "[radosgw's replay that reads the head between another replay's head op
+  and its trim makes an older version
+  current](ceph-upstream-bugs.md#radosgws-replay-that-reads-the-head-between-another-replays-head-op-and-its-trim-makes-an-older-version-current)").
+  rgw-go moves the epoch it compares with to each link it takes, as main
+  does since 8ef9dd9ab27
+  ([rgw_rados.cc:10063-10078](https://github.com/ceph/ceph/blob/v22.0.0/src/rgw/driver/rados/rgw_rados.cc#L10063-L10078);
+  `applyOLHLog`, `internal/driver/olh_head.go`), and takes every link that
+  follows an unlink, as main's `need_to_remove ||` does, so such a replay
+  ends on the newest link. The attrs written keep radosgw's format; only
+  which link `olh.info` names, or whether the OLH is cleared, differs, and
+  only for a log holding a link at or below the head's `olh.ver` and a
+  later one, a link at or below it after an UNLINK_OLH, or two links at one
+  epoch above it. There rgw-go names the newest, and at a shared epoch the
+  link whose instance sorts first, the one the class makes current, where
+  radosgw names the older one, clears the OLH, or names the shared epoch's
+  link logged last
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's apply_olh_log applies a
+  same-epoch link the class did not make
+  current](ceph-upstream-bugs.md#radosgws-apply_olh_log-applies-a-same-epoch-link-the-class-did-not-make-current)").
 - **A replay passes over a version removal that the writer's expected write
   tag refuses.** radosgw's `apply_olh_log` removes each version its pending
   log names before its head op, and stops at a removal that fails with

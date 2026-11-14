@@ -528,6 +528,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's PutObject sets the object ACL and tags its headers name under s3:PutObject alone](#radosgws-putobject-sets-the-object-acl-and-tags-its-headers-name-under-s3putobject-alone) | [#24131](https://tracker.ceph.com/issues/24131) (the tagging half) | pending |  |
 | [radosgw-admin's object stat shows an attr it does not decode only up to its first NUL](#radosgw-admins-object-stat-shows-an-attr-it-does-not-decode-only-up-to-its-first-nul) | pending | pending | ✓ |
 | [radosgw leaves a key's version marker and OLH entry when a delete takes the key's first version before its link](#radosgw-leaves-a-keys-version-marker-and-olh-entry-when-a-delete-takes-the-keys-first-version-before-its-link) | pending | pending | ✓ |
+| [radosgw's replay that reads the head between another replay's head op and its trim makes an older version current](#radosgws-replay-that-reads-the-head-between-another-replays-head-op-and-its-trim-makes-an-older-version-current) | none | [ceph/ceph#67774](https://github.com/ceph/ceph/pull/67774) |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -17105,14 +17106,14 @@ Every new entry adds its row to this table, in document order.
   ([rgw_rados.cc:10132-10149](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_rados.cc#L10132-L10149)),
   so it applies every link logged after the last it applied, and the head
   ends on the one logged last whatever the head's `olh.ver`.
-- **rgw-go:** reproduces it on a replay that reads the head before either
-  link is applied: `applyOLHLog` (`internal/driver/olh_head.go`) replays the
-  log as `apply_olh_log` does, pinned in `internal/driver/olh_head_test.go`.
-  A replay whose head op another writer's apply refused retries from the
-  fresh `olh.ver`, and then keeps the version the class made current
-  (`docs/differences.md`, "apply_olh_log's olh.ver guard is EQ on the bytes
-  read, retried from a fresh read"). rgw-go serves no multisite, so only a
-  link a radosgw synced can reach it.
+- **rgw-go:** differs: `applyOLHLog` (`internal/driver/olh_head.go`) moves
+  the epoch it compares links with to each link it takes, as main's
+  8ef9dd9ab27 does, so two links at one epoch above the head's end on the
+  one whose instance sorts first, the one the class made current, on the
+  first pass as on a retry (`docs/differences.md`, "A replay compares each
+  link with the epoch of the last link it took"; pinned in
+  `internal/driver/olh_head_test.go`). rgw-go serves no multisite, so only
+  a link a radosgw synced can reach it.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task V4, 2026-10-15, implementing the replay; derived
   from the source, not reproduced.
@@ -34213,3 +34214,98 @@ Every new entry adds its row to this table, in document order.
   between a key's first versioned write and its link; its consequence
   traced in V18's review; derived from the source, not reproduced on
   radosgw.
+
+## radosgw's replay that reads the head between another replay's head op and its trim makes an older version current
+
+- **Kind:** defect, possibly security-relevant (integrity). Unreproduced on
+  radosgw: derived from the source.
+  A replay lands its head op, which writes the log's last epoch to
+  `olh.ver` and the version it made current to `olh.info`, before it trims
+  the log. A second replay that reads the head after that head op and the
+  log before that trim applies the same links again over a head that
+  already names the newest. It compares each link with the `olh.ver` it
+  read, the last of their epochs, so it takes the first link whose instance
+  sorts before the current version's, an older one, and its head op writes
+  the head naming that older version. GET and HEAD of the key then serve
+  the version that stale head names, while the bucket index, ListObjects
+  and ListObjectVersions show the newer one current, until the key's next
+  link. A log that holds an UNLINK_OLH before its last link ends
+  otherwise: that link is the version the head names, so it fails the same
+  test, the unlink's removal stands, and the replay clears the OLH over the
+  version the index lists current, so GET and HEAD of the key answer 404
+  while the listings show it. A trim that fails after its head op leaves
+  the same log for any later replay.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `apply_olh_log` lands its head op, then trims the log or clears the OLH
+    ([rgw_rados.cc:8543-8563](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8543-L8563),
+    [rgw_rados.cc:9289-9309](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9289-L9309));
+    the head op removes each applied entry's pending attr
+    ([rgw_rados.cc:8505-8507](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8505-L8507),
+    [rgw_rados.cc:9251-9253](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9251-L9253)).
+  - `update_olh` reads the log from marker 0
+    ([rgw_rados.cc:8651](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8651),
+    [rgw_rados.cc:9397](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9397)),
+    and `apply_olh_log` takes a LINK_OLH when the current instance sorts
+    after the entry's, whatever the entry's epoch, comparing every link with
+    the epoch it decoded once from `olh.ver`
+    ([rgw_rados.cc:8452-8458](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8452-L8458) and
+    [rgw_rados.cc:8482-8496](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8482-L8496),
+    [rgw_rados.cc:9198-9204](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9198-L9204) and
+    [rgw_rados.cc:9228-9242](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9228-L9242)),
+    though its comment allows that only at the same epoch.
+  - An UNLINK_OLH sets the removal that only a link the replay takes
+    cancels
+    ([rgw_rados.cc:8497-8500](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8497-L8500),
+    [rgw_rados.cc:9243-9246](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9243-L9246)),
+    and `clear_olh` removes the head under a guard on `olh.ver` equal to
+    the log's last epoch, which the first replay's head op wrote
+    ([rgw_rados.cc:8614-8619](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8614-L8619),
+    [rgw_rados.cc:9360-9365](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9360-L9365)).
+  - Its head op is guarded on `olh.ver` at or below the log's last epoch
+    ([rgw_rados.cc:8434-8435](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8434-L8435),
+    [rgw_rados.cc:9180-9181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9180-L9181)),
+    so the second replay's head op lands over the first's.
+  - A replay that reads the head fresh and whose own entries link nothing
+    above the applied links ends on the older link: the replay of an unlink
+    of a noncurrent version, whose class call logs a removal only
+    ([cls_rgw.cc:1970-1984](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1970-L1984),
+    [cls_rgw.cc:2117-2131](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2117-L2131)),
+    and a follow's replay while another writer's pending attr is on the
+    head
+    ([rgw_rados.cc:8984-8997](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8984-L8997),
+    [rgw_rados.cc:9730-9743](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9730-L9743)).
+- **Impact:** GET and HEAD of the key serve the older version the head
+  names while every listing shows the newer one current, until the key's
+  next link. Instance ids are random, so an older link sorts first about
+  half the time.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4. Not on
+  main at 90b50e9b879, which v22.0.0 tags: since 8ef9dd9ab27 the replay
+  moves the epoch it compares with to each link it takes, so applying the
+  links again ends on the newest
+  ([rgw_rados.cc:10063-10078](https://github.com/ceph/ceph/blob/v22.0.0/src/rgw/driver/rados/rgw_rados.cc#L10063-L10078)).
+- **rgw-go:** fixed: `applyOLHLog` moves its link epoch to each link it
+  takes, as main's 8ef9dd9ab27 does, and takes every link that follows an
+  unlink, as main's `need_to_remove ||` does, so a re-application of a log
+  holding an UNLINK_OLH before its last link ends on that link
+  (`internal/driver/olh_head.go`;
+  `docs/differences.md`, "A replay compares each link with the epoch of
+  the last link it took"), pinned by "compares each link with the epoch of
+  the last link it took" (`internal/driver/olh_head_test.go`). Before that
+  fix rgw-go also reached the window a way of its own: `replayOLH` answers
+  a head op another replay refused by reading the head again and replaying
+  from marker 0 (`internal/driver/olh.go`), which can read inside that
+  replay's window, where radosgw's `set_olh` replays once from the state it
+  read before its init and takes the ECANCELED for success
+  ([rgw_rados.cc:8752-8755](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8752-L8755),
+  [rgw_rados.cc:9498-9501](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9498-L9501)).
+- **Upstream:** fixed on main by
+  [8ef9dd9ab27](https://github.com/ceph/ceph/commit/8ef9dd9ab277714184654425ffb8f3b48d37fc94),
+  "rgw: fifo bilog entry needs a valid epoch timestamp for link/unlink
+  ops", merged by [ceph/ceph#67774](https://github.com/ceph/ceph/pull/67774),
+  "fifo-based bucket index log", and first tagged in v22.0.0. The commit
+  names the `apply_olh_log` change only as an aside to the FIFO bilog
+  work, "also fix the link_epoch value in apply_olh_log()", and neither it
+  nor the PR names a tracker issue. Pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task V17, 2026-11-14, as the case a failed trim
+  leaves; widened to the replay window by V17's adversarial review the same
+  day, which reproduced it in rgw-go's emulator.
