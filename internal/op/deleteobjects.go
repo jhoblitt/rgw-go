@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"slices"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/sync/errgroup"
 
@@ -171,12 +173,19 @@ func (o *DeleteObjects) Execute(ctx context.Context, r *Request) error {
 	// of the request, taken before the first of them starts, and never the
 	// request itself.
 	kr := *r
-	var mu sync.Mutex
+	var (
+		mu     sync.Mutex
+		failed keyFailures
+	)
 	report := func(res DeleteResult) {
 		mu.Lock()
 		defer mu.Unlock()
+		if res.Err != nil {
+			failed.log(ctx, &kr, res)
+		}
 		o.Result(res)
 	}
+	defer failed.summarize(ctx, &kr)
 	if !kr.BucketRec.Info.Versioned() {
 		return o.deleteAll(ctx, &kr, objects, false, report)
 	}
@@ -346,4 +355,74 @@ func (o *DeleteObjects) deleteOne(ctx context.Context, r *Request, e DeleteObjec
 		res.DeleteMarker, res.MarkerVersionID = true, d.VersionID
 	}
 	return res
+}
+
+// maxKeyErrorLogs bounds the per-key lines one DeleteObjects logs at error
+// level, and maxLoggedLen the bytes of a key, a version or a cause any of its
+// lines carries: the keys come from the request's body, which may run to
+// rgw_max_put_param_size bytes, 1 MiB by default, and so hold a thousand keys
+// or a single key of nearly that size, and a key over the OSD's object-name
+// limit reaches the store and fails as UnknownError.
+const (
+	maxKeyErrorLogs = 10
+	maxLoggedLen    = 256
+)
+
+// keyFailures logs the keys a DeleteObjects reports failed, whose response
+// names each by its code alone, and counts them by code. Its caller
+// serializes it.
+type keyFailures struct {
+	errorLines int
+	byCode     map[string]int
+}
+
+// log logs res, a failed key's outcome in r's bucket: the first
+// maxKeyErrorLogs InternalErrors and UnknownErrors at error level, as
+// WriteError logs a request's failure, and every other at debug, its key,
+// version and cause cut to maxLoggedLen bytes beside their lengths.
+func (f *keyFailures) log(ctx context.Context, r *Request, res DeleteResult) {
+	e := AsError(res.Err)
+	if f.byCode == nil {
+		f.byCode = map[string]int{}
+	}
+	f.byCode[e.Code]++
+	level := slog.LevelDebug
+	if (errors.Is(e, ErrInternalError) || errors.Is(e, ErrUnknown)) && f.errorLines < maxKeyErrorLogs {
+		level = slog.LevelError
+		f.errorLines++
+	}
+	cause := res.Err.Error()
+	slog.Log(ctx, level, "multi-object delete failed for a key",
+		slog.String("bucket", r.BucketRec.Info.Bucket.Name),
+		slog.String("key", clipForLog(res.Key.Name)), slog.Int("key_len", len(res.Key.Name)),
+		slog.String("instance", clipForLog(res.Key.Instance)), slog.Int("instance_len", len(res.Key.Instance)),
+		slog.String("code", e.Code),
+		slog.String("error", clipForLog(cause)), slog.Int("error_len", len(cause)))
+}
+
+// summarize logs, once every key has completed, how many keys of r failed
+// by code, when any did: at error level when an InternalError or
+// UnknownError is among them, and otherwise at debug.
+func (f *keyFailures) summarize(ctx context.Context, r *Request) {
+	if len(f.byCode) == 0 {
+		return
+	}
+	level := slog.LevelDebug
+	if f.byCode[ErrInternalError.Code] > 0 || f.byCode[ErrUnknown.Code] > 0 {
+		level = slog.LevelError
+	}
+	slog.Log(ctx, level, "multi-object delete failed for some keys",
+		slog.String("bucket", r.BucketRec.Info.Bucket.Name), slog.Any("failed_by_code", f.byCode))
+}
+
+// clipForLog is s cut to at most maxLoggedLen bytes, at the start of a rune.
+func clipForLog(s string) string {
+	if len(s) <= maxLoggedLen {
+		return s
+	}
+	n := maxLoggedLen
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }

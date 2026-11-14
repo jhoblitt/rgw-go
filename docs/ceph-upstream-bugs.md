@@ -514,6 +514,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [A radosgw that predates the GCM crypt modes stores a GCM upload's parts in the clear and copies GCM ciphertext as data](#a-radosgw-that-predates-the-gcm-crypt-modes-stores-a-gcm-uploads-parts-in-the-clear-and-copies-gcm-ciphertext-as-data) | none | none | ✓ |
 | [radosgw's writes set an object lock without s3:PutObjectRetention or s3:PutObjectLegalHold](#radosgws-writes-set-an-object-lock-without-s3putobjectretention-or-s3putobjectlegalhold) | [#82703](https://tracker.ceph.com/issues/82703) | [ceph/ceph#73508](https://github.com/ceph/ceph/pull/73508) (open) |  |
 | [radosgw sets none of the object-lock condition keys](#radosgw-sets-none-of-the-object-lock-condition-keys) | none | none | ✓ |
+| [radosgw's versioned write fails when another replay clears the key's OLH before its own replay writes the head](#radosgws-versioned-write-fails-when-another-replay-clears-the-keys-olh-before-its-own-replay-writes-the-head) | [#23579](https://tracker.ceph.com/issues/23579) | none |  |
+| [radosgw's versioned PutObject answers 404 when a delete of its version lands before its link](#radosgws-versioned-putobject-answers-404-when-a-delete-of-its-version-lands-before-its-link) | none | none | ✓ |
+| [cls_rgw's bucket_clear_olh drops a pending log no replay read](#cls_rgws-bucket_clear_olh-drops-a-pending-log-no-replay-read) | none | none | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -33125,3 +33128,241 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task L5b's adversarial review, 2026-11-11, at the
   write path that first stores a lock; derived from the source, not
   reproduced.
+
+## radosgw's versioned write fails when another replay clears the key's OLH before its own replay writes the head
+
+- **Kind:** defect, S3-correctness of versioning: a versioned write whose
+  link landed fails with ENOENT, 404 NoSuchKey, when another writer's
+  replay applies its link and then clears the key's OLH before the write's
+  own replay writes the OLH head, as it does when a delete of the version
+  the write linked races the write. A versioned delete in the same race
+  succeeds but loses its version: DeleteObject sends no
+  `x-amz-version-id`. Not security-relevant. Unreproduced on radosgw:
+  derived from the source; rgw-go's emulator specs stage the interleaving.
+- **Evidence:** paths are under `src/rgw/`.
+  - `apply_olh_log` removes the pending attr of every entry it applies,
+    and clears the OLH when the log ends with an unlink, after its head op
+    ([rgw_rados.cc:8505-8507](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8505-L8507) and
+    [rgw_rados.cc:8550-8556](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8550-L8556),
+    [rgw_rados.cc:9251-9253](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9251-L9253) and
+    [rgw_rados.cc:9296-9302](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9296-L9302)).
+    `clear_olh` removes the head guarded on the OLH tag, `olh.ver` and no
+    pending attr
+    ([rgw_rados.cc:8614-8621](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8614-L8621),
+    [rgw_rados.cc:9360-9367](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9360-L9367)),
+    so once another replay has applied the writer's entry nothing of the
+    writer's stops it.
+  - The writer's own `apply_olh_log`, having read the log before the clear,
+    sends its head op to the missing head; the OSD answers its cmpxattr
+    ENOENT
+    ([PrimaryLogPG.cc:6403-6408](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L6403-L6408),
+    [PrimaryLogPG.cc:6472-6477](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L6472-L6477)),
+    which `apply_olh_log` returns
+    ([rgw_rados.cc:8543-8548](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8543-L8548),
+    [rgw_rados.cc:9289-9294](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9289-L9294)).
+  - `set_olh` and `unlink_obj_instance` take `update_olh`'s ECANCELED for
+    success, "already did what we needed, no need to retry, raced with
+    another user", and return any other error, this ENOENT included
+    ([rgw_rados.cc:8752-8759](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8752-L8759) and
+    [rgw_rados.cc:8855-8863](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8855-L8863),
+    [rgw_rados.cc:9498-9505](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9498-L9505) and
+    [rgw_rados.cc:9601-9609](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9601-L9609)).
+    Main at 37c8ccd62dd (2026-11-10) still does.
+  - `_do_write_meta` returns `set_olh`'s error
+    ([rgw_rados.cc:3369-3375](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3369-L3375),
+    [rgw_rados.cc:3490-3496](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3490-L3496)),
+    `AtomicObjectProcessor::complete` returns it
+    ([rgw_putobj_processor.cc:393-402](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L393-L402),
+    [rgw_putobj_processor.cc:427-436](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L427-L436)),
+    and `RGWPutObj::execute` answers it
+    ([rgw_op.cc:4559-4566](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4559-L4566),
+    [rgw_op.cc:4835-4844](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4835-L4844)):
+    ENOENT is the 404 NoSuchKey row
+    ([rgw_common.cc:97](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L97),
+    [rgw_common.cc:98](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L98)).
+  - `delete_obj` sets the version it removed only after the unlink returns
+    success, and `RGWDeleteObj::execute` keeps it only from a delete that
+    succeeded, while `send_response` turns the ENOENT into 204
+    ([rgw_rados.cc:5944-5952](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5944-L5952),
+    [rgw_op.cc:5291-5295](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5291-L5295) and
+    [rgw_rest_s3.cc:3485-3499](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3485-L3499),
+    [rgw_rados.cc:6556-6564](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6556-L6564),
+    [rgw_op.cc:5680-5684](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5680-L5684) and
+    [rgw_rest_s3.cc:3735-3749](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3735-L3749)).
+- **Impact:** a PutObject racing a delete of the version it writes fails,
+  though its write went right and the delete that followed did too, and
+  deletes the tails it wrote ("[radosgw's versioned PutObject deletes its
+  tails when its link
+  fails](#radosgws-versioned-putobject-deletes-its-tails-when-its-link-fails)").
+  CopyObject and CompleteMultipartUpload link through the same
+  `write_meta`
+  ([rgw_rados.cc:5015](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5015) and
+  [rgw_sal_rados.cc:3639](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3639),
+  [rgw_rados.cc:5243](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5243) and
+  [rgw_sal_rados.cc:4485](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4485))
+  and fail as well; their responses were not traced. A DeleteObject in the
+  race does not say which version it removed. The window is the round trip
+  between the writer's log read and its head op.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
+- **rgw-go:** unaffected: `applyOLHLog` (`internal/driver/olh_head.go`)
+  answers the head op's ENOENT as ECANCELED, so the writer succeeds as it
+  does when the other replay leaves the head in place
+  (`docs/differences.md`, "A versioned write or delete whose replay finds
+  the OLH head removed succeeds"), pinned in
+  `internal/driver/olh_head_test.go`, `olh_test.go`, `olh_cond_test.go`
+  and `deleteobjects_op_test.go`. Before it, rgw-go answered such a delete
+  500 InternalError, which failed s3-tests'
+  test_versioning_concurrent_multi_object_delete on both releases. The
+  head goes only once no pending attr is left on it, so the writer's own
+  entry was applied, unless its pending attr expired first; that one case
+  succeeds for a link no replay applied, as the class's ECANCELED for the
+  cleared entry already made it succeed on both gateways ("[cls_rgw's
+  bucket_clear_olh drops a pending log no replay
+  read](#cls_rgws-bucket_clear_olh-drops-a-pending-log-no-replay-read)").
+- **Upstream:** [#23579](https://tracker.ceph.com/issues/23579), "rgw:
+  racing versioned operations failure" (2018, New), reports the race from a
+  teuthology run, where the write "tries to update the olh object it's
+  already removed", and names upstream's view of the fix: "ignore -ENOENT
+  at that point". No fix: searches of tracker.ceph.com's full text for
+  `apply_olh_log ENOENT`, `update_olh ENOENT`, `could not apply olh
+  update`, `olh object already removed` and `racing versioned`, and of
+  ceph/ceph's pull requests for `apply_olh_log`, `update_olh ENOENT` and
+  `ignore ENOENT olh`, found #23579 alone (2026-11-12). Each search was
+  tested against a known match: the tracker's `ignore -ENOENT at that point`
+  finds #23579, and the pull requests' `apply_olh_log` finds
+  [ceph/ceph#72130](https://github.com/ceph/ceph/pull/72130).
+- **Found:** phase 2 Task V16, 2026-11-12, debugging V15a's failure of
+  test_versioning_concurrent_multi_object_delete; derived from the source,
+  not reproduced on radosgw.
+
+## radosgw's versioned PutObject answers 404 when a delete of its version lands before its link
+
+- **Kind:** defect, S3-correctness of versioning: a versioned PutObject
+  whose version's index entry a DeleteObject naming that version removes
+  between the write's index completion and its link answers 404
+  NoSuchKey, though its write went right and the delete that removed it
+  did too. Not security-relevant. Unreproduced on radosgw: derived from
+  the source. rgw-go answers the same (below).
+- **Evidence:** paths are under `src/`.
+  - The class's `bucket_link_olh` reads the version's instance entry and,
+    for a link that is not a delete marker's, returns its ENOENT
+    ([cls_rgw.cc:1669-1688](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1669-L1688),
+    [cls_rgw.cc:1810-1829](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1810-L1829)).
+  - `set_olh` cancels its modification, runs its best-effort
+    `update_olh` and returns the link's error
+    ([rgw_rados.cc:8715-8737](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8715-L8737),
+    [rgw_rados.cc:9461-9483](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9461-L9483)).
+  - `_do_write_meta` links only after the version's index completion and
+    returns `set_olh`'s error
+    ([rgw_rados.cc:3369-3375](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3369-L3375),
+    [rgw_rados.cc:3490-3496](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3490-L3496)),
+    which reaches the PutObject's response as in "[radosgw's versioned
+    write fails when another replay clears the key's OLH before its own
+    replay writes the
+    head](#radosgws-versioned-write-fails-when-another-replay-clears-the-keys-olh-before-its-own-replay-writes-the-head)":
+    ENOENT is the 404 NoSuchKey row
+    ([rgw_common.cc:97](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L97),
+    [rgw_common.cc:98](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L98)).
+  - A delete names the version in that window only when its id is known
+    before the write answers. A version id the gateway generates is not
+    listed until the link writes its list entry
+    ([cls_rgw.cc:1410-1426](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1410-L1426),
+    [cls_rgw.cc:1537-1553](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1537-L1553));
+    the index completion writes the instance entry alone. The null
+    version, which `versionId=null` names, and a request that names its
+    own version are the cases left; which of them reach the window was not
+    traced.
+  - The PutObject also deletes the tails it wrote ("[radosgw's versioned
+    PutObject deletes its tails when its link
+    fails](#radosgws-versioned-putobject-deletes-its-tails-when-its-link-fails)");
+    here the delete had already removed the version.
+- **Impact:** a PutObject racing a delete of the version it is writing
+  fails though both requests did what they asked; its client retries a
+  write that happened, writing a second version. The window is the round
+  trip between the write's index completion and its link.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it: `setOLH` returns the class's ENOENT after its
+  cancel and best-effort update (`internal/driver/olh.go:301-313`), which
+  the versioned write maps to NoSuchKey
+  (`internal/driver/put_versioned.go:329`). An emulator run of driver
+  puts and deletes of the same named versions at once, which no S3 client
+  can name in advance, answered such a put "NoSuchKey: linking
+  <bucket>/myobj version "vN": ... no such file or directory", before and
+  after the fix of "radosgw's versioned write fails when another replay
+  clears the key's OLH before its own replay writes the head". Plan task
+  V18 makes it answer success.
+- **Upstream:** none found. Searches of tracker.ceph.com's full text for
+  `link_olh ENOENT`, `bucket_index_link_olh ENOENT`, `versioned put
+  NoSuchKey concurrent delete` and `put 404 versioned concurrent`, and of
+  ceph/ceph's pull requests for `link_olh ENOENT`, `set_olh ENOENT` and
+  `bucket_link_olh`, found no report or fix (2026-11-12). Each search was
+  tested against a known match: the tracker's `rgw_olh_pending_timeout_sec`
+  finds [#80886](https://tracker.ceph.com/issues/80886), and the pull
+  requests' `apply_olh_log` finds
+  [ceph/ceph#72130](https://github.com/ceph/ceph/pull/72130).
+- **Found:** phase 2 Task V16, 2026-11-12, exploring concurrent versioned
+  writes and deletes on the emulator; derived from the source, not
+  reproduced on radosgw.
+
+## cls_rgw's bucket_clear_olh drops a pending log no replay read
+
+- **Kind:** defect, data consistency of versioning: the class's
+  `bucket_clear_olh` removes a key's OLH entry, its pending log with it,
+  guarded on the OLH tag alone. Once a writer's pending attr has expired,
+  a clearing replay that read the log before the writer's link landed
+  removes the OLH head and then that link's log entry, and the version
+  the link made current stays listed, and readable by its id, with no OLH
+  head and no OLH entry. Not security-relevant: no client sets the clock
+  or the timeout. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/`.
+  - `bucket_clear_olh` compares the tag and removes the entry whatever its
+    pending log holds
+    ([cls_rgw.cc:2154-2163](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2154-L2163),
+    [cls_rgw.cc:2319-2328](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2319-L2328)).
+  - `clear_olh` first removes the pending attrs older than
+    `rgw_olh_pending_timeout_sec`, an hour by default, then removes the
+    head guarded on no pending attr left, then calls the class
+    ([rgw_rados.cc:8600-8634](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8600-L8634),
+    [rgw_rados.cc:9346-9380](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9346-L9380);
+    [rgw.yaml.in:2389-2399](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L2389-L2399),
+    [rgw.yaml.in:2483-2493](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L2483-L2493)).
+    So an expired attr no longer holds the head for its writer, whose
+    link may land after the clearing replay read the log.
+  - The writer then meets the cleared OLH: its log read gets the class's
+    ECANCELED for the missing entry
+    ([cls_rgw.cc:2047-2050](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2047-L2050),
+    [cls_rgw.cc:2188-2191](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2188-L2191)),
+    which `set_olh` and `unlink_obj_instance` take for success
+    ([rgw_rados.cc:8752-8759](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8752-L8759) and
+    [rgw_rados.cc:8855-8863](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8855-L8863),
+    [rgw_rados.cc:9498-9505](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9498-L9505) and
+    [rgw_rados.cc:9601-9609](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9601-L9609)),
+    or, when it read the log before the clear, its head op's ENOENT
+    ("[radosgw's versioned write fails when another replay clears the
+    key's OLH before its own replay writes the
+    head](#radosgws-versioned-write-fails-when-another-replay-clears-the-keys-olh-before-its-own-replay-writes-the-head)").
+- **Impact:** the key lists a version, flagged current, that a GET of the
+  key answers 404 for, with no OLH to make it current; how a later write
+  of the key treats it was not traced. The writer needs to stall for the
+  timeout between its init and its link, or the gateways' clocks to
+  differ by that much.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it: `clearOLHHead` expires the old pending attrs
+  before its guarded removal and clears the entry through the class
+  (`internal/driver/olh_head.go`). The writer answers success, as
+  radosgw's does for the ECANCELED, and since the fix of "radosgw's
+  versioned write fails when another replay clears the key's OLH before
+  its own replay writes the head" for the head op's ENOENT too, which is
+  the one case where that fix answers success for an entry no replay
+  applied; before it, rgw-go answered that interleaving 404 for a write
+  and 500 for a delete.
+- **Upstream:** none found. Searches of tracker.ceph.com's full text for
+  `clear_olh pending_log`, `bucket_clear_olh`, `clear_olh pending` and
+  `olh pending expired`, and of ceph/ceph's pull requests for `clear_olh`,
+  `olh_pending_timeout` and `bucket_clear_olh pending`, found no report or
+  fix (2026-11-12). Each search was tested against a known match: the
+  tracker's `rgw_olh_pending_timeout_sec` finds
+  [#80886](https://tracker.ceph.com/issues/80886), and the pull requests'
+  `clear_olh` finds [ceph/ceph#72605](https://github.com/ceph/ceph/pull/72605).
+- **Found:** phase 2 Task V16's review, 2026-11-12; derived from the
+  source, not reproduced.

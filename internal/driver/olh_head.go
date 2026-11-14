@@ -407,14 +407,29 @@ func (s *Store) followOLH(ctx context.Context, head *op.ObjectState, update func
 // A removal expectTag refuses (errRemovalRefused, olhIndex) does not stop the
 // replay: it is passed over, and once the head op and the clear or trim have
 // landed the refusal is returned, with the last epoch. A head op that fails
-// returns its own error alone, since the entry stays in the log for the
-// retry; a tail that did not finish is returned joined with the refusal,
-// which is then not final.
+// returns its own error alone: another writer's guard refused it, and the
+// entry stays in the log for the retry, or the head is gone, below. A tail
+// that did not finish is returned joined with the refusal, which is then not
+// final.
 //
 // The head op is guarded on head's OLH tag and on olh.ver equal to the bytes
 // head was read with, where radosgw compares olh.ver in the OSD's u64 mode,
 // which librados' C API cannot send (docs/cgo-limitations.md). An apply that
-// another writer has moved past answers ECANCELED and writes nothing.
+// another writer has moved past answers ECANCELED and writes nothing, and so
+// does one whose head another writer has removed, which the OSD answers
+// ENOENT for the compares on a missing object (errOLHHeadMissing, the OSD's
+// answer alone, not a pool that does not open)
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L6403-L6408 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L6472-L6477 at v20.2.4).
+// A head goes only once no pending attr is left on it (clearOLHHead,
+// olhCancelModification), so another replay has applied the entries this one
+// read, its writer's own among them, unless they expired, and cleared the
+// OLH. radosgw's apply_olh_log returns that ENOENT
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8543-L8548 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9289-L9294 at v20.2.4),
+// which its set_olh and unlink_obj_instance return where they take the
+// ECANCELED of the same race for success (docs/differences.md, "A versioned
+// write or delete whose replay finds the OLH head removed succeeds").
 func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectState, log map[uint64][]rgw.OLHLogEntry, opTag string, expectTag []byte, nullLinkLater bool) (uint64, error) {
 	if len(log) == 0 {
 		return 0, nil
@@ -492,6 +507,17 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 		}
 	}
 	if err := s.writeOLHHead(ctx, head, w); err != nil {
+		if errors.Is(err, errOLHHeadMissing) {
+			// The replay that cleared the OLH removed, unguarded, every
+			// version this one's expectTag refused, so the refusal dropped
+			// here leaves no version stored, unless this writer's pending
+			// attr expired first: that replay then never applied this
+			// one's entries, and the refused version stays
+			// (docs/ceph-upstream-bugs.md, "cls_rgw's bucket_clear_olh drops
+			// a pending log no replay read"). Only a delete given
+			// DeleteParams.Expect sets expectTag.
+			return 0, fmt.Errorf("replaying the olh log of %s: another replay removed its head: %w", what, radosclient.ErrCanceled)
+		}
 		return 0, err
 	}
 	t := olhLogTail{last: last, clear: remove, keep: refused != nil, keepHead: keepHead, opTag: opTag}
@@ -677,13 +703,22 @@ func guardOLHTag(w *radosclient.WriteOp, head *op.ObjectState) {
 	w.CmpXattr(meta.AttrOLHIDTag, radosclient.CmpEQ, head.Attrs[meta.AttrOLHIDTag])
 }
 
-// writeOLHHead runs w on head's object.
+// errOLHHeadMissing marks an ENOENT the OSD answered for an op on an OLH
+// head, which is then missing, apart from one a pool that does not open
+// answers.
+var errOLHHeadMissing = errors.New("the olh head is missing")
+
+// writeOLHHead runs w on head's object. An ENOENT the op answers wraps
+// errOLHHeadMissing too.
 func (s *Store) writeOLHHead(ctx context.Context, head *op.ObjectState, w *radosclient.WriteOp) error {
 	ref, err := s.headRef(ctx, head.Bucket, head.Key)
 	if err != nil {
 		return err
 	}
 	if _, err := ref.pool.Write(ctx, ref.oid, w, radosclient.OpFlagNone); err != nil {
+		if errors.Is(err, radosclient.ErrNotFound) {
+			err = fmt.Errorf("%w: %w", errOLHHeadMissing, err)
+		}
 		return fmt.Errorf("writing the olh head of %s/%s: %w", head.Bucket.Info.Bucket.Name, head.Key.Name, err)
 	}
 	return nil

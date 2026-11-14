@@ -229,7 +229,8 @@ func (s *Store) evalOLHCond(ctx context.Context, idx *bucketOLHIndex, head *op.O
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8984-L8996 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9730-L9742 at v20.2.4),
 // so that a writer's link logged and never replayed counts. When the replay
-// applied anything, or another writer's guard refused a pass of it, head is
+// applied anything, or another writer's guard refused a pass of it or
+// another replay removed the head under it (applyOLHLog), head is
 // read again into *head and the attempt works on that read: the condition
 // is evaluated on the version current after the replay.
 //
