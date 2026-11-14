@@ -12,7 +12,7 @@ Each arrow counts the dependencies from tasks of one unit on tasks of another.
 
 ```mermaid
 flowchart LR
-  u_S["Shared<br/>7 tasks"]
+  u_S["Shared<br/>11 tasks"]
   u_F["F: floor 19.2.7<br/>20 tasks"]
   u_V["V: versioning<br/>29 tasks"]
   u_L["L: object lock<br/>6 tasks"]
@@ -35,6 +35,7 @@ flowchart LR
   u_V -->|2| u_T
   u_L -->|6| u_C
   u_L -->|2| u_B
+  u_L -->|2| u_S
   u_C -->|1| u_B
   u_B -->|4| u_S
   u_B -->|1| u_WP
@@ -61,12 +62,16 @@ flowchart LR
   t_S6["S6"]
   t_S7["S7"]
   t_S8["S8"]
+  t_S9["S9"]
+  t_S10["S10"]
+  t_S11["S11"]
   t_V2["V2"]:::ext
   t_V10["V10"]:::ext
   t_BC_10["BC-10"]:::ext
   t_BC_17["BC-17"]:::ext
   t_BC_23["BC-23"]:::ext
   t_BC_28a["BC-28a"]:::ext
+  t_L7["L7"]:::ext
   t_S1 --> t_S4
   t_V2 --> t_S6
   t_V10 --> t_S7
@@ -74,6 +79,8 @@ flowchart LR
   t_BC_17 --> t_S7
   t_BC_23 --> t_S7
   t_BC_28a --> t_S7
+  t_L7 --> t_S9
+  t_L7 --> t_S10
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_S3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s3-one-aws-correct-ispublic" "S3: one AWS-correct IsPublic"
@@ -82,12 +89,16 @@ flowchart LR
   click t_S6 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s6-one-choose_from" "S6: one choose_from"
   click t_S7 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s7-one-schema-scanner-for-s3-xml-request-bodies" "S7: one schema scanner for S3 XML request bodies"
   click t_S8 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s8-a-deny-that-names-notaction-refuses-every-action-it-does-not-name" "S8: a Deny that names NotAction refuses every action it does not name"
+  click t_S9 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s9-a-denys-condition-holds-where-amazon-s3s-or-radosgws-evaluation-holds" "S9: a Deny's condition holds where Amazon S3's or radosgw's evaluation holds"
+  click t_S10 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s10-a-denys-condition-key-names-match-without-regard-to-case" "S10: a Deny's condition key names match without regard to case"
+  click t_S11 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s11-a-bound-on-an-xml-request-bodys-elements-and-depth" "S11: a bound on an XML request body's elements and depth"
   click t_V2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v2-meta-olh-head-types-and-bucket-helpers" "V2: meta OLH head types and bucket helpers"
   click t_V10 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v10-op-and-s3-putbucketversioning-and-getbucketversioning" "V10: op and s3, PutBucketVersioning and GetBucketVersioning"
   click t_BC_10 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-10-website-semantics-and-xml" "BC-10: Website semantics and XML"
   click t_BC_17 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-17-block-xml" "BC-17: Block XML"
   click t_BC_23 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-23-encryption-configuration-type" "BC-23: Encryption configuration type"
   click t_BC_28a href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-28a-ownership-type" "BC-28a: Ownership type"
+  click t_L7 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l7-a-policys-object-lock-condition-keys-constrain-the-lock-a-request-sets" "L7: a policy's object-lock condition keys constrain the lock a request sets"
   classDef ext stroke-dasharray: 5 4
 ```
 
@@ -99,6 +110,9 @@ flowchart LR
 - [S6](00-index.md#task-s6-one-choose_from): one choose_from
 - [S7](00-index.md#task-s7-one-schema-scanner-for-s3-xml-request-bodies): one schema scanner for S3 XML request bodies
 - [S8](00-index.md#task-s8-a-deny-that-names-notaction-refuses-every-action-it-does-not-name): a Deny that names NotAction refuses every action it does not name
+- [S9](00-index.md#task-s9-a-denys-condition-holds-where-amazon-s3s-or-radosgws-evaluation-holds): a Deny's condition holds where Amazon S3's or radosgw's evaluation holds
+- [S10](00-index.md#task-s10-a-denys-condition-key-names-match-without-regard-to-case): a Deny's condition key names match without regard to case
+- [S11](00-index.md#task-s11-a-bound-on-an-xml-request-bodys-elements-and-depth): a bound on an XML request body's elements and depth
 
 ### F: floor 19.2.7
 
