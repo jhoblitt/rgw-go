@@ -60,6 +60,7 @@ flowchart LR
   t_S5["S5"]
   t_S6["S6"]
   t_S7["S7"]
+  t_S8["S8"]
   t_V2["V2"]:::ext
   t_V10["V10"]:::ext
   t_BC_10["BC-10"]:::ext
@@ -80,6 +81,7 @@ flowchart LR
   click t_S5 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s5-ignorepublicacls-ignores-swifts-public-container-grants" "S5: IgnorePublicAcls ignores Swift's public container grants"
   click t_S6 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s6-one-choose_from" "S6: one choose_from"
   click t_S7 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s7-one-schema-scanner-for-s3-xml-request-bodies" "S7: one schema scanner for S3 XML request bodies"
+  click t_S8 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s8-a-deny-that-names-notaction-refuses-every-action-it-does-not-name" "S8: a Deny that names NotAction refuses every action it does not name"
   click t_V2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v2-meta-olh-head-types-and-bucket-helpers" "V2: meta OLH head types and bucket helpers"
   click t_V10 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v10-op-and-s3-putbucketversioning-and-getbucketversioning" "V10: op and s3, PutBucketVersioning and GetBucketVersioning"
   click t_BC_10 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-10-website-semantics-and-xml" "BC-10: Website semantics and XML"
@@ -96,6 +98,7 @@ flowchart LR
 - [S5](00-index.md#task-s5-ignorepublicacls-ignores-swifts-public-container-grants): IgnorePublicAcls ignores Swift's public container grants
 - [S6](00-index.md#task-s6-one-choose_from): one choose_from
 - [S7](00-index.md#task-s7-one-schema-scanner-for-s3-xml-request-bodies): one schema scanner for S3 XML request bodies
+- [S8](00-index.md#task-s8-a-deny-that-names-notaction-refuses-every-action-it-does-not-name): a Deny that names NotAction refuses every action it does not name
 
 ### F: floor 19.2.7
 

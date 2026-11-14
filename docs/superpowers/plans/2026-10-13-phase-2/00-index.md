@@ -34,7 +34,7 @@ The set's files:
 
 | File | Unit | Tasks |
 |---|---|---|
-| `00-index.md` | this index, and the shared tasks S1 to S7 | 7 |
+| `00-index.md` | this index, and the shared tasks S1 to S8 | 8 |
 | `V-versioning.md` | the OLH protocol, versioned ops, ListObjectVersions, MFA delete | V0-V19 |
 | `L-object-lock.md` | object lock: configuration, retention, legal hold, enforcement | L1-L5b |
 | `C-lifecycle.md` | lifecycle configuration and the worker | C1-C13 |
@@ -272,9 +272,44 @@ The controller's rulings on the research's open questions, under the owner's rul
 - **Specs:** each document's existing specs and fuzz targets pass unchanged; the scanner's own table over the shared refusals, once per leniency; and, in each document's short-refusal table, the probe inputs: 64 × U+E0001 in an xmlns, and a 64-byte attribute name with such a value.
 - **Depends on:** V10, BC-17, BC-23, BC-10, BC-28a. **PR:** one. **Brief:** about 130 lines.
 
+### Task S8: a Deny that names NotAction refuses every action it does not name
+
+Found by WP-25's adversarial review (M1), and numbered here before WP-25 merged (PP-12).
+
+- **Layer:** policy (`internal/policy`). **Files:** the statement's action match in
+  `internal/policy/statement.go` and its specs, `internal/policy/eval_test.go`;
+  `docs/differences.md`; `docs/ceph-upstream-bugs.md`. **Cluster:** no.
+- **Security boundary:** policy evaluation is authorization; adversarial review applies (PP-14).
+- **Behaviour:**
+  1. A Deny statement that names `NotAction` applies to every action its NotAction does not name,
+     as Amazon S3 applies it (the IAM JSON policy reference's NotAction element, cited at
+     implementation), so a Deny written with NotAction alone refuses the actions it covers.
+     radosgw's `Statement::eval` passes any action its `action` mask lacks
+     ([rgw_iam_policy.cc:1222](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L1222),
+     [rgw_iam_policy.cc:1226](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1226)),
+     and its parser fills that mask only from an `Action` element
+     ([rgw_iam_policy.cc:642-656](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L642-L656)),
+     so a statement naming only NotAction matches no action and such a Deny refuses nothing.
+     rgw-go copies that today (`internal/policy/statement.go:111`).
+  2. An Allow statement that names only NotAction keeps radosgw's evaluation and grants nothing.
+     Taking Amazon S3's semantics there would grant on rgw-go what radosgw refuses on the same
+     zone; that is the owner's decision, and until the owner makes it rgw-go differs only on the
+     refusing side.
+  3. A statement naming both Action and NotAction is answered as radosgw answers it, verified at
+     both tags at implementation.
+- **Specs:** per release, a bucket policy allowing `s3:*` and denying NotAction `s3:GetObject`
+  refuses PutObject, DeleteObject and GetObjectAttributes and serves GetObject; the same Deny with
+  NotAction naming several actions; a NotAction-only Allow grants nothing, as before; an explicit
+  Deny of an action keeps refusing it.
+- **Exclusions and registry:** a `docs/differences.md` entry, since rgw-go refuses where radosgw
+  serves; a `docs/ceph-upstream-bugs.md` entry whose Upstream line cites
+  [#73983](https://tracker.ceph.com/issues/73983), Fix Under Review, and
+  [ceph/ceph#66099](https://github.com/ceph/ceph/pull/66099), closed unmerged on 2026-10-22.
+- **Depends on:** nothing. **PR:** one. **Brief:** about 45 lines.
+
 ## Order
 
-1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, S6 once V2 lands, and S7 once V10, BC-17, BC-23, BC-10 and BC-28a land.
+1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, S6 once V2 lands, S7 once V10, BC-17, BC-23, BC-10 and BC-28a land, and S8 at once.
 2. **Then the units in parallel**, each in its own file's waves. V's foundation (V0 to V3b) comes first among the units, because L and C consume its OLH seams. B and WP start with S2, and the T and SM units start at once. Within the waves:
    - The cluster tasks of every unit run one at a time.
    - The recording tasks, which append to the parity ledgers, land one at a time through the controller.
