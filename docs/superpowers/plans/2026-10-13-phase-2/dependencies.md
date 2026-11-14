@@ -18,7 +18,7 @@ flowchart LR
   u_L["L: object lock<br/>6 tasks"]
   u_C["C: lifecycle<br/>14 tasks"]
   u_B["B: bucket config<br/>41 tasks"]
-  u_WP["WP: write path<br/>24 tasks"]
+  u_WP["WP: write path<br/>25 tasks"]
   u_T["T: gate tooling<br/>9 tasks"]
   u_CL["CL: citation links<br/>6 tasks"]
   u_SM["SM: service map<br/>5 tasks"]
@@ -83,6 +83,7 @@ flowchart LR
   t_L7 --> t_S9
   t_L7 --> t_S10
   t_S8 --> t_S12
+  t_S12 --> t_WP_31
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_S3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s3-one-aws-correct-ispublic" "S3: one AWS-correct IsPublic"
@@ -886,6 +887,7 @@ flowchart LR
   t_WP_28["WP-28"]
   t_WP_29["WP-29"]
   t_WP_30["WP-30"]
+  t_WP_31["WP-31"]
   t_S1["S1"]:::ext
   t_S2["S2"]:::ext
   t_S4["S4"]:::ext
@@ -978,6 +980,7 @@ flowchart LR
   click t_WP_28 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-28-a-stored-metadata-value-never-puts-a-nul-into-a-response-header" "WP-28: a stored metadata value never puts a NUL into a response header"
   click t_WP_29 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-29-an-empty-sse-c-algorithm-header-answers-as-radosgw-does-on-every-sse-c-path" "WP-29: an empty SSE-C algorithm header answers as radosgw does on every SSE-C path"
   click t_WP_30 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-30-a-copy-within-one-placement-shares-the-sources-tails-comparing-the-canonical-class" "WP-30: a copy within one placement shares the source's tails, comparing the canonical class"
+  click t_WP_31 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-31-copyobject-honours-x-amz-tagging-directive" "WP-31: CopyObject honours x-amz-tagging-directive"
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_S4 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s4-fakerados-refuses-an-unregistered-class-method-at-op-setup" "S4: fakerados refuses an unregistered class method at op setup"
@@ -1019,6 +1022,7 @@ flowchart LR
 - [WP-28](WP-write-path.md#task-wp-28-a-stored-metadata-value-never-puts-a-nul-into-a-response-header): a stored metadata value never puts a NUL into a response header
 - [WP-29](WP-write-path.md#task-wp-29-an-empty-sse-c-algorithm-header-answers-as-radosgw-does-on-every-sse-c-path): an empty SSE-C algorithm header answers as radosgw does on every SSE-C path
 - [WP-30](WP-write-path.md#task-wp-30-a-copy-within-one-placement-shares-the-sources-tails-comparing-the-canonical-class): a copy within one placement shares the source's tails, comparing the canonical class
+- [WP-31](WP-write-path.md#task-wp-31-copyobject-honours-x-amz-tagging-directive): CopyObject honours x-amz-tagging-directive
 
 ### T: gate tooling
 
