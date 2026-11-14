@@ -999,7 +999,8 @@ the controller's ruling that splits C10 (C-D16).
 
 ### Task C14: x-amz-expiration's rule-id URL-encoded
 
-Found by C8's task review, and numbered here before C8 merged (PP-12).
+Found by C8's task review, and numbered here before C8 merged (PP-12). C8's adversarial review
+added the forged `expiry-date` spec and `x-amz-abort-rule-id`.
 
 - **Layer:** lifecycle library (`internal/lifecycle/headers.go`, `ExpirationHeader`) and its
   specs; `docs/differences.md`. **Cluster:** no.
@@ -1010,10 +1011,20 @@ Found by C8's task review, and numbered here before C8 merged (PP-12).
   [rgw_rest_s3.cc:117-123](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L117-L123)),
   as C2's `ExpirationHeader` does today. The encoding (which bytes, which form) is verified
   against Amazon S3's documentation and SDKs at implementation, and the difference is recorded.
-- **Specs:** a rule ID with spaces, quotes, commas, `=`, `%`, non-ASCII and control bytes, on
-  every response that carries the header; a plain ID unchanged.
+- **`x-amz-abort-rule-id`:** the rule ID in CreateMultipartUpload's abort header (and in ListParts'
+  once C15 sends it there) goes out raw too, on radosgw's CreateMultipartUpload
+  ([rgw_rest_s3.cc:4071](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4071),
+  [rgw_rest_s3.cc:4538](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4538))
+  and on rgw-go. Amazon S3's references state no encoding for it (aws-sdk-go-v2 `service/s3`
+  v1.114.9 `api_op_CreateMultipartUpload.go:803-808`). This task decides its form from S3's
+  documentation and SDKs, and records the ruling; whatever the form, no control byte in a stored
+  ID reaches the header raw, since a strict HTTP parser refuses a field value holding one.
+- **Specs:** a rule ID with spaces, quotes, commas, `=`, `%`, non-ASCII and control bytes (DEL
+  among them), on every response that carries either header; a plain ID unchanged; and an ID of
+  `x", expiry-date="Fri, 01 Jan 2100 00:00:00 GMT`, whose `x-amz-expiration` holds one
+  `expiry-date`, the rule's own.
 - **Exclusions and registry:** a `docs/differences.md` entry.
-- **Depends on:** C8. **PR:** one. **Brief:** about 30 lines.
+- **Depends on:** C8. **PR:** one. **Brief:** about 40 lines.
 
 ### Task C15: the lifecycle headers on CopyObject, CompleteMultipartUpload and ListParts
 
