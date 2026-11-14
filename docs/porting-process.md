@@ -97,6 +97,13 @@ Each fix below that is not this document lands on main before phase 2's tasks st
 | PP-51 | Review output was lost to worktree handling | Major | subagent-driven-development (reviewer dispatch); the controller's own worktree use | open |
 | PP-52 | A shared scratch copy of Ceph source changed under a running reviewer | Minor | the dispatch rules (how to read Ceph source) | open |
 | PP-53 | The cluster lock was taken without `flock -o` | Minor | the dispatch rules (cluster work); hack/rooket's docs | open |
+| PP-54 | A hung cluster bring-up held the host's build lock | Major | the controller's build wrapper; hack/rooket's make targets | open |
+| PP-55 | Ship scripts failed when run by a relative path | Minor | the controller's ship scripts | open |
+| PP-56 | Gate logs misreported the commit they tested and the exit status | Minor | the controller's and agents' gate scripts | open |
+| PP-57 | One dead block device on the host stopped every cluster | Major | rooket's node image; the rooket skill; subagent-driven-development (cluster work in CI) | open |
+| PP-58 | Sandboxed commands could not see processes and files that unsandboxed ones could | Minor | the global CLAUDE.md's sandbox notes; the dispatch rules | open |
+| PP-59 | The shared Go build cache filled /home | Minor | the owner; the controller's build wrapper | open: the owner's decision |
+| PP-60 | Runner images under one label differed, and one shipped a Ceph library | Minor | the cluster action's runner check; PP-48 | open: #602 waits for the owner's acknowledgement |
 
 ## PP-1: Plan code treated as binding mandated a data-loss race
 
@@ -591,6 +598,9 @@ Each fix below that is not this document lands on main before phase 2's tasks st
 - **Observed:**
   - The build wrapper ran `flock FILE command`, which hands the lock descriptor to the command. An rgw-go started with `make rgw-go-up` inherited it and held the host-wide build lock for as long as it ran, so the next build waited 10 minutes.
   - Both rooket clusters were found up from earlier work, with no run using them.
+  - It recurred on 2026-11-12: rgw-go-tentacle was found up for about a day and 16 hours, left by
+    an earlier task's recording with no run using it. V15a, which needed it, reused it and took it
+    down.
 - **Cost:** a stalled agent, and two idle clusters' load on the owner's desktop for an unknown time.
 - **Improvement:**
   - The wrapper runs `flock -o`, so a daemon the command leaves running does not hold the lock. Fixed 2026-10-21.
@@ -823,6 +833,10 @@ Each fix below that is not this document lands on main before phase 2's tasks st
     worktree's git-excluded `.superpowers/`. Its worktree had no tracked changes, so it was removed
     when the agent finished, and the review file went with it; the next fix round worked from the
     controller's summary.
+  - It recurred on 2026-11-14. SM1's implementer, whose first step changed only the go-ceph fork,
+    wrote its report into its rgw-go worktree's `.superpowers/`. That worktree held no tracked
+    change, so it was removed when the agent stopped after the step, and the report went with it;
+    the agent rewrote it beside the controller's ledger.
 - **Cost:** a review that could not run the ledger checks it was asked to, and a review file lost.
 - **Improvement:**
   - A reviewer returns its full review in its final message, and the controller saves it beside the
@@ -856,3 +870,142 @@ Each fix below that is not this document lands on main before phase 2's tasks st
 - **Improvement:** every lock around a command that may leave a daemon running is taken with
   `flock -o`; the dispatch rules now say so.
 - **Candidate home:** the controller's dispatch rules; hack/rooket's docs.
+
+## PP-54: A hung cluster bring-up held the host's build lock
+
+- **Severity:** Major. **Status:** open.
+- **Observed:**
+  - Every make command on the host runs through the build wrapper, which holds the host-wide
+    build lock for the command's whole life, so `make cluster-up` holds it for the whole
+    bring-up, not only for the builds the bring-up needs.
+  - On 2026-11-12 V16's `gobuild.sh make cluster-up RELEASE=squid` hung for more than an hour in
+    `rooket up` (PP-57's dead device). It held the build lock throughout, so V15a's `make check`
+    and V16's own op specs waited behind a bring-up that could not finish.
+  - The agent's kill of the hung `rooket up` was refused by the permission classifier, and the
+    controller did not route around it: the build host's every build waited until the process
+    ended on its own.
+- **Cost:** every build and test on the host stalled for more than an hour, two tasks' gates
+  among them.
+- **Improvement:**
+  - A cluster target builds what it needs under the build lock and runs the bring-up under the
+    cluster lock alone, so a hung cluster stalls cluster work only.
+  - A wait on the build lock that runs past a bound names the holder's command line, so a stall
+    is diagnosed in minutes.
+- **Candidate home:** the controller's build wrapper; hack/rooket's make targets.
+
+## PP-55: Ship scripts failed when run by a relative path
+
+- **Severity:** Minor. **Status:** open.
+- **Observed:**
+  - On 2026-11-12 the controller's first run of `ship-chain.sh` for #590 failed because the file
+    was not executable; it was run through `bash` instead.
+  - The second run, by a relative path, failed four times: the script changes to the repository
+    root and then finds `merge_when_green.sh` through `$(dirname "$0")`, which no longer resolved.
+- **Cost:** a plan PR's merge delayed through five failed tries.
+- **Improvement:**
+  - A script resolves its own directory to an absolute path before it changes directory, as
+    PP-41's commit helper now resolves its arguments.
+  - The controller runs its scripts by absolute path; its ledger and dispatches say so.
+- **Candidate home:** the controller's ship scripts; PP-41 (paths resolved after a directory change).
+
+## PP-56: Gate logs misreported the commit they tested and the exit status
+
+- **Severity:** Minor. **Status:** open.
+- **Observed:**
+  - Scripts that log a gate wrote `echo "=== $(date -Is) exit $?"` after the command. The command
+    substitution runs before the echo and resets `$?` to 0, so the line read "exit 0" whatever the
+    command returned. On 2026-11-12 the squid teardown retries printed "exit 0" while each had
+    failed.
+  - V16's gate script wrote the branch head into its log's header when the gate was queued
+    (50d7688), but `make check` read the tree when it ran, after fix round 2 had moved the head to
+    fe1c8bf. The log named a commit it had not tested; the controller established from the timing
+    and the comment-only diff which tree had passed.
+- **Cost:** two log readings that had to be redone from the output, and a gate result trusted only
+  after a second check.
+- **Improvement:**
+  - A gate script captures the status on the line after the command (`rc=$?`) and logs `$rc`.
+  - A gate records the commit and tree it tests when it starts the test, not when it is queued,
+    or tests a fixed checkout of that commit rather than the live worktree.
+- **Candidate home:** the controller's and agents' gate scripts; the dispatch rules' gate wording.
+
+## PP-57: One dead block device on the host stopped every cluster
+
+- **Severity:** Major. **Status:** open.
+- **Observed:**
+  - From about 12:02 on 2026-11-12, `/dev/rbd0`, a krbd mapping another session made for its own
+    Rook test cluster, stopped completing I/O (two requests in flight that never finished). Every
+    kind node is a privileged container that sees the host's devices.
+  - A node's LVM scans then blocked on it in uninterruptible sleep: during bring-up, so V16's
+    `rooket up` hung (PP-54); and during shutdown, where `vgcfgbackup` under the node's
+    `systemd-shutdown` never returned, so podman could not stop the node. Rook's OSD prepare in
+    one cluster blocked the same way in `ceph-bluestore-tool show-label ... --dev /dev/rbd0`.
+  - rgw-go-squid could not be taken down, and its disks and iSCSI targets stayed. As of
+    2026-11-14 the nodes of three clusters, two of them other sessions', were still "Stopping".
+    Only a reboot or a repair of the device clears it, and both are another session's or the
+    owner's.
+- **Cost:**
+  - V16's cluster verification, and with it V16's and V15a's merges, held from 2026-11-12.
+  - The owner planned a reboot and could not take it; on 2026-11-14 every cluster verification
+    moved to GitHub Actions, where it costs a push and a dispatch per run and an iteration of
+    30 minutes or more.
+- **Improvement:**
+  - rooket's nodes keep the host's krbd devices out of their LVM scans and their Rook device
+    discovery (an LVM filter in the node image, a device filter in the cluster spec), so another
+    session's dead device cannot reach them. To verify on a host with a mapped rbd device.
+  - Cluster verification that CI can run is written so CI runs it: the make target, the s3-test
+    and the expected outcome, with a local run as a convenience rather than the gate.
+- **Candidate home:** rooket's node image and cluster spec; the rooket skill; subagent-driven-
+  development (cluster verification through CI).
+
+## PP-58: Sandboxed commands could not see processes and files that unsandboxed ones could
+
+- **Severity:** Minor. **Status:** open.
+- **Observed:**
+  - On 2026-11-11 a reviewer's file under /tmp/claude-1000 was visible to an unsandboxed `ls` and
+    missing from a sandboxed `ls` of the same path. The controller copied it out unsandboxed.
+  - On 2026-11-12 an orphaned rgw-go from V15a's worktree held Tentacle's ports. A sandboxed `ps`
+    did not show it, since the sandbox runs in its own PID namespace; unsandboxed `pgrep` and `ss`
+    did.
+- **Cost:** a review file nearly lost, and a check for running processes that would have reported
+  none.
+- **Improvement:** a check of processes, ports or files another process wrote runs unsandboxed,
+  and the dispatch rules say so beside PP-41's temporary-directory rule.
+- **Candidate home:** the global CLAUDE.md's sandbox notes; the dispatch rules; PP-41.
+
+## PP-59: The shared Go build cache filled /home
+
+- **Severity:** Minor. **Status:** open: the owner's decision.
+- **Observed:**
+  - The shared Go build cache grew from empty to 185 GB in six days of October 2026. Without
+    `-trimpath`, the go command keys each package it compiles from outside GOROOT on the
+    package's absolute directory (`buildActionID` in cmd/go's `internal/work/exec.go`, go1.27.4),
+    so rgw-go's own packages compiled again in every agent worktree, and no entry one worktree
+    built served another.
+  - It filled /home a second time; on 2026-10-22 a build that ran out of space left a source file
+    at 0 bytes.
+- **Cost:** a truncated source file, and builds that stopped until space was freed.
+- **Fix:** the build wrapper refuses to start below 20 GiB free on /home.
+- **Improvement:** options for the owner: a standing trim of the cache (`go clean -cache` on a
+  schedule, or a size bound), or `-trimpath` so entries no longer depend on the worktree's path.
+- **Candidate home:** the owner; the controller's build wrapper.
+
+## PP-60: Runner images under one label differed, and one shipped a Ceph library
+
+- **Severity:** Minor. **Status:** open: #602 waits for the owner's acknowledgement.
+- **Observed:**
+  - PP-48's fix runs every librados job in the release's builder, and the cluster action checks
+    that the runner holds no Ceph library before it starts a cluster.
+  - On 2026-11-14 that check failed four jobs: #593's parity, #595's Squid integration, and
+    #601's parity and Squid cluster jobs. Each ran on ubuntu-26.04 image 20261111.82.6, which
+    holds Ubuntu's `librados2` 20.2.0-0ubuntu2.1. The action's own install does not bring it, and
+    #594's parity, 80 minutes after #593's, ran on image 20261111.196.1 under the same label and
+    passed.
+- **Cost:** a re-run of each failed job, and a log reading of each to rule out the change under
+  test; three merges delayed.
+- **Fix:** #602 purges the packages the image brought and fails only when one survives the purge.
+  It changes `.github/actions/`, so it waits for the owner's `workflows` acknowledgement (PP-47).
+- **Improvement:** a check that guards an invariant against the runner image restores the
+  invariant where it safely can, and fails only where it cannot; a runner label is a set of image
+  builds, not one image.
+- **Candidate home:** the cluster action's runner check; PP-48; github-conventions'
+  `references/workflows.md` (runner labels).
