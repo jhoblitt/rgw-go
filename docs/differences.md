@@ -11329,10 +11329,18 @@ does the following.
     so a purged bucket whose last versions these are is removed with their
     heads left in the data pool. The version stays readable by its id.
   - A writer whose gateway dies between its unlink and its replay leaves a
-    locked version the same way, where radosgw's next replay removes it.
+    locked version the same way, where radosgw's next replay removes it, and
+    so does a writer whose request ends while its unlink, or a conditional
+    link's check of the OLH, is still in flight: the replay is detached from
+    the request only once the unlink returns.
     When that version is the key's only one and the null version, the key's
     OLH still names it, so a GET of the key answers it until the key's next
     write.
+  - A writer whose own replay runs out of passes with its entries still
+    logged, after a lock was set past its check, answers 204 and leaves the
+    version locked and unlisted, where it answered 403 and kept it listed
+    before: its removal check acts only once the pending log no longer holds
+    its op tag, and nothing reclaims the version.
   - A writer with no `Expect` whose version another replay kept, and whose
     lock ended before the writer's check, a hold removed or a retention
     run out in between, leaves it the same way: its check removes only a
