@@ -50,18 +50,30 @@ runs:
     # runs in the release's builder and rgw-go in its derived image
     # (hack/rooket/README.md, "Running in the builder"), so a librados that a
     # runner image or an install brought in could only let a host build pass
-    # for the wrong reason. The runner image's own gperftools (2.18.1 on
-    # ubuntu-26.04) is left alone: nothing that runs on the host links it.
+    # for the wrong reason. Some ubuntu-26.04 image builds (20261111.82.6)
+    # ship Ubuntu's librados2, which nothing on the host uses, so the step
+    # purges what the image brought before it checks. The runner image's own
+    # gperftools (2.18.1 on ubuntu-26.04) is left alone: nothing that runs on
+    # the host links it.
     # jq and the AWS CLI v2, which populate.sh, the harness scripts and the
     # workflows' scrub steps use, come with the runner image.
-    - name: Check the runner's tools and that it holds no Ceph library
+    - name: Check the runner's tools and clear it of Ceph libraries
       shell: bash
       run: |
         jq --version
         aws --version
         # dpkg-query fails when a pattern matches no package, which pipefail
         # would let hide another pattern's match.
-        if { dpkg-query -W -f '${db:Status-Abbrev} ${Package} ${Version}\n' 'librados*' 'libceph*' 2>/dev/null || true; } | grep '^ii'; then
+        held() { { dpkg-query -W -f '${db:Status-Abbrev} ${Package} ${Version}\n' 'librados*' 'libceph*' 2>/dev/null || true; } | grep '^ii' || true; }
+        found=$(held)
+        if [ -n "${found}" ]; then
+          echo "${found}"
+          mapfile -t pkgs < <(awk '{print $2}' <<<"${found}")
+          sudo apt-get purge -y "${pkgs[@]}"
+          found=$(held)
+        fi
+        if [ -n "${found}" ]; then
+          echo "${found}"
           echo "::error::the runner holds a Ceph library"
           exit 1
         fi
