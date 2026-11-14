@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
@@ -80,6 +82,10 @@ type cluster struct {
 	reads, writes counter
 	reaper        reaper
 	close         sync.Once
+	// service serializes the service-map calls: librados's registration takes
+	// no lock, so two overlapping first calls could both pass its EEXIST check
+	// and write its metadata at once.
+	service sync.Mutex
 
 	// Every field below mu is guarded by it.
 	mu      sync.Mutex
@@ -345,6 +351,72 @@ func (c *cluster) FSID() (string, error) {
 	defer c.end()
 	fsid, err := c.conn.GetFSID()
 	return fsid, toSeamError("fsid", err)
+}
+
+var _ radosclient.ServiceRegistrar = (*cluster)(nil)
+
+// ServiceRegister registers the connection in the manager's service map.
+//
+// The service-map calls are serialized, because librados's registration takes
+// no lock: two overlapping first calls could both pass its EEXIST check
+// (docs/ceph-upstream-bugs.md, "librados keeps a service registration it
+// answers EBUSY"). Serialized, one of them is ErrExists.
+//
+// It must run on a connected handle: librados answers a registration made
+// while the handle connects with EBUSY yet keeps it, and the manager may
+// never hear of it (docs/ceph-upstream-bugs.md, "librados keeps a service
+// registration it answers EBUSY"). A cluster is built only after
+// rados_connect returned, so every call here meets a connected handle.
+//
+// Close removes the entry: rados_shutdown sends the manager its close and
+// waits up to mgr_client_service_daemon_unregister_timeout for the reply
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/MgrClient.cc#L82-L94 at
+// v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/MgrClient.cc#L83-L95 at
+// v20.2.4).
+func (c *cluster) ServiceRegister(service, daemon string, metadata map[string]string) error {
+	const op = "service register"
+	// go-ceph hands both names to librados as C strings, which end at a NUL.
+	if err := errors.Join(cString("service name", service), cString("daemon name", daemon),
+		nulFreeDict("service metadata", metadata)); err != nil {
+		return err
+	}
+	if err := c.begin(op); err != nil {
+		return err
+	}
+	defer c.end()
+	c.service.Lock()
+	defer c.service.Unlock()
+	return toSeamError(op, c.conn.ServiceRegister(service, daemon, metadata))
+}
+
+// ServiceUpdateStatus replaces the status the connection reports to the
+// manager.
+func (c *cluster) ServiceUpdateStatus(status map[string]string) error {
+	const op = "service update status"
+	if err := nulFreeDict("service status", status); err != nil {
+		return err
+	}
+	if err := c.begin(op); err != nil {
+		return err
+	}
+	defer c.end()
+	c.service.Lock()
+	defer c.service.Unlock()
+	return toSeamError(op, c.conn.ServiceUpdateStatus(status))
+}
+
+// nulFreeDict refuses a NUL in a key or value of m, in key order. go-ceph
+// encodes the map as NUL-ended strings and refuses a NUL itself, but with an
+// error of its own; the seam answers every name librados's C API would cut
+// with ErrNULName.
+func nulFreeDict(what string, m map[string]string) error {
+	for _, k := range slices.Sorted(maps.Keys(m)) {
+		if err := errors.Join(cString(what+" key", k), cString(what+" value", m[k])); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Stats reports the operations Read and Write submitted on every Pool of the

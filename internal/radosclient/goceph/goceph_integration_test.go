@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ceph/go-ceph/rados"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"golang.org/x/sync/errgroup"
@@ -1286,3 +1287,233 @@ func stableMod(h, pgNum uint32) uint32 {
 	}
 	return h & (mask >> 1)
 }
+
+// serviceMapTimeout bounds a wait for the manager, which publishes its
+// service map on its tick and hears a status with the client's next report.
+const serviceMapTimeout = time.Minute
+
+// serviceCloseTimeout bounds the wait for an entry to leave the service map
+// after Close. It is under mgr_service_beacon_grace, a minute by default,
+// after which the manager drops a daemon whose beacons stopped anyway, so only
+// the close librados sends at shutdown removes the entry within it
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/mgr.yaml.in#L113-L118 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/mgr.yaml.in#L113-L118 at v20.2.4).
+const serviceCloseTimeout = 30 * time.Second
+
+// serviceMapDaemon is a daemon's entry in the manager's service dump.
+type serviceMapDaemon struct {
+	GID      uint64            `json:"gid"`
+	Metadata map[string]string `json:"metadata"`
+}
+
+// serviceMapReader reads the manager's service map over a bare librados
+// connection of its own, since the seam carries no manager command.
+type serviceMapReader struct{ conn *rados.Conn }
+
+// newServiceMapReader connects as goceph.Connect connects for cfg, so that the
+// two connections of a spec name the same cluster and entity, and shuts the
+// connection down when the spec ends.
+func newServiceMapReader(cfg goceph.Config) *serviceMapReader {
+	GinkgoHelper()
+	cfg = goceph.WithDefaults(cfg)
+	conn, err := rados.NewConnWithClusterAndUser(cfg.Cluster, cfg.Name)
+	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(conn.Shutdown)
+	Expect(conn.ReadConfigFile(cfg.ConfigFile)).To(Succeed())
+	// librados waits for a manager command forever unless this is set, which
+	// it applies to manager commands as to monitor ones
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/librados/RadosClient.cc#L861-L880 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/librados/RadosClient.cc#L863-L883 at v20.2.4).
+	Expect(conn.SetConfigOption("rados_mon_op_timeout", "30")).To(Succeed())
+	Expect(conn.Connect()).To(Succeed())
+	return &serviceMapReader{conn}
+}
+
+// get runs the manager command prefix with JSON output and decodes the answer into v.
+func (r *serviceMapReader) get(prefix string, v any) error {
+	cmd, err := json.Marshal(map[string]string{"prefix": prefix, "format": "json"})
+	if err != nil {
+		return err
+	}
+	out, _, err := r.conn.MgrCommand([][]byte{cmd})
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(out, v)
+}
+
+// daemons returns the daemons service dump lists under service, by name.
+func (r *serviceMapReader) daemons(service string) (map[string]serviceMapDaemon, error) {
+	var dump struct {
+		Services map[string]struct {
+			Daemons map[string]json.RawMessage `json:"daemons"`
+		} `json:"services"`
+	}
+	if err := r.get("service dump", &dump); err != nil {
+		return nil, err
+	}
+	daemons := map[string]serviceMapDaemon{}
+	for name, raw := range dump.Services[service].Daemons {
+		// the service's summary string sits beside its daemons
+		if name == "summary" {
+			continue
+		}
+		var d serviceMapDaemon
+		if err := json.Unmarshal(raw, &d); err != nil {
+			return nil, err
+		}
+		daemons[name] = d
+	}
+	return daemons, nil
+}
+
+// status returns the status service status shows for each daemon of service,
+// by name. Only service status carries a status: the service map does not.
+func (r *serviceMapReader) status(service string) (map[string]map[string]string, error) {
+	var all map[string]map[string]struct {
+		Status map[string]string `json:"status"`
+	}
+	if err := r.get("service status", &all); err != nil {
+		return nil, err
+	}
+	status := map[string]map[string]string{}
+	for name, d := range all[service] {
+		status[name] = d.Status
+	}
+	return status, nil
+}
+
+var _ = Describe("goceph registering in the manager's service map", Label("integration"), func() {
+	var (
+		reader    *serviceMapReader
+		service   string
+		daemon    string
+		cluster   radosclient.Cluster
+		registrar radosclient.ServiceRegistrar
+	)
+
+	BeforeEach(func(ctx SpecContext) {
+		cfg := goceph.Config{ConfigFile: cephtest.Conf()}
+		reader = newServiceMapReader(cfg)
+		// Not rgw, which the cluster's gateway registers under: no reader
+		// of the radosgw entries or dashboard sees the spec's.
+		service = fmt.Sprintf("goceph-spec-%d", time.Now().UnixNano())
+
+		var err error
+		cluster, err = goceph.Connect(ctx, cfg)
+		Expect(err).NotTo(HaveOccurred())
+		// While a registered connection is open, librados puts the host's
+		// build in ceph versions, so a spec that fails still closes it.
+		DeferCleanup(func() { Expect(cluster.Close()).To(Succeed()) })
+		daemon = strconv.FormatUint(cluster.InstanceID(), 10)
+		var ok bool
+		registrar, ok = cluster.(radosclient.ServiceRegistrar)
+		if !ok {
+			Fail(fmt.Sprintf("%T does not register in the service map", cluster))
+		}
+	})
+
+	// listed waits for the daemons service dump lists under service to satisfy match.
+	listed := func(ctx SpecContext, timeout time.Duration, match func(Gomega, map[string]serviceMapDaemon)) {
+		GinkgoHelper()
+		Eventually(func(g Gomega) {
+			daemons, err := reader.daemons(service)
+			g.Expect(err).NotTo(HaveOccurred())
+			match(g, daemons)
+		}).WithContext(ctx).WithTimeout(timeout).WithPolling(500 * time.Millisecond).Should(Succeed())
+	}
+
+	It("lists the connection under its instance id, with its metadata and librados's own", func(ctx SpecContext) {
+		metadata := map[string]string{"goceph_spec": "register", "empty_value": ""}
+		Expect(registrar.ServiceRegister(service, daemon, metadata)).To(Succeed())
+
+		listed(ctx, serviceMapTimeout, func(g Gomega, daemons map[string]serviceMapDaemon) {
+			g.Expect(daemons).To(HaveLen(1), "service %s", service)
+			g.Expect(daemons).To(HaveKey(daemon))
+			entry := daemons[daemon]
+			g.Expect(entry.GID).To(Equal(cluster.InstanceID()))
+			for k, v := range metadata {
+				g.Expect(entry.Metadata).To(HaveKeyWithValue(k, v))
+			}
+			g.Expect(entry.Metadata).To(HaveKeyWithValue("ceph_version", Not(BeEmpty())))
+			g.Expect(entry.Metadata).To(HaveKeyWithValue("hostname", Not(BeEmpty())))
+		})
+	})
+
+	It("shows a status update under service status, and the next one replaces it", func(ctx SpecContext) {
+		Expect(registrar.ServiceRegister(service, daemon, nil)).To(Succeed())
+		shows := func(want map[string]string) {
+			GinkgoHelper()
+			Eventually(func(g Gomega) {
+				status, err := reader.status(service)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(status).To(HaveKeyWithValue(daemon, Equal(want)))
+			}).WithContext(ctx).WithTimeout(serviceMapTimeout).WithPolling(500 * time.Millisecond).Should(Succeed())
+		}
+
+		first := map[string]string{"goceph_spec": "status", "empty_value": ""}
+		Expect(registrar.ServiceUpdateStatus(first)).To(Succeed())
+		shows(first)
+		second := map[string]string{"goceph_spec": "replaced"}
+		Expect(registrar.ServiceUpdateStatus(second)).To(Succeed())
+		shows(second)
+	})
+
+	It("maps librados's refusals to the seam's errors, and a refused call registers nothing", func() {
+		const nul = "x\x00y"
+		Expect(registrar.ServiceRegister("osd", daemon, nil)).To(MatchError(radosclient.ErrInvalid), "a Ceph daemon type is no service")
+		Expect(registrar.ServiceRegister("", daemon, nil)).To(MatchError(radosclient.ErrInvalid), "an empty service name")
+		Expect(registrar.ServiceRegister(service, "", nil)).To(MatchError(radosclient.ErrInvalid), "an empty daemon name")
+		Expect(registrar.ServiceRegister(service, daemon, map[string]string{"": "v"})).
+			To(MatchError(ContainSubstring("key must not be empty")), "an empty metadata key, go-ceph's refusal")
+		Expect(registrar.ServiceRegister(service+nul, daemon, nil)).To(MatchError(radosclient.ErrNULName), "a NUL in the service name")
+		Expect(registrar.ServiceRegister(service, daemon+nul, nil)).To(MatchError(radosclient.ErrNULName), "a NUL in the daemon name")
+		Expect(registrar.ServiceRegister(service, daemon, map[string]string{"k" + nul: "v"})).
+			To(MatchError(radosclient.ErrNULName), "a NUL in a metadata key")
+		Expect(registrar.ServiceRegister(service, daemon, map[string]string{"k": "v" + nul})).
+			To(MatchError(radosclient.ErrNULName), "a NUL in a metadata value")
+		Expect(registrar.ServiceUpdateStatus(map[string]string{"": "v"})).
+			To(MatchError(ContainSubstring("key must not be empty")), "an empty status key")
+		Expect(registrar.ServiceUpdateStatus(map[string]string{"k" + nul: "v"})).
+			To(MatchError(radosclient.ErrNULName), "a NUL in a status key")
+		Expect(registrar.ServiceUpdateStatus(map[string]string{"k": "v" + nul})).
+			To(MatchError(radosclient.ErrNULName), "a NUL in a status value")
+
+		Expect(registrar.ServiceRegister(service, daemon, nil)).To(Succeed(), "no refused call kept a registration")
+		Expect(registrar.ServiceRegister(service, daemon+"-again", nil)).To(MatchError(radosclient.ErrExists), "a connection registers once")
+	})
+
+	It("registers once when two first calls overlap, the other being ErrExists", func() {
+		start := make(chan struct{})
+		errs := make([]error, 2)
+		var wg sync.WaitGroup
+		for i := range errs {
+			wg.Go(func() {
+				<-start
+				errs[i] = registrar.ServiceRegister(service, fmt.Sprintf("%s-%d", daemon, i), nil)
+			})
+		}
+		close(start)
+		wg.Wait()
+		Expect(errs).To(ConsistOf(BeNil(), MatchError(radosclient.ErrExists)))
+	})
+
+	It("refuses a call after Close", func() {
+		Expect(cluster.Close()).To(Succeed())
+
+		Expect(registrar.ServiceRegister(service, daemon, nil)).To(MatchError(radosclient.ErrClosed))
+		Expect(registrar.ServiceUpdateStatus(map[string]string{"goceph_spec": "closed"})).To(MatchError(radosclient.ErrClosed))
+	})
+
+	It("removes the entry from service dump once Close returns", func(ctx SpecContext) {
+		Expect(registrar.ServiceRegister(service, daemon, nil)).To(Succeed())
+		listed(ctx, serviceMapTimeout, func(g Gomega, daemons map[string]serviceMapDaemon) {
+			g.Expect(daemons).To(HaveKey(daemon))
+		})
+
+		Expect(cluster.Close()).To(Succeed())
+		listed(ctx, serviceCloseTimeout, func(g Gomega, daemons map[string]serviceMapDaemon) {
+			g.Expect(daemons).To(BeEmpty(), "service %s after Close", service)
+		})
+	})
+})
