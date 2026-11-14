@@ -541,6 +541,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw skips a bucket's default encryption for a write that sends an empty encryption header](#radosgw-skips-a-buckets-default-encryption-for-a-write-that-sends-an-empty-encryption-header) | [#79506](https://tracker.ceph.com/issues/79506), [#80258](https://tracker.ceph.com/issues/80258), [#80260](https://tracker.ceph.com/issues/80260) | [ceph/ceph#71073](https://github.com/ceph/ceph/pull/71073), [ceph/ceph#71534](https://github.com/ceph/ceph/pull/71534), [ceph/ceph#71535](https://github.com/ceph/ceph/pull/71535) | ✓ |
 | [radosgw's CopyObject ignores x-amz-tagging-directive](#radosgws-copyobject-ignores-x-amz-tagging-directive) | pending | pending | ✓ |
 | [radosgw's CopyObject and CreateMultipartUpload evaluate s3:PutObject without the request's ACL and tag condition keys](#radosgws-copyobject-and-createmultipartupload-evaluate-s3putobject-without-the-requests-acl-and-tag-condition-keys) | pending | pending | ✓ |
+| [radosgw's replay of an OLH log removes a version that a later entry of the same log links](#radosgws-replay-of-an-olh-log-removes-a-version-that-a-later-entry-of-the-same-log-links) | pending | [ceph/ceph#67661](https://github.com/ceph/ceph/pull/67661) (partial) |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -16087,7 +16088,16 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** checked at v19.2.7, v20.2.4 and main 8aa24c51928
   (2026-10-30).
 - **rgw-go:** unaffected. `ReadOLHLog` in `internal/cls/rgw/ops_olh.go` builds
-  the request and decodes the reply.
+  the request and decodes the reply. Its replay (`replayPass`,
+  `internal/driver/olh.go`) sends the call from marker 0 for any name, as
+  `update_olh` does, so an entry trimmed empty reaches the class's read as in
+  radosgw, whose `bucket check olh` tests the entry's log first
+  ([rgw_bucket.cc:530-552](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L530-L552),
+  [rgw_bucket.cc:667-689](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L667-L689));
+  a replay cannot know the log is empty without a read of the entry. The
+  check for a stranded OLH (`clearStrandedOLH`,
+  `internal/driver/olh_stranded.go`) takes the log from the OLH entry it
+  already reads and sends none.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 Task V1, 2026-10-15, reading the class's read handler;
   derived from the source, not reproduced.
@@ -34394,6 +34404,34 @@ Every new entry adds its row to this table, in document order.
     it, through the link's handling of the null version
     ([cls_rgw.cc:1712-1731](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1712-L1731),
     [cls_rgw.cc:1853-1872](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1853-L1872)).
+  - radosgw's own repair of such entries does not clear this one.
+    `radosgw-admin bucket check olh --fix` finds an OLH entry marked for
+    removal that holds no version, "left behind after the last remaining
+    version of an object was deleted or after an incomplete upload", and
+    clears it through `clear_olh`, with the entry's tag, only when the
+    entry's log is empty; for an entry with a log it applies the log
+    through `update_olh` over the key's head
+    ([rgw_bucket.cc:470-552](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L470-L552),
+    [rgw_bucket.cc:607-689](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L607-L689)).
+    That read of the log carries the head's OLH tag, which a head that is
+    gone does not hold
+    ([rgw_rados.cc:8245](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8245),
+    [rgw_rados.cc:8991](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8991);
+    a missing head's state sets no `olh_tag`,
+    [rgw_rados.cc:6293-6307](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6293-L6307),
+    [rgw_rados.cc:6907-6921](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6907-L6921)),
+    so the class answers ECANCELED
+    ([cls_rgw.cc:2047-2050](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2047-L2050),
+    [cls_rgw.cc:2188-2191](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2188-L2191)).
+    The log this entry holds is not empty: `apply_olh_log` trims nothing
+    after the clear the writer's pending attr refused
+    ([rgw_rados.cc:8550-8563](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8550-L8563),
+    [rgw_rados.cc:9296-9309](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9296-L9309)).
+    So the command finds the entry and cannot clear it. The call that
+    clears it is the class's `bucket_clear_olh` with the entry's tag, which
+    removes the entry and the version marker alike
+    ([cls_rgw.cc:2126-2190](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2126-L2190),
+    [cls_rgw.cc:2279-2355](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2279-L2355)).
 - **Impact:** an object written to the key after the race is stored,
   readable and counted, but no listing of the bucket shows it.
 - **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
@@ -34413,8 +34451,21 @@ Every new entry adds its row to this table, in document order.
   for removal, with no OLH head; a PutObject of `k` without a version then
   answered 200, read back, and raised the bucket's stats to one object of
   5 bytes, while ListObjects and ListObjectVersions both listed nothing.
-  Plan task V20, merged in [#600](https://github.com/jhoblitt/rgw-go/pull/600),
-  decides the repair.
+  rgw-go's write of the key without a version, over its own state or
+  radosgw's, clears it first: `clearStrandedOLH`
+  (`internal/driver/olh_stranded.go`) sends the class's `bucket_clear_olh`
+  with the OLH entry's tag before the write's prepare, which removes the
+  entry and the version marker, so the write's entry lands at the plain key
+  and is listed, once the key has no head and nothing is left behind the
+  marker (`docs/differences.md`, "An unversioned write of a key whose OLH a
+  delete left pending removal clears it first, and is listed"; specs in
+  `internal/driver/olh_stranded_test.go`). A key left unlisted, its head
+  stored and its entry behind the marker, is not repaired, as nothing but a
+  later delete's null delete marker moves that entry. radosgw's write leaves
+  a key so, and so does a write of rgw-go's that goes on without the clear:
+  for a key a reshard has moved, a log naming more than sixteen versions or
+  a version that still has an index entry, and an entry that does not
+  decode.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task V18, 2026-11-14, in an emulator run of a delete
   between a key's first versioned write and its link; its consequence
@@ -35195,3 +35246,79 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task S12's adversarial review, 2026-11-15, probing which
   condition keys the s3:PutObject check of each write carries; derived from
   the source and seen in rgw-go, not reproduced on a cluster.
+
+## radosgw's replay of an OLH log removes a version that a later entry of the same log links
+
+- **Kind:** defect, possibly security-relevant (integrity), conservatively:
+  `apply_olh_log` removes every version the OLH log it reads names for
+  removal, before its head op, and a LINK_OLH entry of the same version later
+  in the log does not spare it. A version a link made current can therefore
+  be removed by the replay of the log that holds the link: the key's OLH
+  names a version whose head and instance entry are gone. Two log shapes
+  reach it: a link that takes over an OLH entry marked for removal, which
+  keeps the entry's log, and a link of a version between a delete's unlink of
+  it and the delete's replay. Unreproduced on radosgw: derived from the
+  source.
+- **Evidence:** paths are under `src/`; each pair of links is v19.2.7's,
+  then v20.2.4's.
+  - A link over an OLH entry marked for removal sets the entry's tag and
+    leaves its log, which the entry's `set_tag` does not touch
+    ([cls_rgw.cc:1768-1777](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1768-L1777),
+    [cls_rgw.cc:1909-1918](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1909-L1918);
+    [cls_rgw.cc:1563-1565](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1563-L1565),
+    [cls_rgw.cc:1690-1692](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1690-L1692)).
+    The entry a delete of a key's only version leaves holds that delete's
+    REMOVE_INSTANCE entry in its log, which the clear its replay could not
+    send does not trim ("[radosgw leaves a key's version marker and OLH entry
+    when a delete takes the key's first version before its
+    link](#radosgw-leaves-a-keys-version-marker-and-olh-entry-when-a-delete-takes-the-keys-first-version-before-its-link)").
+  - A delete's unlink of a version that is no delete marker logs its
+    REMOVE_INSTANCE and takes only the version's list entry
+    ([cls_rgw.cc:1970-1981](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1970-L1981),
+    [cls_rgw.cc:2117-2128](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2117-L2128)).
+    The instance entry stays until the replay removes the version, so a link
+    of the same version before that replay finds it, and its LINK_OLH follows
+    the REMOVE_INSTANCE in the log
+    ([cls_rgw.cc:1682-1688](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1682-L1688),
+    [cls_rgw.cc:1823-1829](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1823-L1829)).
+  - `update_olh` reads the log from its start, under the head's OLH tag
+    ([rgw_rados.cc:8639-8667](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8639-L8667),
+    [rgw_rados.cc:9385-9413](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9385-L9413)).
+    `apply_olh_log` takes each REMOVE_INSTANCE entry of it, whatever follows
+    the entry, removes those versions with `delete_obj`, and only then writes
+    the olh.info of the last LINK_OLH
+    ([rgw_rados.cc:8479-8481](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8479-L8481),
+    [rgw_rados.cc:8529-8541](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8529-L8541),
+    [rgw_rados.cc:9225-9227](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9225-L9227),
+    [rgw_rados.cc:9275-9287](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9275-L9287)).
+- **Impact:** a version a write linked, and answered, is removed by the
+  replay of that write's log; the key's OLH names it, and its head and
+  instance entry are gone.
+- **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4. Upstream
+  main since 75c7b8ece79 (ceph/ceph#67661, first tagged in v21.0.1; no v19
+  or v20 tag holds it, by `git tag --contains` in the clone) drops the
+  removal of a key the replay links again after an `UNLINK_OLH` in the same
+  batch
+  ([rgw_rados.cc:10132-10149](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/driver/rados/rgw_rados.cc#L10132-L10149),
+  at 8aa24c51928). That is the first shape above, whose log holds the
+  `UNLINK_OLH` ahead of the link, and not the second, whose log holds none
+  while another version stays current. The same fix covers the null-version
+  form of this ordering in "radosgw's null version removal takes the data of
+  a null PutObject that links after it".
+- **rgw-go:** `applyOLHLog` (`internal/driver/olh_head.go`) drops only the
+  removal of the null version that a later null link follows, so for a named
+  version its replay is radosgw's. Through S3 rgw-go cannot name the id,
+  since it ignores a write's `versionId` (`docs/differences.md`, "A write's
+  versionId is ignored"), and its unversioned write of the key clears the
+  entry and its log first (`docs/differences.md`, "An unversioned write of a
+  key whose OLH a delete left pending removal clears it first, and is
+  listed"). An emulator run of that state, then a driver PutObject of `k`
+  under the same version id, answered success and left the key's OLH naming
+  that version, which ListObjectVersions lists, with no head and no instance
+  entry: a read of the version finds none. No spec pins it.
+- **Upstream:** pending; prior art not searched. Partial fix:
+  [ceph/ceph#67661](https://github.com/ceph/ceph/pull/67661), 75c7b8ece79,
+  first tagged in v21.0.1 (see Releases).
+- **Found:** phase 2 task V20, 2026-11-14, reading `apply_olh_log` beside the
+  log a stranded OLH entry keeps; derived from the source, not reproduced on
+  radosgw.
