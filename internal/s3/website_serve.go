@@ -92,9 +92,10 @@ func (g *websiteGet) serve(ctx context.Context, w http.ResponseWriter, r *op.Req
 // dump_content_length, with Accept-Ranges, and the Location unless it is
 // empty, as dump_redirect skips one
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L440-L443 at v19.2.7 and v20.2.4).
-// net/http writes a CR or LF the stored Location holds as a space
-// (docs/differences.md, "A stored header value's CR and LF go out as
-// spaces").
+// The Location is the stored attr to its first NUL, as GetObject cuts it,
+// and SetHeader writes each of its other control bytes but HTAB as a space
+// (docs/differences.md, "A stored header value's NUL and other control
+// bytes go out as spaces").
 func writeObjectRedirect(w http.ResponseWriter, r *op.Request) {
 	SetCommonHeaders(w, r)
 	h := w.Header()

@@ -17,6 +17,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/rgwtext"
+	"github.com/jhoblitt/rgw-go/internal/s3"
 )
 
 // maxMetadataBody bounds a metadata put's document. radosgw reads the
@@ -228,7 +229,10 @@ func readMetadataBody(r *op.Request) ([]byte, error) {
 // setMetadata is RGWOp_Metadata_Put with its send_response
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_metadata.cc#L234-L288).
 // Both headers keep radosgw's spelling, which http.Header.Set would
-// canonicalize.
+// canonicalize. RGWX_UPDATE_VERSION carries the stored version's tag, whose
+// control bytes s3.SetHeader writes as spaces where radosgw sends them raw
+// (docs/differences.md, "A stored header value's NUL and other control
+// bytes go out as spaces").
 func setMetadata(ctx context.Context, w http.ResponseWriter, r *op.Request, q Request) error {
 	key, _ := q.Args.Get("key")
 	o := &metadataPut{PutMetadata: &op.PutMetadata{}}
@@ -236,7 +240,7 @@ func setMetadata(ctx context.Context, w http.ResponseWriter, r *op.Request, q Re
 	o.updateType, o.hasType = q.Args.Get("update-type")
 	err := op.Run(ctx, o, r)
 	if o.ran {
-		w.Header()["RGWX_UPDATE_VERSION"] = []string{"ver:" + strconv.FormatUint(o.OnDisk.Ver, 10) + ",tag:" + o.OnDisk.Tag}
+		s3.SetHeader(w.Header(), "RGWX_UPDATE_VERSION", "ver:"+strconv.FormatUint(o.OnDisk.Ver, 10)+",tag:"+o.OnDisk.Tag)
 	}
 	if err != nil {
 		return err
