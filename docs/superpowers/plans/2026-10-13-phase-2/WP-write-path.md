@@ -1343,6 +1343,40 @@ Found by T-3 (its copy tests over T-2's classes), and numbered here before T-3 m
   report carries a reproduction spec to start from.
 - **Depends on:** nothing. **PR:** one. **Brief:** about 25 lines.
 
+### Task WP-31: CopyObject honours x-amz-tagging-directive
+
+Found by S12's task review (Important 4), and numbered here before S12 merged (PP-12).
+
+- **Layer:** op. **Files:** CopyObject's tag handling and its authorization in `internal/op` and
+  `internal/authz`, their specs; `docs/differences.md`; the registry entry S12 adds. **Cluster:**
+  no.
+- **Behaviour:**
+  1. CopyObject reads `x-amz-tagging-directive`. REPLACE stores the request's `x-amz-tagging` as
+     the destination's tags, none when it is absent. COPY, the default, copies the source's tags.
+     Any other value is refused with the error Amazon S3 documents; take it from the SDK's
+     CopyObject reference at implementation.
+  2. The tags are stored in the tag attr in the encoding radosgw writes, so radosgw reads a copy
+     rgw-go made.
+  3. REPLACE with tags is authorized as S12 authorizes `x-amz-tagging`: s3:PutObjectTagging on the
+     destination.
+  4. Whether COPY's carried tags need s3:PutObjectTagging is decided at implementation from
+     Amazon's "Required permissions for Amazon S3 API operations" table, which needs it "to put
+     the copied object with object tagging". If no Amazon text decides it, COPY needs none, and the
+     differences entry says so.
+- **Why:** radosgw reads no `x-amz-tagging-directive` at v19.2.7 or v20.2.4. Its CopyObject takes
+  the request's `x-amz-tagging` through the request attrs whatever the directive says (S12's
+  registry evidence). rgw-go has no reader of the header either. Both baselines record
+  `test_object_copy_replacing_tagging`, `_replacing_tagging_with_none` and
+  `_replacing_metadata_and_copying_tagging` as failed on radosgw.
+- **Specs:**
+  - REPLACE with tags, REPLACE without, COPY, and an invalid directive, each read back through
+    GetObjectTagging.
+  - The authorization of REPLACE under a Deny of s3:PutObjectTagging.
+  - COPY's rule, as decided.
+  - The three s3-tests pass on rgw-go. Each gains a known-differences line in both files, in this
+    task's PR (PP-19).
+- **Depends on:** S12. **PR:** one. **Brief:** about 40 lines.
+
 ## Order
 
 Everything starts after the index's deferred benchmark run and the shared tasks it names.
@@ -1360,6 +1394,7 @@ Everything starts after the index's deferred benchmark run and the shared tasks 
 | any time | WP-28 | nothing |
 | after WP-26 | WP-29 | WP-26 |
 | any time | WP-30 | nothing |
+| after S12 | WP-31 | S12 |
 | cluster, one at a time | WP-24, WP-15, WP-14 | WP-19 and WP-21; WP-8 to WP-11 and WP-13; WP-6 to WP-13, WP-22, T-1, and BC-34 or the POST line deselected |
 
 - Wave 1 is wider than the subagent budget allows at once; the controller starts WP-10 (a),
