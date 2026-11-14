@@ -17,6 +17,7 @@
 //	    [--ledger FILE]... [--tests FILE]
 //	go run ./hack/parity migrate BASELINE...
 //	go run ./hack/parity fmt LEDGER...
+//	go run ./hack/parity venv --constraints FILE --freeze FILE
 //
 // --meta, record's --draft and --pin-reason, diff's --selection and
 // --gate-only, check's --draft and pin's --ledger are read from the command
@@ -325,6 +326,16 @@
 // meta, to ledgers in place: one base pin at its source and one entry per
 // test. Every other command refuses that form, naming migrate.
 //
+// venv checks, for hack/s3tests/run.sh, that the venv it built holds the
+// packages hack/s3tests/constraints.txt names. Both files are freezes: the
+// Python that built the venv as "# Python X.Y.Z", then each package at its
+// version, as pip freeze lists them. venv fails, printing each difference by
+// package name, "< " for a line only the constraints hold and "> " for one
+// only the venv does, when the venv lacks a package, holds another version
+// of one or holds one the constraints do not name: a requirement they do not
+// name installs at its latest version, which no recording saw. It warns on
+// stderr when the Python is another, which is no package.
+//
 // Much of what parity prints is text a pull request wrote, which a CI job's
 // log and summary show, so every value from a file is printed escaped so that
 // it reads back exactly: "\" as "\\", each control or format character as
@@ -337,9 +348,10 @@
 // diff exits 0 when it prints no difference, whatever dropped tests it lists,
 // and 1 when it prints one;
 // check and validate exit 1 when they print a problem; record, pin and
-// migrate exit 1 when they cannot do their work. All exit 2 for a refused
-// command line, and diff, check and validate for files they refuse to
-// compare or cannot read. go run reports any nonzero status as 1, and make
+// migrate exit 1 when they cannot do their work; venv exits 1 for a
+// difference in packages. All exit 2 for a refused command line, and diff,
+// check, validate and venv for files they refuse to compare or cannot read.
+// go run reports any nonzero status as 1, and make
 // any failed recipe as 2, so a caller that tells the statuses apart runs a
 // binary go build made.
 //

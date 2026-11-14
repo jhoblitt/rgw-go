@@ -93,7 +93,7 @@ func newRootCmd(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	pf.String("config", "", "config file to read after flags and environment")
 	pf.String("log-level", "info", "log level: debug, info, warn, or error (PARITY_LOG_LEVEL)")
 	pf.String("log-format", "json", "log format: json or text (PARITY_LOG_FORMAT)")
-	cmd.AddCommand(newRecordCmd(v), newDiffCmd(v), newCheckCmd(v), newValidateCmd(), newPinCmd(v), newMigrateCmd(), newFmtCmd())
+	cmd.AddCommand(newRecordCmd(v), newDiffCmd(v), newCheckCmd(v), newValidateCmd(), newPinCmd(v), newMigrateCmd(), newFmtCmd(), newVenvCmd(v))
 	return cmd
 }
 

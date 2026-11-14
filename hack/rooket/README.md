@@ -759,7 +759,7 @@ done
 Each run leaves `hack/s3tests/out/<release>-<gateway>-<run>.xml`, the junit
 report `hack/parity` reads, with `.log` (pytest's output), `.conf` (the
 s3-tests conf), `.freeze` (the Python version and the packages the venv
-held; s3-tests' `requirements.txt` pins none), `.ids` (the pytest node ids
+held, which `constraints.txt` fixes), `.ids` (the pytest node ids
 the run selected, one a line, which `hack/parity diff --selection` reads)
 and `.gate-only.ids` (those of the gate set's tests `gate-only.txt` names,
 whichever set ran, which `--gate-only` reads) beside it. `out/src` holds the
@@ -769,8 +769,21 @@ the files directly in its parent directories and at the top level, which
 cone mode always keeps: a few megabytes. pytest runs from the suite's
 directory. It and the venv
 in `out/venv` are rebuilt when the pin changes, which "Moving the s3-tests
-pin" below covers. `run.sh` exits 0 when pytest ran the whole set, whatever
-the tests' outcomes, and nonzero when it could not.
+pin" below covers, and the venv when `constraints.txt` does. `run.sh` exits 0
+when pytest ran the whole set, whatever the tests' outcomes, and nonzero when
+it could not.
+
+s3-tests' `requirements.txt` pins almost nothing, so a client release
+changes what the tests send, and so their outcomes, unseen. The venv is
+therefore built under `hack/s3tests/constraints.txt`, beside `PIN`. It is
+the `.freeze` file of the venv the ledgers were last recorded under,
+verbatim: the Python that built it, then each package at its version, as
+`pip freeze` lists them. `run.sh` gives it to `pip install -c`, then has
+`hack/parity venv` compare the venv's `pip freeze` with it, which stops the
+run with the difference when the venv holds a package it does
+not name, or another version of one it does, as a requirement it did not
+know installs at its latest version. It only warns of another Python, which
+is no package.
 
 `run.sh`'s fourth argument is the set, `pr` or `gate`, which `make s3tests
 SET=` passes. A fifth, a file of pytest node ids

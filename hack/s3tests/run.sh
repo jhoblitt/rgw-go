@@ -14,7 +14,9 @@
 # pr runs the pr set, the gate set less the tests gate-only.txt names, which
 # only a phase gate and a run on demand afford. The node ids a run selects
 # are left beside its report, in its .ids file, and those of the gate set's
-# gate-only tests, whichever set ran, in its .gate-only.ids file.
+# gate-only tests, whichever set ran, in its .gate-only.ids file. The
+# Python packages the tests run under are those of constraints.txt, and a run
+# leaves what its venv held in its .freeze file.
 # fails_on_rgw stays in, since both gateways must fail those alike. Users
 # are created through radosgw-admin, so run this after make gate: the gate
 # counts the zone's users. TESTS-FILE runs only the pytest node ids it lists,
@@ -69,12 +71,12 @@ readonly S3TESTS_DIR=src/test/rgw/s3-tests
 # while the commit stays the same, so it must be a commit id: a branch or tag
 # names whatever it points at when fetched.
 [[ "${S3TESTS_COMMIT}" =~ ^[0-9a-f]{40}$ ]] || die "the s3-tests commit ${S3TESTS_COMMIT}, from the environment, is not a full commit id"
-readonly PYTEST_TIMEOUT_VERSION=2.4.0
 
 readonly TEST_FILES=(s3tests/functional/test_s3.py s3tests/functional/test_headers.py)
 root=$(cd "${harness}/../.." && pwd)
 readonly root
 readonly s3tests=${root}/bin/s3tests
+readonly parity=${root}/bin/parity
 # The command reads each of its flags from S3TESTS_ variables too, the prefix
 # run.sh's own S3TESTS_REPO and S3TESTS_COMMIT share, and from a config file
 # S3TESTS_CONFIG names. Every call gives every flag, so that no such setting
@@ -150,20 +152,36 @@ dirty=$(git -C "${src}" status --porcelain)
 [[ -z "${dirty}" ]] ||
 	die "${src} differs from s3-tests ${S3TESTS_COMMIT}; remove it and rerun:"$'\n'"${dirty}"
 
-# requirements.txt pins no version, so the venv is built once per s3-tests
-# commit and every report is left beside a record of what the venv held.
-readonly venv_for="s3-tests ${S3TESTS_COMMIT} ${S3TESTS_DIR}, pytest-timeout ${PYTEST_TIMEOUT_VERSION}"
+# Built from this tree on every run, as bin/s3tests is, so that no build
+# older than the tree's rules judges the venv.
+go -C "${root}" build -o bin/parity ./hack/parity ||
+	die "cannot build ${parity} with go build -o bin/parity ./hack/parity in ${root}"
+
+# requirements.txt pins almost no version, so a client release changes what
+# the tests send, and so their outcomes, unseen. The venv is therefore built
+# under constraints.txt, the freeze of the venv the ledgers were last
+# recorded under, whose digest every recorded entry carries as pytest_freeze
+# and every candidate is held to (hack/parity). It is built once per s3-tests
+# commit and constraints file, and every report is left beside a record of
+# what the venv held.
+constraints=${harness}/constraints.txt
+[[ -f "${constraints}" && ! -L "${constraints}" ]] ||
+	die "no ${constraints}: the freeze of the venv the ledgers were recorded under, as a regular file"
+venv_for="s3-tests ${S3TESTS_COMMIT} ${S3TESTS_DIR}, constraints $(sha256sum "${constraints}" | cut -c1-12)"
+readonly venv_for
 if [[ "$(cat "${venv}/built-for" 2>/dev/null)" != "${venv_for}" ]]; then
 	rm -rf "${venv}"
 	python3 -m venv "${venv}"
-	"${venv}/bin/pip" install -q --disable-pip-version-check -r "${suite}/requirements.txt" \
-		"pytest-timeout==${PYTEST_TIMEOUT_VERSION}"
+	"${venv}/bin/pip" install -q --disable-pip-version-check -c "${constraints}" -r "${suite}/requirements.txt" pytest-timeout
 	echo "${venv_for}" >"${venv}/built-for"
 fi
 {
 	echo "# $("${venv}/bin/python" --version)"
 	"${venv}/bin/pip" freeze --disable-pip-version-check
 } >"${freeze}"
+# The freeze file's digest is the pytest_freeze that is recorded and compared,
+# so the venv must hold the constraints' packages and no others.
+"${parity}" venv --config "" --log-level info --log-format json --constraints "${constraints}" --freeze "${freeze}"
 
 use_site
 
