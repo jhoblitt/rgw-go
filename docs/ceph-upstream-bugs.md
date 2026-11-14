@@ -20729,17 +20729,12 @@ Every new entry adds its row to this table, in document order.
 ## radosgw sends a public access block after GetPublicAccessBlock's error document, past its Content-Length
 
 - **Kind:** defect, S3-correctness (HTTP framing), possibly
-  security-relevant, conditionally. A GetPublicAccessBlock whose execute
+  security-relevant. A GetPublicAccessBlock whose execute
   fails, as it does on every bucket without a block, sends its error
   document with that document's Content-Length and then a block document
-  after it, so the response runs past its length. Behind a reverse proxy
-  that pools its upstream keep-alive connections, such as haproxy, nginx or
-  Envoy, the surplus bytes desynchronize a shared connection, and the proxy
-  can then hand a later response to another client's request: response
-  queue poisoning, with a trigger the attacker chooses, a
-  GetPublicAccessBlock on any bucket without a block. That needs radosgw to
-  keep the connection open after the response, which no running release
-  has shown yet. Unreproduced: derived from the source.
+  after it, so the response runs past its length, and radosgw keeps the
+  connection open after it. Reproduced on running radosgw v19.2.7 and
+  v20.2.4 (Evidence).
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
   `rgw_public_access.h`, `rgw_public_access.cc` and
   `rgw_client_io_filters.h` are identical at the two tags.
@@ -20817,20 +20812,38 @@ Every new entry adds its row to this table, in document order.
     and beast's `write_data` writes what it is given
     ([rgw_asio_frontend.cc:131-149](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L131-L149),
     [rgw_asio_frontend.cc:132-150](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L132-L150)).
-- **Impact:** GetPublicAccessBlock on a bucket that never had a block is
-  an ordinary request: a client asks it to learn whether a bucket has one,
-  and a requester can send it on any bucket whose block the permission
-  check lets it read, its own among them. A client that reads the 404's body
-  by its Content-Length leaves the block on the connection. A Go client is
-  not affected as far as its source shows: Go's Transport closes an idle
-  connection on which unsolicited bytes arrive, and logs them
-  (`net/http/transport.go:2630-2640` at go1.27.1). Clients that reuse a
-  connection without such a check can read the bytes as the start of the
-  next response. A pooling reverse proxy, the case the Kind describes, can
-  pass them to another client. Neither was examined, and proxies may
-  differ. A client that closes the connection after an error is
-  unaffected.
-- **Releases:** checked at v19.2.7 and v20.2.4.
+  - Nothing in the frontend closes the connection for it. beast answers
+    an HTTP/1.1 request that does not ask to close with
+    `Connection: Keep-Alive`
+    (`ClientIO::complete_header`,
+    [rgw_asio_client.cc:152-158](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L152-L158),
+    [rgw_asio_client.cc:152-158](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_client.cc#L152-L158)).
+    Once `process_request` returns, `handle_connection` ends the connection
+    only for a stream error or a request that asked to close, and otherwise
+    reads the next request on it
+    ([rgw_asio_frontend.cc:351-363](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L351-L363),
+    [rgw_asio_frontend.cc:362-374](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L362-L374)).
+    So the block waits on the connection ahead of the next response.
+  - Reproduced on rooket clusters of v19.2.7 and v20.2.4 by the public
+    access block gate, `test/integration/phase2_publicaccess_test.go`, in
+    integration run 43592655652 (2026-11-14). On a bucket without a block it
+    sends a signed GetPublicAccessBlock on a fresh connection and, once the
+    404 is read to its Content-Length, a signed GetBucketPolicyStatus on the
+    same connection. The spec passed on both releases, and it requires
+    radosgw's 404 NoSuchPublicAccessBlockConfiguration to carry
+    `Connection: Keep-Alive`, then exactly
+    `<PublicAccessBlockConfiguration><BlockPublicAcls>false</BlockPublicAcls><IgnorePublicAcls>false</IgnorePublicAcls><BlockPublicPolicy>false</BlockPublicPolicy><RestrictPublicBuckets>false</RestrictPublicBuckets></PublicAccessBlockConfiguration>`
+    past the error document's length, then the second response, a 200,
+    whole on the same connection. These are the bytes the spec pins; the
+    run's log holds no capture, as go test prints only `ok` for a passing
+    package.
+- **Impact:** a reader that takes the 404's body by its Content-Length
+  leaves the block document on the connection, where the next response read
+  from it begins. Go's Transport closes an idle connection on which
+  unsolicited bytes arrive, and logs them (`net/http/transport.go:2630-2640`
+  at go1.27.1). A client that closes the connection after an error does not
+  read them.
+- **Releases:** checked at v19.2.7 and v20.2.4, and reproduced on both.
 - **rgw-go:** differs: a GetPublicAccessBlock error is its error document
   alone, so the response ends at its Content-Length
   (`getPublicAccessBlock`, `internal/s3/publicaccess.go`;
@@ -20841,7 +20854,9 @@ Every new entry adds its row to this table, in document order.
   `RGWGetBucketPublicAccessBlock_ObjStore_S3::send_response`; checked at
   v19.2.7 and v20.2.4 by task BC-19, 2026-10-20, and rated possibly
   security-relevant, conditionally, by rgw-bug-reproduction's triage,
-  2026-10-20. Derived from the source, not reproduced.
+  2026-10-20. Reproduced on running radosgw v19.2.7 and v20.2.4 by task
+  BC-22's gate, 2026-11-14, which showed the connection kept, the condition
+  of that rating.
 
 ## radosgw's ?layout dereferences a null manifest
 
