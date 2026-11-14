@@ -871,13 +871,14 @@ var _ = Describe("Policy.Eval on a parsed bucket policy naming NotAction", func(
 		Context("on "+r.String(), func() {
 			var (
 				sem          policy.Semantics
-				bob          fakeIdentity
+				alice, bob   fakeIdentity
 				bucket, obj  policy.ARN
 				expectEffect func(p *policy.Policy, a policy.Action, res *policy.ARN, want policy.Effect)
 			)
 
 			BeforeEach(func() {
 				sem = policy.SemanticsFor(r)
+				alice = fakeID(policy.UserPrincipal("t", "alice"))
 				bob = fakeID(policy.UserPrincipal("t", "bob"))
 				bucket, obj = s3ARN("b"), s3ARN("b/k")
 				expectEffect = func(p *policy.Policy, a policy.Action, res *policy.ARN, want policy.Effect) {
@@ -920,6 +921,69 @@ var _ = Describe("Policy.Eval on a parsed bucket policy naming NotAction", func(
 			It("refuses nothing by a Deny whose NotAction is an empty list", func() {
 				p := mustParse(bucketPolicy(allowAll(), forBob("Deny", `"NotAction": []`)), parseOpts(r))
 				expectEffect(p, policy.S3PutObject, &obj, policy.Allow)
+				expectEffect(p, policy.S3GetObject, &obj, policy.Allow)
+			})
+
+			It("refuses, as a Deny beside NotPrincipal, every principal but the one NotPrincipal names", func() {
+				p := mustParse(bucketPolicy(
+					`{"Effect": "Allow", "Principal": "*", "Action": "s3:*", "Resource": ["arn:aws:s3:::b", "arn:aws:s3:::b/*"]}`,
+					`{"Effect": "Deny", "NotPrincipal": {"AWS": "arn:aws:iam::t:user/alice"}, "NotAction": "s3:GetObject", `+
+						`"Resource": "arn:aws:s3:::b/*"}`), parseOpts(r))
+				expectEffect(p, policy.S3PutObject, &obj, policy.Deny)
+				expectEffect(p, policy.S3GetObject, &obj, policy.Allow)
+				Expect(p.Eval(policy.Env{}, alice, policy.S3PutObject, &obj, sem)).To(Equal(policy.Allow), "alice, named by NotPrincipal")
+			})
+
+			It("refuses, as a Deny beside NotResource, every resource but the ones NotResource names", func() {
+				p := mustParse(bucketPolicy(allowAll(),
+					`{"Effect": "Deny", "Principal": {"AWS": "arn:aws:iam::t:user/bob"}, "NotAction": "s3:GetObject", `+
+						`"NotResource": "arn:aws:s3:::b/public/*"}`), parseOpts(r))
+				public, private := s3ARN("b/public/k"), s3ARN("b/private/k")
+				expectEffect(p, policy.S3PutObject, &public, policy.Allow)
+				expectEffect(p, policy.S3PutObject, &private, policy.Deny)
+				expectEffect(p, policy.S3GetObject, &private, policy.Allow)
+			})
+
+			It("matches a Deny's NotAction without regard to case", func() {
+				p := mustParse(bucketPolicy(allowAll(), forBob("Deny", `"NotAction": "S3:GETOBJECT"`)), parseOpts(r))
+				expectEffect(p, policy.S3GetObject, &obj, policy.Allow)
+				expectEffect(p, policy.S3PutObject, &obj, policy.Deny)
+			})
+
+			It("matches a Deny's NotAction with a wildcard in it as a pattern", func() {
+				p := mustParse(bucketPolicy(allowAll(), forBob("Deny", `"NotAction": "s3:Get*"`)), parseOpts(r))
+				expectEffect(p, policy.S3GetObject, &obj, policy.Allow)
+				expectEffect(p, policy.S3GetObjectTagging, &obj, policy.Allow)
+				expectEffect(p, policy.S3GetBucketPolicy, &bucket, policy.Allow)
+				expectEffect(p, policy.S3PutObject, &obj, policy.Deny)
+				expectEffect(p, policy.S3ListBucket, &bucket, policy.Deny)
+			})
+
+			// radosgw's parser takes an Action or NotAction string that starts
+			// with "*" for every action, whatever follows the "*", so such a
+			// NotAction holds every action and the Deny covers none.
+			DescribeTable("refuses nothing by a Deny whose NotAction has a string starting with *, as radosgw's parser takes it",
+				func(notAction string) {
+					p := mustParse(bucketPolicy(allowAll(), forBob("Deny", `"NotAction": `+notAction)), parseOpts(r))
+					expectEffect(p, policy.S3PutObject, &obj, policy.Allow)
+					expectEffect(p, policy.S3DeleteObject, &obj, policy.Allow)
+				},
+				Entry(`"*:GetObject"`, `"*:GetObject"`),
+				Entry(`"*Object"`, `"*Object"`),
+				Entry(`a list with "*:ListBucket"`, `["s3:GetObject", "*:ListBucket"]`),
+			)
+
+			It("refuses, as a Deny with an empty Action beside NotAction, what its NotAction does not name", func() {
+				p := mustParse(bucketPolicy(allowAll(), forBob("Deny", `"Action": [], "NotAction": "s3:GetObject"`)), parseOpts(r))
+				expectEffect(p, policy.S3PutObject, &obj, policy.Deny)
+				expectEffect(p, policy.S3GetObject, &obj, policy.Allow)
+			})
+
+			It("refuses, as a Deny, what a NotAction-only statement with no Effect does not name", func() {
+				noEffect := `{"Principal": {"AWS": "arn:aws:iam::t:user/bob"}, "NotAction": "s3:GetObject", ` +
+					`"Resource": ["arn:aws:s3:::b", "arn:aws:s3:::b/*"]}`
+				p := mustParse(bucketPolicy(allowAll(), noEffect), parseOpts(r))
+				expectEffect(p, policy.S3PutObject, &obj, policy.Deny)
 				expectEffect(p, policy.S3GetObject, &obj, policy.Allow)
 			})
 		})

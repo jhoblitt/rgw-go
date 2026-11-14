@@ -87,7 +87,8 @@ type Statement struct {
 // a nil res is a request without a resource. A statement applies to a resource
 // only when it names Resource or NotResource, and to a request without a
 // resource only when it names neither. When it names Resource, NotResource is
-// not consulted.
+// not consulted. A Deny that names only NotAction covers actions as
+// coversAction says, not as Statement::eval does.
 func (s *Statement) Eval(env Env, id Identity, a Action, res *ARN, sem Semantics) Effect {
 	if s.EvalPrincipal(id) == Deny {
 		return Pass
@@ -129,8 +130,10 @@ func (s *Statement) Eval(env Env, id Identity, a Action, res *ARN, sem Semantics
 // so that it refuses what it states; an Allow keeps radosgw's test, so that
 // rgw-go never grants what a radosgw serving the same zone refuses
 // (docs/differences.md, "A Deny that names NotAction and no Action refuses
-// every action its NotAction does not name"). A NotAction that names no
-// action counts as none, and a value past the actions, such as ActionNone,
+// every action its NotAction does not name"). An Action or NotAction that
+// names no action counts as none. A NotAction string that starts with "*"
+// names every action, as radosgw's parser takes it, so a Deny naming only
+// such a NotAction covers none. A value past the actions, such as ActionNone,
 // is no action a Deny covers.
 func (s *Statement) coversAction(a Action) bool {
 	if s.Effect == Deny && s.Actions.IsZero() && !s.NotActions.IsZero() {

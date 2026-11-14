@@ -6683,8 +6683,15 @@ rgw-go does the following.
   radosgw's evaluation and grants nothing, so rgw-go never grants what a
   radosgw serving the same zone refuses. A statement that names both
   Action and NotAction applies to the actions Action names and NotAction
-  does not, as radosgw's does, and a NotAction that names no action, `[]`,
-  counts as none.
+  does not, as radosgw's does. A NotAction of `[]` counts as no
+  NotAction. An `Action` of `[]` beside a NotAction counts as no Action,
+  so that Deny refuses every action its NotAction does not name, where
+  radosgw's applies to no action. A statement with no Effect counts as a
+  Deny, as radosgw's does, so it takes this rule. A NotAction string that
+  starts with `*` names every action, as radosgw's parser takes it
+  ("[radosgw takes any policy Action starting with a wildcard for every
+  action](ceph-upstream-bugs.md#radosgw-takes-any-policy-action-starting-with-a-wildcard-for-every-action)"),
+  so a Deny that names only such a NotAction refuses nothing.
   docs/ceph-upstream-bugs.md records the defect ("[radosgw applies a
   policy statement that names NotAction and no Action to no
   action](ceph-upstream-bugs.md#radosgw-applies-a-policy-statement-that-names-notaction-and-no-action-to-no-action)").

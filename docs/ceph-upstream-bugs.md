@@ -4502,7 +4502,9 @@ Every new entry adds its row to this table, in document order.
 - **Impact:** an Allow statement whose Action starts with `*` grants every
   action, not only those its pattern names, a privilege escalation; a Deny
   statement denies every action. A Principal that starts with `*` names
-  everyone.
+  everyone. A NotAction string starting with `*` gives the statement every
+  action in its NotAction, so a statement naming only such a NotAction
+  applies to no action.
 - **Releases:** v19.2.6, v20.2.4 and main (8aa24c51928, 2026-10-30,
   [rgw_iam_policy.cc:785](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_iam_policy.cc#L785),
   [rgw_iam_policy.cc:787](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_iam_policy.cc#L787)
@@ -33950,5 +33952,6 @@ Every new entry adds its row to this table, in document order.
   tested each mask only when it holds an action, which would also have
   made an Allow naming only NotAction grant, and a statement naming
   neither Action nor NotAction apply to every action.
-- **Found:** phase 2 Task WP-25's adversarial review, 2026-11-14, testing
-  Deny precedence for GetObjectAttributes; fixed in rgw-go by Task S8.
+- **Found:** upstream first, by #73983's reporter; met by phase 2 Task
+  WP-25's adversarial review, 2026-11-14, testing Deny precedence for
+  GetObjectAttributes; fixed in rgw-go by Task S8.
