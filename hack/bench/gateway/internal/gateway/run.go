@@ -33,7 +33,7 @@ const (
 
 // buckets are the buckets the profiles write, which the run empties after
 // each profile and removes whenever it ends.
-var buckets = []string{"bench-small", "bench-large", "bench-large-mpu", "bench-list"}
+var buckets = []string{"bench-small", "bench-large", "bench-large-mpu", "bench-list", verBucket}
 
 // Runner runs the comparison against a release's cluster. Its fields are the
 // seams a spec replaces: the commands, /proc, the clock, the environment, the
@@ -80,11 +80,14 @@ type Runner struct {
 	// command, a preparation or a removal, and remove-user.sh; CompactTimeout
 	// the OSD's compaction, which ceph tell osd.* compact waits out, since the
 	// OSD answers only once its store is compacted (OSD.cc's "compact"
-	// handler at v19.2.6 and v20.2.4); and PhaseMargin how long a measured
-	// phase, an httpload run or a CPU profile may run past BENCH_SECONDS.
+	// handler at v19.2.6 and v20.2.4); PurgeTimeout the removal of the
+	// versioned bucket with its versions, which radosgw-admin does one entry
+	// after another and which no run has timed; and PhaseMargin how long a
+	// measured phase, an httpload run or a CPU profile may run past
+	// BENCH_SECONDS.
 	CallTimeout, LocalTimeout, BuildTimeout, ElbenchoBuildTimeout time.Duration
 	UpTimeout, DownTimeout, PrepTimeout, CompactTimeout           time.Duration
-	PhaseMargin                                                   time.Duration
+	PurgeTimeout, PhaseMargin                                     time.Duration
 }
 
 // NewRunner returns a Runner on this host: child processes, /proc, the wall
@@ -117,6 +120,7 @@ func NewRunner(stdout, stderr io.Writer, handler func(io.Writer) slog.Handler) *
 		DownTimeout:          2 * time.Minute,
 		PrepTimeout:          30 * time.Minute,
 		CompactTimeout:       30 * time.Minute,
+		PurgeTimeout:         90 * time.Minute,
 		PhaseMargin:          5 * time.Minute,
 	}
 }
@@ -167,8 +171,8 @@ type state struct {
 	// its chart values pin.
 	clusterImage, cephVersion string
 	// parity are the options both gateways' entities must hold.
-	parity             []option
-	elbencho, httpload string
+	parity                     []option
+	elbencho, httpload, s3send string
 	// The radosgw's: its endpoint, config entity and pod, and its frontends
 	// as the service map reports them.
 	radosgwEndpoint, radosgwEntity, radosgwPod, radosgwFrontends string
@@ -176,6 +180,9 @@ type state struct {
 	// reads (pid:<pid> or pod:<name>), its frontends and their TCP_NODELAY,
 	// and the zonegroup's api_name elbencho signs for.
 	endpoint, target, frontends, tcpNoDelay, apiName string
+	// defaultPlacement is the zonegroup's default placement, where the bench
+	// user's buckets are made.
+	defaultPlacement string
 	// metrics is the running rgw-go's metrics address.
 	metrics string
 	// idle is the data pool's free bytes when the run started.
@@ -185,14 +192,29 @@ type state struct {
 	// profile's fetch, while they run.
 	userCreated, rgwGoStarted bool
 	sampler, profile          *running
+	// purgeFailed says the versioned bucket's removal failed, so that the exit
+	// does not spend its bound again on the same bucket: remove-user.sh takes
+	// it with the user.
+	purgeFailed bool
 }
 
-// admin runs radosgw-admin in the toolbox, in the site the radosgw serves:
-// without the site options it works in a zone named default, which it
-// creates on first use and the radosgw never serves.
+// admin runs radosgw-admin in the toolbox, in the site the radosgw serves.
 func (st *state) admin(ctx context.Context, args ...string) ([]byte, error) {
-	return st.cl.Toolbox(ctx, append(append([]string{"radosgw-admin"}, args...),
-		"--rgw-realm="+st.site.realm, "--rgw-zonegroup="+st.site.zonegroup, "--rgw-zone="+st.site.zone)...)
+	return st.adminWithin(ctx, st.cl.CallTimeout, args...)
+}
+
+// adminWithin is admin bounded by timeout in place of a cluster call's.
+func (st *state) adminWithin(ctx context.Context, timeout time.Duration, args ...string) ([]byte, error) {
+	cl := st.cl
+	cl.CallTimeout = timeout
+	return cl.Toolbox(ctx, append(append([]string{"radosgw-admin"}, args...), st.siteOptions()...)...)
+}
+
+// siteOptions put radosgw-admin in the site the radosgw serves: without them
+// it works in a zone named default, which it creates on first use and the
+// radosgw never serves.
+func (st *state) siteOptions() []string {
+	return []string{"--rgw-realm=" + st.site.realm, "--rgw-zonegroup=" + st.site.zonegroup, "--rgw-zone=" + st.site.zone}
 }
 
 // ran records a command's output in run.log.
@@ -286,6 +308,7 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (err error) {
 		parity:       parity,
 		elbencho:     filepath.Join(cfg.Repo, "hack", "bench", "out", "elbencho"),
 		httpload:     filepath.Join(cfg.Repo, "hack", "bench", "out", "httpload"),
+		s3send:       filepath.Join(cfg.Repo, "hack", "bench", "out", "s3send"),
 	}
 	if err = os.MkdirAll(st.dir, 0o750); err != nil {
 		return fmt.Errorf("creating the run directory: %w", err)
@@ -315,11 +338,20 @@ func (r *Runner) run(ctx context.Context, st *state) error {
 		harness.Cmd{Name: filepath.Join(cfg.Repo, "hack", "bench", "elbencho-build.sh")}); err != nil {
 		return fmt.Errorf("building elbencho failed; see %s: %w", st.runLog, err)
 	}
-	if slices.Contains(cfg.Profiles, "noop") {
+	for _, tool := range []struct {
+		name, path, pkg string
+		needed          bool
+	}{
+		{"httpload", st.httpload, "./hack/bench/httpload", slices.Contains(cfg.Profiles, "noop")},
+		{"s3send", st.s3send, "./hack/bench/s3send", cfg.uses(sendProfiles)},
+	} {
+		if !tool.needed {
+			continue
+		}
 		if _, err := harness.Output(ctx, r.Exec, r.BuildTimeout, harness.Cmd{Name: "go", Args: []string{
-			"-C", cfg.Repo, "build", "-o", st.httpload, "./hack/bench/httpload",
+			"-C", cfg.Repo, "build", "-o", tool.path, tool.pkg,
 		}}); err != nil {
-			return fmt.Errorf("building httpload: %w", err)
+			return fmt.Errorf("building %s: %w", tool.name, err)
 		}
 	}
 	if err := r.useSite(ctx, st); err != nil {
@@ -361,8 +393,13 @@ func (r *Runner) run(ctx context.Context, st *state) error {
 			"give the radosgw the chart values' rgwCommandFlags with make cluster-up RELEASE=%s, then make populate RELEASE=%s",
 			cfg.Gateway, st.frontends, cfg.Release, cfg.Release)
 	}
-	if st.apiName, err = r.apiName(ctx, st); err != nil {
+	if st.apiName, st.defaultPlacement, err = r.zonegroup(ctx, st); err != nil {
 		return err
+	}
+	if cfg.uses(compProfiles) {
+		if err := r.checkClass(ctx, st); err != nil {
+			return err
+		}
 	}
 	if err := r.writeConfig(ctx, st); err != nil {
 		return err

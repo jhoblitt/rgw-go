@@ -54,7 +54,24 @@ var gwTables = []gwTable{
 	{"large-put", []string{"large-put"}},
 	{"large-get", []string{"large-get"}},
 	{"list", []string{"list"}},
+	{"comp-small-put", []string{"comp-small-put"}},
+	{"comp-small-get", []string{"comp-small-get"}},
+	{"comp-large-put", []string{"comp-large-put"}},
+	{"comp-large-get", []string{"comp-large-get"}},
+	{"crc-put", []string{"crc-put"}},
+	{"ver-put", []string{"ver-put"}},
+	{"ver-get", []string{"ver-get"}},
 }
+
+// The profiles whose results elbencho writes, <profile>.json, and those
+// s3send writes, <profile>-<label>.json; noop's are httpload's.
+var (
+	gwElbenchoProfiles = []string{
+		"small-put", "small-get", "large-put", "large-get", "list",
+		"comp-small-get", "comp-large-get", "ver-put", "ver-get",
+	}
+	gwSendProfiles = []string{"comp-small-put", "comp-large-put", "crc-put"}
+)
 
 // opt is a value a phase may lack.
 type opt struct {
@@ -64,7 +81,8 @@ type opt struct {
 
 func some(v float64) opt { return opt{v, true} }
 
-// gwPhase is one measured phase: an elbencho phase or an httpload run.
+// gwPhase is one measured phase: an elbencho phase, an httpload run or an
+// s3send put.
 type gwPhase struct {
 	profile string
 	variant string
@@ -119,8 +137,8 @@ type gwRun struct {
 // gateway answered with.
 var gwComparedSettings = []string{
 	"ceph_version", "seconds", "conc", "put_objects", "get_objects", "large_threads", "large_objects",
-	"list_threads", "list_objects", "smoke", "elbencho_commit", "elbencho_image", "elbencho_packages",
-	"tcp_nodelay", "nproc", "cpu", "mem_total_kib", "kernel", "gomaxprocs",
+	"list_threads", "list_objects", "comp_class", "ver_objects", "smoke", "elbencho_commit", "elbencho_image",
+	"elbencho_packages", "tcp_nodelay", "nproc", "cpu", "mem_total_kib", "kernel", "gomaxprocs",
 }
 
 // Gateway reads the run directories dirs, in order, and renders them side by
@@ -186,8 +204,13 @@ func readGatewayRun(ctx context.Context, dir string) (*gwRun, error) {
 	if err := r.readConfig(); err != nil {
 		return nil, err
 	}
-	for _, p := range []string{"small-put", "small-get", "large-put", "large-get", "list"} {
+	for _, p := range gwElbenchoProfiles {
 		if err := r.readElbencho(p); err != nil {
+			return nil, err
+		}
+	}
+	for _, p := range gwSendProfiles {
+		if err := r.readSend(p); err != nil {
 			return nil, err
 		}
 	}
@@ -195,7 +218,8 @@ func readGatewayRun(ctx context.Context, dir string) (*gwRun, error) {
 		return nil, err
 	}
 	if len(r.phases) == 0 {
-		return nil, fmt.Errorf("%s holds no profile results: no <profile>.json from elbencho and no noop-<t>.json from httpload", dir)
+		return nil, fmt.Errorf("%s holds no profile results: no <profile>.json from elbencho, no noop-<t>.json from httpload "+
+			"and no <profile>-<label>.json from s3send", dir)
 	}
 	profiles := map[string]bool{}
 	for i := range r.phases {
@@ -558,6 +582,88 @@ func (r *gwRun) readNoop() error {
 			errors:   h.Errors,
 			command:  h.Command,
 		})
+	}
+	return nil
+}
+
+// sendResult is what hack/bench/s3send writes for a put.
+type sendResult struct {
+	Threads      int     `json:"threads"`
+	DurationS    float64 `json:"duration_s"`
+	Objects      int64   `json:"objects"`
+	Errors       int64   `json:"errors"`
+	Bytes        int64   `json:"bytes"`
+	Size         int64   `json:"size"`
+	Block        int64   `json:"block"`
+	StorageClass string  `json:"storage_class"`
+	Checksum     string  `json:"checksum"`
+	LatUs        struct {
+		P50  float64 `json:"p50"`
+		P99  float64 `json:"p99"`
+		P999 float64 `json:"p999"`
+	} `json:"lat_us"`
+	Start   time.Time `json:"start"`
+	Command string    `json:"command"`
+}
+
+// variant names what the put did: the object's size, whole or in parts, and
+// the class and checksum it carried. A multipart upload is one request of
+// the row's rate and one of its latencies, so the row is marked as uploads
+// a second, as elbencho's parts are marked.
+func (h *sendResult) variant() string {
+	v := "PUT " + sizeName(h.Size)
+	split := h.Block > 0 && h.Block < h.Size
+	if split {
+		v += " in " + sizeName(h.Block) + " parts"
+	}
+	if h.StorageClass != "" {
+		v += ", class " + h.StorageClass
+	}
+	if h.Checksum != "" {
+		v += ", " + strings.ToUpper(h.Checksum)
+	}
+	if split {
+		v += " (uploads/s)"
+	}
+	return v
+}
+
+// readSend reads every <profile>-<label>.json, one s3send put each.
+func (r *gwRun) readSend(profile string) error {
+	files, err := filepath.Glob(filepath.Join(r.dir, profile+"-*.json"))
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		data, err := os.ReadFile(f) //nolint:gosec // a result in the directory the command line names
+		if err != nil {
+			return err
+		}
+		var h sendResult
+		if err := json.Unmarshal(data, &h); err != nil {
+			return fmt.Errorf("parsing %s: %w", f, err)
+		}
+		if h.Threads < 1 || h.DurationS <= 0 {
+			return fmt.Errorf("%s has no threads or no duration", f)
+		}
+		ph := gwPhase{
+			profile:  profile,
+			variant:  h.variant(),
+			threads:  h.Threads,
+			start:    h.Start,
+			elapsed:  time.Duration(h.DurationS * float64(time.Second)),
+			requests: float64(h.Objects),
+			lat:      [3]opt{some(h.LatUs.P50), some(h.LatUs.P99), some(h.LatUs.P999)},
+			errors:   h.Errors,
+			command:  h.Command,
+		}
+		if h.Objects > 0 {
+			ph.objects = some(float64(h.Objects))
+		}
+		if h.Bytes > 0 {
+			ph.bytes = some(float64(h.Bytes))
+		}
+		r.phases = append(r.phases, ph)
 	}
 	return nil
 }

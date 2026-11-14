@@ -89,6 +89,23 @@ type world struct {
 	holdProfile bool
 	user        bool
 	buckets     map[string]bool
+	// versioned are the buckets s3send enabled versioning on, which only a
+	// bucket removal empties.
+	versioned map[string]bool
+	// classes are the compressors of the zone's default-placement storage
+	// classes in zone get, by class; an empty one is a class with none.
+	// placement is the zonegroup's default placement.
+	classes   map[string]string
+	placement string
+	// rmKeeps has bucket rm exit 0 and remove nothing, and removed is the
+	// bucket a bucket rm last named.
+	rmKeeps bool
+	removed string
+	// lookups answer the lookups of the buckets they name in place of the
+	// buckets' presence, and readBack, once set, every lookup of the bucket a
+	// bucket rm removed from then on.
+	lookups  map[string]answer
+	readBack *answer
 	// avail is what each ceph df reports in turn, the last from then on.
 	avail []int64
 	// radosgws is how many radosgw entries each service dump lists in turn,
@@ -118,6 +135,10 @@ func newWorld(gw string) *world {
 		exec:      &harnessfakes.FakeExecer{},
 		stdout:    &bytes.Buffer{},
 		buckets:   map[string]bool{},
+		versioned: map[string]bool{},
+		lookups:   map[string]answer{},
+		classes:   map[string]string{"STANDARD": "", "COMP_ZLIB": "zlib", "COMP_SNAPPY": "snappy", "COMP_ZSTD": "zstd", "COMP_LZ4": "lz4"},
+		placement: "default-placement",
 		clock:     runStart,
 		avail:     []int64{free},
 		radosgws:  []int{1},
@@ -324,7 +345,10 @@ func (w *world) output(_ context.Context, c harness.Cmd) ([]byte, error) {
 	case c.Name == "rooket" && args[0] == "ceph":
 		return w.ceph(args)
 	case c.Name == "rooket" && args[0] == "radosgw-admin":
-		return w.admin(args[1 : len(args)-3])
+		out, err := w.admin(args[1 : len(args)-3])
+		return out, throughRooket(err)
+	case c.Name == "rooket" && args[0] == "sh":
+		return w.lookup(args)
 	case c.Name == "go" && args[0] == "version":
 		return []byte("go version go1.27.1 linux/amd64\n"), nil
 	case c.Name == "go" && slices.Contains(args, "run"):
@@ -339,6 +363,8 @@ func (w *world) output(_ context.Context, c harness.Cmd) ([]byte, error) {
 		return nil, w.elbencho(c)
 	case strings.HasSuffix(c.Name, "/httpload"):
 		return nil, w.httpload(c)
+	case strings.HasSuffix(c.Name, "/s3send"):
+		return nil, w.s3send(c)
 	case strings.HasSuffix(c.Name, "/elbencho-build.sh"):
 		fmt.Fprintln(c.Out, "elbencho 3.0-25 is current")
 		return nil, nil
@@ -351,7 +377,7 @@ func (w *world) output(_ context.Context, c harness.Cmd) ([]byte, error) {
 		fmt.Fprintln(c.Out, "rgw-go (pid 777) stopped")
 		return nil, nil
 	case strings.HasSuffix(c.Name, "/remove-user.sh"):
-		w.user, w.buckets = false, map[string]bool{}
+		w.user, w.buckets, w.versioned = false, map[string]bool{}, map[string]bool{}
 		return nil, nil
 	}
 	return nil, fmt.Errorf("unexpected command %s", line)
@@ -429,10 +455,23 @@ func (w *world) admin(args []string) ([]byte, error) {
 		}
 		return []byte("[" + strings.Join(entries, ",") + "]\n"), nil
 	case cmd == "zonegroup get":
-		return []byte(`{"name":"ceph-objectstore","api_name":"ceph-objectstore"}`), nil
+		return fmt.Appendf(nil, `{"name":"ceph-objectstore","api_name":"ceph-objectstore","default_placement":%q}`, w.placement), nil
+	case cmd == "zone get":
+		classes := map[string]map[string]string{}
+		for class, compressor := range w.classes {
+			classes[class] = map[string]string{"data_pool": dataPool}
+			if compressor != "" {
+				classes[class]["compression_type"] = compressor
+			}
+		}
+		zone, err := json.Marshal(map[string]any{"name": "ceph-objectstore", "placement_pools": []any{
+			map[string]any{"key": "default-placement", "val": map[string]any{"storage_classes": classes}},
+		}})
+		Expect(err).NotTo(HaveOccurred())
+		return zone, nil
 	case cmd == "user info --uid bench":
 		if !w.user {
-			return nil, errors.New("exit status 22: could not fetch user info: no user info saved")
+			return nil, adminFailure{status: 22, stderr: "could not fetch user info: no user info saved"}
 		}
 		return []byte(benchUser), nil
 	case strings.HasPrefix(cmd, "user create --uid bench"):
@@ -440,11 +479,99 @@ func (w *world) admin(args []string) ([]byte, error) {
 		return []byte(benchUser), nil
 	case strings.HasPrefix(cmd, "bucket stats --bucket "):
 		if !w.buckets[args[len(args)-1]] {
-			return nil, errors.New("exit status 2: failure: no such bucket")
+			return nil, adminFailure{status: 2, stderr: "failure: no such bucket"}
 		}
 		return []byte("{}\n"), nil
+	case strings.HasPrefix(cmd, "bucket rm --bucket "):
+		// A removal of a versioned bucket takes 7 minutes of the world's clock.
+		w.clock = w.clock.Add(7 * time.Minute)
+		w.removed = args[3]
+		if bucket := args[3]; !w.buckets[bucket] {
+			return nil, adminFailure{status: 2, stderr: "failure: no such bucket"}
+		}
+		if w.rmKeeps {
+			// As radosgw-admin does when it removes nothing: exit status 0.
+			return nil, nil
+		}
+		delete(w.buckets, args[3])
+		delete(w.versioned, args[3])
+		return nil, nil
 	}
 	return nil, fmt.Errorf("unexpected radosgw-admin %s", cmd)
+}
+
+// lookup answers the toolbox's sh running the bucket lookup, sh -c <script> sh
+// <bucket> <site options>, as the script does: radosgw-admin bucket stats'
+// error output, then its exit status on a line of its own.
+func (w *world) lookup(args []string) ([]byte, error) {
+	site := []string{"--rgw-realm=ceph-objectstore", "--rgw-zonegroup=ceph-objectstore", "--rgw-zone=ceph-objectstore"}
+	if len(args) != 8 || args[1] != "-c" || args[2] != gateway.LookupScript || args[3] != "sh" || !slices.Equal(args[5:], site) {
+		return nil, fmt.Errorf("unexpected sh %s", strings.Join(args, " "))
+	}
+	bucket := args[4]
+	a, ok := w.lookups[bucket]
+	if w.readBack != nil && bucket == w.removed {
+		a, ok = *w.readBack, true
+	}
+	if !ok {
+		_, err := w.admin([]string{"bucket", "stats", "--bucket", bucket})
+		if f, failed := errors.AsType[adminFailure](err); failed {
+			a = answer{status: f.status, stderr: f.stderr}
+		} else if err != nil {
+			return nil, err
+		}
+	}
+	if a.err != nil {
+		return nil, a.err
+	}
+	var out strings.Builder
+	if a.stderr != "" {
+		out.WriteString(a.stderr + "\n")
+	}
+	if !a.noLine {
+		fmt.Fprintf(&out, "\nradosgw-admin-status=%d\n", a.status)
+	}
+	return []byte(out.String()), nil
+}
+
+// answer is how a bucket lookup comes back from the toolbox in place of what
+// the bucket's presence gives: radosgw-admin's exit status after its error
+// output, which the lookup's sh prints, with the status line left out when
+// noLine is set; or err, a failure of the call itself.
+type answer struct {
+	status int
+	stderr string
+	noLine bool
+	err    error
+}
+
+// adminFailure is radosgw-admin exiting with status in the toolbox, having
+// written stderr.
+type adminFailure struct {
+	status int
+	stderr string
+}
+
+func (e adminFailure) Error() string {
+	return fmt.Sprintf("radosgw-admin exited %d: %s", e.status, e.stderr)
+}
+
+// rooketExit is the error of a toolbox call whose command failed: rooket
+// exits 1 for any error of its kubectl's (rooket cmd/kubectl.go, cmd/root.go),
+// and the run's error carries the error output.
+type rooketExit struct{ stderr string }
+
+func (e rooketExit) Error() string { return "exit status 1: " + e.stderr }
+
+func (rooketExit) ExitCode() int { return 1 }
+
+// throughRooket is err as a toolbox call returns it: radosgw-admin's own exit
+// status reaches the run as rooket's 1.
+func throughRooket(err error) error {
+	if f, ok := errors.AsType[adminFailure](err); ok {
+		return rooketExit{stderr: f.stderr}
+	}
+	return err
 }
 
 // next is the first of answers, which it drops unless it is the last.
@@ -547,6 +674,52 @@ func (w *world) httpload(c harness.Cmd) error {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(os.WriteFile(flag(c.Args, "-out"), result, 0o600)).To(Succeed())
 	fmt.Fprintln(c.Out, "httpload done")
+	return nil
+}
+
+// s3send runs s3send as it would: the bucket it writes to or turns versioning
+// on in must exist, and a measured put writes its result and has rgw-go's GC
+// log a cycle during it.
+func (w *world) s3send(c harness.Cmd) error {
+	bucket := flag(c.Args, "-bucket")
+	if !w.buckets[bucket] {
+		return fmt.Errorf("s3send: the bucket %s does not exist", bucket)
+	}
+	if flag(c.Args, "-op") == "versioning" {
+		w.versioned[bucket] = true
+		return nil
+	}
+	fmt.Fprintln(c.Out, "s3send done")
+	out := flag(c.Args, "-out")
+	if out == "" {
+		return nil
+	}
+	threads, err := strconv.Atoi(flag(c.Args, "-threads"))
+	Expect(err).NotTo(HaveOccurred())
+	result := map[string]any{
+		"op": "put", "threads": threads, "duration_s": 5.0, "objects": 392, "errors": 0, "in_flight": threads, "bytes": 1605632,
+		"size": size(flag(c.Args, "-size")), "lat_us": map[string]any{"p50": 41022.771, "p99": 42051.836, "p999": 42078.596},
+		"start": "2026-10-13T07:11:50Z", "command": "s3send " + strings.Join(c.Args, " "),
+	}
+	if block := flag(c.Args, "-block"); block != "" {
+		result["block"], err = strconv.Atoi(block)
+		Expect(err).NotTo(HaveOccurred())
+	}
+	if class := flag(c.Args, "-storage-class"); class != "" {
+		result["storage_class"] = class
+	}
+	if sum := flag(c.Args, "-checksum"); sum != "" {
+		result["checksum"] = sum
+	}
+	data, err := json.Marshal(result)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(os.WriteFile(out, data, 0o600)).To(Succeed())
+	if w.gateway == "rgw-go" {
+		w.gc++
+		appendFile(filepath.Join(w.out(), "rgw-go.log"), fmt.Sprintf(
+			`{"level":"INFO","msg":"request"}`+"\ngc %d @41.013s 0%%: 0.042+0.84+0.028 ms clock, 1.3+0.43/1.7/0.10+0.92 ms cpu, 3->4->1 MB, 4 MB goal, 0 MB stacks, 0 MB globals, 32 P\n",
+			w.gc))
+	}
 	return nil
 }
 
