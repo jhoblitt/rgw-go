@@ -539,6 +539,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw matches condition key names case-sensitively](#radosgw-matches-condition-key-names-case-sensitively) | pending | pending | ✓ |
 | [radosgw-admin mfa check names the serial number when --totp-pin is missing](#radosgw-admin-mfa-check-names-the-serial-number-when---totp-pin-is-missing) | pending | pending | ✓ |
 | [radosgw skips a bucket's default encryption for a write that sends an empty encryption header](#radosgw-skips-a-buckets-default-encryption-for-a-write-that-sends-an-empty-encryption-header) | [#79506](https://tracker.ceph.com/issues/79506), [#80258](https://tracker.ceph.com/issues/80258), [#80260](https://tracker.ceph.com/issues/80260) | [ceph/ceph#71073](https://github.com/ceph/ceph/pull/71073), [ceph/ceph#71534](https://github.com/ceph/ceph/pull/71534), [ceph/ceph#71535](https://github.com/ceph/ceph/pull/71535) | ✓ |
+| [radosgw's CopyObject ignores x-amz-tagging-directive](#radosgws-copyobject-ignores-x-amz-tagging-directive) | pending | pending | ✓ |
+| [radosgw's CopyObject and CreateMultipartUpload evaluate s3:PutObject without the request's ACL and tag condition keys](#radosgws-copyobject-and-createmultipartupload-evaluate-s3putobject-without-the-requests-acl-and-tag-condition-keys) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -34196,6 +34198,24 @@ Every new entry adds its row to this table, in document order.
     [rgw_op.cc:4599-4600](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4599-L4600);
     [rgw_op.cc:6950-6951](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6950-L6951),
     [rgw_op.cc:4892-4893](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4892-L4893)).
+  - `RGWCopyObj::verify_permission` evaluates s3:PutObject on the
+    destination, then builds the destination's ACL from the request's ACL
+    headers (`init_dest_policy`)
+    ([rgw_op.cc:5491-5495](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5491-L5495),
+    [rgw_rest_s3.cc:3502-3506](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3502-L3506);
+    [rgw_op.cc:6054-6058](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6054-L6058),
+    [rgw_rest_s3.cc:3752-3756](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3752-L3756)).
+    It reads no `x-amz-tagging` and no `x-amz-tagging-directive`, but the
+    attrs it collects from the request hold the `x-amz-tagging` header as
+    sent under the tag attr's name, a copy that replaces its metadata takes
+    them whole, and `RGWObjTags::decode` reads that text as the tags older
+    objects stored, so the header sets the copy's tags
+    ([rgw_op.cc:5526](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5526),
+    [rgw_rados.cc:3713](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3713),
+    [rgw_tag.h:32-62](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.h#L32-L62);
+    [rgw_op.cc:6089](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6089),
+    [rgw_rados.cc:3866](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3866),
+    [rgw_tag.h:32-62](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.h#L32-L62)).
   - Under `src/rgw`, s3:PutObjectAcl and s3:PutObjectVersionAcl are
     evaluated only by `RGWPutACLs`
     ([rgw_op.cc:5749](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5749),
@@ -34211,14 +34231,40 @@ Every new entry adds its row to this table, in document order.
     successfully set the tag-set with your PutObject request, you must
     have the s3:PutObjectTagging"
     ([api_op_PutObject.go:86-90](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_PutObject.go#L86-L90)).
+    The user guide's table "Required permissions for Amazon S3 API
+    operations" lists both as conditionally required for CopyObject's
+    destination ("if you want to put the copied object with the object
+    access control list (ACL) to the destination bucket" and "with object
+    tagging") and for CreateMultipartUpload ("if you want to set the object
+    access control list (ACL) permissions for the uploaded object" and "to
+    add object tagging(s) to the uploaded object"), as for PutObject
+    (https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-with-s3-policy-actions.html,
+    retrieved 2026-11-14). The SDK's CopyObject and CreateMultipartUpload
+    references list only s3:GetObject on the source and s3:PutObject on the
+    destination, and the KMS permissions
+    ([api_op_CopyObject.go:71-82](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_CopyObject.go#L71-L82),
+    [api_op_CreateMultipartUpload.go:59-69](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_CreateMultipartUpload.go#L59-L69)).
+    Only the POST object upload has no Amazon text: the table has no row for
+    it and the SDK no operation.
 - **Releases:** v19.2.7 and v20.2.4; older releases not checked.
-- **rgw-go:** matches it until plan task S12 lands. PutObject evaluates
-  s3:PutObject, then the permissions its object-lock headers need, and
-  never s3:PutObjectAcl or s3:PutObjectTagging, which only the
-  PutObjectAcl and PutObjectTagging ops evaluate
-  (`internal/op/putobject.go:141-146`, `internal/op/objectattrs.go:37-39`
-  and `:188-190`); CreateMultipartUpload does the same
-  (`internal/op/initmultipart.go:75-80`).
+- **rgw-go:** does not reproduce it, for the three writes it serves. A
+  PutObject, a CopyObject's destination and a CreateMultipartUpload whose
+  request names an ACL other than private (an `x-amz-acl` that is none of
+  empty, `private` and `bucket-owner-full-control`, or an `x-amz-grant-*`
+  header) is authorized as s3:PutObjectAcl too, and one that carries
+  `x-amz-tagging` as s3:PutObjectTagging too, on the object's ARN once
+  s3:PutObject and the permissions its object-lock headers need have passed.
+  The policies decide: a Deny refuses the write; an account's user and a role
+  in an account need a policy that allows the action; another account's
+  user needs its own identity policy's Allow, and another account's root
+  needs none; the account's own root passes. Where none decides, no ACL
+  permission is asked of a requester outside an account, a role outside one
+  included, nor of the anonymous user. A denial is 403 AccessDenied with
+  nothing written (`verifyACLAndTags`,
+  `internal/op/writeacltags.go`; `docs/differences.md`, "A write's ACL and
+  tag headers need s3:PutObjectAcl and s3:PutObjectTagging", which records
+  why `bucket-owner-full-control` needs s3:PutObject alone). The POST object
+  upload is not served yet.
 - **Upstream:** [#24131](https://tracker.ceph.com/issues/24131), Fix Under
   Review since 2018, covers the tagging half; the ACL half: pending: sent
   to rgw-bug-reproduction.
@@ -35029,3 +35075,123 @@ Every new entry adds its row to this table, in document order.
   is pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task WP-29, 2026-11-14; derived from the source, not
   reproduced.
+
+## radosgw's CopyObject ignores x-amz-tagging-directive
+
+- **Kind:** defect, S3-correctness, not security-relevant: radosgw reads no
+  `x-amz-tagging-directive`, so a CopyObject's tags follow its metadata
+  directive alone. Under the default metadata directive the copy keeps the
+  source's tags, whatever the request's tagging directive and `x-amz-tagging`
+  say, and under REPLACE the header's text becomes the copy's tags, though
+  the default tagging directive is COPY and keeps the source's. The pinned
+  baselines record tests of the directive failing on radosgw at both
+  releases.
+- **Evidence:**
+  - No code reads the header: a `git grep -i "tagging.directive"` under
+    `src/rgw` finds nothing at v19.2.7 or v20.2.4. `HTTP_X_AMZ_TAGGING` is
+    read by PutObject and CreateMultipartUpload alone, and the POST form's
+    `tagging` field by the POST upload
+    ([rgw_rest_s3.cc:2634](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2634),
+    [rgw_rest_s3.cc:4013](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4013),
+    [rgw_rest_s3.cc:3083](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3083);
+    [rgw_rest_s3.cc:2787](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2787),
+    [rgw_rest_s3.cc:4464](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4464),
+    [rgw_rest_s3.cc:3219](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3219)).
+  - What a copy does with tags instead: under the default metadata directive
+    the destination takes the source's attrs, its tag attr included, and under
+    REPLACE the request's attrs
+    ([rgw_rados.cc:3710-3713](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3710-L3713),
+    [rgw_rados.cc:3863-3866](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3863-L3866)),
+    which hold no tag set but the `x-amz-tagging` header's text, which
+    `RGWObjTags::decode` reads back as the tags older objects stored
+    ([rgw_tag.h:32-62](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.h#L32-L62),
+    [rgw_tag.h:32-62](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.h#L32-L62)).
+  - The SDK documents `x-amz-tagging-directive` as COPY or REPLACE, default
+    COPY, REPLACE taking the request's `x-amz-tagging` tag-set
+    ([api_op_CopyObject.go:817-900](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_CopyObject.go#L817-L900)).
+  - The pinned baselines record these three tests failing on radosgw 19.2.6
+    and 19.2.7 (`test/s3tests/baseline/squid.json`) and 20.2.4
+    (`test/s3tests/baseline/tentacle.json`), each by the code
+    above. test_object_copy_replacing_tagging and
+    test_object_copy_replacing_tagging_with_none send a tagging directive
+    REPLACE under the default metadata directive and expect the request's
+    tags, or none; radosgw keeps the source's.
+    test_object_copy_replacing_metadata_and_copying_tagging sends metadata
+    directive REPLACE with tagging directive COPY once, and with no tagging
+    directive the second time, and expects the source's tags kept both
+    times; radosgw drops them, since REPLACE takes the request's attrs and
+    those hold no tag attr. The tests of the default COPY,
+    test_object_copy_retaining_tagging, test_object_copy_tagging_directive_copy
+    and test_object_copy_tagging_ignored_without_directive, are recorded
+    passed.
+- **Releases:** v19.2.7 and v20.2.4; the baseline also holds v19.2.6.
+- **rgw-go:** reproduces it. rgw-go reads no `x-amz-tagging-directive`
+  either (`internal/s3/copyobject.go`), until plan task WP-31 serves it.
+  The write's tag header is checked as s3:PutObjectTagging meanwhile (`docs/differences.md`, "A write's ACL and
+  tag headers need s3:PutObjectAcl and s3:PutObjectTagging").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task S12's review, 2026-11-14, while checking which
+  headers a CopyObject takes its tags from; derived from the source and the
+  pinned baselines.
+
+## radosgw's CopyObject and CreateMultipartUpload evaluate s3:PutObject without the request's ACL and tag condition keys
+
+- **Kind:** defect, possibly security-relevant. Unreproduced on a cluster:
+  derived from the source, and seen in rgw-go, which mirrors it.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWPutObj::verify_permission` adds `s3:x-amz-acl`, the five
+    `s3:x-amz-grant-*` keys and an `s3:RequestObjectTag/<key>` for each tag
+    of the request to the environment, then evaluates s3:PutObject
+    ([rgw_op.cc:3966-3971](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3966-L3971),
+    [rgw_op.cc:4175-4180](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4175-L4180)).
+    `RGWPutACLs::verify_permission` adds `s3:x-amz-acl` and the grant keys
+    ([rgw_op.cc:5745-5747](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5745-L5747),
+    [rgw_op.cc:6320-6322](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6320-L6322)).
+  - Nothing else under `src/rgw` adds them: a search of `src/rgw` for
+    `s3:x-amz-acl`, `s3:RequestObjectTag` and
+    `rgw_add_grant_to_iam_environment` finds those lines, the helper's
+    definition and the key table's entry for `s3:x-amz-acl`, at both tags
+    ([rgw_op.cc:827-846](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L827-L846),
+    [rgw_iam_policy_keywords.gperf:98](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy_keywords.gperf#L98);
+    [rgw_op.cc:863-882](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L863-L882),
+    [rgw_iam_policy_keywords.gperf:98](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy_keywords.gperf#L98)).
+  - `RGWInitMultipart::verify_permission` and `RGWCopyObj::verify_permission`
+    add none of them before they evaluate s3:PutObject. The first adds the
+    existing object's tags and the encryption headers
+    ([rgw_op.cc:6274-6289](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6274-L6289),
+    [rgw_op.cc:6941-6956](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6941-L6956)),
+    the second the destination bucket's tags, `s3:x-amz-copy-source` and
+    `s3:x-amz-metadata-directive`
+    ([rgw_op.cc:5471-5493](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5471-L5493),
+    [rgw_op.cc:6034-6056](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6034-L6056)).
+    A condition in a policy that decides s3:PutObject on one of the absent
+    keys is therefore judged on an absent key, which `Condition::eval`
+    answers false for every operator but `Null` and the three `ForAllValues`
+    ones, the negated operators included
+    ("[radosgw's negated condition operators are false on an absent key](#radosgws-negated-condition-operators-are-false-on-an-absent-key)").
+  - Amazon's guide documents `s3:x-amz-acl` as the condition key of
+    s3:PutObject that "defines behavior of the `x-amz-acl` request header
+    that the PUT Object API supports"
+    ([amazon-s3-policy-keys.md:75](https://github.com/awsdocs/amazon-s3-developer-guide/blob/e5e6bbd2771d39e8ce3736849548a94b98d5094b/doc_source/amazon-s3-policy-keys.md#L75)
+    in the guide's archived source), and the user guide's table "Required
+    permissions for Amazon S3 API operations" lists s3:PutObject as required
+    for CopyObject's destination, "to put the copied object in the
+    destination bucket", and for CreateMultipartUpload, "to create multipart
+    upload"
+    (https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-with-s3-policy-actions.html,
+    retrieved 2026-11-15). Whether Amazon S3 supplies the keys to the checks
+    of those two operations is not verified here.
+- **Releases:** v19.2.7 and v20.2.4; older releases not checked.
+- **rgw-go:** reproduces it. A copy's s3:PutObject check carries the copy
+  source and the metadata directive, and a multipart upload's the encryption
+  headers (`copyKeys` and `cryptKeys`, `internal/authz/env.go`). The
+  s3:PutObjectAcl check S12 adds carries `s3:x-amz-acl` and the grant keys,
+  and its s3:PutObjectTagging check the request-tag keys, on all three
+  writes (`docs/differences.md`, "A write's ACL and tag headers need
+  s3:PutObjectAcl and s3:PutObjectTagging"). Adding the keys to s3:PutObject
+  for the two operations is plan task S13.
+- **Upstream:** pending; prior art not searched: sent to
+  rgw-bug-reproduction.
+- **Found:** phase 2 task S12's adversarial review, 2026-11-15, probing which
+  condition keys the s3:PutObject check of each write carries; derived from
+  the source and seen in rgw-go, not reproduced on a cluster.
