@@ -34,7 +34,7 @@ The set's files:
 
 | File | Unit | Tasks |
 |---|---|---|
-| `00-index.md` | this index, and the shared tasks S1 to S8 | 8 |
+| `00-index.md` | this index, and the shared tasks S1 to S11 | 11 |
 | `V-versioning.md` | the OLH protocol, versioned ops, ListObjectVersions, MFA delete | V0-V20 |
 | `L-object-lock.md` | object lock: configuration, retention, legal hold, enforcement | L1-L5b |
 | `C-lifecycle.md` | lifecycle configuration and the worker | C1-C15 |
@@ -307,9 +307,90 @@ Found by WP-25's adversarial review (M1), and numbered here before WP-25 merged 
   [ceph/ceph#66099](https://github.com/ceph/ceph/pull/66099), closed unmerged on 2026-10-22.
 - **Depends on:** nothing. **PR:** one. **Brief:** about 45 lines.
 
+### Task S9: a Deny's condition holds where Amazon S3's or radosgw's evaluation holds
+
+Found by L7's adversarial review (F2, F4), and numbered here before L7 merged (PP-12).
+
+- **Layer:** policy (`internal/policy`). **Files:** condition evaluation in
+  `internal/policy/condition.go`, the statement's use of it, and their specs;
+  `docs/differences.md`; `docs/ceph-upstream-bugs.md`. **Cluster:** no.
+- **Security boundary:** policy evaluation is authorization; adversarial review applies (PP-14).
+- **Behaviour:**
+  1. A negated condition operator (StringNotEquals, StringNotEqualsIgnoreCase, StringNotLike,
+     NumericNotEquals, DateNotEquals, ArnNotEquals, ArnNotLike, NotIpAddress, and any other
+     negated operator rgw-go parses) on a key the request context lacks holds in a Deny
+     statement, as the IAM User Guide's condition operators page says Amazon S3 evaluates it
+     (cited at implementation). radosgw's `Condition::eval` answers the condition's IfExists flag
+     for every absent key but Null and the ForAllValues operators
+     ([rgw_iam_policy.cc:854-869](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L854-L869),
+     [rgw_iam_policy.cc:873-889](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L873-L889)), and rgw-go copies it today.
+  2. On Squid, whose Null ignores its values (the registry's "Squid's negated condition operators
+     hold when any pair differs, and its Null ignores its values"), a Null condition in a Deny
+     statement holds when Squid's answer or Amazon S3's holds.
+  3. An Allow statement keeps radosgw's evaluation for both. Amazon S3's answer there would grant
+     on rgw-go what radosgw refuses on the same zone; that is the owner's decision, with S8's
+     NotAction Allow, and until the owner makes it rgw-go differs only on the refusing side.
+- **Specs:** per release, each negated operator on an absent key and on a present one, in a Deny
+  and in an Allow statement; Null true and false on an absent and a present key, in each; the
+  IfExists forms unchanged.
+- **Exclusions and registry:** a `docs/differences.md` entry; the rgw-go lines of the registry
+  entries L7 adds for the absent-key rule.
+- **Depends on:** L7. **PR:** one. **Brief:** about 40 lines.
+
+### Task S10: a Deny's condition key names match without regard to case
+
+Found by L7's adversarial review (F3), and numbered here before L7 merged (PP-12).
+
+- **Layer:** policy (`internal/policy`). **Files:** the condition key's parse and the environment
+  lookup (`internal/policy/env.go`, the condition parser) and their specs; `docs/differences.md`;
+  `docs/ceph-upstream-bugs.md`. **Cluster:** no.
+- **Security boundary:** policy evaluation is authorization; adversarial review applies (PP-14).
+- **Behaviour:**
+  1. In a Deny statement, a condition's key name matches the request context's key whatever the
+     case of either, as the IAM User Guide's condition element page says of Amazon S3 (cited at
+     implementation). radosgw keeps the key as the policy spells it
+     ([rgw_iam_policy.cc:476-483](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L476-L483),
+     [rgw_iam_policy.cc:486-493](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L486-L493)) and finds it in an
+     exact-match `std::unordered_multimap<std::string, std::string>`
+     ([rgw_iam_policy.h:326](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L326),
+     [rgw_iam_policy.h:345](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L345)), and rgw-go matches it today.
+  2. An Allow statement keeps radosgw's exact match, as in S9, until the owner decides.
+  3. Only the key's name folds: each operator keeps its own rule for the values.
+- **Specs:** per release, an `aws:` and an `s3:` key spelled in another case, in a Deny and in an
+  Allow statement; the exact spelling unchanged.
+- **Exclusions and registry:** a `docs/differences.md` entry; the rgw-go line of the registry
+  entry L7 adds for the key names.
+- **Depends on:** L7. **PR:** one. **Brief:** about 30 lines.
+
+### Task S11: a bound on an XML request body's elements and depth
+
+Found by L7's adversarial review (F5), and numbered here before L7 merged (PP-12).
+
+- **Layer:** the XML reader (`internal/xmltext`) and its specs; `docs/differences.md`.
+  **Cluster:** no.
+- **Security boundary:** the request path's parsing of untrusted bytes; adversarial review applies
+  (PP-14).
+- **Behaviour:**
+  1. The tree builder refuses a document whose element count or nesting depth passes a bound, and
+     stops building at the bound, with the error each op gives for a body it cannot parse. Today
+     a body at `rgw_max_put_param_size` of nested or flat elements costs tens of milliseconds and
+     60 to 110 times its size in allocation (measured at L7's head), and DeleteObjects and the
+     lock subresources read such a body from a requester the permission check then refuses.
+  2. The bounds admit every document an honest client sends within radosgw's own limits: the
+     largest DeleteObjects, lifecycle configuration (`rgw_lc_max_rules`), CORS, tagging and
+     website documents within `rgw_max_put_param_size`, measured at implementation; the bounds
+     and their reasons are recorded.
+  3. radosgw's `RGWXMLParser` sets no such bound on expat, installing only its element and
+     character handlers ([rgw_xml.cc:219-221](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L219-L221),
+     [rgw_xml.cc:219-221](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L219-L221)), so this is a difference.
+- **Specs:** a document at each bound parses and one past it is refused, its allocation bounded
+  (shown by an allocation count); each op's largest honest document parses.
+- **Exclusions and registry:** a `docs/differences.md` entry.
+- **Depends on:** nothing. **PR:** one. **Brief:** about 35 lines.
+
 ## Order
 
-1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, S6 once V2 lands, S7 once V10, BC-17, BC-23, BC-10 and BC-28a land, and S8 at once.
+1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, S6 once V2 lands, S7 once V10, BC-17, BC-23, BC-10 and BC-28a land, S8 and S11 at once, and S9 and S10 once L7 lands.
 2. **Then the units in parallel**, each in its own file's waves. V's foundation (V0 to V3b) comes first among the units, because L and C consume its OLH seams. B and WP start with S2, and the T and SM units start at once. Within the waves:
    - The cluster tasks of every unit run one at a time.
    - The recording tasks, which append to the parity ledgers, land one at a time through the controller.
