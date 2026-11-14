@@ -1,13 +1,16 @@
 package op
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/cksum"
+	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/policy"
 )
@@ -36,6 +39,23 @@ type CompleteMultipart struct {
 	// ChecksumField is the request's checksum fields, which
 	// SuppliedForComplete reads (ChecksumInput).
 	ChecksumField func(name string) (string, bool)
+	// SSECAlgorithm is the x-amz-server-side-encryption-customer-algorithm
+	// header, nil when absent: beast files a header sent empty, so
+	// rgw_s3_prepare_decrypt refuses it as no AES256 rather than as missing
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1340-L1354 at v20.2.4).
+	SSECAlgorithm *string
+	// SSECKey and SSECKeyMD5 are the -key and -key-MD5 headers, "" when
+	// absent, with which a completion of an SSE-C upload names the upload's
+	// key (verifyEncryption).
+	SSECKey, SSECKeyMD5 string
+	// SSECSent reports whether the request sends any header that beast
+	// files under a name starting HTTP_X_AMZ_SERVER_SIDE_ENCRYPTION_CUSTOMER_,
+	// as v20.2.5's exists_prefix asks
+	// (https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_rest_s3.cc#L4627-L4629 at v20.2.5).
+	SSECSent bool
+	// Secure is rgw_transport_is_secure: TLS, or a forwarded protocol radosgw
+	// trusts.
+	Secure bool
 
 	// Parts is the document's parts as ParseCompleteMultipart reads them.
 	Parts []CompletePart
@@ -48,6 +68,31 @@ type CompleteMultipart struct {
 	VersionID string
 	// Checksum is the combined checksum the store stored, nil for none.
 	Checksum *cksum.Cksum
+	// Echo is what send_response echoes of the encryption verifyEncryption
+	// decided, set once the decision passes, so that an error after it
+	// echoes it too, as radosgw's does
+	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4604-L4612 at v20.2.4).
+	Echo CryptEcho
+}
+
+// CryptEcho is a Tentacle completion's crypt_http_responses, which
+// rgw_s3_prepare_decrypt gathers
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1415-L1418,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1450-L1453 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1518-L1520 at v20.2.4).
+// A Squid radosgw's completion echoes none
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4106-L4112 at v19.2.7),
+// so a Squid completion's is zero.
+type CryptEcho struct {
+	// SSECKeyMD5 is the key MD5 header as the request sent it, once it named
+	// an SSE-C upload's key, whose algorithm, AES256, is echoed beside it; ""
+	// for none.
+	SSECKeyMD5 string
+	// SSE is x-amz-server-side-encryption: aws:kms for SSE-KMS, AES256 for
+	// SSE-S3, "" for none.
+	SSE string
+	// KMSKeyID is an SSE-KMS upload's user.rgw.crypt.keyid as stored.
+	KMSKeyID string
 }
 
 var _ Op = (*CompleteMultipart)(nil)
@@ -79,10 +124,21 @@ func (o *CompleteMultipart) VerifyPermission(ctx context.Context, r *Request) er
 // empty body, a document that does not parse or holds no part, MalformedXML;
 // more parts than rgw_multipart_part_upload_limit once repeats collapse,
 // InvalidRange (-ERANGE); then, where execute reads the upload's info
-// (readCompleteUpload), an upload of a crypt mode rgw-go does not know
-// refused (refuseUnknownCryptMode) and the checksum the request supplies
+// (readCompleteUpload), the upload's encryption decided where v20.2.5
+// decides it (verifyEncryption), which v20.2.4 does in get_params, before
+// the document parses, and the checksum the request supplies
 // (completeChecksum); then the completion, whose head takes the request id
-// as its tag, at VersionForWrite's instance.
+// as its tag, at VersionForWrite's instance. An answer the store gives from
+// an object a completion already wrote, which a retry of a completion that
+// succeeded and an upload id that names no upload both meet, is decided as
+// an upload is, over that head's crypt attrs (completedHead), before it is
+// answered; radosgw answers it from check_previously_completed with no
+// decision at all
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7248-L7256 at v20.2.4,
+// https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_op.cc#L7431-L7443 at v20.2.5),
+// rendering the head's combined checksum (docs/ceph-upstream-bugs.md,
+// "radosgw shows an encrypted upload's plaintext checksums to a requester
+// without its key").
 func (o *CompleteMultipart) Execute(ctx context.Context, r *Request) error {
 	if o.UploadID == "" {
 		return fmt.Errorf("%w: no upload id", ErrUnknown)
@@ -107,7 +163,7 @@ func (o *CompleteMultipart) Execute(ctx context.Context, r *Request) error {
 	if err != nil {
 		return err
 	}
-	if cerr := refuseUnknownCryptMode(up); cerr != nil {
+	if cerr := o.verifyEncryption(ctx, r, up, false); cerr != nil {
 		return cerr
 	}
 	supplied, err := completeChecksum(r, up, ChecksumInput{Field: o.ChecksumField})
@@ -120,6 +176,11 @@ func (o *CompleteMultipart) Execute(ctx context.Context, r *Request) error {
 	}, o.Parts)
 	if err != nil {
 		return err
+	}
+	if res.Crypt != nil {
+		if cerr := o.verifyEncryption(ctx, r, completedHead(o.UploadID, res), true); cerr != nil {
+			return cerr
+		}
 	}
 	o.ETag, o.Size, o.Mtime, o.Checksum = res.ETag, res.Size, res.Mtime, res.Checksum
 	o.VersionID = ResponseVersionID(r.BucketRec, res.Version)
@@ -138,6 +199,133 @@ func readCompleteUpload(ctx context.Context, r *Request, id string) (*Upload, er
 		return nil, nil
 	}
 	return up, err
+}
+
+// verifyEncryption decides a completion of up, the upload as read, nil for
+// one GetUpload did not find, by its crypt mode, setting Echo when it
+// passes. A completion reads no part's data and writes the meta object's
+// attrs whatever the mode, so it needs a key only to answer as Amazon S3
+// does:
+//   - an upload of a mode rgw-go does not know is refused
+//     (refuseUnknownCryptMode);
+//   - an SSE-C upload is decided as v20.2.5's verify_encryption, Amazon
+//     S3's rule, decides it, on both releases (verifySSEC)
+//     (https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_rest_s3.cc#L4622-L4635 at v20.2.5);
+//   - an SSE-S3 upload completes, as Amazon S3 completes one, which a
+//     Tentacle radosgw refuses only for want of the key whose header it
+//     echoes
+//     (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1495-L1523 at v20.2.4);
+//   - an SSE-KMS upload without a checksum type completes once
+//     rgw_crypt_require_ssl takes the transport, as radosgw checks it before
+//     any key
+//     (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1423-L1428 at v20.2.4);
+//     one with a checksum type, which Amazon S3 completes only for a
+//     requester allowed kms:Decrypt, and an RGW-AUTO upload, which Amazon S3
+//     has no counterpart of, are refused as a radosgw without a key server
+//     refuses them (storedCryptRefusal).
+//
+// On Squid every SSE-KMS, SSE-S3 and RGW-AUTO upload completes and nothing
+// is echoed: a v19.2.7 radosgw's completion reads no crypt attr
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4094-L4112 at v19.2.7),
+// and no Squid upload has a checksum type.
+//
+// completed says up stands for an object a completion already wrote
+// (completedHead), whose answer echoes no SSE-C pair: no radosgw echoes one
+// there, and Amazon S3's SDK reads neither header of a completion. The
+// x-amz-server-side-encryption pair, which it reads, is echoed there too.
+func (o *CompleteMultipart) verifyEncryption(ctx context.Context, r *Request, up *Upload, completed bool) error {
+	if up == nil {
+		return nil
+	}
+	tentacle := r.Env.Zone.Release() >= denc.Tentacle
+	checksum := up.Checksum.Type != cksum.None
+	mode := storedCryptMode(up.Attrs)
+	switch {
+	case mode == cryptNone:
+		return nil
+	case mode == cryptUnknown:
+		return refuseUnknownCryptMode(up)
+	case mode == cryptSSEC:
+		return o.verifySSEC(r, up.Attrs[meta.AttrCryptKeyMD5], checksum, tentacle && !completed)
+	case !tentacle:
+		return nil
+	case mode == cryptSSES3:
+		o.Echo.SSE = "AES256"
+		return nil
+	case mode == cryptSSEKMS && !checksum:
+		if err := requireSSL(r, o.Secure); err != nil {
+			return err
+		}
+		o.Echo.SSE, o.Echo.KMSKeyID = "aws:kms", string(up.Attrs[meta.AttrCryptKeyID])
+		return nil
+	}
+	return storedCryptRefusal(ctx, r, up.Attrs, o.sseCHeaders())
+}
+
+// verifySSEC is v20.2.5's verify_encryption for an SSE-C upload whose key
+// MD5 stored holds: an upload without a checksum type completes without its
+// key when the request sends no SSE-C header (SSECSent); otherwise
+// rgw_crypt_require_ssl refuses an insecure request, an algorithm header
+// sent empty is no AES256, and the headers must name the upload's key
+// (sseCKeyError), which is then echoed when echo says so. A v20.2.4
+// radosgw asks for the key on every SSE-C completion
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4591-L4598 at v20.2.4),
+// and a v19.2.7 one on none (docs/differences.md).
+func (o *CompleteMultipart) verifySSEC(r *Request, stored []byte, checksum, echo bool) error {
+	if !checksum && !o.SSECSent {
+		return nil
+	}
+	if err := requireSSL(r, o.Secure); err != nil {
+		return err
+	}
+	if o.SSECAlgorithm != nil && *o.SSECAlgorithm == "" {
+		return ErrInvalidEncryptionAlgorithm.WithMessage(sseCAlgorithmInvalid)
+	}
+	if err := sseCKeyError(stored, o.sseCHeaders()); err != nil {
+		return err
+	}
+	if echo {
+		o.Echo.SSECKeyMD5 = o.SSECKeyMD5
+	}
+	return nil
+}
+
+// sseCHeaders is the request's SSE-C headers and transport as
+// rgw_s3_prepare_decrypt reads them, an absent algorithm "".
+func (o *CompleteMultipart) sseCHeaders() sseCRequest {
+	req := sseCRequest{key: o.SSECKey, keyMD5: o.SSECKeyMD5, secure: o.Secure}
+	if o.SSECAlgorithm != nil {
+		req.algorithm = *o.SSECAlgorithm
+	}
+	return req
+}
+
+// completedHead is the object a completion of upload id found already
+// written, as res describes it, standing for the upload verifyEncryption
+// decides: its crypt attrs, and a checksum type when it stores a combined
+// checksum, which the completion's answer would render.
+func completedHead(id string, res *PutResult) *Upload {
+	head := &Upload{ID: id, Attrs: res.Crypt}
+	if res.Checksum != nil {
+		head.Checksum.Type = res.Checksum.Type
+	}
+	return head
+}
+
+// CryptAttrs is attrs' user.rgw.crypt.* entries, copied, nil when it has
+// none: what a completion decides of a head a completion already wrote
+// (PutResult.Crypt).
+func CryptAttrs(attrs map[string][]byte) map[string][]byte {
+	var out map[string][]byte
+	for k, v := range attrs {
+		if strings.HasPrefix(k, meta.AttrCryptPrefix) {
+			if out == nil {
+				out = map[string][]byte{}
+			}
+			out[k] = bytes.Clone(v)
+		}
+	}
+	return out
 }
 
 // refuseUnknownCryptMode refuses with NotImplemented the completion of an

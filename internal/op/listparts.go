@@ -193,7 +193,7 @@ func (o *ListParts) checksumsShown(r *Request) bool {
 	case cryptNone, cryptSSES3, cryptRGWAuto:
 		return true
 	case cryptSSEC:
-		if confBool(r, "rgw_crypt_require_ssl", true) && !o.Secure {
+		if requireSSL(r, o.Secure) != nil {
 			return false
 		}
 		return sseCKeyMatches(o.SSECAlgorithm, o.SSECKey, o.SSECKeyMD5, o.Upload.Attrs[meta.AttrCryptKeyMD5])

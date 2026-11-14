@@ -469,6 +469,27 @@ var _ = Describe("multipart", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(again.Checksum).To(Equal(first.Checksum))
 		})
+		It("answers a completion retried after it succeeded with the head's crypt attrs, copied, and a completion that writes with none", func(ctx SpecContext) {
+			var err error
+			up, err = store.CreateUpload(ctx, rec, key, op.UploadParams{Attrs: map[string][]byte{
+				meta.AttrCryptMode: []byte("SSE-C-AES256"), meta.AttrCryptKeyMD5: []byte("md5"), meta.AttrContentType: []byte("text/plain\x00"),
+			}})
+			Expect(err).NotTo(HaveOccurred())
+			_, err = store.PutPart(ctx, up, 1, strings.NewReader("x"), op.PutParams{Size: 1})
+			Expect(err).NotTo(HaveOccurred())
+			parts := []op.CompletePart{{Number: 1, ETag: md5Hex([]byte("x"))}}
+			first, err := store.Complete(ctx, up, parts)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(first.Crypt).To(BeNil(), "the completion that wrote the head")
+			again, err := store.Complete(ctx, up, parts)
+			Expect(err).NotTo(HaveOccurred())
+			want := map[string][]byte{meta.AttrCryptMode: []byte("SSE-C-AES256"), meta.AttrCryptKeyMD5: []byte("md5")}
+			Expect(again.Crypt).To(Equal(want), "check_previously_completed's answer, the crypt attrs alone")
+			again.Crypt[meta.AttrCryptMode][0] = 'x'
+			st, err := store.StatObject(ctx, rec, key)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Attrs).To(HaveKeyWithValue(meta.AttrCryptMode, []byte("SSE-C-AES256")), "the head's attr is not the result's")
+		})
 		It("hands out copies of a part's checksum the caller may change freely", func(ctx SpecContext) {
 			tentacleUpload(ctx, op.UploadChecksum{Type: cksum.CRC32C, Flags: cksum.FlagFullObject})
 			res, err := store.PutPart(ctx, up, 1, strings.NewReader("x"), op.PutParams{Size: 1, Checksum: &op.ChecksumRequest{Type: cksum.CRC32C, Flags: cksum.FlagFullObject}})

@@ -40,10 +40,17 @@ func radosgwCryptAttrs(mode string) map[string][]byte {
 // one it began with mode (radosgwCryptAttrs), and returns its id.
 func (f *writeFixture) encryptedUpload(ctx context.Context, key, mode string) string {
 	GinkgoHelper()
+	return f.encryptedUploadWith(ctx, key, mode, op.UploadChecksum{})
+}
+
+// encryptedUploadWith is encryptedUpload of an upload created with checksum
+// uc, which the store keeps on Tentacle alone.
+func (f *writeFixture) encryptedUploadWith(ctx context.Context, key, mode string, uc op.UploadChecksum) string {
+	GinkgoHelper()
 	attrs := radosgwCryptAttrs(mode)
 	attrs[meta.AttrACL] = f.aliceACL
 	up, err := f.store.CreateUpload(ctx, f.rec, meta.ObjKey{Name: key}, op.UploadParams{
-		Owner: f.alice.Owner, OwnerName: "Alice", Placement: meta.PlacementRule{Name: "default-placement"}, Attrs: attrs,
+		Owner: f.alice.Owner, OwnerName: "Alice", Placement: meta.PlacementRule{Name: "default-placement"}, Attrs: attrs, Checksum: uc,
 	})
 	Expect(err).NotTo(HaveOccurred())
 	return up.ID

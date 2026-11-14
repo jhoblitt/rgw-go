@@ -474,6 +474,23 @@ var _ = Describe("Complete", func() {
 		Expect(err).To(MatchError(op.ErrInternalError), "a lock on a missing object is ENOENT, and the etag does not match")
 	})
 
+	It("answers a re-sent completion with the head's crypt attrs, which the op decides, and the completion that wrote it with none", func(ctx SpecContext) {
+		attrs := attrsWithACL(initiator)
+		attrs[meta.AttrCryptMode] = []byte("SSE-KMS")
+		attrs[meta.AttrCryptKeyID] = []byte("kid")
+		up, err := s.CreateUpload(ctx, rec, key, op.UploadParams{Owner: initiator, OwnerName: "Alice", Placement: meta.PlacementRule{Name: "default-placement"}, Attrs: attrs})
+		Expect(err).NotTo(HaveOccurred())
+		part, err := s.PutPart(ctx, up, 1, bytes.NewReader([]byte("a")), op.PutParams{Attrs: partAttrs(), Size: 1})
+		Expect(err).NotTo(HaveOccurred())
+		first, err := s.Complete(ctx, up, completeParts([]string{part.ETag}))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(first.Crypt).To(BeNil(), "the completion that wrote the head")
+		settle(s)
+		again, err := s.Complete(ctx, &op.Upload{ID: "2~bogusbogusbogus", Bucket: rec, Key: key}, completeParts([]string{part.ETag}))
+		Expect(err).NotTo(HaveOccurred(), "an id that names no meta object meets the head the parts' ETag names")
+		Expect(again.Crypt).To(Equal(map[string][]byte{meta.AttrCryptMode: []byte("SSE-KMS"), meta.AttrCryptKeyID: []byte("kid")}))
+	})
+
 	It("retries the meta object's removal after a racing part, and GCs the orphan but not the object's parts", func(ctx SpecContext) {
 		up, etags := uploadWithParts(ctx, 5<<20, 5<<20)
 		mOID := metaOID(rec, "k", up.ID)

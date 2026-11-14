@@ -8195,49 +8195,20 @@ does the following.
   phase 2 and SSE-C until phase 4"), so only an upload a radosgw began can
   be encrypted. Squid's radosgw stores no checksum in a part record, so
   the rule changes nothing on Squid. rgw-go's CompleteMultipartUpload
-  reads no SSE header, and of the upload's crypt mode refuses only one it
-  does not know ("A completion of an upload of a crypt mode rgw-go does
-  not know answers 501"), where a v20.2.4 radosgw's completion runs
-  `rgw_s3_prepare_decrypt` over the upload's attrs
-  ([rgw_rest_s3.cc:4591-4598](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4591-L4598)).
-  It echoes none of the encryption response headers radosgw's completion
-  sends
-  ([rgw_rest_s3.cc:4610-4611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4610-L4611)),
-  and it answers any encrypted upload's combined checksum, as a Tentacle
-  radosgw answers an SSE-KMS upload's to any requester allowed to
-  complete it over a transport `rgw_crypt_require_ssl` accepts
+  answers an SSE-C upload's combined checksum only to a requester whose
+  SSE-C headers name its key, and on Tentacle refuses an SSE-KMS upload
+  made with a checksum, a completion its store answers from the object
+  already completed included ("CompleteMultipartUpload asks for an SSE-C
+  upload's key as Amazon S3 and v20.2.5 do, and completes a key-server
+  upload where Amazon S3 needs no key"); it answers an SSE-S3 upload's to
+  any requester allowed to complete it, as this entry shows that upload's
+  checksums. A Tentacle radosgw answers an SSE-KMS upload's to any
+  requester allowed to complete it over a transport
+  `rgw_crypt_require_ssl` accepts, and any encrypted object's to a
+  completion whose upload id names no upload
   (`docs/ceph-upstream-bugs.md`, "[radosgw shows an encrypted upload's
   plaintext checksums to a requester without its
   key](ceph-upstream-bugs.md#radosgw-shows-an-encrypted-uploads-plaintext-checksums-to-a-requester-without-its-key)").
-  Phase 2 plan task WP-26 is to make the completion check the upload's
-  crypt mode and the request's SSE-C headers: ask for an SSE-C upload's
-  key as Amazon S3 and a v20.2.5 radosgw do; refuse an SSE-KMS, SSE-S3
-  or RGW-AUTO upload, as a radosgw without a key server refuses or fails
-  one; and echo radosgw's encryption headers for a completed SSE-C
-  upload. Until then rgw-go
-  completes a radosgw-begun encrypted upload that a v20.2.4 radosgw
-  refuses or fails:
-  - an SSE-C upload without its key
-    ([rgw_crypt.cc:1333-1421](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1333-L1421)),
-    which from v20.2.5, through
-    [ceph/ceph#71842](https://github.com/ceph/ceph/pull/71842), a radosgw
-    refuses only for an upload made with a checksum, or for SSE-C headers
-    that do not name its key
-    ([rgw_rest_s3.cc:4622-4635](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_rest_s3.cc#L4622-L4635));
-  - an SSE-C or SSE-KMS upload over plain HTTP, which
-    `rgw_crypt_require_ssl` refuses
-    ([rgw_crypt.cc:1334-1338](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1334-L1338),
-    [rgw_crypt.cc:1424-1428](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1424-L1428)),
-    the SSE-C one from v20.2.5 only for an upload made with a checksum or
-    a request that sends SSE-C headers, as that radosgw runs no SSE-C
-    check for any other
-    ([rgw_rest_s3.cc:4627-4631](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_rest_s3.cc#L4627-L4631),
-    [rgw_crypt.cc:2503-2508](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_crypt.cc#L2503-L2508));
-  - an SSE-KMS, SSE-S3 or RGW-AUTO upload with no key server or default
-    key to fetch its key from
-    ([rgw_crypt.cc:1429-1437](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1429-L1437),
-    [rgw_crypt.cc:1458-1478](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1458-L1478),
-    [rgw_crypt.cc:1495-1505](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1495-L1505)).
 - **Squid clusters show the checksums they store.** The read rules of these
   entries apply on Squid as on Tentacle: rgw-go reads
   `x-amz-checksum-mode` on Squid too, and a checksum-mode GET or HEAD, and
@@ -9197,12 +9168,130 @@ does the following.
   names none of `SSE-C-AES256`, `SSE-KMS`, `AES256` and `RGW-AUTO` with
   501 NotImplemented, on both releases, once it has read the upload's info
   and before anything is written, and keeps the upload. It reads that info
-  on Squid too, where it read none before, and leaves an upload it does
-  not find to the store, which answers a completion retried after it
-  succeeded. An upload of a mode it knows, or of none, it completes as
-  before ("ListParts shows an encrypted upload's checksums only to a
-  requester who could read its data") (`refuseUnknownCryptMode`,
-  `internal/op/completemultipart.go`).
+  on Squid too, where it read none before. An upload it does not find is
+  the store's to answer, from the object a completion retried after it
+  succeeded wrote, and that answer it decides as the next entry says, a
+  head of a mode it does not know refused with 501 too. An upload of a mode
+  it knows it decides as the next entry says, and one of none it completes
+  as before (`refuseUnknownCryptMode`, `internal/op/completemultipart.go`).
+- **CompleteMultipartUpload asks for an SSE-C upload's key as Amazon S3 and
+  v20.2.5 do, and completes a key-server upload where Amazon S3 needs no
+  key.** A completion encrypts nothing: a radosgw completion gives the head
+  the meta object's attrs and writes no crypt attr of its own, a read taking
+  the part lengths from the manifest
+  ([rgw_op.cc:9863-9884](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9863-L9884) at v20.2.4),
+  so rgw-go completes an upload a radosgw began encrypted as radosgw does,
+  once it has decided the upload's crypt mode:
+  - SSE-C, on both releases, as v20.2.5's `verify_encryption` decides it
+    ([rgw_rest_s3.cc:4622-4635](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_rest_s3.cc#L4622-L4635) at v20.2.5),
+    which is Amazon S3's rule: its model takes a completion's SSE-C headers
+    "only when the object was created using a checksum algorithm"
+    (aws-sdk-go-v2 `service/s3` v1.114.6, `CompleteMultipartUploadInput`).
+    An upload without a checksum type, as every Squid upload is ("Squid
+    clusters get single-object and part checksums, not an upload's"),
+    completes without its key when the request sends no header whose name
+    starts `x-amz-server-side-encryption-customer-`. Otherwise
+    `rgw_crypt_require_ssl` refuses an insecure request with 400
+    InvalidRequest, and the headers must name the upload's key, or the
+    completion answers `rgw_s3_prepare_decrypt`'s 400 InvalidArgument or
+    InvalidEncryptionAlgorithmError, the latter for an algorithm header
+    sent empty too, which beast files as sent
+    ([rgw_crypt.cc:1333-1421](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1333-L1421) at v20.2.4).
+    A v20.2.4 radosgw asks for the key on every SSE-C completion
+    ([rgw_rest_s3.cc:4591-4598](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4591-L4598) at v20.2.4),
+    so it refuses one that rgw-go completes: without a checksum and
+    without SSE-C headers, over any transport. A v19.2.7 radosgw reads no
+    SSE header at completion
+    ([rgw_rest_s3.cc:4094-4104](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4094-L4104) at v19.2.7),
+    so it completes every one that rgw-go refuses: a header of the SSE-C
+    prefix sent without the others, an algorithm other than AES256, a key
+    or key MD5 that does not decode or has the wrong length, another key,
+    or the key over plain HTTP under `rgw_crypt_require_ssl`. What Amazon
+    S3 answers to headers naming another key for an upload without a
+    checksum is unverified.
+  - SSE-S3, and SSE-KMS without a checksum type, complete on Tentacle, as
+    Amazon S3 completes them: its model asks `kms:Decrypt` of a general
+    purpose bucket's completion "If you provide an additional checksum
+    value" (the same model, `CompleteMultipartUpload`). The response
+    echoes `x-amz-server-side-encryption`, `AES256` or `aws:kms`, and an
+    SSE-KMS upload's stored key id as
+    `x-amz-server-side-encryption-aws-kms-key-id`, as a radosgw with a key
+    server echoes them
+    ([rgw_crypt.cc:1450-1453](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1450-L1453),
+    [rgw_crypt.cc:1518-1520](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1518-L1520) at v20.2.4);
+    the key id goes out with each byte below 0x20 but a tab, and 0x7f, as
+    a space, and net/http trims the spaces and tabs that leaves at either
+    end, where radosgw sends it as stored. A v20.2.4 radosgw without a
+    key server refuses both with 400 InvalidArgument, as it fetches the key
+    whose headers it echoes
+    ([rgw_crypt.cc:1429-1437](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1429-L1437),
+    [rgw_crypt.cc:1495-1505](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1495-L1505) at v20.2.4).
+    An SSE-KMS one over plain HTTP is still refused under
+    `rgw_crypt_require_ssl`, which radosgw checks before any key
+    ([rgw_crypt.cc:1423-1428](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1423-L1428) at v20.2.4).
+  - SSE-KMS with a checksum type, which Amazon S3 completes only for a
+    requester allowed `kms:Decrypt`, which rgw-go cannot evaluate, and
+    RGW-AUTO, which Amazon S3 has no counterpart of, are refused on
+    Tentacle as a radosgw without a key server refuses them
+    (docs/exclusions.md, "Key management: SSE-KMS and SSE-S3 with every
+    backend", item 3): SSE-KMS with 400 InvalidRequest over plain HTTP
+    under `rgw_crypt_require_ssl` and 400 InvalidArgument otherwise,
+    RGW-AUTO with 500 UnknownError
+    ([rgw_crypt.cc:1423-1493](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1423-L1493) at v20.2.4).
+  - On Squid every SSE-KMS, SSE-S3 and RGW-AUTO upload completes and
+    nothing is echoed, as a Squid radosgw's completion, which reads no crypt
+    attr, completes them and echoes nothing
+    ([rgw_rest_s3.cc:4094-4112](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4094-L4112) at v19.2.7).
+  - An upload of a mode rgw-go does not know is refused (the previous
+    entry).
+
+  The decision comes where v20.2.5 makes it, once the document has parsed
+  and the upload's info is read, and before the checksum the request
+  supplies is read
+  ([rgw_op.cc:7445-7470](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_op.cc#L7445-L7470) at v20.2.5).
+  A request whose document is empty or does not parse, that names more
+  parts than `rgw_multipart_part_upload_limit`, or whose upload id holds a
+  dot answers MalformedXML, InvalidRange or NoSuchUpload first, where a
+  v20.2.4 radosgw, which decides in `get_params`, answers the crypt
+  refusal; and rgw-go decides before it takes the completion's lock, which
+  v20.2.5 takes first. A refusal writes nothing and keeps the upload. Once
+  the decision passes, the response carries what it echoes, a later error
+  too, as radosgw's `send_response` echoes it whatever it answers
+  ([rgw_rest_s3.cc:4604-4612](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4604-L4612) at v20.2.4).
+
+  A completion whose upload id names no upload, a retry of one that
+  succeeded or an id made up, is answered from the object the key holds
+  when its ETag is the one the request's parts make, as radosgw's
+  `check_previously_completed` answers it, with the head's combined
+  checksum
+  ([rgw_op.cc:7433-7504](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7433-L7504) at v20.2.4).
+  rgw-go decides that answer as it decides an upload, over the head's crypt
+  attrs, a head that stores a combined checksum standing for an upload with
+  a checksum type. It echoes the `x-amz-server-side-encryption` and KMS key
+  id the decision gathers, which the SDK reads, but no SSE-C pair, which no
+  radosgw echoes there and the SDK reads for no completion. No radosgw
+  decides anything on that path: v20.2.4's `get_params` skips its check
+  when the meta object is gone
+  ([rgw_rest_s3.cc:4584-4599](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4584-L4599) at v20.2.4),
+  v20.2.5 answers from `check_previously_completed` before
+  `verify_encryption`
+  ([rgw_op.cc:7431-7443](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_op.cc#L7431-L7443) at v20.2.5),
+  and v19.2.7, which decides nothing at completion, answers from the same
+  check
+  ([rgw_op.cc:6437-6445](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6437-L6445) at v19.2.7).
+  Each answers 200 with no encryption header, a Tentacle one with the
+  head's checksum (`docs/ceph-upstream-bugs.md`, "[radosgw shows an
+  encrypted upload's plaintext checksums to a requester without its
+  key](ceph-upstream-bugs.md#radosgw-shows-an-encrypted-uploads-plaintext-checksums-to-a-requester-without-its-key)").
+  Where it answers 200, rgw-go refuses: on Tentacle, a head of SSE-C with a
+  checksum completed again without its key or over plain HTTP, a head of
+  SSE-KMS with a checksum, a head of SSE-KMS without one over plain HTTP
+  under `rgw_crypt_require_ssl`, and a head of RGW-AUTO; on both releases,
+  SSE-C headers that do not name the head's key, SSE-C headers that name it
+  over plain HTTP under `rgw_crypt_require_ssl`, and a head of a mode rgw-go
+  does not know (`verifyEncryption` and `completedHead`,
+  `internal/op/completemultipart.go`; `setCryptEcho`,
+  `internal/s3/multipart.go`).
 - **Appends and a PUT that names a copy source but is no copy are not
   served.** radosgw serves a PUT with `?append` as an append, and a PUT
   whose `x-amz-copy-source` comes with `x-amz-copy-source-range` and no

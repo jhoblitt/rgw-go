@@ -163,6 +163,11 @@ type PutResult struct {
 	// the head's user.rgw.cksum stores it, and for a retried completion the
 	// one the first stored; nil when the write computed none.
 	Checksum *cksum.Cksum
+	// Crypt is the head's crypt attrs (CryptAttrs) when Complete answers
+	// with an object a completion already wrote, as check_previously_completed
+	// answers, which CompleteMultipart decides as it decides an upload; nil
+	// for every other result.
+	Crypt map[string][]byte
 }
 
 // DeleteParams shapes a delete.
