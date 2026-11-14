@@ -525,6 +525,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw sends a metadata put's objv tag raw in RGWX_UPDATE_VERSION](#radosgw-sends-a-metadata-puts-objv-tag-raw-in-rgwx_update_version) | pending | pending | ✓ |
 | [radosgw's replay of another request's versioned delete removes a version locked after that delete's check](#radosgws-replay-of-another-requests-versioned-delete-removes-a-version-locked-after-that-deletes-check) | pending | pending | ✓ |
 | [radosgw applies a policy statement that names NotAction and no Action to no action](#radosgw-applies-a-policy-statement-that-names-notaction-and-no-action-to-no-action) | [#73983](https://tracker.ceph.com/issues/73983) | none; [ceph/ceph#66099](https://github.com/ceph/ceph/pull/66099) closed unmerged |  |
+| [radosgw's PutObject sets the object ACL and tags its headers name under s3:PutObject alone](#radosgws-putobject-sets-the-object-acl-and-tags-its-headers-name-under-s3putobject-alone) | [#24131](https://tracker.ceph.com/issues/24131) (the tagging half) | pending |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -33955,3 +33956,61 @@ Every new entry adds its row to this table, in document order.
 - **Found:** upstream first, by #73983's reporter; met by phase 2 Task
   WP-25's adversarial review, 2026-11-14, testing Deny precedence for
   GetObjectAttributes; fixed in rgw-go by Task S8.
+
+## radosgw's PutObject sets the object ACL and tags its headers name under s3:PutObject alone
+
+- **Kind:** defect, possibly security-relevant. Unreproduced: derived from
+  the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWPutObj::verify_permission` evaluates s3:PutObject on the object it
+    writes and, when a copy source is named, s3:GetObject or
+    s3:GetObjectVersion on the source, and no other action
+    ([rgw_op.cc:3982-3983](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3982-L3983),
+    [rgw_op.cc:4191-4192](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4191-L4192)).
+    The request's `x-amz-acl`, grant headers and tags enter it only as
+    condition keys
+    ([rgw_op.cc:3966-3971](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3966-L3971),
+    [rgw_op.cc:4175-4180](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4175-L4180)).
+  - `get_params` builds the object's ACL from the request's ACL headers
+    (`create_s3_policy`) and reads `x-amz-tagging`
+    ([rgw_rest_s3.cc:2626-2634](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2626-L2634),
+    [rgw_rest_s3.cc:2779-2787](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2779-L2787)),
+    and `execute` stores the ACL and the tags
+    ([rgw_op.cc:4488](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4488),
+    [rgw_op.cc:4531](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4531);
+    [rgw_op.cc:4720](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4720),
+    [rgw_op.cc:4799](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4799)).
+  - `RGWInitMultipart` and `RGWPostObj` evaluate s3:PutObject alone as well
+    ([rgw_op.cc:6283-6284](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6283-L6284),
+    [rgw_op.cc:4599-4600](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4599-L4600);
+    [rgw_op.cc:6950-6951](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6950-L6951),
+    [rgw_op.cc:4892-4893](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4892-L4893)).
+  - Under `src/rgw`, s3:PutObjectAcl and s3:PutObjectVersionAcl are
+    evaluated only by `RGWPutACLs`
+    ([rgw_op.cc:5749](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5749),
+    [rgw_op.cc:6324](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6324)),
+    and s3:PutObjectTagging and s3:PutObjectVersionTagging only by
+    `RGWPutObjTags`
+    ([rgw_op.cc:1079-1080](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1079-L1080),
+    [rgw_op.cc:1278-1279](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1278-L1279)).
+  - Amazon S3 requires s3:PutObjectAcl to change the ACL in a PutObject
+    request and s3:PutObjectTagging to set its tag-set: "s3:PutObjectAcl -
+    To successfully change the objects ACL of your PutObject request, you
+    must have the s3:PutObjectAcl" and "s3:PutObjectTagging - To
+    successfully set the tag-set with your PutObject request, you must
+    have the s3:PutObjectTagging"
+    ([api_op_PutObject.go:86-90](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_PutObject.go#L86-L90)).
+- **Releases:** v19.2.7 and v20.2.4; older releases not checked.
+- **rgw-go:** matches it until plan task S12 lands. PutObject evaluates
+  s3:PutObject, then the permissions its object-lock headers need, and
+  never s3:PutObjectAcl or s3:PutObjectTagging, which only the
+  PutObjectAcl and PutObjectTagging ops evaluate
+  (`internal/op/putobject.go:141-146`, `internal/op/objectattrs.go:37-39`
+  and `:188-190`); CreateMultipartUpload does the same
+  (`internal/op/initmultipart.go:75-80`).
+- **Upstream:** [#24131](https://tracker.ceph.com/issues/24131), Fix Under
+  Review since 2018, covers the tagging half; the ACL half: pending: sent
+  to rgw-bug-reproduction.
+- **Found:** upstream first for the tagging half, by #24131's reporter;
+  met by phase 2 Task S8's adversarial review, 2026-11-14, comparing the
+  actions the PutObject ops evaluate with Amazon S3's.
