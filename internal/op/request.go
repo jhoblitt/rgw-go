@@ -118,6 +118,10 @@ type Request struct {
 	// List is set by a bucket listing once it has read its parameters, before
 	// it authorizes; nil for every other request.
 	List *ListConditions
+	// Lock is set by a request that sets an object lock, from the parse
+	// whose result it stores, before it authorizes; nil for every other
+	// request and for one whose lock did not parse.
+	Lock *LockConditions
 	// Redirect is s->redirect
 	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L1291 at v19.2.7,
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1334 at v20.2.4):
@@ -158,6 +162,18 @@ type ListConditions struct {
 	Prefix    string
 	Delimiter string
 	MaxKeys   int
+}
+
+// LockConditions are the object lock a request sets, which the IAM
+// environment's object-lock keys are taken from: a write's object-lock
+// headers, or PutObjectRetention's or PutObjectLegalHold's document. radosgw
+// adds none of those keys (docs/ceph-upstream-bugs.md, "radosgw sets none of
+// the object-lock condition keys").
+type LockConditions struct {
+	// Retention is the retention the request sets, nil for none.
+	Retention *meta.ObjectRetention
+	// LegalHold is the legal hold the request sets, nil for none.
+	LegalHold *meta.ObjectLegalHold
 }
 
 // HeaderValue is a request header as radosgw's RGWEnv holds it: beast sets
