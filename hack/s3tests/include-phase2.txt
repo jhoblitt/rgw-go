@@ -11,3 +11,52 @@
 # tests in the radosgw ledgers with make s3tests-record-tests.
 # Format: a pytest node id, or a base id for every parametrization, then "#"
 # and why phase 2 runs it.
+
+# copies between storage classes: the encryption marker marks every
+# parametrization of test_copy_enc and test_copy_part_enc, and these are the
+# ones that send no encryption header; the SSE copies stay out
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-STANDARD-STANDARD-1] # CopyObject of 1 B, STANDARD to STANDARD
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-STANDARD-STANDARD-1024] # CopyObject of 1 KiB, STANDARD to STANDARD
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-STANDARD-STANDARD-1048576] # CopyObject of 1 MiB, STANDARD to STANDARD
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-STANDARD-STANDARD-8388608] # CopyObject of 8 MiB, STANDARD to STANDARD
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-STANDARD-LUKEWARM-1] # CopyObject of 1 B, STANDARD to LUKEWARM
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-STANDARD-LUKEWARM-1024] # CopyObject of 1 KiB, STANDARD to LUKEWARM
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-STANDARD-LUKEWARM-1048576] # CopyObject of 1 MiB, STANDARD to LUKEWARM
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-STANDARD-LUKEWARM-8388608] # CopyObject of 8 MiB, STANDARD to LUKEWARM
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-STANDARD-FROZEN-1] # CopyObject of 1 B, STANDARD to FROZEN
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-STANDARD-FROZEN-1024] # CopyObject of 1 KiB, STANDARD to FROZEN
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-STANDARD-FROZEN-1048576] # CopyObject of 1 MiB, STANDARD to FROZEN
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-STANDARD-FROZEN-8388608] # CopyObject of 8 MiB, STANDARD to FROZEN
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-LUKEWARM-STANDARD-1] # CopyObject of 1 B, LUKEWARM to STANDARD
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-LUKEWARM-STANDARD-1024] # CopyObject of 1 KiB, LUKEWARM to STANDARD
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-LUKEWARM-STANDARD-1048576] # CopyObject of 1 MiB, LUKEWARM to STANDARD
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-LUKEWARM-STANDARD-8388608] # CopyObject of 8 MiB, LUKEWARM to STANDARD
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-LUKEWARM-LUKEWARM-1] # CopyObject of 1 B, LUKEWARM to LUKEWARM
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-LUKEWARM-LUKEWARM-1024] # CopyObject of 1 KiB, LUKEWARM to LUKEWARM
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-LUKEWARM-LUKEWARM-1048576] # CopyObject of 1 MiB, LUKEWARM to LUKEWARM
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-LUKEWARM-LUKEWARM-8388608] # CopyObject of 8 MiB, LUKEWARM to LUKEWARM
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-LUKEWARM-FROZEN-1] # CopyObject of 1 B, LUKEWARM to FROZEN
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-LUKEWARM-FROZEN-1024] # CopyObject of 1 KiB, LUKEWARM to FROZEN
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-LUKEWARM-FROZEN-1048576] # CopyObject of 1 MiB, LUKEWARM to FROZEN
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-LUKEWARM-FROZEN-8388608] # CopyObject of 8 MiB, LUKEWARM to FROZEN
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-FROZEN-STANDARD-1] # CopyObject of 1 B, FROZEN to STANDARD
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-FROZEN-STANDARD-1024] # CopyObject of 1 KiB, FROZEN to STANDARD
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-FROZEN-STANDARD-1048576] # CopyObject of 1 MiB, FROZEN to STANDARD
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-FROZEN-STANDARD-8388608] # CopyObject of 8 MiB, FROZEN to STANDARD
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-FROZEN-LUKEWARM-1] # CopyObject of 1 B, FROZEN to LUKEWARM
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-FROZEN-LUKEWARM-1024] # CopyObject of 1 KiB, FROZEN to LUKEWARM
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-FROZEN-LUKEWARM-1048576] # CopyObject of 1 MiB, FROZEN to LUKEWARM
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-FROZEN-LUKEWARM-8388608] # CopyObject of 8 MiB, FROZEN to LUKEWARM
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-FROZEN-FROZEN-1] # CopyObject of 1 B, FROZEN to FROZEN
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-FROZEN-FROZEN-1024] # CopyObject of 1 KiB, FROZEN to FROZEN
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-FROZEN-FROZEN-1048576] # CopyObject of 1 MiB, FROZEN to FROZEN
+s3tests/functional/test_s3.py::test_copy_enc[unencrypted-unencrypted-FROZEN-FROZEN-8388608] # CopyObject of 8 MiB, FROZEN to FROZEN
+s3tests/functional/test_s3.py::test_copy_part_enc[unencrypted-unencrypted-STANDARD-STANDARD-8388608] # UploadPartCopy of 8 MiB, STANDARD source, STANDARD upload
+s3tests/functional/test_s3.py::test_copy_part_enc[unencrypted-unencrypted-STANDARD-LUKEWARM-8388608] # UploadPartCopy of 8 MiB, STANDARD source, LUKEWARM upload
+s3tests/functional/test_s3.py::test_copy_part_enc[unencrypted-unencrypted-STANDARD-FROZEN-8388608] # UploadPartCopy of 8 MiB, STANDARD source, FROZEN upload
+s3tests/functional/test_s3.py::test_copy_part_enc[unencrypted-unencrypted-LUKEWARM-STANDARD-8388608] # UploadPartCopy of 8 MiB, LUKEWARM source, STANDARD upload
+s3tests/functional/test_s3.py::test_copy_part_enc[unencrypted-unencrypted-LUKEWARM-LUKEWARM-8388608] # UploadPartCopy of 8 MiB, LUKEWARM source, LUKEWARM upload
+s3tests/functional/test_s3.py::test_copy_part_enc[unencrypted-unencrypted-LUKEWARM-FROZEN-8388608] # UploadPartCopy of 8 MiB, LUKEWARM source, FROZEN upload
+s3tests/functional/test_s3.py::test_copy_part_enc[unencrypted-unencrypted-FROZEN-STANDARD-8388608] # UploadPartCopy of 8 MiB, FROZEN source, STANDARD upload
+s3tests/functional/test_s3.py::test_copy_part_enc[unencrypted-unencrypted-FROZEN-LUKEWARM-8388608] # UploadPartCopy of 8 MiB, FROZEN source, LUKEWARM upload
+s3tests/functional/test_s3.py::test_copy_part_enc[unencrypted-unencrypted-FROZEN-FROZEN-8388608] # UploadPartCopy of 8 MiB, FROZEN source, FROZEN upload
