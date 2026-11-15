@@ -217,10 +217,12 @@ var _ = Describe("Runner.Run of the limiter re-run", func() {
 	})
 
 	It("removes nothing for a process that never started", func(ctx SpecContext) {
+		// What a removal of the namespace of pid 0 would find and remove.
+		w.left["bench-0"] = []string{"seam-w0-0"}
 		w.launch.BenchReturnsOnCall(0, 0, errors.New("starting seam.test: no such file"))
 		Expect(w.run(ctx, w.limiterConfig())).To(MatchError("bench sync: starting seam.test: no such file"))
 		for _, line := range w.commands() {
-			Expect(line).NotTo(ContainSubstring("bench-"), "no namespace to remove")
+			Expect(line).NotTo(ContainSubstring("xargs"), "no namespace to remove")
 		}
 	})
 
