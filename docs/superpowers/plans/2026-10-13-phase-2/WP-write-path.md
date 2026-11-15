@@ -1377,6 +1377,39 @@ Found by S12's task review (Important 4), and numbered here before S12 merged (P
     task's PR (PP-19).
 - **Depends on:** S12. **PR:** one. **Brief:** about 40 lines.
 
+### Task WP-32: a CompleteMultipartUpload that asks for encryption answers as the writes do
+
+Found by WP-29's scoped re-review (O1), and numbered here before WP-29 merged (PP-12).
+
+- **Layer:** s3 and op. **Files:** CompleteMultipartUpload's request handling and its op, their
+  specs; `docs/differences.md`, the entry "Writes that ask for encryption answer 501" and WP-29's.
+  **Cluster:** no.
+- **Behaviour:**
+  1. A CompleteMultipartUpload carrying a valued encryption name that sets a policy condition key
+     is refused 501, as the other writes refuse a request that asks for encryption, and before any
+     part is assembled or anything is written. rgw-go serves no encryption, so such a completion
+     can only finish an upload stored in the clear.
+  2. The SSE-C names on a completion follow the same rule. Amazon S3 takes them on a completion
+     of an SSE-C upload, but rgw-go makes no SSE-C upload, and refuses such an upload's parts
+     already. If radosgw on the same zone made the upload, the completion is refused too.
+  3. A completion carrying no encryption name is unchanged.
+- **Why:** rgw-go's policy environment adds the encryption condition keys for a completion from
+  its headers, as `RGWCompleteMultipart::verify_permission` does at v19.2.7, v20.2.4 and v20.2.5,
+  but the completion checks none of them. So a valued `x-amz-server-side-encryption` on a
+  completion satisfies a bucket policy `Null` condition written to require encryption, and
+  completes an upload stored in the clear. Only an upload begun before the Deny, or by a principal
+  it does not name, can be completed this way. WP-29 refuses the empty value on a completion; this
+  task refuses the valued one. The constraint: the refusal must run where the completion's
+  headers are known and before the parts are assembled, because a refusal after assembly leaves a
+  written object.
+- **Specs:**
+  - Both releases: an upload with no crypt mode, completed under a `Null` Deny on each condition
+    key the release sets, gives 403 with no header and 501 with a valued one. Use a header, and a
+    query parameter on the routes that read query encryption.
+  - A completion with no encryption name still succeeds.
+  - An s3-test where reasonable (PP-19), with its pin move in this task's PR.
+- **Depends on:** WP-29. **PR:** one. **Brief:** about 35 lines.
+
 ## Order
 
 Everything starts after the index's deferred benchmark run and the shared tasks it names.
@@ -1395,6 +1428,7 @@ Everything starts after the index's deferred benchmark run and the shared tasks 
 | after WP-26 | WP-29 | WP-26 |
 | any time | WP-30 | nothing |
 | after S12 | WP-31 | S12 |
+| after WP-29 | WP-32 | WP-29 |
 | cluster, one at a time | WP-24, WP-15, WP-14 | WP-19 and WP-21; WP-8 to WP-11 and WP-13; WP-6 to WP-13, WP-22, T-1, and BC-34 or the POST line deselected |
 
 - Wave 1 is wider than the subagent budget allows at once; the controller starts WP-10 (a),
