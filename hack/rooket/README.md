@@ -790,7 +790,19 @@ file. It is in every ledger entry's meta and in the result `make
 s3tests-parity` records for rgw-go's run, and `hack/parity diff` refuses a run
 whose `pytest_freeze` is not the one the ledger's newest entries carry, before
 it compares any outcome (exit 2, naming both digests): a venv that drifts is a
-tooling mismatch, not a changed outcome nobody sees. `run.sh` asks the same
+tooling mismatch, not a changed outcome nobody sees. The one exception is
+another patch release of the constraints' Python: CI takes `python3` from the
+runner image, which moves under its label, and that must not fail every pull
+request until a full record. The result `make s3tests-parity` records also
+carries two keys no ledger entry does, `pytest_packages`, the same digest of
+the freeze's package lines alone, and `pytest_python`, the Python's
+major.minor, and `make` gives `diff` the constraints. `diff` then accepts a run
+whose `pytest_freeze` is another when its package lines are the constraints'
+and its Python's major.minor is the one their first line names, printing a note
+on stderr that names both Pythons (the run's by its minor version and "(patch
+not recorded)", which is all its record keeps), as long as the constraints are the freeze the ledger's
+newest entries were recorded under. A changed package, another minor version, or
+a record that carries neither key still fails. `run.sh` asks the same
 of a run of rgw-go at its start, through `hack/parity venv --mode compare`,
 against the ledger `S3TESTS_BASELINE` names, which `make` sets to `BASELINE`,
 the release's committed ledger by default, so that a run in another venv
@@ -798,7 +810,8 @@ stops before it spends the cluster's time; `PARITY_ALLOW_META_DRIFT=true`
 lets a local try through there as `--allow-meta-drift` does for `diff`, and
 `diff` reads the same variable, so exporting it also waives `diff`'s
 source-commit and release checks at the end of `make s3tests-parity`. A run
-of radosgw is a record, and another Python only warns: the record decides.
+of radosgw is a record, and another Python only warns: the record decides, and
+unlike the comparison it holds even a patch release to the ledgers' venv.
 `constraints.txt`'s own digest is the ledgers' newest entries' `pytest_freeze`,
 which a spec holds it to, so a change to the constraints and the record under
 them land together.
@@ -1159,8 +1172,9 @@ make rgw-go-down RELEASE=squid
 against the rgw-go `make rgw-go-up` started, as `make s3tests GATEWAY=rgw-go
 RUN=parity`, records the run in `out/<release>/s3tests-rgw-go.json` with the
 release, the Ceph version from `manifest.json`, the s3-tests commit, the
-deselect digest, the venv's `pytest_freeze` and the LC mode, and compares it
-with `BASELINE`, by default
+deselect digest, the venv's `pytest_freeze`, `pytest_packages` and
+`pytest_python`, and the LC mode, and compares it, under
+`hack/s3tests/constraints.txt`, with `BASELINE`, by default
 `test/s3tests/baseline/<release>.json`. It needs a populated cluster, for
 `manifest.json`. A run of the pr set is compared over the tests it selected
 alone, `bin/parity diff --selection` reading the run's `.ids` and

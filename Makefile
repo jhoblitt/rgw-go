@@ -351,8 +351,13 @@ parity-check: ## Compare a candidate result with a ledger: make parity-check BAS
 # is stale under another Ceph version, and 2 for a run at another s3-tests
 # commit than the ledger's head, for another release, or in another venv than
 # the one the ledger was last recorded under, which hack/s3tests/constraints.txt
-# names and the run's record carries the digest of as pytest_freeze. A run of
-# the pr set is compared over the tests it selected alone, so that the
+# names and the run's record carries the digest of as pytest_freeze. The record
+# is made from the run's .freeze file, which also gives it two keys only a
+# candidate's record carries: the digest of the freeze's package lines and its
+# Python's minor version. They let the diff, given the constraints, pass with a
+# note a venv that differs from the ledger's in the Python's patch release
+# alone, as the runner image's python3 moves under its label. A run of the pr
+# set is compared over the tests it selected alone, so that the
 # ledger's gate-only tests are not missing from it, and the diff lists,
 # without failing, each other ledger test the run no longer selects, as
 # dropped from the pr set; a run of the gate set is compared over every test
@@ -370,10 +375,10 @@ s3tests-parity: need-release ## Run the s3-tests SET (pr|gate) against rgw-go an
 	bin/parity record --format junit --suite s3tests --out $(CLUSTER_OUT)/s3tests-rgw-go.json \
 	  --meta release=$(RELEASE) --meta ceph_version=$$(jq -r .ceph_version $(CLUSTER_OUT)/manifest.json) --meta gateway=rgw-go \
 	  --meta s3tests_commit=$$(hack/s3tests/run.sh --print-commit) --meta deselect=$$(hack/s3tests/run.sh --print-deselect) \
-	  --meta pytest_freeze=$$(sha256sum hack/s3tests/out/$(RELEASE)-rgw-go-parity.freeze | cut -c1-12) --meta lc=$(LC) \
+	  --freeze hack/s3tests/out/$(RELEASE)-rgw-go-parity.freeze --meta lc=$(LC) \
 	  hack/s3tests/out/$(RELEASE)-rgw-go-parity.xml
 	bin/parity diff --baseline $(BASELINE) --candidate $(CLUSTER_OUT)/s3tests-rgw-go.json --known test/s3tests/known-differences-$(RELEASE).txt \
-	  $(if $(SUMMARY),--summary "$(SUMMARY)") \
+	  --constraints hack/s3tests/constraints.txt $(if $(SUMMARY),--summary "$(SUMMARY)") \
 	  $(if $(filter gate,$(SET)),,--selection hack/s3tests/out/$(RELEASE)-rgw-go-parity.ids \
 	    --gate-only hack/s3tests/out/$(RELEASE)-rgw-go-parity.gate-only.ids)
 

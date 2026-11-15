@@ -370,4 +370,16 @@ var _ = Describe("hack/s3tests/constraints.txt", func() {
 			Expect(freeze).To(Equal(digest), "%s: make s3tests-record under the changed constraints, with PIN_REASON, before they land", release)
 		}
 	})
+
+	It("is the freeze of ledgers whose entries carry no key a candidate's record alone carries", func() {
+		for _, release := range []string{"squid", "tentacle"} {
+			l := readLedger("../../../../test/s3tests/baseline/" + release + ".json")
+			for id, entries := range l.Tests {
+				for i, e := range entries {
+					Expect(e.Meta).NotTo(HaveKey("pytest_packages"), "%s %s entry %d", release, id, i+1)
+					Expect(e.Meta).NotTo(HaveKey("pytest_python"), "%s %s entry %d", release, id, i+1)
+				}
+			}
+		}
+	})
 })

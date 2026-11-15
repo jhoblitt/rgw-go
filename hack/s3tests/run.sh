@@ -19,7 +19,8 @@
 # leaves what its venv held in its .freeze file. A run of rgw-go stops at its
 # start, as hack/parity diff would at its end, when its venv is not the one
 # the ledger it will be compared with, S3TESTS_BASELINE, the committed one by
-# default, was last recorded under.
+# default, was last recorded under, bar another patch release of the
+# constraints' Python, which it goes on under with a note.
 # fails_on_rgw stays in, since both gateways must fail those alike. Users
 # are created through radosgw-admin, so run this after make gate: the gate
 # counts the zone's users. TESTS-FILE runs only the pytest node ids it lists,
@@ -186,8 +187,9 @@ fi
 # so the venv must hold the constraints' packages and no others. A run of
 # radosgw is recorded, and another Python moves the venv, which the record
 # decides. A run of rgw-go is compared with the ledger, which refuses at its
-# end a venv other than the one it was last recorded under, and so is refused
-# now, before the run spends the cluster's time.
+# end a venv other than the one it was last recorded under, bar another patch
+# release of the constraints' Python, and so is refused now, before the run
+# spends the cluster's time.
 case "${gateway}" in
 radosgw) venv_mode=(--mode record --baseline "") ;;
 rgw-go) venv_mode=(--mode compare --baseline "${S3TESTS_BASELINE:-${root}/test/s3tests/baseline/${release}.json}") ;;

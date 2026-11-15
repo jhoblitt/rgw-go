@@ -166,7 +166,15 @@ func Record(format Format, suite string, meta map[string]string, files []string)
 // another source than the chain's head, in another release or under another
 // pytest_freeze. allowMetaDrift also compares a test whose last entry was
 // recorded under another Ceph version.
-func Diff(base *Ledger, cand Result, allowMetaDrift bool, known KnownList, sel Selection) ([]string, error) {
+//
+// WithConstraints has Diff accept, as freezeDrift says, a candidate whose
+// pytest_freeze is another when only the Python's patch release differs from
+// the constraints'.
+func Diff(base *Ledger, cand Result, allowMetaDrift bool, known KnownList, sel Selection, opts ...DiffOption) ([]string, error) {
+	var cfg diffConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	freeze, err := base.headFreeze()
 	if err != nil {
 		return nil, err
@@ -180,11 +188,14 @@ func Diff(base *Ledger, cand Result, allowMetaDrift bool, known KnownList, sel S
 			drift = append(drift, fmt.Sprintf("%s: baseline %s, candidate %s", m.key, m.want, got))
 		}
 	}
+	var venvNote string
 	if freeze != "" {
-		if got, ok := cand.Meta[metaFreeze]; !ok {
+		if _, ok := cand.Meta[metaFreeze]; !ok {
 			drift = append(drift, fmt.Sprintf("%s: baseline %s, candidate missing", metaFreeze, freeze))
-		} else if line := freezeDrift(freeze, got, allowMetaDrift); line != "" {
+		} else if line, note := freezeDrift(freeze, candidateVenv(cand.Meta), cfg.constraints, allowMetaDrift); line != "" {
 			drift = append(drift, line)
+		} else {
+			venvNote = note
 		}
 	}
 	cephVersion, ok := cand.Meta[metaCephVersion]
@@ -193,6 +204,9 @@ func Diff(base *Ledger, cand Result, allowMetaDrift bool, known KnownList, sel S
 	}
 	if len(drift) > 0 {
 		return nil, fmt.Errorf("the results ran under different meta (%s)", strings.Join(drift, "; "))
+	}
+	if venvNote != "" && cfg.note != nil {
+		cfg.note(venvNote)
 	}
 
 	ids := map[string]bool{}
@@ -255,6 +269,22 @@ func Diff(base *Ledger, cand Result, allowMetaDrift bool, known KnownList, sel S
 		}
 	}
 	return diffs, nil
+}
+
+// A DiffOption widens what Diff accepts.
+type DiffOption func(*diffConfig)
+
+type diffConfig struct {
+	constraints *Constraints
+	note        func(string)
+}
+
+// WithConstraints has Diff judge the candidate's venv against c as well as the
+// ledger's, as freezeDrift says. Diff calls note, unless it is nil, with the
+// line that says it accepted a venv whose whole freeze is not the ledger's,
+// once it has found the candidate comparable.
+func WithConstraints(c Constraints, note func(string)) DiffOption {
+	return func(cfg *diffConfig) { cfg.constraints, cfg.note = &c, note }
 }
 
 func outcome(outcomes map[string]string, id string) string {

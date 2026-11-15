@@ -34,6 +34,17 @@ const (
 // the venv and every package in it.
 const metaFreeze = "pytest_freeze"
 
+// The meta keys of a candidate's record beside metaFreeze, which no ledger
+// entry carries: the digest of the freeze's package lines alone, and the
+// venv's Python major.minor. They let the comparison tell another patch release
+// of the constraints' Python from a changed package, which the whole freeze's
+// digest cannot. record sets them from --freeze, and only for a result file,
+// so that no ledger entry gains one.
+const (
+	metaPackages = "pytest_packages"
+	metaPython   = "pytest_python"
+)
+
 // sourceKeys are the meta keys that name a suite's source: the s3-tests
 // commit and the go-ceph tag.
 var sourceKeys = []string{"s3tests_commit", "go_ceph_tag"}
