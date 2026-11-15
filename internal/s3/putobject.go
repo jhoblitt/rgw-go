@@ -85,8 +85,9 @@ func (wr *objectWrites) putObject(ctx context.Context, w http.ResponseWriter, r 
 // InvalidArgument, as radosgw answers any such refusal on a PUT
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2626-L2637,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2787-L2798);
-// the object-lock headers' retention and legal hold (objectLockHeaders); a
-// partNumber is read as for a part (partNumberArg); an append's position
+// the object-lock headers' retention and legal hold (objectLockHeaders),
+// which r.Lock gives the policies' object-lock keys before the op authorizes;
+// a partNumber is read as for a part (partNumberArg); an append's position
 // (appendPosition); a Content-MD5 that
 // ceph_unarmor does not decode to 16 bytes is InvalidDigest
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L4184-L4198 at v19.2.6,
@@ -112,6 +113,7 @@ func (wr *objectWrites) putObjectParams(r *op.Request, o *op.PutObject) error {
 	if lerr != nil {
 		return lerr
 	}
+	r.Lock = lock.conditions()
 	if _, err := partNumberArg(r); err != nil {
 		return err
 	}

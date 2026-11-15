@@ -6695,6 +6695,83 @@ rgw-go does the following.
   docs/ceph-upstream-bugs.md records the defect ("[radosgw applies a
   policy statement that names NotAction and no Action to no
   action](ceph-upstream-bugs.md#radosgw-applies-a-policy-statement-that-names-notaction-and-no-action-to-no-action)").
+- **A lock a request sets is evaluated with Amazon S3's object-lock
+  condition keys.** radosgw adds none of `s3:object-lock-mode`,
+  `s3:object-lock-retain-until-date`,
+  `s3:object-lock-remaining-retention-days` and
+  `s3:object-lock-legal-hold` to the environment a request's policies are
+  evaluated in
+  ([rgw_op.cc:848-910](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L848-L910),
+  [rgw_op.cc:884-945](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L884-L945);
+  docs/ceph-upstream-bugs.md, "[radosgw sets none of the object-lock
+  condition
+  keys](ceph-upstream-bugs.md#radosgw-sets-none-of-the-object-lock-condition-keys)"),
+  so a policy conditioned on one judges every request as if the key were
+  absent. rgw-go adds them to a request that sets a lock, from the lock it
+  stores: PutObject's, CopyObject's and CreateMultipartUpload's object-lock
+  headers, and PutObjectRetention's and PutObjectLegalHold's documents
+  (`lockKeys`, `internal/authz/env.go`). Which action carries which key is
+  the Service Authorization Reference's: s3:PutObject all four,
+  s3:PutObjectRetention the retention's three, s3:PutObjectLegalHold the
+  legal hold's, and s3:BypassGovernanceRetention none; a write's own checks
+  of s3:PutObjectRetention and s3:PutObjectLegalHold ("A write's object-lock
+  headers need s3:PutObjectRetention and s3:PutObjectLegalHold") carry
+  their action's. The mode and the legal hold are the values stored, the
+  date is written with nine fractional digits, which a Date condition reads
+  whatever form the request sent it in, and the remaining days are the time
+  to the date in whole days rounded up, so a retention any fraction of a day
+  past a guardrail's limit counts a day more. A key the request does not
+  carry is absent: a CompleteMultipartUpload and a write that takes the
+  bucket's default retention add none, nor do an UploadPart's lock headers,
+  which only its part's head keeps; and so is every key of a lock header or
+  a document that does not parse, which the request is then refused for,
+  400, before any lock is stored. An absent key is treated as radosgw treats
+  one, which is not always Amazon S3's answer: a condition on it is false
+  unless its operator is `Null`, a `ForAllValues` one or carries `IfExists`,
+  negated operators included, where Amazon S3 answers a negated operator on
+  an absent key true (docs/ceph-upstream-bugs.md, "[radosgw's negated
+  condition operators are false on an absent
+  key](ceph-upstream-bugs.md#radosgws-negated-condition-operators-are-false-on-an-absent-key)").
+  A key is found only under the case it is written in here, as radosgw
+  finds it, where AWS takes key names in any case, so a condition on
+  `S3:Object-Lock-Mode` finds no key (docs/ceph-upstream-bugs.md,
+  "[radosgw matches condition key names
+  case-sensitively](ceph-upstream-bugs.md#radosgw-matches-condition-key-names-case-sensitively)").
+  On Squid, `Null` ignores its value, as Squid's radosgw does: it is true
+  when the key is absent and false when it is present, whether the
+  condition gives `true` or `false` (docs/ceph-upstream-bugs.md, "[Squid's
+  negated condition operators hold when any pair differs, and its Null
+  ignores its
+  values](ceph-upstream-bugs.md#squids-negated-condition-operators-hold-when-any-pair-differs-and-its-null-ignores-its-values)");
+  on Tentacle it compares the condition's value with whether the key is
+  absent, as Amazon S3 does.
+
+  To evaluate a document's keys, PutObjectRetention and PutObjectLegalHold
+  read and parse it before their permission check: in Init, once the bucket
+  is loaded and before the version the request names is looked up, for every
+  requester whose op mask passes. radosgw reads PutObjectRetention's
+  document once its permission check passes and PutObjectLegalHold's in
+  execute
+  ([rgw_op.cc:8340-8346](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8340-L8346) and
+  [rgw_op.cc:8518-8520](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8518-L8520),
+  [rgw_op.cc:9275-9281](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9275-L9281) and
+  [rgw_op.cc:9466-9468](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9466-L9468)),
+  so it refuses a requester its check fails without reading the body or
+  sending `100 Continue`. rgw-go reads it for that requester too: one that
+  sent `Expect: 100-continue` gets net/http's `100 Continue` at the read, and
+  its document, up to `rgw_max_put_param_size`, is read and parsed, before
+  it gets the check's 403 AccessDenied, whatever its body. The read comes
+  before the version so that it is made, and `100 Continue` sent, alike for
+  a key or a version that exists and for one that does not: read after the
+  version, it would tell a requester who may not list the bucket what the
+  missing-object rule hides from it. An admin let through a refusal of
+  s3:PutObjectRetention is still served no document, 400 MalformedXML on a
+  bucket with object lock, as on radosgw. radosgw's own PutObjectRetention
+  reads the document before it sends `100 Continue`, so a client that waits
+  for it stalls until its own timeout sends the body unasked
+  (docs/ceph-upstream-bugs.md, "[radosgw reads
+  PutObjectRetention's document before it sends 100
+  Continue](ceph-upstream-bugs.md#radosgw-reads-putobjectretentions-document-before-it-sends-100-continue)").
 
 ### Bucket metadata differences
 

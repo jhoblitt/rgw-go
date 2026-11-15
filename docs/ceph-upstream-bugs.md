@@ -534,6 +534,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's lifecycle headers depart from S3's response model](#radosgws-lifecycle-headers-depart-from-s3s-response-model) | pending | pending | ✓ |
 | [radosgw's PutObject x-amz-expiration matches a tag rule against the bucket's tags](#radosgws-putobject-x-amz-expiration-matches-a-tag-rule-against-the-buckets-tags) | pending | pending | ✓ |
 | [radosgw's x-amz-expiration ignores a rule's object-size filter](#radosgws-x-amz-expiration-ignores-a-rules-object-size-filter) | pending | pending | ✓ |
+| [radosgw reads PutObjectRetention's document before it sends 100 Continue](#radosgw-reads-putobjectretentions-document-before-it-sends-100-continue) | pending | pending | ✓ |
+| [radosgw's negated condition operators are false on an absent key](#radosgws-negated-condition-operators-are-false-on-an-absent-key) | pending | pending | ✓ |
+| [radosgw matches condition key names case-sensitively](#radosgw-matches-condition-key-names-case-sensitively) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -29208,10 +29211,11 @@ Every new entry adds its row to this table, in document order.
   ([rgw_op.cc:9837-9843](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_op.cc#L9837-L9843),
   [rgw_process.cc:373-384](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_process.cc#L373-L384),
   [rgw_op.cc:9857-9874](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_op.cc#L9857-L9874)).
-- **rgw-go:** reproduces the refusal: `op.PutObjectRetention` reads neither
-  the body nor the bypass for a requester its first check refuses, so an
-  admin `op.Run` lets through reaches `Execute` with no document and
-  answers MalformedXML (`internal/op/objectretention_test.go`). A body
+- **rgw-go:** reproduces the refusal: `op.PutObjectRetention` reads the
+  body before its first check, for the object-lock condition keys, but
+  hands neither the document nor the bypass on for a requester that check
+  refuses, so an admin `op.Run` lets through reaches `Execute` with no
+  document and answers MalformedXML (`internal/op/objectretention_test.go`). A body
   error stays an error for an admin on both releases (`docs/differences.md`,
   "An admin is served past a failed permission check only on an access
   denial").
@@ -33304,10 +33308,15 @@ Every new entry adds its row to this table, in document order.
   nothing on radosgw, and an Allow conditioned on one of the keys allows
   nothing.
 - **Releases:** v19.2.7, v20.2.4 and main at 203e7c52025d (2026-10-30).
-- **rgw-go:** reproduces it: its policy environment adds none of the four
-  keys either (`BuildEnv`, `internal/authz/env.go`), so a policy
-  conditioned on one evaluates as on radosgw. Plan task L7 adds them to
-  every request that sets a lock.
+- **rgw-go:** does not reproduce it: a request that sets a lock, by its
+  object-lock headers or a retention or legal-hold document, is evaluated
+  with the keys the Service Authorization Reference lists for each action,
+  taken from the lock it stores (`lockKeys`, `internal/authz/env.go`;
+  `docs/differences.md`, "A lock a request sets is evaluated with Amazon
+  S3's object-lock condition keys"). A CompleteMultipartUpload evaluates
+  no key, as it sets no lock of its own, so an upload created through
+  radosgw, or through an earlier rgw-go, keeps a lock no key judged when
+  rgw-go completes it.
 - **Upstream:** none: searches of the tracker's full text for
   `object-lock-remaining-retention-days` and `s3:object-lock-mode`, and of
   ceph/ceph's issues and pull requests for those and for the other two keys
@@ -34650,3 +34659,121 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task C8's adversarial review, 2026-11-14, comparing
   the header's rule checks with the worker's at both tags. Not reproduced on
   a running radosgw.
+
+## radosgw reads PutObjectRetention's document before it sends 100 Continue
+
+- **Kind:** defect, S3-correctness; not security-relevant. Unreproduced:
+  derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWPutObjRetention::verify_permission` calls `get_params`, which reads
+    the body, once s3:PutObjectRetention passes
+    ([rgw_op.cc:8340-8346](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8340-L8346),
+    [rgw_op.cc:9275-9281](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9275-L9281)).
+  - `100 Continue` is sent only by `dump_continue`
+    ([rgw_rest.cc:752-760](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L752-L760),
+    [rgw_rest.cc:752-760](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L752-L760)),
+    which `rgw_bucket_object_pre_exec` calls for a request that expects it
+    ([rgw_op.cc:969-975](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L969-L975),
+    [rgw_op.cc:1124-1130](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1124-L1130)),
+    and POST object's `get_params`
+    ([rgw_rest.cc:1431-1439](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1431-L1439),
+    [rgw_rest.cc:1431-1439](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1431-L1439)).
+    A request expects it when it sends `Expect: 100-continue` and
+    `rgw_print_continue`, true by default, is set
+    ([rgw_rest.cc:2272-2275](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L2272-L2275),
+    [rgw_rest.cc:2289-2292](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L2289-L2292)).
+  - The op's `pre_exec` is `rgw_bucket_object_pre_exec`
+    ([rgw_op.cc:8353-8356](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8353-L8356),
+    [rgw_op.cc:9288-9291](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9288-L9291)),
+    which `rgw_process_authenticated` runs after `verify_permission`
+    ([rgw_process.cc:225-245](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L225-L245),
+    [rgw_process.cc:225-248](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_process.cc#L225-L248)).
+  - beast's `recv_body` reads the body and sends nothing
+    ([rgw_asio_frontend.cc:151-174](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L151-L174),
+    [rgw_asio_frontend.cc:152-175](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L152-L175)).
+  - PutObjectLegalHold reads its body in `execute`, after `pre_exec`
+    ([rgw_op.cc:8518-8520](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8518-L8520),
+    [rgw_op.cc:9466-9468](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9466-L9468)),
+    so it is not affected.
+- **Impact:** a client that sends a PutObjectRetention with
+  `Expect: 100-continue` and waits for `100 Continue` before sending the
+  document stalls until its own timeout sends the body unasked, while
+  radosgw waits in its read of that body.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** does not reproduce it: net/http sends `100 Continue` at the
+  handler's first read of the body (`docs/differences.md`, "Expectations
+  other than 100-continue"), which PutObjectRetention's Init makes for every
+  requester whose op mask passes (`docs/differences.md`, "A lock a request
+  sets is evaluated with Amazon S3's object-lock condition keys").
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task L7's review, 2026-11-14, reading the order in
+  which PutObjectRetention reads its document; derived from the source,
+  not reproduced.
+
+## radosgw's negated condition operators are false on an absent key
+
+- **Kind:** defect, possibly security-relevant. Unreproduced: derived from
+  the source.
+- **Evidence:**
+  - `Condition::eval` answers a condition whose key the request's
+    environment lacks with its `IfExists` flag, false without one, for
+    every operator but `Null` and the three `ForAllValues` ones, the negated
+    operators included: `StringNotEquals`, `StringNotEqualsIgnoreCase`,
+    `StringNotLike`, `NumericNotEquals`, `DateNotEquals`, `NotIpAddress`,
+    `ArnNotEquals` and `ArnNotLike`
+    ([rgw_iam_policy.cc:854-869](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L854-L869),
+    [rgw_iam_policy.cc:873-889](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L873-L889)).
+  - AWS documents the rule: "If the key that you specify in a policy
+    condition is not present in the request context, the values do not
+    match and the condition is *false*. If the policy condition requires
+    that the key is *not* matched, such as `StringNotLike` or `ArnNotLike`,
+    and the right key is not present, the condition is *true*. This logic
+    applies to all condition operators except ...IfExists and Null check."
+    ([reference_policies_elements_condition_operators.md:10](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md#L10)
+    in the IAM User Guide's archived source).
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it: `policy.Condition.Eval` answers an absent key
+  as `Condition::eval` does (`internal/policy/condition.go`), until plan
+  task S9 lands.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task L7's adversarial review, 2026-11-14, judging
+  the object-lock condition keys a request can leave out; derived from the
+  source, not reproduced.
+
+## radosgw matches condition key names case-sensitively
+
+- **Kind:** defect, possibly security-relevant. Unreproduced: derived from
+  the source.
+- **Evidence:**
+  - The policy parser keeps a condition's key as the policy writes it
+    ([rgw_iam_policy.cc:477-483](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L477-L483),
+    [rgw_iam_policy.cc:487-493](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L487-L493);
+    `Condition`'s constructor,
+    [rgw_iam_policy.h:364-365](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L364-L365),
+    [rgw_iam_policy.h:383-384](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L383-L384)),
+    and `Condition::eval` looks it up with `find` and `equal_range`
+    ([rgw_iam_policy.cc:856](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L856) and
+    [rgw_iam_policy.cc:882](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L882),
+    [rgw_iam_policy.cc:875](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L875) and
+    [rgw_iam_policy.cc:902](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L902))
+    in the request's `Environment`, a
+    `std::unordered_multimap<std::string, std::string>` whose keys compare
+    byte for byte
+    ([rgw_iam_policy.h:326](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L326),
+    [rgw_iam_policy.h:345](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L345)).
+    radosgw adds each of its keys in one spelling, such as `aws:SourceIp`
+    (`rgw_build_iam_environment`,
+    [rgw_op.cc:848-910](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L848-L910),
+    [rgw_op.cc:884-945](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L884-L945)).
+  - AWS documents the rule: "Condition key *names* are not
+    case-sensitive. For example, including the `aws:SourceIP` condition key
+    is equivalent to testing for `AWS:SourceIp`."
+    ([reference_policies_elements_condition.md:11](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition.md#L11)
+    in the IAM User Guide's archived source).
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it: `policy.Env` holds each key under its exact
+  string (`internal/policy/env.go`), until plan task S10 lands.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task L7's adversarial review, 2026-11-14, judging
+  how a policy can name an object-lock condition key; derived from the
+  source, not reproduced.

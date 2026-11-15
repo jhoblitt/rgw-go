@@ -86,7 +86,8 @@ func (wr *objectWrites) copyObject(ctx context.Context, w http.ResponseWriter, r
 // copyObjectParams is the part of get_params that reads the request alone,
 // in its order, then init_common's attrs, which radosgw builds after
 // authorizing (docs/differences.md): the object-lock headers' retention and
-// legal hold (objectLockHeaders, with the messages a copy sets);
+// legal hold (objectLockHeaders, with the messages a copy sets), which r.Lock
+// gives the policies' object-lock keys before the op authorizes;
 // x-amz-metadata-directive, COPY or REPLACE in any case and anything else
 // InvalidArgument, "Unknown metadata directive."; the storage-class check of
 // a copy onto itself that does not replace the metadata
@@ -99,6 +100,7 @@ func (wr *objectWrites) copyObjectParams(r *op.Request, o *op.CopyObject) error 
 	if lerr != nil {
 		return lerr
 	}
+	r.Lock = lock.conditions()
 	if d, ok := op.HeaderValue(r.Header, "X-Amz-Metadata-Directive"); ok {
 		switch d = rgwtext.CString(d); {
 		case strings.EqualFold(d, "COPY"):

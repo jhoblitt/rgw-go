@@ -74,9 +74,14 @@ type PutObjectRetention struct {
 	// BypassGovernanceHeader reads it, bypass_governance_mode.
 	BypassHeader bool
 
-	// body is the document get_params read; nil when VerifyPermission
-	// refused the requester first.
-	body []byte
+	// retention is the document's retention as Init parsed it, nil when the
+	// body was not read or its read or its parse failed: readErr is the
+	// read's error and parseErr the parse's.
+	retention         *meta.ObjectRetention
+	readErr, parseErr error
+	// authorized is that VerifyPermission passed the requester, which hands
+	// the document on to Execute.
+	authorized bool
 	// bypass is bypass_governance_mode with bypass_perm, the
 	// s3:BypassGovernanceRetention check, evaluated only for the header.
 	bypass bool
@@ -93,17 +98,34 @@ func (*PutObjectRetention) Action() policy.Action { return policy.S3PutObjectRet
 // OpMask is RGW_OP_TYPE_WRITE.
 func (*PutObjectRetention) OpMask() uint32 { return OpTypeWrite }
 
-// Init loads the bucket and the head of the version the request names.
-func (*PutObjectRetention) Init(ctx context.Context, r *Request) error { return statHead(ctx, r) }
+// Init is initLockDocument's: the bucket, the document, which it parses
+// once, if it was read, into the retention Execute writes, then the head of
+// the version the request names.
+func (o *PutObjectRetention) Init(ctx context.Context, r *Request) error {
+	doc, err := initLockDocument(ctx, o, r)
+	if err != nil {
+		return err
+	}
+	o.readErr = doc.readErr
+	if doc.read && doc.readErr == nil {
+		v, perr := objectlock.ParseRetention(doc.body)
+		if perr != nil {
+			o.parseErr = perr
+		} else {
+			o.retention = &v
+		}
+	}
+	return nil
+}
 
-// VerifyPermission is RGWPutObjRetention::verify_permission, in its order:
-// s3:PutObjectRetention on the object, authorized by verifyLockWrite; the op
-// mask, which radosgw's
-// verify_op_mask
+// VerifyPermission is RGWPutObjRetention::verify_permission, in its order,
+// with the document Init read: s3:PutObjectRetention on the object,
+// authorized by verifyLockWrite, with the document's retention, when it
+// parsed, as r.Lock for the policies' object-lock keys; the op mask, which
+// radosgw's verify_op_mask
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_process.cc#L207-L211 at v19.2.7 and v20.2.4)
-// checks before verify_permission runs, so that the body of a requester it
-// refuses is never read; get_params, which reads the body under
-// rgw_max_put_param_size as ReadParamBody reads it
+// checks before verify_permission runs; get_params' read of the body under
+// rgw_max_put_param_size, whose error Init kept
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4529-L4531 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5040-L5042 at v20.2.4);
 // and, only when BypassHeader is set, s3:BypassGovernanceRetention on the
@@ -111,25 +133,30 @@ func (*PutObjectRetention) Init(ctx context.Context, r *Request) error { return 
 // leaves the bypass off and refuses nothing, as bypass_perm is a bool. Any
 // other error of that check, a fault such as policies whose tags cannot be
 // read, is the request's, so that it is not answered as the refusal of a
-// change the bypass would have let through, and still nothing is written. A
-// requester the first check
-// refuses is answered before the body is read, and radosgw's admin override
-// then reaches execute with get_params never run, so an admin Run lets
-// through that refusal reaches Execute with no document and no bypass
-// (docs/ceph-upstream-bugs.md, "radosgw's PutObjectRetention reads no
-// document for an admin its permission check refuses").
+// change the bypass would have let through, and still nothing is written.
+// A document that does not parse sets no key, and Execute refuses it.
+// radosgw's admin override reaches execute with get_params never run, so an
+// admin Run lets through the check's refusal reaches Execute with no
+// document handed on and no bypass (docs/ceph-upstream-bugs.md, "radosgw's
+// PutObjectRetention reads no document for an admin its permission check
+// refuses").
 func (o *PutObjectRetention) VerifyPermission(ctx context.Context, r *Request) error {
+	if err := VerifyObjectPrelude(ctx, r); err != nil {
+		return err
+	}
+	if o.retention != nil {
+		r.Lock = &LockConditions{Retention: o.retention}
+	}
 	if err := verifyLockWrite(ctx, r, policy.S3PutObjectRetention); err != nil {
 		return err
 	}
 	if err := verifyOpMask(o, r); err != nil {
 		return err
 	}
-	body, err := ReadParamBody(r, confSize(r, "rgw_max_put_param_size", defaultMaxPutParamSize))
-	if err != nil {
-		return err
+	if o.readErr != nil {
+		return o.readErr
 	}
-	o.body = body
+	o.authorized = true
 	if o.BypassHeader {
 		a := policy.S3BypassGovernanceRetention
 		switch err := VerifyBucketPermissionOwnerOrPolicy(ctx, r, a, acl.PermFor(a)); {
@@ -144,14 +171,17 @@ func (o *PutObjectRetention) VerifyPermission(ctx context.Context, r *Request) e
 
 // Execute is RGWPutObjRetention::execute, in its order. A bucket whose flags
 // do not enable object lock is 400 InvalidRequest. A document
-// objectlock.ParseRetention refuses, an empty one included, is 400
-// MalformedXML. A retain-until date whose whole second is before the clock
-// is 400 InvalidArgument, compared exactly where radosgw reads the clock as
-// a double (docs/differences.md, "A retain-until second is compared with the
-// clock exactly"). A version that does not exist is NoSuchKey. An existing
-// retention objectlock.DecodeRetention refuses, bytes past its encoding
-// included, is radosgw's -EIO, 500 UnknownError (docs/differences.md, "An
-// object-lock attr with bytes past its encoding does not decode"). The
+// objectlock.ParseRetention refused, an empty one included, is 400
+// MalformedXML, and so is the request of an admin Run let through
+// VerifyPermission's refusal, which hands no document on, as radosgw's
+// execute parses the data get_params never read. A retain-until date whose
+// whole second is before the clock is 400 InvalidArgument, compared exactly
+// where radosgw reads the clock as a double (docs/differences.md, "A
+// retain-until second is compared with the clock exactly"). A version that
+// does not exist is NoSuchKey. An existing retention
+// objectlock.DecodeRetention refuses, bytes past its encoding included, is
+// radosgw's -EIO, 500 UnknownError (docs/differences.md, "An object-lock attr
+// with bytes past its encoding does not decode"). The
 // change from it is objectlock.RetentionChange's, with the bypass both the
 // header and the permission, its refusals 403 AccessDenied with radosgw's
 // messages; a lapsed retention binds none of them (docs/differences.md, "A
@@ -166,10 +196,15 @@ func (o *PutObjectRetention) Execute(ctx context.Context, r *Request) error {
 	if !r.BucketRec.Info.ObjLockEnabled() {
 		return ErrInvalidRequest.WithMessage(msgRetentionNoLock)
 	}
-	proposed, err := objectlock.ParseRetention(o.body)
-	if err != nil {
-		return lockError(err)
+	switch {
+	case !o.authorized:
+		return fmt.Errorf("%w: no document handed on past a refused permission check", ErrMalformedXML)
+	case o.parseErr != nil:
+		return lockError(o.parseErr)
+	case o.retention == nil:
+		return fmt.Errorf("%w: no document", ErrMalformedXML)
 	}
+	proposed := *o.retention
 	now := r.Env.Clock()
 	if time.Unix(proposed.RetainUntil.Unix(), 0).Before(now) {
 		return ErrInvalidArgument.WithMessage(msgRetainUntilPast)
@@ -247,7 +282,14 @@ func (*GetObjectRetention) Complete(context.Context, *Request) {}
 // PutObjectLegalHold is RGWPutObjLegalHold
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8486-L8539 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9434-L9507 at v20.2.4).
-type PutObjectLegalHold struct{}
+type PutObjectLegalHold struct {
+	// hold is the document's legal hold as Init parsed it, nil when the body
+	// was not read or its read or its parse failed: readErr is the read's
+	// error and parseErr the parse's, which Execute answers where get_params
+	// and the parse do.
+	hold              *meta.ObjectLegalHold
+	readErr, parseErr error
+}
 
 var _ Op = (*PutObjectLegalHold)(nil)
 
@@ -260,21 +302,48 @@ func (*PutObjectLegalHold) Action() policy.Action { return policy.S3PutObjectLeg
 // OpMask is RGW_OP_TYPE_WRITE.
 func (*PutObjectLegalHold) OpMask() uint32 { return OpTypeWrite }
 
-// Init loads the bucket and the head of the version the request names.
-func (*PutObjectLegalHold) Init(ctx context.Context, r *Request) error { return statHead(ctx, r) }
+// Init is initLockDocument's: the bucket, the document, which it parses
+// once, if it was read, into the legal hold Execute writes, then the head of
+// the version the request names.
+func (o *PutObjectLegalHold) Init(ctx context.Context, r *Request) error {
+	doc, err := initLockDocument(ctx, o, r)
+	if err != nil {
+		return err
+	}
+	o.readErr = doc.readErr
+	if doc.read && doc.readErr == nil {
+		h, perr := objectlock.ParseLegalHold(doc.body)
+		if perr != nil {
+			o.parseErr = perr
+		} else {
+			o.hold = &h
+		}
+	}
+	return nil
+}
 
 // VerifyPermission is RGWPutObjLegalHold::verify_permission, its action
-// authorized by verifyLockWrite.
+// authorized by verifyLockWrite after VerifyObjectPrelude's refusals, with
+// the document's legal hold, when it parsed, as r.Lock for the policies'
+// object-lock keys. radosgw reads the body in execute; the document is kept
+// for Execute whatever the check answers, so an admin Run lets through a
+// refusal is served the document it sent, as radosgw serves it.
 func (o *PutObjectLegalHold) VerifyPermission(ctx context.Context, r *Request) error {
+	if err := VerifyObjectPrelude(ctx, r); err != nil {
+		return err
+	}
+	if o.hold != nil {
+		r.Lock = &LockConditions{LegalHold: o.hold}
+	}
 	return verifyLockWrite(ctx, r, o.Action())
 }
 
 // Execute is RGWPutObjLegalHold::execute, in its order: a bucket whose flags
-// do not enable object lock is 400 InvalidRequest, before the body is read;
-// then get_params, which reads the body under rgw_max_put_param_size as
-// ReadParamBody reads it
+// do not enable object lock is 400 InvalidRequest; then get_params' read of
+// the body under rgw_max_put_param_size, made in Init, whose error comes
+// here
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1498-L1503 at v19.2.7 and v20.2.4);
-// a document objectlock.ParseLegalHold refuses is 400 MalformedXML; a
+// a document objectlock.ParseLegalHold refused is 400 MalformedXML; a
 // version that does not exist is NoSuchKey, which both releases' attr reads
 // answer before the write; and the legal hold is written by
 // modify_obj_attrs.
@@ -282,18 +351,18 @@ func (o *PutObjectLegalHold) Execute(ctx context.Context, r *Request) error {
 	if !r.BucketRec.Info.ObjLockEnabled() {
 		return ErrInvalidRequest.WithMessage(msgLegalHoldNoLock)
 	}
-	body, err := ReadParamBody(r, confSize(r, "rgw_max_put_param_size", defaultMaxPutParamSize))
-	if err != nil {
-		return err
-	}
-	h, err := objectlock.ParseLegalHold(body)
-	if err != nil {
-		return lockError(err)
+	switch {
+	case o.readErr != nil:
+		return o.readErr
+	case o.parseErr != nil:
+		return lockError(o.parseErr)
+	case o.hold == nil:
+		return fmt.Errorf("%w: no document", ErrMalformedXML)
 	}
 	if st := r.ObjState; st == nil || !st.Exists {
 		return fmt.Errorf("%w: %s", ErrNoSuchKey, r.Object.Name)
 	}
-	return modifyObjAttr(ctx, r, meta.AttrObjectLegalHold, encodeAt(h, r.Env.Zone.Release()))
+	return modifyObjAttr(ctx, r, meta.AttrObjectLegalHold, encodeAt(*o.hold, r.Env.Zone.Release()))
 }
 
 // Complete does nothing: the handler logs usage once the response is written.
@@ -344,15 +413,55 @@ func (o *GetObjectLegalHold) Execute(_ context.Context, r *Request) error {
 // Complete does nothing: the handler logs usage once the response is written.
 func (*GetObjectLegalHold) Complete(context.Context, *Request) {}
 
+// lockDocument is what initLockDocument read of the request's body: read is
+// that the op mask passed and the body was read, readErr that read's error,
+// which the op answers where radosgw's get_params does. A requester the op
+// mask refuses has none of the three set.
+type lockDocument struct {
+	body    []byte
+	readErr error
+	read    bool
+}
+
+// initLockDocument is PutObjectRetention's and PutObjectLegalHold's Init:
+// the bucket, a missing one NoSuchBucket; then, for a requester whose op
+// mask passes, the document, read under rgw_max_put_param_size as
+// ReadParamBody reads it; then the head of the version the request names.
+// The document comes before the version is looked up, as DeleteObjects reads
+// its body, because the policies' object-lock keys are taken from it before
+// the permission check: read after the version, its body would be read, and
+// net/http's 100 Continue sent, only for a version that exists, which would
+// tell a requester the missing-object rule refuses (VerifyObjectPrelude)
+// what that rule hides. The op mask depends on the identity alone, and a
+// requester it refuses is never read, as radosgw's verify_op_mask refuses it
+// before verify_permission; its lockDocument is empty, so that the op parses
+// no document for it.
+func initLockDocument(ctx context.Context, o Op, r *Request) (lockDocument, error) {
+	var doc lockDocument
+	if err := loadBucket(ctx, r); err != nil {
+		return doc, err
+	}
+	if verifyOpMask(o, r) == nil {
+		doc.body, doc.readErr = ReadParamBody(r, confSize(r, "rgw_max_put_param_size", defaultMaxPutParamSize))
+		doc.read = true
+	}
+	st, err := r.Env.Objects.StatObject(ctx, r.BucketRec, r.Object)
+	if err != nil {
+		return doc, err
+	}
+	r.ObjState = st
+	return doc, nil
+}
+
 // verifyLockWrite authorizes a, s3:PutObjectRetention or
 // s3:PutObjectLegalHold, on the version the request names as a write's
-// object-lock headers are authorized (verifyLockHeaders): after
-// VerifyObjectPrelude's refusals, which radosgw makes before
-// verify_permission, the identity's and the bucket's policies decide, the
-// version's tags added as they need them, and where neither decides the
-// bucket's owner alone passes (VerifyBucketPermissionOwnerOrPolicy).
-// PutObjectRetention's s3:BypassGovernanceRetention is authorized the same
-// way. radosgw evaluates the three actions with verify_object_permission
+// object-lock headers are authorized (verifyLockHeaders), once the op has
+// made VerifyObjectPrelude's refusals: the identity's
+// and the bucket's policies decide, the version's tags added as they need
+// them, and where neither decides the bucket's owner alone passes
+// (VerifyBucketPermissionOwnerOrPolicy). PutObjectRetention's
+// s3:BypassGovernanceRetention is authorized the same way. radosgw evaluates
+// the three actions with verify_object_permission
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8340,
 // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8348 and
 // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8492 at v19.2.7,
@@ -366,9 +475,6 @@ func (*GetObjectLegalHold) Complete(context.Context, *Request) {}
 // "No ACL grant authorizes PutObjectRetention, PutObjectLegalHold or their
 // governance bypass").
 func verifyLockWrite(ctx context.Context, r *Request, a policy.Action) error {
-	if err := VerifyObjectPrelude(ctx, r); err != nil {
-		return err
-	}
 	return VerifyBucketPermissionOwnerOrPolicy(ctx, r, a, acl.PermFor(a))
 }
 

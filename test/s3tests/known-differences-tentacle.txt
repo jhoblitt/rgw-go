@@ -169,3 +169,6 @@
 # A DeleteObjects whose last delete of a key names a version that does not exist or fails its condition, the key's skipped OLH updates applied after it, so the version it removed first is gone; radosgw leaves them pending and serves that version by its id (differences: "DeleteObjects leaves a key's skipped updates to its last delete")
 ^s3tests\.functional\.test_s3::test_versioning_multi_object_delete_last_missing$
 ^s3tests\.functional\.test_s3::test_versioning_multi_object_delete_last_precondition_failed$
+
+# A bucket policy Deny conditioned on s3:object-lock-mode, evaluated for a PutObject whose headers set that mode; radosgw sets none of the object-lock condition keys (differences: "A lock a request sets is evaluated with Amazon S3's object-lock condition keys")
+^s3tests\.functional\.test_s3::test_object_lock_put_obj_mode_denied_by_policy_condition$

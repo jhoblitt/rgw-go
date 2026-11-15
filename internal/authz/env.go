@@ -7,8 +7,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/denc"
+	"github.com/jhoblitt/rgw-go/internal/iso8601"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/policy"
 	"github.com/jhoblitt/rgw-go/internal/tags"
@@ -22,12 +24,14 @@ type envPair struct{ key, value string }
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L848-L910 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L884-L946 at v20.2.4),
 // then the keys the op for a adds in its verify_permission. Tag keys are not
-// among them; the evaluator adds those where the op does.
+// among them; the evaluator adds those where the op does. Last come the
+// object-lock keys of the lock the request sets (lockKeys), which radosgw
+// does not add.
 //
 // radosgw's environment is an unordered_multimap, and on Tentacle which of a
 // key's values a typed condition reads depends on how many pairs the
 // environment held when each was added (policy.Env), so the keys are added in
-// radosgw's order.
+// radosgw's order, and the keys it lacks after all of its own.
 func BuildEnv(cfg Config, r *op.Request, a policy.Action) policy.Env {
 	return buildEnv(cfg, r, a, nil)
 }
@@ -48,7 +52,66 @@ func buildEnv(cfg Config, r *op.Request, a policy.Action, addTags func(*policy.E
 	if !tagsFirst && addTags != nil {
 		addTags(&env)
 	}
+	for _, p := range lockKeys(cfg, r, a) {
+		env.Add(p.key, p.value)
+	}
 	return env
+}
+
+// lockKeys are the object-lock condition keys of r.Lock, the lock the
+// request sets, that the Service Authorization Reference lists for a: all
+// four for s3:PutObject, the retention's for s3:PutObjectRetention and the
+// legal hold's for s3:PutObjectLegalHold
+// (https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazons3.html);
+// none for any other action or for a request that sets no lock, so a policy
+// conditioned on one finds it absent there. radosgw adds none of them
+// (docs/ceph-upstream-bugs.md, "radosgw sets none of the object-lock
+// condition keys"; docs/differences.md). Each value is one the typed
+// operators convert, so that no Deny on a lock the request sets fails open:
+// the date as iso8601.Format writes it, which as_date reads, and the
+// remaining days a whole number (remainingDays) from the clock that sets
+// aws:CurrentTime.
+func lockKeys(cfg Config, r *op.Request, a policy.Action) []envPair {
+	l := r.Lock
+	if l == nil {
+		return nil
+	}
+	var ps []envPair
+	if ret := l.Retention; ret != nil && (a == policy.S3PutObject || a == policy.S3PutObjectRetention) {
+		ps = append(ps,
+			envPair{"s3:object-lock-mode", ret.Mode},
+			envPair{"s3:object-lock-retain-until-date", iso8601.Format(ret.RetainUntil)},
+			envPair{"s3:object-lock-remaining-retention-days", strconv.FormatInt(remainingDays(ret.RetainUntil, cfg.now()), 10)})
+	}
+	if h := l.LegalHold; h != nil && (a == policy.S3PutObject || a == policy.S3PutObjectLegalHold) {
+		ps = append(ps, envPair{"s3:object-lock-legal-hold", h.Status})
+	}
+	return ps
+}
+
+// remainingDays is the time from now to until in days of 86400 seconds,
+// rounded up, as MinIO rounds s3:object-lock-remaining-retention-days
+// (https://github.com/minio/minio/blob/7aac2a2c5b7c882e68c1ce017d8256be2feea27f/cmd/bucket-object-lock.go#L176-L178),
+// so that a retention past a guardrail's last day by any fraction counts as
+// a day more; negative for a date past. It counts seconds, as a
+// time.Duration saturates near 292 years and a retention runs to
+// meta.MaxRealTime.
+func remainingDays(until, now time.Time) int64 {
+	const day = 86400
+	secs := until.Unix() - now.Unix()
+	nanos := until.Nanosecond() - now.Nanosecond()
+	if nanos < 0 {
+		secs--
+		nanos += int(time.Second)
+	}
+	days, rem := secs/day, secs%day
+	if rem < 0 {
+		days, rem = days-1, rem+day
+	}
+	if rem > 0 || nanos > 0 {
+		days++
+	}
+	return days
 }
 
 // baseEnv is rgw_build_iam_environment's keys alone, the environment

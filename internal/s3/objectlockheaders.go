@@ -86,6 +86,15 @@ func (l requestLock) addAttrs(attrs map[string][]byte) {
 	}
 }
 
+// conditions is l as the policy keys read it (op.Request.Lock), nil when it
+// names neither a retention nor a legal hold.
+func (l requestLock) conditions() *op.LockConditions {
+	if l.retention == nil && l.legalHold == nil {
+		return nil
+	}
+	return &op.LockConditions{Retention: l.retention, LegalHold: l.legalHold}
+}
+
 // setObjectLockHeaders adds send_response_data's object-lock headers
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L603-L621 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L712-L730 at v20.2.4)
