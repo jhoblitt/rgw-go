@@ -17,6 +17,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
+	"github.com/jhoblitt/rgw-go/internal/tags"
 )
 
 // CompleteMultipartUpload is RGWCompleteMultipart::execute
@@ -350,7 +351,7 @@ func (s *Store) Complete(ctx context.Context, up *op.Upload, parts []op.Complete
 				slog.InfoContext(ctx, "multipart completion already completed", slog.String("upload", up.ID))
 				return &op.PutResult{
 					ETag: st.ETag, Size: st.Size, Mtime: st.Mtime, Epoch: st.Epoch, Version: versionID(st.Key),
-					Checksum: st.Checksum, Crypt: op.CryptAttrs(st.Attrs),
+					Checksum: st.Checksum, Crypt: op.CryptAttrs(st.Attrs), Tags: st.Attrs[tags.Attr], OrigSize: st.OrigSize(),
 				}, nil
 			}
 		}
@@ -406,7 +407,10 @@ func (s *Store) completeLocked(ctx context.Context, up *op.Upload, ref mpRef, co
 		}
 		slog.InfoContext(ctx, "finishing a multipart completion whose meta object outlived its head write", slog.String("upload", up.ID))
 		released := s.retireUpload(ctx, up, ref, ms, &a.cleanup)
-		return &op.PutResult{ETag: a.etag, Size: cur.Size, Mtime: cur.Mtime, Epoch: cur.Epoch, Version: versionID(cur.Key), Checksum: cur.Checksum}, released, nil
+		return &op.PutResult{
+			ETag: a.etag, Size: cur.Size, Mtime: cur.Mtime, Epoch: cur.Epoch, Version: versionID(cur.Key), Checksum: cur.Checksum,
+			Tags: cur.Attrs[tags.Attr], OrigSize: cur.OrigSize(),
+		}, released, nil
 	}
 	sum, err := combineChecksums(s.uploadChecksum(ms.info), a.parts, up.SuppliedChecksum)
 	if err != nil {
@@ -456,7 +460,14 @@ func (s *Store) completeLocked(ctx context.Context, up *op.Upload, ref mpRef, co
 		mtime, version = hw.mtime, ""
 	}
 	released := s.retireUpload(ctx, up, ref, ms, &a.cleanup)
-	return &op.PutResult{ETag: a.etag, Size: a.size, Mtime: mtime, Epoch: hr.epoch, Version: version, Checksum: sum}, released, nil
+	orig := a.size
+	if a.compressed {
+		orig = a.cs.OrigSize
+	}
+	return &op.PutResult{
+		ETag: a.etag, Size: a.size, Mtime: mtime, Epoch: hr.epoch, Version: version, Checksum: sum,
+		Tags: attrs[tags.Attr], OrigSize: orig,
+	}, released, nil
 }
 
 // replayRecorded answers a completion whose meta object holds the record of
@@ -507,7 +518,10 @@ func (s *Store) replayRecorded(ctx context.Context, up *op.Upload, ref mpRef, ms
 	}
 	slog.InfoContext(ctx, "finishing a recorded multipart completion whose meta object outlived its head write", slog.String("upload", up.ID))
 	released := s.retireUpload(ctx, up, ref, ms, &cleanup)
-	return &op.PutResult{ETag: cur.ETag, Size: cur.Size, Mtime: cur.Mtime, Epoch: cur.Epoch, Version: versionID(cur.Key), Checksum: cur.Checksum}, released, nil
+	return &op.PutResult{
+		ETag: cur.ETag, Size: cur.Size, Mtime: cur.Mtime, Epoch: cur.Epoch, Version: versionID(cur.Key), Checksum: cur.Checksum,
+		Tags: cur.Attrs[tags.Attr], OrigSize: cur.OrigSize(),
+	}, released, nil
 }
 
 // recordedLink is what the index tells of a version a recorded completion

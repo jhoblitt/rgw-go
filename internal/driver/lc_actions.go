@@ -545,8 +545,7 @@ func (p *lcProbe) stat(ctx context.Context, key meta.ObjKey) (*op.ObjectState, e
 	return p.st, p.err
 }
 
-// Size implements lifecycle.Probe: the size uncompressed, OrigSize for a
-// compressed object, whose Size is the size stored.
+// Size implements lifecycle.Probe: the size uncompressed (ObjectState.OrigSize).
 func (p *lcProbe) Size(ctx context.Context, key meta.ObjKey) (uint64, error) {
 	st, err := p.stat(ctx, key)
 	switch {
@@ -554,10 +553,8 @@ func (p *lcProbe) Size(ctx context.Context, key meta.ObjKey) (uint64, error) {
 		return 0, err
 	case !st.Exists:
 		return 0, nil
-	case st.Compression != nil:
-		return st.Compression.OrigSize, nil
 	}
-	return st.Size, nil
+	return st.OrigSize(), nil
 }
 
 // Tags implements lifecycle.Probe.

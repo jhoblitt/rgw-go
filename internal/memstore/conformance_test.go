@@ -62,6 +62,7 @@ var _ = Describe("memstore", func() {
 			conformance.Run(newEnv)
 			conformance.RunObjectChecksums(newEnv)
 			conformance.RunMultipartChecksums(newEnv)
+			conformance.RunLifecycleInputs(newEnv)
 		})
 	}
 })

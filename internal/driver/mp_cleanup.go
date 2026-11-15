@@ -516,7 +516,22 @@ func (s *Store) scanStart(ctx context.Context, up *op.Upload, ref mpRef, parts [
 // An entry the listing does not find answers the zero time, which bounds
 // nothing: the scan is never narrowed on a guess.
 func (s *Store) uploadInitiated(ctx context.Context, up *op.Upload, ref mpRef) (time.Time, error) {
+	t, ok, err := s.entryMtime(ctx, up, ref)
+	if err == nil && !ok {
+		slog.WarnContext(ctx, "the index entry of a multipart upload is missing; its key's versions are read without a bound",
+			slog.String("upload", up.ID), slog.String("key", up.Key.Name))
+	}
+	return t, err
+}
+
+// entryMtime is the mtime of the index entry of up's meta object, and
+// whether the entry's shard lists one. An indexless bucket has no entry and
+// no shard, and is not read.
+func (s *Store) entryMtime(ctx context.Context, up *op.Upload, ref mpRef) (time.Time, bool, error) {
 	x := s.newIndexOp(up.Bucket, ref.key, "")
+	if x.blind {
+		return time.Time{}, false, nil
+	}
 	x.hashName = up.Key.Name
 	name := ref.key.IndexKeyName()
 	var (
@@ -530,13 +545,11 @@ func (s *Store) uploadInitiated(ctx context.Context, up *op.Upload, ref mpRef) (
 	})
 	switch {
 	case err != nil:
-		return time.Time{}, fmt.Errorf("reading the index entry of upload %s: %w", up.ID, err)
+		return time.Time{}, false, fmt.Errorf("reading the index entry of upload %s: %w", up.ID, err)
 	case !ok:
-		slog.WarnContext(ctx, "the index entry of a multipart upload is missing; its key's versions are read without a bound",
-			slog.String("upload", up.ID), slog.String("key", up.Key.Name))
-		return time.Time{}, nil
+		return time.Time{}, false, nil
 	}
-	return en.Meta.Mtime, nil
+	return en.Meta.Mtime, true, nil
 }
 
 // namesUploadObjects reports that the manifest m names an object written

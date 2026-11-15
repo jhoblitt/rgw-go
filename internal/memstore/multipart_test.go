@@ -360,7 +360,7 @@ var _ = Describe("multipart", func() {
 
 				again, err := store.Complete(ctx, up, parts)
 				Expect(err).NotTo(HaveOccurred(), "check_previously_completed finds the key's ETag the parts make")
-				Expect(again).To(Equal(&op.PutResult{ETag: first.ETag, Size: first.Size, Mtime: first.Mtime, Epoch: first.Epoch}))
+				Expect(again).To(Equal(&op.PutResult{ETag: first.ETag, Size: first.Size, Mtime: first.Mtime, Epoch: first.Epoch, OrigSize: first.Size}))
 
 				reversed, err := store.Complete(ctx, up, []op.CompletePart{parts[1], parts[0]})
 				Expect(err).NotTo(HaveOccurred(), "the parts are sorted by number before the ETag is recomputed, as std::map orders them")

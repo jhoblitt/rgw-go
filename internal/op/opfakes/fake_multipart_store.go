@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
@@ -133,6 +134,20 @@ type FakeMultipartStore struct {
 	}
 	putPartReturnsOnCall map[int]struct {
 		result1 *op.PartResult
+		result2 error
+	}
+	UploadInitiatedStub        func(context.Context, *op.Upload) (time.Time, error)
+	uploadInitiatedMutex       sync.RWMutex
+	uploadInitiatedArgsForCall []struct {
+		arg1 context.Context
+		arg2 *op.Upload
+	}
+	uploadInitiatedReturns struct {
+		result1 time.Time
+		result2 error
+	}
+	uploadInitiatedReturnsOnCall map[int]struct {
+		result1 time.Time
 		result2 error
 	}
 	invocations      map[string][][]interface{}
@@ -671,6 +686,71 @@ func (fake *FakeMultipartStore) PutPartReturnsOnCall(i int, result1 *op.PartResu
 	}
 	fake.putPartReturnsOnCall[i] = struct {
 		result1 *op.PartResult
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeMultipartStore) UploadInitiated(arg1 context.Context, arg2 *op.Upload) (time.Time, error) {
+	fake.uploadInitiatedMutex.Lock()
+	ret, specificReturn := fake.uploadInitiatedReturnsOnCall[len(fake.uploadInitiatedArgsForCall)]
+	fake.uploadInitiatedArgsForCall = append(fake.uploadInitiatedArgsForCall, struct {
+		arg1 context.Context
+		arg2 *op.Upload
+	}{arg1, arg2})
+	stub := fake.UploadInitiatedStub
+	fakeReturns := fake.uploadInitiatedReturns
+	fake.recordInvocation("UploadInitiated", []interface{}{arg1, arg2})
+	fake.uploadInitiatedMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *FakeMultipartStore) UploadInitiatedCallCount() int {
+	fake.uploadInitiatedMutex.RLock()
+	defer fake.uploadInitiatedMutex.RUnlock()
+	return len(fake.uploadInitiatedArgsForCall)
+}
+
+func (fake *FakeMultipartStore) UploadInitiatedCalls(stub func(context.Context, *op.Upload) (time.Time, error)) {
+	fake.uploadInitiatedMutex.Lock()
+	defer fake.uploadInitiatedMutex.Unlock()
+	fake.UploadInitiatedStub = stub
+}
+
+func (fake *FakeMultipartStore) UploadInitiatedArgsForCall(i int) (context.Context, *op.Upload) {
+	fake.uploadInitiatedMutex.RLock()
+	defer fake.uploadInitiatedMutex.RUnlock()
+	argsForCall := fake.uploadInitiatedArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *FakeMultipartStore) UploadInitiatedReturns(result1 time.Time, result2 error) {
+	fake.uploadInitiatedMutex.Lock()
+	defer fake.uploadInitiatedMutex.Unlock()
+	fake.UploadInitiatedStub = nil
+	fake.uploadInitiatedReturns = struct {
+		result1 time.Time
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeMultipartStore) UploadInitiatedReturnsOnCall(i int, result1 time.Time, result2 error) {
+	fake.uploadInitiatedMutex.Lock()
+	defer fake.uploadInitiatedMutex.Unlock()
+	fake.UploadInitiatedStub = nil
+	if fake.uploadInitiatedReturnsOnCall == nil {
+		fake.uploadInitiatedReturnsOnCall = make(map[int]struct {
+			result1 time.Time
+			result2 error
+		})
+	}
+	fake.uploadInitiatedReturnsOnCall[i] = struct {
+		result1 time.Time
 		result2 error
 	}{result1, result2}
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
+	"github.com/jhoblitt/rgw-go/internal/tags"
 )
 
 // A copy is RGWRados::copy_obj's local branch (driver/rados/rgw_rados.cc
@@ -330,7 +331,10 @@ func (s *Store) shareTails(ctx context.Context, src *op.ObjectState, dst *op.Buc
 	if err != nil {
 		return nil, err
 	}
-	return &op.PutResult{ETag: rgwBlStr(attrs[meta.AttrETag]), Size: src.Size, Mtime: res.mtime, Epoch: res.epoch}, nil
+	return &op.PutResult{
+		ETag: rgwBlStr(attrs[meta.AttrETag]), Size: src.Size, Mtime: res.mtime, Epoch: res.epoch,
+		Tags: attrs[tags.Attr], OrigSize: src.OrigSize(),
+	}, nil
 }
 
 // sameBucketID is rgw_bucket's ==, which compares tenant, name and id only.

@@ -22,6 +22,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
+	"github.com/jhoblitt/rgw-go/internal/tags"
 )
 
 // PutObject implements op.ObjectStore as RGWPutObj::execute and
@@ -240,7 +241,10 @@ func (s *Store) putStream(ctx context.Context, rec *op.BucketRecord, key meta.Ob
 	if res.canceled {
 		tw.discard()
 	}
-	return &op.PutResult{ETag: etag, Size: size, Mtime: res.mtime, Epoch: res.epoch, Checksum: sum.cksum}, nil
+	return &op.PutResult{
+		ETag: etag, Size: size, Mtime: res.mtime, Epoch: res.epoch, Checksum: sum.cksum,
+		Tags: attrs[tags.Attr], OrigSize: accounted,
+	}, nil
 }
 
 // putHold is the memory budget hold of a write laid out as l of a body of
