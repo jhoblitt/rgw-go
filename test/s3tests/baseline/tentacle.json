@@ -3288,6 +3288,9 @@
     "s3tests.functional.test_s3::test_object_lock_put_obj_lock_with_days_and_years": [
       {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"20.2.4","recorded":"2026-11-14T17:48:07Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
     ],
+    "s3tests.functional.test_s3::test_object_lock_put_obj_mode_denied_by_policy_condition": [
+      {"outcome":"failed","source":"a11f9990f961ec6643fa5a0c28550f0ed0ceaf30","ceph_version":"20.2.4","recorded":"2026-11-15T00:28:44Z","runs":2,"unstable":false,"meta":{"deselect":"d121159f1d35","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
     "s3tests.functional.test_s3::test_object_lock_put_obj_retention": [
       {"outcome":"passed","source":"715eb69fa9b49dcffc2d2526b5684677ae622482","ceph_version":"20.2.4","recorded":"2026-11-14T17:48:07Z","runs":2,"unstable":false,"meta":{"deselect":"33b4e0628b91","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
     ],
