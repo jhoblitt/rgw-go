@@ -14,7 +14,8 @@
     {"source":"715eb69fa9b49dcffc2d2526b5684677ae622482","admitted":"additive"},
     {"source":"036521df3e36cfb57ab37fc62f8eff9e9c18db5e","admitted":"additive"},
     {"source":"970f0b90d7431b3ff7fa06d4e63d0ac38d14ecd7","admitted":"additive"},
-    {"source":"fb2ced34062be9af10f87181c2e6c163d21ecda5","admitted":"additive"}
+    {"source":"fb2ced34062be9af10f87181c2e6c163d21ecda5","admitted":"additive"},
+    {"source":"a11f9990f961ec6643fa5a0c28550f0ed0ceaf30","admitted":"additive"}
   ],
   "tests": {
     "s3tests.functional.test_headers::test_bucket_create_bad_authorization_empty": [
