@@ -14,7 +14,7 @@ Each arrow counts the dependencies from tasks of one unit on tasks of another.
 flowchart LR
   u_S["Shared<br/>12 tasks"]
   u_F["F: floor 19.2.7<br/>20 tasks"]
-  u_V["V: versioning<br/>29 tasks"]
+  u_V["V: versioning<br/>30 tasks"]
   u_L["L: object lock<br/>6 tasks"]
   u_C["C: lifecycle<br/>14 tasks"]
   u_B["B: bucket config<br/>41 tasks"]
@@ -249,6 +249,7 @@ flowchart LR
   t_V18["V18"]
   t_V19["V19"]
   t_V20["V20"]
+  t_V21["V21"]
   t_S1["S1"]:::ext
   t_S2["S2"]:::ext
   t_WP_16["WP-16"]:::ext
@@ -315,6 +316,7 @@ flowchart LR
   t_V16 --> t_V18
   t_V16 --> t_V19
   t_V18 --> t_V20
+  t_V20 --> t_V21
   click t_V0 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v0-a-failed-class-call-keeps-its-output" "V0: a failed class call keeps its output"
   click t_V1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v1-clsrgw-olh-methods-bi_get-and-the-index-key-encoders" "V1: cls/rgw OLH methods, `bi_get` and the index key encoders"
   click t_V2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v2-meta-olh-head-types-and-bucket-helpers" "V2: meta OLH head types and bucket helpers"
@@ -349,6 +351,7 @@ flowchart LR
   click t_V18 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v18-a-versioned-write-whose-version-is-deleted-before-it-links-succeeds" "V18: a versioned write whose version is deleted before it links succeeds"
   click t_V19 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v19-another-requests-replay-keeps-a-versioned-deletes-object-lock-guard" "V19: another request's replay keeps a versioned delete's object-lock guard"
   click t_V20 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v20-a-key-left-with-an-olh-entry-pending-removal-stays-listable" "V20: a key left with an OLH entry pending removal stays listable"
+  click t_V21 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v21-a-replay-keeps-a-version-a-later-link-of-the-same-log-names" "V21: a replay keeps a version a later link of the same log names"
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_WP_16 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-16-the-otp-class-client" "WP-16: the otp class client"
@@ -391,6 +394,7 @@ flowchart LR
 - [V18](V-versioning.md#task-v18-a-versioned-write-whose-version-is-deleted-before-it-links-succeeds): a versioned write whose version is deleted before it links succeeds
 - [V19](V-versioning.md#task-v19-another-requests-replay-keeps-a-versioned-deletes-object-lock-guard): another request's replay keeps a versioned delete's object-lock guard
 - [V20](V-versioning.md#task-v20-a-key-left-with-an-olh-entry-pending-removal-stays-listable): a key left with an OLH entry pending removal stays listable
+- [V21](V-versioning.md#task-v21-a-replay-keeps-a-version-a-later-link-of-the-same-log-names): a replay keeps a version a later link of the same log names
 
 ### L: object lock
 
