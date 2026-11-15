@@ -34,7 +34,7 @@ The set's files:
 
 | File | Unit | Tasks |
 |---|---|---|
-| `00-index.md` | this index, and the shared tasks S1 to S12 | 12 |
+| `00-index.md` | this index, and the shared tasks S1 to S13 | 13 |
 | `V-versioning.md` | the OLH protocol, versioned ops, ListObjectVersions, MFA delete | V0-V21 |
 | `L-object-lock.md` | object lock: configuration, retention, legal hold, enforcement | L1-L5b |
 | `C-lifecycle.md` | lifecycle configuration and the worker | C1-C15 |
@@ -419,9 +419,38 @@ Found by S8's adversarial review (B-I1), and numbered here before S8 merged (PP-
   s3:PutObject alone").
 - **Depends on:** S8. **PR:** one. **Brief:** about 40 lines.
 
+### Task S13: CopyObject and CreateMultipartUpload evaluate s3:PutObject with the ACL and tag condition keys
+
+Found by S12's adversarial review (Important 1), and numbered here before S12 merged (PP-12).
+
+- **Layer:** authz. **Files:** the policy environment of CopyObject's destination and of
+  CreateMultipartUpload, and their specs; `docs/differences.md`; the registry entry S12 adds.
+  **Cluster:** no.
+- **Security boundary:** request authorization; adversarial review applies (PP-14).
+- **Behaviour:**
+  1. CopyObject and CreateMultipartUpload evaluate s3:PutObject with the request's
+     `s3:x-amz-acl`, `s3:x-amz-grant-*` and request-tag condition keys, as PutObject does.
+  2. Whether Amazon S3 sets those keys for the two operations is decided at implementation from
+     Amazon's documentation of the s3:PutObject condition keys. If no Amazon text decides it, the
+     keys are set: a policy written to govern every write of an object must not be skipped by two
+     of them.
+  3. Under such a policy, rgw-go then refuses CopyObject and CreateMultipartUpload writes that
+     radosgw serves; the differences entry records it.
+- **Why:** radosgw adds those keys to the environment only for PutObject and the ACL operations,
+  not for CopyObject or CreateMultipartUpload, and rgw-go copies it (S12's registry entry). So a
+  bucket policy that conditions s3:PutObject on `s3:x-amz-acl`, for example one that requires
+  `bucket-owner-full-control`, binds a PutObject but not a CopyObject or a
+  CreateMultipartUpload carrying the same headers. S12's own s3:PutObjectAcl and
+  s3:PutObjectTagging checks carry the keys on all three writes, so the gap is in policies written
+  against s3:PutObject alone.
+- **Specs:** per release, a bucket policy conditioning s3:PutObject on `s3:x-amz-acl`
+  (StringEquals, and StringNotEquals `bucket-owner-full-control`) and on a request tag: PutObject,
+  CopyObject and CreateMultipartUpload carrying the same headers give the same answer.
+- **Depends on:** S12. **PR:** one. **Brief:** about 35 lines.
+
 ## Order
 
-1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, S6 once V2 lands, S7 once V10, BC-17, BC-23, BC-10 and BC-28a land, S8 and S11 at once, S9 and S10 once L7 lands, and S12 once S8 lands.
+1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, S6 once V2 lands, S7 once V10, BC-17, BC-23, BC-10 and BC-28a land, S8 and S11 at once, S9 and S10 once L7 lands, S12 once S8 lands, and S13 once S12 lands.
 2. **Then the units in parallel**, each in its own file's waves. V's foundation (V0 to V3b) comes first among the units, because L and C consume its OLH seams. B and WP start with S2, and the T and SM units start at once. Within the waves:
    - The cluster tasks of every unit run one at a time.
    - The recording tasks, which append to the parity ledgers, land one at a time through the controller.

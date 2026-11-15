@@ -12,7 +12,7 @@ Each arrow counts the dependencies from tasks of one unit on tasks of another.
 
 ```mermaid
 flowchart LR
-  u_S["Shared<br/>12 tasks"]
+  u_S["Shared<br/>13 tasks"]
   u_F["F: floor 19.2.7<br/>20 tasks"]
   u_V["V: versioning<br/>30 tasks"]
   u_L["L: object lock<br/>6 tasks"]
@@ -66,6 +66,7 @@ flowchart LR
   t_S10["S10"]
   t_S11["S11"]
   t_S12["S12"]
+  t_S13["S13"]
   t_V2["V2"]:::ext
   t_V10["V10"]:::ext
   t_BC_10["BC-10"]:::ext
@@ -84,6 +85,7 @@ flowchart LR
   t_L7 --> t_S10
   t_S8 --> t_S12
   t_S12 --> t_WP_31
+  t_S12 --> t_S13
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_S3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s3-one-aws-correct-ispublic" "S3: one AWS-correct IsPublic"
@@ -96,6 +98,7 @@ flowchart LR
   click t_S10 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s10-a-denys-condition-key-names-match-without-regard-to-case" "S10: a Deny's condition key names match without regard to case"
   click t_S11 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s11-a-bound-on-an-xml-request-bodys-elements-and-depth" "S11: a bound on an XML request body's elements and depth"
   click t_S12 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s12-the-object-writes-authorize-the-acl-and-tags-they-set-as-amazon-s3-does" "S12: the object writes authorize the ACL and tags they set as Amazon S3 does"
+  click t_S13 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s13-copyobject-and-createmultipartupload-evaluate-s3putobject-with-the-acl-and-tag-condition-keys" "S13: CopyObject and CreateMultipartUpload evaluate s3:PutObject with the ACL and tag condition keys"
   click t_V2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v2-meta-olh-head-types-and-bucket-helpers" "V2: meta OLH head types and bucket helpers"
   click t_V10 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v10-op-and-s3-putbucketversioning-and-getbucketversioning" "V10: op and s3, PutBucketVersioning and GetBucketVersioning"
   click t_BC_10 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-10-website-semantics-and-xml" "BC-10: Website semantics and XML"
@@ -118,6 +121,7 @@ flowchart LR
 - [S10](00-index.md#task-s10-a-denys-condition-key-names-match-without-regard-to-case): a Deny's condition key names match without regard to case
 - [S11](00-index.md#task-s11-a-bound-on-an-xml-request-bodys-elements-and-depth): a bound on an XML request body's elements and depth
 - [S12](00-index.md#task-s12-the-object-writes-authorize-the-acl-and-tags-they-set-as-amazon-s3-does): the object writes authorize the ACL and tags they set as Amazon S3 does
+- [S13](00-index.md#task-s13-copyobject-and-createmultipartupload-evaluate-s3putobject-with-the-acl-and-tag-condition-keys): CopyObject and CreateMultipartUpload evaluate s3:PutObject with the ACL and tag condition keys
 
 ### F: floor 19.2.7
 
