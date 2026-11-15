@@ -95,6 +95,9 @@ const (
 	RefusedIncomplete
 	// RefusedEnd is the refusal of Scan's end function.
 	RefusedEnd
+	// RefusedStartTag is a start tag of more than MaxStartTag bytes, refused as
+	// it is read.
+	RefusedStartTag
 )
 
 // ScanError is Scan's refusal: the rule broken, the byte offset in the body
@@ -154,7 +157,9 @@ type frame struct {
 // not place is refused or read as a field, so nothing is read deeper than
 // the table. When end is not nil it is called as each element ends, after
 // its children, and its error refuses the body at that end tag. Every
-// refusal is a *ScanError.
+// refusal is a *ScanError. A start tag of more than MaxStartTag bytes is
+// refused as it is read, RefusedStartTag, before the decoder builds its
+// attributes.
 //
 // Besides the table's rules, Scan refuses a declaration and every body Parse
 // refuses: a token Go's decoder cannot read; a second root; text outside the
@@ -172,7 +177,7 @@ type frame struct {
 func Scan(body []byte, s *Schema, end func(Closed) error) error {
 	doc := bytes.TrimPrefix(body, utf8BOM)
 	base := int64(len(body) - len(doc))
-	d := xml.NewDecoder(bytes.NewReader(doc))
+	d, g := newDecoder(doc)
 	var (
 		open    []frame
 		closed  bool
@@ -194,7 +199,7 @@ func Scan(body []byte, s *Schema, end func(Closed) error) error {
 	for {
 		start := d.InputOffset()
 		off := base + start
-		tok, err := d.RawToken()
+		tok, err := g.rawToken(d)
 		if errors.Is(err, io.EOF) {
 			switch {
 			case pending != nil:
@@ -205,6 +210,9 @@ func Scan(body []byte, s *Schema, end func(Closed) error) error {
 				return refuse(RefusedIncomplete, off, "the body holds no root")
 			}
 			return nil
+		}
+		if errors.Is(err, ErrStartTagTooLong) {
+			return &ScanError{Refusal: RefusedStartTag, Offset: off, Err: err}
 		}
 		if err != nil {
 			return refuse(RefusedSyntax, off, Clip(err.Error(), 128))

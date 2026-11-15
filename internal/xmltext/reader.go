@@ -66,6 +66,49 @@ func (e *Element) Find(name string) iter.Seq[*Element] {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_xml.cc#L243-L248).
 var ErrNotWellFormed = errors.New("xmltext: not well-formed")
 
+// MaxElements is how many elements a document may start, each attribute
+// counting as one, all of them and not the most open at once. MaxDepth is how
+// many elements may be open at once, the root included, and MaxStartTag how
+// many bytes one start tag may hold, "<" to ">". RGWXMLParser sets no bound on
+// expat, installing only its element and character handlers
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_xml.cc#L219-L221 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_xml.cc#L219-L221 at v20.2.4),
+// so only the body's length, rgw_max_put_param_size, 1 MiB by default, bounds
+// what it builds: 262,144 empty elements, 349,525 nested ones or a start tag
+// of 262,142 attributes. Some of radosgw's ops parse a body before they
+// authorize its sender, and rgw-go's DeleteObjects does, so a requester who
+// names a bucket can have the tree built.
+//
+// The largest document the ops read within radosgw's limits holds about
+// 69,000 elements and attributes: one lifecycle rule of the 23,000 tags 1 MiB
+// holds, a tag being three elements in 39 bytes, the densest content in any
+// request document. The largest an S3 client writes holds 43,000
+// (rgw_lc_max_rules, 1,000, rules of S3's ten tags), then 39,000 (an ACL of
+// the 5,588 grants a body holds, each grantee carrying two attributes), 30,000
+// (a CompleteMultipartUpload of rgw_multipart_part_upload_limit, 10,000,
+// parts) and 6,000 (a DeleteObjects of rgw_delete_multi_obj_max_num, 1,000,
+// keys with every field). MaxElements is 131,072, 1.9 times the first and 3
+// times the second, and a body of empty elements reaches it in 512 KiB. The
+// deepest document holds 6 levels, a lifecycle rule's tag key
+// (LifecycleConfiguration, Rule, Filter, And, Tag, Key), and MaxDepth is 64.
+// The longest start tag is an ACL grantee's, 96 bytes with its two
+// attributes, and MaxStartTag is 16 KiB: encoding/xml builds all of a tag's
+// attributes before it returns the tag, so the bound is made as it reads.
+const (
+	MaxElements = 1 << 17
+	MaxDepth    = 64
+	MaxStartTag = 16 << 10
+)
+
+// ErrTooManyElements is a document that starts more than MaxElements elements
+// and attributes. Parse stops building at the element that passes the bound, so
+// a body of any length costs what MaxElements of them do.
+var ErrTooManyElements = errors.New("xmltext: too many elements")
+
+// ErrTooDeep is a document that nests more than MaxDepth elements, refused at
+// the start tag that passes the bound.
+var ErrTooDeep = errors.New("xmltext: elements nested too deeply")
+
 // Parse is ParseFunc without an end function.
 func Parse(doc []byte) (*Element, error) { return ParseFunc(doc, nil) }
 
@@ -78,8 +121,12 @@ func Parse(doc []byte) (*Element, error) { return ParseFunc(doc, nil) }
 // returns the root element. When end is not nil it is called as each element
 // ends, after its children, as call_xml_end calls xml_end
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_xml.cc#L197-L205);
-// its error fails the parse and is returned as it is. Every other failure is
-// ErrNotWellFormed.
+// its error fails the parse and is returned as it is. A document that starts
+// more than MaxElements elements and attributes or nests more than MaxDepth is
+// refused at the start tag that passes the bound, before the element is built,
+// with ErrTooManyElements or ErrTooDeep, and one with a start tag of more than
+// MaxStartTag bytes is refused as that tag is read, with ErrStartTagTooLong.
+// Every other failure is ErrNotWellFormed.
 //
 // encoding/xml's RawToken reports names as written but checks less than
 // expat, so ParseFunc adds expat's checks: one root, matched end tags, no
@@ -95,7 +142,7 @@ func Parse(doc []byte) (*Element, error) { return ParseFunc(doc, nil) }
 // reads as U+FFFD.
 func ParseFunc(doc []byte, end func(*Element) error) (*Element, error) {
 	doc = bytes.TrimPrefix(doc, utf8BOM)
-	d := xml.NewDecoder(bytes.NewReader(doc))
+	d, g := newDecoder(doc)
 	type open struct {
 		e    *Element
 		text []byte
@@ -103,11 +150,15 @@ func ParseFunc(doc []byte, end func(*Element) error) (*Element, error) {
 	var root *Element
 	var stack []open
 	doctype := false
+	elements := 0
 	for {
 		start := d.InputOffset()
-		tok, err := d.RawToken()
+		tok, err := g.rawToken(d)
 		if errors.Is(err, io.EOF) {
 			break
+		}
+		if errors.Is(err, ErrStartTagTooLong) {
+			return nil, err
 		}
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrNotWellFormed, err)
@@ -118,6 +169,14 @@ func ParseFunc(doc []byte, end func(*Element) error) (*Element, error) {
 			if root != nil && len(stack) == 0 {
 				return nil, notWellFormed("junk after the root element")
 			}
+			units := 1 + len(t.Attr)
+			if units > MaxElements-elements {
+				return nil, fmt.Errorf("%w: more than %d elements and attributes", ErrTooManyElements, MaxElements)
+			}
+			if len(stack) == MaxDepth {
+				return nil, fmt.Errorf("%w: more than %d deep", ErrTooDeep, MaxDepth)
+			}
+			elements += units
 			e := &Element{Name: qname(t.Name), Attrs: make(map[string]string, len(t.Attr))}
 			for _, a := range t.Attr {
 				k := qname(a.Name)
