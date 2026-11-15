@@ -1915,6 +1915,12 @@
     "s3tests.functional.test_s3::test_bucket_policy_deny_notaction": [
       {"outcome":"failed","source":"970f0b90d7431b3ff7fa06d4e63d0ac38d14ecd7","ceph_version":"20.2.4","recorded":"2026-11-14T18:55:27Z","runs":2,"unstable":false,"meta":{"deselect":"2bf175d5e709","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
     ],
+    "s3tests.functional.test_s3::test_bucket_policy_deny_put_object_acl_header": [
+      {"outcome":"failed","source":"02599604861e23fc75441b715679d9e4949a0a98","ceph_version":"20.2.4","recorded":"2026-11-15T21:59:27Z","runs":2,"unstable":false,"meta":{"deselect":"d121159f1d35","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_bucket_policy_deny_put_object_tagging_header": [
+      {"outcome":"failed","source":"02599604861e23fc75441b715679d9e4949a0a98","ceph_version":"20.2.4","recorded":"2026-11-15T21:59:27Z","runs":2,"unstable":false,"meta":{"deselect":"d121159f1d35","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
     "s3tests.functional.test_s3::test_bucket_policy_different_tenant": [
       {"outcome":"passed","source":"f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3","ceph_version":"20.2.4","recorded":"2026-10-12T17:07:25Z","runs":2,"unstable":false,"meta":{"deselect":"999e22cc41a0","gateway":"radosgw","pytest_freeze":"c53be7f8edea"}},
       {"outcome":"passed","source":"ab228b1b9f0dc8cbc52f6dcbc649519212421c8d","ceph_version":"20.2.4","recorded":"2026-10-15T15:48:33Z","runs":2,"unstable":false,"meta":{"deselect":"999e22cc41a0","gateway":"radosgw","pytest_freeze":"4b86ad0fbb95"}},
