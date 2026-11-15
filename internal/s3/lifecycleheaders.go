@@ -22,10 +22,10 @@ import (
 // the read sends, and the tags attr RGWGetObj::execute decodes into s->tagset
 // before every read rgw-go serves (storedTags). The size is the object's own,
 // o.CondState's, which a partNumber read keeps apart from its part's, as the
-// worker's size filter reads it (lifecycleSize).
+// worker's size filter reads it (ObjectState.OrigSize).
 func setReadExpiration(h http.Header, r *op.Request, o *op.GetObject) {
 	if c, ok := storedLifecycle(r); ok {
-		addExpiration(h, r, c, storedTags(o.State.Attrs[tags.Attr]), o.State.Mtime, lifecycleSize(o.CondState))
+		addExpiration(h, r, c, storedTags(o.State.Attrs[tags.Attr]), o.State.Mtime, o.CondState.OrigSize())
 	}
 }
 
@@ -57,6 +57,25 @@ func setWriteExpiration(h http.Header, r *op.Request, requested *tags.Set, mtime
 	addExpiration(h, r, c, objTags, mtime, uint64(max(r.BytesIn, 0)))
 }
 
+// setStoredExpiration adds x-amz-expiration to the success headers of a
+// CopyObject or a CompleteMultipartUpload, for the head the store reports it
+// wrote, or found a completion already wrote: its tags attr (tagsAttr, nil
+// for an object without one, as storedTags reads it), its mtime and its size
+// before compression, which the worker's size filter reads
+// (op.PutResult). radosgw sends none at either site
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3596-L3633 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4106-L4138 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3846-L3886 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4604-L4644 at v20.2.4),
+// and rgw-go sends the value PutObject's does for the object the response
+// names (docs/differences.md, "CopyObject and CompleteMultipartUpload send
+// x-amz-expiration").
+func setStoredExpiration(h http.Header, r *op.Request, tagsAttr []byte, mtime time.Time, size uint64) {
+	if c, ok := storedLifecycle(r); ok {
+		addExpiration(h, r, c, storedTags(tagsAttr), mtime, size)
+	}
+}
+
 // addExpiration adds the x-amz-expiration lifecycle.ExpirationHeader gives c
 // for r's key, and none when it gives none, as dump_header_if_nonempty sends
 // it. The key is get_s3_expiration_header's at v19.2.7, the object's name
@@ -68,16 +87,6 @@ func addExpiration(h http.Header, r *op.Request, c lifecycle.Configuration, objT
 	if v := lifecycle.ExpirationHeader(c, r.Object.Name, r.Query.Get("versionId"), objTags, mtime, size); v != "" {
 		addHeader(h, "x-amz-expiration", v)
 	}
-}
-
-// lifecycleSize is st's size as the lifecycle worker's size filter reads it,
-// lcProbe.Size's (internal/driver/lc_actions.go:540-551): a compressed
-// object's uncompressed size, and any other object's size.
-func lifecycleSize(st *op.ObjectState) uint64 {
-	if st.Compression != nil {
-		return st.Compression.OrigSize
-	}
-	return st.Size
 }
 
 // setAbortHeaders adds RGWInitMultipart_ObjStore_S3::send_response's
@@ -93,6 +102,9 @@ func lifecycleSize(st *op.ObjectState) uint64 {
 // upload's initiation"). The rule's ID goes out as lifecycle.EncodeRuleID
 // writes it, where radosgw sends it as stored (docs/differences.md, "The
 // rule-id of x-amz-expiration and x-amz-abort-rule-id is URL-encoded").
+// ListParts sends them for the upload it lists, where radosgw sends none
+// (docs/differences.md, "ListParts sends x-amz-abort-date and
+// x-amz-abort-rule-id").
 func setAbortHeaders(h http.Header, r *op.Request, initiated time.Time) {
 	c, ok := storedLifecycle(r)
 	if !ok {

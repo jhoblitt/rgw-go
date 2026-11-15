@@ -13,16 +13,6 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/op"
 )
 
-var _ = Describe("lifecycleSize", func() {
-	It("is a compressed object's uncompressed size, as the worker's size filter reads it", func() {
-		st := &op.ObjectState{Size: 10, Compression: &meta.CompressionInfo{Type: "zlib", OrigSize: 4096}}
-		Expect(lifecycleSize(st)).To(Equal(uint64(4096)))
-	})
-	It("is any other object's size", func() {
-		Expect(lifecycleSize(&op.ObjectState{Size: 10})).To(Equal(uint64(10)))
-	})
-})
-
 var _ = Describe("setReadExpiration", func() {
 	// overKiB is a request for k in a bucket whose one rule expires objects
 	// over 1000 bytes a day after their mtime.

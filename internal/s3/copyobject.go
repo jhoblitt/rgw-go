@@ -29,7 +29,8 @@ import (
 // learns nothing the store holds (docs/differences.md).
 //
 // The success is framed as radosgw frames it, with the two version headers
-// radosgw does not send (setVersionHeaders): send_partial_response(0)
+// radosgw does not send (setVersionHeaders) and x-amz-expiration, which it
+// does not send either (setStoredExpiration): send_partial_response(0)
 // sends the common headers and application/xml without a length, so that
 // net/http frames the body chunked, then the XML declaration and the
 // CopyObjectResult open tag, flushed; send_response then sends LastModified,
@@ -64,6 +65,7 @@ func (wr *objectWrites) copyObject(ctx context.Context, w http.ResponseWriter, r
 		mtime = mtime.Truncate(time.Second)
 	}
 	setVersionHeaders(w.Header(), o.VersionID, o.SrcVersionID)
+	setStoredExpiration(w.Header(), r, o.Tags, o.Mtime, o.OrigSize)
 	cx, err := startChunkedXML(w, r)
 	if err == nil {
 		cx.add(xmlHeader + `<CopyObjectResult xmlns="` + xmlnsS3 + `">`)

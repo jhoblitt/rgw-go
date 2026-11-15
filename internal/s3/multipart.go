@@ -384,7 +384,8 @@ type completeMultipartUploadResult struct {
 // send_response's
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4076-L4108,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4604-L4644):
-// 200, x-amz-version-id (setVersionHeaders), the encryption headers the
+// 200, x-amz-version-id (setVersionHeaders), x-amz-expiration, which radosgw
+// does not send (setStoredExpiration), the encryption headers the
 // op's decision gathered (setCryptEcho), which an error after the decision
 // carries too, and the document, whose length radosgw's frontend adds, the
 // ETag in the quotes dump_format adds and the checksum after it
@@ -415,6 +416,7 @@ func completeMultipart(ctx context.Context, w http.ResponseWriter, r *op.Request
 		return err
 	}
 	setVersionHeaders(w.Header(), o.VersionID, "")
+	setStoredExpiration(w.Header(), r, o.Tags, o.Mtime, o.OrigSize)
 	doc := completeMultipartUploadResult{
 		Xmlns: xmlnsS3, Location: xmltext.Text(completeLocation(r)), Tenant: xmltext.Text(r.Tenant),
 		Bucket: xmltext.Text(r.Bucket), Key: xmltext.Text(r.Object.Name), ETag: quotedETag(o.ETag),
@@ -582,9 +584,12 @@ type listPartsResult struct {
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L4121-L4171,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4657-L4719),
 // chunked after end_header with the whole document in its one closing flush.
-// NextPartNumberMarker is the highest part number listed, 0 when none is;
-// LastModified is rgw_to_iso8601's milliseconds on Squid and whole seconds on
-// Tentacle (dump_time_exact_seconds,
+// It adds x-amz-abort-date and x-amz-abort-rule-id, which radosgw sends only
+// on CreateMultipartUpload (setAbortHeaders), for the upload's initiation,
+// which the op reads for a bucket whose lifecycle aborts uploads of the key
+// (op.ListParts). NextPartNumberMarker is the highest part number listed, 0
+// when none is; LastModified is rgw_to_iso8601's milliseconds on Squid and
+// whole seconds on Tentacle (dump_time_exact_seconds,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4704).
 func listParts(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.ListParts{
@@ -625,6 +630,9 @@ func listParts(ctx context.Context, w http.ResponseWriter, r *op.Request) error 
 			LastModified: xmltext.Text(ISO8601(mtime)), PartNumber: p.Number, ETag: quotedETag(p.ETag), Size: p.Size,
 			Checksum: partChecksum(p.Checksum),
 		})
+	}
+	if !o.Initiated.IsZero() {
+		setAbortHeaders(w.Header(), r, o.Initiated)
 	}
 	writeChunkedXML(ctx, w, r, doc)
 	return nil

@@ -34760,19 +34760,25 @@ Every new entry adds its row to this table, in document order.
   ([rgw_rest_s3.cc:418](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L418),
   [rgw_rest_s3.cc:3038](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L3038),
   [rgw_rest_s3.cc:4795](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L4795)).
-- **rgw-go:** sends x-amz-expiration on PutObject and not on UploadPart or
-  UploadPartCopy, which "is not sent on UploadPart or UploadPartCopy, as S3
-  sends none there" (`internal/s3/lifecycleheaders_test.go`) pins
-  (`docs/differences.md`, "UploadPart and UploadPartCopy send no
-  x-amz-expiration"). It reproduces the rest: no header on CopyObject,
-  CompleteMultipartUpload or ListParts. It writes the rule ID URL-encoded,
-  which "is the rule's ID URL-encoded (RFC 3986 unreserved characters
-  kept), whatever bytes it holds" (`internal/lifecycle/headers_test.go`) and
-  "sends a stored rule ID URL-encoded in x-amz-expiration and
-  x-amz-abort-rule-id, on every response that carries them"
-  (`internal/s3/lifecycleheaders_test.go`) pin (`lifecycle.EncodeRuleID`,
-  `internal/lifecycle/headers.go`; `docs/differences.md`, "The rule-id of
-  x-amz-expiration and x-amz-abort-rule-id is URL-encoded").
+- **rgw-go:** sends x-amz-expiration on PutObject, CopyObject and
+  CompleteMultipartUpload, which "is sent for the destination under a
+  matching rule" and "is sent for the completed object under a matching
+  rule" (`internal/s3/lifecycleheaders_ops_test.go`) pin, and
+  x-amz-abort-date and x-amz-abort-rule-id on ListParts (`docs/differences.md`,
+  "CopyObject and CompleteMultipartUpload send x-amz-expiration" and
+  "ListParts sends x-amz-abort-date and x-amz-abort-rule-id"). It sends no
+  x-amz-expiration on UploadPart or UploadPartCopy, which "is not sent on
+  UploadPart or UploadPartCopy, as S3 sends none there"
+  (`internal/s3/lifecycleheaders_test.go`) pins (`docs/differences.md`,
+  "UploadPart and UploadPartCopy send no x-amz-expiration"). It writes the
+  rule ID URL-encoded, which "is the rule's ID URL-encoded (RFC 3986
+  unreserved characters kept), whatever bytes it holds"
+  (`internal/lifecycle/headers_test.go`) and "sends a stored rule ID
+  URL-encoded in x-amz-expiration and x-amz-abort-rule-id, on every
+  response that carries them" (`internal/s3/lifecycleheaders_test.go`) pin
+  (`lifecycle.EncodeRuleID`, `internal/lifecycle/headers.go`;
+  `docs/differences.md`, "The rule-id of x-amz-expiration and
+  x-amz-abort-rule-id is URL-encoded").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task C8, 2026-11-14, reading the call sites at both
   tags and aws-sdk-go-v2's model. Not reproduced on a running radosgw.
