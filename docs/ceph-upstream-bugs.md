@@ -538,6 +538,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's negated condition operators are false on an absent key](#radosgws-negated-condition-operators-are-false-on-an-absent-key) | pending | pending | ✓ |
 | [radosgw matches condition key names case-sensitively](#radosgw-matches-condition-key-names-case-sensitively) | pending | pending | ✓ |
 | [radosgw-admin mfa check names the serial number when --totp-pin is missing](#radosgw-admin-mfa-check-names-the-serial-number-when---totp-pin-is-missing) | pending | pending | ✓ |
+| [radosgw skips a bucket's default encryption for a write that sends an empty encryption header](#radosgw-skips-a-buckets-default-encryption-for-a-write-that-sends-an-empty-encryption-header) | [#79506](https://tracker.ceph.com/issues/79506), [#80258](https://tracker.ceph.com/issues/80258), [#80260](https://tracker.ceph.com/issues/80260) | [ceph/ceph#71073](https://github.com/ceph/ceph/pull/71073), [ceph/ceph#71534](https://github.com/ceph/ceph/pull/71534), [ceph/ceph#71535](https://github.com/ceph/ceph/pull/71535) | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -18238,7 +18239,12 @@ Every new entry adds its row to this table, in document order.
   `get_encryption_defaults`, and CopyObject does not ("radosgw's
   PutBucketEncryption stores any SSEAlgorithm, and a KMS key id with any
   algorithm"). On a radosgw without a key server every write that takes
-  an `AES256` default fails anyway, with another message.
+  an `AES256` default fails anyway, with another message. A PutObject's
+  and an UploadPart's 400 is answered before `verify_permission`, as their
+  `get_params` runs in `init_processing`
+  ([rgw_op.cc:3911](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3911),
+  [rgw_op.cc:4120](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4120)),
+  to a requester the permission check would refuse.
 - **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
 - **rgw-go:** stores the configuration, as radosgw does:
   `sse.BucketEncryptionConfig.Validate` (`internal/sse/xml.go`) refuses
@@ -34904,3 +34910,122 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** by the review of phase 2 task WP-24, 2026-11-14, reading
   `mfa check` to see what a refused code prints.
+
+## radosgw skips a bucket's default encryption for a write that sends an empty encryption header
+
+- **Kind:** defect, S3-correctness of a bucket's default encryption, and
+  possibly security-relevant. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - Beast files a header sent with no value as present, with the empty
+    string for its value
+    ([rgw_asio_client.cc:36-65](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L36-L65),
+    [rgw_asio_client.cc:36-65](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_client.cc#L36-L65)),
+    and `req_info::init_meta_info` files its name in `crypt_attribute_map`
+    ([rgw_common.cc:455-457](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L455-L457),
+    [rgw_common.cc:468-470](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L468-L470)).
+  - A bucket's default encryption, `RGW_ATTR_BUCKET_ENCRYPTION_POLICY`, is
+    applied only inside `get_encryption_defaults`, which PutObject,
+    CreateMultipartUpload and POST object call from `get_params`
+    ([rgw_rest_s3.cc:2620](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2620),
+    [rgw_rest_s3.cc:4003](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4003),
+    [rgw_rest_s3.cc:2981](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2981),
+    [rgw_rest_s3.cc:2773](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2773),
+    [rgw_rest_s3.cc:4454](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4454),
+    [rgw_rest_s3.cc:3118](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3118)):
+    every other reader of the attr is a bucket encryption op or, at
+    v20.2.4, the logging target check (`git grep` of the tag).
+  - It returns before applying the defaults when any `crypt_attribute_map`
+    name starts `x-amz-server-side-encryption-customer-`, whatever its value
+    ([rgw_rest_s3.cc:194-198](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L194-L198),
+    [rgw_rest_s3.cc:191-195](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L191-L195)).
+    When the map holds `x-amz-server-side-encryption`, it sets the
+    algorithm to that value, "" included, and applies the bucket's
+    algorithm and key id only when the header is absent
+    ([rgw_rest_s3.cc:208-215](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L208-L215),
+    [rgw_rest_s3.cc:205-212](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L205-L212)).
+  - `rgw_s3_prepare_encrypt` then finds no encryption to make: it skips its
+    SSE-C branch for an empty algorithm and takes an empty
+    `x-amz-server-side-encryption` for none, and returns 0 with no block
+    cipher and no crypt attrs unless `rgw_crypt_default_encryption_key` is
+    set
+    ([rgw_crypt.cc:1040-1048](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1040-L1048),
+    [rgw_crypt.cc:1148-1150](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1148-L1150),
+    [rgw_crypt.cc:1055-1063](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1055-L1063),
+    [rgw_crypt.cc:1163-1165](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1163-L1165)).
+  - It reads the KMS key id, the context and the bucket key only inside
+    its `aws:kms` branch, which an empty algorithm never reaches, so a key
+    id sent beside an empty `x-amz-server-side-encryption` is dropped and
+    the write stored unencrypted
+    ([rgw_crypt.cc:1150-1166](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1150-L1166),
+    [rgw_crypt.cc:1165-1181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1165-L1181)).
+  - `rgw_iam_add_crypt_attrs` adds `s3:x-amz-server-side-encryption` to the
+    policy environment whenever the name is in the map, its value "" for an
+    empty header, and on Tentacle
+    `s3:x-amz-server-side-encryption-customer-algorithm` too
+    ([rgw_op.cc:760-774](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L760-L774),
+    [rgw_op.cc:790-810](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L790-L810),
+    [rgw_op.cc:813-833](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_op.cc#L813-L833) at v20.2.5),
+    so an empty header satisfies a `Null` condition on the key that tests
+    whether the write names an encryption; `RGWPutObj::verify_permission`
+    and `RGWCompleteMultipart::verify_permission` call it
+    ([rgw_op.cc:4277-4278](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_op.cc#L4277-L4278) and
+    [rgw_op.cc:7210-7211](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_op.cc#L7210-L7211) at v20.2.5). It adds
+    `s3:x-amz-server-side-encryption-aws-kms-key-id` for an empty
+    `x-amz-server-side-encryption-aws-kms-key-id` header the same way.
+- **Trigger:** a write into a bucket with a default encryption whose
+  request carries an SSE-C header, or `x-amz-server-side-encryption`, with
+  an empty value; a write that sends `x-amz-server-side-encryption` empty
+  beside a KMS key id; a write that sends `x-amz-server-side-encryption`
+  empty to a bucket whose policy denies a write on a `Null` condition of
+  `s3:x-amz-server-side-encryption`. An SSE-C header sent empty adds only
+  Tentacle's `s3:x-amz-server-side-encryption-customer-algorithm`, and the
+  KMS key id its own key.
+- **Impact:** the bucket's default encryption is not applied to that
+  write; the key id the request names is dropped; and a policy `Deny` on
+  `{"Null": {"s3:x-amz-server-side-encryption": "true"}}`, written to
+  require encryption, does not apply to the write, which is stored
+  unencrypted.
+- **Releases:** v19.2.7 and v20.2.4, all three facets. v20.2.5 refuses an
+  empty `x-amz-server-side-encryption` in `rgw_s3_prepare_encrypt` alone,
+  which a PutObject, a CopyObject and a CreateMultipartUpload run, so the
+  second and the third facet end for those; a part goes through
+  `rgw_s3_prepare_decrypt`
+  ([rgw_rest_s3.cc:3004-3019](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_rest_s3.cc#L3004-L3019))
+  and a completion's `verify_encryption` calls only that
+  ([rgw_rest_s3.cc:4622-4634](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_rest_s3.cc#L4622-L4634)),
+  while both operations' `verify_permission` still add the key, so the
+  third facet remains there: a part and a completion of an upload without a
+  crypt mode pass a `Null` Deny with the header empty and are stored
+  unencrypted. v20.2.5 keeps the SSE-C half: an empty
+  `x-amz-server-side-encryption-customer-` header still sets the SSE-C group
+  and returns before the defaults, and an empty algorithm still adds its
+  policy key on Tentacle
+  ([rgw_rest_s3.cc:170-175](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_rest_s3.cc#L170-L175),
+  [rgw_rest_s3.cc:199-203](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_rest_s3.cc#L199-L203)).
+  Main at 203e7c52025d keeps it too, adding only a call to
+  `rgw_s3_check_sse_c_blocked` before the same return
+  ([rgw_rest_s3.cc:172-177](https://github.com/ceph/ceph/blob/203e7c52025d/src/rgw/rgw_rest_s3.cc#L172-L177),
+  [rgw_rest_s3.cc:201-213](https://github.com/ceph/ceph/blob/203e7c52025d/src/rgw/rgw_rest_s3.cc#L201-L213)).
+- **rgw-go:** does not reproduce it: a PutObject, a CopyObject, a
+  CreateMultipartUpload, an UploadPart, an UploadPartCopy and a
+  CompleteMultipartUpload that sends `x-amz-server-side-encryption`, its KMS
+  key id or an SSE-C header empty is refused 400 InvalidArgument, before it
+  is stored and whatever the policy says of the key, and a write into a
+  bucket with a default encryption without the header is refused 501 once
+  the requester is authorized
+  (`docs/differences.md`, "A write that sends
+  `x-amz-server-side-encryption`, its KMS key id or an SSE-C header with no
+  value is refused 400").
+- **Upstream:** [tracker #79506](https://tracker.ceph.com/issues/79506),
+  Resolved, covers the empty `x-amz-server-side-encryption` half. Main
+  fixes it with [ceph/ceph#71073](https://github.com/ceph/ceph/pull/71073)
+  (at main 203e7c52025d,
+  [rgw_crypt.cc:2213-2215](https://github.com/ceph/ceph/blob/203e7c52025d/src/rgw/rgw_crypt.cc#L2213-L2215)),
+  backported to squid by [ceph/ceph#71534](https://github.com/ceph/ceph/pull/71534)
+  ([#80258](https://tracker.ceph.com/issues/80258), merged after v19.2.7)
+  and to tentacle by [ceph/ceph#71535](https://github.com/ceph/ceph/pull/71535)
+  ([#80260](https://tracker.ceph.com/issues/80260), first in v20.2.5). No
+  upstream issue or pull request for the SSE-C half is known. The SSE-C half
+  is pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task WP-29, 2026-11-14; derived from the source, not
+  reproduced.

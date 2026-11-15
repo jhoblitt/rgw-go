@@ -31,6 +31,12 @@ type InitMultipart struct {
 	// as the object's (UploadParams), each nil for none.
 	Retention *meta.ObjectRetention
 	LegalHold *meta.ObjectLegalHold
+	// Defaults, when set, is the protocol's get_encryption_defaults, the first
+	// thing get_params does and so the first thing RGWInitMultipart::execute
+	// reads: Execute calls it once the placement is checked, ahead of the
+	// refusal of a bucket's default encryption, which radosgw reaches only
+	// when it prepares the encryption, after get_params.
+	Defaults func(ctx context.Context, o *InitMultipart) error
 	// Params, when set, is the protocol's get_params, which
 	// RGWInitMultipart::execute runs once the requester is authorized
 	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6299 at v19.2.6,
@@ -87,8 +93,9 @@ func (o *InitMultipart) VerifyPermission(ctx context.Context, r *Request) error 
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L576-L583 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L606-L613 at v20.2.4),
 // which radosgw checks before verify_permission and so before anything
-// get_params reads; a bucket with a default encryption is refused, as
-// get_encryption_defaults comes first in get_params; Params runs, then the
+// get_params reads; Defaults runs, as get_encryption_defaults comes first in
+// get_params; a bucket with a default encryption is refused, as radosgw fails
+// it only when it prepares the encryption; Params runs, then the
 // checksum fields get_params reads last (ChecksumForCreate), and a
 // public ACL under the bucket's block of public ACLs is refused, as
 // PutObject refuses one, where radosgw checks no block for
@@ -105,6 +112,11 @@ func (o *InitMultipart) VerifyPermission(ctx context.Context, r *Request) error 
 func (o *InitMultipart) Execute(ctx context.Context, r *Request) error {
 	if err := checkDestPlacement(r, o.StorageClass); err != nil {
 		return err
+	}
+	if o.Defaults != nil {
+		if err := o.Defaults(ctx, o); err != nil {
+			return err
+		}
 	}
 	if err := bucketEncryptionUnserved(r.BucketRec); err != nil {
 		return err

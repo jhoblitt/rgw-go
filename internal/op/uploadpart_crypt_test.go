@@ -59,15 +59,17 @@ func (f *writeFixture) encryptedUploadWith(ctx context.Context, key, mode string
 var _ = Describe("UploadPart of an upload radosgw began encrypted", func() {
 	key := func() string { return base64.StdEncoding.EncodeToString(sseCKey()) }
 	keyMD5 := func() string { return base64.StdEncoding.EncodeToString(sseCKeyMD5()) }
-	withKey := func(o *op.UploadPart) { o.SSECAlgorithm, o.SSECKey, o.SSECKeyMD5 = "AES256", key(), keyMD5() }
+	withKey := func(o *op.UploadPart) { o.SSECAlgorithm, o.SSECKey, o.SSECKeyMD5 = new("AES256"), key(), keyMD5() }
 	otherKey := func(o *op.UploadPart) {
 		k := bytes.Repeat([]byte{2}, 32)
 		sum := md5.Sum(k) //nolint:gosec // SSE-C names its key by the key's MD5
-		o.SSECAlgorithm = "AES256"
+		o.SSECAlgorithm = new("AES256")
 		o.SSECKey, o.SSECKeyMD5 = base64.StdEncoding.EncodeToString(k), base64.StdEncoding.EncodeToString(sum[:])
 	}
 	const (
 		badAlgorithm = "Requests specifying Server Side Encryption with Customer provided keys must provide a valid encryption algorithm."
+		notAES256    = "The requested encryption algorithm is not valid, must be AES256."
+		badKey       = "Requests specifying Server Side Encryption with Customer provided keys must provide an appropriate secret key."
 		mismatch     = "The calculated MD5 hash of the key did not match the hash that was provided."
 	)
 
@@ -112,6 +114,110 @@ var _ = Describe("UploadPart of an upload radosgw began encrypted", func() {
 		Entry("a GCM mode v20.2.5 adds, which rgw-go does not know, the request naming the key", "SSE-C-AES256-GCM", true, withKey, op.ErrNotImplemented, ""),
 		Entry("a mode a NUL ends, which names no mode", "SSE-KMS\x00", true, nil, op.ErrNotImplemented, ""),
 		Entry("a mode rgw-go does not know over plain HTTP, which no transport check answers first", "SSE-KMS-GCM", false, nil, op.ErrNotImplemented, ""),
+	)
+
+	// get_encrypt_filter runs rgw_s3_prepare_decrypt over the upload's attrs
+	// with copy_source false, so the request's own algorithm header decides,
+	// as beast files it: an absent one is EINVAL, and one sent empty is no
+	// AES256, before the key headers are read.
+	DescribeTable("takes the algorithm header of a part of an SSE-C upload as sent, on both releases, uploaded or copied",
+		func(ctx SpecContext, algorithm *string, keyed bool, want error, msg string) {
+			for _, rel := range bothReleases {
+				for _, copied := range []bool{false, true} {
+					f := newMPFixture(ctx, rel)
+					f.put(ctx, "src", []byte("hello"))
+					id := f.encryptedUpload(ctx, "k", "SSE-C-AES256")
+					o := partFor(f, id, copied)
+					o.Secure, o.SSECAlgorithm = true, algorithm
+					if keyed {
+						o.SSECKey, o.SSECKeyMD5 = key(), keyMD5()
+					}
+					err := op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))
+					Expect(err).To(MatchError(want), "release %d, copied %t", rel, copied)
+					Expect(messageOf(err)).To(Equal(msg), "release %d, copied %t", rel, copied)
+					Expect(f.parts(ctx, "k", id)).To(BeEmpty(), "release %d, copied %t", rel, copied)
+				}
+			}
+		},
+		Entry("absent, no key headers", nil, false, op.ErrInvalidArgument, badAlgorithm),
+		Entry("absent, the key headers sent", nil, true, op.ErrInvalidArgument, badAlgorithm),
+		Entry("sent empty, no key headers", new(""), false, op.ErrInvalidEncryptionAlgorithm, notAES256),
+		Entry("sent empty, the key headers sent", new(""), true, op.ErrInvalidEncryptionAlgorithm, notAES256),
+		Entry("AES128, the key headers sent", new("AES128"), true, op.ErrInvalidEncryptionAlgorithm, notAES256),
+		Entry("AES256, no key headers", new("AES256"), false, op.ErrInvalidArgument, badKey),
+		Entry("AES256, the key headers sent: radosgw encrypts, rgw-go cannot", new("AES256"), true, op.ErrNotImplemented, ""),
+	)
+
+	It("reads the algorithm header only for an SSE-C upload, so a part of an upload without a crypt mode is stored whatever it says", func(ctx SpecContext) {
+		for _, rel := range bothReleases {
+			for name, algorithm := range map[string]*string{"absent": nil, "empty": new(""), "AES128": new("AES128")} {
+				for _, copied := range []bool{false, true} {
+					f := newMPFixture(ctx, rel)
+					f.put(ctx, "src", []byte("hello"))
+					id := f.initUpload(ctx, "k")
+					o := f.partOf(id, 1, "hello")
+					if copied {
+						o = f.copyPartOf(id, 1, "src", "")
+					}
+					o.Secure, o.SSECAlgorithm = true, algorithm
+					Expect(op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))).To(Succeed(), "release %d, copied %t, algorithm %s", rel, copied, name)
+					Expect(f.parts(ctx, "k", id)).To(HaveLen(1), "release %d, copied %t, algorithm %s", rel, copied, name)
+				}
+			}
+		}
+	})
+
+	// EmptyEncryption is the protocol's refusal of x-amz-server-side-encryption
+	// or an SSE-C header sent with no value. radosgw stores such a part, and
+	// rgw-go refuses it, for an upload that stores no crypt mode: an upload
+	// that stores one answers by its mode and the SSE-C headers as sent.
+	DescribeTable("refuses a part of an upload without a crypt mode for an encryption header the request sent empty, on both releases, uploaded or copied",
+		func(ctx SpecContext, mode string) {
+			refusal := op.ErrInvalidArgument.WithMessage("an encryption header with no value")
+			for _, rel := range bothReleases {
+				for _, copied := range []bool{false, true} {
+					f := newMPFixture(ctx, rel)
+					f.put(ctx, "src", []byte("hello"))
+					var id string
+					if mode == "none" {
+						id = f.initUpload(ctx, "k")
+					} else {
+						id = f.encryptedUpload(ctx, "k", mode)
+					}
+					o := partFor(f, id, copied)
+					o.Secure, o.EmptyEncryption = true, refusal
+					err := op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))
+					Expect(err).To(MatchError(op.ErrInvalidArgument), "release %d, copied %t", rel, copied)
+					Expect(messageOf(err)).To(Equal("an encryption header with no value"), "release %d, copied %t", rel, copied)
+					Expect(f.parts(ctx, "k", id)).To(BeEmpty(), "release %d, copied %t", rel, copied)
+				}
+			}
+		},
+		Entry("an upload with no mode attr", "none"),
+		Entry("an upload with an empty mode attr, which radosgw takes for none", ""),
+	)
+
+	DescribeTable("leaves a part of an upload with a crypt mode to that mode's own refusal, whatever EmptyEncryption says",
+		func(ctx SpecContext, mode string, algorithm *string, want error, msg string) {
+			for _, rel := range bothReleases {
+				for _, copied := range []bool{false, true} {
+					f := newMPFixture(ctx, rel)
+					f.put(ctx, "src", []byte("hello"))
+					id := f.encryptedUpload(ctx, "k", mode)
+					o := partFor(f, id, copied)
+					o.Secure, o.SSECAlgorithm = true, algorithm
+					o.EmptyEncryption = op.ErrInvalidArgument.WithMessage("an encryption header with no value")
+					err := op.Run(ctx, o, f.req(http.MethodPut, "plain", "k"))
+					Expect(err).To(MatchError(want), "release %d, copied %t", rel, copied)
+					Expect(messageOf(err)).To(Equal(msg), "release %d, copied %t", rel, copied)
+					Expect(f.parts(ctx, "k", id)).To(BeEmpty(), "release %d, copied %t", rel, copied)
+				}
+			}
+		},
+		Entry("SSE-C, the algorithm sent empty: no AES256, the exception WP-29 keeps", "SSE-C-AES256", new(""), op.ErrInvalidEncryptionAlgorithm, notAES256),
+		Entry("SSE-C, the algorithm not sent", "SSE-C-AES256", nil, op.ErrInvalidArgument, badAlgorithm),
+		Entry("SSE-KMS", "SSE-KMS", new(""), op.ErrInvalidArgument, "Failed to retrieve the actual key, kms-keyid: kid"),
+		Entry("SSE-S3", "AES256", new(""), op.ErrInvalidArgument, "Failed to retrieve the actual key"),
 	)
 
 	It("refuses SSE-S3 over plain HTTP as each release's radosgw does: Squid checks the transport, Tentacle does not", func(ctx SpecContext) {
@@ -250,13 +356,17 @@ var _ = Describe("UploadPartCopy of a source radosgw encrypted", func() {
 		return func(o *op.UploadPart) {
 			k, m := base64.StdEncoding.EncodeToString(sseCKey()), base64.StdEncoding.EncodeToString(sseCKeyMD5())
 			if copySource {
-				o.CopySourceSSECAlgorithm, o.CopySourceSSECKey, o.CopySourceSSECKeyMD5 = "AES256", k, m
+				o.CopySourceSSECAlgorithm, o.CopySourceSSECKey, o.CopySourceSSECKeyMD5 = new("AES256"), k, m
 				return
 			}
-			o.SSECAlgorithm, o.SSECKey, o.SSECKeyMD5 = "AES256", k, m
+			o.SSECAlgorithm, o.SSECKey, o.SSECKeyMD5 = new("AES256"), k, m
 		}
 	}
-	const badAlgorithm = "Requests specifying Server Side Encryption with Customer provided keys must provide a valid encryption algorithm."
+	const (
+		badAlgorithm = "Requests specifying Server Side Encryption with Customer provided keys must provide a valid encryption algorithm."
+		notAES256    = "The requested encryption algorithm is not valid, must be AES256."
+		badKey       = "Requests specifying Server Side Encryption with Customer provided keys must provide an appropriate secret key."
+	)
 
 	// copyFrom copies plain's enc, which holds hello under attrs, into part 1
 	// of a new upload of k on rel, over a secure transport unless set says
@@ -302,6 +412,35 @@ var _ = Describe("UploadPartCopy of a source radosgw encrypted", func() {
 		Entry("Squid, which reads no copy-source header", denc.Squid, true, op.ErrInvalidArgument),
 		Entry("Tentacle, the copy-source headers naming it", denc.Tentacle, true, op.ErrNotImplemented),
 		Entry("Tentacle, which reads not the request's own", denc.Tentacle, false, op.ErrInvalidArgument),
+	)
+
+	// get_data's get_decrypt_filter passes copy_source true on Tentacle, so
+	// its copy-source algorithm header decides as beast files it, and the
+	// request's own is not read; on Squid the request's own decides and the
+	// copy-source one is not read.
+	DescribeTable("takes an SSE-C source's algorithm header as sent, from the header the release reads",
+		func(ctx SpecContext, rel denc.Release, set func(*op.UploadPart), want error, msg string) {
+			parts, err := copyFrom(ctx, rel, radosgwCryptAttrs("SSE-C-AES256"), "", set)
+			Expect(err).To(MatchError(want))
+			Expect(messageOf(err)).To(Equal(msg))
+			Expect(parts).To(BeEmpty())
+		},
+		Entry("Squid, the request's own sent empty", denc.Squid,
+			func(o *op.UploadPart) { o.SSECAlgorithm = new("") }, op.ErrInvalidEncryptionAlgorithm, notAES256),
+		Entry("Squid, the request's own AES256 with its key, the copy-source one sent empty and not read", denc.Squid,
+			func(o *op.UploadPart) { keyFor(false)(o); o.CopySourceSSECAlgorithm = new("") }, op.ErrNotImplemented, ""),
+		Entry("Squid, the copy-source one sent empty and the request's own not sent: the copy-source one is not read, so the algorithm is missing", denc.Squid,
+			func(o *op.UploadPart) { o.CopySourceSSECAlgorithm = new("") }, op.ErrInvalidArgument, badAlgorithm),
+		Entry("Tentacle, the copy-source one sent empty", denc.Tentacle,
+			func(o *op.UploadPart) { o.CopySourceSSECAlgorithm = new("") }, op.ErrInvalidEncryptionAlgorithm, notAES256),
+		Entry("Tentacle, the copy-source one AES128", denc.Tentacle,
+			func(o *op.UploadPart) { keyFor(true)(o); o.CopySourceSSECAlgorithm = new("AES128") }, op.ErrInvalidEncryptionAlgorithm, notAES256),
+		Entry("Tentacle, the copy-source one AES256 without a key", denc.Tentacle,
+			func(o *op.UploadPart) { o.CopySourceSSECAlgorithm = new("AES256") }, op.ErrInvalidArgument, badKey),
+		Entry("Tentacle, the copy-source one AES256 with its key, the request's own sent empty and not read", denc.Tentacle,
+			func(o *op.UploadPart) { keyFor(true)(o); o.SSECAlgorithm = new("") }, op.ErrNotImplemented, ""),
+		Entry("Tentacle, the request's own sent empty and the copy-source one not sent: the request's own is not read, so the algorithm is missing", denc.Tentacle,
+			func(o *op.UploadPart) { o.SSECAlgorithm = new("") }, op.ErrInvalidArgument, badAlgorithm),
 	)
 
 	It("copies a source whose mode is empty, as radosgw takes it for none, where CopyObject's store refuses one", func(ctx SpecContext) {

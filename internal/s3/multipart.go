@@ -69,6 +69,7 @@ func (wr *objectWrites) initMultipart(ctx context.Context, w http.ResponseWriter
 	if lerr == nil {
 		r.Lock = lock.conditions()
 	}
+	o.Defaults = func(context.Context, *op.InitMultipart) error { return encryptionDefaultsError(r, false) }
 	o.Params = func(ctx context.Context, o *op.InitMultipart) error {
 		return wr.initMultipartParams(ctx, r, o, lock, lerr)
 	}
@@ -90,15 +91,18 @@ func (wr *objectWrites) initMultipart(ctx context.Context, w http.ResponseWriter
 // and the reads RGWInitMultipart::execute makes after it
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6293-L6343 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6963-L7019 at v20.2.4),
-// in their order, once the op has refused a bucket's default encryption, as
-// get_encryption_defaults comes first: the ACL, create_s3_policy's for the
-// requester, its bucket-owner grants naming the bucket's ACL owner;
+// in their order, once the op has refused a bucket's default encryption,
+// which follows get_encryption_defaults' refusal of encryption names that do
+// not go together (encryptionDefaultsError, the op's Defaults): the ACL,
+// create_s3_policy's for the requester, its bucket-owner grants naming the
+// bucket's ACL owner;
 // x-amz-tagging, any refusal InvalidArgument; the object-lock headers'
 // retention and legal hold, lock or the refusal lerr, as objectLockHeaders
 // read them before the op ran, so that r.Lock gave the policies' object-lock
 // keys to its check, refused on a bucket without object lock (objectLock) and
 // otherwise the upload's, which its completion writes as the object's; a
-// request that asks for encryption, which prepare_encryption reads; and the
+// request that asks for encryption, or sends a header emptyMessage covers
+// with no value, which prepare_encryption reads (refuseEncryption); and the
 // attrs, the headers' alone, as no map_qs_metadata runs.
 func (wr *objectWrites) initMultipartParams(ctx context.Context, r *op.Request, o *op.InitMultipart, lock requestLock, lerr error) error {
 	p, aclErr := newObjectACL(ctx, r)
@@ -154,9 +158,11 @@ type copyPartResult struct {
 // requester learns nothing the store holds (docs/differences.md). The SSE-C
 // headers and the transport are what rgw_s3_prepare_decrypt reads of a part
 // of an encrypted upload and, with the copy-source SSE-C headers, of an
-// encrypted copy source; the op refuses both, and a request carrying any
-// SSE-C header does not reach that check, as uploadPartParams refuses it
-// first.
+// encrypted copy source, the algorithms as sent (headerPtr), as beast files
+// a header sent with no value as present; the op refuses both, and a request
+// carrying a value in any SSE-C header does not reach that check, as
+// uploadPartParams refuses it first, where one sent empty does, and is
+// refused after it for an upload without a crypt mode.
 //
 // The success is send_response's
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L2730-L2782,
@@ -173,7 +179,7 @@ func (wr *objectWrites) uploadPart(ctx context.Context, w http.ResponseWriter, r
 	o := &op.UploadPart{
 		UploadID: r.Query.Get("uploadId"), Body: r.Body, Size: r.ContentLength,
 		StorageClass: header(r, "X-Amz-Storage-Class"), CannedACL: header(r, "X-Amz-Acl"), ChecksumField: checksumField(r),
-		SSECAlgorithm: header(r, "x-amz-server-side-encryption-customer-algorithm"),
+		SSECAlgorithm: headerPtr(r, "x-amz-server-side-encryption-customer-algorithm"),
 		SSECKey:       header(r, "x-amz-server-side-encryption-customer-key"),
 		SSECKeyMD5:    header(r, "x-amz-server-side-encryption-customer-key-MD5"),
 		Secure:        secure(r),
@@ -187,7 +193,7 @@ func (wr *objectWrites) uploadPart(ctx context.Context, w http.ResponseWriter, r
 			o.IfNoneMatch = headerPtr(r, "X-Amz-Copy-Source-If-None-Match")
 			o.IfModifiedSince = headerPtr(r, "X-Amz-Copy-Source-If-Modified-Since")
 			o.IfUnmodifiedSince = headerPtr(r, "X-Amz-Copy-Source-If-Unmodified-Since")
-			o.CopySourceSSECAlgorithm = header(r, "x-amz-copy-source-server-side-encryption-customer-algorithm")
+			o.CopySourceSSECAlgorithm = headerPtr(r, "x-amz-copy-source-server-side-encryption-customer-algorithm")
 			o.CopySourceSSECKey = header(r, "x-amz-copy-source-server-side-encryption-customer-key")
 			o.CopySourceSSECKeyMD5 = header(r, "x-amz-copy-source-server-side-encryption-customer-key-MD5")
 		} else {
@@ -232,7 +238,10 @@ func (wr *objectWrites) uploadPart(ctx context.Context, w http.ResponseWriter, r
 // that reads the request alone, in its order, with the refusal
 // putObjectParams makes beside it: a body without a Content-Length that is
 // not chunked is MissingContentLength; a request that asks for encryption,
-// by a header or by the query, is refused; x-amz-tagging, any refusal
+// by a header or by the query, is refused, and names that do not go together
+// are (readEncryption); an encryption header sent with no value is the
+// op's to refuse (op.UploadPart.EmptyEncryption), as only an upload without
+// a crypt mode is refused for it; x-amz-tagging, any refusal
 // InvalidArgument, whose tags it returns; the object-lock headers'
 // retention and legal hold (objectLockHeaders), which it returns; and
 // partNumber (partNumberArg), which refuses an empty or absent one beside an
@@ -241,9 +250,11 @@ func uploadPartParams(r *op.Request, o *op.UploadPart) (*tags.Set, requestLock, 
 	if r.ContentLength == 0 && r.Header.Get("Content-Length") == "" {
 		return nil, requestLock{}, op.ErrMissingContentLength
 	}
-	if err := refuseEncryption(r, true); err != nil {
-		return nil, requestLock{}, err
+	c, cerr := readEncryption(r, true)
+	if cerr != nil {
+		return nil, requestLock{}, cerr
 	}
+	o.EmptyEncryption = c.emptyRefusal()
 	var set *tags.Set
 	if v, ok := op.HeaderValue(r.Header, "X-Amz-Tagging"); ok {
 		s, err := tags.ParseHeader(v, tags.MaxObjectTags)
@@ -380,7 +391,11 @@ type completeMultipartUploadResult struct {
 // (completeChecksum). The value a completion supplies is read from the
 // headers (checksumField); the SSE-C headers, the algorithm's nil when it
 // is not sent, whether any header of their prefix is sent (sendsSSEC), and
-// the transport are what the op's decision reads.
+// the transport are what the op's decision reads. A header sent empty that
+// emptyMessage covers is refused once the decision has passed, as
+// radosgw's environment for the policy holds its key
+// (op.CompleteMultipart.EmptyEncryption); a header with a value is not
+// asked of a completion (docs/differences.md).
 func completeMultipart(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.CompleteMultipart{
 		UploadID: r.Query.Get("uploadId"), IfMatch: headerPtr(r, "If-Match"), IfNoneMatch: headerPtr(r, "If-None-Match"),
@@ -390,6 +405,9 @@ func completeMultipart(ctx context.Context, w http.ResponseWriter, r *op.Request
 		SSECKeyMD5:    header(r, "x-amz-server-side-encryption-customer-key-MD5"),
 		SSECSent:      sendsSSEC(r),
 		Secure:        secure(r),
+		// A completion's query is read by neither radosgw nor the policy's
+		// environment, as a CreateMultipartUpload's is not.
+		EmptyEncryption: cryptRequestOf(r, false).emptyRefusal(),
 	}
 	err := op.Run(ctx, o, r)
 	setCryptEcho(w.Header(), o.Echo)

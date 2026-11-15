@@ -3,6 +3,7 @@ package s3
 import (
 	"context"
 	"fmt"
+	"iter"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -457,24 +458,36 @@ func lowerASCII(c byte) byte {
 	return c
 }
 
-// parseArgs is RGWHTTPArgs::parse. Each "&"-separated pair is decoded whole
-// and then split at its first "=", so an escaped "=" separates; a malformed
-// escape empties the pair rather than failing the request; a name containing
-// "X-Amz-" has its ASCII letters lowercased; and a repeated name keeps its
+// parseArgs is RGWHTTPArgs::parse over argPairs: a repeated name keeps its
 // last value, as radosgw's val_map does, so every key holds one value.
 func parseArgs(raw string) url.Values {
 	args := url.Values{}
-	if raw == "" {
-		return args
-	}
-	for pair := range strings.SplitSeq(strings.TrimPrefix(raw, "?"), "&") {
-		name, val, _ := strings.Cut(rgwtext.URLDecode(pair, true), "=")
-		if strings.Contains(name, "X-Amz-") {
-			name = lowerASCIIString(name)
-		}
+	for name, val := range argPairs(raw) {
 		args[name] = []string{val}
 	}
 	return args
+}
+
+// argPairs is each pair of the query string raw as RGWHTTPArgs::parse reads
+// it, in order: each "&"-separated pair is decoded whole and then split at
+// its first "=", so an escaped "=" separates; a malformed escape empties the
+// pair rather than failing the request; and a name containing "X-Amz-" has
+// its ASCII letters lowercased. A repeated name yields each of its pairs.
+func argPairs(raw string) iter.Seq2[string, string] {
+	return func(yield func(string, string) bool) {
+		if raw == "" {
+			return
+		}
+		for pair := range strings.SplitSeq(strings.TrimPrefix(raw, "?"), "&") {
+			name, val, _ := strings.Cut(rgwtext.URLDecode(pair, true), "=")
+			if strings.Contains(name, "X-Amz-") {
+				name = lowerASCIIString(name)
+			}
+			if !yield(name, val) {
+				return
+			}
+		}
+	}
 }
 
 func lowerASCIIString(s string) string {

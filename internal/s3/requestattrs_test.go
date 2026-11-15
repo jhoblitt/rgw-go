@@ -60,6 +60,20 @@ var _ = Describe("requestAttrs", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(attrs).To(BeEmpty())
 	})
+	It("stores a name that asks for encryption when it is sent empty, as radosgw does, and no SSE-C name", func() {
+		attrs, err := s3.RequestAttrsForTest(req(http.Header{
+			"X-Amz-Server-Side-Encryption": {""}, "X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id": {""},
+			"X-Amz-Server-Side-Enx": {""}, "X-Amz-Server-Side-Encryption-Customer-Algorithm": {""},
+			"X-Amz-Server-Side-Encryption-Customer-Key": {""}, "X-Amz-Server-Side-Encryption-Customer-Key-Md5": {""},
+			"X-Amz-Copy-Source-Server-Side-Encryption-Customer-Algorithm": {""},
+		}, nil), true)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(attrs).To(Equal(map[string][]byte{
+			"user.rgw.x-amz-server-side-encryption":                {0},
+			"user.rgw.x-amz-server-side-encryption-aws-kms-key-id": {0},
+			"user.rgw.x-amz-server-side-enx":                       {0},
+		}), "rgw_get_request_metadata blocklists only the SSE-C names, rgw_op.h:2344-2357 at v20.2.4")
+	})
 	It("takes a repeated header's last value, as RGWEnv keeps it", func() {
 		attrs, err := s3.RequestAttrsForTest(req(http.Header{"X-Amz-Meta-A": {"1", "2"}}, nil), true)
 		Expect(err).NotTo(HaveOccurred())

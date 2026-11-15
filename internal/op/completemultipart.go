@@ -56,6 +56,12 @@ type CompleteMultipart struct {
 	// Secure is rgw_transport_is_secure: TLS, or a forwarded protocol radosgw
 	// trusts.
 	Secure bool
+	// EmptyEncryption is the protocol's refusal of a request that sent an
+	// encryption header it refuses with no value (emptyMessage in
+	// internal/s3), nil when it sent none. A completion reads no encryption
+	// header otherwise but an SSE-C upload's, so the refusal stands behind
+	// verifyEncryption, which an SSE-C upload's headers answer first.
+	EmptyEncryption error
 
 	// Parts is the document's parts as ParseCompleteMultipart reads them.
 	Parts []CompletePart
@@ -126,8 +132,9 @@ func (o *CompleteMultipart) VerifyPermission(ctx context.Context, r *Request) er
 // InvalidRange (-ERANGE); then, where execute reads the upload's info
 // (readCompleteUpload), the upload's encryption decided where v20.2.5
 // decides it (verifyEncryption), which v20.2.4 does in get_params, before
-// the document parses, and the checksum the request supplies
-// (completeChecksum); then the completion, whose head takes the request id
+// the document parses, an encryption header sent empty refused
+// (EmptyEncryption) for an upload that is found, and the checksum the
+// request supplies (completeChecksum); then the completion, whose head takes the request id
 // as its tag, at VersionForWrite's instance. An answer the store gives from
 // an object a completion already wrote, which a retry of a completion that
 // succeeded and an upload id that names no upload both meet, is decided as
@@ -165,6 +172,10 @@ func (o *CompleteMultipart) Execute(ctx context.Context, r *Request) error {
 	}
 	if cerr := o.verifyEncryption(ctx, r, up, false); cerr != nil {
 		return cerr
+	}
+	if up != nil && o.EmptyEncryption != nil {
+		o.Echo = CryptEcho{}
+		return o.EmptyEncryption
 	}
 	supplied, err := completeChecksum(r, up, ChecksumInput{Field: o.ChecksumField})
 	if err != nil {
@@ -265,9 +276,9 @@ func (o *CompleteMultipart) verifyEncryption(ctx context.Context, r *Request, up
 // verifySSEC is v20.2.5's verify_encryption for an SSE-C upload whose key
 // MD5 stored holds: an upload without a checksum type completes without its
 // key when the request sends no SSE-C header (SSECSent); otherwise
-// rgw_crypt_require_ssl refuses an insecure request, an algorithm header
-// sent empty is no AES256, and the headers must name the upload's key
-// (sseCKeyError), which is then echoed when echo says so. A v20.2.4
+// rgw_crypt_require_ssl refuses an insecure request, and the headers must
+// name the upload's key (sseCKeyError, which takes an algorithm header sent
+// empty for no AES256), which is then echoed when echo says so. A v20.2.4
 // radosgw asks for the key on every SSE-C completion
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4591-L4598 at v20.2.4),
 // and a v19.2.7 one on none (docs/differences.md).
@@ -277,9 +288,6 @@ func (o *CompleteMultipart) verifySSEC(r *Request, stored []byte, checksum, echo
 	}
 	if err := requireSSL(r, o.Secure); err != nil {
 		return err
-	}
-	if o.SSECAlgorithm != nil && *o.SSECAlgorithm == "" {
-		return ErrInvalidEncryptionAlgorithm.WithMessage(sseCAlgorithmInvalid)
 	}
 	if err := sseCKeyError(stored, o.sseCHeaders()); err != nil {
 		return err
@@ -291,13 +299,9 @@ func (o *CompleteMultipart) verifySSEC(r *Request, stored []byte, checksum, echo
 }
 
 // sseCHeaders is the request's SSE-C headers and transport as
-// rgw_s3_prepare_decrypt reads them, an absent algorithm "".
+// rgw_s3_prepare_decrypt reads them.
 func (o *CompleteMultipart) sseCHeaders() sseCRequest {
-	req := sseCRequest{key: o.SSECKey, keyMD5: o.SSECKeyMD5, secure: o.Secure}
-	if o.SSECAlgorithm != nil {
-		req.algorithm = *o.SSECAlgorithm
-	}
-	return req
+	return sseCRequest{algorithm: o.SSECAlgorithm, key: o.SSECKey, keyMD5: o.SSECKeyMD5, secure: o.Secure}
 }
 
 // completedHead is the object a completion of upload id found already

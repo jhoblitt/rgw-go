@@ -112,6 +112,63 @@ var _ = Describe("CompleteMultipart of an upload radosgw began encrypted", func(
 		Entry("an empty mode, which radosgw takes for none", map[string][]byte{meta.AttrCryptMode: {}}),
 	)
 
+	// EmptyEncryption is the protocol's refusal of an encryption header sent
+	// with no value. It stands behind the decision, which an SSE-C upload's
+	// headers answer first, and applies to an upload that is found: one that
+	// is not is the store's to answer.
+	DescribeTable("refuses an encryption header sent empty once the decision has passed, completing nothing and echoing nothing",
+		func(ctx SpecContext, mode string, release denc.Release) {
+			f := newMPFixture(ctx, release)
+			var id string
+			if mode == "none" {
+				id = f.initUpload(ctx, "k")
+			} else {
+				id = f.encryptedUpload(ctx, "k", mode)
+			}
+			doc := withPart(ctx, f, "k", id, op.UploadChecksum{})
+			o := &op.CompleteMultipart{UploadID: id, Secure: true, EmptyEncryption: op.ErrInvalidArgument.WithMessage("an encryption header with no value")}
+			err := op.Run(ctx, o, f.bodyReq(http.MethodPost, "k", doc))
+			Expect(err).To(MatchError(op.ErrInvalidArgument))
+			Expect(messageOf(err)).To(Equal("an encryption header with no value"))
+			Expect(o.Echo).To(Equal(op.CryptEcho{}), "the refusal echoes nothing")
+			_, err = f.upload(ctx, "k", id)
+			Expect(err).NotTo(HaveOccurred(), "the upload is kept")
+			st, err := f.store.StatObject(ctx, f.rec, meta.ObjKey{Name: "k"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Exists).To(BeFalse(), "no object is written")
+		},
+		Entry("an upload with no mode attr, Squid", "none", denc.Squid),
+		Entry("an upload with no mode attr, Tentacle", "none", denc.Tentacle),
+		Entry("an upload with an empty mode attr, which radosgw takes for none", "", denc.Tentacle),
+		Entry("SSE-S3 on Tentacle, whose decision would echo AES256", "AES256", denc.Tentacle),
+		Entry("SSE-KMS on Tentacle, whose decision would echo aws:kms and its key id", "SSE-KMS", denc.Tentacle),
+		Entry("SSE-KMS on Squid, whose decision passes", "SSE-KMS", denc.Squid),
+	)
+
+	It("leaves the SSE-C decision first, so an algorithm sent empty is InvalidEncryptionAlgorithmError", func(ctx SpecContext) {
+		for _, rel := range bothReleases {
+			f := newMPFixture(ctx, rel)
+			id := f.encryptedUpload(ctx, "k", "SSE-C-AES256")
+			doc := withPart(ctx, f, "k", id, op.UploadChecksum{})
+			o := &op.CompleteMultipart{
+				UploadID: id, Secure: true, SSECAlgorithm: new(""), SSECSent: true,
+				EmptyEncryption: op.ErrInvalidArgument.WithMessage("an encryption header with no value"),
+			}
+			Expect(op.Run(ctx, o, f.bodyReq(http.MethodPost, "k", doc))).To(MatchError(op.ErrInvalidEncryptionAlgorithm), "release %d", rel)
+		}
+	})
+
+	It("leaves an upload that is not found to the store, whatever EmptyEncryption says", func(ctx SpecContext) {
+		f := newMPFixture(ctx, bothReleases[1])
+		stub := &opfakes.FakeMultipartStore{}
+		stub.GetUploadReturns(nil, op.ErrNoSuchUpload)
+		stub.CompleteReturns(&op.PutResult{ETag: "e"}, nil)
+		f.env.Multipart = stub
+		o := &op.CompleteMultipart{UploadID: "2~x", EmptyEncryption: op.ErrInvalidArgument.WithMessage("an encryption header with no value")}
+		Expect(op.Run(ctx, o, f.bodyReq(http.MethodPost, "k", completeDoc(xmlPart("1", "e"))))).To(Succeed())
+		Expect(stub.CompleteCallCount()).To(Equal(1))
+	})
+
 	It("leaves a completion retried after it succeeded to the store, which finds no upload", func(ctx SpecContext) {
 		f := newMPFixture(ctx, bothReleases[1])
 		stub := &opfakes.FakeMultipartStore{}
