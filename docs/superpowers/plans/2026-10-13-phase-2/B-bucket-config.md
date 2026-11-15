@@ -1738,7 +1738,16 @@ BC-29's and BC-32's specs.
 
   VerifyPermission is s3:PutObject on the key's ARN, with the effective encryption in the
   environment ([rgw_op.cc:4592-4605](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4592-L4605),
-  [rgw_op.cc:4885-4898](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4885-L4898)). Execute follows
+  [rgw_op.cc:4885-4898](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4885-L4898)).
+  It also authorizes s3:PutObjectAcl when the `acl` field names an ACL other than private and
+  s3:PutObjectTagging when the form carries a `tagging` field, through `verifyACLAndTags`
+  (`internal/op/writeacltags.go`), as PutObject's headers are (task S12; `docs/differences.md`, "A
+  write's ACL and tag headers need s3:PutObjectAcl and s3:PutObjectTagging"). The `acl` rule is
+  the headers' (`namesACL`): a value that is none of empty, `private` and `bucket-owner-full-control`.
+  `namesACL` takes an `http.Header`, so the executor needs a string form of that predicate for the
+  form's `acl` value, kept beside it so the two cannot drift. radosgw checks s3:PutObject alone
+  ([rgw_op.cc:4600](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4600),
+  [rgw_op.cc:4893](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4893)). Execute follows
   [rgw_op.cc:4612-4796](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4612-L4796) and
   [rgw_op.cc:4905-5139](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4905-L5139):
   9. **A public canned ACL under BlockPublicAcls is 403 AccessDenied**, as rgw-go's PutObject

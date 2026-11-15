@@ -136,13 +136,13 @@ func (o *PutObject) Init(ctx context.Context, r *Request) error {
 // source
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L3982-L3985 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4191-L4194 at v20.2.4),
-// then the permissions the request's object-lock headers need
-// (verifyLockHeaders), which radosgw does not check.
+// then the permissions the request's object-lock, ACL and tag headers need
+// (verifyWriteHeaders), which radosgw does not check.
 func (o *PutObject) VerifyPermission(ctx context.Context, r *Request) error {
 	if err := VerifyBucketPermission(ctx, r, policy.S3PutObject, acl.PermFor(policy.S3PutObject)); err != nil {
 		return err
 	}
-	return verifyLockHeaders(ctx, r)
+	return verifyWriteHeaders(ctx, r)
 }
 
 // Execute first makes, in radosgw's order, the checks of stored state that

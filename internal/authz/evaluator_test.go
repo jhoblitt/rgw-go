@@ -1722,6 +1722,25 @@ var _ = Describe("Evaluator", func() {
 			Expect(f.putObject(bob(), "tagbkt", "o")).To(Succeed(), "s3:ResourceTag")
 		})
 
+		It("give an object write's checks of the ACL and tags it sets the bucket's tags and never the object's", func() {
+			for _, a := range []policy.Action{policy.S3PutObjectAcl, policy.S3PutObjectTagging} {
+				check := func() error {
+					r := f.req(alice(), "tagbkt", "o")
+					r.Method = http.MethodPut
+					return f.eval.VerifyBucket(f.ctx, r, a, acl.PermNone)
+				}
+				deny := func(cond string) {
+					f.setPolicy("tagbkt", doc(stmt("Deny", `"*"`, a.String(), "arn:aws:s3:::tagbkt/*", cond)))
+				}
+				deny(`{"StringEquals": {"s3:ResourceTag/team": "a"}}`)
+				Expect(check()).To(MatchError(op.ErrAccessDenied), a.String()+" under the bucket's team")
+				deny(`{"StringEquals": {"s3:ResourceTag/team": "b"}}`)
+				Expect(check()).To(Succeed(), a.String()+" under another team")
+				deny(`{"StringEquals": {"s3:ExistingObjectTag/env": "prod"}}`)
+				Expect(check()).To(Succeed(), a.String()+" under the object's env, which a write does not read")
+			}
+		})
+
 		It("decide a copy source by the source object's tags", func() {
 			f.setPolicy("priv", bobOn("s3:GetObject", "arn:aws:s3:::priv/*", `{"StringEquals": {"s3:ExistingObjectTag/env": "prod"}}`))
 			copyKey := func(key string) error {

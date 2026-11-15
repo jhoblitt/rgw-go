@@ -78,7 +78,10 @@ func tagRule(f form, r *op.Request, a policy.Action) (objectTags, bucketTags) {
 		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6768-L6775),
 		// whose request names no object.
 		return objectTagsAsNeeded, noBucketTags
-	case policy.S3PutObject:
+	case policy.S3PutObject, policy.S3PutObjectAcl, policy.S3PutObjectTagging:
+		// An object write's checks of the ACL and the tags it sets, which
+		// radosgw does not make, see the tags its s3:PutObject check sees.
+		// The ACL and tagging ops check theirs as object checks.
 		switch {
 		case r.Method == http.MethodPut:
 			// RGWPutObj

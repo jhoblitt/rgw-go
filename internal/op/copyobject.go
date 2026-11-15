@@ -133,9 +133,9 @@ func (o *CopyObject) Init(ctx context.Context, r *Request) error {
 // check, each with the source bucket's policy and the identity's, which
 // decide before either ACL (docs/differences.md). A source naming a delete
 // marker's version is refused ahead of the missing source's rule
-// (copySourceMarker). Last come the permissions the request's object-lock
-// headers need on the destination (verifyLockHeaders), which radosgw does not
-// check.
+// (copySourceMarker). Last come the permissions the request's object-lock,
+// ACL and tag headers need on the destination (verifyWriteHeaders), which
+// radosgw does not check.
 func (o *CopyObject) VerifyPermission(ctx context.Context, r *Request) error {
 	a := policy.S3GetObject
 	if o.SrcKey.Instance != "" {
@@ -188,7 +188,7 @@ func (o *CopyObject) VerifyPermission(ctx context.Context, r *Request) error {
 	if destErr != nil {
 		return destErr
 	}
-	return verifyLockHeaders(ctx, r)
+	return verifyWriteHeaders(ctx, r)
 }
 
 // checkStorageClass is RGWCopyObj_ObjStore_S3::check_storage_class

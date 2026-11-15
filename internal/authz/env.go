@@ -295,7 +295,17 @@ func opKeys(cfg Config, r *op.Request, a policy.Action) (keys []envPair, tagsFir
 		// RGWPutACLs
 		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5742-L5744,
 		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6320-L6322).
+		// An object write that sets an ACL checks s3:PutObjectAcl with the
+		// same keys, from the headers it sets the ACL with.
 		return append([]envPair{{"s3:x-amz-acl", cannedACL(r)}}, grantKeys(r)...), false
+	case policy.S3PutObjectTagging:
+		// RGWPutObjTags adds no key: its tags are in its body. An object
+		// write that sets tags checks s3:PutObjectTagging with the
+		// s3:RequestObjectTag keys RGWPutObj adds for the tags its
+		// x-amz-tagging header sets.
+		if !hasQuery(r, "tagging") {
+			return requestTagKeys(r), false
+		}
 	}
 	return nil, false
 }
@@ -363,14 +373,27 @@ func copyKeys(r *op.Request) []envPair {
 // verify_permission, so it adds none here.
 func putObjectKeys(cfg Config, r *op.Request) []envPair {
 	ps := append(grantKeys(r), envPair{"s3:x-amz-acl", cannedACL(r)})
-	if h, ok := op.HeaderValue(r.Header, "X-Amz-Tagging"); ok {
-		if set, err := tags.ParseHeader(h, tags.MaxObjectTags); err == nil {
-			for _, t := range set.Tags {
-				ps = append(ps, envPair{"s3:RequestObjectTag/" + t.Key, t.Value})
-			}
-		}
-	}
+	ps = append(ps, requestTagKeys(r)...)
 	return append(ps, cryptKeys(cfg, r, true)...)
+}
+
+// requestTagKeys are the s3:RequestObjectTag/<key> keys of the tags the
+// request's x-amz-tagging header sets, none for a tag set that does not
+// parse.
+func requestTagKeys(r *op.Request) []envPair {
+	h, ok := op.HeaderValue(r.Header, "X-Amz-Tagging")
+	if !ok {
+		return nil
+	}
+	set, err := tags.ParseHeader(h, tags.MaxObjectTags)
+	if err != nil {
+		return nil
+	}
+	ps := make([]envPair, 0, len(set.Tags))
+	for _, t := range set.Tags {
+		ps = append(ps, envPair{"s3:RequestObjectTag/" + t.Key, t.Value})
+	}
+	return ps
 }
 
 // cannedACL is s->canned_acl, x-amz-acl or empty, which the ops add even when
@@ -394,10 +417,10 @@ var grantHeaders = []struct{ header, key string }{
 
 // grantKeys are the grant headers present, when the request has any header
 // starting with x-amz-grant (has_acl_header,
-// https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5024 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5054 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5584 at v20.2.4).
 func grantKeys(r *op.Request) []envPair {
-	if !hasACLHeader(r.Header) {
+	if !op.HasGrantHeader(r.Header) {
 		return nil
 	}
 	var ps []envPair
@@ -407,15 +430,6 @@ func grantKeys(r *op.Request) []envPair {
 		}
 	}
 	return ps
-}
-
-func hasACLHeader(h http.Header) bool {
-	for k := range h {
-		if strings.HasPrefix(strings.ToUpper(k), "X-AMZ-GRANT") {
-			return true
-		}
-	}
-	return false
 }
 
 // cryptKeys are rgw_iam_add_crypt_attrs' keys
