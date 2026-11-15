@@ -153,7 +153,7 @@ func newRecordCmd(v *viper.Viper) *cobra.Command {
 	var meta map[string]string
 	var draft, pinReason string
 	cmd := &cobra.Command{
-		Use: "record --format junit|gotest --suite NAME (--out FILE | --ledger FILE [--subset] [--reasons FILE] " +
+		Use: "record --format junit|gotest --suite NAME (--out FILE [--freeze FILE] | --ledger FILE [--subset] [--reasons FILE] " +
 			"[--draft NOTE] [--pin-reason REASON]) [--pin-file FILE] [--meta k=v]... RUN-FILE [RUN-FILE...]",
 		Short: "Record run files into a result file, or append them to a ledger",
 		Args: func(_ *cobra.Command, args []string) error {
@@ -193,8 +193,17 @@ func newRecordCmd(v *viper.Viper) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			meta, err = parseMeta(pairs)
-			return err
+			if meta, err = parseMeta(pairs); err != nil {
+				return err
+			}
+			freezeFile, err := cmd.Flags().GetString("freeze")
+			if err != nil || freezeFile == "" {
+				return err
+			}
+			if v.GetString("ledger") != "" {
+				return fmt.Errorf("--freeze is for --out: no ledger entry carries %s or %s, so give --meta %s alone", metaPackages, metaPython, metaFreeze)
+			}
+			return addFreezeMeta(meta, freezeFile)
 		},
 		RunE: func(cmd *cobra.Command, files []string) error {
 			res, err := Record(Format(v.GetString("format")), v.GetString("suite"), meta, files)
@@ -244,7 +253,29 @@ func newRecordCmd(v *viper.Viper) *cobra.Command {
 		"rather than a proven pin joining the chain, or why a full record at the head under another pytest_freeze "+
 		"re-stamps every test under a new venv; command line only")
 	f.StringArray("meta", nil, "a k=v pair to record with the result; repeatable, command line only")
+	// --freeze adds meta, so it is never bound into viper either.
+	f.String("freeze", "", "with --out, the .freeze file of the venv the runs ran under: the result's meta carries "+
+		"its pytest_freeze, its pytest_packages and its pytest_python; command line only")
 	return cmd
+}
+
+// addFreezeMeta adds to meta the venv a candidate's record names, from the
+// .freeze file at path: the digest of the whole freeze, of its package lines
+// alone and its Python's minor version.
+func addFreezeMeta(meta map[string]string, path string) error {
+	if v, ok := meta[metaFreeze]; ok {
+		return fmt.Errorf("--meta %s=%s: record sets %s itself, from --freeze", metaFreeze, v, metaFreeze)
+	}
+	data, err := readFile(path)
+	if err != nil {
+		return fmt.Errorf("reading the freeze: %w", err)
+	}
+	f, err := parseFreeze(data, path)
+	if err != nil {
+		return err
+	}
+	meta[metaFreeze], meta[metaPackages], meta[metaPython] = f.digest, f.packagesDigest, f.minor
+	return nil
 }
 
 // atPin returns an error unless res, an s3-tests record, ran at the commit
@@ -345,6 +376,8 @@ func parseMeta(pairs []string) (map[string]string, error) {
 			return nil, fmt.Errorf("--meta %q is not k=v", kv)
 		case k == metaRuns || k == metaRecorded:
 			return nil, fmt.Errorf("--meta %s: record sets %s itself", kv, k)
+		case k == metaPackages || k == metaPython:
+			return nil, fmt.Errorf("--meta %s: record sets %s itself, from --freeze", kv, k)
 		}
 		if _, dup := meta[k]; dup {
 			return nil, fmt.Errorf("--meta %s given twice", k)
@@ -357,7 +390,7 @@ func parseMeta(pairs []string) (map[string]string, error) {
 func newDiffCmd(v *viper.Viper) *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "diff --baseline LEDGER --candidate FILE [--known FILE] [--selection FILE [--gate-only FILE]] " +
-			"[--summary FILE] [--allow-meta-drift]",
+			"[--summary FILE] [--constraints FILE] [--allow-meta-drift]",
 		Short: "Compare a candidate result with a ledger",
 		Args:  cobra.NoArgs,
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
@@ -389,7 +422,11 @@ func newDiffCmd(v *viper.Viper) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			diffs, err := Diff(base, cand, v.GetBool("allow-meta-drift"), known, sel)
+			opts, err := constraintsOption(cmd)
+			if err != nil {
+				return err
+			}
+			diffs, err := Diff(base, cand, v.GetBool("allow-meta-drift"), known, sel, opts...)
 			if err != nil {
 				return err
 			}
@@ -431,7 +468,31 @@ func newDiffCmd(v *viper.Viper) *cobra.Command {
 		"one a line, which are not listed as dropped; command line only")
 	f.String("summary", "", "a file to append a markdown list of the dropped tests to, when there are any, "+
 		"such as a CI job's summary (PARITY_SUMMARY)")
+	// --constraints widens what diff accepts, so it is never bound into viper
+	// either: no stray PARITY_ variable or config file turns it on.
+	f.String("constraints", "", "the constraints file, the freeze of the venv the ledger was recorded under: with it, a "+
+		"candidate whose pytest_freeze is another is accepted, with a note, when its pytest_packages are the constraints' "+
+		"and its pytest_python their Python's minor version; command line only")
 	return cmd
+}
+
+// constraintsOption returns the option diff's --constraints gives Diff, none
+// when the flag is not set; the note it carries goes to stderr.
+func constraintsOption(cmd *cobra.Command) ([]DiffOption, error) {
+	path, err := cmd.Flags().GetString("constraints")
+	if err != nil || path == "" {
+		return nil, err
+	}
+	data, err := readFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading the constraints: %w", err)
+	}
+	constraints, err := ParseConstraints(data, path)
+	if err != nil {
+		return nil, err
+	}
+	note := func(line string) { fmt.Fprintln(cmd.ErrOrStderr(), SafeText("parity: note: "+line)) }
+	return []DiffOption{WithConstraints(constraints, note)}, nil
 }
 
 // readSelectionFlags returns the selection diff's --selection and

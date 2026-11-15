@@ -3,12 +3,12 @@
 // rgw-go's must match. A baseline is a ledger, kept append-only; a
 // candidate is a result file.
 //
-//	go run ./hack/parity record --format junit|gotest --suite NAME --out FILE [--pin-file FILE] [--meta k=v]...
-//	    RUN-FILE...
+//	go run ./hack/parity record --format junit|gotest --suite NAME --out FILE [--freeze FILE] [--pin-file FILE]
+//	    [--meta k=v]... RUN-FILE...
 //	go run ./hack/parity record --format junit|gotest --suite NAME --ledger FILE [--subset] [--reasons FILE]
 //	    [--draft NOTE] [--pin-reason REASON] [--pin-file FILE] [--meta k=v]... RUN-FILE RUN-FILE...
 //	go run ./hack/parity diff --baseline LEDGER --candidate FILE [--known FILE]
-//	    [--selection FILE [--gate-only FILE]] [--summary FILE] [--allow-meta-drift]
+//	    [--selection FILE [--gate-only FILE]] [--summary FILE] [--constraints FILE] [--allow-meta-drift]
 //	go run ./hack/parity check --old LEDGER --new LEDGER [--list-reasoned] [--draft]
 //	go run ./hack/parity check --base COMMIT [--head COMMIT] [--repo DIR] [--run-sh FILE] [--pin-file FILE]
 //	    [--clone DIR | --ceph-repo URL] [--summary FILE] [PATH...]
@@ -20,14 +20,16 @@
 //	go run ./hack/parity venv --constraints FILE --freeze FILE [--mode record|compare [--baseline LEDGER]]
 //	    [--allow-meta-drift]
 //
-// --meta, record's --draft and --pin-reason, diff's --selection and
-// --gate-only, check's --draft and pin's --ledger are read from the command
-// line only. Every other flag can also come from the environment, as PARITY_
-// and its name upper-cased with "-" as "_" (PARITY_OUT,
-// PARITY_ALLOW_META_DRIFT, PARITY_CONFIG), and every other flag but --config
-// from the config file --config names, under its own name, in any format
-// viper reads by the file's extension (YAML, JSON, TOML). The command line
-// wins over the environment, and the environment over the file.
+// --meta, record's --draft, --pin-reason and --freeze, diff's --selection,
+// --gate-only and --constraints, check's --draft and pin's --ledger are read
+// from the command line only, so that no stray variable or config file
+// changes what a record holds or what a comparison accepts. Every
+// other flag can also come from the environment, as PARITY_ and its name
+// upper-cased with "-" as "_" (PARITY_OUT, PARITY_ALLOW_META_DRIFT,
+// PARITY_CONFIG), and every other flag but --config from the config file
+// --config names, under its own name, in any format viper reads by the file's
+// extension (YAML, JSON, TOML). The command line wins over the environment,
+// and the environment over the file.
 // The root's --log-level (debug, info, warn or error; info by default) and
 // --log-format (json or text; json by default) set the logger, which writes
 // to stderr.
@@ -69,6 +71,14 @@
 // of the sha256 of the .freeze file hack/s3tests/run.sh leaves beside the
 // report, the Python that built the venv and every package in it, which
 // hack/s3tests/constraints.txt fixes (see Pinning).
+//
+// With --out, --freeze FILE reads that .freeze file and records, in place of a
+// --meta pytest_freeze, its pytest_freeze and two keys of a candidate's
+// record alone: pytest_packages, the same digest of its package lines, each
+// ended by a newline, and pytest_python, the Python's major.minor. diff reads
+// them to tell another patch release of the Python from a changed package (see
+// Comparing). --freeze is refused with --ledger and --meta refuses the two
+// keys, so that no ledger entry carries either.
 //
 // --pin-file FILE refuses an s3-tests record whose s3tests_commit is not
 // the pin the PIN file FILE holds (see Pinning): a run at another commit,
@@ -279,6 +289,23 @@
 // retires it; under --selection, a test the change removes is listed as
 // dropped instead.
 //
+// --constraints FILE, the freeze of the venv the ledger was last recorded
+// under (hack/s3tests/constraints.txt), lets a candidate whose pytest_freeze
+// is another through, with a note on stderr that names both Pythons, when two
+// things hold: its pytest_packages are the digest of the constraints' package
+// lines, and its pytest_python is the major.minor of the Python the
+// constraints' first line names. The runner image's python3 moves under its
+// label, and the constraints hold every package whatever Python's patch
+// release, so a patch release must not fail every pull request until a full
+// record; a new minor version or a changed package still fails, as does a
+// candidate whose record names neither key, and the constraints must be the
+// freeze the ledger's newest entries were recorded under, which the specs hold
+// hack/s3tests/constraints.txt to. The note names the candidate's Python by
+// its minor version alone, "(patch not recorded)", which is all its record
+// keeps. Without --constraints the whole pytest_freeze alone decides. The flag
+// is never read from the environment, so that no stray variable widens a
+// comparison that names no constraints.
+//
 // # Pinning
 //
 // The s3-tests pin is data: hack/s3tests/PIN, a regular file of exactly 40
@@ -374,9 +401,11 @@
 // venv refuses what diff would refuse at its end, a venv whose pytest_freeze
 // (see Comparing) is not the one the ledger's newest entries carry, naming
 // both digests and both Pythons, so that a run doomed to that spends no
-// cluster time; --allow-meta-drift, as for diff, lets another through, and
-// a ledger whose newest entries name no venv asks none. diff and venv judge
-// the digest by one function.
+// cluster time, unless, as for diff given --constraints, the venv's packages
+// are the constraints' and its Python is another patch release of theirs,
+// which it passes with the same note; --allow-meta-drift, as for diff, lets
+// another through, and a ledger whose newest entries name no venv asks none.
+// diff and venv judge the digest by one function.
 //
 // Much of what parity prints is text a pull request wrote, which a CI job's
 // log and summary show, so every value from a file is printed escaped so that

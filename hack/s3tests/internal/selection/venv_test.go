@@ -204,6 +204,12 @@ var _ = Describe("run.sh's venv", func() {
 		// entries were recorded under, and its Python.
 		var current, python, packages, ledger string
 
+		// anotherMinor is a Python no constraints name, and anotherPatch a patch
+		// release of the constraints' Python that no run has.
+		const anotherMinor = "3.0.0"
+		anotherPatch := func() string { return python[:strings.LastIndex(python, ".")] + ".99" }
+		sum := func(text string) string { sha := sha256.Sum256([]byte(text)); return hex.EncodeToString(sha[:])[:12] }
+
 		BeforeEach(func() {
 			current = readFile(filepath.Join(repoRoot, "hack/s3tests/constraints.txt"))
 			header, rest, _ := strings.Cut(current, "\n")
@@ -226,17 +232,27 @@ var _ = Describe("run.sh's venv", func() {
 			Expect(v.reachedCluster()).To(BeTrue(), "run.sh went on past the venv to the cluster")
 		}, SpecTimeout(5*time.Minute))
 
-		It("stops at its start, as diff would at its end, when the Python is another, naming both digests", func(ctx SpecContext) {
-			v := newRgwGoRun("3.14.0")
+		It("goes on, with a note naming both Pythons, when only the Python's patch release is another", func(ctx SpecContext) {
+			v := newRgwGoRun(anotherPatch())
 			_, stderr := v.run(ctx)
-			sum := func(text string) string { sha := sha256.Sum256([]byte(text)); return hex.EncodeToString(sha[:])[:12] }
+			constraints := filepath.Join(v.root, "hack/s3tests/constraints.txt")
+			Expect(stderr).To(ContainSubstring("parity: note: pytest_freeze: baseline " + sum(current) + ", candidate " +
+				sum("# Python "+anotherPatch()+"\n"+packages) + ", accepted: the packages are " + constraints +
+				"'s and the Python has its minor version: the venv was built by Python " + anotherPatch() + ", " + constraints + " names Python " + python))
+			Expect(stderr).NotTo(ContainSubstring("diff would refuse"))
+			Expect(v.reachedCluster()).To(BeTrue(), "run.sh went on past the venv to the cluster")
+		}, SpecTimeout(5*time.Minute))
+
+		It("stops at its start, as diff would at its end, when the Python's minor version is another, naming both digests", func(ctx SpecContext) {
+			v := newRgwGoRun(anotherMinor)
+			_, stderr := v.run(ctx)
 			Expect(stderr).To(ContainSubstring("parity: diff would refuse this run against " + ledger + " before it compared any outcome: " +
-				"pytest_freeze: baseline " + sum(current) + ", candidate " + sum("# Python 3.14.0\n"+packages)))
+				"pytest_freeze: baseline " + sum(current) + ", candidate " + sum("# Python "+anotherMinor+"\n"+packages)))
 			Expect(v.reachedCluster()).To(BeFalse())
 		}, SpecTimeout(5*time.Minute))
 
 		It("takes the ledger from the tree's committed ones unless S3TESTS_BASELINE names another", func(ctx SpecContext) {
-			v := newRgwGoRun("3.14.0")
+			v := newRgwGoRun(anotherMinor)
 			v.baseline = ""
 			_, stderr := v.run(ctx)
 			Expect(stderr).To(ContainSubstring("parity: reading the ledger: open " +
@@ -246,7 +262,7 @@ var _ = Describe("run.sh's venv", func() {
 
 		It("lets another Python through under PARITY_ALLOW_META_DRIFT, which diff reads too", func(ctx SpecContext) {
 			GinkgoT().Setenv("PARITY_ALLOW_META_DRIFT", "true")
-			v := newRgwGoRun("3.14.0")
+			v := newRgwGoRun(anotherMinor)
 			_, stderr := v.run(ctx)
 			Expect(stderr).NotTo(ContainSubstring("parity:"))
 			Expect(v.reachedCluster()).To(BeTrue())
