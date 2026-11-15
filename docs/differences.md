@@ -13460,6 +13460,42 @@ the correct S3 result, in RADOS state radosgw reads as its own.
   (`lifecycle.ExpirationHeader`; `setReadExpiration` and
   `setWriteExpiration`, `internal/s3/lifecycleheaders.go`). For an object no
   size filter excludes, the two agree.
+- **The rule-id of x-amz-expiration and x-amz-abort-rule-id is
+  URL-encoded.** radosgw formats a rule's ID into x-amz-expiration as it is
+  stored
+  ([rgw_lc.cc:2878-2884](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2878-L2884),
+  [rgw_lc.cc:2942-2948](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2942-L2948))
+  and sends x-amz-abort-rule-id the same way
+  ([rgw_rest_s3.cc:4071](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4071),
+  [rgw_rest_s3.cc:4538](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4538)).
+  An ID holding a quote ends the header's quoted value there, so one that
+  holds `", expiry-date="` gives x-amz-expiration a second expiry-date of
+  its own choosing; a control byte reaches the client as radosgw's
+  frontend writes any header value ("A stored header value's NUL and other
+  control bytes go out as spaces", above); and a space, comma, `=` or
+  non-ASCII byte goes out as it is. S3's reference says of x-amz-expiration
+  that "the value of the rule-id is URL-encoded"
+  ([api_op_PutObject.go:868-871](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.9/service/s3/api_op_PutObject.go#L868-L871)),
+  and states no form for x-amz-abort-rule-id
+  ([api_op_CreateMultipartUpload.go:803-808](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.9/service/s3/api_op_CreateMultipartUpload.go#L803-L808)).
+  No SDK says which escaping it is: aws-sdk-go-v2 hands each header to the
+  caller as the string it trimmed
+  ([deserializers.go:271-274](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.9/service/s3/deserializers.go#L271-L274),
+  [deserializers.go:1166-1169](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.9/service/s3/deserializers.go#L1166-L1169)),
+  and botocore's S3 model types both as plain strings with no handler to
+  decode them. rgw-go writes the ID of both headers with each byte but a
+  letter, a digit, `-`, `.`, `_` and `~` as `%XX` in upper-case hex, a space
+  as `%20` and never `+`: a form a path decoder and a query decoder read
+  back to the stored bytes alike, and one that carries no quote, comma, `=`,
+  `;`, space or control byte. An ID of those letters, digits and marks is
+  unchanged, and an ID with another byte differs from radosgw's, so
+  `Delete old logs` is `Delete%20old%20logs`
+  (`lifecycle.EncodeRuleID`, `internal/lifecycle/headers.go`;
+  `lifecycle.ExpirationHeader` and `setAbortHeaders`,
+  `internal/s3/lifecycleheaders.go`). Encoding x-amz-abort-rule-id is
+  rgw-go's own choice, on weak evidence: S3 documents no form for it, so
+  S3 may send the ID as stored, and for an ID outside those letters,
+  digits and marks the value then differs from S3's too.
 - **The lifecycle work window must scan as four numbers.** With
   `rgw_enable_lc_threads` on, rgw-go refuses to start on an
   `rgw_lifecycle_work_time` that does not hold four numbers of `int` in the

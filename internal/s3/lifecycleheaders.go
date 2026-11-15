@@ -90,7 +90,9 @@ func lifecycleSize(st *op.ObjectState) uint64 {
 // counts from the epoch, and sends the headers on a refusal too; rgw-go
 // counts from the upload's initiation, as S3 does, and sends them with the
 // upload it created (docs/differences.md, "x-amz-abort-date counts from the
-// upload's initiation").
+// upload's initiation"). The rule's ID goes out as lifecycle.EncodeRuleID
+// writes it, where radosgw sends it as stored (docs/differences.md, "The
+// rule-id of x-amz-expiration and x-amz-abort-rule-id is URL-encoded").
 func setAbortHeaders(h http.Header, r *op.Request, initiated time.Time) {
 	c, ok := storedLifecycle(r)
 	if !ok {
@@ -102,7 +104,7 @@ func setAbortHeaders(h http.Header, r *op.Request, initiated time.Time) {
 	}
 	addHeader(h, "x-amz-abort-date", httpDate(date))
 	if id != "" {
-		addHeader(h, "x-amz-abort-rule-id", id)
+		addHeader(h, "x-amz-abort-rule-id", lifecycle.EncodeRuleID(id))
 	}
 }
 

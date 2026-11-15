@@ -389,8 +389,43 @@ var _ = Describe("the lifecycle response headers", func() {
 				})
 			})
 
-			It("sends a stored rule ID's CR and LF as spaces in both headers, starting no header of its own", func(ctx SpecContext) {
-				const id = "a\r\nX-Injected: 1"
+			DescribeTable("sends a stored rule ID URL-encoded in x-amz-expiration and x-amz-abort-rule-id, on every response that carries them",
+				func(ctx SpecContext, id, wantID string) {
+					w.put(ctx, "k", "x", nil)
+					w.storeLifecycle(ctx, lifecycle.Rule{
+						ID: id, Status: "Enabled",
+						Expiration: lifecycle.Expiration{Days: "1"}, MPExpiration: lifecycle.Expiration{Days: "1"},
+					})
+					wantExpiry := `expiry-date="Wed, 30 Sep 2026 00:00:00 GMT", rule-id="` + wantID + `"`
+					for _, call := range []struct{ name, method string }{{"PutObject", http.MethodPut}, {"GET", http.MethodGet}, {"HEAD", http.MethodHead}} {
+						body := ""
+						if call.method == http.MethodPut {
+							body = "x"
+						}
+						rec := w.send(w.alice, call.method, "/plain/k", body)
+						Expect(rec.Code).To(Equal(http.StatusOK), call.name)
+						Expect(exactValues(rec.Header(), "x-amz-expiration")).To(Equal([]string{wantExpiry}), call.name)
+						Expect(strings.Count(exactHeader(rec.Header(), "x-amz-expiration"), "expiry-date=")).To(Equal(1), "%s: the rule's own date alone", call.name)
+					}
+					create := serveReq(w.handler(w.alice), http.MethodPost, "/plain/k?uploads", nil)
+					Expect(create.Code).To(Equal(http.StatusOK), create.Body.String())
+					Expect(exactValues(create.Header(), "x-amz-abort-rule-id")).To(Equal([]string{wantID}), "CreateMultipartUpload")
+				},
+				Entry("a plain ID, unchanged", "rule1", "rule1"),
+				Entry("spaces", "my rule  1", "my%20rule%20%201"),
+				Entry("quotes", `say "hi"`, "say%20%22hi%22"),
+				Entry("commas and equals signs", "a,b=c", "a%2Cb%3Dc"),
+				Entry("a percent sign", "100%", "100%25"),
+				Entry("non-ASCII", "caf\u00e9", "caf%C3%A9"),
+				Entry("a byte that is not UTF-8", "a\xffb", "a%FFb"),
+				Entry("NUL, tab, CR and LF", "a\x00\t\r\nb", "a%00%09%0D%0Ab"),
+				Entry("DEL", "a\x7fb", "a%7Fb"),
+				Entry("an ID that forges an expiry-date", `x", expiry-date="Fri, 01 Jan 2100 00:00:00 GMT`,
+					"x%22%2C%20expiry-date%3D%22Fri%2C%2001%20Jan%202100%2000%3A00%3A00%20GMT"),
+			)
+
+			It("sends a stored rule ID's control bytes as %XX in both headers, which a strict client reads, starting no header of its own", func(ctx SpecContext) {
+				const id = "a\r\nX-Injected: 1\x00\x7f"
 				w.put(ctx, "k", "x", nil)
 				w.storeLifecycle(ctx, lifecycle.Rule{
 					ID: id, Status: "Enabled",
@@ -408,11 +443,12 @@ var _ = Describe("the lifecycle response headers", func() {
 					Expect(resp.StatusCode).To(Equal(http.StatusOK))
 					return resp
 				}
+				const wantID = "a%0D%0AX-Injected%3A%201%00%7F"
 				head := do(http.MethodHead, "/plain/k")
-				Expect(head.Header.Values("X-Amz-Expiration")).To(Equal([]string{`expiry-date="Wed, 30 Sep 2026 00:00:00 GMT", rule-id="a  X-Injected: 1"`}))
+				Expect(head.Header.Values("X-Amz-Expiration")).To(Equal([]string{`expiry-date="Wed, 30 Sep 2026 00:00:00 GMT", rule-id="` + wantID + `"`}))
 				Expect(head.Header).NotTo(HaveKey("X-Injected"))
 				create := do(http.MethodPost, "/plain/k?uploads")
-				Expect(create.Header.Values("X-Amz-Abort-Rule-Id")).To(Equal([]string{"a  X-Injected: 1"}))
+				Expect(create.Header.Values("X-Amz-Abort-Rule-Id")).To(Equal([]string{wantID}))
 				Expect(create.Header).NotTo(HaveKey("X-Injected"))
 			})
 		})

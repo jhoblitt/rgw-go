@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"net/url"
 	"strings"
 	"time"
 
@@ -28,8 +29,10 @@ const expiryDateLayout = "Mon, 02 Jan 2006 15:04:05 GMT"
 // at least its Days after mtime's whole second, the pass at which a worker on
 // UTC first finds the object due. The earliest date wins, the first rule on a
 // tie, and the value is `expiry-date="<the date, RFC 1123 in GMT>",
-// rule-id="<the rule's ID>"`. A request that names a version, "null"
-// included, gets none.
+// rule-id="<the rule's ID, as EncodeRuleID writes it>"`, where radosgw writes
+// the ID as stored (docs/differences.md, "The rule-id of x-amz-expiration and
+// x-amz-abort-rule-id is URL-encoded"). A request that names a version,
+// "null" included, gets none.
 //
 // That is v19.2.7's form, on both releases. v20.2.4's s3_expiration_header
 // (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2817-L2952 at v20.2.4)
@@ -73,7 +76,22 @@ func ExpirationHeader(c Configuration, name, versionID string, objTags tags.Set,
 	if !found {
 		return ""
 	}
-	return `expiry-date="` + time.Unix(earliest.Unix(), 0).UTC().Format(expiryDateLayout) + `", rule-id="` + id + `"`
+	return `expiry-date="` + time.Unix(earliest.Unix(), 0).UTC().Format(expiryDateLayout) + `", rule-id="` + EncodeRuleID(id) + `"`
+}
+
+// EncodeRuleID is a rule's ID as the rule-id of x-amz-expiration and the value
+// of x-amz-abort-rule-id carry it. S3 documents the rule-id of x-amz-expiration
+// as "URL-encoded", states no form for x-amz-abort-rule-id, and no SDK decodes
+// either, so nothing shows which escaping S3 applies. Every byte but an
+// RFC 3986 unreserved one (a letter, a digit, '-', '.', '_' or '~') is %XX in
+// upper-case hex, a form url.PathUnescape and url.QueryUnescape both read
+// back; a space is %20 and never '+', which a path decoder leaves alone. No
+// quote, comma, '=' or control byte survives, so an ID can end neither the
+// header's quoted value nor its field, and the escaping is bytewise, so an ID
+// that is not UTF-8 is covered. Giving x-amz-abort-rule-id the same form is a
+// judgement on that weak evidence.
+func EncodeRuleID(id string) string {
+	return strings.ReplaceAll(url.QueryEscape(id), "+", "%20")
 }
 
 // AbortHeader is s3_multipart_abort_header
@@ -83,8 +101,10 @@ func ExpirationHeader(c Configuration, name, versionID string, objTags tags.Set,
 // rule_map order whose prefix begins name, whatever their tags, the earliest
 // date their DaysAfterInitiation give, counted as ExpirationHeader counts
 // Days, and its rule's ID, the first rule on a tie; ok is false when no rule
-// gives one. The date keeps mtime's fraction of a second, as radosgw's
-// real_time does, which x-amz-abort-date's format drops.
+// gives one. The ID is returned raw, as stored: callers send it through
+// setAbortHeaders, which writes it as EncodeRuleID does. The date keeps
+// mtime's fraction of a second, as radosgw's real_time does, which
+// x-amz-abort-date's format drops.
 func AbortHeader(c Configuration, name string, mtime time.Time) (date time.Time, ruleID string, ok bool) {
 	rules := c.ordered()
 	for i := range rules {
