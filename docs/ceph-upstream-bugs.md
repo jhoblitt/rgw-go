@@ -537,6 +537,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw reads PutObjectRetention's document before it sends 100 Continue](#radosgw-reads-putobjectretentions-document-before-it-sends-100-continue) | pending | pending | ✓ |
 | [radosgw's negated condition operators are false on an absent key](#radosgws-negated-condition-operators-are-false-on-an-absent-key) | pending | pending | ✓ |
 | [radosgw matches condition key names case-sensitively](#radosgw-matches-condition-key-names-case-sensitively) | pending | pending | ✓ |
+| [radosgw-admin mfa check names the serial number when --totp-pin is missing](#radosgw-admin-mfa-check-names-the-serial-number-when---totp-pin-is-missing) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -19483,7 +19484,9 @@ Every new entry adds its row to this table, in document order.
   - Not security-relevant: no check is granted that the class would refuse.
     The dropped device's record is gone, so a code for it checks as a
     missing device, and a removed object fails every check.
-  - Prior art not searched. Unreproduced: derived from the source.
+  - Prior art not searched. Reproduced on running radosgw at v19.2.7 and
+    v20.2.4 (Reproduction, below). The metadata sync consequence is derived
+    from the source, unreproduced: it needs two zones.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
   - The otp metadata put is `RGWSI_Cls::MFA::set_mfa` with `reset_obj`. It
     is one write op: it removes the object, failure allowed, creates it
@@ -19592,6 +19595,19 @@ Every new entry adds its row to this table, in document order.
     replay state.
 - **Releases:** checked at v19.2.7 and v20.2.4, where the class, the put,
   the sync and the OSD's handling are the same.
+- **Reproduction:** phase 2 task WP-24's cluster gate reproduced it on
+  rooket clusters of v19.2.7 and v20.2.4, each of its own image, on
+  2026-11-14 (CI run 43642253362; `test/integration/phase2_layout_otp_test.go`,
+  "lists the remaining device after a put that drops one"). It made two
+  devices with `radosgw-admin mfa create`, then put a document that keeps
+  one:
+  - through radosgw's metadata API, radosgw's metadata get answered 404 and
+    `radosgw-admin mfa list` printed no devices; `radosgw-admin mfa remove`
+    of the dropped id restored both. rgw-go's metadata get of the same
+    object answered 404 too, which the spec prints and does not assert, so
+    only the verbose run 43642255912 shows it;
+  - through rgw-go's, both gateways' metadata gets and `radosgw-admin mfa
+    list` showed the remaining device.
 - **rgw-go:** does not reproduce it. Its otp metadata put composes
   radosgw's op and then writes the object's header itself, in the same op,
   holding exactly the document's ids, `otp_header` v1 in the class's bytes
@@ -19609,7 +19625,8 @@ Every new entry adds its row to this table, in document order.
   searched.
 - **Found:** phase 2 Task WP-17, 2026-10-19, while emulating `otp_set`'s
   reads at both tags. The `mfa list` and sync consequences come from WP-17's
-  task review. Derived from the source, not reproduced.
+  task review. Derived from the source; reproduced at v19.2.7 and v20.2.4 by
+  phase 2 task WP-24's gate, 2026-11-14, except the sync consequence.
 
 ## radosgw's otp replay state stays in the zone that recorded it
 
@@ -19671,6 +19688,11 @@ Every new entry adds its row to this table, in document order.
   document, the check and the sync are the same; reproduced on v21.1.2,
   whose check refuses and records the step the same way
   ([cls_otp.cc:141-146](https://github.com/ceph/ceph/blob/v21.1.2/src/cls/otp/cls_otp.cc#L141-L146)).
+  Phase 2 task WP-24 does not reproduce it at v19.2.7 or v20.2.4: the
+  defect shows only between two zones and the cluster gate runs one, so its
+  spec for it is a named skip (`test/integration/phase2_layout_otp_test.go`).
+  The gate's spec "refuses an accepted code again after a put that keeps the
+  device" asserts that a put keeps a device's replay state in one zone.
 - **rgw-go:** affected the same way. `(*Store).VerifyMFA` checks on the
   local zone's otp object, as radosgw's check does
   (`internal/driver/mfa.go`), and its refusal of a code the device may have
@@ -21033,7 +21055,9 @@ Every new entry adds its row to this table, in document order.
 
 - **Kind:** defect, possibly security-relevant, conditional on the tier's
   non-default `retain_head_object`; found by us. Unfixed at v19.2.7, v20.2.4
-  and main at 8aa24c51928 (2026-10-30). Derived from the source, not reproduced.
+  and main at 8aa24c51928 (2026-10-30). The `?layout` half is reproduced at
+  v19.2.7 and v20.2.4 through rewritten manifests (Reproduction, below); the
+  lifecycle half is derived from the source, not reproduced.
 - **Evidence:**
   - `?layout` is the object GET `RGWGetObjLayout`, whose permission check is
     the requester's `admin=read` cap alone
@@ -21105,6 +21129,26 @@ Every new entry adds its row to this table, in document order.
   factor.
 - **Releases:** v19.2.7 and v20.2.4. Main's `RGWZoneGroupPlacementTierS3::dump`
   still writes the secret at 8aa24c51928 ([rgw_zone.cc:779-783](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_zone.cc#L779-L783)).
+- **Reproduction:** phase 2 task WP-24's cluster gate reproduced the
+  `?layout` half on rooket clusters of v19.2.7 and v20.2.4, each of its own
+  image, on 2026-11-14 (CI run 43642253362;
+  `test/integration/phase2_layout_otp_test.go`, "masks the secret in the
+  layout of a head that names a cloud tier, where radosgw writes it in the
+  clear"). The gate signed as an admin user, which radosgw lets past the
+  `admin=read` check that no caps command can grant. For two radosgw-written
+  heads it rewrote the manifest to name a cloud-s3 tier with
+  `retain_head_object` set, an S3 key and a secret, and radosgw's `?layout`
+  carried the secret where rgw-go's was radosgw's body with it masked:
+  - one manifest keeps the object's own stripes and rules and adds the tier;
+  - the other is the manifest a transition writes, which
+    `RadosObject::write_cloud_tier` builds new, of size 0, with no rules
+    ([rgw_sal_rados.cc:2720-2734](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2720-L2734),
+    [rgw_sal_rados.cc:3541-3555](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L3541-L3555)).
+  - The transition itself is not reproduced, and the gate's spec for it is a
+    named skip. It needs a tier with `retain_head_object` set and an
+    endpoint that answers, which the population's tier lacks, and changing
+    the tier is a zonegroup change committed to a new period, which the
+    other specs of the suite read.
 - **rgw-go:** masks it (exclusion: "`?layout` masks a cloud tier's S3
   secret", `docs/differences.md`). `?layout`'s document
   (`driver.Store.ObjectLayout`, `internal/driver/layout.go`) dumps the
@@ -21128,8 +21172,9 @@ Every new entry adds its row to this table, in document order.
     untouched.
 - **Found:** phase 2 task WP-20's review, 2026-10-20; the chain was verified
   end to end at v20.2.4, and the `retain_head_object` precondition at both
-  tags, by rgw-bug-reproduction's triage. Derived from the source, not
-  reproduced.
+  tags, by rgw-bug-reproduction's triage. Derived from the source; the
+  `?layout` half reproduced at v19.2.7 and v20.2.4 by phase 2 task WP-24's
+  gate, 2026-11-14.
 
 ## cls_rgw's lc_get_entry and lc_get_next_entry refuse an lc entry stored in its old pair form, which stalls the shard
 
@@ -29970,6 +30015,20 @@ Every new entry adds its row to this table, in document order.
     ([rgw_rados.cc:7111-7114](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7111-L7114),
     [rgw_rados.cc:7773-7776](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7773-L7776)).
   How to make either call fail on a running release is open.
+  - Phase 2 task WP-24 built no input for either call, and its cluster gate
+    carries a named skip for it (`test/integration/phase2_layout_otp_test.go`).
+    A head that is missing, or whose manifest does not decode, fails the
+    state read `read_permissions` makes first, the decode with -EIO
+    ([rgw_rados.cc:6354-6368](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6354-L6368),
+    [rgw_rados.cc:6968-6982](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6968-L6982)).
+    What is left is the pool open and the OLH follow above. Pending entries
+    older than `rgw_olh_pending_timeout_sec` are removed
+    ([rgw_rados.cc:8926](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8926),
+    [rgw_rados.cc:9672](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9672)),
+    and the only way WP-24 found to have the read meet them is a versioned
+    write racing it, which a gate cannot time. The pool open could fail only
+    for a pool that vanished between the two reads of one request, which a
+    gate cannot do to a shared zone.
 - **Impact:** a holder of `admin=read`, or an admin or system user, gets
   200 and `{}` for an object whose layout radosgw could not read, which it
   cannot tell from a success.
@@ -34803,3 +34862,22 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task L7's adversarial review, 2026-11-14, judging
   how a policy can name an object-lock condition key; derived from the
   source, not reproduced.
+
+## radosgw-admin mfa check names the serial number when --totp-pin is missing
+
+- **Kind:** defect, cosmetic, not security-relevant: an error message names
+  the wrong thing. `radosgw-admin mfa check` without `--totp-pin` exits with
+  EINVAL and prints "ERROR: TOTP device serial number was not provided (via
+  --totp-pin)", though the serial number was given. Derived from the source,
+  not run.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - The command tests `totp_serial` and then `totp_pin`, and the second
+    test prints the first one's message with its option changed, so the
+    message says the serial number is missing where the pin is
+    ([rgw_admin.cc:10945-10953](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L10945-L10953),
+    [radosgw-admin.cc:11537-11545](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L11537-L11545)).
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** not affected. rgw-go ports no radosgw-admin command.
+- **Upstream:** pending; prior art not searched.
+- **Found:** by the review of phase 2 task WP-24, 2026-11-14, reading
+  `mfa check` to see what a refused code prints.

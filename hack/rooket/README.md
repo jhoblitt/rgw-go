@@ -1417,8 +1417,9 @@ makes the suite read it), and `make admin-gate` reads that file unless the
 variable names another rgw-go.
 
 `make admin-gate` runs the specs of `test/integration` labelled `rgw-go`,
-which `make integration` leaves out: the admin gate, `admin_test.go`, and
-the CORS gate, `phase2_cors_test.go`, which need the rgw-go `make rgw-go-up`
+which `make integration` leaves out: the admin gate, `admin_test.go`, the
+CORS gate, `phase2_cors_test.go`, and the `?layout` and otp gate,
+`phase2_layout_otp_test.go`, which need the rgw-go `make rgw-go-up`
 started, and the website gate, `phase2_website_test.go`, below. The admin
 gate's specs sign as the user `rgwgo-admin`, which holds Rook's admin-ops
 caps and `info`, `ratelimit` and the write caps the trim, index check and
@@ -1460,6 +1461,38 @@ other serve it, and compares the `user.rgw.cors` attr each leaves. Its
 fixtures are the user `cors-gate` and its `rgwgo-cors-*` buckets; it
 removes the user with its buckets, the user's usage records and the garbage
 the removal leaves before and after it runs.
+
+The `?layout` and otp gate sends the `?layout` of every populated object, and
+of each shape of object rgw-go writes, to both gateways and requires the same
+bytes, and makes otp devices with `radosgw-admin mfa create` and through
+rgw-go's otp and user sections, requiring each gateway to show, list, check,
+keep and remove what the other made. It signs as the admin user
+`layout-otp-gate`, which holds `metadata=*`, and its fixtures are that user
+with its `rgwgo-layout-*` bucket, and nine `rgwgo-otp-*` users: one for the
+spec that shows the devices `radosgw-admin` made, two for each of the put and
+remove specs, and one for each entry of the replay and drop tables. It removes
+them, the usage records and the garbage before and after it runs, and removes
+each otp user's `user:<uid>` object in the zone's otp pool, which a user's
+removal leaves. The replay specs wait for a 30 s TOTP step with at least 22 s
+left, which takes up to 22 s when the current step has fewer.
+
+A passing `make admin-gate` prints no more than `ok`. With `-v -ginkgo.v`
+added to its `go test`, each `?layout` answer is printed as a
+`LAYOUT-GOLDEN-JSON` line holding the document and the head's stored
+manifest. Those lines are the goldens `internal/driver`'s specs lay objects
+out against. To make them again, for a release's new cluster image, save the
+lines of that release's job and write the files from them:
+
+```sh
+gh run view --job JOB --log | grep -F 'LAYOUT-GOLDEN-JSON ' > internal/driver/testdata/layout/squid.jsonl
+go run ./hack/layoutgolden --release squid
+```
+
+`hack/layoutgolden` replaces `internal/driver/testdata/layout/<release>/` with
+`<shape>.bin` and `<shape>.json` for each line, and its package doc says how
+a line becomes the two. Commit the capture with its goldens: a spec in
+`hack/layoutgolden` requires the checked-in goldens to be what it makes of
+the checked-in captures.
 
 The website gate needs no `make rgw-go-up`: it builds an rgw-go of its own and
 runs it on a loopback port as `client.admin`, with `rgw_dns_s3website_name`,
