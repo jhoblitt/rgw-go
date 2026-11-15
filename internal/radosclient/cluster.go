@@ -41,6 +41,28 @@ type StatsReporter interface {
 	Stats() Stats
 }
 
+//counterfeiter:generate . ServiceRegistrar
+
+// ServiceRegistrar is satisfied by a Cluster that can register in the
+// manager's service map; serve type-asserts it.
+type ServiceRegistrar interface {
+	// ServiceRegister registers the connection as daemon of service, with
+	// metadata as the daemon's static metadata beside the keys librados adds
+	// itself, such as ceph_version and hostname, whose values it keeps. A
+	// Cluster registers once, and a second call, overlapping or not, is
+	// ErrExists; a service named for a Ceph daemon type (osd, mds, client,
+	// mon or mgr), or an empty service or daemon name, is ErrInvalid. An
+	// empty metadata key is refused, and a NUL in a name, key or value is
+	// ErrNULName; a refused call registers nothing. The entry stays until
+	// Close, which removes it.
+	ServiceRegister(service, daemon string, metadata map[string]string) error
+	// ServiceUpdateStatus replaces the status the manager reports for the
+	// registered daemon, which `ceph service status` shows. The manager keeps
+	// a status only for a registered connection. An empty key is refused, and
+	// a NUL in a key or value is ErrNULName.
+	ServiceUpdateStatus(status map[string]string) error
+}
+
 //counterfeiter:generate . Pool
 
 // Pool is an I/O context: one pool and one namespace, with an optional object locator.

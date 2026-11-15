@@ -33781,6 +33781,15 @@ Every new entry adds its row to this table, in document order.
     handle that is connecting
     ([RadosClient.cc:1089-1102](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/RadosClient.cc#L1089-L1102),
     [RadosClient.cc:1091-1104](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/RadosClient.cc#L1091-L1104)).
+  - Nothing locks that check against those writes: `service_daemon_register`
+    checks, calls `collect_sys_info` on `daemon_metadata`, a `std::map`, then
+    sets `service_daemon` and the names and inserts the caller's metadata, all
+    without the client's lock
+    ([RadosClient.cc:1069-1106](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/RadosClient.cc#L1069-L1106),
+    [RadosClient.cc:1071-1108](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/RadosClient.cc#L1071-L1108)),
+    and its C wrapper `rados_service_register` takes none either
+    ([librados_c.cc:811-823](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/librados_c.cc#L811-L823),
+    [librados_c.cc:811-823](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/librados_c.cc#L811-L823)).
   - `connect` sets `CONNECTING` first and hands the manager client the
     registration only if `service_daemon` is set when it gets there
     ([RadosClient.cc:215-224](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/RadosClient.cc#L215-L224),
@@ -33801,12 +33810,16 @@ Every new entry adds its row to this table, in document order.
     [MgrClient.cc:238-256](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/MgrClient.cc#L238-L256)).
     A registration that lands after `connect`'s check is never handed over, so
     no reconnect sends it either.
-- **Trigger:** either of two.
+- **Trigger:** any of three.
   - A caller registers from one thread while another runs `rados_connect` on
     the same handle.
   - A caller registers, on any thread, after a `rados_connect` that failed in
     its monitor bootstrap, which leaves the handle connecting for good
     ([librados's rados_connect leaves the handle connecting when its monitor bootstrap fails](#libradoss-rados_connect-leaves-the-handle-connecting-when-its-monitor-bootstrap-fails)).
+  - Two callers register on one handle at once. Both can pass the `-EEXIST`
+    check before either sets `service_daemon`, so neither is refused, and both
+    write the names and the metadata map unguarded. By the source only: not
+    reproduced.
 - **Reproduction:** by the review of phase 2 task SM1, 2026-11-14: a
   hermetic Go test on go-ceph a81d09b with librados 20.2.4 and no cluster.
   A new handle whose `monmap` option names a file that does not exist
@@ -33827,12 +33840,16 @@ Every new entry adds its row to this table, in document order.
   SM4, which makes it register, does so once, after its connect has returned
   (`docs/superpowers/plans/2026-10-13-phase-2/SM-service-map.md`, SM-D5).
   goceph shuts a handle down when its connect fails or is cancelled, without
-  connecting it again (internal/radosclient/goceph/cluster.go:150-164), so no
-  registration can meet a connecting handle.
+  connecting it again (internal/radosclient/goceph/cluster.go:156-170), so no
+  registration can meet a connecting handle. It also serializes its own
+  service-map calls on one mutex held across the librados call, so two
+  overlapping first calls are answered one after the other, the second
+  `EEXIST` (`ServiceRegister` in the same file).
 - **Upstream:** pending; prior art not searched.
 - **Found:** reading librados for go-ceph's `Conn.ServiceRegister` binding,
   phase 2 task SM1, 2026-11-14; reproduced, and the single-threaded trigger
-  found, by that task's review the same day.
+  found, by that task's review the same day; the two-register trigger, from
+  the source, by the review of phase 2 task SM3 the same day.
 
 ## librados's rados_connect leaves the handle connecting when its monitor bootstrap fails
 
@@ -33866,8 +33883,8 @@ Every new entry adds its row to this table, in document order.
   Main at ec322a5e95eb (2026-11-14) still returns before `out:`
   ([RadosClient.cc:235-237](https://github.com/ceph/ceph/blob/ec322a5e95ebcb46dec7d6a9d7813a34543c64ad/src/librados/RadosClient.cc#L235-L237)).
 - **rgw-go:** not affected: goceph shuts a handle down when its connect fails
-  (internal/radosclient/goceph/cluster.go:150-157), and when a cancelled
-  connect returns (internal/radosclient/goceph/cluster.go:158-164), and never
+  (internal/radosclient/goceph/cluster.go:156-163), and when a cancelled
+  connect returns (internal/radosclient/goceph/cluster.go:164-170), and never
   connects a handle twice.
 - **Upstream:** pending; prior art not searched.
 - **Found:** by the review of phase 2 task SM1, 2026-11-14, tracing the
