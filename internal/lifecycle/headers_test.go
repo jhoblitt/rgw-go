@@ -1,7 +1,11 @@
 package lifecycle_test
 
 import (
+	"fmt"
 	"net/http"
+	"net/url"
+	"regexp"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -184,6 +188,69 @@ var _ = Describe("ExpirationHeader", func() {
 	It("gives the date Days past real_time's range name, where radosgw's arithmetic wraps", func() {
 		want := time.Date(2026, 6, 14+200001, 0, 0, 0, 0, time.UTC).Format(http.TimeFormat)
 		Expect(lifecycle.ExpirationHeader(rules(expire("r", "200000", "")), plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"), 0)).To(Equal(header(want, "r")))
+	})
+})
+
+var _ = Describe("the rule-id of x-amz-expiration", func() {
+	DescribeTable("is the rule's ID URL-encoded (RFC 3986 unreserved characters kept), whatever bytes it holds",
+		func(id, wantID string) {
+			Expect(lifecycle.ExpirationHeader(rules(expire(id, "1", "")), plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"), 0)).To(
+				Equal(header("Tue, 16 Jun 2026 00:00:00 GMT", wantID)))
+		},
+		Entry("a plain ID, unchanged", "Expire-old_logs.v1~", "Expire-old_logs.v1~"),
+		Entry("an empty ID", "", ""),
+		Entry("spaces", "rule one  two", "rule%20one%20%20two"),
+		Entry("quotes", `a"b"`, "a%22b%22"),
+		Entry("commas and equals signs", "a,b=c", "a%2Cb%3Dc"),
+		Entry("a percent sign", "100%", "100%25"),
+		Entry("non-ASCII", "caf\u00e9 \u65e5\u672c", "caf%C3%A9%20%E6%97%A5%E6%9C%AC"),
+		Entry("a byte that is not UTF-8", "a\xffb", "a%FFb"),
+		Entry("NUL, tab, CR and LF", "a\x00\t\r\nb", "a%00%09%0D%0Ab"),
+		Entry("DEL", "a\x7fb", "a%7Fb"),
+	)
+
+	It("holds the rule's own expiry-date alone for an ID that forges another", func() {
+		const id = `x", expiry-date="Fri, 01 Jan 2100 00:00:00 GMT`
+		got := lifecycle.ExpirationHeader(rules(expire(id, "1", "")), plain, "", tags.Set{}, utc("2026-06-14T12:00:00Z"), 0)
+		Expect(got).To(Equal(header("Tue, 16 Jun 2026 00:00:00 GMT", "x%22%2C%20expiry-date%3D%22Fri%2C%2001%20Jan%202100%2000%3A00%3A00%20GMT")))
+		Expect(strings.Count(got, "expiry-date=")).To(Equal(1), "no second pair starts inside the ID")
+		m := regexp.MustCompile(`^expiry-date="([^"]*)", rule-id="([^"]*)"$`).FindStringSubmatch(got)
+		Expect(m).To(HaveLen(3), "two quoted values and nothing else, as a client's parser reads them: %s", got)
+		Expect(m[1]).To(Equal("Tue, 16 Jun 2026 00:00:00 GMT"))
+		Expect(url.PathUnescape(m[2])).To(Equal(id), "the ID a client decodes is the one stored")
+	})
+})
+
+var _ = Describe("EncodeRuleID", func() {
+	// everyByte holds each of the 256 byte values once.
+	everyByte := func() string {
+		b := make([]byte, 256)
+		for i := range b {
+			b[i] = byte(i)
+		}
+		return string(b)
+	}
+
+	It("keeps the RFC 3986 unreserved bytes and writes every other byte as %XX in upper-case hex", func() {
+		for _, c := range []byte(everyByte()) {
+			unreserved := c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || strings.IndexByte("-._~", c) >= 0
+			if unreserved {
+				Expect(lifecycle.EncodeRuleID(string([]byte{c}))).To(Equal(string([]byte{c})), "byte %#02x", c)
+			} else {
+				Expect(lifecycle.EncodeRuleID(string([]byte{c}))).To(Equal(fmt.Sprintf("%%%02X", c)), "byte %#02x", c)
+			}
+		}
+	})
+
+	It("writes nothing a strict HTTP parser refuses or that ends the header's quoted value", func() {
+		Expect(lifecycle.EncodeRuleID(everyByte())).To(MatchRegexp(`^[A-Za-z0-9._~%-]*$`))
+	})
+
+	It("reads back through the path and the query decoder alike, whichever a client applies", func() {
+		id := everyByte()
+		enc := lifecycle.EncodeRuleID(id)
+		Expect(url.PathUnescape(enc)).To(Equal(id), "url.PathUnescape")
+		Expect(url.QueryUnescape(enc)).To(Equal(id), "url.QueryUnescape, which would turn a raw + into a space")
 	})
 })
 

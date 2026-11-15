@@ -22506,13 +22506,14 @@ Every new entry adds its row to this table, in document order.
   ([rgw_lc.cc:3451-3452](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_lc.cc#L3451-L3452))
   and `send_header`
   ([rgw_asio_client.cc:170-184](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_asio_client.cc#L170-L184)).
-- **rgw-go:** not affected: it sends both headers through net/http, which
-  writes a CR or LF in a header value as a space (`docs/differences.md`, "A
-  stored header value's CR and LF go out as spaces"), and
-  `lifecycle.ExpirationHeader` (`internal/lifecycle/headers.go`) writes the
-  ID as radosgw does. "sends a stored rule ID's CR and LF as spaces in both
-  headers, starting no header of its own"
-  (`internal/s3/lifecycleheaders_test.go`) pins it through a server.
+- **rgw-go:** not affected: it writes the ID of both headers URL-encoded,
+  a CR or LF as `%0D` or `%0A`, so none reaches the client
+  (`lifecycle.EncodeRuleID`, `internal/lifecycle/headers.go`;
+  `docs/differences.md`, "The rule-id of x-amz-expiration and
+  x-amz-abort-rule-id is URL-encoded"). "sends a stored rule ID's control
+  bytes as %XX in both headers, which a strict client reads, starting no
+  header of its own" (`internal/s3/lifecycleheaders_test.go`) pins it
+  through a server.
 - **Upstream:** pending: sent to rgw-bug-reproduction, which takes it to
   security@ceph.io as an addendum to the thread of "[radosgw stores a POST upload's x-amz-meta fields with their CR and LF and sends them raw on GET](#radosgw-stores-a-post-uploads-x-amz-meta-fields-with-their-cr-and-lf-and-sends-them-raw-on-get)" and "[radosgw sends a query-string x-amz-meta name's CR and LF raw in GET's headers](#radosgw-sends-a-query-string-x-amz-meta-names-cr-and-lf-raw-in-gets-headers)".
   Their filed fixes refuse the bad bytes where each input arrives, so
@@ -34650,8 +34651,7 @@ Every new entry adds its row to this table, in document order.
   rule ID holding a character S3 would have encoded as it is. Quotes and
   commas in an ID let its writer add a second `expiry-date` to the value,
   as an ID of `x", expiry-date="Fri, 01 Jan 2100 00:00:00 GMT` does, on
-  radosgw and on rgw-go, which writes the ID raw too until its plan task
-  C14 encodes it. The worker acts as its rules say.
+  radosgw. The worker acts as its rules say.
 - **Releases:** v19.2.7 and v20.2.4, and main at 8aa24c51928 (2026-10-30),
   where the call sites are still those three
   ([rgw_rest_s3.cc:418](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L418),
@@ -34662,8 +34662,14 @@ Every new entry adds its row to this table, in document order.
   sends none there" (`internal/s3/lifecycleheaders_test.go`) pins
   (`docs/differences.md`, "UploadPart and UploadPartCopy send no
   x-amz-expiration"). It reproduces the rest: no header on CopyObject,
-  CompleteMultipartUpload or ListParts, and the rule ID as stored
-  (`lifecycle.ExpirationHeader`, `internal/lifecycle/headers.go`).
+  CompleteMultipartUpload or ListParts. It writes the rule ID URL-encoded,
+  which "is the rule's ID URL-encoded (RFC 3986 unreserved characters
+  kept), whatever bytes it holds" (`internal/lifecycle/headers_test.go`) and
+  "sends a stored rule ID URL-encoded in x-amz-expiration and
+  x-amz-abort-rule-id, on every response that carries them"
+  (`internal/s3/lifecycleheaders_test.go`) pin (`lifecycle.EncodeRuleID`,
+  `internal/lifecycle/headers.go`; `docs/differences.md`, "The rule-id of
+  x-amz-expiration and x-amz-abort-rule-id is URL-encoded").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task C8, 2026-11-14, reading the call sites at both
   tags and aws-sdk-go-v2's model. Not reproduced on a running radosgw.
