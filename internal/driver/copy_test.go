@@ -233,6 +233,26 @@ var _ = Describe("CopyObject", func() {
 		Expect(readBack(ctx, srcKey)).To(Equal(body))
 	})
 
+	It("rewrites only the head when copying onto itself with REPLACE and an explicit STANDARD", func(ctx SpecContext) {
+		c.ResetCounters()
+		_, err := s.CopyObject(ctx, srcSt, rec, srcKey, op.CopyParams{
+			Attrs: reqAttrs(meta.AttrMetaPrefix+"c", "3"), ReplaceAttrs: true, StorageClass: "STANDARD", Tag: "tx-self",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(c.Writes(testDataPool, "", tail1)).To(BeZero(), "the tails are neither copied nor referenced")
+		Expect(c.Writes(testDataPool, "", tail2)).To(BeZero())
+		head := c.Object(testDataPool, "", srcOID)
+		m := meta.DecodeManifest(denc.NewDecoder(head.Xattrs["user.rgw.manifest"]))
+		Expect(m.Prefix).To(Equal(srcSt.Manifest.Prefix), "the head names the source's own tails")
+		Expect(head.Xattrs).To(HaveKeyWithValue("user.rgw.tail_tag", []byte("tx-src\x00")), "keep_tail: the tails stay under the old tag")
+		Expect(head.Xattrs).To(HaveKeyWithValue("user.rgw.x-amz-meta-c", []byte("3\x00")))
+		Expect(head.Xattrs).NotTo(HaveKey("user.rgw.x-amz-meta-a"))
+		for i := range 32 {
+			Expect(c.GCEntries(gcPoolName, gcNS, fmt.Sprintf("gc.%d", i))).To(BeEmpty(), "nothing was queued for the GC")
+		}
+		Expect(readBack(ctx, srcKey)).To(Equal(body))
+	})
+
 	It("takes references for a source naming the null version copied onto its plain key, as copy_obj compares the keys as named", func(ctx SpecContext) {
 		nullSt, err := s.PrefetchObject(ctx, rec, meta.ObjKey{Name: "src", Instance: meta.NullInstance})
 		Expect(err).NotTo(HaveOccurred())
@@ -419,7 +439,7 @@ var _ = Describe("CopyObject", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 			srcTailPool := testDataPool
-			if cc.srcClass != "" {
+			if cmp.Or(cc.srcClass, meta.StorageClassStandard) != meta.StorageClassStandard {
 				srcTailPool = coldPool
 			}
 			if cc.shared {
@@ -465,6 +485,71 @@ var _ = Describe("CopyObject", func() {
 			denc.Squid, classCase{srcClass: "COLD", reqClass: "COLD", shared: true, want: "COLD"}),
 		Entry("Tentacle: COLD to COLD shares its tails and stays COLD",
 			denc.Tentacle, classCase{srcClass: "COLD", reqClass: "COLD", shared: true, want: "COLD"}),
+		Entry("Squid: a source in the default class to an explicit STANDARD shares its tails",
+			denc.Squid, classCase{reqClass: "STANDARD", shared: true}),
+		Entry("Tentacle: a source in the default class to an explicit STANDARD shares its tails",
+			denc.Tentacle, classCase{reqClass: "STANDARD", shared: true}),
+		Entry("Squid: a source PUT as an explicit STANDARD to the default class shares its tails",
+			denc.Squid, classCase{srcClass: "STANDARD", shared: true}),
+		Entry("Tentacle: a source PUT as an explicit STANDARD to the default class shares its tails",
+			denc.Tentacle, classCase{srcClass: "STANDARD", shared: true}),
+	)
+
+	// ruleCase is a copy of a 5 MiB source PUT under srcClass, whose manifest's
+	// tail placement rule is replaced with tailRule once it is read when that
+	// is set, copied under reqClass; shared is whether the copy shares the
+	// source's tails. WARM is a class the zone's default placement lists
+	// without a pool of its own, so it takes STANDARD's pool and only the
+	// rules tell the two apart.
+	type ruleCase struct {
+		srcClass, reqClass string
+		tailRule           *meta.PlacementRule
+		shared             bool
+	}
+	DescribeTable("shares the source's tails when the two placement rules have one name and one canonical class",
+		func(ctx SpecContext, rel denc.Release, rc ruleCase) {
+			editRoot(c, meta.ZoneInfoOID(putZoneID), meta.DecodeZoneParams, func(z *meta.ZoneParams) {
+				pi := z.PlacementPools["default-placement"]
+				pi.StorageClasses["WARM"] = meta.ZoneStorageClass{}
+				z.PlacementPools["default-placement"] = pi
+			})
+			openStore(ctx, rel, nil)
+			key := meta.ObjKey{Name: "ruled"}
+			data := bytes.Repeat([]byte("r"), 5<<20)
+			putObject(ctx, key, data, op.PutParams{Tag: "tx-ruled", StorageClass: rc.srcClass})
+			st, err := s.PrefetchObject(ctx, rec, key)
+			Expect(err).NotTo(HaveOccurred())
+			if rc.tailRule != nil {
+				st.Manifest.TailPlacement.PlacementRule = *rc.tailRule
+			}
+			s.SetRandForTest(fixedRand("THIRDTHIRDTHIRDTHIRDTHIRDTHIRD3"))
+			_, err = s.CopyObject(ctx, st, rec, dstKey, op.CopyParams{Attrs: reqAttrs(), StorageClass: rc.reqClass, Tag: "tx-copy"})
+			Expect(err).NotTo(HaveOccurred())
+			settle(s)
+			tail := tailOID(secondPrefix, 1)
+			if rc.shared {
+				Expect(refsOf(c, testDataPool, tail).Refs).To(HaveKey("tx-copy\x00"), "the copy shares the source's tails")
+			} else {
+				Expect(c.Object(testDataPool, "", tail).Xattrs).NotTo(HaveKey(refcount.XattrName), "the copy streams its data")
+			}
+			Expect(readBack(ctx, dstKey)).To(Equal(data))
+		},
+		Entry("Squid: a source whose tail rule names STANDARD, to the default class",
+			denc.Squid, ruleCase{tailRule: new(meta.PlacementRule{Name: "default-placement", StorageClass: "STANDARD"}), shared: true}),
+		Entry("Tentacle: a source whose tail rule names STANDARD, to the default class",
+			denc.Tentacle, ruleCase{tailRule: new(meta.PlacementRule{Name: "default-placement", StorageClass: "STANDARD"}), shared: true}),
+		Entry("Squid: a source whose tails lie under another placement's rule streams, though its pool is the same",
+			denc.Squid, ruleCase{tailRule: new(meta.PlacementRule{Name: "other-placement"})}),
+		Entry("Tentacle: a source whose tails lie under another placement's rule streams, though its pool is the same",
+			denc.Tentacle, ruleCase{tailRule: new(meta.PlacementRule{Name: "other-placement"})}),
+		Entry("Squid: the default class to WARM streams, though its pool is the same",
+			denc.Squid, ruleCase{reqClass: "WARM"}),
+		Entry("Tentacle: the default class to WARM streams, though its pool is the same",
+			denc.Tentacle, ruleCase{reqClass: "WARM"}),
+		Entry("Squid: WARM to the default class streams, though its pool is the same",
+			denc.Squid, ruleCase{srcClass: "WARM"}),
+		Entry("Tentacle: WARM to the default class streams, though its pool is the same",
+			denc.Tentacle, ruleCase{srcClass: "WARM"}),
 	)
 
 	It("drops the references it took when a tail is gone, and keeps the tails' own", func(ctx SpecContext) {

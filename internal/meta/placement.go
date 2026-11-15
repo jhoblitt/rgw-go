@@ -42,6 +42,17 @@ func (p PlacementRule) CanonicalStorageClass() string {
 	return p.StorageClass
 }
 
+// Equal is rgw_placement_rule's ==: the same name and the same canonical
+// storage class, an empty class being STANDARD
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_placement_types.h#L71-L78 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_placement_types.h#L71-L78 at v20.2.4).
+// Go's == on two rules compares the stored classes, which tell an empty class
+// from STANDARD, and so is not this; a comparison with the zero rule is
+// radosgw's empty(), and stays one.
+func (p PlacementRule) Equal(o PlacementRule) bool {
+	return p.Name == o.Name && p.CanonicalStorageClass() == o.CanonicalStorageClass()
+}
+
 // InheritFrom is rgw_placement_rule::inherit_from: p, with an empty name or
 // storage class taken from r.
 func (p PlacementRule) InheritFrom(r PlacementRule) PlacementRule {

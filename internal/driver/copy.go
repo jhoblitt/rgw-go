@@ -112,7 +112,14 @@ func (s *Store) CopyObject(ctx context.Context, src *op.ObjectState, dst *op.Buc
 	// without a manifest or tails, one whose tails lie under another rule or
 	// in another pool, or one whose head holds more than a chunk
 	// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L4847-L4866).
-	copyData := m == nil || srcRule != destRule || srcPool != dstPool
+	// The rules are compared as rgw_placement_rule's == does (PlacementRule.Equal).
+	// A manifest stores its tail rule through to_str, which leaves out a
+	// STANDARD class
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_placement_types.h#L102-L107 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_placement_types.h#L102-L107 at v20.2.4),
+	// so a source in STANDARD names none, where destRule has the request's
+	// class as sent.
+	copyData := m == nil || !srcRule.Equal(destRule) || srcPool != dstPool
 	copyFirst := false
 	if m != nil {
 		switch {
