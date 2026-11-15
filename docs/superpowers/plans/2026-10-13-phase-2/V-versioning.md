@@ -1855,6 +1855,31 @@ Found by V18's task review (Important 1), and numbered here before V18 merged (P
   reported upstream (spec §8).
 - **Depends on:** V15a, V15b. **PR split:** one. **Brief:** about 40 lines.
 
+### Task V21: a replay keeps a version a later link of the same log names
+
+Found by V20's implementer and confirmed by its task review, and numbered here before V20 merged
+(PP-12).
+
+- **Layer:** driver. **Files:** `applyOLHLog` in `internal/driver/olh_head.go` and its specs; the
+  registry entry V20 adds; `docs/differences.md`. **Cluster:** no.
+- **Security boundary:** the versioned write's replay; adversarial review applies (PP-14).
+- **Behaviour:**
+  1. A replay that meets a REMOVE_INSTANCE of a version and, later in the same log, a LINK_OLH of
+     that version removes nothing for it, and links it. Today rgw-go's `applyOLHLog` drops such a
+     removal only for the null version; a named version is removed though the log links it after.
+     radosgw's `apply_olh_log` removes every logged removal before its head op at v19.2.7 and
+     v20.2.4. Upstream main's 75c7b8ece79 (ceph/ceph#67661) cancels the removal when the same key
+     is relinked after an UNLINK_OLH in the batch; verify how much of this it covers at
+     implementation.
+  2. The RADOS state the replay writes stays one radosgw writes for that log, except for the version
+     it keeps; record the difference.
+  3. Trace the lifecycle transition, the one in-process writer that names an existing version,
+     against a concurrent delete. Say whether it reaches this shape.
+- **Specs:** an emulator log of REMOVE_INSTANCE then LINK_OLH for one named version keeps that
+  version listed and readable; the null-version case as today; a removal with no later link of its
+  version removes it as today.
+- **Depends on:** V20. **PR:** one. **Brief:** about 35 lines.
+
 ## Order
 
 At most three implementers at once. A wave starts when the tasks it depends on have merged;
@@ -1874,7 +1899,7 @@ recordings land one at a time through the controller.
 | 8 | V7b, V8b, V8c | V7a, V8a, V9 |
 | 9 | V11, V12b | V7b, V8b |
 | 10 | V12a, V14a | V11, V13d |
-| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c | everything above, WP-22 |
+| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21 | everything above, WP-22 |
 
 - V10's recording PR is a cluster task the controller schedules after its first PR merges.
 - The critical path is V1, V3b, V4, V5a, V5b, V5c, V7a, V7b, V11, V14a, V15a. L and C start
