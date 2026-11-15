@@ -312,7 +312,7 @@ lc-mode: need-release ## Run the lifecycle workers LC (off|radosgw|rgw-go|both) 
 .PHONY: s3tests
 s3tests: need-release ## Run the s3-tests SET (pr|gate), or the TESTS file's tests of it, against GATEWAY (radosgw|rgw-go) on the RELEASE cluster in the LC mode; junit under hack/s3tests/out/
 	$(MAKE) lc-mode RELEASE=$(RELEASE) LC=$(LC)
-	ROOKET=$(ROOKET_BIN) hack/s3tests/run.sh $(RELEASE) $(GATEWAY) $(RUN) $(SET) $(TESTS)
+	ROOKET=$(ROOKET_BIN) S3TESTS_BASELINE=$(BASELINE) hack/s3tests/run.sh $(RELEASE) $(GATEWAY) $(RUN) $(SET) $(TESTS)
 
 .PHONY: admin-suite
 admin-suite: need-release ## Run go-ceph's rgw/admin suite at its pinned tag against GATEWAY on the RELEASE cluster in the parity mode; go test -json under hack/admin/_out/
@@ -326,7 +326,9 @@ admin-suite: need-release ## Run go-ceph's rgw/admin suite at its pinned tag aga
 # cover gets the reason "unreviewed: DRAFT", which diff accepts and make
 # ledger-check and the ci workflow refuse. PIN_REASON says why a full record
 # at a source the ledger does not pin re-stamps every outcome there, which the
-# base pin it appends must carry.
+# base pin it appends must carry, or why a full record at the head moves the
+# venv, under a pytest_freeze other than the newest entries', which each entry
+# it re-stamps must carry.
 REASONS ?=
 DRAFT ?=
 PIN_REASON ?=
@@ -347,13 +349,17 @@ parity-check: ## Compare a candidate result with a ledger: make parity-check BAS
 # built binary because go run exits 1 for any failure: make's error line
 # then names the diff's own status, 1 for a test that differs or whose entry
 # is stale under another Ceph version, and 2 for a run at another s3-tests
-# commit than the ledger's head, or for another release. A run of the pr set
-# is compared over the tests it selected alone, so that the ledger's
-# gate-only tests are not missing from it, and the diff lists, without
-# failing, each other ledger test the run no longer selects, as dropped from
-# the pr set; a run of the gate set is compared over every test of the
-# ledger. SUMMARY names a markdown file, such as a CI job's summary, that the
-# diff appends that list to when it is not empty.
+# commit than the ledger's head, for another release, or in another venv than
+# the one the ledger was last recorded under, which hack/s3tests/constraints.txt
+# names and the run's record carries the digest of as pytest_freeze. A run of
+# the pr set is compared over the tests it selected alone, so that the
+# ledger's gate-only tests are not missing from it, and the diff lists,
+# without failing, each other ledger test the run no longer selects, as
+# dropped from the pr set; a run of the gate set is compared over every test
+# of the ledger. SUMMARY names a markdown file, such as a CI job's summary,
+# that the diff appends that list to when it is not empty. s3tests gives
+# run.sh the ledger as S3TESTS_BASELINE, so that a run of rgw-go in another
+# venv stops at its start, as the diff would stop it at its end.
 BASELINE ?= test/s3tests/baseline/$(RELEASE).json
 SUMMARY ?=
 
@@ -364,7 +370,7 @@ s3tests-parity: need-release ## Run the s3-tests SET (pr|gate) against rgw-go an
 	bin/parity record --format junit --suite s3tests --out $(CLUSTER_OUT)/s3tests-rgw-go.json \
 	  --meta release=$(RELEASE) --meta ceph_version=$$(jq -r .ceph_version $(CLUSTER_OUT)/manifest.json) --meta gateway=rgw-go \
 	  --meta s3tests_commit=$$(hack/s3tests/run.sh --print-commit) --meta deselect=$$(hack/s3tests/run.sh --print-deselect) \
-	  --meta lc=$(LC) \
+	  --meta pytest_freeze=$$(sha256sum hack/s3tests/out/$(RELEASE)-rgw-go-parity.freeze | cut -c1-12) --meta lc=$(LC) \
 	  hack/s3tests/out/$(RELEASE)-rgw-go-parity.xml
 	bin/parity diff --baseline $(BASELINE) --candidate $(CLUSTER_OUT)/s3tests-rgw-go.json --known test/s3tests/known-differences-$(RELEASE).txt \
 	  $(if $(SUMMARY),--summary "$(SUMMARY)") \

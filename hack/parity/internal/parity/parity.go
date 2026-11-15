@@ -161,11 +161,16 @@ func Record(format Format, suite string, meta map[string]string, files []string)
 // unstable.
 //
 // Diff refuses to compare, and returns an error, when cand lacks base's
-// source key, release or ceph_version, or, unless allowMetaDrift is set,
-// carries a source other than the chain's head or another release.
-// allowMetaDrift also compares a test whose last entry was recorded under
-// another Ceph version.
+// source key, release or ceph_version, or the pytest_freeze the ledger's
+// newest entries carry, and, unless allowMetaDrift is set, when cand ran at
+// another source than the chain's head, in another release or under another
+// pytest_freeze. allowMetaDrift also compares a test whose last entry was
+// recorded under another Ceph version.
 func Diff(base *Ledger, cand Result, allowMetaDrift bool, known KnownList, sel Selection) ([]string, error) {
+	freeze, err := base.headFreeze()
+	if err != nil {
+		return nil, err
+	}
 	var drift []string
 	for _, m := range []struct{ key, want string }{{base.SourceKey, base.head()}, {metaRelease, base.Release}} {
 		switch got, ok := cand.Meta[m.key]; {
@@ -173,6 +178,13 @@ func Diff(base *Ledger, cand Result, allowMetaDrift bool, known KnownList, sel S
 			drift = append(drift, fmt.Sprintf("%s: baseline %s, candidate missing", m.key, m.want))
 		case got != m.want && !allowMetaDrift:
 			drift = append(drift, fmt.Sprintf("%s: baseline %s, candidate %s", m.key, m.want, got))
+		}
+	}
+	if freeze != "" {
+		if got, ok := cand.Meta[metaFreeze]; !ok {
+			drift = append(drift, fmt.Sprintf("%s: baseline %s, candidate missing", metaFreeze, freeze))
+		} else if line := freezeDrift(freeze, got, allowMetaDrift); line != "" {
+			drift = append(drift, line)
 		}
 	}
 	cephVersion, ok := cand.Meta[metaCephVersion]

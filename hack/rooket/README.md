@@ -759,7 +759,7 @@ done
 Each run leaves `hack/s3tests/out/<release>-<gateway>-<run>.xml`, the junit
 report `hack/parity` reads, with `.log` (pytest's output), `.conf` (the
 s3-tests conf), `.freeze` (the Python version and the packages the venv
-held; s3-tests' `requirements.txt` pins none), `.ids` (the pytest node ids
+held, which `constraints.txt` fixes), `.ids` (the pytest node ids
 the run selected, one a line, which `hack/parity diff --selection` reads)
 and `.gate-only.ids` (those of the gate set's tests `gate-only.txt` names,
 whichever set ran, which `--gate-only` reads) beside it. `out/src` holds the
@@ -769,8 +769,48 @@ the files directly in its parent directories and at the top level, which
 cone mode always keeps: a few megabytes. pytest runs from the suite's
 directory. It and the venv
 in `out/venv` are rebuilt when the pin changes, which "Moving the s3-tests
-pin" below covers. `run.sh` exits 0 when pytest ran the whole set, whatever
-the tests' outcomes, and nonzero when it could not.
+pin" below covers, and the venv when `constraints.txt` does. `run.sh` exits 0
+when pytest ran the whole set, whatever the tests' outcomes, and nonzero when
+it could not.
+
+s3-tests' `requirements.txt` pins almost nothing, so a client release
+changes what the tests send, and so their outcomes, unseen. The venv is
+therefore built under `hack/s3tests/constraints.txt`, beside `PIN`. It is
+the `.freeze` file of the venv the ledgers were last recorded under,
+verbatim: the Python that built it, then each package at its version, as
+`pip freeze` lists them. `run.sh` gives it to `pip install -c`, then has
+`hack/parity venv` compare the venv's `pip freeze` with it, which stops the
+run with the difference when the venv holds a package it does
+not name, or another version of one it does, as a requirement it did not
+know installs at its latest version. It only warns of another Python, which
+is no package, though `pytest_freeze` below holds it.
+
+`pytest_freeze` is the first twelve hex digits of the SHA-256 of the `.freeze`
+file. It is in every ledger entry's meta and in the result `make
+s3tests-parity` records for rgw-go's run, and `hack/parity diff` refuses a run
+whose `pytest_freeze` is not the one the ledger's newest entries carry, before
+it compares any outcome (exit 2, naming both digests): a venv that drifts is a
+tooling mismatch, not a changed outcome nobody sees. `run.sh` asks the same
+of a run of rgw-go at its start, through `hack/parity venv --mode compare`,
+against the ledger `S3TESTS_BASELINE` names, which `make` sets to `BASELINE`,
+the release's committed ledger by default, so that a run in another venv
+stops before it spends the cluster's time; `PARITY_ALLOW_META_DRIFT=true`
+lets a local try through there as `--allow-meta-drift` does for `diff`, and
+`diff` reads the same variable, so exporting it also waives `diff`'s
+source-commit and release checks at the end of `make s3tests-parity`. A run
+of radosgw is a record, and another Python only warns: the record decides.
+`constraints.txt`'s own digest is the ledgers' newest entries' `pytest_freeze`,
+which a spec holds it to, so a change to the constraints and the record under
+them land together.
+
+To move the venv, replace `constraints.txt` with the `.freeze` file of a run
+under the venv you want, from the `s3tests-reports-<release>` artifact of a CI
+run (`s3tests/out/<release>-radosgw-base1.freeze`), and record both ledgers
+in full under it with a reason ("A full record" below). The Python is the CI
+runner's `python3`, set by the runner image and recorded on the first line of
+`constraints.txt`. A record made on a host with another Python, even another
+patch release, has another `pytest_freeze` and moves the venv, so record in
+CI.
 
 `run.sh`'s fourth argument is the set, `pr` or `gate`, which `make s3tests
 SET=` passes. A fifth, a file of pytest node ids
@@ -987,8 +1027,7 @@ s3tests.functional.test_s3::test_x radosgw 19.2.7 answers 400 where 19.2.6 answe
 ```
 
 `pytest_freeze` is the first twelve hex digits of the SHA-256 of the
-`.freeze` file beside the last run, a record of the venv rather than
-something the comparison checks.
+`.freeze` file beside the last run, whose venv `constraints.txt` fixes.
 
 The `s3tests` workflow's `record-baseline` input runs the same target on the
 runner with `DRAFT`, appending to a copy of the committed ledger as a draft:
@@ -996,7 +1035,7 @@ each change that needs a reason gets `unreviewed: recorded by <run URL>`.
 The job summary lists those entries, the workflow compares rgw-go with the
 copy, and uploads it as the artifact `s3tests-baseline-<release>`. A record
 there and one here differ only in `recorded`, in `pytest_freeze` when the
-hosts' Python or packages differ, and in any outcome the two hosts' radosgw
+hosts' Python differs, and in any outcome the two hosts' radosgw
 give differently, which the summary shows rather than letting it in
 silently. `make check` and the `ledgers` job refuse the draft until each
 `unreviewed:` reason is replaced by the change's own, and a reasons file
@@ -1019,6 +1058,20 @@ record replaces it. Such a pin re-stamps every outcome at a source no proof
 ties to the one before, so a record that would append one without
 `PIN_REASON` stops, and `DRAFT` gives it the draft's reason, which `make
 check` refuses like any other.
+
+A change to `hack/s3tests/constraints.txt` alone, with the pin where it is,
+is recorded the same way. A record whose `pytest_freeze` is not the one the
+ledger's newest entries carry moves the venv: it must be a full record (a
+`TESTS` file's cannot, since every test needs an entry under the new venv),
+it stops without `PIN_REASON`, and it appends an entry for every test, those
+whose outcome holds carrying `PIN_REASON` as theirs. A test whose outcome
+changes under the new venv needs its own line in `REASONS`, as
+anywhere. `make check` fails while the constraints and the ledgers' newest
+`pytest_freeze` disagree, so one never lands without the other. A pin move
+that changes `requirements.txt` is the same record, with the pin: write the
+new `PIN`, edit the constraints so the venv `run.sh` builds holds what the new
+requirements install, and record in full with `PIN_REASON`. `make
+s3tests-pin` leaves `requirements.txt` alone, which it says.
 
 ### Moving the s3-tests pin
 
@@ -1106,7 +1159,8 @@ make rgw-go-down RELEASE=squid
 against the rgw-go `make rgw-go-up` started, as `make s3tests GATEWAY=rgw-go
 RUN=parity`, records the run in `out/<release>/s3tests-rgw-go.json` with the
 release, the Ceph version from `manifest.json`, the s3-tests commit, the
-deselect digest and the LC mode, and compares it with `BASELINE`, by default
+deselect digest, the venv's `pytest_freeze` and the LC mode, and compares it
+with `BASELINE`, by default
 `test/s3tests/baseline/<release>.json`. It needs a populated cluster, for
 `manifest.json`. A run of the pr set is compared over the tests it selected
 alone, `bin/parity diff --selection` reading the run's `.ids` and
@@ -1131,9 +1185,10 @@ whose last entry was recorded under another Ceph version or before the
 chain's last base pin, and fails unless there is none. `hack/parity` runs
 as a built binary, `bin/parity`, so make's error line carries the
 comparison's own status: 1 for a test that differs or is stale, 2 for a run
-at another s3-tests commit than the ledger's head, or for another release.
-A stale test and a moved pin are recorded as under "Parity baselines". make
-itself exits 2 for either status.
+at another s3-tests commit than the ledger's head, for another release, or
+in another venv than the ledger's newest entries were recorded under. A stale
+test, a moved pin and a moved venv are recorded as under "Parity baselines".
+make itself exits 2 for either status.
 
 The comparison skips the tests `test/s3tests/known-differences-<release>.txt`
 lists: one regular expression per line over `hack/parity`'s test ids

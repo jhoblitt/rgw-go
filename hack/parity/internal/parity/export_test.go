@@ -30,3 +30,9 @@ var PinSourceProblems = pinSourceProblems
 
 // FetchTreeless exposes fetchTreeless to the specs.
 var FetchTreeless = fetchTreeless
+
+// HeadFreeze exposes headFreeze to the specs.
+func HeadFreeze(l *Ledger) (string, error) { return l.headFreeze() }
+
+// FreezeDigest exposes freezeDigest to the specs.
+var FreezeDigest = freezeDigest

@@ -28,6 +28,12 @@ const (
 	metaCephVersion = "ceph_version"
 )
 
+// metaFreeze is the meta key an s3-tests record carries to name the venv its
+// runs held: the first 12 hex digits of the sha256 of the .freeze file
+// hack/s3tests/run.sh leaves beside a report, which is the Python that built
+// the venv and every package in it.
+const metaFreeze = "pytest_freeze"
+
 // sourceKeys are the meta keys that name a suite's source: the s3-tests
 // commit and the go-ceph tag.
 var sourceKeys = []string{"s3tests_commit", "go_ceph_tag"}
@@ -134,6 +140,56 @@ func (l *Ledger) lastBase() int {
 // base pin, so that no record since has replaced the tests it ran.
 func (l *Ledger) current(e Entry) bool {
 	return l.pinIndex(e.Source) >= l.lastBase()
+}
+
+// headFreeze returns the pytest_freeze of the ledger's newest entries, the
+// ones with the latest recording time, or "" when they carry none: the venv
+// the ledger was last recorded under, which a candidate must have run under.
+// One record stamps every entry it appends alike, so the newest entries
+// disagree only if two records were made in one second.
+func (l *Ledger) headFreeze() (string, error) {
+	var newest time.Time
+	var freezes []string
+	for _, entries := range l.Tests {
+		for _, e := range entries {
+			t, err := time.Parse(time.RFC3339, e.Recorded)
+			if err != nil {
+				continue // Validate refuses it
+			}
+			f := e.Meta[metaFreeze]
+			switch {
+			case t.After(newest):
+				newest, freezes = t, []string{f}
+			case t.Equal(newest) && !slices.Contains(freezes, f):
+				freezes = append(freezes, f)
+			}
+		}
+	}
+	if len(freezes) > 1 {
+		slices.Sort(freezes)
+		return "", fmt.Errorf("the ledger's newest entries, recorded %s, carry different %s values: %q",
+			newest.UTC().Format(time.RFC3339), metaFreeze, freezes)
+	}
+	if len(freezes) == 0 {
+		return "", nil
+	}
+	return freezes[0], nil
+}
+
+// venvMove is the move of the venv a record makes: the pytest_freeze the
+// ledger's newest entries carry, and the record's, when the ledger's has one
+// and the two differ. The zero venvMove is no move.
+type venvMove struct{ from, to string }
+
+func (m venvMove) moved() bool { return m.from != "" }
+
+// freezeMove returns the move of the venv a record under freeze makes to l.
+func (l *Ledger) freezeMove(freeze string) (venvMove, error) {
+	from, err := l.headFreeze()
+	if err != nil || from == "" || from == freeze {
+		return venvMove{}, err
+	}
+	return venvMove{from: from, to: freeze}, nil
 }
 
 func (l *Ledger) last(id string) (Entry, bool) {
@@ -585,13 +641,34 @@ type Appended struct {
 // must be the chain's head, or, for a full record, a source the chain does
 // not pin, which a base pin with opts.PinReason, or a draft's, then joins.
 // opts.PinReason must be readable and not a draft's, and is refused for a
-// record that starts or appends no pin. Each test of res gets an entry
-// unless its last entry is a current, valid one in the same state; a full
-// record retires every other test whose last entry does not already. It
-// fails, listing every one, when an entry needs a reason opts does not give,
-// or opts gives a reason for a test it does not append. The ledger it makes
-// is a draft when opts.Draft gave a reason, or l was one.
+// record that starts or appends no pin, unless it moves the venv. Each test
+// of res gets an entry unless its last entry is a current, valid one in the
+// same state; a full record retires every other test whose last entry does
+// not already. It fails, listing every one, when an entry needs a reason
+// opts does not give, or opts gives a reason for a test it does not append.
+// The ledger it makes is a draft when opts.Draft gave a reason, or l was one.
+//
+// A record at the chain's head moves the venv when its pytest_freeze is not
+// the one the ledger's newest entries carry. Only a full record may, so that
+// no test keeps a state no run saw under the new venv, and it needs
+// opts.PinReason, or a draft's, as a base pin does: it gets an entry for
+// every test, those whose state holds carrying that reason. A record that
+// lacks the pytest_freeze the newest entries carry is refused.
 func AppendRecord(l *Ledger, res Result, opts RecordOptions) (*Ledger, []Appended, error) {
+	var mv venvMove
+	if l != nil {
+		var err error
+		if mv, err = l.freezeMove(res.Meta[metaFreeze]); err != nil {
+			return nil, nil, err
+		}
+	}
+	return appendRecord(l, res, opts, mv)
+}
+
+// appendRecord is AppendRecord for a record that makes the venv move mv to l,
+// which its caller worked out, so that a caller that reports the move too
+// works it out once.
+func appendRecord(l *Ledger, res Result, opts RecordOptions, mv venvMove) (*Ledger, []Appended, error) {
 	st, err := stampOf(res)
 	if err != nil {
 		return nil, nil, err
@@ -609,6 +686,9 @@ func AppendRecord(l *Ledger, res Result, opts RecordOptions) (*Ledger, []Appende
 	}
 
 	var out *Ledger
+	// restamp is the reason a record that moves the venv at the chain's head
+	// gives each entry whose state holds.
+	var restamp string
 	if l == nil {
 		if opts.Subset {
 			return nil, nil, errors.New("a ledger starts with a full record, not a subset")
@@ -632,9 +712,25 @@ func AppendRecord(l *Ledger, res Result, opts RecordOptions) (*Ledger, []Appende
 			return nil, nil, err
 		}
 		out = l.clone()
+		from, to := mv.from, mv.to
+		if mv.moved() && to == "" {
+			return nil, nil, fmt.Errorf("the record carries no %s, which the ledger's newest entries do: %s", metaFreeze, from)
+		}
 		switch i := out.pinIndex(st.source); {
+		case i == len(out.Pins)-1 && mv.moved():
+			if opts.Subset {
+				return nil, nil, fmt.Errorf("the record ran under %s %s, where the ledger's newest entries ran under %s: a subset record "+
+					"cannot move the venv, since every test must have an entry under it; make a full record", metaFreeze, to, from)
+			}
+			if restamp = opts.PinReason; restamp == "" && opts.Draft != "" {
+				restamp = DraftMarker + " " + opts.Draft
+			}
+			if restamp == "" {
+				return nil, nil, fmt.Errorf("a full record under %s %s, where the ledger's newest entries ran under %s, re-stamps every "+
+					"test under a venv no proof ties to the one before, and needs --pin-reason", metaFreeze, to, from)
+			}
 		case i == len(out.Pins)-1 && opts.PinReason != "":
-			return nil, nil, fmt.Errorf("a pin reason, but the record ran at the chain's head %s and appends no pin", st.source)
+			return nil, nil, fmt.Errorf("a pin reason, but the record ran at the chain's head %s and appends no pin or venv move", st.source)
 		case i == len(out.Pins)-1:
 		case i >= 0:
 			return nil, nil, fmt.Errorf("the record ran at %s, pin %d of the chain, not at its head %s", st.source, i+1, out.head())
@@ -667,6 +763,8 @@ func AppendRecord(l *Ledger, res Result, opts RecordOptions) (*Ledger, []Appende
 			a.Entry.Reason = reason
 		} else if a.Reasoned && opts.Draft != "" {
 			a.Entry.Reason = DraftMarker + " " + opts.Draft
+		} else if restamp != "" && !a.Reasoned && a.Change != "" {
+			a.Entry.Reason = restamp
 		}
 		if a.Reasoned && !readable(a.Entry.Reason) {
 			offenders = append(offenders, fmt.Errorf("%s: %s needs a reason", id, a.Change))
@@ -682,7 +780,7 @@ func AppendRecord(l *Ledger, res Result, opts RecordOptions) (*Ledger, []Appende
 	}
 	for _, id := range slices.Sorted(maps.Keys(res.Outcomes)) {
 		e := st.with(res.Outcomes[id], unstable[id])
-		if prev, ok := out.last(id); ok && !out.stale(prev, e) {
+		if prev, ok := out.last(id); ok && restamp == "" && !out.stale(prev, e) {
 			continue
 		}
 		add(id, e)

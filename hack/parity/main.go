@@ -17,6 +17,8 @@
 //	    [--ledger FILE]... [--tests FILE]
 //	go run ./hack/parity migrate BASELINE...
 //	go run ./hack/parity fmt LEDGER...
+//	go run ./hack/parity venv --constraints FILE --freeze FILE [--mode record|compare [--baseline LEDGER]]
+//	    [--allow-meta-drift]
 //
 // --meta, record's --draft and --pin-reason, diff's --selection and
 // --gate-only, check's --draft and pin's --ledger are read from the command
@@ -63,6 +65,10 @@
 // s3tests_commit for s3-tests, hack/s3tests/run.sh --print-commit, or
 // go_ceph_tag for go-ceph's rgw/admin suite. Its other pairs, such as
 // gateway, deselect and pytest_freeze, go into each entry's meta.
+// pytest_freeze names the venv an s3-tests run held: the first 12 hex digits
+// of the sha256 of the .freeze file hack/s3tests/run.sh leaves beside the
+// report, the Python that built the venv and every package in it, which
+// hack/s3tests/constraints.txt fixes (see Pinning).
 //
 // --pin-file FILE refuses an s3-tests record whose s3tests_commit is not
 // the pin the PIN file FILE holds (see Pinning): a run at another commit,
@@ -177,7 +183,8 @@
 // The record's source must be the chain's head, or, for a full record, a
 // source the chain does not pin, which then joins it as a base pin whose
 // reason is --pin-reason, or with --draft the draft's; record refuses such a
-// record with neither, and --pin-reason for a record that appends no pin.
+// record with neither, and --pin-reason for a record that appends no pin and
+// moves no venv.
 // record appends an entry for each test it ran whose last entry differs in
 // outcome, unstable flag or ceph_version, or is retired or not valid (see
 // diff), and leaves the others alone: a full record under a new Ceph version
@@ -190,6 +197,17 @@
 // needs a reason neither gives, and a reason for a test it does not append,
 // and then writes nothing. It prints each appended entry that needed a
 // reason, as check --list-reasoned does.
+//
+// A record at the head moves the venv when its pytest_freeze is not the one
+// the ledger's newest entries carry, the entries with the latest recording
+// time, which one record stamps alike. Entries recorded under another venv
+// stay as they are until a record moves it, which must be a full one, so
+// that no test is left without an entry under the new venv, and must give
+// --pin-reason, or with --draft the draft's, as a base pin does: it appends
+// an entry for every test, and those whose state holds carry that reason. A
+// test whose outcome changes still needs its own. A record with no
+// pytest_freeze into a ledger whose newest entries have one is refused, and
+// a ledger whose newest entries carry none names no venv.
 //
 // # Comparing
 //
@@ -250,10 +268,13 @@
 // --gate-only without --selection.
 //
 // diff refuses to compare when the candidate lacks the ledger's source key,
-// release or ceph_version, or carries a source other than the chain's head
-// or another release; --allow-meta-drift lets the source and release
-// differ, and compares a last entry recorded under another Ceph version,
-// never a key go missing. A selection change, such as a deselect list's,
+// release or ceph_version, or the pytest_freeze the ledger's newest entries
+// carry, or carries a source other than the chain's head, another release or
+// another pytest_freeze, before it compares any outcome: a client release
+// changes what the tests send, and so their outcomes, unseen, so the venv is
+// as fixed as the commit. --allow-meta-drift lets the source, release and
+// pytest_freeze differ, and compares a last entry recorded under another Ceph
+// version, never a key go missing. A selection change, such as a deselect list's,
 // shows as a test with no entry or one missing, until a record enters or
 // retires it; under --selection, a test the change removes is listed as
 // dropped instead.
@@ -320,10 +341,42 @@
 // pin refuses anything else, naming each line that keeps it from being
 // additive: that needs a full record, which appends a base pin with a reason.
 //
+// The venv is pinned as the commit is: hack/s3tests/constraints.txt, beside
+// PIN, is the freeze of the venv the ledgers were last recorded under, the
+// Python that built it and each package at its version, which run.sh gives
+// pip as its constraints and then holds the venv to, refusing one with any
+// other package. Its sha256's first 12 hex digits are the ledgers' newest
+// entries' pytest_freeze, which the specs hold it to, so the constraints and
+// the ledgers change together: new constraints land with the full record
+// under them, and a record under another venv waits for its constraints. A
+// pin move that only adds tests, or rewords commits, leaves requirements.txt
+// as it was, so the constraints stand, which pin says; one that changes
+// requirements.txt is refused, and needs the constraints that name what it
+// installs, in the full record.
+//
 // migrate converts baselines in the flat form ledgers replaced, a result
 // file with release, ceph_version, recorded, runs and a source key in its
 // meta, to ledgers in place: one base pin at its source and one entry per
 // test. Every other command refuses that form, naming migrate.
+//
+// venv checks, for hack/s3tests/run.sh, that the venv it built holds the
+// packages hack/s3tests/constraints.txt names. Both files are freezes: the
+// Python that built the venv as "# Python X.Y.Z", then each package at its
+// version, as pip freeze lists them. venv fails, printing each difference by
+// package name, "< " for a line only the constraints hold and "> " for one
+// only the venv does, when the venv lacks a package, holds another version
+// of one or holds one the constraints do not name: a requirement they do not
+// name installs at its latest version, which no recording saw. The Python is
+// no package, and --mode says what another one means. In a record run, the
+// default, which is of the gateway whose outcomes a ledger records, it is a
+// move of the venv that the record decides, and venv warns on stderr. In a
+// compare run, of the gateway diff compares with the ledger --baseline names,
+// venv refuses what diff would refuse at its end, a venv whose pytest_freeze
+// (see Comparing) is not the one the ledger's newest entries carry, naming
+// both digests and both Pythons, so that a run doomed to that spends no
+// cluster time; --allow-meta-drift, as for diff, lets another through, and
+// a ledger whose newest entries name no venv asks none. diff and venv judge
+// the digest by one function.
 //
 // Much of what parity prints is text a pull request wrote, which a CI job's
 // log and summary show, so every value from a file is printed escaped so that
@@ -337,9 +390,11 @@
 // diff exits 0 when it prints no difference, whatever dropped tests it lists,
 // and 1 when it prints one;
 // check and validate exit 1 when they print a problem; record, pin and
-// migrate exit 1 when they cannot do their work. All exit 2 for a refused
-// command line, and diff, check and validate for files they refuse to
-// compare or cannot read. go run reports any nonzero status as 1, and make
+// migrate exit 1 when they cannot do their work; venv exits 1 for a
+// difference in packages and for a venv a compare refuses, which diff
+// refuses with 2. All exit 2 for a refused command line, and diff,
+// check, validate and venv for files they refuse to compare or cannot read.
+// go run reports any nonzero status as 1, and make
 // any failed recipe as 2, so a caller that tells the statuses apart runs a
 // binary go build made.
 //

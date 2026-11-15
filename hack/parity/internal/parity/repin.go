@@ -360,6 +360,10 @@ func proveAdditive(ctx context.Context, clone, old, next string, r runSh) (proof
 			continue
 		case file != "pytest.ini" && !isTestModule(file):
 			problems = append(problems, file+": changed; only a test module or pytest.ini may change")
+			if file == "requirements.txt" {
+				problems = append(problems, file+": changed; "+constraintsName+" beside the PIN file must name the packages it installs, "+
+					"which a full record under the changed constraints settles")
+			}
 			continue
 		}
 		text, inserted, removed, err := patchLines(ctx, clone, old, next, r.dir+"/"+file)
