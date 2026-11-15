@@ -1363,6 +1363,8 @@ Found by S12's task review (Important 4), and numbered here before S12 merged (P
      Amazon's "Required permissions for Amazon S3 API operations" table, which needs it "to put
      the copied object with object tagging". If no Amazon text decides it, COPY needs none, and the
      differences entry says so.
+  5. The in-memory store keeps the source's tags under COPY, as the RADOS driver and radosgw do.
+     Today it applies a request's `x-amz-tagging` over them (found by S12's adversarial review).
 - **Why:** radosgw reads no `x-amz-tagging-directive` at v19.2.7 or v20.2.4. Its CopyObject takes
   the request's `x-amz-tagging` through the request attrs whatever the directive says (S12's
   registry evidence). rgw-go has no reader of the header either. Both baselines record
