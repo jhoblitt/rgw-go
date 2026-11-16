@@ -176,3 +176,6 @@
 # A bucket policy Deny of s3:PutObjectAcl, or of s3:PutObjectTagging, refuses a PutObject, CopyObject or CreateMultipartUpload that sets an ACL, or tags; radosgw evaluates s3:PutObject alone for those writes (differences: "A write's ACL and tag headers need s3:PutObjectAcl and s3:PutObjectTagging")
 ^s3tests\.functional\.test_s3::test_bucket_policy_deny_put_object_acl_header$
 ^s3tests\.functional\.test_s3::test_bucket_policy_deny_put_object_tagging_header$
+
+# A bucket policy Deny under StringNotLike aws:Referer, evaluated for a GetObject that sends no Referer header; radosgw answers a condition on a key the request lacks with its IfExists flag (differences: "A Deny's condition holds where Amazon S3's evaluation or radosgw's holds")
+^s3tests\.functional\.test_s3::test_bucket_policy_deny_stringnotlike_key_absent$

@@ -155,14 +155,13 @@ var _ = Describe("the object-lock condition keys a policy names", func() {
 					Entry("a retain-until date before 2026, with s3:PutObjectRetention", "s3:PutObjectRetention", before2026, governanceSoon, governanceLate),
 					Entry("the legal hold OFF, with s3:PutObjectLegalHold", "s3:PutObjectLegalHold", holdIsOff, holdOff, holdOn),
 				)
-				It("takes a Deny on Null false for the mode as the release's radosgw takes Null, which on Squid serves the writes it means to refuse", func(ctx SpecContext) {
+				It("refuses the writes a Deny on Null false for the mode means to refuse, and on Squid, whose Null ignores its value, the writes that set none too", func(ctx SpecContext) {
 					setPolicy(ctx, keyStatement("Deny", "alice", modePresent, "s3:PutObject"))
+					expectRefused(ctx, w.alice, complianceLate, 403, "AccessDenied")
 					if rel == denc.Squid {
 						expectRefused(ctx, w.alice, nil, 403, "AccessDenied")
-						expectServed(w.alice, complianceLate)
 						return
 					}
-					expectRefused(ctx, w.alice, complianceLate, 403, "AccessDenied")
 					expectServed(w.alice, nil)
 				})
 				It("refuses a lock header that does not parse 400 InvalidArgument, whatever a Deny on its key says, storing nothing", func(ctx SpecContext) {

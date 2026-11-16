@@ -174,10 +174,12 @@ func (s *Statement) EvalPrincipal(id Identity) Effect {
 // EvalConditions is Statement::eval_conditions
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L1278-L1285 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1282-L1289 at v20.2.4):
-// Allow when every condition holds in env under sem, Deny otherwise.
+// Allow when every condition holds in env under sem, Deny otherwise. Each
+// condition is evaluated for the statement's Effect, as Condition.EvalFor
+// says: a Deny statement's holds where Amazon S3's or radosgw's does.
 func (s *Statement) EvalConditions(env Env, sem Semantics) Effect {
 	for _, c := range s.Conditions {
-		if !c.Eval(env, sem) {
+		if !c.EvalFor(env, sem, s.Effect) {
 			return Deny
 		}
 	}
