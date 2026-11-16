@@ -87,6 +87,15 @@ tidy-check: ## Fail when go mod tidy would change go.mod or go.sum
 test: ## Run every suite with the race detector
 	@for m in $(MODULES); do (cd "$$m" && go test "-tags=$(GO_TAGS)" -race -count=1 ./...) || exit 1; done
 
+# Neither vet nor test builds the integration tag's spec tree, so an error
+# Ginkgo finds only while building it, such as a decorator on a node that
+# does not take it, would otherwise first fail on a cluster in CI. A dry run
+# builds the tree and runs no node, BeforeSuite included, so it needs no
+# cluster.
+.PHONY: integration-dry-run
+integration-dry-run: ## Build the integration specs' tree without running them
+	go test "-tags=$(GO_TAGS),integration" -count=1 ./test/integration -ginkgo.dry-run
+
 .PHONY: goldens
 goldens: ## Regenerate ceph-dencoder goldens from the object corpus (needs podman)
 	hack/goldens/gen.sh
@@ -199,7 +208,7 @@ citecheck-go-fix: ## Rewrite the plain Ceph citations in the Go comments under t
 	go run ./hack/citecheck --fix $(CITECHECK_GO_FILES)
 
 .PHONY: check
-check: generate-check fmt-check vet lint fix-check tidy-check release-pins-check parity-options-check bench-plan-check ledger-check citation-form-check citation-go-check citecheck-files-check test ## The local gate
+check: generate-check fmt-check vet integration-dry-run lint fix-check tidy-check release-pins-check parity-options-check bench-plan-check ledger-check citation-form-check citation-go-check citecheck-files-check test ## The local gate
 
 # Disposable one-worker Rook clusters on kind, one per release, driven by
 # rooket (hack/rooket/README.md). RELEASE is squid or tentacle; each release is
