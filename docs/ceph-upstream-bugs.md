@@ -545,6 +545,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw never sets aws:SecureTransport to false](#radosgw-never-sets-awssecuretransport-to-false) | none; [#42521](https://tracker.ceph.com/issues/42521) is related | none |  |
 | [radosgw sets few of the condition keys Amazon S3 sets on S3 requests](#radosgw-sets-few-of-the-condition-keys-amazon-s3-sets-on-s3-requests) | pending | pending | ✓ |
 | [radosgw refuses a condition value that starts with a policy variable and goes on after it](#radosgw-refuses-a-condition-value-that-starts-with-a-policy-variable-and-goes-on-after-it) | none | none | ✓ |
+| [radosgw-admin olh get decodes olh.ver on Squid](#radosgw-admin-olh-get-decodes-olhver-on-squid) | [#69536](https://tracker.ceph.com/issues/69536), [#69578](https://tracker.ceph.com/issues/69578) | [ceph/ceph#61370](https://github.com/ceph/ceph/pull/61370) |  |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -35526,3 +35527,56 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task S9's adversarial review, 2026-11-15, probing a
   Deny's policy variables through the parser; derived from the source, not
   reproduced on radosgw.
+
+## radosgw-admin olh get decodes olh.ver on Squid
+
+- **Kind:** defect, cosmetic: an admin tool's read fails. Not
+  security-relevant. Not found by us: reported and fixed upstream, fixed in
+  Tentacle, with the Squid backport still open. Unreproduced on rgw-go's
+  clusters: derived from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `radosgw-admin olh get` prints what `RGWRados::get_olh` reads of a key's
+    OLH head, and fails with that call's error
+    ([rgw_admin.cc:7794-7809](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L7794-L7809),
+    [radosgw-admin.cc:8180-8195](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L8180-L8195)).
+    It is `get_olh`'s only caller at either tag.
+  - On Squid, `get_olh` decodes `user.rgw.olh.ver` as an `RGWOLHInfo`
+    ([rgw_rados.cc:8884-8902](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8884-L8902));
+    Tentacle decodes `user.rgw.olh.info`, which holds one
+    ([rgw_rados.cc:9630-9648](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9630-L9648)).
+  - `olh.ver` holds the last epoch a replay applied, in decimal digits:
+    `apply_olh_log` sets `RGW_ATTR_OLH_VER` to `last_ver_s`
+    ([rgw_rados.cc:8437-8440](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8437-L8440),
+    [rgw_rados.cc:9183-9186](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9183-L9186)).
+    `RGWOLHInfo`'s decode starts with `DECODE_START(1)`, which reads a
+    version byte, a compat byte and a 32-bit length
+    ([rgw_rados.h:94-116](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.h#L94-L116)):
+    one digit ends the buffer at the compat byte, and with two or more the
+    compat byte is a digit, above 1. Either throws a `buffer::error`, which
+    `decode_olh_info` answers as EIO
+    ([rgw_rados.cc:8397-8407](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8397-L8407)).
+  - The fix, 044cd2c3dd2 "rgw: RGWRados::get_olh() needs to use the
+    correct attr", is in every v20 tag from v20.0.0 and in no v19 tag; the
+    squid branch still reads `olh.ver` at d5dbda1c766 (2026-11-11).
+- **Impact:** on Squid, `radosgw-admin olh get` of any versioned key whose
+  OLH a replay has applied fails with "ERROR: failed reading olh: (5)
+  Input/output error", where Tentacle prints the version the key resolves
+  to. Neither gateway's reads go through `get_olh`.
+- **Releases:** Squid v19.2.7, checked there, and v19.2.6, which the V
+  unit's research read. Fixed in Tentacle from v20.2.0, its first release,
+  so not in v20.2.4, checked there.
+- **rgw-go:** not affected: it writes `olh.ver` and `olh.info` as radosgw
+  does and serves no `olh get`. The versioning gate's cross-gateway history
+  spec reads `olh get` of the OLH heads both gateways wrote: on Squid it
+  expects this failure, and on Tentacle the version `olh.info` names
+  (`test/integration/phase2_versioning_test.go`).
+- **Upstream:** reported as [#69536](https://tracker.ceph.com/issues/69536)
+  ("radosgw-admin olh get is broken"), fixed on main by
+  [ceph/ceph#61370](https://github.com/ceph/ceph/pull/61370) (merge
+  34882a4048c, 2025-01-17), released in v20.2.0. The Squid backport,
+  [#69578](https://tracker.ceph.com/issues/69578), is New with no pull
+  request; the Reef backport,
+  [#69579](https://tracker.ceph.com/issues/69579), was Rejected.
+- **Found:** upstream, by Yehuda Sadeh's report #69536, 2025-01-14. Met
+  again by phase 2 unit V's research at v19.2.6 and its task V15b,
+  2026-11-16, reading `get_olh` at v19.2.7 and v20.2.4; not reproduced.
