@@ -419,16 +419,6 @@ func restartRadosgw(ctx context.Context, deploy string) {
 	}).WithContext(ctx).WithTimeout(3 * time.Minute).WithPolling(2 * time.Second).Should(Succeed())
 }
 
-// removeWebsiteFixtures removes websiteUser with its buckets and objects,
-// its usage records and the garbage their removal leaves.
-func removeWebsiteFixtures(ctx context.Context) {
-	if _, err := radosgwAdmin(ctx, "user", "info", "--uid", websiteUser); err == nil {
-		tryAdmin(ctx, "user", "rm", "--uid", websiteUser, "--purge-data")
-	}
-	tryAdmin(ctx, "usage", "trim", "--uid", websiteUser, "--yes-i-really-mean-it")
-	gcProcess(ctx)
-}
-
 // loopbackAddr is a loopback address whose port was free a moment ago.
 func loopbackAddr(ctx context.Context) string {
 	GinkgoHelper()
@@ -516,8 +506,8 @@ var _ = Describe("the website gate", Ordered, ContinueOnFailure, Label("integrat
 		DeferCleanup(restartRadosgw, deploy)
 		DeferCleanup(func(ctx context.Context) { tryCeph(ctx, "config", "rm", entity, "rgw_enable_static_website") })
 		DeferCleanup(func(ctx context.Context) { tryCeph(ctx, "config", "rm", entity, "rgw_dns_s3website_name") })
-		removeWebsiteFixtures(ctx)
-		DeferCleanup(removeWebsiteFixtures)
+		removeUserFixtures(ctx, websiteUser)
+		DeferCleanup(removeUserFixtures, websiteUser)
 		createUser(ctx, websiteUser, websiteKey, "--caps", "metadata=read")
 		radosgw := webGateway{name: "radosgw", base: endpoint, s3: s3At(endpoint, websiteKey)}
 
