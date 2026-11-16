@@ -68,6 +68,10 @@ type CompleteMultipart struct {
 	ETag  string
 	Size  uint64
 	Mtime time.Time
+	// Tags and OrigSize are the completed object's tags attr and its size
+	// before compression, as the store reports them (PutResult).
+	Tags     []byte
+	OrigSize uint64
 	// VersionID is the id of the version the store completed
 	// (ResponseVersionID), "" for none: for a completion it finishes rather
 	// than writes, the version that earlier completion wrote.
@@ -194,6 +198,7 @@ func (o *CompleteMultipart) Execute(ctx context.Context, r *Request) error {
 		}
 	}
 	o.ETag, o.Size, o.Mtime, o.Checksum = res.ETag, res.Size, res.Mtime, res.Checksum
+	o.Tags, o.OrigSize = res.Tags, res.OrigSize
 	o.VersionID = ResponseVersionID(r.BucketRec, res.Version)
 	return nil
 }

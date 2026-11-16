@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5" //nolint:gosec // a multipart ETag is an MD5 of MD5s
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -85,6 +86,22 @@ func (s *Store) GetUpload(_ context.Context, rec *op.BucketRecord, key meta.ObjK
 		return nil, fmt.Errorf("upload %s of %s: %w", uploadID, key.Name, op.ErrNoSuchUpload)
 	}
 	return copyUpload(u, rec), nil
+}
+
+// UploadInitiated implements op.MultipartStore: the time CreateUpload
+// recorded, which no part moves, and the zero time for an upload that is
+// gone, as the driver's shard lists no entry for it.
+func (s *Store) UploadInitiated(_ context.Context, up *op.Upload) (time.Time, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	u, err := s.upload(up)
+	if errors.Is(err, op.ErrNoSuchUpload) {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	return u.up.Initiated, nil
 }
 
 // upload finds up; the caller holds the lock.

@@ -296,7 +296,7 @@ var _ = Describe("a versioned CompleteMultipartUpload", func() {
 		settle(s)
 		again, err := complete(ctx, up, "c2", etags)
 		Expect(err).NotTo(HaveOccurred(), "check_previously_completed reads the key's current version (rgw_op.cc:6438-6445 at v19.2.7)")
-		Expect(again).To(Equal(&op.PutResult{ETag: first.ETag, Size: first.Size, Mtime: first.Mtime, Epoch: first.Epoch, Version: "c1"}))
+		Expect(again).To(Equal(&op.PutResult{ETag: first.ETag, Size: first.Size, Mtime: first.Mtime, Epoch: first.Epoch, Version: "c1", OrigSize: first.Size}))
 		Expect(head("c2")).To(BeNil())
 	})
 

@@ -68,6 +68,10 @@ type CopyObject struct {
 	// the version copied, as its bucket names it (ResponseVersionID), each ""
 	// for none.
 	VersionID, SrcVersionID string
+	// Tags and OrigSize are the destination's tags attr and its size before
+	// compression, as the store reports them (PutResult).
+	Tags     []byte
+	OrigSize uint64
 
 	srcRec *BucketRecord
 	src    *ObjectState
@@ -272,7 +276,7 @@ func (o *CopyObject) Execute(ctx context.Context, r *Request) error {
 	if err != nil {
 		return err
 	}
-	o.ETag, o.Mtime = res.ETag, res.Mtime
+	o.ETag, o.Mtime, o.Tags, o.OrigSize = res.ETag, res.Mtime, res.Tags, res.OrigSize
 	o.VersionID = ResponseVersionID(r.BucketRec, key.Instance)
 	o.SrcVersionID = ResponseVersionID(o.srcRec, o.src.Key.Instance)
 	return nil

@@ -407,9 +407,19 @@ var _ = Describe("the lifecycle response headers", func() {
 						Expect(exactValues(rec.Header(), "x-amz-expiration")).To(Equal([]string{wantExpiry}), call.name)
 						Expect(strings.Count(exactHeader(rec.Header(), "x-amz-expiration"), "expiry-date=")).To(Equal(1), "%s: the rule's own date alone", call.name)
 					}
+					copied := w.send(w.alice, http.MethodPut, "/plain/copied", "", "X-Amz-Copy-Source", "/plain/k")
+					Expect(copied.Code).To(Equal(http.StatusOK), copied.Body.String())
+					Expect(exactValues(copied.Header(), "x-amz-expiration")).To(Equal([]string{wantExpiry}), "CopyObject")
+					upload, doc := w.partsUpload("m", nil, nil, []byte("x"))
+					completed := w.send(w.alice, http.MethodPost, "/plain/m?uploadId="+upload, doc)
+					Expect(completed.Code).To(Equal(http.StatusOK), completed.Body.String())
+					Expect(exactValues(completed.Header(), "x-amz-expiration")).To(Equal([]string{wantExpiry}), "CompleteMultipartUpload")
 					create := serveReq(w.handler(w.alice), http.MethodPost, "/plain/k?uploads", nil)
 					Expect(create.Code).To(Equal(http.StatusOK), create.Body.String())
 					Expect(exactValues(create.Header(), "x-amz-abort-rule-id")).To(Equal([]string{wantID}), "CreateMultipartUpload")
+					listed := w.send(w.alice, http.MethodGet, "/plain/k?uploadId="+uploadIDPattern.FindStringSubmatch(create.Body.String())[1], "")
+					Expect(listed.Code).To(Equal(http.StatusOK), listed.Body.String())
+					Expect(exactValues(listed.Header(), "x-amz-abort-rule-id")).To(Equal([]string{wantID}), "ListParts")
 				},
 				Entry("a plain ID, unchanged", "rule1", "rule1"),
 				Entry("spaces", "my rule  1", "my%20rule%20%201"),

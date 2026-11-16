@@ -13685,8 +13685,9 @@ the abort of its expired multipart uploads (`internal/driver/lc_bucket.go`,
 `lc_actions.go` and `lc_transition.go`); it leaves a bucket whose rules
 transition to a cloud tier unclaimed for radosgw's workers ("An rgw-go-only
 zone never processes a bucket whose rules transition to a cloud tier",
-below). GET, HEAD and PutObject send `x-amz-expiration`, and
-CreateMultipartUpload `x-amz-abort-date` and `x-amz-abort-rule-id`
+below). GET, HEAD, PutObject, CopyObject and CompleteMultipartUpload send
+`x-amz-expiration`, and CreateMultipartUpload and ListParts
+`x-amz-abort-date` and `x-amz-abort-rule-id`
 (`internal/s3/lifecycleheaders.go`).
 Where rgw-go differs, it does the following, as the design's compatibility
 rule asks (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:284-298`):
@@ -13975,10 +13976,11 @@ the correct S3 result, in RADOS state radosgw reads as its own.
   S3's header "indicates when the initiated multipart upload becomes
   eligible for an abort operation"
   ([api_op_CreateMultipartUpload.go:789-801](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_CreateMultipartUpload.go#L789-L801)).
-  rgw-go counts from the upload's initiation, the meta object's mtime the
-  lifecycle worker's abort counts from too, and sends the headers only with
-  the upload it created (`setAbortHeaders`,
-  `internal/s3/lifecycleheaders.go`).
+  rgw-go counts from the upload's initiation, the mtime of its meta object's
+  index entry that the lifecycle worker's abort counts from too, and sends
+  the headers only on a success, with the upload it created or, as "ListParts
+  sends x-amz-abort-date and x-amz-abort-rule-id" has it, the upload it lists
+  (`setAbortHeaders`, `internal/s3/lifecycleheaders.go`).
 - **UploadPart and UploadPartCopy send no x-amz-expiration.** radosgw
   answers a part with PutObject's `send_response`, which sends
   `x-amz-expiration` computed from the part's mtime
@@ -13991,7 +13993,8 @@ the correct S3 result, in RADOS state radosgw reads as its own.
   S3's response
   model](ceph-upstream-bugs.md#radosgws-lifecycle-headers-depart-from-s3s-response-model)").
   S3 sends none on a part. rgw-go sends none there either: the header is
-  PutObject's alone (`setWriteExpiration`, `internal/s3/lifecycleheaders.go`).
+  an object write's, never a part's (`setWriteExpiration` and
+  `setStoredExpiration`, `internal/s3/lifecycleheaders.go`).
 - **A PutObject's x-amz-expiration matches the object's own tags.**
   radosgw matches a tag-filtered rule against `s->tagset`, which a
   PutObject sets from its `x-amz-tagging` only when that holds a tag
@@ -14069,6 +14072,83 @@ the correct S3 result, in RADOS state radosgw reads as its own.
   rgw-go's own choice, on weak evidence: S3 documents no form for it, so
   S3 may send the ID as stored, and for an ID outside those letters,
   digits and marks the value then differs from S3's too.
+- **CopyObject and CompleteMultipartUpload send x-amz-expiration.**
+  radosgw computes `x-amz-expiration` for a GET, a HEAD and a PutObject;
+  its CopyObject and CompleteMultipartUpload responses send none
+  ([rgw_rest_s3.cc:3596-3633](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3596-L3633),
+  [rgw_rest_s3.cc:3846-3886](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3846-L3886);
+  [rgw_rest_s3.cc:4106-4138](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4106-L4138),
+  [rgw_rest_s3.cc:4604-4644](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4604-L4644);
+  docs/ceph-upstream-bugs.md, "[radosgw's lifecycle headers depart from
+  S3's response
+  model](ceph-upstream-bugs.md#radosgws-lifecycle-headers-depart-from-s3s-response-model)").
+  S3 answers both with it: "If the object expiration is configured, the
+  response includes this header" for a copy
+  ([api_op_CopyObject.go:938-943](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_CopyObject.go#L938-L943)),
+  and the completed object's expiration date and rule ID
+  ([api_op_CompleteMultipartUpload.go:512-516](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_CompleteMultipartUpload.go#L512-L516)).
+  rgw-go sends it on both, computed as a PutObject's is for the object the
+  response names. A copy's is the destination as the copy wrote it: its
+  mtime, its tags as stored, which are the source's under COPY and the
+  request's under REPLACE, and its size before compression, which is the
+  source's. The tags follow the metadata directive, as radosgw's copy
+  reads no `x-amz-tagging-directive`, where S3's default tagging
+  directive keeps the source's tags under REPLACE too, so a REPLACE copy's
+  header can differ from S3's (docs/ceph-upstream-bugs.md, "[radosgw's
+  CopyObject ignores
+  x-amz-tagging-directive](ceph-upstream-bugs.md#radosgws-copyobject-ignores-x-amz-tagging-directive)").
+  A completion's is the completed object: the upload's tags and
+  its parts' size before compression, and, for a completion retried after
+  it succeeded, the object found, whose mtime and tags those are
+  (`setStoredExpiration`, `internal/s3/lifecycleheaders.go`;
+  `PutResult.Tags` and `PutResult.OrigSize`, `internal/op/object.go`). The
+  rules are the other entries': a request that names a versionId gets none,
+  and the Expiration rule alone gives the date on a versioning-enabled
+  bucket ("x-amz-expiration names the Expiration rule alone on Tentacle"),
+  a rule counts only for a size its filter admits ("x-amz-expiration leaves
+  out a rule whose size filter excludes the object"), a stored Date
+  real_time cannot hold gives none ("x-amz-expiration takes no date from a
+  stored Date real_time cannot hold"), and the rule's ID goes out
+  URL-encoded ("The rule-id of x-amz-expiration and x-amz-abort-rule-id is
+  URL-encoded").
+- **ListParts sends x-amz-abort-date and x-amz-abort-rule-id.** radosgw
+  sends them on CreateMultipartUpload alone
+  ([rgw_rest_s3.cc:4066-4072](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4066-L4072),
+  [rgw_rest_s3.cc:4533-4539](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4533-L4539));
+  its ListParts response sends neither
+  ([rgw_rest_s3.cc:4151-4201](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4151-L4201),
+  [rgw_rest_s3.cc:4657-4719](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4657-L4719);
+  docs/ceph-upstream-bugs.md, "[radosgw's lifecycle headers depart from
+  S3's response
+  model](ceph-upstream-bugs.md#radosgws-lifecycle-headers-depart-from-s3s-response-model)").
+  S3 sends them when "the bucket has a lifecycle rule configured with an
+  action to abort incomplete multipart uploads and the prefix in the
+  lifecycle rule matches the object name in the request"
+  ([api_op_ListParts.go:221-240](https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.114.7/service/s3/api_op_ListParts.go#L221-L240)).
+  rgw-go sends them on a successful ListParts, GET or HEAD, as
+  CreateMultipartUpload does: the earliest date the matching rules'
+  DaysAfterInitiation give, counted from the upload's initiation
+  ("x-amz-abort-date counts from the upload's initiation"), with its
+  rule's ID when that is not empty. The initiation is the mtime of the
+  upload's index entry, the one ListMultipartUploads reports and the
+  lifecycle worker's abort counts from, which
+  `MultipartStore.UploadInitiated` reads from the entry's shard; the meta
+  object's own mtime, which `GetUpload` reads, moves with every part, so
+  the date a listing after the parts names is the one the create named.
+  The entry is read only for a bucket whose lifecycle has a rule that
+  aborts uploads of the key. The headers are information radosgw's ListParts
+  does not send, so their absence never turns a listing radosgw serves into
+  an error: an indexless bucket, which a Squid radosgw can give an abort
+  rule and rgw-go's worker never lists, sends none and is not read; an upload
+  whose shard lists no entry, or whose shard is gone (ENOENT) as a
+  concurrent abort or completion leaves it, sends none, where a listing that
+  loses its upload's index entry mid-request answers without headers instead
+  of 404. Any other error reading the entry fails the listing. The rule's ID
+  is URL-encoded as CreateMultipartUpload's is
+  ("The rule-id of x-amz-expiration and x-amz-abort-rule-id is
+  URL-encoded"), both through `setAbortHeaders`
+  (`internal/s3/lifecycleheaders.go`;
+  `ListParts.Execute`, `internal/op/listparts.go`).
 - **The lifecycle work window must scan as four numbers.** With
   `rgw_enable_lc_threads` on, rgw-go refuses to start on an
   `rgw_lifecycle_work_time` that does not hold four numbers of `int` in the

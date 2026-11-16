@@ -2,13 +2,16 @@ package driver
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/cksum"
 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
+	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
 
 // uploadIDLen is the random part of an upload id: gen_rand_alphanumeric
@@ -96,4 +99,24 @@ func (s *Store) GetUpload(ctx context.Context, rec *op.BucketRecord, key meta.Ob
 	up := uploadFromMeta(rec, key, uploadID, st)
 	up.Checksum = s.uploadChecksum(st.info)
 	return up, nil
+}
+
+// UploadInitiated implements op.MultipartStore: the mtime of the upload's
+// index entry (entryMtime), which CreateUpload writes and no part moves, the
+// zero time when the shard lists no entry for it, when the bucket is
+// indexless, and when the shard is gone (ENOENT), as a concurrent abort or
+// completion leaves it. Any other failure to read it is returned: the abort
+// headers it serves are information radosgw's ListParts does not send, but a
+// read that fails here for another reason says the cluster is failing the
+// listing too.
+func (s *Store) UploadInitiated(ctx context.Context, up *op.Upload) (time.Time, error) {
+	ref, err := s.metaRef(ctx, up.Bucket, up.Key, up.ID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	t, _, err := s.entryMtime(ctx, up, ref)
+	if errors.Is(err, radosclient.ErrNotFound) {
+		return time.Time{}, nil
+	}
+	return t, err
 }

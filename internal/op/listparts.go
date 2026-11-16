@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/cksum"
+	"github.com/jhoblitt/rgw-go/internal/lifecycle"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/policy"
 )
@@ -59,6 +61,12 @@ type ListParts struct {
 	// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4709-L4713 at v20.2.4),
 	// and nil for an encrypted upload whose checksums are not shown.
 	Result ListPartsResult
+	// Initiated is when the upload began (MultipartStore.UploadInitiated),
+	// which the abort headers count from. Execute reads it only when the
+	// bucket's lifecycle configuration has a rule that aborts uploads of the
+	// key, so it is the zero time otherwise, and when the store finds no
+	// index entry for the upload.
+	Initiated time.Time
 
 	// loadErr is a failure to read the upload or the object, which Execute
 	// answers once the requester is authorized.
@@ -170,7 +178,31 @@ func (o *ListParts) Execute(ctx context.Context, r *Request) error {
 		}
 	}
 	o.Result = res
+	if abortsUploads(r) {
+		if o.Initiated, err = r.Env.Multipart.UploadInitiated(ctx, o.Upload); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// abortsUploads reports whether the bucket's lifecycle configuration has a
+// rule that aborts uploads of the request's key, for which the response
+// carries an abort date. A configuration that does not decode has none, as
+// radosgw's s3_multipart_abort_header reads it
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L2901-L2913 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L2965-L2977 at v20.2.4).
+func abortsUploads(r *Request) bool {
+	b, ok := r.BucketRec.Attrs[AttrLC]
+	if !ok {
+		return false
+	}
+	c, err := lifecycle.Decode(b)
+	if err != nil {
+		return false
+	}
+	_, _, ok = lifecycle.AbortHeader(c, r.Object.Name, time.Time{})
+	return ok
 }
 
 // checksumsShown reports whether the upload's checksums, which radosgw

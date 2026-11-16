@@ -464,7 +464,7 @@ var _ = Describe("Complete", func() {
 		Expect(err).NotTo(HaveOccurred())
 		settle(s)
 		c.ResetCounters()
-		want := &op.PutResult{ETag: first.ETag, Size: first.Size, Mtime: first.Mtime, Epoch: first.Epoch}
+		want := &op.PutResult{ETag: first.ETag, Size: first.Size, Mtime: first.Mtime, Epoch: first.Epoch, OrigSize: first.Size}
 		for _, st := range []*driver.Store{s, openStore(ctx, denc.Tentacle)} {
 			Expect(st.Complete(ctx, up, completeParts(etags))).To(Equal(want),
 				"%v: check_previously_completed matches the etags and sets etag = oetag (rgw_op.cc:6584 at v19.2.7, :7472 at v20.2.4)", st.Release())

@@ -105,6 +105,18 @@ func (st *ObjectState) ForgetHead() {
 	}
 }
 
+// OrigSize is the size of st's data before compression, which is what the
+// lifecycle worker's size filter reads (lcProbe.Size) and the lifecycle
+// response headers match against a rule's size filter: the compression
+// info's orig_size for a compressed head, and Size, the size stored, for any
+// other.
+func (st *ObjectState) OrigSize() uint64 {
+	if st.Compression != nil {
+		return st.Compression.OrigSize
+	}
+	return st.Size
+}
+
 // ByteRange is a resolved range: Length bytes from Offset.
 type ByteRange struct {
 	Offset, Length uint64
@@ -168,6 +180,15 @@ type PutResult struct {
 	// answers, which CompleteMultipart decides as it decides an upload; nil
 	// for every other result.
 	Crypt map[string][]byte
+	// Tags and OrigSize are what a lifecycle rule's filters read of the head
+	// the write wrote, or of the one a completion found already written: its
+	// tags attr as stored, nil for an object without one, and the size the
+	// worker's size filter reads, the compression info's orig_size for a
+	// compressed head and Size for any other. Size is the stored size, which
+	// a compressed head's is smaller than. A copy's and a completion's
+	// headers read them; the RADOS driver's PutObject fills them too.
+	Tags     []byte
+	OrigSize uint64
 }
 
 // DeleteParams shapes a delete.

@@ -381,6 +381,7 @@ var _ = Describe("the driver against the coexisting radosgw", Label("integration
 		conformance.Run(newEnv)
 		conformance.RunObjectChecksums(newEnv)
 		conformance.RunMultipartChecksums(newEnv)
+		conformance.RunLifecycleInputs(newEnv)
 	})
 
 	It("resolves Rook's zoned site as radosgw-admin reads it", func(ctx SpecContext) {

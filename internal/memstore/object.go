@@ -16,6 +16,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
+	"github.com/jhoblitt/rgw-go/internal/tags"
 )
 
 // objKey is the key an object is stored under: the null instance is the
@@ -383,9 +384,13 @@ func currentObject(b *bucket, name string) *object {
 	return cur
 }
 
-// putResult describes o, whose write computed ck, or nil.
+// putResult describes o, whose write computed ck, or nil. A memstore object
+// is never compressed, so its size before compression is its size.
 func putResult(o *object, ck *cksum.Cksum) *op.PutResult {
-	return &op.PutResult{ETag: o.state.ETag, Size: o.state.Size, Mtime: o.state.Mtime, Epoch: o.state.Epoch, Checksum: ck}
+	return &op.PutResult{
+		ETag: o.state.ETag, Size: o.state.Size, Mtime: o.state.Mtime, Epoch: o.state.Epoch, Checksum: ck,
+		Tags: bytes.Clone(o.state.Attrs[tags.Attr]), OrigSize: o.state.Size,
+	}
 }
 
 // readBody reads a write's body. A body longer than its declared size is

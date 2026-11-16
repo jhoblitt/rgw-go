@@ -22,6 +22,10 @@ type Upload struct {
 	Key       meta.ObjKey
 	Owner     meta.Owner
 	OwnerName string
+	// Initiated is when the upload began, as CreateUpload and a listing
+	// report it. The RADOS driver's GetUpload sets it to the meta object's
+	// own mtime, which every part moves, so only UploadInitiated gives the
+	// time of an upload's initiation.
 	Initiated time.Time
 	Placement meta.PlacementRule
 	// Attrs are the head xattrs the completed object receives.
@@ -243,6 +247,12 @@ func CompleteETag(parts []CompletePart) (string, error) {
 type MultipartStore interface {
 	CreateUpload(ctx context.Context, rec *BucketRecord, key meta.ObjKey, p UploadParams) (*Upload, error)
 	GetUpload(ctx context.Context, rec *BucketRecord, key meta.ObjKey, uploadID string) (*Upload, error)
+	// UploadInitiated is when up began: the mtime of its meta object's index
+	// entry, which CreateUpload writes, ListUploads reports as Initiated and
+	// the lifecycle worker's abort counts from. It is one read of the entry's
+	// index shard, which GetUpload spares every part and completion. A store
+	// that finds no entry answers the zero time, which no abort counts from.
+	UploadInitiated(ctx context.Context, up *Upload) (time.Time, error)
 	// PutPart writes part n of up with the head attrs p.Attrs. up carries the
 	// destination placement GetUpload or CreateUpload gave the upload, and
 	// the part goes there, as radosgw's goes to the placement get_info read
