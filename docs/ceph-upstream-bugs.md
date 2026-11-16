@@ -6082,8 +6082,20 @@ Every new entry adds its row to this table, in document order.
   - `Null` answers whether the key is absent and ignores its values
     (`rgw_iam_policy.cc:857-859`), so `"Null": {"k": "false"}`, which asks
     that the key be present, holds only when it is absent.
+  - A negated string or ARN operator compares the key's values with the
+    values of the runtime key `Condition::eval` takes from the last condition
+    value ([rgw_iam_policy.cc:871-879](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L871-L879)),
+    and `orrible` over no value is false
+    ([rgw_iam_policy.h:482-493](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L482-L493)),
+    so such an operator whose runtime key the request has no value for never
+    holds. AWS's inverted operators match a policy variable with no value:
+    "Inverted condition operators like `StringNotEquals` or `StringNotLike`
+    do match against a null value, as the value of the condition key they
+    are testing against is not equal to or like the effectively null value"
+    ([reference_policies_variables.md:249](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_variables.md?plain=1#L249)
+    in the IAM User Guide's archived source).
   - v20.2.4 evaluates the negated operators as `multimap_none` and
-    `typed_none`, which hold when no pair matches
+    `typed_none`, which hold when no pair matches, and over no value
     (`rgw_iam_policy.cc:910-912`, `:918-919`, `:925-926`, `:941-943`,
     `:964-966` and `:1003-1005`; `rgw_iam_policy.h:514-525` and
     `:548-567`), and compares `Null`'s values, through `as_bool`, with
@@ -6098,7 +6110,8 @@ Every new entry adds its row to this table, in document order.
   request whose value the condition lists, once the condition lists another
   value or the key holds another; a Deny so guarded denies it. A `Null`
   condition that asks for the key's presence holds exactly when the key is
-  absent.
+  absent. A negated string or ARN operator on a runtime key the request has
+  no value for never holds, where AWS's does.
 - **Releases:** v19.2.6 and v19.2.7, which still evaluates the negated
   operators with `orrible` and `Null` by absence alone
   ([rgw_iam_policy.cc:890-892](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L890-L892),
@@ -6107,6 +6120,13 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** follows the zone's release: `policy.Semantics`'s
   `NotMeansNone` and `NullTestsValues` select v19.2.6's rule on Squid and
   v20.2.4's on Tentacle (`internal/policy/condition.go`).
+  A Deny statement's conditions hold where Amazon S3's or radosgw's does
+  (`policy.Condition.EvalFor`; `docs/differences.md`, "A Deny's condition
+  holds where Amazon S3's evaluation or radosgw's holds"): on Squid a `Null`
+  holds when the key is absent, as Squid's does, or when its values say so, as
+  Amazon S3's and Tentacle's do, and a string or ARN operator whose values
+  name policy variables also holds where Amazon S3's answer over the values
+  with their variables replaced does.
 - **Upstream:** fixed upstream and tracked; both first shipped in a stable
   release in v20.2.3, and main carries them, still at 8aa24c51928
   (2026-10-30), from the development tags v21.0.0 (NotEquals) and v21.0.1
@@ -34949,9 +34969,13 @@ Every new entry adds its row to this table, in document order.
     ([reference_policies_elements_condition_operators.md:10](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md#L10)
     in the IAM User Guide's archived source).
 - **Releases:** v19.2.7 and v20.2.4.
-- **rgw-go:** reproduces it: `policy.Condition.Eval` answers an absent key
-  as `Condition::eval` does (`internal/policy/condition.go`), until plan
-  task S9 lands.
+- **rgw-go:** reproduces it in an Allow statement, whose conditions
+  `policy.Condition.EvalFor` answers as `Condition::eval` does
+  (`internal/policy/condition.go`), so an Allow guarded by a negated
+  operator on an absent key grants nothing; a Deny statement's conditions
+  hold where Amazon S3's evaluation or radosgw's does, so a Deny so guarded
+  refuses the request (`docs/differences.md`, "A Deny's condition holds
+  where Amazon S3's evaluation or radosgw's holds").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task L7's adversarial review, 2026-11-14, judging
   the object-lock condition keys a request can leave out; derived from the
@@ -35247,6 +35271,9 @@ Every new entry adds its row to this table, in document order.
   writes (`docs/differences.md`, "A write's ACL and tag headers need
   s3:PutObjectAcl and s3:PutObjectTagging"). Adding the keys to s3:PutObject
   for the two operations is plan task S13.
+  A Deny whose negated operator tests one of those keys holds for the two
+  operations, as for any key the request lacks (`docs/differences.md`, "A
+  Deny's condition holds where Amazon S3's evaluation or radosgw's holds").
 - **Upstream:** pending; prior art not searched: sent to
   rgw-bug-reproduction.
 - **Found:** phase 2 task S12's adversarial review, 2026-11-15, probing which

@@ -6802,6 +6802,8 @@ rgw-go does the following.
   an absent key true (docs/ceph-upstream-bugs.md, "[radosgw's negated
   condition operators are false on an absent
   key](ceph-upstream-bugs.md#radosgws-negated-condition-operators-are-false-on-an-absent-key)").
+  A Deny statement's condition takes Amazon S3's answer as well ("A Deny's
+  condition holds where Amazon S3's evaluation or radosgw's holds", below).
   A key is found only under the case it is written in here, as radosgw
   finds it, where AWS takes key names in any case, so a condition on
   `S3:Object-Lock-Mode` finds no key (docs/ceph-upstream-bugs.md,
@@ -6815,6 +6817,9 @@ rgw-go does the following.
   values](ceph-upstream-bugs.md#squids-negated-condition-operators-hold-when-any-pair-differs-and-its-null-ignores-its-values)");
   on Tentacle it compares the condition's value with whether the key is
   absent, as Amazon S3 does.
+  A Deny statement's `Null` on Squid also holds as Amazon S3's does ("A
+  Deny's condition holds where Amazon S3's evaluation or radosgw's holds",
+  below).
 
   To evaluate a document's keys, PutObjectRetention and PutObjectLegalHold
   read and parse it before their permission check: in Init, once the bucket
@@ -6842,6 +6847,140 @@ rgw-go does the following.
   (docs/ceph-upstream-bugs.md, "[radosgw reads
   PutObjectRetention's document before it sends 100
   Continue](ceph-upstream-bugs.md#radosgw-reads-putobjectretentions-document-before-it-sends-100-continue)").
+- **A Deny's condition holds where Amazon S3's evaluation or radosgw's
+  holds.** radosgw's `Condition::eval` answers a condition on a key the
+  request's environment lacks with the condition's `IfExists` flag, so false
+  without one, for every operator but `Null` and the `ForAllValues` ones,
+  the negated operators among them: `StringNotEquals`,
+  `StringNotEqualsIgnoreCase`, `StringNotLike`, `NumericNotEquals`,
+  `DateNotEquals`, `NotIpAddress`, `ArnNotEquals` and `ArnNotLike`
+  ([rgw_iam_policy.cc:861-869](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L861-L869),
+  [rgw_iam_policy.cc:881-889](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L881-L889);
+  docs/ceph-upstream-bugs.md, "[radosgw's negated condition operators are
+  false on an absent
+  key](ceph-upstream-bugs.md#radosgws-negated-condition-operators-are-false-on-an-absent-key)").
+  Amazon S3 holds a negated operator there: "If the policy condition
+  requires that the key is *not* matched, such as `StringNotLike` or
+  `ArnNotLike`, and the right key is not present, the condition is *true*.
+  This logic applies to all condition operators except ...IfExists and Null
+  check"
+  ([reference_policies_elements_condition_operators.md:10](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L10)
+  in the IAM User Guide's archived source). A bucket policy that denies
+  `s3:GetObject` where `aws:Referer` is `StringNotLike`
+  `http://www.example.com/*` refuses, on Amazon S3, every GetObject from
+  another page and every one that sends no Referer header, which adds no
+  `aws:Referer` key
+  ([rgw_op.cc:860-863](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L860-L863),
+  [rgw_op.cc:895-898](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L895-L898)).
+  radosgw serves the second and rgw-go refuses it, 403 AccessDenied.
+
+  A string or ARN operator whose values name policy variables is evaluated
+  differently too. Amazon S3 allows variables in "string comparisons in the
+  `Condition` element"
+  ([reference_policies_variables.md:128](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_variables.md?plain=1#L128)),
+  with the String and ARN operators
+  ([reference_policies_elements_condition_operators.md:55](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L55),
+  [:309](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L309)).
+  It replaces each variable with the request's value for its key, found
+  without regard to the case of the key's name ("Key names are
+  case-insensitive",
+  [reference_policies_variables.md:55](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_variables.md?plain=1#L55)),
+  takes only a single-valued key as a variable
+  ([:56](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_variables.md?plain=1#L56)), and treats a variable it has no value for
+  as a null value that matches nothing: "Inverted condition operators like
+  `StringNotEquals` or `StringNotLike` do match against a null value, as the
+  value of the condition key they are testing against is not equal to or like
+  the effectively null value"
+  ([:249](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_variables.md?plain=1#L249)). So a positive operator holds when some
+  key value matches a value with its variables replaced, a `ForAllValues`
+  one when every key value does, and a negated one when no key value does.
+  radosgw reads a variable only in a value that is one whole, and once a
+  value starts with a `$` it takes a key from the last value, whatever it
+  is, and compares the key's values with that key's values in place of every
+  value of the condition
+  ([rgw_iam_policy.cc:871-879](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L871-L879),
+  [rgw_iam_policy.cc:891-899](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L891-L899);
+  docs/ceph-upstream-bugs.md, "[radosgw reads a runtime condition's key from
+  its last value, and terminates when that value is
+  short](ceph-upstream-bugs.md#radosgw-reads-a-runtime-conditions-key-from-its-last-value-and-terminates-when-that-value-is-short)"),
+  and where that key has no value, Tentacle's `multimap_none` holds over no
+  value and Squid's `orrible` does not
+  ([rgw_iam_policy.h:514-525](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L514-L525),
+  [rgw_iam_policy.h:482-493](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L482-L493)).
+  On Squid, `Null` ignores its values too and holds exactly when the key is
+  absent
+  ([rgw_iam_policy.cc:857-859](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L857-L859)),
+  where Amazon S3's holds for `true` when the key is absent and for `false`
+  when it is present, as Tentacle's does
+  ([rgw_iam_policy.cc:876-879](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L876-L879);
+  docs/ceph-upstream-bugs.md, "[Squid's negated condition operators hold
+  when any pair differs, and its Null ignores its
+  values](ceph-upstream-bugs.md#squids-negated-condition-operators-hold-when-any-pair-differs-and-its-null-ignores-its-values)").
+
+  rgw-go evaluates every condition of a statement that denies so that it
+  holds where either evaluation holds, in bucket and identity policies
+  alike (`policy.Statement.Eval`, `policy.Condition.EvalFor`): a negated
+  operator holds on a key the request lacks, on both releases; on Squid a
+  `Null` holds when the key is absent or when its values say so as Amazon
+  S3's do; and a string or ARN operator, negated, positive or `ForAllValues`,
+  whose values name policy variables holds where Amazon S3's answer over the
+  values with their variables replaced does, which on Squid reaches what its
+  `orrible` leaves false. The replacement reads `${key}` and `${key,
+  'default'}`, which takes the default unless the request has exactly one
+  value for the key ("To add a default value to a variable, surround the
+  default value with single quotes (' '), and separate the variable text and
+  the default value with a comma and space (, )",
+  [reference_policies_variables.md:305](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_variables.md?plain=1#L305)).
+  It finds the variable's key whatever its ASCII case, and takes a key the
+  request holds under several names that differ only in case, as one holding
+  several values, for no value, where the condition's own key is found in the
+  case written, as radosgw finds it, until condition key names fold case in a
+  Deny. A value with `${*}`, `${?}` or `${$}`, which stand for a character
+  that the matching cannot express, holds the operator, whichever it is, for
+  every request whose key is present, so that such a Deny refuses where Amazon
+  S3 may serve. The typed operators take no variable, as radosgw's do, though
+  the IAM User Guide's archived operators page lets the Boolean operator take
+  one
+  ([reference_policies_elements_condition_operators.md:206](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L206));
+  an empty value list, a typed negated operator none of whose values converts
+  and one whose key value does not keep radosgw's answer. So a Deny whose
+  condition is
+  `"Null": {"aws:Referer": "false"}` refuses a request that sends a Referer
+  on both releases, where Squid's radosgw serves it, and on Squid refuses one
+  that sends none too, where Amazon S3 serves it and Squid's radosgw refuses
+  it. The s3-test `test_bucket_policy_deny_stringnotlike_key_absent` checks
+  the first rule and `test_bucket_policy_deny_null_false_key_present` the
+  Null one. A key the request holds is evaluated as radosgw evaluates it, in
+  either effect, except where a condition value names a policy variable, and
+  so are the `IfExists` and `ForAllValues` forms on an absent one, which
+  hold on both evaluations. A statement that names no Effect counts as a
+  Deny, as radosgw's does, so it takes this rule.
+
+  A statement that allows keeps radosgw's evaluation of every condition:
+  Amazon S3's answer would grant a request that a radosgw serving the same
+  zone refuses, so an Allow guarded by a negated operator on an absent key
+  grants nothing, as on radosgw.
+
+  A Deny whose negated operator names a key rgw-go does not set refuses
+  every request the statement covers, where radosgw serves them all: the key
+  is absent from every request's environment, so the operator holds for each.
+  rgw-go sets no key radosgw does not set, but for the object-lock keys ("A
+  lock a request sets is evaluated with Amazon S3's object-lock condition
+  keys"). A key it does not set is one of three kinds. Keys of AWS
+  infrastructure that an on-premises gateway has no value for, among them
+  the VPC, organization, MFA, service-chain and EC2-instance keys, which
+  Amazon S3 leaves absent too for a request that does not come through
+  those services, so there the Deny holds on Amazon S3 as well. Keys Amazon
+  S3 sets on S3 requests that radosgw does not, such as `s3:signatureversion`,
+  `s3:authType`, `s3:TlsVersion` and `s3:x-amz-content-sha256`, where Amazon
+  S3 refuses only the requests whose value fails the condition
+  (docs/ceph-upstream-bugs.md, "[radosgw sets few of the condition keys
+  Amazon S3 sets on S3
+  requests](ceph-upstream-bugs.md#radosgw-sets-few-of-the-condition-keys-amazon-s3-sets-on-s3-requests)";
+  plan task S14). And a key spelled in another case than rgw-go sets it,
+  which finds no key until condition key names fold case in a Deny
+  (docs/ceph-upstream-bugs.md, "[radosgw matches condition key names
+  case-sensitively](ceph-upstream-bugs.md#radosgw-matches-condition-key-names-case-sensitively)").
 
 ### Bucket metadata differences
 
