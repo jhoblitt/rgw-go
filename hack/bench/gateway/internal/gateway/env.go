@@ -115,6 +115,8 @@ type Environment struct {
 	LargeObjects     int64   `json:"large_objects"`
 	ListThreads      int64   `json:"list_threads"`
 	ListObjects      int64   `json:"list_objects"`
+	CompClass        string  `json:"comp_class"`
+	VerObjects       int64   `json:"ver_objects"`
 	Elbencho         string  `json:"elbencho"`
 	ElbenchoCommit   string  `json:"elbencho_commit"`
 	ElbenchoImage    string  `json:"elbencho_image"`
@@ -180,6 +182,8 @@ func (r *Runner) writeEnvironment(ctx context.Context, st *state) error {
 		LargeObjects:  cfg.LargeObjects,
 		ListThreads:   cfg.ListThreads,
 		ListObjects:   cfg.ListObjects,
+		CompClass:     compClass,
+		VerObjects:    cfg.VerObjects(),
 		NProc:         runtime.NumCPU(),
 		MemTotalKiB:   memTotal,
 		CPU:           harness.CPUModel(r.Proc),

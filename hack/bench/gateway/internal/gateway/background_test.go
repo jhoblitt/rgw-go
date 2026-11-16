@@ -10,10 +10,11 @@ import (
 	"github.com/jhoblitt/rgw-go/hack/bench/gateway/internal/gateway"
 )
 
-// measured reports whether a traced command is a measured phase or an
-// httpload run.
+// measured reports whether a traced command is a measured phase, an httpload
+// run or an s3send put bounded in time, which its preparations are not.
 func measured(event string) bool {
-	return strings.Contains(event, " --jsonfile ") || strings.Contains(event, "/httpload ")
+	return strings.Contains(event, " --jsonfile ") || strings.Contains(event, "/httpload ") ||
+		(strings.Contains(event, "/s3send ") && strings.Contains(event, " -duration "))
 }
 
 // placed writes each event with the background tasks running beside it, S

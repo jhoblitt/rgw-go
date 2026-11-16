@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"go.yaml.in/yaml/v3"
@@ -142,36 +143,199 @@ func (r *Runner) needSpace(ctx context.Context, st *state, profile string) error
 	}
 }
 
-// emptyBuckets removes every bench bucket's objects through the radosgw with
-// elbencho's multi-object delete, a thousand keys a request.
+// emptyBuckets removes every bench bucket's objects through the radosgw: those
+// of the plain buckets with elbencho's multi-object delete, a thousand keys a
+// request, and the versioned bucket with its objects, versions and delete
+// markers, which a delete naming no version leaves behind. Both run whatever
+// the other gives. A bucket is first looked up, and one that is not there is
+// skipped; one whose lookup tells nothing, a timeout or a toolbox that could
+// not be reached among them, is skipped too, since nothing is known of it,
+// and the failure is returned, so that its objects are not left for the next
+// profile unnoticed.
 func (r *Runner) emptyBuckets(ctx context.Context, st *state) error {
-	var have []string
+	var plain []string
+	var versioned bool
+	var errs []error
 	for _, b := range buckets {
-		if _, err := st.admin(ctx, "bucket", "stats", "--bucket", b); err == nil {
-			have = append(have, b)
+		exists, err := st.bucketExists(ctx, b)
+		if err != nil {
+			st.log.ErrorContext(ctx, "could not tell whether a bench bucket is there, so its objects stay",
+				slog.String("bucket", b), slog.Any("error", err))
+			errs = append(errs, fmt.Errorf("looking up %s before removing its objects: %w", b, err))
+			continue
+		}
+		if !exists {
+			continue
+		}
+		if b == verBucket {
+			versioned = true
+		} else {
+			plain = append(plain, b)
 		}
 	}
-	if len(have) == 0 {
-		return nil
+	if len(plain) > 0 {
+		st.log.InfoContext(ctx, "removing the objects of the bench buckets", slog.String("buckets", strings.Join(plain, " ")))
+		errs = append(errs, r.logged(ctx, st, r.PrepTimeout,
+			st.el(st.radosgwEndpoint, append([]string{"--s3multidel", "1000", "-t", strconv.Itoa(len(plain))}, plain...)...)))
 	}
-	st.log.InfoContext(ctx, "removing the objects of the bench buckets", slog.String("buckets", strings.Join(have, " ")))
-	return r.logged(ctx, st, r.PrepTimeout,
-		st.el(st.radosgwEndpoint, append([]string{"--s3multidel", "1000", "-t", strconv.Itoa(len(have))}, have...)...))
+	switch {
+	case versioned && st.purgeFailed:
+		st.log.WarnContext(ctx, "not removing the versioned bench bucket again: its removal failed, and remove-user.sh takes it with the user",
+			slog.String("bucket", verBucket))
+	case versioned:
+		errs = append(errs, r.purgeBucket(ctx, st, verBucket))
+	}
+	return errors.Join(errs...)
 }
 
-// apiName is the zonegroup's api_name, the region elbencho signs for.
-func (r *Runner) apiName(ctx context.Context, st *state) (string, error) {
+// purgeBucket removes bucket with every version in it: radosgw-admin lists
+// them all, as no client's delete does without a version id for each. The
+// bucket is gone after it, so the next profile's preparation makes it again,
+// unversioned. It has a bound of its own, PurgeTimeout, since a bucket of
+// hundreds of thousands of versions takes far longer than a cluster call or
+// a preparation is allowed, and it logs its start, its end and how long it
+// took, which the next run's bound is chosen from.
+//
+// radosgw-admin bucket rm exits 0 when it removes nothing (the registry's
+// "radosgw-admin bucket rm exits 0 when it removes nothing", in
+// docs/ceph-upstream-bugs.md), so the bucket is read back, and a bucket still
+// there fails the run, as does a read-back that tells nothing.
+func (r *Runner) purgeBucket(ctx context.Context, st *state, bucket string) (err error) {
+	defer func() {
+		if err != nil {
+			st.purgeFailed = true
+		}
+	}()
+	args := []string{"bucket", "rm", "--bucket", bucket, "--purge-objects"}
+	started := r.Now()
+	st.log.InfoContext(ctx, "removing the versioned bench bucket with its versions",
+		slog.String("bucket", bucket), slog.Int64("limit_seconds", seconds(r.PurgeTimeout)))
+	out, err := st.adminWithin(ctx, r.PurgeTimeout, args...)
+	st.ran(ctx, "radosgw-admin "+strings.Join(args, " "), out, err)
+	took := seconds(r.Now().Sub(started))
+	if err != nil {
+		st.log.ErrorContext(ctx, "removing the versioned bench bucket failed",
+			slog.String("bucket", bucket), slog.Int64("seconds", took), slog.Int64("limit_seconds", seconds(r.PurgeTimeout)), slog.Any("error", err))
+		return fmt.Errorf("removing %s with its versions failed after %d s of the %d s allowed: %w", bucket, took, seconds(r.PurgeTimeout), err)
+	}
+	switch exists, readErr := st.bucketExists(ctx, bucket); {
+	case readErr != nil:
+		st.log.ErrorContext(ctx, "the versioned bench bucket could not be read back",
+			slog.String("bucket", bucket), slog.Int64("seconds", took), slog.Any("error", readErr))
+		return fmt.Errorf("reading back %s after radosgw-admin bucket rm exited 0, %d s into the %d s allowed: %w", bucket, took, seconds(r.PurgeTimeout), readErr)
+	case exists:
+		st.log.ErrorContext(ctx, "the versioned bench bucket is still there", slog.String("bucket", bucket), slog.Int64("seconds", took))
+		return fmt.Errorf("%s still exists after radosgw-admin bucket rm exited 0, %d s into the %d s allowed", bucket, took, seconds(r.PurgeTimeout))
+	}
+	st.log.InfoContext(ctx, "removed the versioned bench bucket", slog.String("bucket", bucket), slog.Int64("seconds", took))
+	return nil
+}
+
+// statusPrefix starts the line lookupScript ends its output with.
+const statusPrefix = "radosgw-admin-status="
+
+// lookupScript is the bucket lookup the toolbox's sh runs: radosgw-admin
+// bucket stats of the bucket its first argument names, in the site its others
+// name, the stats discarded and the error output kept, then its exit status on
+// a line of its own. rooket exits 1 for any command that fails (rooket
+// cmd/kubectl.go and cmd/root.go), so the status reaches the run only as
+// output. The bucket is an argument, never part of the script.
+const lookupScript = `bucket=$1; shift; radosgw-admin bucket stats --bucket "$bucket" "$@" 2>&1 >/dev/null; printf '\n` +
+	statusPrefix + `%s\n' "$?"`
+
+// bucketExists reports whether bucket exists, from the exit status of
+// radosgw-admin bucket stats, which lookupScript prints: 0 for a bucket that
+// exists, and 2 for one that does not. bucket stats exits with
+// posix_errortrans of its failure, at v20.2.4
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L7655-L7659)
+// and at v19.2.7
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L7408-L7412),
+// which turns ERR_NO_SUCH_BUCKET into ENOENT
+// (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/radosgw-admin/radosgw-admin.cc#L132-L135,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_admin.cc#L120-L130).
+// Any other status, an output that ends in none, and a toolbox that could not
+// run the script are errors, since none of them tells whether the bucket is
+// there.
+func (st *state) bucketExists(ctx context.Context, bucket string) (bool, error) {
+	out, err := st.cl.Toolbox(ctx, append([]string{"sh", "-c", lookupScript, "sh", bucket}, st.siteOptions()...)...)
+	st.ran(ctx, "radosgw-admin bucket stats --bucket "+bucket, out, err)
+	if err != nil {
+		return false, err
+	}
+	text := strings.TrimRight(string(out), "\n")
+	before, last, found := strings.CutLast(text, "\n")
+	if !found {
+		before, last = "", text
+	}
+	field, ok := strings.CutPrefix(last, statusPrefix)
+	status, convErr := strconv.Atoi(field)
+	switch {
+	case !ok || convErr != nil:
+		return false, fmt.Errorf("radosgw-admin bucket stats --bucket %s ended in no exit status: %q", bucket, out)
+	case status == 0:
+		return true, nil
+	case status == int(syscall.ENOENT):
+		return false, nil
+	}
+	return false, fmt.Errorf("radosgw-admin bucket stats --bucket %s exited %d: %s", bucket, status, strings.TrimSpace(before))
+}
+
+// zonegroup is the zonegroup's api_name, the region elbencho signs for, and
+// its default placement.
+func (r *Runner) zonegroup(ctx context.Context, st *state) (apiName, placement string, err error) {
 	out, err := st.admin(ctx, "zonegroup", "get")
 	if err != nil {
-		return "", fmt.Errorf("reading the zonegroup: %w", err)
+		return "", "", fmt.Errorf("reading the zonegroup: %w", err)
 	}
 	var zg struct {
-		APIName string `json:"api_name"`
+		APIName          string `json:"api_name"`
+		DefaultPlacement string `json:"default_placement"`
 	}
 	if err := json.Unmarshal(out, &zg); err != nil {
-		return "", fmt.Errorf("decoding radosgw-admin zonegroup get: %w", err)
+		return "", "", fmt.Errorf("decoding radosgw-admin zonegroup get: %w", err)
 	}
-	return zg.APIName, nil
+	return zg.APIName, zg.DefaultPlacement, nil
+}
+
+// checkClass fails unless the zone's default placement holds the class the
+// comp profiles write through, and gives it a compressor: without one the
+// profiles would measure plain writes under a compressing profile's name.
+// make populate makes the class on every cluster it populates.
+func (r *Runner) checkClass(ctx context.Context, st *state) error {
+	out, err := st.admin(ctx, "zone", "get")
+	if err != nil {
+		return fmt.Errorf("reading the zone: %w", err)
+	}
+	var zone struct {
+		PlacementPools []struct {
+			Key string `json:"key"`
+			Val struct {
+				StorageClasses map[string]struct {
+					CompressionType string `json:"compression_type"`
+				} `json:"storage_classes"`
+			} `json:"val"`
+		} `json:"placement_pools"`
+	}
+	if err := json.Unmarshal(out, &zone); err != nil {
+		return fmt.Errorf("decoding radosgw-admin zone get: %w", err)
+	}
+	for _, pool := range zone.PlacementPools {
+		if pool.Key != st.defaultPlacement {
+			continue
+		}
+		class, ok := pool.Val.StorageClasses[compClass]
+		if !ok {
+			return fmt.Errorf("the placement %s has no storage class %s: run make populate RELEASE=%s first",
+				st.defaultPlacement, compClass, st.cfg.Release)
+		}
+		if class.CompressionType == "" || class.CompressionType == "none" {
+			return fmt.Errorf("the storage class %s of the placement %s has no compressor, so the comp profiles would write uncompressed: "+
+				"run make populate RELEASE=%s first", compClass, st.defaultPlacement, st.cfg.Release)
+		}
+		st.log.InfoContext(ctx, "compressing class", slog.String("class", compClass), slog.String("compression_type", class.CompressionType))
+		return nil
+	}
+	return fmt.Errorf("the zone has no placement %s, the zonegroup's default", st.defaultPlacement)
 }
 
 // ensureUser creates the user bench with its fixed keys unless it exists,

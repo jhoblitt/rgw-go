@@ -53,10 +53,13 @@ func (g *gwRender) render(findings []string) string {
 		}
 	}
 	b.WriteString("\nEach row is one measured phase. req/s counts S3 requests: elbencho's IOs, a listing's ListObjectsV2 " +
-		"calls, httpload's GETs. A multipart PUT's row, marked (parts/s), counts as elbencho does: its req/s counts " +
-		"UploadPart requests, leaving out each upload's Create and Complete, and its CPU per request is per part. " +
+		"calls, httpload's GETs, and for s3send's PUTs the objects stored. A multipart PUT's row, marked (parts/s), counts as " +
+		"elbencho does: its req/s counts UploadPart requests, leaving out each upload's Create and Complete, and its CPU per " +
+		"request is per part. s3send's multipart row, marked (uploads/s), counts each upload as one request, of all its parts, " +
+		"and its CPU per request is per upload. " +
 		"objects/s counts objects written or read, or keys listed. The latency percentiles are " +
-		"per request, from elbencho's latency histogram as its --latpercent9s prints them, or httpload's. CPU per " +
+		"per request, from elbencho's latency histogram as its --latpercent9s prints them, or httpload's; s3send's are per " +
+		"object stored, so a multipart upload's covers all its requests. CPU per " +
 		"request is the gateway process's user and system time over the phase, from the samples taken once a second " +
 		"around it, interpolated at its start and end, so a short phase's is coarse; a 2 s gap after every phase and " +
 		"every preparation keeps their CPU out of the next phase's. Peak RSS is the highest of those samples, and " +
@@ -369,7 +372,8 @@ func (g *gwRender) renderEnv(b *strings.Builder) {
 }
 
 func (g *gwRender) renderCommands(b *strings.Builder) {
-	b.WriteString("\n## Commands\n\nEvery measured command, as elbencho and httpload recorded it; elbencho leaves out the secret key.\n")
+	b.WriteString("\n## Commands\n\nEvery measured command, as elbencho, httpload and s3send recorded it; elbencho and s3send " +
+		"leave out the secret key.\n")
 	for _, r := range g.runs {
 		fmt.Fprintf(b, "\n### %s\n\n```\n", r.label)
 		for i := range r.phases {

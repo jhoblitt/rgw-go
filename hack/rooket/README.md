@@ -487,12 +487,20 @@ sweep reads are refused. Setting `BENCH_INFLIGHT_BYTES` without
 
 `make bench-gateway RELEASE=<release> GATEWAY=radosgw|rgw-go` runs
 `hack/bench/gateway`, a Go command: elbencho against the gateway for the S3
-profiles, `hack/bench/httpload` for the anonymous `GET /` baseline, a sampler
-of the gateway's process once a second, and for rgw-go a CPU profile of each
-profile's last phase and its GC trace. It writes
-`hack/bench/out/<release>/gateway-<gateway>-<UTC time>/` and its `REPORT.md`;
-the command's package doc lists the profiles, the files and the settings, and
-`go run ./hack/bench/gateway --help` every flag and its environment name.
+profiles, `hack/bench/httpload` for the anonymous `GET /` baseline,
+`hack/bench/s3send` for the three requests elbencho cannot send (a PUT into a
+storage class, a PUT carrying a CRC32, and the PutBucketVersioning that turns a
+bucket's versioning on), a sampler of the gateway's process once a second, and
+for rgw-go a CPU profile of each profile's last phase and its GC trace. It has
+thirteen profiles: small-put, small-get, noop, large-put, large-get and list,
+and, for a compressing storage class, a CRC32 and a versioned bucket,
+comp-small-put, comp-small-get, comp-large-put, comp-large-get, crc-put,
+ver-put and ver-get. It writes
+`hack/bench/out/<release>/gateway-<gateway>-<UTC time>/` and its `REPORT.md`,
+which tables every profile the run recorded, those of a run of the last seven
+alone included; the command's package doc lists the profiles, the files and the
+settings, and `go run ./hack/bench/gateway --help` every flag and its
+environment name.
 `PROFILES="small-get noop"` runs some profiles only, and `BENCH_SMOKE=1` runs
 every profile with 5 s phases at one concurrency, which proves the tooling and
 measures nothing; any other value of it is refused. Every setting is checked
@@ -511,18 +519,95 @@ later build can link a newer libcurl; `hack/bench/out/elbencho.commit` records
 the image and the toolchain and library versions a binary was built with,
 and every run copies them into its `env.json`.
 
-elbencho signs as the user `bench`, created with fixed keys. A radosgw run
-refuses to start while an rgw-go runs against the cluster, and both refuse a
+elbencho and s3send sign as the user `bench`, created with fixed keys. A radosgw
+run refuses to start while an rgw-go runs against the cluster, and both refuse a
 gateway whose entity lacks the parity options, so `make rgw-go-up` runs once
 first; an rgw-go run starts its own rgw-go and stops it when it ends.
+
+Both fail a request that moves no byte for 30 s (`--s3reqtimeout 30000` for
+elbencho, `-request-timeout 30s` for s3send, one constant in the gateway
+command). elbencho's request "fails if no data was transferred for this long",
+which its HTTP client judges over a window of a few seconds; s3send cancels a
+request once none of its body has gone out and none of its answer has come in
+for that long, the wait for the answer counting as nothing moving. A request
+that is slow but moving is not cut, so a slow gateway is measured. s3send counts
+a request that stalls as an error and exits 1, so a gateway that holds some
+threads' requests fails the phase rather than leaving a lower rate; a phase in
+which it stored nothing fails too, and its result's `in_flight` counts the
+requests the end of the phase cut.
+
+The seven profiles after list's:
+
+- **comp-small-put, comp-small-get, comp-large-put and comp-large-get** write
+  and read through the storage class `COMP_ZLIB`, one of the classes `make
+  populate` adds to the default placement, each with a compressor of its own on
+  STANDARD's data pool. A run of any of them first reads `zone get` and refuses
+  a zone whose default placement lacks the class or gives it no compressor,
+  naming `make populate RELEASE=<release>`: a profile that wrote uncompressed
+  under a compressing name would be a silent mismeasurement. elbencho has no
+  option for a storage class, so s3send writes the objects, bytes that deflate
+  compresses to about half; elbencho reads them, with small-get's and
+  large-get's commands, over keys s3send names as elbencho names those of its
+  ranks (`r<rank>-f<index>`). A comp read profile is therefore small-get or
+  large-get with the same client, over objects the gateway stores compressed.
+- **crc-put** is small-put's PUTs with a CRC32, sent by `s3send -checksum
+  crc32`: `x-amz-sdk-checksum-algorithm: CRC32` and the value in
+  `x-amz-checksum-crc32` over plain HTTP, the form botocore sends by default (an
+  aws-chunked trailer in place of the value header over TLS, which the
+  comparison's plain-HTTP endpoints do not exercise). It is that form because a
+  Tentacle radosgw acts on it: it builds its PutObject checksum filter only from
+  an algorithm header
+  ([rgw_op.cc:4601-4611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4601-L4611),
+  [rgw_cksum_pipe.h:65-82](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_cksum_pipe.h#L65-L82)),
+  so both gateways compute and check the CRC32. The Go SDK's own default, the
+  value header alone, is not measured: rgw-go verifies such a value and a
+  Tentacle radosgw does not (`docs/differences.md`, "A checksum value without an
+  algorithm header names its algorithm and is verified"), so a profile of it
+  would compare work with none. Squid's radosgw has no PutObject checksum filter
+  at all (v19.2.7 has no `rgw_cksum_pipe.cc`), so on Squid crc-put compares
+  rgw-go's work with none.
+- **ver-put and ver-get** run on `bench-ver`, which elbencho creates and s3send
+  sets versioned in the profile's preparation: at the pinned commit elbencho's
+  create phase sets Suspended, and only its delete phase, in the run that
+  deletes the bucket, sets Enabled. ver-put's phases write into the same bucket
+  at each concurrency, so every version stays. A phase's keys (`r<thread>-f<index>`)
+  include the earlier phases', whose threads are fewer, so the share of its PUTs
+  that the previous phase's threads make of its own write new versions of keys
+  the previous phase got to write before its time limit (an eighth, a quarter,
+  then a half at the default concurrencies), and the rest write a key for the first
+  time; a smoke run, with one concurrency, writes no new version. What ver-put
+  measures is that mix. Its objects a thread are `BENCH_PUT_OBJECTS` times the
+  top concurrency over the sum of the concurrencies, 1 570 at the defaults, so
+  that the versions its phases keep, at most 767 730 of 4 KiB, come to
+  small-put's dataset, which `make bench-plan-check` holds to half the data pool.
+  A multi-object delete would only add delete markers to a versioned bucket, so
+  after the profile the run removes `bench-ver` with `radosgw-admin bucket rm
+  --purge-objects`, which lists every version and deletes them one after
+  another. Nobody has timed that on a cluster. The removal has a bound of its
+  own, 90 minutes; it logs its start, its end and its duration to `run.log`; and
+  the run reads the bucket back with `bucket stats`, since `bucket rm` exits 0
+  when it removes nothing (`docs/ceph-upstream-bugs.md`, "radosgw-admin bucket rm
+  exits 0 when it removes nothing"). `rooket kubectl` exits 1 for any command
+  that fails, so the run looks a bucket up with a shell in the toolbox that runs
+  `bucket stats` and prints its exit status on the last line of its output, and
+  `run.log` records that output. Only status 2, which is what `bucket stats`
+  says of a bucket that does not exist, counts as removed: status 0, a bucket
+  still there, fails the run, and so do any other status, an output that ends
+  in no status and a toolbox that could not run the shell. The same lookup tells
+  which bench buckets there are to empty after each profile and as the run ends,
+  and one that tells nothing fails the run in the same way. A failed removal is
+  not tried again when it ends: remove-user.sh takes the bucket with the user. The
+  smoke run's duration in `run.log` decides whether the bound or the method
+  (`--bypass-gc`, which nobody has run here) changes.
 
 The clusters' one OSD holds 10 GiB, and the parity options leave no garbage
 collector running. A run first collects any garbage left queued and reads the
 data pool's free space, and refuses to start when a profile's dataset, the
 most object data the profile holds at once, is more than half of it; the
 other half is room for the bucket index and the OSD's own metadata. The
-defaults hold at most 3 GiB at once, small-put's 3 000 objects of 4 KiB per
-thread at 256 threads, and 2 GiB in the large profiles, which write one
+defaults hold at most 3 GiB at once, small-put's, comp-small-put's and
+crc-put's 3 000 objects of 4 KiB per thread at 256 threads and ver-put's
+versions, and 2 GiB in the large and comp-large profiles, which write one
 64 MiB object per thread at 32 threads and remove it before the next write.
 After each profile the run removes every bench object and collects the
 garbage, and when it ends it removes the user with its buckets, collects the
@@ -559,13 +644,13 @@ export CGO_CFLAGS=... CGO_LDFLAGS=...   # as for make rgw-go-up; leave GOMAXPROC
 make elbencho
 make cluster-up RELEASE=squid && make populate RELEASE=squid  # a cluster without rgwCommandFlags only
 make rgw-go-up RELEASE=squid && make rgw-go-down RELEASE=squid
-make bench-gateway RELEASE=squid GATEWAY=radosgw     # about 40 minutes
-make bench-gateway RELEASE=squid GATEWAY=rgw-go      # about 40 minutes
+make bench-gateway RELEASE=squid GATEWAY=radosgw     # about 80 minutes, to confirm
+make bench-gateway RELEASE=squid GATEWAY=rgw-go      # about 80 minutes, to confirm
 make gate RELEASE=squid
 make cluster-up RELEASE=tentacle && make populate RELEASE=tentacle  # likewise
 make rgw-go-up RELEASE=tentacle && make rgw-go-down RELEASE=tentacle
-make bench-gateway RELEASE=tentacle GATEWAY=radosgw  # about 40 minutes
-make bench-gateway RELEASE=tentacle GATEWAY=rgw-go   # about 40 minutes
+make bench-gateway RELEASE=tentacle GATEWAY=radosgw  # about 80 minutes, to confirm
+make bench-gateway RELEASE=tentacle GATEWAY=rgw-go   # about 80 minutes, to confirm
 make gate RELEASE=tentacle
 go run ./hack/bench/report gateway --dir hack/bench/out/squid/gateway-radosgw-<time> \
   --dir hack/bench/out/squid/gateway-rgw-go-<time> --out hack/bench/out/squid/gateway.md
@@ -584,6 +669,14 @@ at about 1 600 objects a second: about a minute each for small-get's and
 list's 102 400, and for small-put's however many its phases wrote, up to
 768 000. A phase that finishes its objects first, as small-put's lower
 concurrencies do, is shorter.
+
+Those durations, and the 40 minutes of the six profiles, are the ones before the
+seven after them. Each of those has the phase structure of the profile it
+mirrors, so by the same estimate a run of all thirteen takes about 80 minutes,
+and the versioned bucket's two removals come on top of it, whose time nobody
+has measured. That is an estimate to confirm at the first smoke run and the
+first full run on a cluster, not a measurement; `run.log`'s seconds for the
+removals are the numbers to read.
 
 What shapes the numbers before they are read:
 

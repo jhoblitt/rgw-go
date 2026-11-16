@@ -1,7 +1,6 @@
 package gateway_test
 
 import (
-	"errors"
 	"path/filepath"
 	"strings"
 
@@ -115,9 +114,9 @@ var _ = Describe("the run's waits", func() {
 			Entry("when it lists none", 0, nil,
 				"the service map did not settle to one radosgw in 180s (radosgw entries: []); "+
 					"the manager drops a stopped radosgw within about a minute, so none is running or more than one is"),
-			Entry("when ceph service dump fails", 1, errors.New("exit status 110: timed out"),
+			Entry("when ceph service dump fails", 1, rooketExit{stderr: "timed out"},
 				"the service map did not settle to one radosgw in 180s: ceph service dump failed, so the service map "+
-					"could not be read: exit status 110: timed out"),
+					"could not be read: exit status 1: timed out"),
 		)
 	})
 })

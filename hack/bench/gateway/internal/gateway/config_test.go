@@ -78,7 +78,8 @@ var _ = Describe("Settings.Check", func() {
 		Entry("a release other than squid or tentacle", gateway.Settings{Release: "reef"}, `release "reef" is not squid or tentacle`),
 		Entry("a gateway other than radosgw or rgw-go", gateway.Settings{Gateway: "minio"}, `gateway "minio" is not radosgw or rgw-go`),
 		Entry("an unknown profile", gateway.Settings{Profiles: []string{"small-put", "huge-put"}},
-			"no profile huge-put; the profiles are small-put small-get noop large-put large-get list"),
+			"no profile huge-put; the profiles are small-put small-get noop large-put large-get list "+
+				"comp-small-put comp-small-get comp-large-put comp-large-get crc-put ver-put ver-get"),
 		Entry("a profile given twice, whose second run would append to the first's results",
 			gateway.Settings{Profiles: []string{"noop", "list", "noop"}}, "profile noop is given twice"),
 		Entry("BENCH_SMOKE=yes, which must not start a full run", gateway.Settings{Smoke: "yes"},
@@ -137,7 +138,32 @@ var _ = Describe("Config", func() {
 		Entry("large-get's read set", gateway.Settings{LargeThreads: "4"}, "large-get", int64(4*64<<20)),
 		Entry("noop, which writes nothing", gateway.Settings{}, "noop", int64(0)),
 		Entry("list, whose keys are empty", gateway.Settings{}, "list", int64(0)),
+		Entry("comp-small-put, small-put's keys written through the class", gateway.Settings{Conc: "8 64 1"}, "comp-small-put", int64(64*3000*4096)),
+		Entry("comp-small-get's read set", gateway.Settings{GetObjects: "10"}, "comp-small-get", int64(256*10*4096)),
+		Entry("comp-large-put, one write of 64 MiB objects at a time", gateway.Settings{LargeObjects: "2"}, "comp-large-put", int64(32*2*64<<20)),
+		Entry("comp-large-get's read set", gateway.Settings{LargeThreads: "4"}, "comp-large-get", int64(4*64<<20)),
+		Entry("crc-put at the top concurrency's keys", gateway.Settings{Conc: "8 64 1"}, "crc-put", int64(64*3000*4096)),
+		Entry("ver-put, whose phases' versions all stay", gateway.Settings{Conc: "8 64 1"}, "ver-put", int64(73*2630*4096)),
+		Entry("ver-get's read set", gateway.Settings{GetObjects: "10"}, "ver-get", int64(256*10*4096)),
 	)
+
+	DescribeTable("shares small-put's keys among the versions ver-put's phases keep",
+		func(s gateway.Settings, want int64) {
+			Expect(config(s).VerObjects()).To(Equal(want))
+		},
+		Entry("the defaults, which keep small-put's dataset", gateway.Settings{}, int64(1570)),
+		Entry("a smoke run's one concurrency, whose keys are small-put's", gateway.Settings{Smoke: "1"}, int64(3000)),
+		Entry("two concurrencies", gateway.Settings{Conc: "1 8", PutObjects: "900"}, int64(800)),
+		Entry("fewer keys than threads, which still write one each", gateway.Settings{Conc: "1 2 3 4 5 6 7 8 9 10", PutObjects: "1"}, int64(1)),
+	)
+
+	It("takes small-put's six profiles first and the seven added after them, all by default", func() {
+		Expect(gateway.Profiles).To(Equal([]string{
+			"small-put", "small-get", "noop", "large-put", "large-get", "list",
+			"comp-small-put", "comp-small-get", "comp-large-put", "comp-large-get", "crc-put", "ver-put", "ver-get",
+		}))
+		Expect(config(gateway.Settings{}).Profiles).To(Equal(gateway.Profiles))
+	})
 
 	It("writes the defaults' plan as traced", func() {
 		var b strings.Builder
@@ -155,20 +181,27 @@ var _ = Describe("Config", func() {
 		var b strings.Builder
 		Expect(config(gateway.Settings{}).WritePlan(&b, 4000000000)).To(BeFalse())
 		Expect(b.String()).To(Equal(
-			"small-put dataset  3145728000 B, needs  6291456000 B of  4000000000 B free: DOES NOT FIT\n" +
-				"small-get dataset   419430400 B, needs   838860800 B of  4000000000 B free: fits\n" +
-				"noop      dataset           0 B, needs           0 B of  4000000000 B free: fits\n" +
-				"large-put dataset  2147483648 B, needs  4294967296 B of  4000000000 B free: DOES NOT FIT\n" +
-				"large-get dataset  2147483648 B, needs  4294967296 B of  4000000000 B free: DOES NOT FIT\n" +
-				"list      dataset           0 B, needs           0 B of  4000000000 B free: fits\n"))
+			"small-put      dataset  3145728000 B, needs  6291456000 B of  4000000000 B free: DOES NOT FIT\n" +
+				"small-get      dataset   419430400 B, needs   838860800 B of  4000000000 B free: fits\n" +
+				"noop           dataset           0 B, needs           0 B of  4000000000 B free: fits\n" +
+				"large-put      dataset  2147483648 B, needs  4294967296 B of  4000000000 B free: DOES NOT FIT\n" +
+				"large-get      dataset  2147483648 B, needs  4294967296 B of  4000000000 B free: DOES NOT FIT\n" +
+				"list           dataset           0 B, needs           0 B of  4000000000 B free: fits\n" +
+				"comp-small-put dataset  3145728000 B, needs  6291456000 B of  4000000000 B free: DOES NOT FIT\n" +
+				"comp-small-get dataset   419430400 B, needs   838860800 B of  4000000000 B free: fits\n" +
+				"comp-large-put dataset  2147483648 B, needs  4294967296 B of  4000000000 B free: DOES NOT FIT\n" +
+				"comp-large-get dataset  2147483648 B, needs  4294967296 B of  4000000000 B free: DOES NOT FIT\n" +
+				"crc-put        dataset  3145728000 B, needs  6291456000 B of  4000000000 B free: DOES NOT FIT\n" +
+				"ver-put        dataset  3144622080 B, needs  6289244160 B of  4000000000 B free: DOES NOT FIT\n" +
+				"ver-get        dataset   419430400 B, needs   838860800 B of  4000000000 B free: fits\n"))
 	})
 
 	It("plans only the profiles given, in their order", func() {
 		var b strings.Builder
 		Expect(config(gateway.Settings{Profiles: []string{"list", "large-get"}}).WritePlan(&b, 8220119040)).To(BeTrue())
 		Expect(b.String()).To(Equal(
-			"list      dataset           0 B, needs           0 B of  8220119040 B free: fits\n" +
-				"large-get dataset  2147483648 B, needs  4294967296 B of  8220119040 B free: fits\n"))
+			"list           dataset           0 B, needs           0 B of  8220119040 B free: fits\n" +
+				"large-get      dataset  2147483648 B, needs  4294967296 B of  8220119040 B free: fits\n"))
 	})
 
 	It("names the run directory for the gateway and the run's UTC start", func() {

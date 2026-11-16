@@ -86,7 +86,7 @@ var _ = Describe("Run", func() {
 		GinkgoT().Setenv("BENCH_IDLE_AVAIL", "4000000000")
 		Expect(run(ctx, "tentacle", "radosgw", "small-put")).To(MatchError(
 			"a profile's dataset is more than half of 4000000000 B: lower its threads or objects"))
-		Expect(stdout.String()).To(Equal("small-put dataset  3145728000 B, needs  6291456000 B of  4000000000 B free: DOES NOT FIT\n"))
+		Expect(stdout.String()).To(Equal("small-put      dataset  3145728000 B, needs  6291456000 B of  4000000000 B free: DOES NOT FIT\n"))
 		untouched()
 	})
 
@@ -102,15 +102,17 @@ var _ = Describe("Run", func() {
 			untouched()
 		},
 		Entry("BENCH_CONC, whose top concurrency sizes small-put", "BENCH_CONC", "8 64", "small-put",
-			"small-put dataset   786432000 B, needs  1572864000 B of 99999999999 B free: fits\n"),
+			"small-put      dataset   786432000 B, needs  1572864000 B of 99999999999 B free: fits\n"),
 		Entry("BENCH_PUT_OBJECTS", "BENCH_PUT_OBJECTS", "100", "small-put",
-			"small-put dataset   104857600 B, needs   209715200 B of 99999999999 B free: fits\n"),
+			"small-put      dataset   104857600 B, needs   209715200 B of 99999999999 B free: fits\n"),
+		Entry("BENCH_PUT_OBJECTS, which ver-put shares among its phases' versions", "BENCH_PUT_OBJECTS", "100", "ver-put",
+			"ver-put        dataset   104153088 B, needs   208306176 B of 99999999999 B free: fits\n"),
 		Entry("BENCH_GET_OBJECTS", "BENCH_GET_OBJECTS", "100", "small-get",
-			"small-get dataset   104857600 B, needs   209715200 B of 99999999999 B free: fits\n"),
+			"small-get      dataset   104857600 B, needs   209715200 B of 99999999999 B free: fits\n"),
 		Entry("BENCH_LARGE_THREADS", "BENCH_LARGE_THREADS", "8", "large-put",
-			"large-put dataset   536870912 B, needs  1073741824 B of 99999999999 B free: fits\n"),
+			"large-put      dataset   536870912 B, needs  1073741824 B of 99999999999 B free: fits\n"),
 		Entry("BENCH_LARGE_OBJECTS", "BENCH_LARGE_OBJECTS", "3", "large-get",
-			"large-get dataset  6442450944 B, needs 12884901888 B of 99999999999 B free: fits\n"),
+			"large-get      dataset  6442450944 B, needs 12884901888 B of 99999999999 B free: fits\n"),
 	)
 
 	// The settings the plan does not show reach the commands of a run.
@@ -201,14 +203,14 @@ var _ = Describe("Run", func() {
 		GinkgoT().Setenv("BENCH_IDLE_AVAIL", "8220119040")
 		GinkgoT().Setenv("BENCH_PUT_OBJECTS", "100")
 		Expect(run(ctx, "tentacle", "radosgw", "small-put", "--put-objects", "200")).To(Succeed())
-		Expect(stdout.String()).To(HavePrefix("small-put dataset   209715200 B"))
+		Expect(stdout.String()).To(HavePrefix("small-put      dataset   209715200 B"))
 	})
 
 	It("logs the run to stderr and run.log, and prints the plan, the phases and the report's answer", func(ctx SpecContext) {
 		GinkgoT().Setenv("BENCH_SMOKE", "1")
 		Expect(run(ctx, "tentacle", "rgw-go", "list")).To(Succeed())
 		Expect(stderr.String()).To(ContainSubstring(`"msg":"profile done","profile":"list"`))
-		Expect(stdout.String()).To(Equal("list      dataset           0 B, needs           0 B of  8220119040 B free: fits\n" +
+		Expect(stdout.String()).To(Equal("list           dataset           0 B, needs           0 B of  8220119040 B free: fits\n" +
 			"elbencho done\nelbencho done\n" + filepath.Join(w.dir(), "REPORT.md") + ": no phase had an error or a retry\n"))
 		Expect(w.readFile("run.log")).To(ContainSubstring(`"msg":"profile done","profile":"list"`))
 	})
@@ -239,7 +241,8 @@ var _ = Describe("Run", func() {
 		Entry("a BENCH_LIST_OBJECTS that is no count", map[string]string{"BENCH_LIST_OBJECTS": "lots"},
 			[]string{"tentacle", "rgw-go"}, "BENCH_LIST_OBJECTS is 'lots', not a positive count of at most 9 digits"),
 		Entry("an unknown profile", nil, []string{"tentacle", "rgw-go", "small-put", "mixed"},
-			"no profile mixed; the profiles are small-put small-get noop large-put large-get list"),
+			"no profile mixed; the profiles are small-put small-get noop large-put large-get list "+
+				"comp-small-put comp-small-get comp-large-put comp-large-get crc-put ver-put ver-get"),
 		Entry("an unknown gateway", nil, []string{"tentacle", "minio"}, `gateway "minio" is not radosgw or rgw-go`),
 		Entry("an unknown release", nil, []string{"reef", "radosgw"}, `release "reef" is not squid or tentacle`),
 		Entry("no gateway", nil, []string{"tentacle"}, "requires at least 2 arg(s), only received 1"),

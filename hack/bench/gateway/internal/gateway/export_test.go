@@ -4,7 +4,25 @@ import (
 	"context"
 	"log/slog"
 	"time"
+
+	"github.com/jhoblitt/rgw-go/hack/internal/harness"
 )
+
+// LookupScript is the bucket lookup's script, so that a fake toolbox can
+// answer it.
+const LookupScript = lookupScript
+
+// LookUpBucket is the lookup of bucket that the removal of the bench objects
+// and the versioned bucket's read-back make, through ex as the toolbox of the
+// site realm r, zonegroup zg and zone z.
+func LookUpBucket(ctx context.Context, ex harness.Execer, bucket string) (bool, error) {
+	st := &state{
+		cl:   harness.Cluster{Exec: ex, Rooket: "rooket", Release: "tentacle", CallTimeout: time.Minute},
+		site: site{realm: "r", zonegroup: "zg", zone: "z"},
+		out:  slog.New(slog.DiscardHandler),
+	}
+	return st.bucketExists(ctx, bucket)
+}
 
 // RunWith is Run with adjust applied to the Runner before it runs, so that a
 // spec can replace its seams with fakes.

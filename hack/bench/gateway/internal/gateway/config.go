@@ -19,11 +19,31 @@ import (
 
 // Profiles are the comparison's profiles, in the order a run without any
 // named takes them.
-var Profiles = []string{"small-put", "small-get", "noop", "large-put", "large-get", "list"}
+var Profiles = []string{
+	"small-put", "small-get", "noop", "large-put", "large-get", "list",
+	"comp-small-put", "comp-small-get", "comp-large-put", "comp-large-get", "crc-put", "ver-put", "ver-get",
+}
+
+var (
+	// compProfiles write through compClass.
+	compProfiles = []string{"comp-small-put", "comp-small-get", "comp-large-put", "comp-large-get"}
+	// sendProfiles send a request elbencho cannot, and so need s3send.
+	sendProfiles = append(slices.Clone(compProfiles), "crc-put", "ver-put", "ver-get")
+)
 
 const (
 	objSmall = 4 << 10
 	objLarge = 64 << 20
+	// objLargePart is the part size of large-put's multipart write.
+	objLargePart = 8 << 20
+
+	// compClass is the storage class the comp profiles write through, one of
+	// the classes make populate adds to the default placement with a
+	// compressor of its own (hack/rooket/populate.sh).
+	compClass = "COMP_ZLIB"
+	// verBucket is the versioned bucket, which no profile can empty with a
+	// multi-object delete.
+	verBucket = "bench-ver"
 
 	defaultSeconds      = 60
 	defaultPutObjects   = 3000
@@ -269,11 +289,37 @@ func (c Config) Top() int64 {
 	return slices.Max(c.Conc)
 }
 
+// VerObjects is ver-put's objects per thread at every concurrency. A versioned
+// bucket keeps each version, so the objects every phase writes add to those of
+// the phases before it instead of replacing them, and the phases together
+// write what small-put's top concurrency does: BENCH_PUT_OBJECTS objects for
+// each of the top concurrency's threads, shared among the concurrencies'
+// threads, at least one each.
+func (c Config) VerObjects() int64 {
+	return max(c.Top()*c.PutObjects/c.threadSum(), 1)
+}
+
+// threadSum is the threads of all the concurrencies together.
+func (c Config) threadSum() int64 {
+	var sum int64
+	for _, t := range c.Conc {
+		sum += t
+	}
+	return sum
+}
+
+// uses reports whether the run takes any of profiles.
+func (c Config) uses(profiles []string) bool {
+	return slices.ContainsFunc(c.Profiles, func(p string) bool { return slices.Contains(profiles, p) })
+}
+
 // Dataset is the bytes of object data profile holds at once, from the
 // threads, objects per thread and object size its commands use. A lower
 // concurrency's keys are among the top one's, since elbencho names an object
-// by its thread's rank and its index, r<rank>-f<index>; the large profiles
-// remove each write's objects before the next; list's keys are empty.
+// by its thread's rank and its index, r<rank>-f<index>, and s3send names them
+// the same; the large profiles remove each write's objects before the next;
+// list's keys are empty. Compression is not counted: a profile's dataset is
+// the bytes before the codec.
 func (c Config) Dataset(profile string) int64 {
 	n, _ := c.dataset(profile)
 	return n
@@ -283,12 +329,15 @@ func (c Config) Dataset(profile string) int64 {
 func (c Config) dataset(profile string) (int64, bool) {
 	var factors []int64
 	switch profile {
-	case "small-put":
+	case "small-put", "comp-small-put", "crc-put":
 		factors = []int64{c.Top(), c.PutObjects, objSmall}
-	case "small-get":
+	case "small-get", "comp-small-get", "ver-get":
 		factors = []int64{c.Top(), c.GetObjects, objSmall}
-	case "large-put", "large-get":
+	case "large-put", "large-get", "comp-large-put", "comp-large-get":
 		factors = []int64{c.LargeThreads, c.LargeObjects, objLarge}
+	case "ver-put":
+		// Every phase's versions stay: the threads of all the phases write.
+		factors = []int64{c.threadSum(), c.VerObjects(), objSmall}
 	default:
 		return 0, true
 	}
@@ -313,10 +362,20 @@ func (c Config) WritePlan(w io.Writer, free int64) bool {
 		if need > free {
 			verdict, fits = "DOES NOT FIT", false
 		}
-		fmt.Fprintf(w, "%-9s dataset %11d B, needs %11d B of %11d B free: %s\n", p, bytes, need, free, verdict)
+		fmt.Fprintf(w, "%-*s dataset %11d B, needs %11d B of %11d B free: %s\n", planNameWidth, p, bytes, need, free, verdict)
 	}
 	return fits
 }
+
+// planNameWidth is the width of the profile names' column in the plan: the
+// longest profile name.
+var planNameWidth = func() int {
+	width := 0
+	for _, p := range Profiles {
+		width = max(width, len(p))
+	}
+	return width
+}()
 
 // clusterOut is the release's rooket output: its ceph.conf, image,
 // manifest.json and, while one runs, the rgw-go's endpoint, metrics address,

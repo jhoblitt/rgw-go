@@ -11,6 +11,9 @@
 //	config.json             the parity options as each gateway's entity holds them
 //	<profile>.json, .csv    elbencho's results, one line per measured phase
 //	noop-<t>.json           httpload's result at t goroutines
+//	<profile>-<label>.json  s3send's result of a measured phase: the comp-small-put and
+//	                        crc-put profiles' at t goroutines (label t), comp-large-put's
+//	                        whole objects (whole) and parts (parts)
 //	<profile>.log           what elbencho, httpload and the preparation printed
 //	samples-<profile>.csv   the gateway process once a second
 //	cpu-<profile>.pprof     rgw-go only: a CPU profile of the profile's last phase
@@ -28,6 +31,49 @@
 //	large-get  64 MiB objects read in 4 MiB ranges and whole, looping over a set written first
 //	list       ListObjectsV2 over BENCH_LIST_THREADS * BENCH_LIST_OBJECTS keys, from one
 //	           thread and with one prefix per thread
+//
+// and, after those, the profiles for a compressing storage class, a CRC32 and a
+// versioned bucket:
+//
+//	comp-small-put  small-put's PUTs into the storage class COMP_ZLIB, which compresses, of
+//	                bytes that deflate halves, sent by s3send
+//	comp-small-get  small-get's GETs of a read set s3send wrote through that class first
+//	comp-large-put  large-put's PUTs, whole and in 8 MiB parts, through that class, sent by
+//	                s3send
+//	comp-large-get  large-get's reads of a set s3send wrote through that class first
+//	crc-put         small-put's PUTs, each carrying a CRC32 in the form botocore sends by
+//	                default, sent by s3send
+//	ver-put         4 KiB PUTs into a bucket whose versioning is on, at each concurrency.
+//	                A phase's keys include the earlier phases', whose threads are fewer, so
+//	                the share of its PUTs that the previous phase's threads make of its own
+//	                write new versions of keys the previous phase got to write before its
+//	                time limit, and the rest write a key for the first time; a run of one
+//	                concurrency writes no new version. Its objects a thread are
+//	                BENCH_PUT_OBJECTS * the top concurrency / the sum of the concurrencies,
+//	                so that all the versions its phases keep come to small-put's dataset
+//	ver-get         small-get's GETs of a read set written into that bucket first
+//
+// elbencho sends the reads and the versioned puts. It cannot send the rest: it has no option
+// for a storage class, it runs the AWS SDK with its default checksums off, and at the pinned
+// commit its create phase sets a bucket's versioning to Suspended, and only its delete phase
+// sets Enabled, in the run that deletes the bucket. So hack/bench/s3send sends the puts
+// through the class, the puts carrying a CRC32 and the PutBucketVersioning that turns the
+// versioned bucket's versioning on. s3send names an object as elbencho names the objects of
+// its ranks, so an elbencho read phase over the same threads and objects reads what s3send
+// wrote. A run of the comp profiles first reads the zone and refuses unless the default
+// placement holds the class with a compressor, which make populate gives it; the class is
+// COMP_ZLIB and env.json records it.
+//
+// The versioned bucket, bench-ver, is made unversioned by elbencho's create phase and set
+// versioned by s3send, in the profile's preparation. A multi-object delete would only add
+// delete markers to it, so the run removes it with radosgw-admin bucket rm --purge-objects,
+// which lists every version, and the profile's preparation makes it again. radosgw-admin
+// removes the versions one after another, and no run has timed it: the removal has a bound of
+// its own, ninety minutes, and logs its start, its end and its duration to run.log. It exits
+// 0 when it removes nothing, so the run reads the bucket back and fails when it is still
+// there. A failed removal is not tried again when the run ends, which leaves the bucket to
+// remove-user.sh. The smoke run's duration in run.log decides whether the bound or the
+// method, radosgw-admin's --bypass-gc, changes.
 //
 // Every measured phase is bounded by BENCH_SECONDS; a phase that finishes its
 // objects first ends early. A read phase loops over objects written for it
@@ -98,9 +144,11 @@
 // No command can hang the run: each runs in a process group of its own,
 // killed whole past its bound: three minutes a call to the cluster, ten
 // seconds a read of the radosgw pod's process, BENCH_SECONDS and five minutes
-// a measured phase, an httpload run or a CPU profile, thirty minutes each
-// unmeasured elbencho command, a preparation or a removal, remove-user.sh,
+// a measured phase, an httpload or s3send run or a CPU profile, thirty minutes
+// each unmeasured elbencho or s3send command, a preparation or a removal,
+// remove-user.sh,
 // and the OSD's compaction, which returns only once the OSD has compacted,
+// ninety minutes the versioned bucket's removal,
 // fifteen minutes each go build, the report and rgw-go-up.sh, which can
 // restart the radosgw, an hour elbencho's build, two minutes rgw-go-down.sh,
 // and one minute each other command on this host.
@@ -108,11 +156,14 @@
 // Environment, each also a flag (--help lists them):
 //
 //	BENCH_SECONDS        each measured phase's time limit (60)
-//	BENCH_CONC           the small and noop profiles' concurrencies ("1 8 32 64 128 256")
-//	BENCH_PUT_OBJECTS    small-put's objects per thread (3000)
-//	BENCH_GET_OBJECTS    small-get's read set, objects per thread at the highest concurrency (400)
-//	BENCH_LARGE_THREADS  the large profiles' threads (32)
-//	BENCH_LARGE_OBJECTS  the large profiles' objects per thread (1)
+//	BENCH_CONC           the small, noop, comp-small, crc and ver profiles' concurrencies
+//	                     ("1 8 32 64 128 256")
+//	BENCH_PUT_OBJECTS    small-put's, comp-small-put's and crc-put's objects per thread (3000),
+//	                     and what ver-put's are shared from
+//	BENCH_GET_OBJECTS    small-get's, comp-small-get's and ver-get's read set, objects per
+//	                     thread at the highest concurrency (400)
+//	BENCH_LARGE_THREADS  the large and comp-large profiles' threads (32)
+//	BENCH_LARGE_OBJECTS  the large and comp-large profiles' objects per thread (1)
 //	BENCH_LIST_THREADS   the list profile's threads (64)
 //	BENCH_LIST_OBJECTS   the list profile's keys per thread (1600)
 //	BENCH_SMOKE=1        a run that only proves the tooling: 5 s phases, BENCH_CONC=8, 50

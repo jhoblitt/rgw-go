@@ -16,13 +16,33 @@ import (
 	"github.com/jhoblitt/rgw-go/hack/internal/harness"
 )
 
+// requestTimeout is how long a request of elbencho's or s3send's may move no
+// byte before it is an error: elbencho's --s3reqtimeout fails a request that
+// transferred nothing for that long, and s3send's -request-timeout one that
+// sent none of its body and received none of its answer, so that a gateway
+// that stops answering some threads fails the phase in place of leaving a
+// lower rate, and a slow one is measured.
+const requestTimeout = 30 * time.Second
+
 // el is elbencho against endpoint as bench, without live statistics.
 func (st *state) el(endpoint string, args ...string) harness.Cmd {
 	return harness.Cmd{
 		Name: st.elbencho,
 		Args: append([]string{
 			"--s3endpoints", endpoint, "--s3key", benchKey, "--s3region", st.apiName,
-			"--s3nocompress", "--s3reqtimeout", "30000", "--nolive",
+			"--s3nocompress", "--s3reqtimeout", strconv.FormatInt(requestTimeout.Milliseconds(), 10), "--nolive",
+		}, args...),
+		Env: []string{"AWS_SECRET_ACCESS_KEY=" + benchSecret},
+	}
+}
+
+// send is s3send against endpoint as bench; like elbencho's, its secret
+// reaches it through the environment.
+func (st *state) send(endpoint string, args ...string) harness.Cmd {
+	return harness.Cmd{
+		Name: st.s3send,
+		Args: append([]string{
+			"-endpoint", endpoint, "-key", benchKey, "-region", st.apiName, "-request-timeout", requestTimeout.String(),
 		}, args...),
 		Env: []string{"AWS_SECRET_ACCESS_KEY=" + benchSecret},
 	}
@@ -58,6 +78,20 @@ func (r *Runner) runProfile(ctx context.Context, st *state, name string) (err er
 		return p.largePut(ctx)
 	case "large-get":
 		return p.largeGet(ctx)
+	case "comp-small-put":
+		return p.smallSendPut(ctx, "-storage-class", compClass, "-compressible")
+	case "comp-small-get":
+		return p.compSmallGet(ctx)
+	case "comp-large-put":
+		return p.compLargePut(ctx)
+	case "comp-large-get":
+		return p.compLargeGet(ctx)
+	case "crc-put":
+		return p.smallSendPut(ctx, "-checksum", "crc32")
+	case "ver-put":
+		return p.verPut(ctx)
+	case "ver-get":
+		return p.verGet(ctx)
 	default:
 		return p.list(ctx)
 	}
@@ -74,8 +108,16 @@ func (p *profileRun) quiet(ctx context.Context) error {
 // after it keeps its CPU out of the samples the next phase's is read
 // between.
 func (p *profileRun) prep(ctx context.Context, what string, args ...string) error {
+	return p.prepCmd(ctx, what, p.st.el(p.st.endpoint, args...))
+}
+
+// prepSend is prep for an s3send command.
+func (p *profileRun) prepSend(ctx context.Context, what string, args ...string) error {
+	return p.prepCmd(ctx, what, p.st.send(p.st.endpoint, args...))
+}
+
+func (p *profileRun) prepCmd(ctx context.Context, what string, c harness.Cmd) error {
 	p.st.log.InfoContext(ctx, "prep", slog.String("profile", p.name), slog.String("what", what))
-	c := p.st.el(p.st.endpoint, args...)
 	c.Out = p.log
 	if _, err := harness.Output(ctx, p.r.Exec, p.r.PrepTimeout, c); err != nil {
 		return fmt.Errorf("%s: %s failed; see %s: %w", p.name, what, p.logPath, err)
@@ -88,16 +130,32 @@ func (p *profileRun) prep(ctx context.Context, what string, args ...string) erro
 // is profiled through.
 func (p *profileRun) phase(ctx context.Context, last bool, args ...string) error {
 	p.st.log.InfoContext(ctx, "phase", slog.String("profile", p.name), slog.String("elbencho", strings.Join(args, " ")))
-	if last {
-		p.r.startProfile(ctx, p.st, p.name)
-	}
 	c := p.st.el(p.st.endpoint, append([]string{
 		"--lat", "--latpercent", "--latpercent9s", "1", "--lathisto",
 		"--csvfile", filepath.Join(p.st.dir, p.name+".csv"), "--jsonfile", filepath.Join(p.st.dir, p.name+".json"),
 	}, args...)...)
+	return p.measure(ctx, last, c, "elbencho "+strings.Join(args, " "))
+}
+
+// sendPhase runs one measured s3send put bounded by BENCH_SECONDS, its result
+// in <profile>-<label>.json; last is as phase's.
+func (p *profileRun) sendPhase(ctx context.Context, last bool, label string, args ...string) error {
+	p.st.log.InfoContext(ctx, "phase", slog.String("profile", p.name), slog.String("s3send", strings.Join(args, " ")))
+	c := p.st.send(p.st.endpoint, append([]string{
+		"-op", "put", "-duration", itoa(p.st.cfg.Seconds) + "s", "-out", filepath.Join(p.st.dir, p.name+"-"+label+".json"),
+	}, args...)...)
+	return p.measure(ctx, last, c, "s3send "+strings.Join(args, " "))
+}
+
+// measure runs c, a measured phase, taking rgw-go's CPU profile through it
+// when it is the profile's last.
+func (p *profileRun) measure(ctx context.Context, last bool, c harness.Cmd, what string) error {
+	if last {
+		p.r.startProfile(ctx, p.st, p.name)
+	}
 	c.Out = io.MultiWriter(p.log, p.r.Stdout)
 	if _, err := harness.Output(ctx, p.r.Exec, p.r.phaseTimeout(p.st), c); err != nil {
-		return fmt.Errorf("%s: elbencho %s failed: %w", p.name, strings.Join(args, " "), err)
+		return fmt.Errorf("%s: %s failed: %w", p.name, what, err)
 	}
 	if last {
 		if err := p.r.waitProfile(ctx, p.st); err != nil {
@@ -149,9 +207,16 @@ func (p *profileRun) smallGet(ctx context.Context) error {
 		"-d", "-w", "-t", itoa(cfg.Top()), "-n", "0", "-N", itoa(cfg.GetObjects), "-s", "4k", "-b", "4k", "bench-small"); err != nil {
 		return err
 	}
+	return p.readSmall(ctx, "bench-small")
+}
+
+// readSmall GETs 4 KiB objects of bucket at each concurrency, looping over the
+// read set already written.
+func (p *profileRun) readSmall(ctx context.Context, bucket string) error {
+	cfg := p.st.cfg
 	for i, t := range cfg.Conc {
 		if err := p.phase(ctx, i == len(cfg.Conc)-1, "-r", "-t", itoa(t), "-n", "0", "-N", itoa(cfg.GetObjects),
-			"-s", "4k", "-b", "4k", "--timelimit", itoa(cfg.Seconds), "--infloop", "bench-small"); err != nil {
+			"-s", "4k", "-b", "4k", "--timelimit", itoa(cfg.Seconds), "--infloop", bucket); err != nil {
 			return err
 		}
 	}
@@ -194,15 +259,42 @@ func (p *profileRun) largePut(ctx context.Context) error {
 	if err := p.prep(ctx, "creating bench-large and bench-large-mpu", "-d", "-t", "1", "bench-large", "bench-large-mpu"); err != nil {
 		return err
 	}
-	for _, w := range []struct {
-		bucket, block string
-		last          bool
-	}{{"bench-large", "64m", false}, {"bench-large-mpu", "8m", true}} {
+	return p.largeWrites(ctx, func(w largeWrite) error {
+		return p.phase(ctx, w.last, "-w", "-t", itoa(cfg.LargeThreads), "-n", "0", "-N", itoa(cfg.LargeObjects),
+			"-s", "64m", "-b", w.block, "--timelimit", itoa(cfg.Seconds), w.bucket)
+	})
+}
+
+// largeWrite is one of a large profile's two writes: 64 MiB objects whole,
+// then in 8 MiB parts, which are the last measured, so rgw-go is profiled
+// through them.
+type largeWrite struct {
+	bucket string
+	// block is elbencho's -b: the object, or its parts.
+	block string
+	parts bool
+	last  bool
+}
+
+// label names the write in the file of an s3send result.
+func (w largeWrite) label() string {
+	if w.parts {
+		return "parts"
+	}
+	return "whole"
+}
+
+// largeWrites runs write once for each of the two, each time with the space
+// it needs free and its objects removed after it.
+func (p *profileRun) largeWrites(ctx context.Context, write func(largeWrite) error) error {
+	for _, w := range []largeWrite{
+		{"bench-large", "64m", false, false},
+		{"bench-large-mpu", "8m", true, true},
+	} {
 		if err := p.r.needSpace(ctx, p.st, p.name); err != nil {
 			return err
 		}
-		if err := p.phase(ctx, w.last, "-w", "-t", itoa(cfg.LargeThreads), "-n", "0", "-N", itoa(cfg.LargeObjects),
-			"-s", "64m", "-b", w.block, "--timelimit", itoa(cfg.Seconds), w.bucket); err != nil {
+		if err := write(w); err != nil {
 			return err
 		}
 		if err := p.removeLarge(ctx, w.bucket); err != nil {
@@ -223,6 +315,13 @@ func (p *profileRun) largeGet(ctx context.Context) error {
 		"-d", "-w", "-t", itoa(cfg.LargeThreads), "-n", "0", "-N", itoa(cfg.LargeObjects), "-s", "64m", "-b", "64m", "bench-large"); err != nil {
 		return err
 	}
+	return p.readLarge(ctx)
+}
+
+// readLarge reads the 64 MiB objects of bench-large in 4 MiB ranges and
+// whole, looping over the set already written, and removes them.
+func (p *profileRun) readLarge(ctx context.Context) error {
+	cfg := p.st.cfg
 	for _, read := range []struct {
 		block string
 		last  bool
@@ -233,6 +332,131 @@ func (p *profileRun) largeGet(ctx context.Context) error {
 		}
 	}
 	return p.removeLarge(ctx, "bench-large")
+}
+
+// smallSendPut PUTs 4 KiB objects with s3send at each concurrency,
+// BENCH_PUT_OBJECTS per thread, with the s3send flags extra adds: the storage
+// class or the checksum that elbencho cannot send.
+func (p *profileRun) smallSendPut(ctx context.Context, extra ...string) error {
+	cfg := p.st.cfg
+	if err := p.r.needSpace(ctx, p.st, p.name); err != nil {
+		return err
+	}
+	if err := p.prep(ctx, "creating bench-small", "-d", "-t", "1", "bench-small"); err != nil {
+		return err
+	}
+	for i, t := range cfg.Conc {
+		args := []string{"-bucket", "bench-small", "-threads", itoa(t), "-objects", itoa(cfg.PutObjects), "-size", itoa(objSmall)}
+		if err := p.sendPhase(ctx, i == len(cfg.Conc)-1, itoa(t), append(args, extra...)...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// compSmallGet GETs 4 KiB objects at each concurrency, looping over a read
+// set s3send wrote through compClass first; the reads are small-get's.
+func (p *profileRun) compSmallGet(ctx context.Context) error {
+	cfg := p.st.cfg
+	if err := p.r.needSpace(ctx, p.st, p.name); err != nil {
+		return err
+	}
+	if err := p.prep(ctx, "creating bench-small", "-d", "-t", "1", "bench-small"); err != nil {
+		return err
+	}
+	if err := p.prepSend(ctx, fmt.Sprintf("writing %d x %d objects of 4 KiB through %s to read", cfg.Top(), cfg.GetObjects, compClass),
+		"-op", "put", "-bucket", "bench-small", "-threads", itoa(cfg.Top()), "-objects", itoa(cfg.GetObjects), "-size", itoa(objSmall),
+		"-storage-class", compClass, "-compressible"); err != nil {
+		return err
+	}
+	return p.readSmall(ctx, "bench-small")
+}
+
+// compLargePut PUTs 64 MiB objects through compClass, whole and in 8 MiB
+// parts, each write's objects removed after it.
+func (p *profileRun) compLargePut(ctx context.Context) error {
+	cfg := p.st.cfg
+	if err := p.prep(ctx, "creating bench-large and bench-large-mpu", "-d", "-t", "1", "bench-large", "bench-large-mpu"); err != nil {
+		return err
+	}
+	return p.largeWrites(ctx, func(w largeWrite) error {
+		args := []string{
+			"-bucket", w.bucket, "-threads", itoa(cfg.LargeThreads), "-objects", itoa(cfg.LargeObjects), "-size", itoa(objLarge),
+			"-storage-class", compClass, "-compressible",
+		}
+		if w.parts {
+			args = append(args, "-block", itoa(objLargePart))
+		}
+		return p.sendPhase(ctx, w.last, w.label(), args...)
+	})
+}
+
+// compLargeGet reads 64 MiB objects in 4 MiB ranges and whole, looping over a
+// set s3send wrote through compClass first; the reads are large-get's.
+func (p *profileRun) compLargeGet(ctx context.Context) error {
+	cfg := p.st.cfg
+	if err := p.r.needSpace(ctx, p.st, p.name); err != nil {
+		return err
+	}
+	if err := p.prep(ctx, "creating bench-large", "-d", "-t", "1", "bench-large"); err != nil {
+		return err
+	}
+	if err := p.prepSend(ctx, fmt.Sprintf("writing %d x %d objects of 64 MiB through %s to read", cfg.LargeThreads, cfg.LargeObjects, compClass),
+		"-op", "put", "-bucket", "bench-large", "-threads", itoa(cfg.LargeThreads), "-objects", itoa(cfg.LargeObjects), "-size", itoa(objLarge),
+		"-storage-class", compClass, "-compressible"); err != nil {
+		return err
+	}
+	return p.readLarge(ctx)
+}
+
+// versionedBucket makes verBucket and turns its versioning on, which
+// elbencho cannot leave on.
+func (p *profileRun) versionedBucket(ctx context.Context) error {
+	if err := p.prep(ctx, "creating "+verBucket, "-d", "-t", "1", verBucket); err != nil {
+		return err
+	}
+	return p.prepSend(ctx, "enabling versioning on "+verBucket, "-op", "versioning", "-bucket", verBucket)
+}
+
+// verPut PUTs 4 KiB objects into the versioned bucket at each concurrency,
+// Config.VerObjects per thread. A phase's keys, by thread and index, include
+// the earlier phases', whose threads are fewer: of a phase's PUTs the share
+// its predecessor's threads make of its own are of keys the previous phase may
+// have written, new versions if it did before its time limit, and the rest
+// write a key for the first time. A run of one concurrency writes no new
+// version, so what ver-put measures is that mix.
+func (p *profileRun) verPut(ctx context.Context) error {
+	cfg := p.st.cfg
+	if err := p.r.needSpace(ctx, p.st, p.name); err != nil {
+		return err
+	}
+	if err := p.versionedBucket(ctx); err != nil {
+		return err
+	}
+	for i, t := range cfg.Conc {
+		if err := p.phase(ctx, i == len(cfg.Conc)-1, "-w", "-t", itoa(t), "-n", "0", "-N", itoa(cfg.VerObjects()),
+			"-s", "4k", "-b", "4k", "--timelimit", itoa(cfg.Seconds), verBucket); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// verGet GETs 4 KiB objects of the versioned bucket at each concurrency,
+// looping over a read set written first, each key at one version.
+func (p *profileRun) verGet(ctx context.Context) error {
+	cfg := p.st.cfg
+	if err := p.r.needSpace(ctx, p.st, p.name); err != nil {
+		return err
+	}
+	if err := p.versionedBucket(ctx); err != nil {
+		return err
+	}
+	if err := p.prep(ctx, fmt.Sprintf("writing %d x %d objects of 4 KiB to read", cfg.Top(), cfg.GetObjects),
+		"-w", "-t", itoa(cfg.Top()), "-n", "0", "-N", itoa(cfg.GetObjects), "-s", "4k", "-b", "4k", verBucket); err != nil {
+		return err
+	}
+	return p.readSmall(ctx, verBucket)
 }
 
 // list lists BENCH_LIST_THREADS * BENCH_LIST_OBJECTS empty keys with
