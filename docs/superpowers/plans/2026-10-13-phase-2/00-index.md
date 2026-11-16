@@ -34,7 +34,7 @@ The set's files:
 
 | File | Unit | Tasks |
 |---|---|---|
-| `00-index.md` | this index, and the shared tasks S1 to S13 | 13 |
+| `00-index.md` | this index, and the shared tasks S1 to S14 | 14 |
 | `V-versioning.md` | the OLH protocol, versioned ops, ListObjectVersions, MFA delete | V0-V21 |
 | `L-object-lock.md` | object lock: configuration, retention, legal hold, enforcement | L1-L5b |
 | `C-lifecycle.md` | lifecycle configuration and the worker | C1-C15 |
@@ -448,9 +448,50 @@ Found by S12's adversarial review (Important 1), and numbered here before S12 me
   CopyObject and CreateMultipartUpload carrying the same headers give the same answer.
 - **Depends on:** S12. **PR:** one. **Brief:** about 35 lines.
 
+### Task S14: a Deny reads the request context Amazon S3 builds
+
+Found by S9's implementation and task review, and numbered here before S9 merged (PP-12).
+
+- **Layer:** authz and policy. **Files:** the request context (`internal/authz/env.go`), the Deny
+  seam S9 adds to condition evaluation, and their specs; `docs/differences.md`; the registry
+  entries S9 adds. **Cluster:** no.
+- **Security boundary:** policy evaluation is authorization; adversarial review applies (PP-14).
+- **Behaviour:**
+  1. A Deny statement's conditions read, besides radosgw's keys, the keys Amazon S3 sets on an S3
+     request that radosgw leaves out or sets to another value, wherever rgw-go knows the value
+     Amazon S3 gives:
+     - aws:SecureTransport `false` on a request that is not secure, where radosgw sets the key only
+       to `true`
+       ([rgw_op.cc:865-867](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L865-L867),
+       [rgw_op.cc:900-902](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L900-L902));
+     - aws:CurrentTime and aws:EpochTime in Amazon S3's formats (the registry's "radosgw swaps
+       aws:CurrentTime and aws:EpochTime");
+     - the S3 keys the registry entry S9 adds for the class lists, such as s3:signatureversion,
+       s3:authType and s3:x-amz-content-sha256.
+  2. Each key's value comes from Amazon S3's documentation of it, cited at implementation. A key
+     whose value no Amazon text decides stays as radosgw leaves it, and the differences entry
+     names it.
+  3. An Allow statement keeps radosgw's context, as S9 keeps its evaluation, until the owner
+     decides. The added keys are visible to a Deny's conditions alone.
+  4. Under a Deny whose condition holds only on Amazon S3's context, rgw-go refuses requests
+     radosgw serves. The differences entry records it, and S9's paragraph on keys rgw-go does not
+     set drops the keys this task sets.
+- **Why:** S9 holds a Deny's negated operator on an absent key, as Amazon S3 does. But rgw-go's
+  context lacks keys Amazon S3 always has, so such a Deny refuses every request it covers where
+  Amazon S3 refuses only the requests whose value fails it. And a condition on a value radosgw
+  never sets, such as aws:SecureTransport's `false`, never holds where Amazon S3's does.
+- **Specs:** per release, in a Deny and in an Allow statement:
+  - aws:SecureTransport on a secure and a plain request;
+  - aws:CurrentTime and aws:EpochTime under a Numeric and a Date operator;
+  - each added S3 key under a negated and a plain operator;
+  - every Allow answer unchanged.
+- **Exclusions and registry:** a `docs/differences.md` entry; the rgw-go lines of S9's two
+  registry entries and of the time-swap entry.
+- **Depends on:** S9. **PR:** one. **Brief:** about 40 lines.
+
 ## Order
 
-1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, S6 once V2 lands, S7 once V10, BC-17, BC-23, BC-10 and BC-28a land, S8 and S11 at once, S9 and S10 once L7 lands, S12 once S8 lands, and S13 once S12 lands.
+1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, S6 once V2 lands, S7 once V10, BC-17, BC-23, BC-10 and BC-28a land, S8 and S11 at once, S9 and S10 once L7 lands, S12 once S8 lands, S13 once S12 lands, and S14 once S9 lands.
 2. **Then the units in parallel**, each in its own file's waves. V's foundation (V0 to V3b) comes first among the units, because L and C consume its OLH seams. B and WP start with S2, and the T and SM units start at once. Within the waves:
    - The cluster tasks of every unit run one at a time.
    - The recording tasks, which append to the parity ledgers, land one at a time through the controller.
