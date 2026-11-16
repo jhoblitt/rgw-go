@@ -11719,6 +11719,127 @@ does the following.
 
   The windows that entry "A conditional delete marker is checked against
   the version current when it links" names stay.
+- **An unversioned write of a key whose OLH a delete left pending removal
+  clears it first, and is listed.** A versioned write that creates its key's
+  OLH head, whose version a delete removes before the write links it, leaves
+  the key a version marker at its plain index entry and an OLH entry marked
+  for removal that holds no version, with no OLH head (`docs/ceph-upstream-bugs.md`,
+  "[radosgw leaves a key's version marker and OLH entry when a delete takes
+  the key's first version before its
+  link](ceph-upstream-bugs.md#radosgw-leaves-a-keys-version-marker-and-olh-entry-when-a-delete-takes-the-keys-first-version-before-its-link)";
+  entry "A versioned write whose version a delete removes before its link
+  succeeds" for the write, which rgw-go answers success where radosgw's
+  answers 404). A PutObject, CopyObject or CompleteMultipartUpload of the key
+  without a `versionId`, on a bucket whose versioning is suspended, links
+  nothing, so nothing takes the OLH entry over, and radosgw's class prepares
+  and completes the write's index entry where it reads the key: through the
+  version marker, at the null data key
+  ([cls_rgw.cc:946-978](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L946-L978),
+  [cls_rgw.cc:1076-1108](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1076-L1108)).
+  The object reads back and the bucket's stats count it, and neither
+  ListObjects nor ListObjectVersions shows it, until a later delete's null
+  delete marker replaces it. rgw-go sends the class's `bucket_clear_olh`
+  before such a write prepares its index entry (`clearStrandedOLH`,
+  `internal/driver/olh_stranded.go`), with the OLH entry's own tag, which
+  removes the OLH entry and the version marker. The write's entry then lands
+  at the plain key, and the shard holds what it holds for a key never
+  versioned: the plain entry alone. radosgw's write leaves the key unlisted.
+  - The clear is radosgw's own. `radosgw-admin bucket check olh` finds OLH
+    entries marked for removal that hold no version, as left "after the last
+    remaining version of an object was deleted or after an incomplete
+    upload", and with `--fix` sends this call for them through `clear_olh`,
+    with the entry's tag, when their log is empty
+    ([rgw_bucket.cc:470-552](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L470-L552),
+    [rgw_bucket.cc:607-689](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L607-L689);
+    [rgw_rados.cc:8583-8634](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8583-L8634),
+    [rgw_rados.cc:9329-9380](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9329-L9380)).
+    The class removes the OLH entry, whose tag it compares alone, and the
+    plain entry when it is a version marker
+    ([cls_rgw.cc:2126-2190](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2126-L2190),
+    [cls_rgw.cc:2279-2355](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2279-L2355)).
+  - The log of the entry a delete leaves is not empty: `apply_olh_log` trims
+    nothing after a clear that a pending attr refused
+    ([rgw_rados.cc:8550-8563](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8550-L8563),
+    [rgw_rados.cc:9296-9309](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9296-L9309)).
+    For an entry with a log `bucket check olh --fix` applies the log through
+    `update_olh`, whose read of it carries the OLH tag of the key's head, which
+    a head that is gone does not hold
+    ([rgw_rados.cc:8245](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8245),
+    [rgw_rados.cc:8991](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8991)),
+    so the class refuses it with ECANCELED
+    ([cls_rgw.cc:2047-2050](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2047-L2050),
+    [cls_rgw.cc:2188-2191](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2188-L2191)),
+    and radosgw's own repair leaves the entry. rgw-go clears the entry, its
+    log with it, after it has read that nothing is left behind the marker and
+    that no version the log names for removal still has an index entry.
+  - rgw-go sends the clear only when all of this holds, read as the class
+    reads it, and goes on as radosgw's write does when any does not:
+    - the key's plain entry is a version marker, and the key's OLH entry is
+      marked for removal and holds no version;
+    - the key has no head object, so no replay can apply the log or clear
+      the OLH, and `clear_olh` has nothing to remove before it clears the
+      index; a head that exists is a plain object, whose write goes on
+      behind the marker as before, or an OLH head, which makes the write a
+      versioned op whose link takes the entry over
+      ([cls_rgw.cc:1768-1777](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1768-L1777),
+      [cls_rgw.cc:1909-1918](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1909-L1918));
+    - nothing is left behind the marker for the clear to drop: the null
+      data entry is missing, since an entry a write left there is counted in
+      the bucket's stats and reached only through the marker, and no version
+      the log names for removal still has an index entry, since a removal no
+      replay applied would be applied by the next versioned link, which
+      keeps the log. rgw-go takes the log from the OLH entry it read and
+      looks up sixteen of the versions it names at most, one read each; a
+      log that names more counts as one with a version left.
+  - The class compares the OLH entry's tag alone, and a delete's unlink
+    appends its removal to the log without changing the tag. The clear's op
+    therefore also compares the OLH entry's bytes as rgw-go read them and that
+    the null data key holds no entry, as `unlinkInstance`'s op compares an
+    entry, a missing key reading as empty and a mismatch answering ECANCELED
+    with nothing cleared
+    ([PrimaryLogPG.cc:7802-7875](https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L7802-L7875),
+    [PrimaryLogPG.cc:7879-7952](https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L7879-L7952)).
+    A removal logged since the read, a link that re-tagged the entry, and a
+    write that prepared its entry behind the marker, radosgw's included, each
+    change what is compared, and the clear is refused. A write that
+    prepares after a clear landed finds no marker and prepares at the plain
+    key, so no write completes after a clear that removed the marker it
+    prepared behind. rgw-go then reads the key again, up to the 100 attempts
+    `set_olh` makes
+    ([rgw_rados.cc:8688-8689](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8688-L8689),
+    [rgw_rados.cc:9434-9435](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9434-L9435)),
+    then answers UnknownError, nothing written, where radosgw's write, which
+    has no such loop, answers 200 and leaves the key unlisted. The next
+    attempt either finds the key no longer stranded, or finds what the change
+    left and goes on without a clear.
+  - An index entry the check reads that does not decode, the OLH entry
+    included, makes the key not stranded: the write goes on as radosgw's
+    does, and a warning names the key, where a failure would fail every write
+    to it. Any other failed read or clear fails the write with that error,
+    before it prepares or writes anything, where radosgw's write succeeds and
+    is not listed; a retry clears again, which a write that went on would
+    prevent, its entry behind the marker blocking every later clear.
+  - The reads: one bi_get of the key's plain entry before the prepare of an
+    unconditional write, which reads no head first, and of a conditional
+    write over a missing head, on a bucket with an index whose versioning is
+    suspended, for a key in no namespace; when the plain entry is a version
+    marker, a bi_get of the OLH entry as well, and in the stranded state the
+    reads the conditions above name. radosgw sends none of them. A plain entry
+    that is missing reads as no marker, where `readShard` reads the bucket
+    instance and the shard again to tell it from a shard a reshard has moved,
+    which every such write would pay: a write that meets a reshard goes on
+    without the clear, as radosgw's does.
+  - A write that goes on without the clear leaves the key as radosgw's write
+    does, and no later write repairs it. It stores a plain head, and its
+    entry sits at the null data key behind the marker, counted in the
+    bucket's stats and shown by no listing. The key then has a head, so no
+    later write meets a stranded key, and a clear would orphan the counted
+    entry; only a later delete's null delete marker replaces it. That holds
+    for each way a write goes on: a plain entry read as missing on the shard
+    a reshard has moved, so that the marker is not seen; a log that names
+    more than sixteen versions, or a version it names that still has an
+    index entry; a null data entry already there; an entry that does not
+    decode.
 - **A versioned link or unlink that logs nothing removes its own pending
   attr.** radosgw's `set_olh` records a pending modification on the key's
   OLH head before its link, and only the replay of the link's log entry

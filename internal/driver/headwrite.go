@@ -285,11 +285,12 @@ func (s *Store) unguardedNullInit(hw *headWrite, st *op.ObjectState) *nullInit {
 // VERSIONED_OP on its index op, sets the OLH tag of an OLH head it writes
 // over again, and once its head write lands adds to the quota cache and
 // links its version (linkVersion); any other write completes its index entry
-// unawaited. in, when not nil, is the init of a null write's modification on
-// st, which the head write's op carries (nullInit): its guards come first,
-// its sets after the reset, a refusal of a conditional write's init's guards
-// answers errOLHGuardRefused with nothing written, and the link is made under
-// its op tag.
+// unawaited, and one that may find its key's OLH left stranded by a delete
+// clears it before its prepare (clearStrandedOLH). in, when not nil, is the
+// init of a null write's modification on st, which the head write's op
+// carries (nullInit): its guards come first, its sets after the reset, a
+// refusal of a conditional write's init's guards answers errOLHGuardRefused
+// with nothing written, and the link is made under its op tag.
 func (s *Store) doWriteMeta(ctx context.Context, hw *headWrite, x *indexOp, st, cur *op.ObjectState, mtime time.Time, assumeNoent bool, in *nullInit) (headResult, error) {
 	ref, err := s.headWriteRef(ctx, hw)
 	if err != nil {
@@ -383,6 +384,15 @@ func (s *Store) doWriteMeta(ctx context.Context, hw *headWrite, x *indexOp, st, 
 		x.bilogFlags |= rgw.BILogFlagVersionedOp
 	}
 	if !x.prepared {
+		if meetsStrandedOLH(hw, st, x) {
+			// Before the prepare, which the class would write behind a version
+			// marker (olh_stranded.go). A failure writes nothing yet, and a
+			// retry clears again, where a write that went on would leave an
+			// entry behind the marker that blocks every later clear.
+			if err = s.clearStrandedOLH(ctx, hw.rec, hw.key); err != nil {
+				return headResult{}, op.FromRADOS(err, op.ScopeObject)
+			}
+		}
 		if err = x.prepare(ctx, rgw.OpAdd); err != nil {
 			return headResult{}, op.FromRADOS(err, op.ScopeObject)
 		}

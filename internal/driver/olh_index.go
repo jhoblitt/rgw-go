@@ -19,6 +19,14 @@ import (
 // and bi_get of one entry. Link, unlink, trim and clear are guarded writes,
 // the read-log and bi_get unguarded reads.
 
+// errUndecodable marks, beside op.ErrUnknown, an index entry or a reply that
+// does not decode, as bi_get_olh answers it -EIO
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9465-L9485 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10214-L10234 at v20.2.4).
+// It tells a stored entry's failure from a transport failure, which answers
+// UnknownError too.
+var errUndecodable = errors.New("the index entry does not decode")
+
 // bucketOLHIndex is the bucket index side of the OLH protocol for one name
 // of one bucket: the shard holding the name, found from the bucket record and
 // found again when a reshard moves the name, and the request fields every
@@ -193,6 +201,27 @@ func (b *bucketOLHIndex) clear(ctx context.Context, head *op.ObjectState) error 
 	return b.x.guardedWrite(ctx, func(w *radosclient.WriteOp) { rgw.ClearOLH(w, c, b.x.s.release) })
 }
 
+// clearUnchanged is clear in an op that also compares, ahead of the class
+// call, the OLH entry's omap value with the bytes its caller read, olh, and
+// that each key in absent holds no entry, a missing key reading as empty, as
+// unlinkInstance's compare does. The OSD applies the op whole or not at all,
+// so a change to what the caller read, an entry another writer logged to under
+// the same tag included, answers ECANCELED with nothing cleared, where the
+// class's own check compares the tag alone.
+func (b *bucketOLHIndex) clearUnchanged(ctx context.Context, head *op.ObjectState, olh rgw.BIEntry, absent ...string) error {
+	if err := b.ofName(head.Key); err != nil {
+		return err
+	}
+	c := rgw.ClearOLHOp{Key: b.olhKey(), OLHTag: headOLHTag(head)}
+	return b.x.guardedWrite(ctx, func(w *radosclient.WriteOp) {
+		w.OmapCmp(olh.Idx, radosclient.CmpEQ, olh.Data)
+		for _, k := range absent {
+			w.OmapCmp(k, radosclient.CmpEQ, nil)
+		}
+		rgw.ClearOLH(w, c, b.x.s.release)
+	})
+}
+
 // getOLH is bi_get_olh
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9465-L9485 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10214-L10234 at v20.2.4):
@@ -203,21 +232,33 @@ func (b *bucketOLHIndex) clear(ctx context.Context, head *op.ObjectState) error 
 // once the bucket, read again, names the shard that answered it. An entry
 // that does not decode is bi_get_olh's -EIO, UnknownError.
 func (b *bucketOLHIndex) getOLH(ctx context.Context, head *op.ObjectState) (rgw.OLHEntry, error) {
+	e, _, err := b.getOLHBI(ctx, head)
+	return e, err
+}
+
+// getOLHBI is getOLH, returning beside the decoded entry the raw entry
+// bi_get answered: the omap key and value as stored, which a later op can
+// compare unchanged (clearUnchanged).
+func (b *bucketOLHIndex) getOLHBI(ctx context.Context, head *op.ObjectState) (rgw.OLHEntry, rgw.BIEntry, error) {
 	if err := b.ofName(head.Key); err != nil {
-		return rgw.OLHEntry{}, err
+		return rgw.OLHEntry{}, rgw.BIEntry{}, err
 	}
 	var e rgw.OLHEntry
+	var bi rgw.BIEntry
 	err := b.x.readShard(ctx, func(sh indexShard) error {
 		res, err := b.x.biGet(ctx, sh, b.olhKey(), rgw.BIIndexOLH)
 		if err != nil {
 			return err
 		}
+		if bi, err = res.Result(); err != nil {
+			return fmt.Errorf("%w: %w: the olh entry of %s on index shard %s: %w", op.ErrUnknown, errUndecodable, b.x.obj.Key.Name, sh.oid, err)
+		}
 		if e, err = res.OLHEntry(); err != nil {
-			return fmt.Errorf("%w: the olh entry of %s on index shard %s: %w", op.ErrUnknown, b.x.obj.Key.Name, sh.oid, err)
+			return fmt.Errorf("%w: %w: the olh entry of %s on index shard %s: %w", op.ErrUnknown, errUndecodable, b.x.obj.Key.Name, sh.oid, err)
 		}
 		return nil
 	})
-	return e, err
+	return e, bi, err
 }
 
 // getInstanceEntry is the index entry of key's version as the class's
@@ -299,11 +340,11 @@ func (x *indexOp) dirEntryBI(ctx context.Context, sh indexShard, key rgw.ObjKey,
 	}
 	bi, err := res.Result()
 	if err != nil {
-		return rgw.DirEntry{}, rgw.BIEntry{}, fmt.Errorf("%w: the index entry %q on index shard %s: %w", op.ErrUnknown, key.Name, sh.oid, err)
+		return rgw.DirEntry{}, rgw.BIEntry{}, fmt.Errorf("%w: %w: the index entry %q on index shard %s: %w", op.ErrUnknown, errUndecodable, key.Name, sh.oid, err)
 	}
 	en, err := res.DirEntry()
 	if err != nil {
-		return rgw.DirEntry{}, rgw.BIEntry{}, fmt.Errorf("%w: the index entry %q on index shard %s: %w", op.ErrUnknown, key.Name, sh.oid, err)
+		return rgw.DirEntry{}, rgw.BIEntry{}, fmt.Errorf("%w: %w: the index entry %q on index shard %s: %w", op.ErrUnknown, errUndecodable, key.Name, sh.oid, err)
 	}
 	return en, bi, nil
 }
