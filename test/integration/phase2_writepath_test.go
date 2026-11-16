@@ -412,16 +412,6 @@ func expectIndexed(ctx context.Context, bucket, key string, plaintext int, o adm
 	)), "bucket list's entry of %s", key)
 }
 
-// removeWritepathFixtures removes writepathUser with its buckets and
-// objects, its usage records and the garbage their removal leaves.
-func removeWritepathFixtures(ctx context.Context) {
-	if _, err := radosgwAdmin(ctx, "user", "info", "--uid", writepathUser); err == nil {
-		tryAdmin(ctx, "user", "rm", "--uid", writepathUser, "--purge-data")
-	}
-	tryAdmin(ctx, "usage", "trim", "--uid", writepathUser, "--yes-i-really-mean-it")
-	gcProcess(ctx)
-}
-
 // skipOnSquid skips a spec of Tentacle's checksums on a Squid cluster.
 func skipOnSquid() {
 	if store.Release() < denc.Tentacle {
@@ -437,8 +427,8 @@ var _ = Describe("the write-path gate", Ordered, ContinueOnFailure, Label("integ
 	var gateways map[string]wpGateway
 
 	BeforeAll(func(ctx SpecContext) {
-		removeWritepathFixtures(ctx)
-		DeferCleanup(removeWritepathFixtures)
+		removeUserFixtures(ctx, writepathUser)
+		DeferCleanup(removeUserFixtures, writepathUser)
 		createUser(ctx, writepathUser, writepathKey)
 		for _, codec := range writepathCodecs {
 			Expect(manifest.StorageClasses).To(HaveKeyWithValue(codecClass(codec), codec), "populate.sh's storage class for %s", codec)

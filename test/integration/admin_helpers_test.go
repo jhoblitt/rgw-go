@@ -292,6 +292,17 @@ func cephFSID(ctx context.Context) string {
 		"ceph", "--connect-timeout=20", "fsid")))
 }
 
+// removeUserFixtures removes a gate's fixed user uid with its buckets and
+// objects, its usage records and the garbage their removal leaves, whether
+// or not a run that stopped partway left the user.
+func removeUserFixtures(ctx context.Context, uid string) {
+	if _, err := radosgwAdmin(ctx, "user", "info", "--uid", uid); err == nil {
+		tryAdmin(ctx, "user", "rm", "--uid", uid, "--purge-data")
+	}
+	tryAdmin(ctx, "usage", "trim", "--uid", uid, "--yes-i-really-mean-it")
+	gcProcess(ctx)
+}
+
 // tryAdmin runs radosgw-admin for a cleanup, which goes on past a fixture
 // that is already gone.
 func tryAdmin(ctx context.Context, args ...string) {
