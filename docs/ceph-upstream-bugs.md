@@ -6067,7 +6067,11 @@ Every new entry adds its row to this table, in document order.
 
 ## Squid's negated condition operators hold when any pair differs, and its Null ignores its values
 
-- **Kind:** defect, fixed in v20.2.3 and unfixed on squid. Unreproduced:
+- **Kind:** defect, fixed in v20.2.3 and unfixed on squid. Its Null half
+  is reproduced on v19.2.7 on 2026-11-16 by
+  `test_bucket_policy_deny_null_false_key_present` in jhoblitt/ceph
+  3bce2b8b90e, merged into `rgw-go-s3tests` by [jhoblitt/ceph#47](https://github.com/jhoblitt/ceph/pull/47),
+  which passes on v20.2.4; its negated-operator half is unreproduced,
   derived from the source.
 - **Evidence:** paths are under `src/rgw/`.
   - At v19.2.6, `StringNotEquals`, `StringNotEqualsIgnoreCase`,
@@ -34952,8 +34956,10 @@ Every new entry adds its row to this table, in document order.
 
 ## radosgw's negated condition operators are false on an absent key
 
-- **Kind:** defect, possibly security-relevant. Unreproduced: derived from
-  the source.
+- **Kind:** defect, possibly security-relevant. Reproduced on v19.2.7 and
+  v20.2.4 on 2026-11-16 by `test_bucket_policy_deny_stringnotlike_key_absent`
+  in jhoblitt/ceph 3bce2b8b90e, merged into `rgw-go-s3tests` by
+  [jhoblitt/ceph#47](https://github.com/jhoblitt/ceph/pull/47).
 - **Evidence:**
   - `Condition::eval` answers a condition whose key the request's
     environment lacks with its `IfExists` flag, false without one, for
