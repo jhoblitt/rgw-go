@@ -542,6 +542,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's CopyObject ignores x-amz-tagging-directive](#radosgws-copyobject-ignores-x-amz-tagging-directive) | pending | pending | ✓ |
 | [radosgw's CopyObject and CreateMultipartUpload evaluate s3:PutObject without the request's ACL and tag condition keys](#radosgws-copyobject-and-createmultipartupload-evaluate-s3putobject-without-the-requests-acl-and-tag-condition-keys) | pending | pending | ✓ |
 | [radosgw's replay of an OLH log removes a version that a later entry of the same log links](#radosgws-replay-of-an-olh-log-removes-a-version-that-a-later-entry-of-the-same-log-links) | pending | [ceph/ceph#67661](https://github.com/ceph/ceph/pull/67661) (partial) |  |
+| [radosgw never sets aws:SecureTransport to false](#radosgw-never-sets-awssecuretransport-to-false) | none; [#42521](https://tracker.ceph.com/issues/42521) is related | none |  |
+| [radosgw sets few of the condition keys Amazon S3 sets on S3 requests](#radosgw-sets-few-of-the-condition-keys-amazon-s3-sets-on-s3-requests) | pending | pending | ✓ |
+| [radosgw refuses a condition value that starts with a policy variable and goes on after it](#radosgw-refuses-a-condition-value-that-starts-with-a-policy-variable-and-goes-on-after-it) | none | none | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -35355,3 +35358,165 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task V20, 2026-11-14, reading `apply_olh_log` beside the
   log a stranded OLH entry keeps; derived from the source, not reproduced on
   radosgw.
+
+## radosgw never sets aws:SecureTransport to false
+
+- **Kind:** defect, possibly security-relevant. Unreproduced: derived from
+  the source.
+- **Evidence:**
+  - `rgw_build_iam_environment` adds `aws:SecureTransport` with the value
+    `true` when the request's transport is secure, and adds no such key
+    otherwise
+    ([rgw_op.cc:865-867](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L865-L867),
+    [rgw_op.cc:900-902](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L900-L902),
+    [rgw_op.cc:1007-1009](https://github.com/ceph/ceph/blob/203e7c52025d/src/rgw/rgw_op.cc#L1007-L1009)
+    at main 203e7c52025d). No other line under `src/rgw` sets it at any of
+    the three.
+  - `Condition::eval` answers a condition on a key the request's
+    environment lacks with the condition's `IfExists` flag, false without
+    one, for every operator but `Null` and the three `ForAllValues` ones
+    ([rgw_iam_policy.cc:861-869](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L861-L869),
+    [rgw_iam_policy.cc:881-889](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L881-L889)),
+    so a `Bool` condition on the key is false for a request that is not
+    secure, whichever value it names.
+  - AWS documents the key as one the request context always holds: "The
+    request context returns `true` or `false`" and "This key is always
+    included in the request context"
+    ([reference_policies_condition-keys.md:988-989](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_condition-keys.md?plain=1#L988-L989)
+    in the IAM User Guide's archived source).
+- **Releases:** v19.2.7, v20.2.4 and main at 203e7c52025d (2026-10-30); older
+  releases not checked.
+- **rgw-go:** reproduces it: `baseKeys` adds the key as radosgw does, with
+  the value `true` for a secure request alone (`internal/authz/env.go`); plan
+  task S14.
+- **Upstream:** none. A prior-art search on 2026-11-15 found no open report
+  or pull request. [tracker #42521](https://tracker.ceph.com/issues/42521) is
+  related, not a fix: it was closed in 2021 with "I believe this is fixed in
+  current Ceph" and no fix linked.
+- **Found:** phase 2 task S9's implementation, 2026-11-15, listing the keys a
+  Deny's negated operator meets; derived from the source, not reproduced.
+
+## radosgw sets few of the condition keys Amazon S3 sets on S3 requests
+
+- **Kind:** defect, possibly security-relevant. Unreproduced: derived from
+  the source.
+- **Evidence:** the keys below are those whose value radosgw holds; AWS
+  infrastructure keys, such as the VPC, organization, MFA, service-chain and
+  EC2-instance ones, are left out.
+  - `rgw_build_iam_environment` adds `aws:CurrentTime`, `aws:EpochTime`,
+    `aws:PrincipalType` and `sts:authentication` to every request, and
+    `aws:Referer`, `aws:SecureTransport`, `aws:SourceIp`, `aws:UserAgent`,
+    `aws:username` and `rgw:subuser` when the request has them
+    ([rgw_op.cc:848-910](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L848-L910),
+    [rgw_op.cc:884-945](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L884-L945)).
+    A role session adds `aws:userid`, `aws:TokenIssueTime` and the
+    `aws:PrincipalTag/` keys (`RoleApplier::modify_request_state`,
+    [rgw_auth.cc:1242-1250](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.cc#L1242-L1250),
+    [rgw_auth.cc:1287-1295](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.cc#L1287-L1295)),
+    and the ops add the S3 keys of the request they serve, such as
+    `s3:prefix` and `s3:x-amz-acl`.
+  - No line under `src/rgw` sets any of these, by `git grep` of each key at
+    v19.2.7 and v20.2.4: `s3:signatureversion`, `s3:authType`,
+    `s3:signatureAge`, `s3:TlsVersion`, `s3:x-amz-content-sha256`,
+    `s3:x-amz-storage-class`, `s3:VersionId`, `s3:LocationConstraint`,
+    `aws:PrincipalArn`, `aws:PrincipalAccount`, `aws:ResourceAccount` and
+    `aws:RequestedRegion`, nor `aws:userid` for a request that is not a role
+    session. The keyword table lists the S3 ones but `s3:TlsVersion` in rows
+    it comments out (`rgw_iam_policy_keywords.gperf`).
+  - radosgw holds each value for its own use: the headers and parameters
+    `x-amz-storage-class`, `x-amz-content-sha256` and `versionId`, the
+    `LocationConstraint` of CreateBucket's document, the signature and date a
+    request carries, the TLS session its frontend terminates, the requester's
+    identity and its account, the bucket's owner and the zonegroup's name
+    ([rgw_rest_s3.cc:5073](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5073),
+    [rgw_auth_s3.h:646](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.h#L646),
+    [rgw_op.cc:5373](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5373),
+    [rgw_rest_s3.cc:2432](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2432),
+    [rgw_auth_s3.cc:219](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L219),
+    [rgw_auth.h:76-91](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth.h#L76-L91),
+    [rgw_common.h:1281-1285](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.h#L1281-L1285),
+    [rgw_asio_frontend.cc:1130-1131](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_frontend.cc#L1130-L1131);
+    [rgw_rest_s3.cc:5603](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5603),
+    [rgw_auth_s3.h:649](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.h#L649),
+    [rgw_op.cc:5936](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5936),
+    [rgw_rest_s3.cc:2540](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2540),
+    [rgw_auth_s3.cc:221](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L221),
+    [rgw_auth.h:85-100](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth.h#L85-L100),
+    [rgw_common.h:1324-1328](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.h#L1324-L1328),
+    [rgw_asio_frontend.cc:1092-1093](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L1092-L1093)),
+    and v20.2.4 records the TLS version of a connection, as `TLS_VERSION`, for
+    bucket logging
+    ([rgw_asio_frontend.cc:326-334](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L326-L334)).
+  - A condition on a key the request's environment lacks answers its
+    `IfExists` flag, false without one, for every operator but `Null` and the
+    three `ForAllValues` ones
+    ([rgw_iam_policy.cc:861-869](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L861-L869),
+    [rgw_iam_policy.cc:881-889](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L881-L889)),
+    so a condition on one of them is judged as if the request lacked the
+    key.
+  - AWS documents the global keys, `aws:PrincipalArn`
+    ([reference_policies_condition-keys.md:375](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_condition-keys.md?plain=1#L375)),
+    `aws:PrincipalAccount` ([:342](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_condition-keys.md?plain=1#L342)), `aws:userid`
+    ([:1149](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_condition-keys.md?plain=1#L1149)), `aws:ResourceAccount`
+    ([:744](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_condition-keys.md?plain=1#L744)) and `aws:RequestedRegion`
+    ([:651](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_condition-keys.md?plain=1#L651)), in the IAM User Guide's archived source,
+    and the S3 keys in AWS's service reference for Amazon S3
+    (https://servicereference.us-east-1.amazonaws.com/v1/s3/s3.json, Version
+    v1.5, read 2026-11-15), whose `ActionConditionKeys` list
+    `s3:signatureversion`, `s3:authType`, `s3:signatureAge` and
+    `s3:TlsVersion` for 177 of its 180 S3 actions, `s3:x-amz-content-sha256`
+    for 165, `s3:versionid` for 13, `s3:x-amz-storage-class` for 4 and
+    `s3:locationconstraint` for 2, as the S3 user guide's archived source
+    documents `s3:x-amz-storage-class`
+    ([amazon-s3-policy-keys.md:260](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L260)),
+    `s3:VersionId` ([:227](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L227)),
+    `s3:LocationConstraint`
+    ([:369](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L369))
+    and `s3:TlsVersion`
+    ([:288](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L288)).
+    The object-lock keys are the same defect
+    ("[radosgw sets none of the object-lock condition keys](#radosgw-sets-none-of-the-object-lock-condition-keys)"),
+    and so is `aws:SecureTransport`, which radosgw sets to `true` alone
+    ("[radosgw never sets aws:SecureTransport to false](#radosgw-never-sets-awssecuretransport-to-false)").
+- **Releases:** v19.2.7 and v20.2.4; older releases not checked.
+- **rgw-go:** reproduces it for an Allow: a condition on one of the keys is
+  judged on an absent key, and an Allow so conditioned grants nothing. For a
+  Deny, a negated operator on an absent key holds
+  (`docs/differences.md`, "A Deny's condition holds where Amazon S3's
+  evaluation or radosgw's holds"). Setting the keys Amazon S3 sets on S3
+  requests is plan task S14.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task S9's implementation, 2026-11-15, listing the keys a
+  Deny's negated operator meets; derived from the source, not reproduced.
+
+## radosgw refuses a condition value that starts with a policy variable and goes on after it
+
+- **Kind:** defect. Unreproduced: derived from the source.
+- **Evidence:**
+  - A condition value whose first byte is `$` must be a whole `${...}`, a
+    second byte `{` and a last byte `}`; any other value that starts with
+    `$` fails the parse with "Invalid interpolation", which refuses the
+    policy at PutBucketPolicy
+    ([rgw_iam_policy.cc:703-720](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L703-L720),
+    [rgw_iam_policy.cc:716-732](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L716-L732)).
+    A value that starts with a variable and goes on, such as
+    `${aws:username}/*`, is therefore refused.
+  - The IAM User Guide uses such values: its example `StringLike` condition
+    on `s3:prefix` lists `${aws:username}/*`
+    ([reference_policies_variables.md:68](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_variables.md?plain=1#L68)
+    in its archived source).
+- **Releases:** v19.2.7 and v20.2.4; older releases not checked.
+- **rgw-go:** reproduces it (`internal/policy/parse.go`).
+- **Upstream:** none. A prior-art search on 2026-11-15 found no report or
+  pull request: ceph/ceph's pull requests for "Invalid interpolation",
+  "interpolation", "policy variable" and "policy variables", with the search
+  checked against a known title ("match value of Null condition"), and the
+  tracker's full-text search for "Invalid interpolation", checked against a
+  known issue ("NotEquals multiple values", #73146), returned nothing about
+  the refusal. The one related pull request,
+  [ceph/ceph#44434](https://github.com/ceph/ceph/pull/44434), open, adds
+  the substitution of a variable inside a value and of defaults at
+  evaluation, and leaves the parser's check as it is.
+- **Found:** phase 2 task S9's adversarial review, 2026-11-15, probing a
+  Deny's policy variables through the parser; derived from the source, not
+  reproduced on radosgw.
