@@ -277,7 +277,7 @@ integration: need-release ## Run the integration specs against the RELEASE clust
 # cancelled job.
 
 .PHONY: admin-gate
-admin-gate: need-release ## Run the admin, website, CORS and ?layout and otp gates against the RELEASE cluster's radosgw and the rgw-go rgw-go-up started (the website gate builds its own)
+admin-gate: need-release ## Run the admin, website, CORS, ?layout and otp, and versioning gates against the RELEASE cluster's radosgw and the rgw-go rgw-go-up started (the website gate builds its own)
 	trap 'ROOKET=$(ROOKET_BIN) hack/admin/remove-user.sh $(RELEASE) rgwgo-admin || echo "could not remove the user rgwgo-admin" >&2' EXIT; \
 	$(CGO_RUN_RELEASE) env RGW_GO_TEST_CEPH_CONF=$(CLUSTER_OUT)/ceph.conf RGW_GO_TEST_ROOKET=$(ROOKET_BIN) \
 	  go test "-tags=$(GO_TAGS),integration" -race -count=1 -timeout=45m ./test/integration -ginkgo.label-filter=rgw-go -ginkgo.fail-on-empty
