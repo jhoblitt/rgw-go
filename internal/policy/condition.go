@@ -104,6 +104,18 @@ func (o Operator) String() string {
 	return operatorNames[o]
 }
 
+// negated is whether o is one of the Not operators, which Amazon S3 holds on a
+// key the request lacks.
+func (o Operator) negated() bool {
+	switch o {
+	case OpStringNotEquals, OpStringNotEqualsIgnoreCase, OpStringNotLike,
+		OpNumericNotEquals, OpDateNotEquals, OpNotIPAddress,
+		OpArnNotEquals, OpArnNotLike:
+		return true
+	}
+	return false
+}
+
 // ParseOperator parses an operator keyword exactly as String renders it, as
 // the keyword table's case-sensitive lookup does. The IfExists suffix is not
 // part of the keyword; the policy parser strips it first.
@@ -147,27 +159,85 @@ type Condition struct {
 // is absent, and on Tentacle (sem.NullTestsValues) it compares Key's
 // absence, "true" when absent and "false" when present, with Values through
 // as_bool.
+//
+// Eval stays as radosgw's evaluation, the one an Allow gets, which the specs
+// pin on both releases; requests reach conditions through EvalFor.
 func (c Condition) Eval(env Env, sem Semantics) bool {
+	return c.EvalFor(env, sem, Allow)
+}
+
+// EvalFor is Eval for a condition of a statement whose effect is effect. A
+// Deny statement's condition holds where Amazon S3's evaluation or radosgw's
+// does, so that it refuses what either refuses; an Allow statement's keeps
+// radosgw's, so that rgw-go never grants what a radosgw serving the same zone
+// refuses (docs/differences.md, "A Deny's condition holds where Amazon S3's
+// evaluation or radosgw's holds"). The two differ in three places:
+//
+//   - A negated operator on a key the request lacks. Amazon S3 holds it:
+//     "If the policy condition requires that the key is not matched, such as
+//     StringNotLike or ArnNotLike, and the right key is not present, the
+//     condition is true. This logic applies to all condition operators except
+//     ...IfExists and Null check"
+//     (https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L10).
+//     radosgw answers IfExists, as it does for any operator but Null and the
+//     ForAllValues ones
+//     (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L861-L869,
+//     https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L881-L889).
+//   - Null on Squid, whose Null ignores Values
+//     (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L857-L859).
+//     Amazon S3's holds for "true" when the key is absent and for "false" when
+//     it is present, as Tentacle's does
+//     (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L876-L879).
+//   - A string or ARN operator whose values name policy variables, which
+//     Amazon S3 allows in "string comparisons in the Condition element"
+//     (https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_variables.md?plain=1#L128),
+//     and with the String and ARN operators
+//     (https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L55,
+//     https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L309).
+//     Amazon S3 replaces each variable with the request's value for its key,
+//     and a variable the request has no value for makes its value null, which
+//     matches nothing: "Inverted condition operators like StringNotEquals or
+//     StringNotLike do match against a null value, as the value of the
+//     condition key they are testing against is not equal to or like the
+//     effectively null value"
+//     (https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_variables.md?plain=1#L249).
+//     radosgw reads a policy variable only as a whole value, and once a value
+//     starts with a "$" it takes a key from the last value, whatever it is,
+//     and compares the key's values with that key's values in place of every
+//     value of the condition; no value at all holds on Tentacle's
+//     multimap_none and not on Squid's orrible
+//     (https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L514-L525,
+//     https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L482-L493).
+//
+// A key the request holds is evaluated as radosgw evaluates it, in either
+// effect, except where a condition value names a policy variable. An effect
+// other than Deny, Pass included, gets radosgw's evaluation.
+func (c Condition) EvalFor(env Env, sem Semantics, effect Effect) bool {
+	deny := effect == Deny
 	s, present := env.Find(c.Key, sem)
 	if c.Op == OpNull {
-		if !sem.NullTestsValues {
-			return !present
-		}
 		absent := "false"
 		if !present {
 			absent = "true"
 		}
-		return typedAny(absent, c.Values, asBool, equal[bool])
+		byValues := typedAny(absent, c.Values, asBool, equal[bool])
+		if sem.NullTestsValues {
+			return byValues
+		}
+		return !present || (deny && byValues)
 	}
 	if !present {
 		switch c.Op {
 		case OpForAllValuesStringEquals, OpForAllValuesStringEqualsIgnoreCase, OpForAllValuesStringLike:
 			return true
 		}
-		return c.IfExists
+		return c.IfExists || (deny && c.Op.negated())
 	}
 
 	vs := env.Lookup(c.Key)
+	if deny && c.holdsOverVariables(env, vs) {
+		return true
+	}
 	ds := c.Values
 	if c.IsRuntime {
 		ds = env.Lookup(runtimeKey(c.Values))
@@ -235,6 +305,138 @@ func (c Condition) Eval(env Env, sem Semantics) bool {
 		return notPair(sem, vs, ds, arnLike)
 	}
 	return false
+}
+
+// variableForm is how a string or ARN operator, which Amazon S3 lets name
+// policy variables, relates the values the key holds to the condition's: the
+// comparison it makes, and whether the operator holds when some key value
+// matches (the positive and ForAnyValue forms), every key value matches
+// (ForAllValues) or none does (the negated forms).
+func variableForm(op Operator) (match func(v, d string) bool, holds func(vs, ds []string, f func(v, d string) bool) bool, ok bool) {
+	switch op {
+	case OpStringEquals, OpForAnyValueStringEquals:
+		return equal[string], anyPair, true
+	case OpStringEqualsIgnoreCase, OpForAnyValueStringEqualsIgnoreCase:
+		return asciiEqualFold, anyPair, true
+	case OpStringLike, OpForAnyValueStringLike:
+		return stringLike, anyPair, true
+	case OpArnEquals, OpArnLike:
+		return arnLike, anyPair, true
+	case OpForAllValuesStringEquals:
+		return equal[string], allPairs, true
+	case OpForAllValuesStringEqualsIgnoreCase:
+		return asciiEqualFold, allPairs, true
+	case OpForAllValuesStringLike:
+		return stringLike, allPairs, true
+	case OpStringNotEquals:
+		return equal[string], nonePair, true
+	case OpStringNotEqualsIgnoreCase:
+		return asciiEqualFold, nonePair, true
+	case OpStringNotLike:
+		return stringLike, nonePair, true
+	case OpArnNotEquals, OpArnNotLike:
+		return arnLike, nonePair, true
+	}
+	return nil, nil, false
+}
+
+// holdsOverVariables is Amazon S3's answer for a string or ARN operator whose
+// values name policy variables, over the values vs the key holds: the
+// operator relates them to the condition's values, with their variables
+// replaced, as variableForm says. A value whose variable the request has no
+// value for is null and matches nothing, so a negated operator naming no
+// other value holds and a positive one does not. A value that holds ${*}, ${?}
+// or ${$}, which stand for a character the matching cannot express, makes the
+// operator hold: a Deny errs toward refusing there. A condition naming no
+// variable is not answered here; radosgw's answer stands for it.
+func (c Condition) holdsOverVariables(env Env, vs []string) bool {
+	match, holds, ok := variableForm(c.Op)
+	if !ok {
+		return false
+	}
+	named := false
+	for _, d := range c.Values {
+		if strings.Contains(d, "${*}") || strings.Contains(d, "${?}") || strings.Contains(d, "${$}") {
+			return true
+		}
+		named = named || strings.Contains(d, "${")
+	}
+	if !named {
+		return false
+	}
+	values := valuesByFoldedKey(env)
+	var ds []string
+	for _, d := range c.Values {
+		if !strings.Contains(d, "${") {
+			ds = append(ds, d)
+		} else if v, ok := substituteVariables(values, d); ok {
+			ds = append(ds, v)
+		}
+	}
+	return holds(vs, ds, match)
+}
+
+// nonePair holds when no environment value matches a condition value.
+func nonePair(vs, ds []string, f func(v, d string) bool) bool { return !anyPair(vs, ds, f) }
+
+// valuesByFoldedKey is the values env holds for each key name, the names
+// folded to ASCII lower case and the values of names that differ only in case
+// together: "Key names are case-insensitive"
+// (https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_variables.md?plain=1#L55).
+// A condition's own key stays exact, as radosgw's lookup does.
+func valuesByFoldedKey(env Env) map[string][]string {
+	m := make(map[string][]string, len(env.keys))
+	for key, v := range env.keys {
+		folded := asciiLowerString(key)
+		m[folded] = append(m[folded], v.added...)
+	}
+	return m
+}
+
+// asciiLowerString is s with its ASCII letters in lower case.
+func asciiLowerString(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		b[i] = asciiLower(c)
+	}
+	return string(b)
+}
+
+// substituteVariables replaces each ${key} of d with the value values holds
+// for key, or each ${key, 'default'} with that value, or with the default
+// unless the request has exactly one value for key: "To add a default value
+// to a variable, surround the default value with single quotes (' '), and
+// separate the variable text and the default value with a comma and space
+// (, )"
+// (https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_variables.md?plain=1#L305).
+// ok is false when a variable has no value, or several, and no default, which
+// Amazon S3 takes for a null value: it takes only a single-valued key as a
+// variable. A ${ that nothing closes is text.
+func substituteVariables(values map[string][]string, d string) (value string, ok bool) {
+	var b strings.Builder
+	for {
+		i := strings.Index(d, "${")
+		if i < 0 {
+			b.WriteString(d)
+			return b.String(), true
+		}
+		n := strings.IndexByte(d[i+2:], '}')
+		if n < 0 {
+			b.WriteString(d)
+			return b.String(), true
+		}
+		name, def, hasDefault := strings.Cut(d[i+2:i+2+n], ", '")
+		hasDefault = hasDefault && strings.HasSuffix(def, "'")
+		val := strings.TrimSuffix(def, "'")
+		if vals := values[asciiLowerString(name)]; len(vals) == 1 {
+			val = vals[0]
+		} else if !hasDefault {
+			return "", false
+		}
+		b.WriteString(d[:i])
+		b.WriteString(val)
+		d = d[i+2+n+1:]
+	}
 }
 
 // runtimeKey is the key a runtime condition's string and ARN operators read:
