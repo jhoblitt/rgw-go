@@ -18,7 +18,8 @@
     {"source":"a11f9990f961ec6643fa5a0c28550f0ed0ceaf30","admitted":"additive"},
     {"source":"cfb95e0533890e66b2be4c5e8df1358b2f57f0a8","admitted":"additive"},
     {"source":"5e0ea2e71db86992093d55b6168da5f1059cdc8b","admitted":"additive"},
-    {"source":"02599604861e23fc75441b715679d9e4949a0a98","admitted":"additive"}
+    {"source":"02599604861e23fc75441b715679d9e4949a0a98","admitted":"additive"},
+    {"source":"632e2341d3c7cdc81fcfaf73f2fd787a85858615","admitted":"additive"}
   ],
   "tests": {
     "s3tests.functional.test_headers::test_bucket_create_bad_authorization_empty": [
