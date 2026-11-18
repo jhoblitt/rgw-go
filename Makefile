@@ -272,9 +272,9 @@ integration: need-release ## Run the integration specs against the RELEASE clust
 # The admin gate signs as rgwgo-admin, which holds every admin cap with keys
 # the spec commits; the specs remove it when they end, and the trap removes
 # it, with the garbage its removal leaves, when go test ends some other way.
-# Its go test timeout is explicit and well inside the job's 90 minutes, so
-# that a run that hangs ends in go test's goroutine dump rather than a
-# cancelled job.
+# Its go test timeout is explicit and below the workflow step's, so that a
+# run that hangs ends in go test's goroutine dump rather than a cancelled
+# step.
 
 .PHONY: admin-gate
 admin-gate: need-release ## Run the admin, website, CORS, ?layout and otp, and versioning gates against the RELEASE cluster's radosgw and the rgw-go rgw-go-up started (the website gate builds its own)
