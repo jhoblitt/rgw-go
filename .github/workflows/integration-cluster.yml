@@ -126,8 +126,12 @@ jobs:
         if: ${{ !cancelled() && steps.rgw-go.outcome == 'success' }}
         run: make admin-parity "RELEASE=${RELEASE}"
 
+      # Its go test runs under a 45-minute timeout, which fires first; the
+      # steps before it take about 14 of the job's 90 minutes, and the
+      # diagnostics and the teardown need the rest.
       - name: Admin gate
         if: ${{ !cancelled() && steps.rgw-go.outcome == 'success' }}
+        timeout-minutes: 50
         run: make admin-gate "RELEASE=${RELEASE}"
 
       # Collected before teardown, which removes the cluster and out/. A
