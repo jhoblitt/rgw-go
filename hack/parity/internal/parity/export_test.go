@@ -10,6 +10,11 @@ func SelectionIDs(s Selection) []string {
 	return slices.Sorted(maps.Keys(s.ids))
 }
 
+// LeaveIDs returns the ids l names, sorted, for the specs.
+func LeaveIDs(l Leave) []string {
+	return slices.Sorted(maps.Keys(l.ids))
+}
+
 // DroppedSummary exposes droppedSummary to the specs.
 var DroppedSummary = droppedSummary
 

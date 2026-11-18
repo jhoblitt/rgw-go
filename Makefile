@@ -300,7 +300,7 @@ read-gate: need-release ## Read the populated corpus through rgw-go and the RELE
 # s3tests to run alone, s3tests-record-tests to record and s3tests-pin to
 # write. SET is the s3-tests set s3tests and s3tests-parity run: pr, the gate
 # set less the tests hack/s3tests/gate-only.txt names, or gate; the
-# recordings run the gate set whatever it says.
+# recordings choose their own sets whatever it says.
 GATEWAY ?= radosgw
 RUN ?= local
 TESTS ?=
@@ -308,7 +308,10 @@ SET ?= pr
 # The LC mode, the gateways whose lifecycle workers run: off, the parity
 # mode, radosgw, rgw-go, or both. Each s3-tests target sets it first, and
 # each record and parity run carries it as the meta lc; the admin suite runs
-# in the parity mode.
+# in the parity mode, and s3tests-record, which refuses LC, records the pr
+# set in off, the mode a pull request's check compares it in, and the
+# gate-only tests in radosgw, the radosgw counterpart of the rgw-go mode the
+# phase gate compares them in.
 LC ?= off
 
 # lc-mode is given every flag, so that no S3TESTS_ variable or config file
@@ -431,34 +434,83 @@ admin-record: need-release ## Run go-ceph's rgw/admin suite twice against radosg
 # OUT, else the committed one.
 S3TESTS_RECORD_OUT = $(or $(OUT),test/s3tests/baseline/$(RELEASE).json)
 
-# s3tests_append RUN1,RUN2[,FLAGS] appends radosgw's two s3-tests runs to the
-# ledger S3TESTS_RECORD_OUT.
+# s3tests_record LEDGER,RUN1,RUN2,LC,FLAGS is the command that appends
+# radosgw's two s3-tests runs, made in the LC mode LC, to the ledger LEDGER
+# with the record flags FLAGS. It is one command, so that one recipe line can
+# chain two of them.
+s3tests_record = ceph_version=$$(jq -er .ceph_version $(CLUSTER_OUT)/manifest.json) && \
+  commit=$$(hack/s3tests/run.sh --print-commit) && \
+  deselect=$$(hack/s3tests/run.sh --print-deselect) && \
+  freeze=$$(sha256sum hack/s3tests/out/$(RELEASE)-radosgw-$(3).freeze | cut -c1-12) && \
+  bin/parity record --format junit --suite s3tests --ledger $(1) --pin-file hack/s3tests/PIN $(5) \
+  --meta release=$(RELEASE) --meta ceph_version=$$ceph_version --meta gateway=radosgw \
+  --meta s3tests_commit=$$commit --meta deselect=$$deselect --meta pytest_freeze=$$freeze --meta lc=$(4) \
+  hack/s3tests/out/$(RELEASE)-radosgw-$(2).xml hack/s3tests/out/$(RELEASE)-radosgw-$(3).xml
+
+# s3tests_append RUN1,RUN2,LC[,FLAGS] appends radosgw's two s3-tests runs,
+# made in the LC mode LC, to the ledger S3TESTS_RECORD_OUT.
 define s3tests_append
 go build -o bin/parity ./hack/parity
 mkdir -p $(dir $(S3TESTS_RECORD_OUT))
-ceph_version=$$(jq -er .ceph_version $(CLUSTER_OUT)/manifest.json) && \
-commit=$$(hack/s3tests/run.sh --print-commit) && \
-deselect=$$(hack/s3tests/run.sh --print-deselect) && \
-freeze=$$(sha256sum hack/s3tests/out/$(RELEASE)-radosgw-$(2).freeze | cut -c1-12) && \
-bin/parity record --format junit --suite s3tests --ledger $(S3TESTS_RECORD_OUT) --pin-file hack/s3tests/PIN $(3) $(RECORD_FLAGS) \
-  --meta release=$(RELEASE) --meta ceph_version=$$ceph_version --meta gateway=radosgw \
-  --meta s3tests_commit=$$commit --meta deselect=$$deselect --meta pytest_freeze=$$freeze --meta lc=$(LC) \
-  hack/s3tests/out/$(RELEASE)-radosgw-$(1).xml hack/s3tests/out/$(RELEASE)-radosgw-$(2).xml
+$(call s3tests_record,$(S3TESTS_RECORD_OUT),$(1),$(2),$(3),$(4) $(RECORD_FLAGS))
 endef
+
+# The reasons, as REASONS gives them, for the entries s3tests-record's
+# record of the gate-only tests appends. REASONS and PIN_REASON are its full
+# record's: a reason for a test a record does not append is refused, and a
+# record at the chain's head appends no pin.
+GATE_ONLY_REASONS ?=
+GATE_ONLY_RECORD_FLAGS = $(if $(GATE_ONLY_REASONS),--reasons $(GATE_ONLY_REASONS)) $(if $(DRAFT),--draft "$(DRAFT)")
+
+# The gate-only tests the selection of s3tests-record's second run of the pr
+# set left out, one node id a line, as run.sh writes them: the tests its full
+# record leaves and its record of the gate-only tests runs. Its first run's
+# must be the same.
+S3TESTS_GATE_ONLY_IDS = hack/s3tests/out/$(RELEASE)-radosgw-base2.gate-only.ids
+
+# The copy of OUT that s3tests-record appends both of its records to, which
+# replaces OUT once both have: beside OUT, so that the rename that replaces
+# it is atomic, and hidden, so that no wildcard of ledgers takes it for one.
+S3TESTS_RECORD_SCRATCH = $(dir $(S3TESTS_RECORD_OUT)).$(notdir $(S3TESTS_RECORD_OUT)).recording
 
 # rgw-go-up sets the parity options on radosgw's entity as well as rgw-go's,
 # but for rgw_enable_lc_threads, which each run's make lc-mode sets through
 # the object store's rgwConfig, so a baseline recorded after it is radosgw
 # under the options rgw-go is compared under; its endpoint file is the sign it
-# has run. A recording runs the gate set whatever SET says: a full record
-# retires every ledger test it did not run, which would retire the gate-only
-# tests.
+# has run. s3tests-record chooses each set's LC mode whatever SET says, and
+# refuses LC, which no longer chooses it. It runs the pr set in the parity
+# mode, off, the mode a pull request's check compares it in. Then, when the
+# pr set's selection left gate-only tests out, it runs those, as
+# s3tests-record-tests runs tests, in radosgw's mode, the radosgw counterpart
+# of the rgw-go mode the phase gate compares them in, since they wait for a
+# lifecycle worker. Only then does it record, into a copy of OUT: first the
+# pr set, a full record that retires every ledger test it did not run but the
+# gate-only tests, which it leaves; then the gate-only tests, a subset
+# record. The full record comes first since it is the one that may append a
+# pin or move the venv, and a subset record runs at the chain's head. The copy
+# replaces OUT only once both records have succeeded, so a run that stops
+# anywhere leaves OUT as it was, and the same make s3tests-record again,
+# with what it lacked, records afresh. DRAFT goes to both records.
 .PHONY: s3tests-record
-s3tests-record: need-release ## Run the s3-tests gate set twice against radosgw, after rgw-go-up, and append it to the ledger OUT (default test/s3tests/baseline/RELEASE.json)
+s3tests-record: need-release ## Run the s3-tests pr set twice against radosgw in the LC mode off, then the gate-only tests twice in radosgw's, after rgw-go-up, and append both records to the ledger OUT (default test/s3tests/baseline/RELEASE.json)
+	$(if $(filter-out file,$(origin LC)),$(error s3tests-record takes no LC: it records the pr set in off, the mode a pull request's check compares it in, and the gate-only tests in radosgw, the radosgw counterpart of the rgw-go mode the phase gate compares them in; make s3tests-record-tests records chosen tests in the mode LC names))
 	@test -f $(CLUSTER_OUT)/rgw-go.endpoint || { echo "run make rgw-go-up RELEASE=$(RELEASE) first: radosgw records under the parity options it sets, its LC option the mode make lc-mode sets" >&2; exit 1; }
-	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base1 SET=gate TESTS= LC=$(LC)
-	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base2 SET=gate TESTS= LC=$(LC)
-	$(call s3tests_append,base1,base2)
+	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base1 SET=pr TESTS= LC=off
+	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=base2 SET=pr TESTS= LC=off
+	@cmp -s hack/s3tests/out/$(RELEASE)-radosgw-base1.gate-only.ids $(S3TESTS_GATE_ONLY_IDS) || \
+	  { echo "the pr set's two runs left different gate-only tests out; nothing is recorded" >&2; exit 1; }
+	@if test -s $(S3TESTS_GATE_ONLY_IDS); then \
+	  $(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=tests1 SET=gate TESTS=$(S3TESTS_GATE_ONLY_IDS) LC=radosgw && \
+	  $(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=tests2 SET=gate TESTS=$(S3TESTS_GATE_ONLY_IDS) LC=radosgw; \
+	else echo "the pr set's selection left no gate-only test out, so there is no gate-only record"; fi
+	go build -o bin/parity ./hack/parity
+	mkdir -p $(dir $(S3TESTS_RECORD_OUT))
+	scratch=$(S3TESTS_RECORD_SCRATCH) && trap 'rm -f "$$scratch"' EXIT && rm -f "$$scratch" && \
+	  { ! test -f $(S3TESTS_RECORD_OUT) || cp $(S3TESTS_RECORD_OUT) "$$scratch"; } && \
+	  { $(call s3tests_record,"$$scratch",base1,base2,off,--leave $(S3TESTS_GATE_ONLY_IDS) $(RECORD_FLAGS)); } && \
+	  { ! test -s $(S3TESTS_GATE_ONLY_IDS) || \
+	    { $(call s3tests_record,"$$scratch",tests1,tests2,radosgw,--subset $(GATE_ONLY_RECORD_FLAGS)); }; } && \
+	  mv -f "$$scratch" $(S3TESTS_RECORD_OUT)
 
 .PHONY: s3tests-record-tests
 s3tests-record-tests: need-release ## Run the TESTS file's s3-tests, of the gate set, twice against radosgw, after rgw-go-up, and append them alone to the ledger OUT (default test/s3tests/baseline/RELEASE.json)
@@ -466,7 +518,7 @@ s3tests-record-tests: need-release ## Run the TESTS file's s3-tests, of the gate
 	@test -f $(CLUSTER_OUT)/rgw-go.endpoint || { echo "run make rgw-go-up RELEASE=$(RELEASE) first: radosgw records under the parity options it sets, its LC option the mode make lc-mode sets" >&2; exit 1; }
 	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=tests1 SET=gate TESTS=$(TESTS) LC=$(LC)
 	$(MAKE) s3tests RELEASE=$(RELEASE) GATEWAY=radosgw RUN=tests2 SET=gate TESTS=$(TESTS) LC=$(LC)
-	$(call s3tests_append,tests1,tests2,--subset)
+	$(call s3tests_append,tests1,tests2,$(LC),--subset)
 
 # A clone of Ceph that holds the s3-tests pin and NEW, the commit to pin.
 CLONE ?=

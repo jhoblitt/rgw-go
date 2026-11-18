@@ -16,11 +16,11 @@
 // plus those the include lists name, which such a marker removes, and less
 // those the deselect lists name. The pr set, which a pull request's check
 // runs, is the gate set less the tests gate-only.txt names, which only a
-// phase gate and a run on demand afford; every recording runs the gate set,
-// which --set gate, the default, selects. DIR, hack/s3tests by default,
-// holds the lists; run.sh passes its own directory. Each list is a line per
-// item; "#" starts a comment, and trailing blanks and blank lines are
-// dropped.
+// phase gate and a run on demand afford; make s3tests-record records the pr
+// set and then those tests, and --set gate, the default, selects the gate
+// set. DIR, hack/s3tests by default, holds the lists; run.sh passes its own
+// directory. Each list is a line per item; "#" starts a comment, and
+// trailing blanks and blank lines are dropped.
 //
 // expr prints the pytest -m expression that leaves the markers out, "not M1
 // and not M2 ...", in the list's order. It first refuses a --set that is

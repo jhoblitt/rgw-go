@@ -631,7 +631,7 @@ var _ = Describe("a base pin in a ledger", func() {
 			status, _, stderr := run(ctx, "record", "--format", "junit", "--suite", "s3tests", "--out", out,
 				"--pin-reason", "moved", "testdata/run1.xml")
 			Expect(status).To(Equal(2))
-			Expect(stderr).To(ContainSubstring("--subset, --reasons, --draft and --pin-reason are for --ledger"))
+			Expect(stderr).To(ContainSubstring("--subset, --leave, --reasons, --draft and --pin-reason are for --ledger"))
 		})
 	})
 

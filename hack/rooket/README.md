@@ -787,11 +787,12 @@ names, and minus the tests `hack/s3tests/deselect-phase2.txt` and
 of a feature not served yet, and the include list names the tests it removes
 that phase 2 serves; a deselect list names tests that call a later phase's
 feature but carry none of those markers. That is the gate set, which a phase
-gate and every recording run. The pr set, which `SET=pr`, the default, runs,
-and with it the `s3tests` workflow on every pull request, is the gate set
-less the tests `hack/s3tests/gate-only.txt` names: tests only a gate and a
-run on demand afford, such as the time-driven lifecycle tests, which sleep
-while their rules come due. `SET=gate` runs the gate set. Both gateways run
+gate runs and `make s3tests-record` records, in two parts ("Recording"). The
+pr set, which `SET=pr`, the default, runs, and with it the `s3tests` workflow
+on every pull request, is the gate set less the tests
+`hack/s3tests/gate-only.txt` names: tests only a gate and a run on demand
+afford, such as the time-driven lifecycle tests, which sleep while their
+rules come due. `SET=gate` runs the gate set. Both gateways run
 the same set, `fails_on_rgw` tests included, since both must fail those
 alike. The selection is a Go command, `hack/s3tests`, which `run.sh` builds
 into `bin/s3tests` from its own tree each time it runs: `run.sh` collects the
@@ -928,10 +929,9 @@ a deselect list remove it, or, for the pr set, `gate-only.txt` names it.
 Such a run's `.ids` holds only those tests, so a `hack/parity diff
 --selection` of it by hand lists every other ledger test as dropped from the
 pr set, as expected.
-`make s3tests-record` and `make s3tests-record-tests` run the gate set
-whatever `SET` says: a full record retires every ledger test it did not run,
-which would retire the gate-only tests, and a TESTS file of a record may
-name one.
+`make s3tests-record` runs the pr set and then the gate-only tests, and
+`make s3tests-record-tests` the gate set, whatever `SET` says, so that a
+TESTS file of a record may name a gate-only test ("Recording" below).
 
 To try a change to s3-tests before it is pinned, `S3TESTS_REPO` and
 `S3TESTS_COMMIT` in the environment make `run.sh`, and every target that
@@ -991,17 +991,23 @@ make lc-mode RELEASE=squid LC=off                      # the parity mode again
 ```
 
 The LC mode is harness configuration: which gateways run their lifecycle
-worker. `off`, the parity mode, runs neither, and phase 1's set is recorded
+worker. `off`, the parity mode, runs neither, and the pr set is recorded
 and compared under it; `radosgw` and `rgw-go` run that gateway's alone,
-the gateway under test's; `both` runs both, which then share the zone's
-lifecycle shards. `make lc-mode` sets the mode `LC` names, `off` by
-default. Every s3-tests target, `make s3tests`, `make s3tests-parity`,
-`make s3tests-record` and `make s3tests-record-tests`, sets its own `LC`
-first, and each result and ledger entry it records carries it as the meta
-`lc`. `make admin-suite`, and with it `make admin-record` and `make
-admin-parity`, sets the parity mode first. The gateway comparison checks both
-entities for every parity option, so it runs in the parity mode only, and
-names `make lc-mode LC=off` for a radosgw left in another.
+the gateway under test's, and the gate-only tests, which wait for a worker
+to expire or transition what they wrote, are recorded under `radosgw` and
+compared at a phase gate under `rgw-go`; `both` runs both, which then share
+the zone's lifecycle shards. `make lc-mode` sets the mode `LC` names, `off`
+by default. `make s3tests`, `make s3tests-parity` and `make
+s3tests-record-tests` set their own `LC` first. `make s3tests-record`
+refuses `LC` and sets each set's mode itself ("Recording" below): `off` for
+the pr set, the mode a pull request's check compares it in, and `radosgw`
+for the gate-only tests, the radosgw counterpart of the `rgw-go` mode the
+phase gate compares them in. Each result and ledger entry they record
+carries its mode as the meta `lc`. `make admin-suite`, and with it `make
+admin-record` and `make admin-parity`, sets the parity mode first. The
+gateway comparison checks both entities for every parity option, so it runs
+in the parity mode only, and names `make lc-mode LC=off` for a radosgw left
+in another.
 
 radosgw reads `rgw_enable_lc_threads` only when it builds its store, at
 startup and at each realm reload, and Rook writes the radosgw entity's options
@@ -1116,21 +1122,44 @@ make rgw-go-up RELEASE=squid       # sets the parity options on radosgw's entity
 make s3tests-record RELEASE=squid  # REASONS=FILE for changed outcomes; OUT=FILE appends to another ledger
 ```
 
-`make s3tests-record` runs the gate set, whatever `SET` says, against radosgw
-twice, as `RUN=base1` and `RUN=base2`, and appends both runs to `OUT`, by
-default `test/s3tests/baseline/<release>.json`, with the meta `release`,
-`ceph_version` from `manifest.json`, `gateway=radosgw`, `s3tests_commit`,
-`deselect`, `pytest_freeze` and `lc`, the LC mode. It refuses to start
-before `make rgw-go-up`, so that radosgw records under the parity options
-rgw-go is compared under, its `rgw_enable_lc_threads` the mode each run's
-`make lc-mode` sets.
-A record that would change an outcome or an unstable flag, or retire a test,
-stops and names each one; nothing is written. Each needs a line in
-`REASONS`, a file of a test id, blanks and the reason, one a line:
+`make s3tests-record` makes two records, whatever `SET` says, and sets each
+one's LC mode itself. It runs the pr set against radosgw twice in `off`, the
+mode a pull request's check compares it in, as `RUN=base1` and `RUN=base2`.
+Each run leaves in its `.gate-only.ids` the gate-only tests its selection
+left out, and the two must leave the same. When they left any, it runs
+those twice, as `RUN=tests1` and `RUN=tests2`, in `radosgw`, the radosgw
+counterpart of the `rgw-go` mode the phase gate compares them in: they wait
+for a lifecycle worker. Then it records into a copy of `OUT`, by default
+`test/s3tests/baseline/<release>.json`, kept beside it. First the pr set, as
+a full record that leaves the tests `base2.gate-only.ids` names to the record
+after it (`hack/parity record --leave`): it retires every other ledger test
+the runs lack, and keeps the gate-only tests' entries as they are. Then the
+gate-only tests, appended alone. The full record comes first because it is
+the one that may append a pin or move the venv, and a record of chosen
+tests runs at the chain's head. The copy replaces `OUT` only once both
+records have succeeded, so a run that stops anywhere, on a failed run or a
+refused record, leaves `OUT` as it was. Each entry carries the meta
+`release`, `ceph_version` from `manifest.json`, `gateway=radosgw`,
+`s3tests_commit`, `deselect`, `pytest_freeze` and `lc`, the LC mode of its
+runs. `LC` no longer chooses that mode, so the target refuses it; `make
+s3tests-record-tests` records chosen tests in the mode `LC` names. It
+refuses to start before `make rgw-go-up`, so that radosgw records under the
+parity options rgw-go is compared under, its `rgw_enable_lc_threads` the
+mode each run's `make lc-mode` sets.
+
+A record that would change an outcome or an unstable flag, or retire a
+test, stops and names each one, and `OUT` is left as it was. Each needs a
+line in `REASONS`, or, for a gate-only test, in `GATE_ONLY_REASONS`, since a
+record refuses a reason for a test it does not append: a file of a test id,
+blanks and the reason, one a line:
 
 ```text
 s3tests.functional.test_s3::test_x radosgw 19.2.7 answers 400 where 19.2.6 answered 200
 ```
+
+`PIN_REASON` is the full record's alone, and `DRAFT` both records'. After a
+run that stopped, run the same `make s3tests-record` again, with the reasons
+it named added: `OUT` holds neither record, so both are made afresh.
 
 `pytest_freeze` is the first twelve hex digits of the SHA-256 of the
 `.freeze` file beside the last run, whose venv `constraints.txt` fixes.
@@ -1139,13 +1168,15 @@ The `s3tests` workflow's `record-baseline` input runs the same target on the
 runner with `DRAFT`, appending to a copy of the committed ledger as a draft:
 each change that needs a reason gets `unreviewed: recorded by <run URL>`.
 The job summary lists those entries, the workflow compares rgw-go with the
-copy, and uploads it as the artifact `s3tests-baseline-<release>`. A record
-there and one here differ only in `recorded`, in `pytest_freeze` when the
-hosts' Python differs, and in any outcome the two hosts' radosgw
-give differently, which the summary shows rather than letting it in
-silently. `make check` and the `ledgers` job refuse the draft until each
-`unreviewed:` reason is replaced by the change's own, and a reasons file
-cannot give one. Every reader holds a ledger to the exact form
+copy, the pr set in the parity mode as on a pull request, and uploads it as
+the artifact `s3tests-baseline-<release>`. Such a dispatch's job may run
+100 minutes rather than a pull request's 45, for the gate-only tests'
+sleeps. A record there and one here differ only in `recorded`, in
+`pytest_freeze` when the hosts' Python differs, and in any outcome the two
+hosts' radosgw give differently, which the summary shows rather than
+letting it in silently. `make check` and the `ledgers` job refuse the draft
+until each `unreviewed:` reason is replaced by the change's own, and a
+reasons file cannot give one. Every reader holds a ledger to the exact form
 `hack/parity` writes, one pin or entry a line, so that its diff reads as the
 tools read it; `go run ./hack/parity fmt FILE` rewrites a hand-edited ledger
 into that form.
@@ -1169,13 +1200,17 @@ A change to `hack/s3tests/constraints.txt` alone, with the pin where it is,
 is recorded the same way. A record whose `pytest_freeze` is not the one the
 ledger's newest entries carry moves the venv: it must be a full record (a
 `TESTS` file's cannot, since every test needs an entry under the new venv),
-it stops without `PIN_REASON`, and it appends an entry for every test, those
-whose outcome holds carrying `PIN_REASON` as theirs. A test whose outcome
-changes under the new venv needs its own line in `REASONS`, as
-anywhere. `make check` fails while the constraints and the ledgers' newest
-`pytest_freeze` disagree, so one never lands without the other. A pin move
-that changes `requirements.txt` is the same record, with the pin: write the
-new `PIN`, edit the constraints so the venv `run.sh` builds holds what the new
+it stops without `PIN_REASON`, and it appends an entry for every test it
+ran, those whose outcome holds carrying `PIN_REASON` as theirs. A test whose
+outcome changes under the new venv needs its own line in `REASONS`, as
+anywhere. The gate-only tests the full record leaves get no entry from it:
+the record of them after it runs them under the new venv, and appends one
+only where a test's state changes, since a venv alone makes no entry stale,
+so a gate-only test's entry may name the venv before. `make check` fails
+while the constraints and the ledgers' newest `pytest_freeze` disagree, so
+one never lands without the other. A pin move that changes
+`requirements.txt` is the same record, with the pin: write the new `PIN`,
+edit the constraints so the venv `run.sh` builds holds what the new
 requirements install, and record in full with `PIN_REASON`. `make
 s3tests-pin` leaves `requirements.txt` alone, which it says.
 
@@ -1247,8 +1282,10 @@ and the last two lines again with `RELEASE=tentacle`. Delete from
 `added.txt` any test the set's markers remove, which `run.sh` refuses.
 `make s3tests-record-tests` runs the listed tests against radosgw twice, as
 `RUN=tests1` and `RUN=tests2`, and appends them alone; every other test
-keeps its entries. A new test's first entry needs no reason. Commit
-`run.sh` and both ledgers together.
+keeps its entries. It runs them in the parity mode unless `LC` names
+another, so record tests `gate-only.txt` names apart from the others, with
+`LC=radosgw`, the mode `make s3tests-record` records them in. A new test's
+first entry needs no reason. Commit `run.sh` and both ledgers together.
 
 ## Comparing rgw-go with the baseline
 
