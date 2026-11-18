@@ -126,6 +126,7 @@
 ^s3tests\.functional\.test_s3::test_delete_marker_suspended$
 ^s3tests\.functional\.test_s3::test_delete_marker_versioned$
 ^s3tests\.functional\.test_s3::test_delete_marker_versioned_get$
+^s3tests\.functional\.test_s3::test_delete_marker_expiration$
 
 # Concurrent deletes naming no version of a versioned key, each under If-Match of the current version's ETag, of which at most one writes a delete marker; radosgw lets several write one (differences: "A conditional delete marker is checked against the version current when it links")
 ^s3tests\.functional\.test_s3::test_delete_object_current_if_match_concurrent$
@@ -206,3 +207,12 @@
 
 # A bucket policy Deny under Null aws:Referer false, evaluated for a GetObject that sends a Referer header; Squid's radosgw Null ignores its values (differences: "A Deny's condition holds where Amazon S3's evaluation or radosgw's holds")
 ^s3tests\.functional\.test_s3::test_bucket_policy_deny_null_false_key_present$
+
+# Lifecycle current expiration on a versioning-suspended bucket, writing the null delete marker, which replaces the null version and keeps any other as noncurrent; radosgw removes the current version outright, and an older version becomes current (differences: "Lifecycle expiration on a versioning-suspended bucket writes the null delete marker")
+^s3tests\.functional\.test_s3::test_lifecycle_expiration_versioning_suspended_null_marker$
+
+# A lifecycle transition of the current version after a noncurrent version of its key was removed by its id, leaving it the key's current version in ListObjects and ListObjectVersions; radosgw links it at its own epoch, below the OLH entry's, and lists it as no key's current version (differences: "A lifecycle transition keeps the current version current")
+^s3tests\.functional\.test_s3::test_lifecycle_transition_current_after_noncurrent_removal$
+
+# A lifecycle transition of a version without a retention, on a bucket whose default retention was set after the version was written, leaving it without one; radosgw's rewrite takes the bucket's default retention (differences: "A lifecycle transition adds no default retention")
+^s3tests\.functional\.test_s3::test_lifecycle_transition_adds_no_default_retention$
