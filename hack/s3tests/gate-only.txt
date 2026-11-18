@@ -10,3 +10,31 @@
 # comment and lands with the PR that records its area's tests.
 # Format: a pytest node id, or a base id for every parametrization, then "#"
 # and why it waits for the gate.
+
+# lifecycle worker: each test sleeps for lifecycle days, of
+# rgw_lc_debug_interval's 10 s, while its rules come due.
+s3tests/functional/test_s3.py::test_lifecycle_expiration # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecyclev2_expiration # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_expiration_versioning_enabled # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_expiration_versioning_suspended_null_marker # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_expiration_tags1 # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_expiration_tags2 # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_expiration_versioned_tags2 # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_expiration_noncur_tags1 # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_expiration_newer_noncurrent # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_expiration_size_gt # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_expiration_size_lt # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_expiration_date # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_noncur_expiration # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_deletemarker_expiration # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_deletemarker_expiration_with_days_tag # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_multipart_expiration # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_transition # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_transition_single_rule_multi_trans # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_noncur_transition # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_plain_null_version_current_transition # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_transition_keeps_object # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_transition_keeps_object_lock # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_transition_current_after_noncurrent_removal # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_lifecycle_transition_adds_no_default_retention # sleeps while its rules come due
+s3tests/functional/test_s3.py::test_delete_marker_expiration # sleeps while its rules come due

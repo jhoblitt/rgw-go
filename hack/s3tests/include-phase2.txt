@@ -60,3 +60,34 @@ s3tests/functional/test_s3.py::test_copy_part_enc[unencrypted-unencrypted-LUKEWA
 s3tests/functional/test_s3.py::test_copy_part_enc[unencrypted-unencrypted-FROZEN-STANDARD-8388608] # UploadPartCopy of 8 MiB, FROZEN source, STANDARD upload
 s3tests/functional/test_s3.py::test_copy_part_enc[unencrypted-unencrypted-FROZEN-LUKEWARM-8388608] # UploadPartCopy of 8 MiB, FROZEN source, LUKEWARM upload
 s3tests/functional/test_s3.py::test_copy_part_enc[unencrypted-unencrypted-FROZEN-FROZEN-8388608] # UploadPartCopy of 8 MiB, FROZEN source, FROZEN upload
+
+# lifecycle worker: expiration, noncurrent and delete-marker expiration,
+# multipart abort, and transition to a storage class of the placement.
+# Each test carries lifecycle and lifecycle_expiration or
+# lifecycle_transition, which stay listed while they also mark the
+# configuration and header tests.
+s3tests/functional/test_s3.py::test_lifecycle_expiration # current expiration by Days
+s3tests/functional/test_s3.py::test_lifecyclev2_expiration # current expiration by Days, listed with ListObjectsV2
+s3tests/functional/test_s3.py::test_lifecycle_expiration_versioning_enabled # current expiration's delete marker on a versioned bucket
+s3tests/functional/test_s3.py::test_lifecycle_expiration_versioning_suspended_null_marker # current expiration's null delete marker on a suspended bucket
+s3tests/functional/test_s3.py::test_lifecycle_expiration_tags1 # current expiration by a tag filter
+s3tests/functional/test_s3.py::test_lifecycle_expiration_tags2 # current expiration by a filter of a prefix and two tags
+s3tests/functional/test_s3.py::test_lifecycle_expiration_versioned_tags2 # current expiration by a filter of a prefix and two tags on a versioned bucket
+s3tests/functional/test_s3.py::test_lifecycle_expiration_noncur_tags1 # noncurrent expiration by a tag filter
+s3tests/functional/test_s3.py::test_lifecycle_expiration_newer_noncurrent # noncurrent expiration past NewerNoncurrentVersions
+s3tests/functional/test_s3.py::test_lifecycle_expiration_size_gt # current expiration by ObjectSizeGreaterThan
+s3tests/functional/test_s3.py::test_lifecycle_expiration_size_lt # current expiration by ObjectSizeLessThan
+s3tests/functional/test_s3.py::test_lifecycle_expiration_date # current expiration by Date
+s3tests/functional/test_s3.py::test_lifecycle_noncur_expiration # noncurrent expiration by NoncurrentDays
+s3tests/functional/test_s3.py::test_lifecycle_deletemarker_expiration # noncurrent and delete-marker expiration
+s3tests/functional/test_s3.py::test_lifecycle_deletemarker_expiration_with_days_tag # noncurrent expiration, then current expiration by Days of the delete marker left
+s3tests/functional/test_s3.py::test_lifecycle_multipart_expiration # multipart abort by DaysAfterInitiation
+s3tests/functional/test_s3.py::test_lifecycle_transition # current transition to two storage classes
+s3tests/functional/test_s3.py::test_lifecycle_transition_single_rule_multi_trans # two transitions in one rule
+s3tests/functional/test_s3.py::test_lifecycle_noncur_transition # noncurrent transition and expiration
+s3tests/functional/test_s3.py::test_lifecycle_plain_null_version_current_transition # transition of a plain null version that is current
+s3tests/functional/test_s3.py::test_lifecycle_transition_keeps_object # a transition keeps the object's data and metadata
+s3tests/functional/test_s3.py::test_lifecycle_transition_keeps_object_lock # a transition keeps a version's retention and legal hold
+s3tests/functional/test_s3.py::test_lifecycle_transition_current_after_noncurrent_removal # a transition keeps the current version current
+s3tests/functional/test_s3.py::test_lifecycle_transition_adds_no_default_retention # a transition adds no default retention
+s3tests/functional/test_s3.py::test_delete_marker_expiration # noncurrent and delete-marker expiration of a key's delete marker
