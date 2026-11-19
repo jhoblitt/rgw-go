@@ -227,6 +227,16 @@ CLUSTER_OUT = $(CURDIR)/hack/rooket/out/$(RELEASE)
 CGO_RUN ?=
 CGO_RUN_RELEASE = $(if $(CGO_RUN),$(CGO_RUN) $(RELEASE))
 
+# The targets that run an rgw-go on the host against a cluster, themselves,
+# through a script or through a recursive make, which inherits the export.
+# rgw-go registers in the manager's service map unless told not to, and
+# librados reports the Ceph build the process links there, so a host rgw-go
+# linking another build than the cluster's would add a second one to `ceph
+# versions`. A target added later that runs one joins the list.
+SERVICE_MAP_OFF_TARGETS = integration admin-gate gate read-gate rgw-go-up lc-mode s3tests admin-suite \
+  s3tests-parity admin-parity admin-record s3tests-record s3tests-record-tests bench-gateway
+$(SERVICE_MAP_OFF_TARGETS): export RGW_GO_SERVICE_MAP = false
+
 .PHONY: need-release
 need-release:
 	@case "$(RELEASE)" in squid | tentacle) ;; *) echo "set RELEASE=squid or RELEASE=tentacle" >&2; exit 1 ;; esac

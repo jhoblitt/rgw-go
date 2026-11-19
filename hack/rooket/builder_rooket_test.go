@@ -77,32 +77,52 @@ var _ = Describe("builder-rooket.sh, which stands in for rooket in a builder", f
 	)
 })
 
+// inBuilder runs in-builder.sh for squid's make gate against the fake engine,
+// with ROOKET set and env added to its environment, and returns the engine's
+// run call, the script's directory, and the HOME and bin directory
+// builderHome made.
+func inBuilder(ctx context.Context, env ...string) (run []string, here, home, bin string) {
+	GinkgoHelper()
+	home, bin = builderHome("rgw-go-squid")
+	dir := GinkgoT().TempDir()
+	engine, log := filepath.Join(dir, "engine"), filepath.Join(dir, "log")
+	Expect(os.WriteFile(engine, []byte(startEngine), 0o700)).To(Succeed())
+	here, err := filepath.Abs(".")
+	Expect(err).NotTo(HaveOccurred())
+	cmd := exec.CommandContext(ctx, "bash", "in-builder.sh", "squid", "make", "gate")
+	cmd.Dir = here
+	cmd.Env = slices.Concat([]string{
+		"PATH=" + bin + ":" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + dir,
+		"GOMODCACHE=" + filepath.Join(dir, "mod"), "RGW_GO_ENGINE=" + engine, "FAKE_LOG=" + log,
+		"ROOKET=/opt/rooket/bin/rooket",
+	}, env)
+	out, err := cmd.CombinedOutput()
+	Expect(err).NotTo(HaveOccurred(), string(out))
+	data, err := os.ReadFile(log)
+	Expect(err).NotTo(HaveOccurred())
+	for call := range strings.SplitSeq(strings.TrimSuffix(string(data), "--end--\n"), "--end--\n") {
+		if lines := strings.Split(strings.TrimSuffix(call, "\n"), "\n"); lines[0] == "run" {
+			run = lines
+		}
+	}
+	return run, here, home, bin
+}
+
+// passed are the variables a run call passes by name, each an -e NAME pair.
+func passed(run []string) []string {
+	var names []string
+	for i, a := range run[:len(run)-1] {
+		if a == "-e" && !strings.Contains(run[i+1], "=") {
+			names = append(names, run[i+1])
+		}
+	}
+	return names
+}
+
 var _ = Describe("in-builder.sh", func() {
 	It("mounts the stand-in as rooket, the host's kubectl, and the cluster's rooket state, on the host's network",
 		func(ctx SpecContext) {
-			home, bin := builderHome("rgw-go-squid")
-			dir := GinkgoT().TempDir()
-			engine, log := filepath.Join(dir, "engine"), filepath.Join(dir, "log")
-			Expect(os.WriteFile(engine, []byte(startEngine), 0o700)).To(Succeed())
-			here, err := filepath.Abs(".")
-			Expect(err).NotTo(HaveOccurred())
-			cmd := exec.CommandContext(ctx, "bash", "in-builder.sh", "squid", "make", "gate")
-			cmd.Dir = here
-			cmd.Env = []string{
-				"PATH=" + bin + ":" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + dir,
-				"GOMODCACHE=" + filepath.Join(dir, "mod"), "RGW_GO_ENGINE=" + engine, "FAKE_LOG=" + log,
-				"ROOKET=/opt/rooket/bin/rooket",
-			}
-			out, err := cmd.CombinedOutput()
-			Expect(err).NotTo(HaveOccurred(), string(out))
-			data, err := os.ReadFile(log)
-			Expect(err).NotTo(HaveOccurred())
-			var run []string
-			for call := range strings.SplitSeq(strings.TrimSuffix(string(data), "--end--\n"), "--end--\n") {
-				if lines := strings.Split(strings.TrimSuffix(call, "\n"), "\n"); lines[0] == "run" {
-					run = lines
-				}
-			}
+			run, here, home, bin := inBuilder(ctx)
 			Expect(run).To(ContainElements(
 				"--network=host",
 				here+"/builder-rooket.sh:/usr/local/bin/rooket:ro",
@@ -112,4 +132,14 @@ var _ = Describe("in-builder.sh", func() {
 			))
 			Expect(slices.Index(run, "make")).To(Equal(len(run)-2), "the command after the image")
 		})
+
+	DescribeTable("passes the Makefile's RGW_GO_SERVICE_MAP into the builder by name when it is set",
+		func(ctx SpecContext, env, want []string) {
+			run, _, _, _ := inBuilder(ctx, env...)
+			Expect(passed(run)).To(Equal(want))
+		},
+		Entry("set false, as the Makefile exports it", []string{"RGW_GO_SERVICE_MAP=false"},
+			[]string{"ROOKET_NAME", "RGW_GO_SERVICE_MAP"}),
+		Entry("unset, as outside the Makefile's targets", []string(nil), []string{"ROOKET_NAME"}),
+	)
 })
