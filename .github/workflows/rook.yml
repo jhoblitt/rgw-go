@@ -1,9 +1,9 @@
-# The Rook gate: Rook's object suite, minus the lifecycle, Kafka topic and
-# notification tests of features not implemented yet
-# (hack/rook/phase1.patch), on kind against the derived image with rgw-go
-# as radosgw. Rook is checked out at the workspace root because its setup
-# action runs its helper scripts from there; rgw-go sits under rgw-go/.
-# Nightly and on demand; it does not gate pull requests.
+# The Rook gate: Rook's object suite, minus the Kafka topic and notification
+# tests of features not implemented yet (hack/rook/phase1.patch), on kind
+# against the derived image with rgw-go as radosgw. Rook is checked out at
+# the workspace root because its setup action runs its helper scripts from
+# there; rgw-go sits under rgw-go/. Nightly and on demand; it does not gate
+# pull requests.
 name: rook
 
 on:

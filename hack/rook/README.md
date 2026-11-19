@@ -26,22 +26,24 @@ leaves alone.
 
 ## The phase 1 subset
 
-`phase1.patch` removes three of the suite's tests from
+`phase1.patch` removes two of the suite's tests from
 `tests/integration/ceph_object_test.go`, with their imports:
 
 | Removed | Needs | Gate |
 |---|---|---|
-| `bucketlifecycle.TestObjectBucketClaimLifecycle` | bucket lifecycle | phase 2 |
 | `topickafka.TestBucketTopicKafka` | bucket notification topics | phase 3 |
 | `notification.TestBucketNotification` | bucket notifications | phase 3 |
 
 rgw-go does not implement those features yet, and `runObjectE2ETest` calls
 every test unconditionally, so without the patch the suite would fail on them
-every night and say nothing about the rest. What remains is the phase 1 gate:
-`zonepools`, `bucket/{owner,policy,quota,rw}`,
+every night and say nothing about the rest. What remains is the phase 1 gate
+and phase 2's bucket lifecycle: `zonepools`,
+`bucket/{lifecycle,owner,policy,quota,rw}`,
 `user/{caps,keys,opmask,placement,storageclass}`, `cosi` (it skips itself in
-the TLS pass) and `dependents`. The full, unpatched suite is the phase 3
-gate.
+the TLS pass) and `dependents`. The lifecycle test sets, changes and removes
+an ObjectBucketClaim's `bucketLifecycle` and checks the bucket's configuration
+with GetBucketLifecycleConfiguration after each; it waits on no lifecycle
+worker. The full, unpatched suite is the phase 3 gate.
 
 The patch makes two more changes so that the kept tests can run:
 
