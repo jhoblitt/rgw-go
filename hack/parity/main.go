@@ -5,8 +5,8 @@
 //
 //	go run ./hack/parity record --format junit|gotest --suite NAME --out FILE [--freeze FILE] [--pin-file FILE]
 //	    [--meta k=v]... RUN-FILE...
-//	go run ./hack/parity record --format junit|gotest --suite NAME --ledger FILE [--subset] [--reasons FILE]
-//	    [--draft NOTE] [--pin-reason REASON] [--pin-file FILE] [--meta k=v]... RUN-FILE RUN-FILE...
+//	go run ./hack/parity record --format junit|gotest --suite NAME --ledger FILE [--subset | --leave FILE]
+//	    [--reasons FILE] [--draft NOTE] [--pin-reason REASON] [--pin-file FILE] [--meta k=v]... RUN-FILE RUN-FILE...
 //	go run ./hack/parity diff --baseline LEDGER --candidate FILE [--known FILE]
 //	    [--selection FILE [--gate-only FILE]] [--summary FILE] [--constraints FILE] [--allow-meta-drift]
 //	go run ./hack/parity check --old LEDGER --new LEDGER [--list-reasoned] [--draft]
@@ -20,11 +20,11 @@
 //	go run ./hack/parity venv --constraints FILE --freeze FILE [--mode record|compare [--baseline LEDGER]]
 //	    [--allow-meta-drift]
 //
-// --meta, record's --draft, --pin-reason and --freeze, diff's --selection,
-// --gate-only and --constraints, check's --draft and pin's --ledger are read
-// from the command line only, so that no stray variable or config file
-// changes what a record holds or what a comparison accepts. Every
-// other flag can also come from the environment, as PARITY_ and its name
+// --meta, record's --draft, --pin-reason, --leave and --freeze, diff's
+// --selection, --gate-only and --constraints, check's --draft and pin's
+// --ledger are read from the command line only, so that no stray variable
+// or config file changes what a record holds or what a comparison accepts.
+// Every other flag can also come from the environment, as PARITY_ and its name
 // upper-cased with "-" as "_" (PARITY_OUT, PARITY_ALLOW_META_DRIFT,
 // PARITY_CONFIG), and every other flag but --config from the config file
 // --config names, under its own name, in any format viper reads by the file's
@@ -200,13 +200,22 @@
 // diff), and leaves the others alone: a full record under a new Ceph version
 // appends for every test. A full record also retires every ledger test it did
 // not run. --subset marks a record of chosen tests: it appends only those,
-// retires nothing, and runs at the head; it cannot start a ledger. An append
-// that needs a reason takes it from --reasons, a file whose lines are a test
-// id, blanks and the reason, "#" starting a comment line; or else, with
-// --draft, the draft's. record refuses, listing every one, an append that
-// needs a reason neither gives, and a reason for a test it does not append,
-// and then writes nothing. It prints each appended entry that needed a
-// reason, as check --list-reasoned does.
+// retires nothing, and runs at the head; it cannot start a ledger. --leave
+// FILE, for a full record alone, names tests it leaves to another record,
+// such as the gate-only tests, which make s3tests-record records in another
+// LC mode: it neither retires them nor needs the runs to hold them, so each
+// keeps its entries as they are, and a ledger it starts holds none of them.
+// FILE holds pytest node ids, one a line, blank lines aside, as a run of
+// hack/s3tests/run.sh leaves the gate-only tests its selection resolved in
+// its .gate-only.ids file, read as --selection reads them (see Comparing);
+// it may name none. record refuses runs that ran a test FILE names, naming
+// each, since a selection meant to leave it out did not. An append that
+// needs a reason takes it from --reasons, a file whose lines are a test id,
+// blanks and the reason, "#" starting a comment line; or else, with --draft,
+// the draft's. record refuses, listing every one, an append that needs a
+// reason neither gives, and a reason for a test it does not append, and then
+// writes nothing. It prints each appended entry that needed a reason, as
+// check --list-reasoned does.
 //
 // A record at the head moves the venv when its pytest_freeze is not the one
 // the ledger's newest entries carry, the entries with the latest recording
@@ -214,10 +223,12 @@
 // stay as they are until a record moves it, which must be a full one, so
 // that no test is left without an entry under the new venv, and must give
 // --pin-reason, or with --draft the draft's, as a base pin does: it appends
-// an entry for every test, and those whose state holds carry that reason. A
-// test whose outcome changes still needs its own. A record with no
-// pytest_freeze into a ledger whose newest entries have one is refused, and
-// a ledger whose newest entries carry none names no venv.
+// an entry for every test it ran, and those whose state holds carry that
+// reason. A test whose outcome changes still needs its own. A test --leave
+// names gets none: its entries keep the venv they were recorded under until
+// a record of it appends one, which the venv alone never makes stale. A
+// record with no pytest_freeze into a ledger whose newest entries have one
+// is refused, and a ledger whose newest entries carry none names no venv.
 //
 // # Comparing
 //

@@ -90,7 +90,12 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # A record-baseline dispatch records the pr set twice and then the
+    # gate-only tests twice, which sleep about 18 minutes a run while their
+    # lifecycle rules come due. Dispatches that recorded the pr set alone
+    # took up to 40 minutes (November 2026), so 100 minutes holds those 40,
+    # about 40 more for the gate-only pair and 20 to spare.
+    timeout-minutes: ${{ inputs.record-baseline && 100 || 45 }}
     # rgw-go runs from the release's derived image, so that it runs the
     # release's own librados and tcmalloc on a runner that holds no librados
     # (hack/rooket/README.md, "Running in the builder").

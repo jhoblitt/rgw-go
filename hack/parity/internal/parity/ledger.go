@@ -585,6 +585,10 @@ type RecordOptions struct {
 	// Subset marks a record of chosen tests, which leaves the ledger's other
 	// tests alone; a full record retires every test it did not run.
 	Subset bool
+	// Leave names the tests a full record leaves to another record: it
+	// retires none of them, and refuses a record that ran one. A subset
+	// record, which retires nothing, takes none.
+	Leave Leave
 	// Reasons holds, by test id, the reason for the test's appended entry.
 	Reasons map[string]string
 	// Draft, when set, makes the record a draft: every appended entry that
@@ -655,16 +659,20 @@ type Appended struct {
 // record that starts or appends no pin, unless it moves the venv. Each test
 // of res gets an entry unless its last entry is a current, valid one in the
 // same state; a full record retires every other test whose last entry does
-// not already. It fails, listing every one, when an entry needs a reason
-// opts does not give, or opts gives a reason for a test it does not append.
+// not already, but for those opts.Leave names, which keep their entries as
+// they are. It fails, listing every one, when res ran a test opts.Leave
+// names, when an entry needs a reason opts does not give, or opts gives a
+// reason for a test it does not append.
 // The ledger it makes is a draft when opts.Draft gave a reason, or l was one.
 //
 // A record at the chain's head moves the venv when its pytest_freeze is not
 // the one the ledger's newest entries carry. Only a full record may, so that
-// no test keeps a state no run saw under the new venv, and it needs
-// opts.PinReason, or a draft's, as a base pin does: it gets an entry for
-// every test, those whose state holds carrying that reason. A record that
-// lacks the pytest_freeze the newest entries carry is refused.
+// no test it ran keeps a state no run saw under the new venv, and it needs
+// opts.PinReason, or a draft's, as a base pin does: each test it ran gets an
+// entry, those whose state holds carrying that reason. A test opts.Leave
+// names gets none and keeps its entries under the venv before, until a
+// record of it appends one; the venv alone never makes an entry stale. A
+// record that lacks the pytest_freeze the newest entries carry is refused.
 func AppendRecord(l *Ledger, res Result, opts RecordOptions) (*Ledger, []Appended, error) {
 	var mv venvMove
 	if l != nil {
@@ -694,6 +702,9 @@ func appendRecord(l *Ledger, res Result, opts RecordOptions, mv venvMove) (*Ledg
 		return nil, nil, fmt.Errorf("the pin's reason starts with %q, which marks a draft", DraftMarker)
 	case !printable(r) || !readable(r):
 		return nil, nil, fmt.Errorf("the pin's reason %q is not one a reader can read", r)
+	}
+	if err := leaveProblem(res, opts); err != nil {
+		return nil, nil, err
 	}
 
 	var out *Ledger
@@ -798,7 +809,7 @@ func appendRecord(l *Ledger, res Result, opts RecordOptions, mv venvMove) (*Ledg
 	}
 	if !opts.Subset {
 		for _, id := range ledgerIDs {
-			if _, ran := res.Outcomes[id]; ran {
+			if _, ran := res.Outcomes[id]; ran || opts.Leave.holds(id) {
 				continue
 			}
 			if prev, _ := out.last(id); prev.Outcome != outcomeRetired {

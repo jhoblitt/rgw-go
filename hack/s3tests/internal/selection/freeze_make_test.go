@@ -15,11 +15,18 @@ var _ = Describe("the Makefile's s3-tests ledger records", func() {
 			Expect(got[0]).To(ContainSubstring("sha256sum hack/s3tests/out/" + freeze + " | cut -c1-12"))
 			Expect(got[0]).To(MatchRegexp(` --meta pytest_freeze=(\$freeze|\$\(sha256sum hack/s3tests/out/` + freeze + ` \| cut -c1-12\)) `))
 		},
-		Entry("make s3tests-record's ledger entries, from the second run",
-			[]string{"s3tests-record", "RELEASE=squid"}, "squid-radosgw-base2.freeze"),
 		Entry("make s3tests-record-tests's ledger entries, from the second run",
 			[]string{"s3tests-record-tests", "RELEASE=tentacle", "TESTS=t.txt"}, "tentacle-radosgw-tests2.freeze"),
 	)
+
+	It("carry, for each of make s3tests-record's two records, the digest of its second run's .freeze file", func(ctx SpecContext) {
+		got := chainedRecords(makeDryRunIn(ctx, recordTree(gateOnlyOne), nil, "s3tests-record", "RELEASE=squid"))
+		Expect(got).To(HaveLen(2))
+		for i, freeze := range []string{"squid-radosgw-base2.freeze", "squid-radosgw-tests2.freeze"} {
+			Expect(got[i]).To(MatchRegexp(` --meta pytest_freeze=(\$freeze|\$\(sha256sum hack/s3tests/out/` + freeze + ` \| cut -c1-12\)) `))
+			Expect(got[i]).To(ContainSubstring("sha256sum hack/s3tests/out/" + freeze + " | cut -c1-12"))
+		}
+	})
 })
 
 var _ = Describe("the Makefile's s3-tests candidate", func() {

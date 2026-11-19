@@ -151,10 +151,10 @@ func setupLogging(v *viper.Viper, w io.Writer) error {
 
 func newRecordCmd(v *viper.Viper) *cobra.Command {
 	var meta map[string]string
-	var draft, pinReason string
+	var draft, pinReason, leave string
 	cmd := &cobra.Command{
-		Use: "record --format junit|gotest --suite NAME (--out FILE [--freeze FILE] | --ledger FILE [--subset] [--reasons FILE] " +
-			"[--draft NOTE] [--pin-reason REASON]) [--pin-file FILE] [--meta k=v]... RUN-FILE [RUN-FILE...]",
+		Use: "record --format junit|gotest --suite NAME (--out FILE [--freeze FILE] | --ledger FILE [--subset | --leave FILE] " +
+			"[--reasons FILE] [--draft NOTE] [--pin-reason REASON]) [--pin-file FILE] [--meta k=v]... RUN-FILE [RUN-FILE...]",
 		Short: "Record run files into a result file, or append them to a ledger",
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) == 0 {
@@ -179,13 +179,18 @@ func newRecordCmd(v *viper.Viper) *cobra.Command {
 			if pinReason, err = cmd.Flags().GetString("pin-reason"); err != nil {
 				return err
 			}
+			if leave, err = cmd.Flags().GetString("leave"); err != nil {
+				return err
+			}
 			switch out, ledger := v.GetString("out"), v.GetString("ledger"); {
 			case out == "" && ledger == "":
 				return errors.New("--out or --ledger is required")
 			case out != "" && ledger != "":
 				return errors.New("--out and --ledger exclude each other")
-			case out != "" && (v.GetBool("subset") || v.GetString("reasons") != "" || draft != "" || pinReason != ""):
-				return errors.New("--subset, --reasons, --draft and --pin-reason are for --ledger")
+			case out != "" && (v.GetBool("subset") || v.GetString("reasons") != "" || draft != "" || pinReason != "" || leave != ""):
+				return errors.New("--subset, --leave, --reasons, --draft and --pin-reason are for --ledger")
+			case leave != "" && v.GetBool("subset"):
+				return errors.New("--leave is for a full record: a --subset record retires no test, so it leaves none to another record")
 			case ledger != "" && len(files) < minRuns:
 				return fmt.Errorf("--ledger takes at least %d run files, so that a flaky test shows as unstable", minRuns)
 			}
@@ -218,6 +223,11 @@ func newRecordCmd(v *viper.Viper) *cobra.Command {
 			}
 			if path := v.GetString("ledger"); path != "" {
 				opts := RecordOptions{Subset: v.GetBool("subset"), Draft: draft, PinReason: pinReason}
+				if leave != "" {
+					if opts.Leave, err = readLeave(leave); err != nil {
+						return failed(err)
+					}
+				}
 				return failedIf(appendToLedger(cmd.OutOrStdout(), path, v.GetString("reasons"), res, len(files), opts))
 			}
 			out := v.GetString("out")
@@ -253,6 +263,12 @@ func newRecordCmd(v *viper.Viper) *cobra.Command {
 		"rather than a proven pin joining the chain, or why a full record at the head under another pytest_freeze "+
 		"re-stamps every test under a new venv; command line only")
 	f.StringArray("meta", nil, "a k=v pair to record with the result; repeatable, command line only")
+	// --leave keeps a full record from retiring tests, so it is never bound
+	// into viper either: no stray variable or config file keeps a test the
+	// runs no longer hold from being retired.
+	f.String("leave", "", "with --ledger, a file of the pytest node ids, one a line, of the tests a full record "+
+		"leaves to another record, as a run's .gate-only.ids holds them: it retires none of them, and refuses runs "+
+		"that ran one; command line only")
 	// --freeze adds meta, so it is never bound into viper either.
 	f.String("freeze", "", "with --out, the .freeze file of the venv the runs ran under: the result's meta carries "+
 		"its pytest_freeze, its pytest_packages and its pytest_python; command line only")
@@ -362,6 +378,9 @@ func appendToLedger(w io.Writer, path, reasons string, res Result, runs int, opt
 		len(appended), len(reasoned), len(res.Outcomes), runs, len(res.Unstable), path)
 	for _, line := range reasoned {
 		fmt.Fprintln(w, SafeLine(line))
+	}
+	if n := opts.Leave.count(l); n > 0 {
+		fmt.Fprintf(w, "left %d ledger tests the leave list names to another record\n", n)
 	}
 	return nil
 }
@@ -872,6 +891,18 @@ func readSelection(path string) (Selection, error) {
 		return Selection{}, fmt.Errorf("%s: %w", path, err)
 	}
 	return sel, nil
+}
+
+func readLeave(path string) (Leave, error) {
+	data, err := readFile(path)
+	if err != nil {
+		return Leave{}, fmt.Errorf("reading the leave list: %w", err)
+	}
+	leave, err := ParseLeave(bytes.NewReader(data))
+	if err != nil {
+		return Leave{}, fmt.Errorf("%s: %w", path, err)
+	}
+	return leave, nil
 }
 
 func readKnown(path string) (KnownList, error) {
