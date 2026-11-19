@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -25,12 +24,11 @@ import (
 	"github.com/aws/smithy-go"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/onsi/gomega/gexec"
 
 	"github.com/jhoblitt/rgw-go/internal/denc"
-	"github.com/jhoblitt/rgw-go/internal/frontend"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
+	"github.com/jhoblitt/rgw-go/internal/testutil/cephtest"
 	"github.com/jhoblitt/rgw-go/test/gate"
 )
 
@@ -429,35 +427,22 @@ func loopbackAddr(ctx context.Context) string {
 	return addr
 }
 
-// startWebsiteRGWGo builds rgw-go and runs it on the populated site beside
-// the radosgw, with websiteName and the website configuration routes on,
+// startWebsiteRGWGo runs rgw-go serve on the populated site beside the
+// radosgw, with websiteName and the website configuration routes on,
 // until the container ends, and returns its endpoint. It runs as
 // client.admin, whose config section the harness leaves alone, with the
 // background workers off on its command line, as the parity options hold
 // them for rgw-go-up's.
 func startWebsiteRGWGo(ctx context.Context) string {
 	GinkgoHelper()
-	built, err := gexec.Build("github.com/jhoblitt/rgw-go/cmd/rgw-go", "-tags=ceph_preview")
-	Expect(err).NotTo(HaveOccurred())
-	DeferCleanup(gexec.CleanupBuildArtifacts)
 	addr := loopbackAddr(ctx)
-	// Not exec.CommandContext: a process a BeforeAll starts outlives that
-	// node's context, and DeferCleanup ends it.
-	cmd := exec.Command(built, slices.Concat([]string{"serve", "--", "--name=client.admin", "-c", conf}, //nolint:noctx // see above
+	cephtest.StartRGWGo(cephtest.Serve, slices.Concat([]string{"--", "--name=client.admin", "-c", conf},
 		manifest.AdminFlags(), []string{
 			"--rgw-frontends=beast endpoint=" + addr,
 			"--rgw-dns-s3website-name=" + websiteName, "--rgw-enable-static-website=true",
 			"--rgw-enable-gc-threads=false", "--rgw-enable-lc-threads=false",
 			"--rgw-dynamic-resharding=false", "--rgw-run-sync-thread=false",
-		})...)
-	s, err := gexec.Start(cmd, GinkgoWriter, GinkgoWriter)
-	Expect(err).NotTo(HaveOccurred())
-	DeferCleanup(func() {
-		defer s.Kill()
-		s.Terminate()
-		Eventually(s).WithTimeout(frontend.DrainTimeout+time.Minute).WithPolling(100*time.Millisecond).
-			Should(gexec.Exit(), "rgw-go outlived SIGTERM and is killed")
-	})
+		}))
 	base := "http://" + addr
 	Eventually(func(g Gomega) int {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/", http.NoBody)

@@ -19,7 +19,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -133,9 +132,12 @@ func writeSelfSigned(path string) *x509.Certificate {
 	return cert
 }
 
+// The binaries cephtest.StartRGWGo built outlive every spec, so the suite
+// removes them once it ends.
+var _ = AfterSuite(func() { cephtest.RemoveRGWGoBuilds() })
+
 var _ = Describe("serve against a cluster", Label("integration"), Ordered, func() {
 	var (
-		bin     string
 		conf    string
 		m       serveManifest
 		release string
@@ -148,16 +150,7 @@ var _ = Describe("serve against a cluster", Label("integration"), Ordered, func(
 		cephtest.ReadManifest(conf, &m)
 		Expect(m.Zone).NotTo(BeEmpty(), "manifest.json names the zone")
 
-		built, err := gexec.Build("github.com/jhoblitt/rgw-go/cmd/rgw-go", "-tags=ceph_preview")
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(gexec.CleanupBuildArtifacts)
-		// Named radosgw, the binary takes its whole command line as ceph's,
-		// as Rook launches it.
-		b, err := os.ReadFile(built)
-		Expect(err).NotTo(HaveOccurred())
-		bin = filepath.Join(GinkgoT().TempDir(), "radosgw")
-		Expect(os.WriteFile(bin, b, 0o755)).To(Succeed())
-
+		var err error
 		cluster, err = goceph.Connect(ctx, goceph.Config{ConfigFile: conf})
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(cluster.Close()).To(Succeed()) })
@@ -183,9 +176,10 @@ var _ = Describe("serve against a cluster", Label("integration"), Ordered, func(
 			Should(gexec.Exit(), "rgw-go outlived SIGTERM and is killed")
 	}
 
-	// start runs the binary with Rook's argv shape, frontends as its
-	// rgw_frontends and metricsAddr as RGW_GO_METRICS_ADDR, and stops it when
-	// the spec or container that started it ends, unless it has exited.
+	// start runs rgw-go named radosgw, which takes its whole command line as
+	// ceph's, with Rook's argv shape, frontends as its rgw_frontends and
+	// metricsAddr as RGW_GO_METRICS_ADDR, and stops it when the spec or
+	// container that started it ends, unless it has exited.
 	start := func(frontends, metricsAddr string, extra ...string) *gexec.Session {
 		GinkgoHelper()
 		args := slices.Concat([]string{
@@ -194,14 +188,7 @@ var _ = Describe("serve against a cluster", Label("integration"), Ordered, func(
 			"--rgw-frontends=" + frontends,
 			"--rgw-realm=" + m.Realm, "--rgw-zonegroup=" + m.Zonegroup, "--rgw-zone=" + m.Zone,
 		}, extra)
-		// Not exec.CommandContext: a process a BeforeAll starts outlives
-		// that node's context, and DeferCleanup ends it.
-		cmd := exec.Command(bin, args...) //nolint:noctx // see above
-		cmd.Env = append(os.Environ(), "RGW_GO_METRICS_ADDR="+metricsAddr, "RGW_GO_LOG_LEVEL=debug")
-		s, err := gexec.Start(cmd, GinkgoWriter, GinkgoWriter)
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() { stop(s) })
-		return s
+		return cephtest.StartRGWGo(cephtest.Radosgw, args, "RGW_GO_METRICS_ADDR="+metricsAddr, "RGW_GO_LOG_LEVEL=debug")
 	}
 
 	// probe waits for base to answer Rook's probe.
