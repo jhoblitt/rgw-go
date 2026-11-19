@@ -31970,9 +31970,8 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.7 and v20.2.4 by the source; reproduced on v20.2.4 and
   v21.1.2. Main at 8aa24c51928 (2026-10-30) still reads the key unchecked,
   now under the daemon's lock (ceph/ceph#71039).
-- **rgw-go:** not affected: it registers nothing today. Phase 2 plan task
-  SM4, which makes it register, writes `id` in every registration, as
-  radosgw does (`docs/superpowers/plans/2026-10-13-phase-2/SM-service-map.md`).
+- **rgw-go:** not affected: it writes `id` in every registration, as
+  radosgw does (`serviceMetadata`, `internal/cli/servicemap.go`).
 - **Upstream:** none. A prior-art search on 2026-10-30 found no issue or fix
   PR, each search first checked against a known match. It covered GitHub
   pull requests on ceph/ceph, where issues are disabled, for
@@ -34013,9 +34012,8 @@ Every new entry adds its row to this table, in document order.
   Main at ec322a5e95eb (2026-11-14) still sets the registration before it
   answers `-EBUSY`
   ([RadosClient.cc:1099-1112](https://github.com/ceph/ceph/blob/ec322a5e95ebcb46dec7d6a9d7813a34543c64ad/src/librados/RadosClient.cc#L1099-L1112)).
-- **rgw-go:** not affected. It registers nothing today, and phase 2 plan task
-  SM4, which makes it register, does so once, after its connect has returned
-  (`docs/superpowers/plans/2026-10-13-phase-2/SM-service-map.md`, SM-D5).
+- **rgw-go:** not affected. It registers once, after its connect has
+  returned and its frontends listen (`startup.start`, `internal/cli/serve.go`).
   goceph shuts a handle down when its connect fails or is cancelled, without
   connecting it again (internal/radosclient/goceph/cluster.go:156-170), so no
   registration can meet a connecting handle. It also serializes its own
