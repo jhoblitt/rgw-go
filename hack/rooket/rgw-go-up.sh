@@ -164,9 +164,12 @@ fi
 
 rm -f "${out}/rgw-go.endpoint" "${out}/rgw-go.metrics"
 # make lc-mode restarts rgw-go with the serve flags it was started with,
-# which this records, one a line.
+# which this records, one a line. rgw-go stays out of the manager's service
+# map, where a host rgw-go linking another Ceph build than the cluster's
+# would add it to `ceph versions`; rgw-go-start.sh passes the setting into a
+# derived image's container with the caller's other RGW_GO_* settings.
 if (($#)); then printf '%s\n' "$@" >"${flagsfile}"; else : >"${flagsfile}"; fi
-pid=$("${here}/rgw-go-start.sh" "${release}" "${log}" serve "--metrics-addr=127.0.0.1:${metrics_port}" "$@" -- \
+pid=$(RGW_GO_SERVICE_MAP=false "${here}/rgw-go-start.sh" "${release}" "${log}" serve "--metrics-addr=127.0.0.1:${metrics_port}" "$@" -- \
 	--id rgw.rgw-go --keyring "${keyring}" -c "${conf}" \
 	--rgw-realm="${realm}" --rgw-zonegroup="${zonegroup}" --rgw-zone="${zone}" \
 	--rgw-frontends="beast endpoint=127.0.0.1:${port}")
