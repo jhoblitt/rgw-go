@@ -1,0 +1,1 @@
+go build -o x ./cmd/rgw-go names the binary under docs/, which the guard leaves alone.
