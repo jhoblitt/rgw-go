@@ -57,6 +57,8 @@ func newServeCmd(v *viper.Viper) *cobra.Command {
 	f.Float64("memory-budget-ratio", driver.DefaultMemoryBudgetRatio,
 		"share of the Go memory limit, or of 80% of physical memory without one, that the buffers of object data "+
 			"may hold before requests wait, above 0 and at most 1 (RGW_GO_MEMORY_BUDGET_RATIO)")
+	f.Bool("service-map", true,
+		"register in the manager's service map and report the gateway's status there, as radosgw does (RGW_GO_SERVICE_MAP)")
 	return cmd
 }
 
@@ -73,10 +75,15 @@ type serveSettings struct {
 	// memoryBudgetRatio for the same reason.
 	memoryBudgetArg   string
 	memoryBudgetRatio float64
+	// serviceMapArg is --service-map as viper's string, parsed into
+	// serviceMap for the same reason: GetBool reads a value that is not a
+	// boolean as false.
+	serviceMapArg string
+	serviceMap    bool
 }
 
 // validate checks s and returns it with its memory limit and memory budget
-// ratios parsed.
+// ratios and its service map setting parsed.
 func (s serveSettings) validate() (serveSettings, error) {
 	switch s.mode {
 	case goceph.ModeSync, goceph.ModeCallback, goceph.ModePipe:
@@ -96,6 +103,9 @@ func (s serveSettings) validate() (serveSettings, error) {
 		return s, fmt.Errorf("--memory-budget-ratio %q would leave the buffers unbounded; it takes a number above 0 and at most 1", s.memoryBudgetArg)
 	}
 	s.memoryBudgetRatio = b
+	if s.serviceMap, err = strconv.ParseBool(s.serviceMapArg); err != nil {
+		return s, fmt.Errorf("--service-map %q is not true or false", s.serviceMapArg)
+	}
 	return s, nil
 }
 
@@ -120,10 +130,12 @@ func serve(ctx context.Context, v *viper.Viper, stdout io.Writer, args []string)
 		mode:            goceph.Mode(v.GetString("rados-completions")),
 		memoryLimitArg:  v.GetString("memory-limit-ratio"),
 		memoryBudgetArg: v.GetString("memory-budget-ratio"),
+		serviceMapArg:   v.GetString("service-map"),
 	}
 	slog.DebugContext(ctx, "serve settings",
 		slog.String("metrics_addr", s.metricsAddr), slog.String("rados_completions", string(s.mode)),
-		slog.String("memory_limit_ratio", s.memoryLimitArg), slog.String("memory_budget_ratio", s.memoryBudgetArg))
+		slog.String("memory_limit_ratio", s.memoryLimitArg), slog.String("memory_budget_ratio", s.memoryBudgetArg),
+		slog.String("service_map", s.serviceMapArg))
 	if len(args) == 0 {
 		return errNoArguments
 	}
@@ -196,6 +208,8 @@ rgw-go logs to stderr and takes its own settings from the environment:
   RGW_GO_MEMORY_BUDGET_RATIO share of the Go memory limit that object data buffers
                              hold before requests wait, above 0 and at most 1
                              (default ` + strconv.FormatFloat(driver.DefaultMemoryBudgetRatio, 'g', -1, 64) + `)
+  RGW_GO_SERVICE_MAP         true or false: register in the manager's service map
+                             and report status there, as radosgw does (default true)
 `
 
 // envToVec is ceph's env_to_vec for a set CEPH_ARGS
@@ -251,20 +265,13 @@ var radosgwDefaults = []string{
 var privilegeOptions = []string{"setuser", "setgroup", "setuser_match_path"}
 
 // run starts the gateway in radosgw's order: connect to RADOS as the
-// launching user, open the store, bind every listener, then drop
-// privileges and serve until ctx ends. It sizes the Go runtime's memory
-// limit first, so that the limit holds for everything the gateway
-// allocates.
+// launching user, open the store, then the steps startup takes: bind every
+// listener, drop privileges, register in the manager's service map and
+// serve until ctx ends. It sizes the Go runtime's memory limit first, so
+// that the limit holds for everything the gateway allocates.
 func (s serveSettings) run(ctx context.Context, early cephconf.EarlyArgs) (err error) {
 	limit := processSizer().Size(ctx, s.memoryLimitRatio)
-	cfg := goceph.Config{
-		Cluster:      early.Cluster,
-		Name:         early.Name,
-		ConfigFile:   early.ConfFile,
-		NoConfigFile: early.NoConfigFile,
-		Args:         slices.Concat(radosgwDefaults, early.Rest),
-		Mode:         s.mode,
-	}
+	cfg := radosConfig(early, s.mode)
 	ids, err := goceph.ConfiguredOptions(ctx, cfg, privilegeOptions...)
 	if err != nil {
 		return fmt.Errorf("reading the ceph configuration: %w", err)
@@ -340,34 +347,103 @@ func (s serveSettings) run(ctx context.Context, early cephconf.EarlyArgs) (err e
 	if err != nil {
 		return fmt.Errorf("configuring the frontend: %w", err)
 	}
-	if err = fe.Listen(); err != nil {
+	sm := serviceMap{
+		daemon:   serviceDaemon(cluster),
+		interval: func() (int64, error) { return conf.Int64("rgw_sync_trace_servicemap_update_interval") },
+		after:    time.After,
+	}
+	if sm.registrar, sm.metadata, err = serviceRegistration(ctx, s.serviceMap, cluster, conf, store, early.Name, frontends); err != nil {
+		return err
+	}
+	return startup{
+		frontend:    fe,
+		metricsAddr: s.metricsAddr,
+		registry:    reg,
+		dropPrivileges: func() error {
+			return cephconf.DropPrivileges(cephconf.NewOptions(cephconf.MapGetter(ids)))
+		},
+		serviceMap: sm,
+		run:        store.Run,
+		logAttrs:   []slog.Attr{slog.String("zone", zone.Name), slog.String("release", store.Release().String())},
+	}.start(ctx)
+}
+
+// radosConfig is the configuration serve connects to RADOS with: the early
+// arguments' cluster, name and config file, and the rest of the command
+// line after radosgw's own defaults.
+func radosConfig(early cephconf.EarlyArgs, mode goceph.Mode) goceph.Config {
+	return goceph.Config{
+		Cluster:      early.Cluster,
+		Name:         early.Name,
+		ConfigFile:   early.ConfFile,
+		NoConfigFile: early.NoConfigFile,
+		Args:         slices.Concat(radosgwDefaults, early.Rest),
+		Mode:         mode,
+	}
+}
+
+// frontendServer is the frontend startup binds and serves.
+type frontendServer interface {
+	Listen() error
+	Serve(ctx context.Context) error
+	Addrs() []net.Addr
+}
+
+// startup is what run does once the store is open, in radosgw's order:
+// the frontend's and the metrics listener's listen, the privileges'
+// drop, the registration in the manager's service map once every frontend
+// runs
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_appmain.cc#L516-L521 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_appmain.cc#L524-L529 at v20.2.4),
+// then serving, with the status reports beside it after a registration.
+type startup struct {
+	frontend frontendServer
+	// metricsAddr is --metrics-addr, "" for no metrics listener.
+	metricsAddr    string
+	registry       *metrics.Registry
+	dropPrivileges func() error
+	serviceMap     serviceMap
+	// run is the store's background workers.
+	run func(context.Context) error
+	// logAttrs go on the serving line.
+	logAttrs []slog.Attr
+}
+
+// start runs the steps and serves until ctx ends.
+func (st startup) start(ctx context.Context) error {
+	if err := st.frontend.Listen(); err != nil {
 		return fmt.Errorf("starting the frontend: %w", err)
 	}
 	var metricsLn net.Listener
-	if s.metricsAddr != "" {
-		if metricsLn, err = (&net.ListenConfig{}).Listen(ctx, "tcp", s.metricsAddr); err != nil {
-			return fmt.Errorf("listening on --metrics-addr %s: %w", s.metricsAddr, err)
+	if st.metricsAddr != "" {
+		var err error
+		if metricsLn, err = (&net.ListenConfig{}).Listen(ctx, "tcp", st.metricsAddr); err != nil {
+			return fmt.Errorf("listening on --metrics-addr %s: %w", st.metricsAddr, err)
 		}
 	}
-	if err = cephconf.DropPrivileges(cephconf.NewOptions(cephconf.MapGetter(ids))); err != nil {
+	if err := st.dropPrivileges(); err != nil {
 		return fmt.Errorf("dropping privileges: %w", err)
 	}
+	registered := st.serviceMap.register(ctx)
 
 	g, gctx := errgroup.WithContext(ctx)
-	serveAndRun(gctx, g, fe.Serve, store.Run)
+	serveAndRun(gctx, g, st.frontend.Serve, st.run)
 	if metricsLn != nil {
-		serveMetrics(gctx, g, metricsLn, reg)
+		serveMetrics(gctx, g, metricsLn, st.registry)
 	}
-	addrs := make([]string, 0, len(fe.Addrs()))
-	for _, a := range fe.Addrs() {
+	if registered {
+		g.Go(func() error { return st.serviceMap.report(gctx) })
+	}
+	addrs := make([]string, 0, len(st.frontend.Addrs()))
+	for _, a := range st.frontend.Addrs() {
 		addrs = append(addrs, a.String())
 	}
 	var metricsAddr string
 	if metricsLn != nil {
 		metricsAddr = metricsLn.Addr().String()
 	}
-	slog.InfoContext(ctx, "serving", slog.Any("addrs", addrs), slog.String("metrics_addr", metricsAddr),
-		slog.String("zone", zone.Name), slog.String("release", store.Release().String()))
+	slog.LogAttrs(ctx, slog.LevelInfo, "serving",
+		append([]slog.Attr{slog.Any("addrs", addrs), slog.String("metrics_addr", metricsAddr)}, st.logAttrs...)...)
 	return g.Wait()
 }
 
