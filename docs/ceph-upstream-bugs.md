@@ -537,6 +537,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw reads PutObjectRetention's document before it sends 100 Continue](#radosgw-reads-putobjectretentions-document-before-it-sends-100-continue) | pending | pending | ✓ |
 | [radosgw's negated condition operators are false on an absent key](#radosgws-negated-condition-operators-are-false-on-an-absent-key) | pending | pending | ✓ |
 | [radosgw matches condition key names case-sensitively](#radosgw-matches-condition-key-names-case-sensitively) | pending | pending | ✓ |
+| [radosgw evaluates a repeated x-amz-tagging key as one multivalued s3:RequestObjectTag condition key](#radosgw-evaluates-a-repeated-x-amz-tagging-key-as-one-multivalued-s3requestobjecttag-condition-key) | pending | pending | ✓ |
 | [radosgw-admin mfa check names the serial number when --totp-pin is missing](#radosgw-admin-mfa-check-names-the-serial-number-when---totp-pin-is-missing) | pending | pending | ✓ |
 | [radosgw skips a bucket's default encryption for a write that sends an empty encryption header](#radosgw-skips-a-buckets-default-encryption-for-a-write-that-sends-an-empty-encryption-header) | [#79506](https://tracker.ceph.com/issues/79506), [#80258](https://tracker.ceph.com/issues/80258), [#80260](https://tracker.ceph.com/issues/80260) | [ceph/ceph#71073](https://github.com/ceph/ceph/pull/71073), [ceph/ceph#71534](https://github.com/ceph/ceph/pull/71534), [ceph/ceph#71535](https://github.com/ceph/ceph/pull/71535) | ✓ |
 | [radosgw's CopyObject ignores x-amz-tagging-directive](#radosgws-copyobject-ignores-x-amz-tagging-directive) | pending | pending | ✓ |
@@ -35159,6 +35160,65 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task L7's adversarial review, 2026-11-14, judging
   how a policy can name an object-lock condition key; derived from the
   source, not reproduced.
+
+## radosgw evaluates a repeated x-amz-tagging key as one multivalued s3:RequestObjectTag condition key
+
+- **Kind:** defect, possibly security-relevant. Unreproduced: derived from
+  the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWObjTags` holds its tags in a `std::multimap`
+    ([rgw_tag.h:13-16](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.h#L13-L16),
+    [rgw_tag.h:13-16](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.h#L13-L16)),
+    and `set_from_string` adds every pair of the `x-amz-tagging` header, a
+    repeated key included
+    ([rgw_tag.cc:36-57](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.cc#L36-L57),
+    [rgw_tag.cc:36-57](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.cc#L36-L57)).
+    It is the sink the entry "[radosgw's lifecycle tag filter counts an
+    object's repeated tag key toward the rule's other
+    tags](#radosgws-lifecycle-tag-filter-counts-an-objects-repeated-tag-key-toward-the-rules-other-tags)"
+    names, which also records that S3 refuses a tag set that repeats a key.
+  - radosgw stores the repeated key with the object too: `set_from_string`
+    adds every pair to the `std::multimap` with no check for a key it
+    already holds
+    ([rgw_tag.cc:14-57](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.cc#L14-L57),
+    [rgw_tag.cc:14-57](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.cc#L14-L57);
+    [rgw_tag.h:13](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.h#L13),
+    [rgw_tag.h:13](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.h#L13)),
+    and the set is encoded whole
+    ([rgw_tag.h:26-30](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.h#L26-L30),
+    [rgw_tag.h:26-30](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.h#L26-L30)).
+  - PutObject adds each pair to the request's environment as
+    `s3:RequestObjectTag/<key>`, so a repeated key becomes one condition
+    key with several values
+    ([rgw_op.cc:3970-3972](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3970-L3972),
+    [rgw_op.cc:4179-4181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4179-L4181)).
+  - `StringNotEquals` and the other negated string and ARN operators are
+    `multimap_none` on v20.2.4, false when any value of the key matches a
+    condition value
+    ([rgw_iam_policy.cc:910-912](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L910-L912),
+    [rgw_iam_policy.h:514-525](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L514-L525)),
+    so on Tentacle such an operator on `s3:RequestObjectTag/<key>` is false
+    for a request that repeats the key with one value that matches and
+    another that does not. v19.2.7's is `orrible` over the negated
+    comparison, true when any pair differs
+    ([rgw_iam_policy.cc:890-892](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L890-L892),
+    [rgw_iam_policy.h:482-493](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L482-L493)),
+    so Squid holds it for the same request ("[Squid's negated condition
+    operators hold when any pair differs, and its Null ignores its
+    values](#squids-negated-condition-operators-hold-when-any-pair-differs-and-its-null-ignores-its-values)").
+- **Releases:** v20.2.4; v19.2.7 differs as above.
+- **rgw-go:** reproduces it: `tags.ParseHeader` keeps a repeated key
+  (`internal/tags/tags.go`), and `requestTagKeys` adds each pair
+  (`internal/authz/env.go`), so on Tentacle a negated string operator on
+  the key as written is false for such a request, in an Allow and in a
+  Deny. On Squid, for the key as written, it holds, as Squid's radosgw's
+  does. In a Deny on the key in another ASCII case, which the IAM User Guide
+  gives no answer for there, it holds on both releases (`docs/differences.md`,
+  "A Deny's condition key names match whatever their case").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task S10's adversarial review, 2026-11-19, probing a
+  request tag key repeated in another case; derived from the source, not
+  reproduced on a cluster.
 
 ## radosgw-admin mfa check names the serial number when --totp-pin is missing
 
