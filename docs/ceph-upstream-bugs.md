@@ -24184,7 +24184,15 @@ Every new entry adds its row to this table, in document order.
   resumed as radosgw's does before that change, repeated a key's sixteen
   newest versions on fakerados (`internal/driver/list_versions_test.go`,
   "resumes a round that ended on the null version after it").
-- **Upstream:** pending; prior art not searched.
+- **Upstream:** [#83208](https://tracker.ceph.com/issues/83208), "rgw:
+  bucket listings replay versions when a page ends on a null version",
+  Fix Under Review, with backports to tentacle and umbrella requested. Its
+  fix, [ceph/ceph#73935](https://github.com/ceph/ceph/pull/73935), not yet
+  merged, has `cls_bucket_list_ordered`, `cls_bucket_list_unordered`
+  and `list_objects_ordered` and `list_objects_unordered` resume after a
+  null version of a listing with versions by naming its instance `null`
+  (`rgw_list_resume_marker`). Read from the tracker and the pull request on
+  2026-11-19.
 - **Found:** phase 2 task V9, 2026-10-20, pinning a listing's paging
   boundaries. Derived from the source and seen on fakerados, not reproduced
   on a cluster.
