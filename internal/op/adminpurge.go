@@ -17,7 +17,11 @@ const purgePage = 1000
 // PurgeObjects, then DeleteBucket, which aborts the in-flight uploads as
 // remove's abort_multiparts does, so the multipart namespace is never
 // deleted entry by entry. DeleteBucket refuses a bucket an object reached
-// after the listing, where radosgw's delete_bucket does not check.
+// after the listing, where radosgw's delete_bucket does not check. The
+// removal is DeleteBucketPurged, which skips the store's index check, so a
+// version no listing shows goes with the index as radosgw's purge leaves it:
+// the operator's way to remove a bucket whose index holds an entry no
+// request reaches.
 func PurgeBucket(ctx context.Context, env *Env, rec *BucketRecord) error {
 	if err := refuseUnfinishedRename(ctx, env, rec); err != nil {
 		return err
@@ -28,7 +32,7 @@ func PurgeBucket(ctx context.Context, env *Env, rec *BucketRecord) error {
 	if err := PurgeObjects(ctx, env, rec); err != nil {
 		return err
 	}
-	return env.Buckets.DeleteBucket(ctx, rec)
+	return env.Buckets.DeleteBucketPurged(ctx, rec)
 }
 
 // PurgeObjects is RadosBucket::remove's delete_children pass

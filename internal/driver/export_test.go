@@ -321,6 +321,13 @@ func (s *Store) WorkerNamesForTest() []string {
 	return names
 }
 
+// SetIndexAwaitForTest bounds a bucket delete's wait for its index
+// completions at d in place of indexAwaitCap.
+func SetIndexAwaitForTest(s *Store, d time.Duration) { s.indexAwaitTimeout = d }
+
+// IndexAwaitCap is indexAwaitCap for the external specs.
+const IndexAwaitCap = indexAwaitCap
+
 // PendingCompletionsForTest is the number of bucket index completions
 // submitted or queued and not yet done.
 func (s *Store) PendingCompletionsForTest() int { return s.w.completions.pending() }

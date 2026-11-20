@@ -92,6 +92,12 @@ func (s *Store) CreateBucket(_ context.Context, p op.CreateBucketParams) (*op.Bu
 	return copyBucket(&b.rec), nil
 }
 
+// DeleteBucketPurged implements op.BucketStore as DeleteBucket: the memory
+// store keeps no index to check.
+func (s *Store) DeleteBucketPurged(ctx context.Context, rec *op.BucketRecord) error {
+	return s.DeleteBucket(ctx, rec)
+}
+
 // DeleteBucket implements op.BucketStore: a bucket of this zonegroup without
 // objects goes, and its in-flight uploads with it, as RadosBucket::remove
 // aborts them; one of another zonegroup is refused as the RADOS store

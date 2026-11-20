@@ -786,6 +786,43 @@ var _ = Describe("a versioned CompleteMultipartUpload", func() {
 			Expect(listed()).To(Equal([]string{"v3", "c1", "v1"}))
 		})
 
+		// DeleteBucket aborts the upload after its listing check, and the abort
+		// removes a recorded version no link of which landed only once no link
+		// of it can land: until then the delete fails and keeps the version.
+		DescribeTable("keeps the bucket of a completion whose link never landed, and the version",
+			func(ctx SpecContext, r denc.Release) {
+				st, err := driver.Open(ctx, ac, conf(nil), driver.Options{Release: &r})
+				Expect(err).NotTo(HaveOccurred())
+				driver.SetClock(st, now)
+				st.SetReshardWaitForTest(0)
+				driver.SetCondSleepForTest(st, func(context.Context, time.Duration) error { return nil })
+				s = st
+				up, etags := upload(ctx, reprefix, 5<<20)
+				up.WriteTag = "tx-first"
+				ac.set(onFirst("bucket_link_olh", failWith(syscall.ETIMEDOUT)))
+				_, err = complete(ctx, up, "c1", etags)
+				Expect(err).To(MatchError(op.ErrRequestTimedOut))
+				settle(s)
+				ac.set(nil)
+				Expect(listed()).To(BeEmpty(), "no link landed")
+				Expect(head("c1")).NotTo(BeNil())
+				before, err := s.BucketStats(ctx, rec)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(s.DeleteBucket(ctx, rec)).To(MatchError(op.ErrInternalError), "the abort: a link of c1 may still land")
+				Expect(head("c1")).NotTo(BeNil(), "c1 is kept")
+				_, ok := c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k", Instance: "c1"})
+				Expect(ok).To(BeTrue(), "with its instance entry")
+				Expect(c.Object(extraPoolName, "", mOID(up))).NotTo(BeNil(), "and the upload")
+				Expect(c.Object(rookMetaPool, rookRoot, rec.Info.Bucket.InstanceOID())).NotTo(BeNil(), "and the bucket")
+				after, err := s.BucketStats(ctx, rec)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(after).To(Equal(before))
+			},
+			Entry("on Squid", denc.Squid),
+			Entry("on Tentacle", denc.Tentacle),
+		)
+
 		It("completes its index entry and links it after a gateway stopped once the head was written", func(ctx SpecContext) {
 			mustPut(ctx, "v1", "one")
 			up, etags := upload(ctx, reprefix, 5<<20)

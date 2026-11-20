@@ -259,6 +259,26 @@ func (m *completionManager) awaitSent(ctx context.Context, k waitKey) error {
 	return nil
 }
 
+// awaitBucket is awaitSent for every wait set of bucket, a bucket key, that
+// holds a flight when the call begins. A multipart part's completion, which
+// joins no wait set, is not waited for.
+func (m *completionManager) awaitBucket(ctx context.Context, bucket string) error {
+	m.mu.Lock()
+	var keys []waitKey
+	for k := range m.waits {
+		if k.bucket == bucket {
+			keys = append(keys, k)
+		}
+	}
+	m.mu.Unlock()
+	for _, k := range keys {
+		if err := m.awaitSent(ctx, k); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // want has k's queued retries sent before the rest of its bucket's queue.
 // m.mu is held.
 func (m *completionManager) want(k waitKey) {
