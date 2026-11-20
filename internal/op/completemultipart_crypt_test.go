@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/md5" //nolint:gosec // SSE-C names its key by the key's MD5
 	"encoding/base64"
+	"fmt"
 	"maps"
 	"net/http"
 	"strings"
@@ -28,20 +29,22 @@ type cryptOutcome struct {
 	echo op.CryptEcho
 }
 
-// The outcomes the encrypted completion specs expect, and the checksum their
-// uploads are created with.
+// The outcomes the encrypted completion specs expect, the checksum their
+// uploads are created with, and the protocol's refusal of a completion that
+// asks for encryption.
 var (
-	sseCCompletes    = cryptOutcome{}
-	sseCEchoes       = cryptOutcome{echo: op.CryptEcho{SSECKeyMD5: base64.StdEncoding.EncodeToString(sseCKeyMD5())}}
-	sseCInsecure     = cryptOutcome{err: op.ErrInvalidRequest}
-	sseCNoKey        = cryptOutcome{err: op.ErrInvalidArgument, msg: "Requests specifying Server Side Encryption with Customer provided keys must provide a valid encryption algorithm."}
-	sseCWrongKey     = cryptOutcome{err: op.ErrInvalidArgument, msg: "The calculated MD5 hash of the key did not match the hash that was provided."}
-	sseCBadAlgorithm = cryptOutcome{err: op.ErrInvalidEncryptionAlgorithm, msg: "The requested encryption algorithm is not valid, must be AES256."}
-	sseCBadKey       = cryptOutcome{err: op.ErrInvalidArgument, msg: "Requests specifying Server Side Encryption with Customer provided keys must provide an appropriate secret key."}
-	kmsNoKeyServer   = cryptOutcome{err: op.ErrInvalidArgument, msg: "Failed to retrieve the actual key, kms-keyid: kid"}
-	kmsCompletes     = cryptOutcome{echo: op.CryptEcho{SSE: "aws:kms", KMSKeyID: "kid"}}
-	sseS3Completes   = cryptOutcome{echo: op.CryptEcho{SSE: "AES256"}}
-	sseCSHA256Upload = op.UploadChecksum{Type: cksum.SHA256, Flags: cksum.FlagComposite}
+	sseCCompletes      = cryptOutcome{}
+	sseCEchoes         = cryptOutcome{echo: op.CryptEcho{SSECKeyMD5: base64.StdEncoding.EncodeToString(sseCKeyMD5())}}
+	sseCInsecure       = cryptOutcome{err: op.ErrInvalidRequest}
+	sseCNoKey          = cryptOutcome{err: op.ErrInvalidArgument, msg: "Requests specifying Server Side Encryption with Customer provided keys must provide a valid encryption algorithm."}
+	sseCWrongKey       = cryptOutcome{err: op.ErrInvalidArgument, msg: "The calculated MD5 hash of the key did not match the hash that was provided."}
+	sseCBadAlgorithm   = cryptOutcome{err: op.ErrInvalidEncryptionAlgorithm, msg: "The requested encryption algorithm is not valid, must be AES256."}
+	sseCBadKey         = cryptOutcome{err: op.ErrInvalidArgument, msg: "Requests specifying Server Side Encryption with Customer provided keys must provide an appropriate secret key."}
+	kmsNoKeyServer     = cryptOutcome{err: op.ErrInvalidArgument, msg: "Failed to retrieve the actual key, kms-keyid: kid"}
+	kmsCompletes       = cryptOutcome{echo: op.CryptEcho{SSE: "aws:kms", KMSKeyID: "kid"}}
+	sseS3Completes     = cryptOutcome{echo: op.CryptEcho{SSE: "AES256"}}
+	sseCSHA256Upload   = op.UploadChecksum{Type: cksum.SHA256, Flags: cksum.FlagComposite}
+	errAskedEncryption = fmt.Errorf("%w: server-side encryption is not served yet", op.ErrNotImplemented)
 )
 
 var _ = Describe("CompleteMultipart of an upload radosgw began encrypted", func() {
@@ -203,6 +206,65 @@ var _ = Describe("CompleteMultipart of an upload radosgw began encrypted", func(
 		withKey(o)
 		o.SSECKey = "not base64!"
 	}
+
+	// AskedEncryption is the protocol's refusal of a request that asks for
+	// encryption. rgw-go encrypts nothing, so it comes ahead of the upload's
+	// decision, an SSE-C upload's key included, and of EmptyEncryption, for
+	// an upload of any mode and for one that is not found.
+	DescribeTable("refuses a completion that asks for encryption before it reads the upload or the body, completing nothing",
+		func(ctx SpecContext, found *op.Upload, set func(*op.CompleteMultipart)) {
+			for _, rel := range bothReleases {
+				f := newMPFixture(ctx, rel)
+				stub := &opfakes.FakeMultipartStore{}
+				if found == nil {
+					stub.GetUploadReturns(nil, op.ErrNoSuchUpload)
+				} else {
+					stub.GetUploadReturns(found, nil)
+				}
+				stub.CompleteReturns(&op.PutResult{ETag: "e"}, nil)
+				f.env.Multipart = stub
+				o := &op.CompleteMultipart{UploadID: "2~x", Secure: true, AskedEncryption: errAskedEncryption}
+				if set != nil {
+					set(o)
+				}
+				r := f.bodyReq(http.MethodPost, "k", completeDoc(xmlPart("1", "e")))
+				body := &readCounter{r: r.Body}
+				r.Body = body
+				err := op.Run(ctx, o, r)
+				Expect(err).To(MatchError(op.ErrNotImplemented), "release %d", rel)
+				Expect(o.Echo).To(BeZero(), "release %d: the refusal echoes nothing", rel)
+				Expect(body.reads).To(BeZero(), "release %d: the body is not read", rel)
+				Expect(stub.GetUploadCallCount()).To(BeZero(), "release %d: the upload is not read", rel)
+				Expect(stub.CompleteCallCount()).To(BeZero(), "release %d: nothing is completed", rel)
+			}
+		},
+		Entry("an upload without a crypt mode", &op.Upload{ID: "2~x"}, nil),
+		Entry("an SSE-C upload, its key named, which the decision would complete", &op.Upload{ID: "2~x", Attrs: radosgwCryptAttrs("SSE-C-AES256")}, withKey),
+		Entry("an SSE-KMS upload, whose decision would echo aws:kms", &op.Upload{ID: "2~x", Attrs: radosgwCryptAttrs("SSE-KMS")}, nil),
+		Entry("an upload that is not found, as a retried completion meets", nil, nil),
+		Entry("beside an encryption header sent empty, as a value wins", &op.Upload{ID: "2~x"},
+			func(o *op.CompleteMultipart) {
+				o.EmptyEncryption = op.ErrInvalidArgument.WithMessage("an encryption header with no value")
+			}),
+	)
+
+	It("keeps the upload and its part, and writes no object, when it refuses a completion that asks for encryption", func(ctx SpecContext) {
+		for _, rel := range bothReleases {
+			f := newMPFixture(ctx, rel)
+			id := f.initUpload(ctx, "k")
+			doc := withPart(ctx, f, "k", id, op.UploadChecksum{})
+			err := op.Run(ctx, &op.CompleteMultipart{UploadID: id, AskedEncryption: errAskedEncryption}, f.bodyReq(http.MethodPost, "k", doc))
+			Expect(err).To(MatchError(op.ErrNotImplemented), "release %d", rel)
+			up, err := f.upload(ctx, "k", id)
+			Expect(err).NotTo(HaveOccurred(), "release %d: the upload is kept", rel)
+			parts, err := f.store.ListParts(ctx, up, 0, 1000)
+			Expect(err).NotTo(HaveOccurred(), "release %d", rel)
+			Expect(parts.Parts).To(HaveLen(1), "release %d: its part is kept", rel)
+			st, err := f.store.StatObject(ctx, f.rec, meta.ObjKey{Name: "k"})
+			Expect(err).NotTo(HaveOccurred(), "release %d", rel)
+			Expect(st.Exists).To(BeFalse(), "release %d: no object is written", rel)
+		}
+	})
 
 	// complete runs alice's completion of a one-part upload of k in plain
 	// that radosgw began with mode and uc, over a secure transport or not,

@@ -56,11 +56,16 @@ type CompleteMultipart struct {
 	// Secure is rgw_transport_is_secure: TLS, or a forwarded protocol radosgw
 	// trusts.
 	Secure bool
+	// AskedEncryption is the protocol's refusal of a request that asks for
+	// encryption (askedRefusal in internal/s3), nil when it asks for none.
+	// rgw-go encrypts nothing and begins no SSE-C upload, so it stands ahead
+	// of everything Execute reads, an SSE-C upload's key included.
+	AskedEncryption error
 	// EmptyEncryption is the protocol's refusal of a request that sent an
 	// encryption header it refuses with no value (emptyMessage in
-	// internal/s3), nil when it sent none. A completion reads no encryption
-	// header otherwise but an SSE-C upload's, so the refusal stands behind
-	// verifyEncryption, which an SSE-C upload's headers answer first.
+	// internal/s3), nil when it sent none. It stands behind AskedEncryption,
+	// as a value wins over an empty instance, and behind verifyEncryption,
+	// which an SSE-C upload's headers answer first.
 	EmptyEncryption error
 
 	// Parts is the document's parts as ParseCompleteMultipart reads them.
@@ -129,8 +134,10 @@ func (o *CompleteMultipart) VerifyPermission(ctx context.Context, r *Request) er
 // Execute is RGWCompleteMultipart::execute in its order
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L6367-L6416 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7163-L7211 at v20.2.4):
-// get_params, whose empty upload id is -ENOTSUP, 500 UnknownError, and whose
-// body is read as ReadParamBody reads it under rgw_max_put_param_size; an
+// get_params, whose empty upload id is -ENOTSUP, 500 UnknownError; a request
+// that asks for encryption refused (AskedEncryption) before its body is read,
+// so nothing of the upload is read, assembled or written; the body read as
+// ReadParamBody reads it under rgw_max_put_param_size; an
 // empty body, a document that does not parse or holds no part, MalformedXML;
 // more parts than rgw_multipart_part_upload_limit once repeats collapse,
 // InvalidRange (-ERANGE); then, where execute reads the upload's info
@@ -153,6 +160,9 @@ func (o *CompleteMultipart) VerifyPermission(ctx context.Context, r *Request) er
 func (o *CompleteMultipart) Execute(ctx context.Context, r *Request) error {
 	if o.UploadID == "" {
 		return fmt.Errorf("%w: no upload id", ErrUnknown)
+	}
+	if o.AskedEncryption != nil {
+		return o.AskedEncryption
 	}
 	body, err := ReadParamBody(r, confSize(r, "rgw_max_put_param_size", defaultMaxPutParamSize))
 	if err != nil {
