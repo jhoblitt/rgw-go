@@ -8,7 +8,10 @@
 # does, stands in for it: on PATH as rooket, and at ROOKET's path when that
 # names one, as the Makefile passes it on as ROOKET and RGW_GO_TEST_ROOKET.
 # The host's kubectl is mounted on PATH, and the cluster's rooket state, which
-# holds its kubeconfig, under the container's HOME, both read-only.
+# holds its kubeconfig, under the container's HOME, both read-only. A set
+# RGW_GO_SERVICE_MAP, which the Makefile exports to every target that runs a
+# host rgw-go, goes in too, so that an rgw-go a command in the builder starts
+# stays out of the manager's service map as well.
 #
 # Usage: in-builder.sh squid|tentacle command [arguments...]
 set -euo pipefail
@@ -30,4 +33,6 @@ mounts=(-v "${here}/builder-rooket.sh:/usr/local/bin/rooket:ro" -v "${kubectl_bi
 if [[ "${rooket}" == /* && "${rooket}" != /usr/local/bin/rooket ]]; then
 	mounts+=(-v "${here}/builder-rooket.sh:${rooket}:ro")
 fi
-exec "${here}/../image/run.sh" --network=host "${mounts[@]}" -e ROOKET_NAME -- "${release}" "$@"
+env=(-e ROOKET_NAME)
+[[ -z "${RGW_GO_SERVICE_MAP+set}" ]] || env+=(-e RGW_GO_SERVICE_MAP)
+exec "${here}/../image/run.sh" --network=host "${mounts[@]}" "${env[@]}" -- "${release}" "$@"

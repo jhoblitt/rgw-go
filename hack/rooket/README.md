@@ -277,6 +277,20 @@ anonymous `GET /` with 200, as Rook's probe expects of radosgw, the script
 writes `out/<release>/rgw-go.endpoint`, which `make s3tests` and `make
 admin-suite` read for `GATEWAY=rgw-go`.
 
+The script starts rgw-go with `RGW_GO_SERVICE_MAP=false`, the setting that
+keeps rgw-go out of the manager's service map once it registers there as
+radosgw does. librados reports there the Ceph build the process links,
+and a host rgw-go linking another build than the cluster's would add a second
+one to `ceph versions`, which fails the harness's one-build checks
+(`up.sh`'s, and the phase 0 gate's). Every rgw-go the harness starts on the host runs
+so: each Makefile target that runs one exports `RGW_GO_SERVICE_MAP=false` to
+everything it starts, which `in-builder.sh` passes into the release's builder
+under `CGO_RUN`, and the Go specs start rgw-go only through
+`cephtest.StartRGWGo` (`internal/testutil/cephtest`), which sets it again. A
+spec in that package's suite fails any other tracked file outside `docs/` and
+Markdown that names the binary, `cmd/rgw-go` or `bin/rgw-go`, or builds it
+from a package pattern, until it is allow-listed there with its reason.
+
 rgw-go runs as its own cephx entity, `client.rgw.rgw-go`, with radosgw's caps
 under Rook, `mon 'allow rw' osd 'allow rwx'`. The script creates it on its
 first run and fetches its key into `ceph.client.rgw.rgw-go.keyring` on each
@@ -382,12 +396,13 @@ the same entities and pass rgw-go the same command line.
 
 rgw-go runs on the host against a populated cluster with the command line Rook
 gives radosgw. Named `radosgw`, the binary takes its whole command line as
-ceph's; rgw-go's own settings come from `RGW_GO_*` variables:
+ceph's; rgw-go's own settings come from `RGW_GO_*` variables, and
+`RGW_GO_SERVICE_MAP=false` keeps it out of the service map, as above:
 
 ```sh
 out=hack/rooket/out/squid
 go build -tags=ceph_preview -o "${TMPDIR}/radosgw" ./cmd/rgw-go
-RGW_GO_METRICS_ADDR=127.0.0.1:9283 RGW_GO_LOG_LEVEL=debug \
+RGW_GO_SERVICE_MAP=false RGW_GO_METRICS_ADDR=127.0.0.1:9283 RGW_GO_LOG_LEVEL=debug \
 "${TMPDIR}/radosgw" --foreground --name=client.admin -c "${out}/ceph.conf" \
 	--default-log-to-stderr=true --default-err-to-stderr=true \
 	'--rgw-frontends=beast endpoint=127.0.0.1:8080' \
@@ -405,7 +420,8 @@ Rook's probe, an anonymous `curl -i http://127.0.0.1:8080/`, answers 200 with
 
 `http://127.0.0.1:9283/metrics` and `/debug/pprof/` serve the metrics and
 profiles. `serve_integration_test.go` in `internal/cli` runs this command
-under `make integration`, over TLS too, and stops it with SIGTERM.
+through `cephtest.StartRGWGo` under `make integration`, over TLS too, and
+stops it with SIGTERM.
 
 ## The read gate
 

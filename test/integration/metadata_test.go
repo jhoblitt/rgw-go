@@ -119,8 +119,10 @@ var _ = BeforeSuite(func(ctx SpecContext) {
 // xattrs, the gate only counts. Ginkgo runs this before the cleanups
 // BeforeSuite deferred, which close the store and the cluster; it does
 // nothing when BeforeSuite failed before opening the store, as then no spec
-// ran.
+// ran. It also removes the rgw-go binaries cephtest.StartRGWGo built, which
+// outlive every spec, whatever the rest of it does.
 var _ = AfterSuite(func(ctx SpecContext) {
+	DeferCleanup(cephtest.RemoveRGWGoBuilds)
 	if store == nil {
 		return
 	}

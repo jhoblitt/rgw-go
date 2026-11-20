@@ -88,7 +88,7 @@ var _ = Describe("rgw-go's serve flags, which make lc-mode restarts it with", fu
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(data)).To(MatchRegexp(
 			`(?m)^if \(\(\$#\)\); then printf '%s\\n' "\$@" >"\$\{flagsfile\}"; else : >"\$\{flagsfile\}"; fi\n` +
-				`pid=\$\("\$\{here\}/rgw-go-start.sh" "\$\{release\}" "\$\{log\}" serve "--metrics-addr=127.0.0.1:\$\{metrics_port\}" "\$@"`))
+				`pid=\$\(RGW_GO_SERVICE_MAP=false "\$\{here\}/rgw-go-start.sh" "\$\{release\}" "\$\{log\}" serve "--metrics-addr=127.0.0.1:\$\{metrics_port\}" "\$@"`))
 	})
 
 	It("rgw-go-down.sh removes the serve flags with the pid", func(ctx SpecContext) {
@@ -99,6 +99,63 @@ var _ = Describe("rgw-go's serve flags, which make lc-mode restarts it with", fu
 		Expect(ok).To(BeTrue(), stdout+stderr)
 		Expect(flags).NotTo(BeAnExistingFile())
 		Eventually(exited).WithTimeout(5 * time.Second).WithPolling(10 * time.Millisecond).Should(Receive())
+	})
+})
+
+// serveEngine stands in for podman or docker: it answers info as a rootful
+// engine and inspect with pid 4242, and for a run writes to $FAKE_LOG the
+// RGW_GO_SERVICE_MAP and RGW_GO_LOG_FORMAT a container it ran would take,
+// as each -e NAME takes the engine's own value, then its arguments, one a
+// line.
+const serveEngine = `#!/usr/bin/env bash
+case "$1" in
+info) echo false ;;
+run)
+	{
+		echo "RGW_GO_SERVICE_MAP=${RGW_GO_SERVICE_MAP-unset}" "RGW_GO_LOG_FORMAT=${RGW_GO_LOG_FORMAT-unset}"
+		printf '%s\n' "$@"
+	} >"${FAKE_LOG}"
+	echo c0ffee
+	;;
+inspect) echo 4242 ;;
+esac
+`
+
+var _ = Describe("rgw-go-up.sh's serve line, through which every rgw-go the scripts start goes", func() {
+	It("starts rgw-go out of the manager's service map beside RGW_GO_LOG_FORMAT=json, over an inherited true", func(ctx SpecContext) {
+		data, err := os.ReadFile("rgw-go-up.sh")
+		Expect(err).NotTo(HaveOccurred())
+		line := regexp.MustCompile(`(?ms)^pid=\$\(.*?"\)$`).FindString(string(data))
+		Expect(line).To(ContainSubstring("rgw-go-start.sh"), "rgw-go-up.sh's serve line")
+		here, err := filepath.Abs(".")
+		Expect(err).NotTo(HaveOccurred())
+		dir := GinkgoT().TempDir()
+		engine, fakeLog := filepath.Join(dir, "engine"), filepath.Join(dir, "run")
+		Expect(os.WriteFile(engine, []byte(serveEngine), 0o700)).To(Succeed())
+
+		cmd := exec.CommandContext(ctx, "bash", "-c", `set -euo pipefail
+here=$1 release=squid log=$2/rgw-go.log metrics_port=9481 port=7481 keyring=k conf=c realm=r zonegroup=g zone=z
+set -- --rados-completions=pipe
+`+line+`
+echo "${pid}"`, "spec", here, dir)
+		cmd.Env = []string{
+			"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "RGW_GO_ENGINE=" + engine, "FAKE_LOG=" + fakeLog,
+			"RGW_GO_IMAGE=ghcr.io/jhoblitt/rgw-go:local-v19.2.7", "RGW_GO_SERVICE_MAP=true",
+		}
+		var errOut strings.Builder
+		cmd.Stderr = &errOut
+		out, err := cmd.Output()
+		Expect(err).NotTo(HaveOccurred(), errOut.String())
+		Expect(string(out)).To(Equal("4242\n"))
+		run, err := os.ReadFile(fakeLog)
+		Expect(err).NotTo(HaveOccurred())
+		lines := strings.Split(strings.TrimSuffix(string(run), "\n"), "\n")
+		Expect(lines[0]).To(Equal("RGW_GO_SERVICE_MAP=false RGW_GO_LOG_FORMAT=json"))
+		Expect(strings.Join(lines[1:], "\n")).To(SatisfyAll(
+			ContainSubstring("-e\nRGW_GO_SERVICE_MAP\n"), ContainSubstring("-e\nRGW_GO_LOG_FORMAT\n"),
+			HaveSuffix("\nserve\n--metrics-addr=127.0.0.1:9481\n--rados-completions=pipe\n--\n--id\nrgw.rgw-go\n"+
+				"--keyring\nk\n-c\nc\n--rgw-realm=r\n--rgw-zonegroup=g\n--rgw-zone=z\n--rgw-frontends=beast endpoint=127.0.0.1:7481"),
+		))
 	})
 })
 
