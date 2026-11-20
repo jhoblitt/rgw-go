@@ -540,6 +540,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw evaluates a repeated x-amz-tagging key as one multivalued s3:RequestObjectTag condition key](#radosgw-evaluates-a-repeated-x-amz-tagging-key-as-one-multivalued-s3requestobjecttag-condition-key) | pending | pending | ✓ |
 | [radosgw's policy patterns are fnmatch patterns](#radosgws-policy-patterns-are-fnmatch-patterns) | pending | pending | ✓ |
 | [radosgw's date conditions read no UTC offset](#radosgws-date-conditions-read-no-utc-offset) | pending | pending | ✓ |
+| [radosgw's base64 decoder takes the URL-safe alphabet and ignores what follows the padding](#radosgws-base64-decoder-takes-the-url-safe-alphabet-and-ignores-what-follows-the-padding) | none | none | ✓ |
 | [radosgw-admin mfa check names the serial number when --totp-pin is missing](#radosgw-admin-mfa-check-names-the-serial-number-when---totp-pin-is-missing) | pending | pending | ✓ |
 | [radosgw skips a bucket's default encryption for a write that sends an empty encryption header](#radosgw-skips-a-buckets-default-encryption-for-a-write-that-sends-an-empty-encryption-header) | [#79506](https://tracker.ceph.com/issues/79506), [#80258](https://tracker.ceph.com/issues/80258), [#80260](https://tracker.ceph.com/issues/80260) | [ceph/ceph#71073](https://github.com/ceph/ceph/pull/71073), [ceph/ceph#71534](https://github.com/ceph/ceph/pull/71534), [ceph/ceph#71535](https://github.com/ceph/ceph/pull/71535) | ✓ |
 | [radosgw's CopyObject ignores x-amz-tagging-directive](#radosgws-copyobject-ignores-x-amz-tagging-directive) | pending | pending | ✓ |
@@ -35354,6 +35355,71 @@ Every new entry adds its row to this table, in document order.
   2026-11-19, comparing the date forms radosgw converts with the W3C
   forms the IAM User Guide names; derived from the source, not reproduced
   on a cluster.
+
+## radosgw's base64 decoder takes the URL-safe alphabet and ignores what follows the padding
+
+- **Kind:** defect, not security-relevant: `BinaryEquals` compares the
+  decoded bytes of both sides, so two encodings of the same bytes matching
+  is the data being equal. Unreproduced: derived from the source. The other
+  callers of `decode_base64` share the decoder. A survey of them finds none
+  where the lenience changes an outcome beyond accepting a malformed value.
+  One compatibility note: a service that checks a client's base64 POST
+  policy with a stricter or different decoder, and then signs that same
+  string, may see radosgw enforce a different document from the one it
+  approved; the signature still covers the raw string.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's; `armor.c`
+  is the same at both tags.
+  - `BinaryEquals` converts the environment's value and each condition
+    value with `Condition::as_binary` and compares what they convert to
+    ([rgw_iam_policy.cc:966-968](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L966-L968),
+    [rgw_iam_policy.cc:986-988](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L986-L988)).
+    `as_binary` is `bufferlist::decode_base64`
+    ([rgw_iam_policy.h:422-438](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L422-L438),
+    [rgw_iam_policy.h:441-457](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L441-L457)),
+    which hands the whole value to `ceph_unarmor`
+    ([buffer.cc:1634-1637](https://github.com/ceph/ceph/blob/v19.2.7/src/common/buffer.cc#L1634-L1637),
+    [buffer.cc:1703-1706](https://github.com/ceph/ceph/blob/v20.2.4/src/common/buffer.cc#L1703-L1706)).
+  - `decode_bits` gives one value to two characters, 62 to `+` and to `-`
+    and 63 to `/` and to `_`
+    ([armor.c:19-34](https://github.com/ceph/ceph/blob/v19.2.7/src/common/armor.c#L19-L34),
+    [armor.c:19-34](https://github.com/ceph/ceph/blob/v20.2.4/src/common/armor.c#L19-L34)),
+    so `ceph_unarmor` reads the standard alphabet, the URL-safe one and a
+    mix of the two alike.
+  - `ceph_unarmor` reads the value in groups of four characters and returns
+    at the first group whose third or fourth character is `=`
+    ([armor.c:99-131](https://github.com/ceph/ceph/blob/v19.2.7/src/common/armor.c#L99-L131),
+    [armor.c:99-131](https://github.com/ceph/ceph/blob/v20.2.4/src/common/armor.c#L99-L131)),
+    so it reads nothing that follows the padding, base64 or not.
+    `decode_bits` gives `=` the value 0 wherever it stands, so a group's
+    first or second character may be one too. It skips a line break before
+    a group, and refuses a value whose last group is short of four
+    characters.
+  - So values that differ as strings convert to the same bytes, among them
+    values that a decoder of the standard alphabet refuses. The IAM User
+    Guide describes the operator's value as "a base-64 encoded
+    representation of the binary value in the policy"
+    ([reference_policies_elements_condition_operators.md:210](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L210)
+    in its archived source).
+  - This decoder is not `rgw::from_base64`, whose own defect is the entry
+    "[radosgw's from_base64 reads before an all-'='
+    input](#radosgws-from_base64-reads-before-an-all--input)". `ceph_unarmor`
+    decodes for every caller of `bufferlist::decode_base64`; this entry
+    records the condition operator, where rgw-go's work met it.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it wherever it evaluates as radosgw does:
+  `policy.AsBinary` is `ceph_unarmor` (`internal/policy/convert.go`), for
+  every Allow and for a Deny's condition on a key the request holds as
+  written. For a key the request holds in another ASCII case than the
+  condition's, a Deny's `BinaryEquals` holds wherever any reading of the
+  two values finds them equal, this decoder's among them
+  (`amazonBinaryEquals`, `internal/policy/condition.go`;
+  `docs/differences.md`, "A Deny's condition key names match whatever their
+  case").
+- **Upstream:** none.
+- **Found:** phase 2 task S10's adversarial review, its fifth re-run,
+  2026-11-20, comparing the decoder rgw-go gave Amazon S3's reading of
+  `BinaryEquals` with radosgw's; derived from the source, not reproduced on
+  a cluster.
 
 ## radosgw-admin mfa check names the serial number when --totp-pin is missing
 
