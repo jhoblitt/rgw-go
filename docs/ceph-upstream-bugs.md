@@ -539,6 +539,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw matches condition key names case-sensitively](#radosgw-matches-condition-key-names-case-sensitively) | pending | pending | ✓ |
 | [radosgw evaluates a repeated x-amz-tagging key as one multivalued s3:RequestObjectTag condition key](#radosgw-evaluates-a-repeated-x-amz-tagging-key-as-one-multivalued-s3requestobjecttag-condition-key) | pending | pending | ✓ |
 | [radosgw's policy patterns are fnmatch patterns](#radosgws-policy-patterns-are-fnmatch-patterns) | pending | pending | ✓ |
+| [radosgw's date conditions read no UTC offset](#radosgws-date-conditions-read-no-utc-offset) | pending | pending | ✓ |
 | [radosgw-admin mfa check names the serial number when --totp-pin is missing](#radosgw-admin-mfa-check-names-the-serial-number-when---totp-pin-is-missing) | pending | pending | ✓ |
 | [radosgw skips a bucket's default encryption for a write that sends an empty encryption header](#radosgw-skips-a-buckets-default-encryption-for-a-write-that-sends-an-empty-encryption-header) | [#79506](https://tracker.ceph.com/issues/79506), [#80258](https://tracker.ceph.com/issues/80258), [#80260](https://tracker.ceph.com/issues/80260) | [ceph/ceph#71073](https://github.com/ceph/ceph/pull/71073), [ceph/ceph#71534](https://github.com/ceph/ceph/pull/71534), [ceph/ceph#71535](https://github.com/ceph/ceph/pull/71535) | ✓ |
 | [radosgw's CopyObject ignores x-amz-tagging-directive](#radosgws-copyobject-ignores-x-amz-tagging-directive) | pending | pending | ✓ |
@@ -35281,6 +35282,78 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task S10's adversarial review, its first re-run,
   2026-11-19, comparing radosgw's matcher with the IAM User Guide's
   wildcards; derived from the source, not reproduced on a cluster.
+
+## radosgw's date conditions read no UTC offset
+
+- **Kind:** defect, possibly security-relevant, conditional on a date
+  condition meeting a date written with a UTC offset. Unreproduced: derived
+  from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
+  `iso_8601.cc` is the same at both tags.
+  - `Condition::as_date` converts a date condition's values and the
+    environment's value: a value `std::stod` converts whole is a count of
+    seconds, and any other goes to `from_iso_8601`
+    ([rgw_iam_policy.h:384-401](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L384-L401),
+    [rgw_iam_policy.h:403-420](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L403-L420)).
+  - `from_iso_8601` ends a time only at a `Z` that ends the string
+    (`time_end`,
+    [iso_8601.cc:74-78](https://github.com/ceph/ceph/blob/v19.2.7/src/common/iso_8601.cc#L74-L78),
+    [iso_8601.cc:74-78](https://github.com/ceph/ceph/blob/v20.2.4/src/common/iso_8601.cc#L74-L78)).
+    After the hour, the minute and the second it takes that `Z` or the next
+    field's delimiter, and after a digit of the fraction that `Z` or
+    another digit, and it converts nothing when it meets any other
+    character
+    ([iso_8601.cc:120-151](https://github.com/ceph/ceph/blob/v19.2.7/src/common/iso_8601.cc#L120-L151),
+    [iso_8601.cc:120-151](https://github.com/ceph/ceph/blob/v20.2.4/src/common/iso_8601.cc#L120-L151)),
+    so it converts no date and time that ends in `+hh:mm` or `-hh:mm`.
+  - A date operator is false when the environment's value does not
+    convert, and leaves out a condition value that does not (`shortible`,
+    [rgw_iam_policy.h:495-514](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L495-L514);
+    `typed_any` and `typed_none`,
+    [rgw_iam_policy.h:527-567](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L527-L567);
+    the operators,
+    [rgw_iam_policy.cc:940-959](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L940-L959),
+    [rgw_iam_policy.cc:961-979](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L961-L979)).
+    So every date operator, `DateNotEquals` included, is false over a key
+    whose value is written with an offset, and a condition value written
+    with one takes no part in the comparison: where it is the only value,
+    v19.2.7's operators are all false and, of v20.2.4's, `DateNotEquals`
+    alone holds.
+  - The IAM User Guide takes "one of the W3C implementations of the ISO
+    8601 date formats" for a date condition
+    ([reference_policies_elements_condition_operators.md:131](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L131)
+    in its archived source), and its policy checks name one with an offset,
+    `YYYY-MM-DDThh:mm:ssTZD (1997-07-16T19:20:30+01:00)`
+    ([access-analyzer-reference-policy-checks.md:1963](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/access-analyzer-reference-policy-checks.md?plain=1#L1963)).
+    The W3C note those forms come from ends every date and time in a time
+    zone designator, "Z or +hh:mm or -hh:mm", the offset being the local
+    time's distance ahead of or behind UTC
+    ([W3C-NOTE-datetime.html:141-166](https://github.com/exelearning/iteexe/blob/3f4452780a4b2cfd2bc9d9152e92dfd86d2ff0cc/exe/webui/docs/W3C-NOTE-datetime.html#L141-L166),
+    [:175-186](https://github.com/exelearning/iteexe/blob/3f4452780a4b2cfd2bc9d9152e92dfd86d2ff0cc/exe/webui/docs/W3C-NOTE-datetime.html#L175-L186)
+    in eXeLearning's copy of the note).
+  - `from_iso_8601` is the function the entries "[radosgw's date conditions
+    wrap past 2554 and before
+    1970](#radosgws-date-conditions-wrap-past-2554-and-before-1970)",
+    "[radosgw's object-lock dates wrap past
+    2554](#radosgws-object-lock-dates-wrap-past-2554)" and "[radosgw's
+    lifecycle Date wraps past 2554 and expires at
+    once](#radosgws-lifecycle-date-wraps-past-2554-and-expires-at-once)"
+    name for its arithmetic; this one is its grammar.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it wherever it evaluates as radosgw does:
+  `policy.AsDate` converts through `iso8601.ParseWrapped`, which reads the
+  forms `from_iso_8601` reads (`internal/policy/convert.go`,
+  `internal/iso8601/iso8601.go`), for every Allow and for a Deny's condition
+  on a key the request holds as written. Amazon S3's answer, which a Deny
+  takes for a key the request holds in another ASCII case than the
+  condition's, reads a date and time with an offset as the instant it
+  names (`internal/policy/condition.go`; `docs/differences.md`, "A Deny's
+  condition key names match whatever their case").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task S10's adversarial review, its third re-run,
+  2026-11-19, comparing the date forms radosgw converts with the W3C
+  forms the IAM User Guide names; derived from the source, not reproduced
+  on a cluster.
 
 ## radosgw-admin mfa check names the serial number when --totp-pin is missing
 
