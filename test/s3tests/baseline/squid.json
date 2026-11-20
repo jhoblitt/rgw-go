@@ -20,7 +20,8 @@
     {"source":"5e0ea2e71db86992093d55b6168da5f1059cdc8b","admitted":"additive"},
     {"source":"02599604861e23fc75441b715679d9e4949a0a98","admitted":"additive"},
     {"source":"632e2341d3c7cdc81fcfaf73f2fd787a85858615","admitted":"additive"},
-    {"source":"94617ce22d0cddf418091c9080092f562177c9d7","admitted":"additive"}
+    {"source":"94617ce22d0cddf418091c9080092f562177c9d7","admitted":"additive"},
+    {"source":"dade633ae637fb967062a9fcc76efa74ca156ded","admitted":"additive"}
   ],
   "tests": {
     "s3tests.functional.test_headers::test_bucket_create_bad_authorization_empty": [
