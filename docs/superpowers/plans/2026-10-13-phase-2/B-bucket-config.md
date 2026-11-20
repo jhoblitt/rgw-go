@@ -1727,9 +1727,26 @@ BC-29's and BC-32's specs.
      empty `x-amz-security-token` is 400 "Invalid token". `Authenticate` then resolves the
      identity. Without a `policy` field the request stays anonymous.
   6. **A suspended user is 403 UserSuspended** once `Authenticate` resolves it (B11, defect 8).
-  7. The policy decodes (400 "Could not decode policy") and BC-30's `Check` runs, the
-     signature fields marked checked as radosgw marks them. The `acl` field is a canned ACL
-     built by `acl.Canned` ("Bad canned ACLs"), and `tagging` a Tagging document
+  7. The policy decodes as radosgw decodes it (400 "Could not decode policy"):
+     `bufferlist::decode_base64`, which runs `ceph_unarmor` over the whole raw `policy` field
+     into a buffer of 4 + 3n/4 bytes that the decode never fills
+     ([rgw_rest_s3.cc:3190-3204](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3190-L3204),
+     [rgw_rest_s3.cc:3326-3340](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3326-L3340);
+     [buffer.cc:1634-1646](https://github.com/ceph/ceph/blob/v19.2.7/src/common/buffer.cc#L1634-L1646),
+     [buffer.cc:1703-1715](https://github.com/ceph/ceph/blob/v20.2.4/src/common/buffer.cc#L1703-L1715);
+     [armor.c:99-131](https://github.com/ceph/ceph/blob/v19.2.7/src/common/armor.c#L99-L131),
+     [armor.c:99-131](https://github.com/ceph/ceph/blob/v20.2.4/src/common/armor.c#L99-L131)).
+     It reads `-` and `_` as `+` and `/`, reads `=` as a zero digit wherever it stands, skips a
+     line feed before a group, and ends at the first group whose third or fourth character is
+     `=`, ignoring what follows; a group cut short or any other byte fails. That is rgw-go's
+     `cephUnarmor` (`internal/s3/putobject.go:513`) without its 17-byte stop, which
+     `policy.AsBinary` (`internal/policy/convert.go:132`) already reproduces; the op reuses that
+     decoder rather than adding a third copy. `encoding/base64`, or any decode stricter than
+     `ceph_unarmor`, refuses policies radosgw serves, so it ships only with a
+     `docs/differences.md` entry naming what it refuses. The form's signature covers the raw
+     field, so only a holder of the secret chooses the bytes this lenience reads. Then BC-30's
+     `Check` runs on the decoded document, the signature fields marked checked as radosgw marks
+     them. The `acl` field is a canned ACL built by `acl.Canned` ("Bad canned ACLs"), and `tagging` a Tagging document
      ([rgw_rest_s3.cc:3080-3118](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3080-L3118),
      [rgw_rest_s3.cc:3216-3254](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3216-L3254)).
   8. No Content-Length is 411 MissingContentLength, and one over `rgw_max_put_size` is 400
@@ -1767,6 +1784,21 @@ BC-29's and BC-32's specs.
      through WP-6's parser, D21's refusals included; `ObjectStore.PutObject` streaming the file
      with the policy's bounds (400 EntityTooLarge over the maximum, EntityTooSmall under the
      minimum); the attrs ETag, ACL, Content-Type (NUL-terminated), metas, the redirect and tags.
+     **Content-MD5 decodes as PutObject's does.** It is the outer request's header, not a form
+     field ([rgw_rest.cc:1426](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1426),
+     [rgw_rest.cc:1426](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1426)),
+     and radosgw runs the same `ceph_unarmor` into a 17-byte buffer as RGWPutObj, anything but
+     16 bytes being InvalidDigest
+     ([rgw_op.cc:4641-4655](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4641-L4655),
+     [rgw_op.cc:4935-4949](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4935-L4949)),
+     so the op calls the existing `cephUnarmor` on `rgwtext.CString` of the header, as PutObject
+     and UploadPart do (`internal/s3/putobject.go:127`, `internal/s3/multipart.go:309`). One
+     function serves all three: `internal/s3` imports `internal/op`, so `cephUnarmor` moves to
+     a package both reach, and PutObject's and UploadPart's decode is unchanged by the move. The
+     character check signed requests run before the decode (`is_base64_for_content_md5`;
+     `isBase64Charset`, `internal/auth/encoding.go:101`) does not apply: the form
+     authenticates the request, radosgw never runs that check on a POST, and the URL-safe
+     alphabet and data after the padding reach the decode.
      **Every checksum field D21 refuses reaches WP-6's parser and is refused,** whatever the
      policy said of it: `x-amz-checksum-md5`, `-xxhash64`, `-xxhash128`, `-xxhash3`, Tentacle's
      spelling `-xxh3` and `-blake3`, an `x-amz-checksum-algorithm` naming any of them, and each
@@ -1798,6 +1830,13 @@ BC-29's and BC-32's specs.
   - the bounds: an empty file under a maximum of -1 stored, and a one-byte file refused; a
     maximum of 5 under a minimum of 10 refusing every file, the empty one too; a file of exactly
     each bound stored;
+  - the decoders as radosgw answers them: a `policy` field written in the URL-safe alphabet
+    (its signature over the field as sent) is read as the document it encodes, and one with
+    data after its first padded group as the bytes before the padding, `Check` judging that
+    document; a Content-MD5 header written in the URL-safe alphabet, and a canonical one
+    followed by data after its `==`, decode to its 16 bytes, the write stored when the file
+    hashes to them and BadDigest when it does not; a policy with a group cut short is 400
+    "Could not decode policy", and a Content-MD5 decoding to other than 16 bytes InvalidDigest;
   - **Review Focus 5, a `$key` condition with a `${filename}` key:** with key
     `uploads/${filename}` and filename `cat.jpg`, the conditions `["eq", "$key",
     "uploads/${filename}"]`, `["eq", "$key", "uploads/cat.jpg"]` and `["starts-with", "$key",
