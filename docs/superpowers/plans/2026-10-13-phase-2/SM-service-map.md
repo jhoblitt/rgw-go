@@ -396,14 +396,31 @@ type ServiceRegistrar interface {
      after. It is the one check of serve's own wiring of the setting, where `run` hands the
      resolved `--service-map` to the registration, which no hermetic spec reaches past the
      connect.
-  7. After SIGTERM the process exits 0 and its entry leaves `service dump` within 10 s. That is
-     well under `mgr_service_beacon_grace`, 60 s
+  7. After SIGTERM the process exits 0. Within 30 s of its exit, no entry under its key still
+     carries the `start_epoch` and `start_stamp` step 2 found. That is under
+     `mgr_service_beacon_grace`, 60 s
      ([mgr.yaml.in:113-118](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/mgr.yaml.in#L113-L118),
      [mgr.yaml.in:113-118](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/mgr.yaml.in#L113-L118)),
-     after which the manager drops a silent daemon anyway, so only the close librados sends at
-     shutdown removes it that soon
+     after which the manager drops a silent daemon anyway. So only the close librados sends at
+     shutdown removes the registration that soon
      ([DaemonServer.cc:686-710](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/DaemonServer.cc#L686-L710),
      [DaemonServer.cc:690-714](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/DaemonServer.cc#L690-L714)).
+     - While it shuts down, librados can register the daemon again under the same key, with a
+       later `start_stamp` (`docs/ceph-upstream-bugs.md`, "librados registers a service daemon
+       again while it shuts down"). It does so about one shutdown in five, and radosgw shares the
+       race.
+     - No close or beacon follows that registration, so its entry leaves only with the grace: the
+       manager's first prune stamps it, and a prune 60 s later drops it, both on the manager's 2 s
+       tick
+       ([DaemonServer.cc:2677-2711](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/DaemonServer.cc#L2677-L2711),
+       [DaemonServer.cc:3156-3190](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/DaemonServer.cc#L3156-L3190)).
+       The spec takes it, and requires it to leave within 90 s of the exit.
+     - The entry counts as gone once the map has listed nothing under the key for 10 s, since a map
+       published between the close and that registration lists neither.
+     - The spec records which of the two held, and when the entry left. It records the second
+       whenever any 1 s poll finds a registration other than step 2's under the key; a
+       re-registered entry stays listed for about a minute, so no poll misses it. On a failure it
+       records the entry, with its `start_epoch` and `start_stamp`.
 - **Cost:** while the spec runs, `ceph versions` lists the host's librados build too (SM-D2). It
   runs under `make integration`, which CI runs before `make gate` and never beside it.
 - **Exclusions and registry:** none.
@@ -466,3 +483,5 @@ SM6, run one at a time with every other unit's.
 
 - "The manager's config show reads an rgw service daemon's id without checking it exists"
   (`docs/ceph-upstream-bugs.md`): SM4's metadata always carries `id`.
+- "librados registers a service daemon again while it shuts down" (`docs/ceph-upstream-bugs.md`):
+  found by SM5's first CI run; SM5's step 7 waits for such an entry up to the beacon grace.
