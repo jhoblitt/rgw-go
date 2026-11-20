@@ -6150,7 +6150,10 @@ Every new entry adds its row to this table, in document order.
     ([ceph/ceph#68444](https://github.com/ceph/ceph/pull/68444)); the squid
     backport [ceph/ceph#68445](https://github.com/ceph/ceph/pull/68445) is open.
 - **Found:** phase 1 unit Z, Task 3, 2026-10-02, transcribing
-  `Condition::eval` at both tags; derived from the source, not reproduced.
+  `Condition::eval` at both tags; derived from the source. Its Null half
+  reproduced by phase 2 task S9's s3-test
+  `test_bucket_policy_deny_null_false_key_present`, 2026-11-16, on
+  v19.2.7.
 
 ## radosgw's date conditions wrap past 2554 and before 1970
 
@@ -10744,7 +10747,11 @@ Every new entry adds its row to this table, in document order.
   delete (triage estimate CVSS about 8.1). A regression, fixed on main
   (checked at 8aa24c51928, 2026-10-30), not on the release branches, and
   carried by both floor releases, v19.2.7
-  and v20.2.4; not found by us. Unreproduced: derived from the source.
+  and v20.2.4; not found by us. Reproduced on v19.2.7 and v20.2.4 on
+  2026-11-16 by the versioning gate's spec "verifies MFA codes through
+  rgw-go as radosgw counts them, and holds radosgw to the MFA delete
+  rgw-go set" (`test/integration/phase2_versioning_mfa_test.go`) in
+  [integration run 43876112553](https://github.com/jhoblitt/rgw-go/actions/runs/43876112553).
 - **Evidence:** paths are under `src/rgw/`.
   - On a bucket with MFA delete enabled, `RGWDeleteMultiObj::execute` asks
     for a verified MFA token when the request names a version. v19.2.6
@@ -10787,8 +10794,9 @@ Every new entry adds its row to this table, in document order.
   [#78707](https://tracker.ceph.com/issues/78707), is New with no PR, as
   rgw-bug-reproduction's triage found it.
 - **Found:** phase 1 unit W, Task 10, 2026-10-05, reading
-  `RGWDeleteMultiObj::execute` at both tags; derived from the source, not
-  reproduced.
+  `RGWDeleteMultiObj::execute` at both tags; derived from the source.
+  Reproduced by phase 2 task V15b's versioning gate, integration run
+  43876112553, 2026-11-16, on both releases.
 
 ## radosgw's parse_date writes a NUL one byte past its format buffer
 
@@ -17377,8 +17385,15 @@ Every new entry adds its row to this table, in document order.
   serves the version that was current before the replay. When that writer
   was deleting the current version, the replay removes that version's head
   and the read answers 404 NoSuchKey, though the key has a current version
-  before and after. Not security-relevant. Unreproduced: derived from the
-  source.
+  before and after. Not security-relevant. Reproduced on v19.2.7 and
+  v20.2.4 on 2026-11-16 by the versioning gate's table "finishes rgw-go's
+  versioned write stopped after its link on radosgw's next read"
+  (`test/integration/phase2_versioning_test.go`) in
+  [integration run 43876112553](https://github.com/jhoblitt/rgw-go/actions/runs/43876112553):
+  with rgw-go's write stopped after its link, and its delete of the
+  current version after its unlink, each leaving its pending attr and
+  log entry, radosgw's read replayed the log and served the version
+  before the write, and after the delete answered 404.
 - **Evidence:** paths are under `src/`.
   - A read follows the key's OLH through `get_olh_target_state`, which reads
     the state of the target `follow_olh` answers and does not read the head
@@ -17478,7 +17493,9 @@ Every new entry adds its row to this table, in document order.
   five cancelled replays its read answers 503. Read from the ceph git history
   and the pull request on 2026-10-30; the tracker's own state is not checked.
 - **Found:** phase 2 Task V4's review, 2026-10-15, tracing the stale answer
-  V4 reproduces; derived from the source, not reproduced.
+  V4 reproduces; derived from the source. Reproduced by phase 2 task V15b's
+  versioning gate, integration run 43876112553, 2026-11-16, on both
+  releases.
 
 ## cls_otp's otp_set puts an array as long as the seed on the OSD's stack
 
@@ -24056,8 +24073,17 @@ Every new entry adds its row to this table, in document order.
   `version-id-marker` of `null` naming a null delete marker, as radosgw's own
   `NextVersionIdMarker` names one that ends a page, starts past the key's
   older versions. No stored data is damaged. Not security-relevant.
-  Unreproduced: derived from the source and from fakerados's emulation of
-  the class.
+  Reproduced on v19.2.7 and v20.2.4 by the s3-test
+  `test_versioning_list_versions_paginated_null_delete_marker`
+  ([jhoblitt/ceph#18](https://github.com/jhoblitt/ceph/pull/18)), which
+  radosgw fails in both ledgers' recordings of 2026-11-12; its radosgw
+  runs in s3tests runs
+  [44412782233](https://github.com/jhoblitt/rgw-go/actions/runs/44412782233)
+  (v19.2.7) and
+  [44412788406](https://github.com/jhoblitt/rgw-go/actions/runs/44412788406)
+  (v20.2.4), 2026-11-18, paging one version at a time, list the null
+  delete marker that ends a page and then none of the key's older
+  versions.
 - **Evidence:** paths are under `src/`.
   - ListObjectVersions takes `version-id-marker` as the marker's instance
     ([rgw_rest_s3.cc:1758-1759](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L1758-L1759), [rgw_rest_s3.cc:1861-1862](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L1861-L1862)),
@@ -24096,10 +24122,22 @@ Every new entry adds its row to this table, in document order.
   Before that change its listing, on fakerados's emulation of the class,
   lost the key's older versions in both cases
   (`internal/driver/list_versions_test.go`).
-- **Upstream:** pending; prior art not searched.
-- **Found:** the phase 2 versioning research, defect 17, 2026-10-13;
-  traced at v19.2.7 and v20.2.4 and recorded by phase 2 task V9,
-  2026-10-20. Derived from the source, not reproduced on a cluster.
+- **Upstream:** [#82181](https://tracker.ceph.com/issues/82181), whose
+  description names this case beside its lifecycle one. Fixed on main by
+  [ceph/ceph#73165](https://github.com/ceph/ceph/pull/73165) (merge
+  37c8ccd62dd, 2026-11-10), in no release tag yet, whose
+  `encode_list_index_key` reads the null delete marker's key when the null
+  version's data key is missing. Its backports,
+  [#83008](https://tracker.ceph.com/issues/83008) for tentacle
+  ([ceph/ceph#73747](https://github.com/ceph/ceph/pull/73747)) and
+  [#83009](https://tracker.ceph.com/issues/83009) for umbrella
+  ([ceph/ceph#73746](https://github.com/ceph/ceph/pull/73746)), are open;
+  no squid backport is requested. Read from the tracker, the pull requests
+  and the local clone's history on 2026-11-19.
+- **Found:** the phase 2 versioning research, defect 17, 2026-10-13; traced
+  at v19.2.7 and v20.2.4 and recorded by phase 2 task V9, 2026-10-20.
+  Derived from the source; reproduced by phase 2 task V15a's recording of
+  the versioning s3-tests, 2026-11-12, on both releases.
 
 ## radosgw's versions listing repeats a key's newer versions when a round ends on its null version
 
@@ -24146,7 +24184,15 @@ Every new entry adds its row to this table, in document order.
   resumed as radosgw's does before that change, repeated a key's sixteen
   newest versions on fakerados (`internal/driver/list_versions_test.go`,
   "resumes a round that ended on the null version after it").
-- **Upstream:** pending; prior art not searched.
+- **Upstream:** [#83208](https://tracker.ceph.com/issues/83208), "rgw:
+  bucket listings replay versions when a page ends on a null version",
+  Fix Under Review, with backports to tentacle and umbrella requested. Its
+  fix, [ceph/ceph#73935](https://github.com/ceph/ceph/pull/73935), not yet
+  merged, has `cls_bucket_list_ordered`, `cls_bucket_list_unordered`
+  and `list_objects_ordered` and `list_objects_unordered` resume after a
+  null version of a listing with versions by naming its instance `null`
+  (`rgw_list_resume_marker`). Read from the tracker and the pull request on
+  2026-11-19.
 - **Found:** phase 2 task V9, 2026-10-20, pinning a listing's paging
   boundaries. Derived from the source and seen on fakerados, not reproduced
   on a cluster.
@@ -24486,8 +24532,16 @@ Every new entry adds its row to this table, in document order.
 - **Kind:** defect, S3-correctness. A ListObjectVersions request with a
   `key-marker` and no `version-id-marker` lists the versions of the
   key-marker's own key, where S3 starts after every version of it. No
-  stored data is damaged. Not security-relevant. Unreproduced: derived from
-  the source and from fakerados's emulation of the class.
+  stored data is damaged. Not security-relevant. Reproduced on v19.2.7 and
+  v20.2.4 by the s3-test `test_versioning_list_versions_key_marker_alone`
+  ([jhoblitt/ceph#18](https://github.com/jhoblitt/ceph/pull/18)), which
+  radosgw fails in both ledgers' recordings of 2026-11-12; its radosgw
+  runs in s3tests runs
+  [44412782233](https://github.com/jhoblitt/rgw-go/actions/runs/44412782233)
+  (v19.2.7) and
+  [44412788406](https://github.com/jhoblitt/rgw-go/actions/runs/44412788406)
+  (v20.2.4), 2026-11-18, list the versions of `k` before those of `z`
+  for the key-marker `k` alone.
 - **Evidence:** paths are under `src/`.
   - ListObjectVersions takes `key-marker` as the marker's name and
     `version-id-marker` as its instance, empty when absent
@@ -24528,7 +24582,8 @@ Every new entry adds its row to this table, in document order.
   more.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V9's review, 2026-10-20; recorded by its fix
-  round. Derived from the source, not reproduced.
+  round. Derived from the source; reproduced by phase 2 task V15a's
+  recording of the versioning s3-tests, 2026-11-12, on both releases.
 
 ## cls_rgw's start-key delimiter test reads a null version's list key as a common prefix
 
@@ -26339,8 +26394,21 @@ Every new entry adds its row to this table, in document order.
   answers 404 NoSuchKey, the answer for a version that does not exist,
   where S3 answers 405 MethodNotAllowed with `x-amz-delete-marker: true`.
   Not security-relevant: either answer is a refusal, and the 404 goes only
-  to an admin or a requester who may list the bucket. Unreproduced: derived
-  from the source.
+  to an admin or a requester who may list the bucket. Its GET half is
+  reproduced on v19.2.7 and v20.2.4 by the s3-test
+  `test_versioning_read_delete_marker_version`
+  ([jhoblitt/ceph#29](https://github.com/jhoblitt/ceph/pull/29)), which
+  radosgw fails in both ledgers' recordings of 2026-11-12; its radosgw
+  runs in s3tests runs
+  [44412782233](https://github.com/jhoblitt/rgw-go/actions/runs/44412782233)
+  (v19.2.7) and
+  [44412788406](https://github.com/jhoblitt/rgw-go/actions/runs/44412788406)
+  (v20.2.4), 2026-11-18, answer a GET naming a delete marker's version
+  on a bucket whose versioning is enabled 404 NoSuchKey, where the test
+  stops. Its HEAD, GetObjectAcl, GetObjectTagging and Tentacle's
+  GetObjectAttributes halves, and a read naming `versionId=null` when the
+  null version is a delete marker, are unreproduced, derived from the
+  source.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
   - A delete marker has no head object: the versioned delete links it under
     the key's OLH through `set_olh` with the delete-marker flag and writes
@@ -26398,7 +26466,9 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** the phase 2 versioning research, 2026-10-13, as its defect 6;
   registered by phase 2 Task V6's fix round, 2026-10-22, whose
-  `namedVersion` meets it. Derived from the source, not reproduced.
+  `namedVersion` meets it. Derived from the source; its GET half reproduced
+  by phase 2 task V15a's recording of the versioning s3-tests, 2026-11-12,
+  on both releases.
 
 ## radosgw's attr writes put a null-current OLH head's OLH attrs back, reverting a link that lands in between
 
@@ -27316,9 +27386,30 @@ Every new entry adds its row to this table, in document order.
 - **Kind:** defect, S3-correctness: a `versionId=null` delete on a versioned
   key compares its conditions with the version marker's empty meta and
   omits `x-amz-delete-marker` from the removal of a null delete marker. Not
-  security-relevant: the conditions guard the requester's own delete, which
-  they refuse rather than let through, and the missing header misreports a
-  removal the requester made. Unreproduced: derived from the source.
+  security-relevant: the conditions guard the requester's own delete, and
+  the missing header misreports a removal the requester made. The
+  conditions mostly refuse a delete they should let through, but an
+  `x-amz-if-match-size` of 0 matches the version marker's empty meta, so
+  it lets through the delete of a null version of any size
+  ([rgw_rados.cc:5922-5927](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5922-L5927),
+  [rgw_rados.cc:6534-6539](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6534-L6539));
+  that pass is unreproduced here, and
+  [#82328](https://tracker.ceph.com/issues/82328) reports it reproduced on
+  v20.2.4. The 412s and the missing header are reproduced on v19.2.7 and
+  v20.2.4 by the
+  s3-tests `test_versioning_obj_plain_null_version_removal_if_match`,
+  `test_versioning_obj_plain_null_version_removal_if_match_size_and_mtime`
+  and `test_delete_marker_suspended_null_removal_reports_marker`
+  ([jhoblitt/ceph#31](https://github.com/jhoblitt/ceph/pull/31)), which
+  radosgw fails in both ledgers' recordings of 2026-11-12; its radosgw
+  runs in s3tests runs
+  [44412782233](https://github.com/jhoblitt/rgw-go/actions/runs/44412782233)
+  (v19.2.7) and
+  [44412788406](https://github.com/jhoblitt/rgw-go/actions/runs/44412788406)
+  (v20.2.4), 2026-11-18, answer 412 PreconditionFailed to a
+  `versionId=null` delete whose If-Match, or whose size and mtime
+  conditions, the null version meets, and answer the removal of a null
+  delete marker without `x-amz-delete-marker`.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
   - The versioned delete of a named version clears `null`, reads the
     version's entry through `bi_get_instance`, compares If-Match, whole,
@@ -27369,10 +27460,13 @@ Every new entry adds its row to this table, in document order.
   (`getInstanceEntry`, `internal/driver/olh_index.go`; `removeVersion`,
   `internal/driver/delete_versioned.go`; `docs/differences.md`, "A versioned
   delete of versionId=null checks the null version itself").
-- **Upstream:** pending; prior art not searched.
+- **Upstream:** [#82328](https://tracker.ceph.com/issues/82328), New,
+  filed 2026-10-29 with a reproduction on v20.2.4 and a suggested patch;
+  no pull request. Read from the tracker on 2026-11-19.
 - **Found:** the phase 2 versioning plan's review, finding F4, as the plan's
   defect 16; registered by phase 2 Task V8a, 2026-10-22. Derived from the
-  source, not reproduced.
+  source; reproduced by phase 2 task V15a's recording of the versioning
+  s3-tests, 2026-11-12, on both releases.
 
 ## radosgw's versioned delete of a named version ignores unmod_since, which its lifecycle relies on
 
@@ -30549,7 +30643,15 @@ Every new entry adds its row to this table, in document order.
   key whose current version is a delete marker answers 404 NoSuchKey
   without `x-amz-delete-marker`, which S3 sends as `true` on that 404. Not
   security-relevant: the 404 goes only to an admin or a requester who may
-  list the bucket. Unreproduced: derived from the source.
+  list the bucket. Reproduced on v19.2.7 by the s3-tests
+  `test_delete_marker_versioned`, `test_delete_marker_suspended` and
+  `test_delete_marker_versioned_get`, the last from
+  [jhoblitt/ceph#29](https://github.com/jhoblitt/ceph/pull/29), which
+  radosgw fails in Squid's ledger's recording of 2026-11-12 and passes in
+  Tentacle's; its radosgw runs in s3tests run
+  [44412782233](https://github.com/jhoblitt/rgw-go/actions/runs/44412782233)
+  (v19.2.7), 2026-11-18, answer a HEAD's and a GET's 404 with no
+  `x-amz-delete-marker`.
 - **Evidence:**
   - v19.2.7's `RGWHandler_REST::read_permissions` returns
     `do_read_permissions`' answer and sends no header
@@ -30581,7 +30683,8 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** the phase 2 versioning research, 2026-10-13, as its defect 7;
   registered by phase 2 task V14a, 2026-10-27, which serves the header.
-  Derived from the source, not reproduced.
+  Derived from the source; reproduced by phase 2 task V15a's recording of
+  the versioning s3-tests, 2026-11-12, on v19.2.7.
 
 ## radosgw's GET and HEAD send no x-amz-version-id for the null version they read
 
@@ -30590,7 +30693,21 @@ Every new entry adds its row to this table, in document order.
   version answers without `x-amz-version-id`, where S3 sends `null`, the
   null version's id; and a `partNumber` read of a version names the
   instance of its part head's key, usually none, instead of the version's.
-  Unreproduced: derived from the source.
+  Its GET of a null version written before versioning was enabled, and
+  never linked under an OLH, is reproduced on v19.2.7 and v20.2.4 by the
+  s3-test
+  `test_versioning_read_names_null_version`
+  ([jhoblitt/ceph#29](https://github.com/jhoblitt/ceph/pull/29)), which
+  radosgw fails in both ledgers' recordings of 2026-11-12; its radosgw
+  runs in s3tests runs
+  [44412782233](https://github.com/jhoblitt/rgw-go/actions/runs/44412782233)
+  (v19.2.7) and
+  [44412788406](https://github.com/jhoblitt/rgw-go/actions/runs/44412788406)
+  (v20.2.4), 2026-11-18, answer a GET naming no version of a key written
+  before its bucket's versioning was enabled, and not written since,
+  without `x-amz-version-id`, where the test stops. The GET of a null
+  version written under an OLH, as on a suspended bucket, the HEAD half
+  and the `partNumber` half are unreproduced, derived from the source.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
   - `Read::prepare` keeps the key of the version it followed to
     ([rgw_rados.cc:7105](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L7105),
@@ -30645,7 +30762,9 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** the phase 2 versioning research, 2026-10-13, as the read side
   of its defect 8; registered by phase 2 task V14a, 2026-10-27, serving
-  versioned reads. Derived from the source, not reproduced.
+  versioned reads. Derived from the source; its GET of a null version
+  written before versioning was enabled reproduced by phase 2 task V15a's
+  recording of the versioning s3-tests, 2026-11-12, on both releases.
 
 ## radosgw's DeleteObjectTagging naming no version writes the key's OLH head, not its current version
 
@@ -30761,7 +30880,17 @@ Every new entry adds its row to this table, in document order.
   version answers 404 NoSuchKey, or 403 to a requester who may not list
   the source's bucket, the answers for a source that does not exist, where
   S3 answers 400 Bad Request. Either answer is a refusal, and neither tells
-  a requester more than the other. Unreproduced: derived from the source.
+  a requester more than the other. Reproduced on v19.2.7 and v20.2.4 by
+  the s3-tests `test_versioning_copy_object_source_delete_marker_version`
+  and `test_versioning_upload_part_copy_source_delete_marker_version`
+  ([jhoblitt/ceph#29](https://github.com/jhoblitt/ceph/pull/29)), which
+  radosgw fails in both ledgers' recordings of 2026-11-12; its radosgw
+  runs in s3tests runs
+  [44412782233](https://github.com/jhoblitt/rgw-go/actions/runs/44412782233)
+  (v19.2.7) and
+  [44412788406](https://github.com/jhoblitt/rgw-go/actions/runs/44412788406)
+  (v20.2.4), 2026-11-18, answer a CopyObject and an UploadPartCopy whose
+  source names a delete marker's version 404 NoSuchKey.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
   - Both ops key the source with its `versionId` and read its policies
     through `read_obj_policy`, CopyObject
@@ -30801,7 +30930,8 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task V14a's review, 2026-10-27, as task V14a served
   UploadPartCopy from a version; registered by its fix round. Derived from
-  the source, not reproduced.
+  the source; reproduced by phase 2 task V15a's recording of the versioning
+  s3-tests, 2026-11-12, on both releases.
 
 ## radosgw links a versioned write whose index completion the class refused, leaving its list entry pending until the version is removed
 
@@ -34989,7 +35119,9 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task L7's adversarial review, 2026-11-14, judging
   the object-lock condition keys a request can leave out; derived from the
-  source, not reproduced.
+  source. Reproduced by phase 2 task S9's s3-test
+  `test_bucket_policy_deny_stringnotlike_key_absent`, 2026-11-16, on both
+  releases.
 
 ## radosgw matches condition key names case-sensitively
 
@@ -35532,8 +35664,14 @@ Every new entry adds its row to this table, in document order.
 
 - **Kind:** defect, cosmetic: an admin tool's read fails. Not
   security-relevant. Not found by us: reported and fixed upstream, fixed in
-  Tentacle, with the Squid backport still open. Unreproduced on rgw-go's
-  clusters: derived from the source.
+  Tentacle, with the Squid backport still open. Reproduced on v19.2.7 on
+  2026-11-16 by the versioning gate's spec "keeps one version history
+  whichever gateway writes it and whichever reads, lists, deletes and sets
+  an ACL on it" (`test/integration/phase2_versioning_test.go`) in
+  [integration run 43876112553](https://github.com/jhoblitt/rgw-go/actions/runs/43876112553):
+  `olh get` of a versioned key whose OLH replays had applied failed with
+  "(5) Input/output error", where on v20.2.4 it named the version
+  `olh.info` names.
 - **Evidence:** paths are under `src/rgw/`.
   - `radosgw-admin olh get` prints what `RGWRados::get_olh` reads of a key's
     OLH head, and fails with that call's error
@@ -35579,4 +35717,6 @@ Every new entry adds its row to this table, in document order.
   [#69579](https://tracker.ceph.com/issues/69579), was Rejected.
 - **Found:** upstream, by Yehuda Sadeh's report #69536, 2025-01-14. Met
   again by phase 2 unit V's research at v19.2.6 and its task V15b,
-  2026-11-16, reading `get_olh` at v19.2.7 and v20.2.4; not reproduced.
+  2026-11-16, reading `get_olh` at v19.2.7 and v20.2.4; reproduced by that
+  task's versioning gate, integration run 43876112553, the same day, on
+  v19.2.7.
