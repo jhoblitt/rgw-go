@@ -546,6 +546,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's CopyObject ignores x-amz-tagging-directive](#radosgws-copyobject-ignores-x-amz-tagging-directive) | pending | pending | ✓ |
 | [radosgw's CopyObject and CreateMultipartUpload evaluate s3:PutObject without the request's ACL and tag condition keys](#radosgws-copyobject-and-createmultipartupload-evaluate-s3putobject-without-the-requests-acl-and-tag-condition-keys) | pending | pending | ✓ |
 | [radosgw adds an empty s3:x-amz-acl key to a PutObject that sends no x-amz-acl](#radosgw-adds-an-empty-s3x-amz-acl-key-to-a-putobject-that-sends-no-x-amz-acl) | pending | pending | ✓ |
+| [radosgw's CopyObject stores an x-amz-tagging header it does not validate](#radosgws-copyobject-stores-an-x-amz-tagging-header-it-does-not-validate) | pending | pending | ✓ |
 | [radosgw's replay of an OLH log removes a version that a later entry of the same log links](#radosgws-replay-of-an-olh-log-removes-a-version-that-a-later-entry-of-the-same-log-links) | pending | [ceph/ceph#67661](https://github.com/ceph/ceph/pull/67661) (partial) |  |
 | [radosgw never sets aws:SecureTransport to false](#radosgw-never-sets-awssecuretransport-to-false) | none; [#42521](https://tracker.ceph.com/issues/42521) is related | none |  |
 | [radosgw sets few of the condition keys Amazon S3 sets on S3 requests](#radosgw-sets-few-of-the-condition-keys-amazon-s3-sets-on-s3-requests) | pending | pending | ✓ |
@@ -35751,6 +35752,62 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task S13's review, 2026-11-20, checking which keys a
   write that sends no ACL header carries; derived from the source, not
   reproduced on a cluster.
+
+## radosgw's CopyObject stores an x-amz-tagging header it does not validate
+
+- **Kind:** defect, possibly security-relevant, conservatively: a copy
+  under the REPLACE metadata directive can create an object whose tag attr
+  no tag reader decodes, so a policy, lifecycle rule or replication rule
+  conditioned on the object's tags evaluates it without them.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - PutObject's get_params parses `x-amz-tagging` and refuses a header
+    that does not parse
+    ([rgw_rest_s3.cc:2633-2644](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2633-L2644),
+    [rgw_rest_s3.cc:2786-2797](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2786-L2797)).
+    `RGWCopyObj_ObjStore_S3::get_params` reads none, and sets the
+    directive under which the copy keeps the request's attrs in place of
+    its source's
+    ([rgw_rest_s3.cc:3508-3581](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3508-L3581),
+    [rgw_rest_s3.cc:3758-3831](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3758-L3831)).
+  - `RGWCopyObj::init_common` builds those attrs with
+    `rgw_get_request_metadata`
+    ([rgw_op.cc:5526](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5526),
+    [rgw_op.cc:6089](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6089)), which stores
+    each `x-amz-*` header under its attr name, the tag set's among them,
+    after `format_xattr`
+    ([rgw_op.h:2175-2237](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2175-L2237),
+    [rgw_op.h:2338-2408](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2338-L2408)).
+    `format_xattr` rewrites a value holding a control character or a byte
+    that is not UTF-8 as `=?UTF-8?Q?...?=` text
+    ([rgw_op.h:2145-2164](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2145-L2164),
+    [rgw_op.h:2308-2327](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2308-L2327)).
+  - The tag set's decode reads such text through `set_from_string`
+    ([rgw_tag.h:32-62](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.h#L32-L62),
+    [rgw_tag.h:32-62](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.h#L32-L62)), whose
+    `check_and_add_tag` refuses an eleventh tag and an empty key
+    ([rgw_tag.cc:23-34](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.cc#L23-L34),
+    [rgw_tag.cc:23-34](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.cc#L23-L34)). A header
+    with more than ten tags, with an empty key, or rewritten by
+    `format_xattr`, whose first item then has an empty key, decodes to no
+    tag set, and `rgw_iam_add_tags_from_bl` fails with -EIO
+    ([rgw_op.cc:708-725](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L708-L725),
+    [rgw_op.cc:738-755](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L738-L755)), the sink
+    the entry "[radosgw evaluates a tag-conditioned policy without the tags
+    it fails to
+    read](#radosgw-evaluates-a-tag-conditioned-policy-without-the-tags-it-fails-to-read)"
+    records.
+- **Releases:** v19.2.7 and v20.2.4; older releases not checked.
+- **rgw-go:** does not reproduce it: a CopyObject under the REPLACE
+  metadata directive refuses, with 400 InvalidArgument before it is
+  authorized, an `x-amz-tagging` header that does not parse or that
+  `formatXattr` would rewrite (`replaceTags`, `internal/s3/copyobject.go`;
+  `docs/differences.md`, "CopyObject and CreateMultipartUpload evaluate
+  s3:PutObject with the keys of the ACL and the tags they set").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task S13's review and adversarial review, 2026-11-20,
+  checking what a copy stores of its tag header; derived from the source,
+  not reproduced on a cluster.
 
 ## radosgw's replay of an OLH log removes a version that a later entry of the same log links
 
