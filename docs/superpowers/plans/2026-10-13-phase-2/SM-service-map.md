@@ -389,7 +389,14 @@ type ServiceRegistrar interface {
        `frontend_config#0` is the beast entry it was given, and `ceph_version` names a build.
   4. `ceph service status -f json` shows `current_sync` `[]` for rgw-go, as for the radosgw.
   5. `ceph config show client.rgw.rgw-go-servicemap rgw_frontends` answers the beast entry.
-  6. After SIGTERM the process exits 0 and its entry leaves `service dump` within 10 s. That is
+  6. While that rgw-go runs, a second rgw-go, started through the same helper without the flag,
+     so under the helper's `RGW_GO_SERVICE_MAP=false`, on the same site as `client.admin`, as
+     `startWebsiteRGWGo` runs, with a frontend of its own, answers Rook's probe; then no rgw
+     entry in `ceph service dump -f json` carries that process's `pid`, at once or for 30 s
+     after. It is the one check of serve's own wiring of the setting, where `run` hands the
+     resolved `--service-map` to the registration, which no hermetic spec reaches past the
+     connect.
+  7. After SIGTERM the process exits 0 and its entry leaves `service dump` within 10 s. That is
      well under `mgr_service_beacon_grace`, 60 s
      ([mgr.yaml.in:113-118](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/mgr.yaml.in#L113-L118),
      [mgr.yaml.in:113-118](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/mgr.yaml.in#L113-L118)),
