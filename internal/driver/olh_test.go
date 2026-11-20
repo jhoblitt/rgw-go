@@ -1,6 +1,7 @@
 package driver_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -913,6 +914,157 @@ var _ = Describe("the versioned link and unlink", func() {
 			Entry("a null delete marker's link on the next page does not", rgwcls.OLHLogEntry{Op: rgwcls.OLHOpLinkOLH, Key: rgwcls.ObjKey{Name: "k"}, DeleteMarker: true}, false),
 			Entry("a named link on the next page does not", rgwcls.OLHLogEntry{Op: rgwcls.OLHOpLinkOLH, Key: rgwcls.ObjKey{Name: "k", Instance: "v001002"}}, false),
 		)
+
+		DescribeTable("pairs a removal of a named version with a link of it on a later page",
+			func(ctx SpecContext, laterLink rgwcls.OLHLogEntry, kept bool) {
+				const tag = "pagespagespagespagespagespages00"
+				write(ctx, "v1")
+				log := map[uint64][]rgwcls.OLHLogEntry{}
+				for epoch := uint64(2); epoch <= 1000; epoch++ {
+					log[epoch] = []rgwcls.OLHLogEntry{{Epoch: epoch, Op: rgwcls.OLHOpLinkOLH, OpTag: fmt.Sprintf("op%06d", epoch), Key: rgwcls.ObjKey{Name: "k", Instance: fmt.Sprintf("v%06d", epoch)}}}
+				}
+				log[1001] = []rgwcls.OLHLogEntry{{Epoch: 1001, Op: rgwcls.OLHOpRemoveInstance, OpTag: "op001001", Key: rgwcls.ObjKey{Name: "k", Instance: "v1"}}}
+				laterLink.Epoch, laterLink.OpTag = 1002, "op001002"
+				log[1002] = []rgwcls.OLHLogEntry{laterLink}
+				c.Object(rookIndexPool, "", shard).Omap[rgwcls.OLHDataKey("k")] = encode(rgwcls.OLHEntry{
+					Key: laterLink.Key, Epoch: 1002, PendingLog: log, Tag: tag, Exists: true, DeleteMarker: laterLink.DeleteMarker,
+				})
+				c.Put(testDataPool, "", olhHeadOID(version("")), nil)
+				olhHead().Xattrs[meta.AttrOLHIDTag] = []byte(tag)
+				olhHead().Xattrs[meta.AttrOLHVer] = []byte{}
+
+				Expect(s.UpdateOLHForTest(ctx, rec, readHead(ctx))).To(Succeed())
+				Expect(olhVer()).To(Equal("1002"), "both pages applied")
+				Expect(olhEntry(shard).PendingLog).To(BeEmpty())
+				Expect(target()).To(Equal(laterLink.Key.Instance))
+				if kept {
+					Expect(versionHead("v1")).NotTo(BeNil(), "the version the second page's link names")
+					Expect(hasInstanceEntry(shard, "v1")).To(BeTrue())
+					return
+				}
+				Expect(versionHead("v1")).To(BeNil(), "the version the first page's removal names")
+				Expect(hasInstanceEntry(shard, "v1")).To(BeFalse())
+			},
+			Entry("its link on the next page keeps it", rgwcls.OLHLogEntry{Op: rgwcls.OLHOpLinkOLH, Key: rgwcls.ObjKey{Name: "k", Instance: "v1"}}, true),
+			Entry("a delete marker's link of the same instance on the next page does not",
+				rgwcls.OLHLogEntry{Op: rgwcls.OLHOpLinkOLH, Key: rgwcls.ObjKey{Name: "k", Instance: "v1"}, DeleteMarker: true}, false),
+			Entry("another version's link on the next page does not", rgwcls.OLHLogEntry{Op: rgwcls.OLHOpLinkOLH, Key: rgwcls.ObjKey{Name: "k", Instance: "v001002"}}, false),
+			Entry("the null version's link on the next page does not", rgwcls.OLHLogEntry{Op: rgwcls.OLHOpLinkOLH, Key: rgwcls.ObjKey{Name: "k"}}, false),
+		)
+
+		// The class appends a null write's link while the replay is on the
+		// first of three pages, which already read ahead for its own
+		// removal: the second page's removal of the null version must still
+		// pair with that link on the third.
+		It("pairs a removal with a link logged during the pass, after an earlier page read ahead", func(ctx SpecContext) {
+			const tag = "pagespagespagespagespagespages00"
+			linkAt := func(epoch uint64, instance string) rgwcls.OLHLogEntry {
+				return rgwcls.OLHLogEntry{Epoch: epoch, Op: rgwcls.OLHOpLinkOLH, OpTag: fmt.Sprintf("op%06d", epoch), Key: rgwcls.ObjKey{Name: "k", Instance: instance}}
+			}
+			log := map[uint64][]rgwcls.OLHLogEntry{}
+			for epoch := uint64(2); epoch <= 2005; epoch++ {
+				log[epoch] = []rgwcls.OLHLogEntry{linkAt(epoch, fmt.Sprintf("v%06d", epoch))}
+			}
+			log[2] = []rgwcls.OLHLogEntry{{Epoch: 2, Op: rgwcls.OLHOpRemoveInstance, OpTag: "op000002", Key: rgwcls.ObjKey{Name: "k", Instance: "gone"}}}
+			log[1002] = []rgwcls.OLHLogEntry{{Epoch: 1002, Op: rgwcls.OLHOpRemoveInstance, OpTag: "op001002", Key: rgwcls.ObjKey{Name: "k"}}}
+			c.Object(rookIndexPool, "", shard).Omap[rgwcls.OLHDataKey("k")] = encode(rgwcls.OLHEntry{
+				Key: rgwcls.ObjKey{Name: "k", Instance: "v002005"}, Epoch: 2005, PendingLog: log, Tag: tag, Exists: true,
+			})
+			c.Put(testDataPool, "", olhHeadOID(version("")), []byte("null-data"))
+			olhHead().Xattrs[meta.AttrOLHIDTag] = []byte(tag)
+			olhHead().Xattrs[meta.AttrOLHVer] = []byte{}
+			olhHead().Xattrs[meta.AttrETag] = []byte("etag-null")
+			// The first page's removal names no stored version, so the first
+			// write to the shard is that page's trim.
+			c.BeforeWrite(rookIndexPool, "", shard, func(o *fakerados.Object) {
+				c.BeforeWrite(rookIndexPool, "", shard, nil)
+				e, ok := c.OLHEntry(rookIndexPool, "", shard, "k")
+				Expect(ok).To(BeTrue())
+				e.PendingLog[2006] = []rgwcls.OLHLogEntry{linkAt(2006, "")}
+				e.Key, e.Epoch = rgwcls.ObjKey{Name: "k"}, 2006
+				o.Omap[rgwcls.OLHDataKey("k")] = encode(e)
+			})
+
+			Expect(s.UpdateOLHForTest(ctx, rec, readHead(ctx))).To(Succeed())
+			Expect(olhVer()).To(Equal("2006"), "every page applied")
+			Expect(olhEntry(shard).PendingLog).To(BeEmpty())
+			Expect(target()).To(BeEmpty(), "the null write current")
+			Expect(olhHead().Data).To(Equal([]byte("null-data")), "the null write's data, which the link logged during the pass names")
+			Expect(olhHead().Xattrs).To(HaveKey(meta.AttrETag))
+		})
+
+		// A delete's unlink of a version takes its list entry and logs its
+		// removal, leaving its head and instance entry to the replay, so a link
+		// of the same version before that replay finds them and logs its
+		// LINK_OLH after the removal. radosgw's replay removes the version and
+		// links it, leaving the key's OLH naming a version that is gone.
+		Describe("a log that removes a named version and then links it", func() {
+			// relinked writes v1 again and links it without a replay, after
+			// unlink, leaving the log both made.
+			relinked := func(ctx context.Context) {
+				GinkgoHelper()
+				Expect(unlink(ctx, "v1", driver.OLHUnlink{SkipUpdate: true})).To(Succeed())
+				Expect(s.SetOLHForTest(ctx, rec, write(ctx, "v1"), driver.OLHLink{SkipUpdate: true})).To(Succeed())
+				log := olhEntry(shard).PendingLog
+				var ops []rgwcls.OLHLogOp
+				for _, epoch := range slices.Sorted(maps.Keys(log)) {
+					for _, e := range log[epoch] {
+						if e.Key.Instance == "v1" {
+							ops = append(ops, e.Op)
+						}
+					}
+				}
+				Expect(ops).To(Equal([]rgwcls.OLHLogOp{rgwcls.OLHOpRemoveInstance, rgwcls.OLHOpLinkOLH}), "v1's removal, then its link")
+			}
+			// readable checks that k reads as v1, by its name and by its id,
+			// and that ListObjectVersions lists v1 first.
+			readable := func(ctx context.Context, versions ...string) {
+				GinkgoHelper()
+				for _, key := range []meta.ObjKey{{Name: "k"}, version("v1")} {
+					st, err := s.StatObject(ctx, rec, key)
+					Expect(err).NotTo(HaveOccurred(), "reading %v", key)
+					Expect(st.Key).To(Equal(version("v1")))
+					var buf bytes.Buffer
+					Expect(s.ReadObject(ctx, st, op.ByteRange{Length: st.Size}, &buf)).To(Succeed())
+					Expect(buf.String()).To(Equal("data-v1"))
+				}
+				res, err := s.ListObjects(ctx, rec, op.ListObjectsParams{ListVersions: true, MaxKeys: 1000})
+				Expect(err).NotTo(HaveOccurred())
+				var got []string
+				for _, e := range res.Entries {
+					got = append(got, e.Key.Instance)
+				}
+				Expect(got).To(Equal(versions), "ListObjectVersions, newest first")
+			}
+
+			It("keeps the version and links it when another version stayed current between", func(ctx SpecContext) {
+				put(ctx, "v1")
+				put(ctx, "v2")
+				relinked(ctx)
+				Expect(update(ctx)).To(Succeed())
+				settled(shard, "v1", "v1", "v2")
+				linkedLast(shard)
+				readable(ctx, "v1", "v2")
+			})
+
+			It("keeps the version and links it when its unlink left the key no version", func(ctx SpecContext) {
+				put(ctx, "v1")
+				relinked(ctx)
+				Expect(olhEntry(shard).PendingLog).To(ContainElement(ContainElement(HaveField("Op", rgwcls.OLHOpUnlinkOLH))), "the unlink left no version")
+				Expect(update(ctx)).To(Succeed())
+				settled(shard, "v1", "v1")
+				readable(ctx, "v1")
+			})
+
+			It("still removes a version whose removal no later link of it follows", func(ctx SpecContext) {
+				put(ctx, "v1")
+				put(ctx, "v2")
+				Expect(unlink(ctx, "v1", driver.OLHUnlink{SkipUpdate: true})).To(Succeed())
+				put(ctx, "v3")
+				settled(shard, "v3", "v2", "v3")
+				Expect(versionHead("v1")).To(BeNil())
+			})
+		})
 
 		It("runs a trim that failed once again, without a second head op", func(ctx SpecContext) {
 			put(ctx, "v1")

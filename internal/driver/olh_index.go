@@ -58,13 +58,15 @@ func (s *Store) newOLHIndex(rec *op.BucketRecord, key meta.ObjKey) *bucketOLHInd
 // version is a delete marker, the meta a marker's entry is written with, the
 // zero meta of a null pointer otherwise, the epoch, 0 letting the class take
 // the OLH entry's next, and unmod_since, compared in whole seconds unless
-// highPrecision.
+// highPrecision. cmp, when not nil, is an index entry the link's op requires
+// unchanged, as an unlink's (olhUnlinkFields).
 type olhLinkFields struct {
 	deleteMarker  bool
 	meta          rgw.DirEntryMeta
 	epoch         uint64
 	unmodSince    time.Time
 	highPrecision bool
+	cmp           *rgw.BIEntry
 }
 
 // olhUnlinkFields are the fields of an unlink its caller chooses: the epoch,
@@ -103,7 +105,9 @@ func versionKey(key meta.ObjKey) rgw.ObjKey {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L8876-L8922 at v20.2.4):
 // bucket_link_olh of key, a version of the name, under opTag, with
 // the zone's log_op and zones_trace. radosgw then adds a data log entry when
-// it logs the op, which a single zone never does.
+// it logs the op, which a single zone never does. With f.cmp the op compares
+// that omap entry first, as unlinkInstance's does, a changed entry answering
+// ECANCELED with nothing linked.
 func (b *bucketOLHIndex) linkOLH(ctx context.Context, head *op.ObjectState, key meta.ObjKey, opTag string, f olhLinkFields) error {
 	if err := b.ofName(key); err != nil {
 		return err
@@ -113,7 +117,12 @@ func (b *bucketOLHIndex) linkOLH(ctx context.Context, head *op.ObjectState, key 
 		Meta: f.meta, OLHEpoch: f.epoch, LogOp: b.x.logOp(), UnmodSince: f.unmodSince,
 		HighPrecisionTime: f.highPrecision, ZonesTrace: b.x.zonesTrace(),
 	}
-	return b.x.guardedWrite(ctx, func(w *radosclient.WriteOp) { rgw.LinkOLH(w, l, b.x.s.release) })
+	return b.x.guardedWrite(ctx, func(w *radosclient.WriteOp) {
+		if f.cmp != nil {
+			w.OmapCmp(f.cmp.Idx, radosclient.CmpEQ, f.cmp.Data)
+		}
+		rgw.LinkOLH(w, l, b.x.s.release)
+	})
 }
 
 // unlinkInstance is bucket_index_unlink_instance

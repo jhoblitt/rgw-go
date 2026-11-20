@@ -61,6 +61,12 @@ type Store struct {
 	// condSleep, when set, is how a conditional link waits out a backoff
 	// (waitOLHPending); sleepCtx when nil.
 	condSleep func(ctx context.Context, d time.Duration) error
+	// relistTimeout, when positive, caps a relist's retries in place of
+	// relistCap, for specs (refusedRemoval).
+	relistTimeout time.Duration
+	// relistBackstopTimeout, when positive, bounds a relist up to its link
+	// in place of relistBackstop, for specs (refusedRemoval).
+	relistBackstopTimeout time.Duration
 	// bufs is the free list, capped at the memory budget's size, of the
 	// buffers prefetches read the head into, those of
 	// rgw_get_obj_max_req_size that data reads of more than half that go

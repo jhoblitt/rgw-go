@@ -945,6 +945,63 @@ var _ = Describe("the OLH head operations", func() {
 				map[uint64][]rgwcls.OLHLogEntry{3: {removal("v0", tagP)}, 4: {link("", tagQ)}}, []string{"v0"}),
 		)
 
+		// radosgw removes every version its log names for removal, a link of
+		// the same version later in the log or not
+		// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8479-L8481 at v19.2.7,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9225-L9227 at v20.2.4).
+		DescribeTable("drops a removal of a named version that a later link of that version follows, and links it",
+			func(ctx SpecContext, log map[uint64][]rgwcls.OLHLogEntry, removed []string, current string) {
+				olhHead("5", info("v1", false), nil)
+				_, err := s.ApplyOLHLogForTest(ctx, idx, state(), log, "", nil)
+				Expect(err).NotTo(HaveOccurred())
+				var got []string
+				for _, call := range idx.Calls {
+					if call.Method == "removeInstance" {
+						got = append(got, call.Key.Instance)
+					}
+				}
+				Expect(got).To(Equal(removed))
+				Expect(head()).NotTo(BeNil(), "the replay ends on a link, keeping the OLH")
+				Expect(head().Xattrs).To(HaveKeyWithValue(meta.AttrOLHInfo, info(current, false)))
+			},
+			Entry("its link at a later epoch, another version staying current between, drops it",
+				map[uint64][]rgwcls.OLHLogEntry{6: {removal("v0", tagP)}, 7: {link("v0", tagQ)}}, []string(nil), "v0"),
+			Entry("its link later in the same epoch drops it",
+				map[uint64][]rgwcls.OLHLogEntry{6: {removal("v0", tagP), link("v0", tagQ)}}, []string(nil), "v0"),
+			Entry("its link after the unlink that left no version drops it",
+				map[uint64][]rgwcls.OLHLogEntry{6: {unlink(tagP), removal("v1", tagP)}, 7: {link("v1", tagQ)}}, []string(nil), "v1"),
+			Entry("its link after the unlink that promoted another drops it",
+				map[uint64][]rgwcls.OLHLogEntry{6: {link("v0", tagP), removal("v1", tagP)}, 7: {link("v1", tagQ)}}, []string(nil), "v1"),
+			Entry("its link at an epoch the replay does not take, an apply of it not yet trimmed, drops it",
+				map[uint64][]rgwcls.OLHLogEntry{4: {removal("v2", tagP)}, 5: {link("v2", tagQ)}}, []string(nil), "v1"),
+			Entry("its link before it keeps it",
+				map[uint64][]rgwcls.OLHLogEntry{6: {link("v0", tagQ)}, 7: {link("v1", "r"), removal("v0", tagP)}}, []string{"v0"}, "v1"),
+			Entry("a second removal after its link stays",
+				map[uint64][]rgwcls.OLHLogEntry{6: {removal("v0", tagP)}, 7: {link("v0", tagQ)}, 8: {link("v1", "r"), removal("v0", "r")}}, []string{"v0"}, "v1"),
+			Entry("another version's link keeps it",
+				map[uint64][]rgwcls.OLHLogEntry{6: {removal("v0", tagP)}, 7: {link("v2", tagQ)}}, []string{"v0"}, "v2"),
+			Entry("the null version's link keeps it",
+				map[uint64][]rgwcls.OLHLogEntry{6: {removal("v0", tagP)}, 7: {link("", tagQ)}}, []string{"v0"}, ""),
+		)
+
+		It("keeps a removal of a named version that a later delete marker's link of the same instance follows", func(ctx SpecContext) {
+			olhHead("5", info("v1", false), nil)
+			_, err := s.ApplyOLHLogForTest(ctx, idx, state(), map[uint64][]rgwcls.OLHLogEntry{6: {removal("v0", tagP)}, 7: {marker("v0", tagQ)}}, "", nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(idx.Methods()).To(Equal([]string{"removeInstance", "trimLog"}))
+			Expect(idx.Calls[0].Key).To(Equal(meta.ObjKey{Name: "k", Instance: "v0"}))
+			Expect(head().Xattrs).To(HaveKeyWithValue(meta.AttrOLHInfo, info("v0", true)))
+		})
+
+		It("drops the writer's own guarded removal of a named version that a later link of it follows", func(ctx SpecContext) {
+			olhHead("5", info("v1", false), nil)
+			last, err := s.ApplyOLHLogForTest(ctx, idx, state(), map[uint64][]rgwcls.OLHLogEntry{6: {removal("v0", tagP)}, 7: {link("v0", tagQ)}}, tagP, []byte("tx-own\x00"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(last).To(BeEquivalentTo(7))
+			Expect(idx.Methods()).To(Equal([]string{"trimLog"}))
+			Expect(head().Xattrs).To(HaveKeyWithValue(meta.AttrOLHInfo, info("v0", false)))
+		})
+
 		It("passes no tag guard without the writer's expected tag", func(ctx SpecContext) {
 			olhHead("2", info("v1", false), nil)
 			_, err := s.ApplyOLHLogForTest(ctx, idx, state(), map[uint64][]rgwcls.OLHLogEntry{3: {removal("v1", tagP)}}, tagP, nil)

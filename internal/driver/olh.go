@@ -93,13 +93,27 @@ type olhLink struct {
 // caller's wait on other writers' pending modifications has passed
 // (waitOLHPending), a pending attr no longer refuses the link, and the init
 // is guarded on olh.info and olh.ver alone, as a conditional writer's is past
-// its wait.
+// its wait. olh, when not nil, is the name's OLH entry as the caller read it
+// (relinkOLHEntry), which the link's op compares unchanged, a missing entry
+// as empty: another writer's link or unlink of the name rewrites that entry,
+// and one landing between the read and the link, which the head's guard does
+// not see, refuses the link, which then answers errRelinkMoved. finish is set
+// for a link whose context a cap can end between two of its writes, a
+// relist's (refusedRemoval): an attempt whose init is begun before the cap
+// sends that init, then its link, or after a link that did not land the
+// cancel of the init's pending attr, whatever the cap does, under the
+// relist's backstop (pairContext). An attempt cut between the two would
+// leave the pending attr on the head until it expires, with nothing sent
+// under it.
 type olhRelink struct {
 	head      *op.ObjectState
 	pendingOK bool
+	olh       *rgw.BIEntry
+	finish    bool
 }
 
-// errRelinkMoved ends a link whose olhRelink head another writer has moved.
+// errRelinkMoved ends a link whose olhRelink head, or OLH entry, another
+// writer has moved.
 var errRelinkMoved = errors.New("the key's OLH head changed since the re-link chose its epoch")
 
 // moved reports whether head, an attempt's read of the OLH head, is no longer
@@ -257,11 +271,16 @@ func (s *Store) stopsAfterLink() bool { return olhStopAfterLink != nil && olhSto
 // once one landed it removes nothing, whatever it then returns, so its
 // caller never removes the version. A conditional link the check voids is
 // removed by that check's unlink. A link with p.Relink removes nothing on
-// any path.
+// any path, and with its finish set an attempt begun before a cap on ctx
+// sends its init, its link, and the cancel after a link that did not land,
+// whatever that cap does (olhRelink).
 func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p olhLink) error {
 	what := versionName(rec, key)
 	idx := s.newOLHIndex(rec, key)
 	f := olhLinkFields{deleteMarker: p.DeleteMarker, meta: p.Meta, epoch: p.Epoch, unmodSince: p.UnmodSince, highPrecision: p.HighPrecision}
+	if p.Relink != nil {
+		f.cmp = p.Relink.olh
+	}
 	removes := !p.DeleteMarker && p.Relink == nil && !p.KeepVersion
 	unlinked := func(err error) error {
 		if removes {
@@ -288,6 +307,13 @@ func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKe
 	if p.Inited != nil && p.Cond != nil {
 		return beforeInit(errInitedCond)
 	}
+	// after is the context of an attempt's init and of the writes that
+	// follow it.
+	after, done := ctx, func() {}
+	if p.Relink != nil && p.Relink.finish {
+		after, done = pairContext(ctx)
+	}
+	defer done()
 	var wait olhCondWait
 	for range olhAttempts {
 		head, err := s.readOLHHead(ctx, rec, olhHeadKey(key))
@@ -310,7 +336,10 @@ func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKe
 			}
 			found := head.Exists
 			tagged = olhTagged(head)
-			opTag, _, err = s.olhInitModification(ctx, head, a.guard, expect)
+			if p.Relink != nil && p.Relink.finish && ctx.Err() != nil {
+				return beforeInit(ctx.Err())
+			}
+			opTag, _, err = s.olhInitModification(after, head, a.guard, expect)
 			switch {
 			case errors.Is(err, radosclient.ErrCanceled), found && errors.Is(err, radosclient.ErrNotFound):
 				continue
@@ -318,7 +347,7 @@ func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKe
 				return unlinked(fmt.Errorf("linking %s: %w", what, err))
 			}
 		}
-		err = idx.linkOLH(ctx, head, key, opTag, f)
+		err = idx.linkOLH(after, head, key, opTag, f)
 		if err == nil {
 			if a.check != nil && !s.stopsAfterLink() {
 				if cerr := s.checkOLHLink(ctx, idx, key, a.check, p.SkipUpdate); cerr != nil {
@@ -333,11 +362,14 @@ func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKe
 			return s.finishOLHModification(ctx, idx, head, opTag, p.SkipUpdate, expect, rm)
 		}
 		if !outcomeUnknown(err) {
-			s.olhCancelModification(ctx, head, opTag)
+			s.olhCancelModification(after, head, opTag)
 		}
 		if errors.Is(err, radosclient.ErrCanceled) {
 			if rerr := s.repairOLH(ctx, idx, head); rerr != nil && !errors.Is(rerr, radosclient.ErrCanceled) {
 				return unlinked(fmt.Errorf("linking %s: %w", what, rerr))
+			}
+			if f.cmp != nil {
+				return fmt.Errorf("linking %s: %w", what, errRelinkMoved)
 			}
 			continue
 		}
@@ -710,12 +742,14 @@ func (s *Store) replayOLH(ctx context.Context, idx *bucketOLHIndex, head *op.Obj
 // An apply whose head op landed is not applied again: a tail it left is run
 // again within the bound through finishOLHLog. canceled reports an apply that
 // ECANCELED refused before its head op landed. A page with more to follow
-// that ends with a removal of the null version no null link in it follows
-// has the pages after it read first (nullLinkAfter), so that its apply drops
-// that removal when a later page links null data.
+// that holds a removal no link of its version's data in it follows has the
+// rest of the log read first, from where the pass last read ahead
+// (linkedLater), so that its apply drops that removal when a later page links
+// that version's data, one logged during the pass included.
 func (s *Store) replayPass(ctx context.Context, idx *bucketOLHIndex, cur *op.ObjectState, r *olhReplay, retries *int) (refused error, canceled bool, err error) {
 	r.readAll, r.own = false, false
 	var marker uint64
+	var ahead readAhead
 	for {
 		ret, err := idx.readLog(ctx, cur, marker)
 		if err != nil {
@@ -724,11 +758,9 @@ func (s *Store) replayPass(ctx context.Context, idx *bucketOLHIndex, cur *op.Obj
 		if r.opTag != "" && logHolds(ret.Log, r.opTag) {
 			r.own = true
 		}
-		later := false
-		if ret.IsTruncated && nullRemovalLeft(ret.Log) {
-			if later, err = s.nullLinkAfter(ctx, idx, cur, slices.Max(slices.Collect(maps.Keys(ret.Log)))); err != nil {
-				return refused, false, err
-			}
+		later, err := s.linkedLater(ctx, idx, cur, ret, &ahead)
+		if err != nil {
+			return refused, false, err
 		}
 		last, err := s.applyOLHLog(ctx, idx, cur, ret.Log, r.opTag, r.expectTag, later)
 		if last == 0 && err != nil {
@@ -830,49 +862,97 @@ func logHolds(log map[uint64][]rgw.OLHLogEntry, opTag string) bool {
 	return false
 }
 
-// nullDataLink reports whether e is a LINK_OLH of the null version's data,
-// whose head write put that data in the OLH head (applyOLHLog).
-func nullDataLink(e rgw.OLHLogEntry) bool {
-	return e.Op == rgw.OLHOpLinkOLH && e.Key.Instance == "" && !e.DeleteMarker
+// dataLink reports whether e is a LINK_OLH of a version's data, not of a
+// delete marker (applyOLHLog).
+func dataLink(e rgw.OLHLogEntry) bool {
+	return e.Op == rgw.OLHOpLinkOLH && !e.DeleteMarker
 }
 
-// nullRemovalLeft reports whether a page of the pending log ends with a
-// removal of the null version that no later link of null data in it
-// follows, one a later page may follow.
-func nullRemovalLeft(log map[uint64][]rgw.OLHLogEntry) bool {
-	left := false
+// unpairedRemovals is the versions, by instance, the null version's empty,
+// that a page of the pending log names for removal with no later link of
+// their data in it, whose removal a later page's link may still drop.
+func unpairedRemovals(log map[uint64][]rgw.OLHLogEntry) map[string]bool {
+	left := map[string]bool{}
 	for _, epoch := range slices.Sorted(maps.Keys(log)) {
 		for _, e := range log[epoch] {
 			switch {
-			case e.Op == rgw.OLHOpRemoveInstance && e.Key.Instance == "":
-				left = true
-			case nullDataLink(e):
-				left = false
+			case e.Op == rgw.OLHOpRemoveInstance:
+				left[e.Key.Instance] = true
+			case dataLink(e):
+				delete(left, e.Key.Instance)
 			}
 		}
 	}
 	return left
 }
 
-// nullLinkAfter reports whether cur's pending log links null data at an
-// epoch above marker, reading the pages after it until one does or the log
-// ends, so that a replay pairs a removal of the null version with a null link
-// on any later page of it (applyOLHLog), not only on the removal's own.
-func (s *Store) nullLinkAfter(ctx context.Context, idx *bucketOLHIndex, cur *op.ObjectState, marker uint64) (bool, error) {
+// readAhead is what a replay pass has read of the pending log past its
+// pages: the last epoch of each data link there, by instance, and the last
+// epoch read, 0 before the first read (dataLinksAfter).
+type readAhead struct {
+	links map[string]uint64
+	last  uint64
+}
+
+// linkedLater is the versions, by instance, that page ret of cur's pending
+// log names for removal and a link of whose data a later page holds: none
+// for a page the log ends with. Each page that needs it reads ahead from
+// where the pass's last read ahead ended, its last epoch included, or from
+// its own last epoch when that is later, into ahead: so a link the class
+// logged since an earlier page read ahead, at the epoch that read ended on
+// or above it, still pairs this page's removal, and the log is read once a
+// pass, with one page more for each later page that needs it.
+func (s *Store) linkedLater(ctx context.Context, idx *bucketOLHIndex, cur *op.ObjectState, ret rgw.ReadOLHLogRet, ahead *readAhead) (map[string]bool, error) {
+	if !ret.IsTruncated {
+		return nil, nil
+	}
+	left := unpairedRemovals(ret.Log)
+	if len(left) == 0 {
+		return nil, nil
+	}
+	top := slices.Max(slices.Collect(maps.Keys(ret.Log)))
+	from := top
+	if ahead.last > top {
+		from = ahead.last - 1
+	}
+	if err := s.dataLinksAfter(ctx, idx, cur, from, ahead); err != nil {
+		return nil, err
+	}
+	later := map[string]bool{}
+	for instance := range left {
+		if ahead.links[instance] > top {
+			later[instance] = true
+		}
+	}
+	return later, nil
+}
+
+// dataLinksAfter reads cur's pending log above marker to its end into
+// ahead: for each version a link of whose data it holds, by instance, the
+// last epoch of such a link, and the last epoch read, so that a replay pairs
+// a version's removal with a link on any later page of the log
+// (applyOLHLog), not only on the removal's own.
+func (s *Store) dataLinksAfter(ctx context.Context, idx *bucketOLHIndex, cur *op.ObjectState, marker uint64, ahead *readAhead) error {
+	if ahead.links == nil {
+		ahead.links = map[string]uint64{}
+	}
 	for {
 		ret, err := idx.readLog(ctx, cur, marker)
 		if err != nil {
-			return false, err
+			return err
 		}
 		next := marker
 		for epoch, entries := range ret.Log {
-			if slices.ContainsFunc(entries, nullDataLink) {
-				return true, nil
+			for _, e := range entries {
+				if dataLink(e) {
+					ahead.links[e.Key.Instance] = max(ahead.links[e.Key.Instance], epoch)
+				}
 			}
 			next = max(next, epoch)
 		}
+		ahead.last = max(ahead.last, next)
 		if !ret.IsTruncated || next <= marker {
-			return false, nil
+			return nil
 		}
 		marker = next
 	}
@@ -1050,9 +1130,8 @@ func holdsNullData(st *op.ObjectState) bool {
 // the OLH head for the null version, whose data it must hold, is a version
 // whose record no listing shows: one an unlink, or a null delete marker's
 // link, took off the listing and no replay removed. A version listed is one
-// a writer's link listed again since; for the null version, a later null
-// write's, which its link lists, the replay having dropped the removal it
-// follows (applyOLHLog).
+// a writer's link listed again since, the replay having dropped the removal
+// that link follows (applyOLHLog).
 func (s *Store) unlistedVersion(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, st *op.ObjectState) (bool, error) {
 	read := s.getInstanceEntry
 	if key.Instance == "" {
