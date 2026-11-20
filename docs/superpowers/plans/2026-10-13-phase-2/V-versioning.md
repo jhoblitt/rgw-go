@@ -1967,6 +1967,58 @@ V21's adversarial re-run found four cases of it:
   - the interleavings V21's specs and its adversarial harness pin stay as they are.
 - **Depends on:** V21. **PR:** one. **Brief:** about 70 lines.
 
+### Task V23: two refused deletes keep the newest version current
+
+Found by V21's adversarial review and numbered here before V21 merged (PP-12). Its re-run 2 reports
+it as R2-P1, older than V21 and outside V22's text: 74 of 2000 random schedules with named versions
+and 110 of 2000 with the null version at V21's head, 72 and 106 at main. Two guarded deletes of one
+key run at once, each refused because an attr write moved its version's write tag after the unlink.
+With v1, v2 and v3 written and v3 current, the delete of v3 unlinks it and the delete of v2 unlinks
+v2; both own replays refuse their removals and trim; v2's relist finds nothing newer listed, since
+v3 is still out of the listing, and links v2 at epoch 0, current at a fresh epoch; v3's relist then
+finds v2 listed newer and links v3 below it at its own epoch. Both deletes answer
+ConcurrentModification and remove nothing, yet a GET of the key reads v2 until the key's next write.
+The null form is the same with null data older than v1 on a suspended bucket: the refused null
+delete marker's relist links the null data current while v1's refused delete holds v1 out of the
+listing, and v1 is relisted below it.
+
+- **Layer:** driver. **Files:** the refused-removal path in `internal/driver/delete_versioned.go`
+  (`refusedRemoval`; the relists V21 changes, `relistVersion` and `relistNull`; `relistBelow`,
+  `newestListed` and `listsBefore`) and their specs; the entry "A refused versioned removal re-links
+  the version, unless a newer null write owns the null key" in `docs/differences.md`, which states
+  the rule (a version no listed version is newer than goes current) and not this consequence.
+  **Cluster:** no.
+- **Security boundary:** the versioned write's replay; adversarial review applies (PP-14).
+- **Behaviour:**
+  1. After two refused deletes, the current version is the newest one still listed, newest in the
+     order the versions held before the deletes: v3 over v2, and v1 over the older null data. No
+     relist links its version current over a newer version another refused delete holds out of the
+     listing. radosgw never reaches this state: its replay removes every version its log names
+     through `delete_obj`, with no write-tag guard
+     ([rgw_rados.cc:8530-8541](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8530-L8541),
+     [rgw_rados.cc:9276-9287](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9276-L9287);
+     registry entry "radosgw's DeleteObject removes the head without checking its write tag"), so in
+     the same interleaving both deletes answer 204 and both versions are removed, leaving v1 current
+     in the named form and the null delete marker in the null form. The state to reach is the key's
+     state before the two deletes, as V8c restores it after one refusal.
+  2. The RADOS state otherwise stays radosgw's: every link goes through the class's epoch-0 or
+     old-epoch path, and the index and OLH head bytes are ones radosgw writes. A version a writer
+     links after the unlinks stays current over both, a version another replay removed is not
+     listed, and no version V21 lists is left unlisted. When the other refused delete's relist never
+     runs (its gateway stops, or its request ends), say what the first relist leaves. Record that
+     state, and any other difference, in `docs/differences.md`.
+- **Specs:** on both releases, against the emulator:
+  - named versions: the interleaving above, with v2's relist linking before v3's reads the listing.
+    Both deletes answer ConcurrentModification; v1, v2 and v3 are stored and listed, v3 current and
+    read by a GET of the key, exactly one entry flagged current;
+  - the null version: the null delete marker's link and v1's unlink land before either relist, and
+    the null relist links first. Both answer ConcurrentModification; the null data and v1 are stored
+    and listed, v1 current;
+  - each again with the newer version's relist first, whose outcome stays as today;
+  - V21's adversarial harness, its random families H10 (null) and H12 (named), 2000 schedules each:
+    0 schedules leave the older version current, the other families' tallies as V21 leaves them.
+- **Depends on:** V21. **PR:** one. **Brief:** about 30 lines.
+
 ## Order
 
 At most three implementers at once. A wave starts when the tasks it depends on have merged;
@@ -1986,7 +2038,7 @@ recordings land one at a time through the controller.
 | 8 | V7b, V8b, V8c | V7a, V8a, V9 |
 | 9 | V11, V12b | V7b, V8b |
 | 10 | V12a, V14a | V11, V13d |
-| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22 | everything above, WP-22 |
+| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22, then V23 | everything above, WP-22 |
 
 - V10's recording PR is a cluster task the controller schedules after its first PR merges.
 - The critical path is V1, V3b, V4, V5a, V5b, V5c, V7a, V7b, V11, V14a, V15a. L and C start
