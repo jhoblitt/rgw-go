@@ -216,3 +216,9 @@
 
 # A lifecycle transition of a version without a retention, on a bucket whose default retention was set after the version was written, leaving it without one; radosgw's rewrite takes the bucket's default retention (differences: "A lifecycle transition adds no default retention")
 ^s3tests\.functional\.test_s3::test_lifecycle_transition_adds_no_default_retention$
+
+# A bucket policy Deny on StringLike over S3:Prefix, a key spelled in another case than the request's s3:prefix, with patterns holding ? and brackets: refused 403 AccessDenied where Amazon S3 refuses it; radosgw finds the key only as the policy spells it and serves the listing (differences: "A Deny's condition key names match whatever their case")
+^s3tests\.functional\.test_s3::test_bucket_policy_deny_stringlike_key_other_case$
+
+# A bucket policy Deny on StringNotLike over S3:Prefix, a key spelled in another case than the request's s3:prefix, with a pattern holding ?: refused 403 AccessDenied or served as Amazon S3 answers; radosgw finds the key only as the policy spells it and serves every listing (differences: "A Deny's condition key names match whatever their case")
+^s3tests\.functional\.test_s3::test_bucket_policy_deny_stringnotlike_key_other_case$
