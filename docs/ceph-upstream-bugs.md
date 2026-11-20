@@ -6150,7 +6150,10 @@ Every new entry adds its row to this table, in document order.
     ([ceph/ceph#68444](https://github.com/ceph/ceph/pull/68444)); the squid
     backport [ceph/ceph#68445](https://github.com/ceph/ceph/pull/68445) is open.
 - **Found:** phase 1 unit Z, Task 3, 2026-10-02, transcribing
-  `Condition::eval` at both tags; derived from the source, not reproduced.
+  `Condition::eval` at both tags; derived from the source. Its Null half
+  reproduced by phase 2 task S9's s3-test
+  `test_bucket_policy_deny_null_false_key_present`, 2026-11-16, on
+  v19.2.7.
 
 ## radosgw's date conditions wrap past 2554 and before 1970
 
@@ -35108,7 +35111,9 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task L7's adversarial review, 2026-11-14, judging
   the object-lock condition keys a request can leave out; derived from the
-  source, not reproduced.
+  source. Reproduced by phase 2 task S9's s3-test
+  `test_bucket_policy_deny_stringnotlike_key_absent`, 2026-11-16, on both
+  releases.
 
 ## radosgw matches condition key names case-sensitively
 
