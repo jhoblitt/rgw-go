@@ -34,7 +34,7 @@ The set's files:
 
 | File | Unit | Tasks |
 |---|---|---|
-| `00-index.md` | this index, and the shared tasks S1 to S15 | 15 |
+| `00-index.md` | this index, and the shared tasks S1 to S16 | 16 |
 | `V-versioning.md` | the OLH protocol, versioned ops, ListObjectVersions, MFA delete | V0-V24 |
 | `L-object-lock.md` | object lock: configuration, retention, legal hold, enforcement | L1-L5b |
 | `C-lifecycle.md` | lifecycle configuration and the worker | C1-C15 |
@@ -583,9 +583,106 @@ merged (PP-12).
   condition operators are false on an absent key" names the completion's answer.
 - **Depends on:** S13. **PR:** one. **Brief:** about 60 lines.
 
+### Task S16: a Deny's typed operator over a repeated tag key
+
+Found by S13's adversarial review (outside the PR, older than it), and numbered here before S13
+merged (PP-12).
+
+- **Layer:** tags and the S3 handlers, and policy for item 3. **Files:** the tag set's parse of a
+  request (`internal/tags`); the tag reads of PutObject, CopyObject, CreateMultipartUpload and
+  PutObjectTagging in `internal/s3`; for item 3, condition evaluation
+  (`internal/policy/condition.go`); their specs; `docs/differences.md`;
+  `docs/ceph-upstream-bugs.md`. **Cluster:** no.
+- **Security boundary:** request authorization; adversarial review applies (PP-14).
+- **Why:**
+  - A Deny of s3:PutObject with `NumericGreaterThan` `s3:RequestObjectTag/level` `5` is evaded by
+    repeating the key: Squid serves `level=9&level=1` and stores level=9, and Tentacle serves
+    `level=1&level=9`, alone or after eight other tags. Each release refuses the other order.
+    It holds for PutObject on main since S12, and for CopyObject under REPLACE and
+    CreateMultipartUpload since S13 gave them the tag keys.
+  - radosgw adds every pair of `x-amz-tagging` to the environment, a repeated key as one key
+    with several values
+    ([rgw_op.cc:3970-3972](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3970-L3972),
+    [rgw_op.cc:4179-4181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4179-L4181)),
+    and its Numeric, Date, Bool, Binary and IpAddress operators compare the one value
+    `env.find` returns
+    ([rgw_iam_policy.cc:880](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L880)
+    and the typed cases from
+    [rgw_iam_policy.cc:918](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L918),
+    [rgw_iam_policy.cc:900](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L900)
+    and from
+    [rgw_iam_policy.cc:938](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L938)).
+    rgw-go's `policy.Env.Find` reproduces which value each release reads (`docs/differences.md`,
+    "A typed condition on a repeated key reads the value upstream's builds read").
+  - radosgw takes a repeated key on every write: `check_and_add_tag` refuses only a full set,
+    an empty key and an overlong key or value, and the set is a `std::multimap`
+    ([rgw_tag.cc:23-35](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.cc#L23-L35),
+    [rgw_tag.cc:23-35](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.cc#L23-L35);
+    [rgw_tag.h:13-16](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.h#L13-L16),
+    [rgw_tag.h:13-16](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.h#L13-L16)).
+    PutObjectTagging's body goes through the same check
+    ([rgw_tag_s3.cc:32-53](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag_s3.cc#L32-L53),
+    [rgw_tag_s3.cc:32-53](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag_s3.cc#L32-L53)).
+    rgw-go's `tags.ParseHeader` keeps a repeated key too.
+  - Amazon S3 refuses it. Its user guide: "Tags that are associated with an object must have
+    unique tag keys"
+    ([object-tagging.md:6](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/object-tagging.md?plain=1#L6)).
+    Its PutObjectTagging reference names the error, `InvalidTag`, "if the tag did not pass input
+    validation", pointing to that page
+    ([service-2.json:1307](https://github.com/boto/botocore/blob/6411f5c81a991cc868f29eddf1a8eb0beb9da37d/botocore/data/s3/2006-03-01/service-2.json#L1307),
+    botocore 1.35.0). No pinned text names the error a header write gives.
+  - The registry's "radosgw evaluates a repeated x-amz-tagging key as one multivalued
+    s3:RequestObjectTag condition key" covers the negated string operators only, not the typed
+    read.
+- **Behaviour:**
+  1. **Item 1 applies: refuse the repeated key.** Refusing is Amazon's documented answer, so a
+     tag set that names a key twice is refused on every write that takes one, before the
+     request is authorized:
+     - PutObject's `x-amz-tagging`;
+     - CopyObject's, exactly when the copy stores the header's tags (`replaceTags` today, the
+       tagging directive once WP-31 serves it);
+     - CreateMultipartUpload's. It parses its header once authorized today, as radosgw does
+       (S13's report); the refusal moves ahead of the check, so no request passes a check that
+       read one value of the key;
+     - PutObjectTagging's body. It adds no `s3:RequestObjectTag` key in either gateway, so the
+       evasion does not reach it, but Amazon's rule is about the set an object holds.
+     Each op answers as it answers a tag set that fails `check_and_add_tag` today: 400
+     InvalidArgument on the header writes, as PutObject refuses an eleven-tag header, and 400
+     InvalidTag on PutObjectTagging, as the reference names. A later write that takes a tag set,
+     such as the POST upload's `tagging` field, refuses it the same way.
+     Whether Amazon counts keys that differ only in case as one is taken from Amazon's text at
+     implementation. If no text decides, they stay distinct, as both gateways hold them today,
+     and S10's Deny reading covers them.
+  2. **Item 2, holding a Deny's typed operator over every value of a request key, does not
+     apply** to the request's tags: once item 1 refuses a repeated key, no `s3:RequestObjectTag`
+     key reaches the environment with two values.
+  3. A repeated key still reaches the environment from a tag set radosgw stored on the same
+     zone, through `s3:ExistingObjectTag/<key>`, since the decode of a stored set must not refuse
+     it. There a Deny's typed operator holds if any value of the key makes it hold, which fails
+     closed. An Allow keeps radosgw's read, as S9 keeps its evaluation, until the owner decides.
+- **Specs:** per release:
+  - under a bucket Deny of s3:PutObject with `NumericGreaterThan` `s3:RequestObjectTag/level`
+    `5`: `level=9&level=1`, `level=1&level=9` and the latter after eight other tags, on PutObject,
+    CopyObject under REPLACE and CreateMultipartUpload, each refused 400 with nothing stored and
+    no upload left; `level=9` refused 403 and `level=1` served, unchanged;
+  - PutObjectTagging with a body that repeats a key: 400 InvalidTag, the object's tags unchanged;
+  - a copy under COPY with such a header: as before, since it does not store the header;
+  - an object whose stored tag set repeats `level`, under a Deny of s3:GetObject with
+    `NumericGreaterThan` `s3:ExistingObjectTag/level` `5`: refused for either order of the
+    values; under an Allow so conditioned, unchanged;
+  - an s3-test of the header writes and of PutObjectTagging, with its pin move in this task's
+    PR (PP-19).
+- **Exclusions and registry:** a `docs/differences.md` entry for the refusal, which radosgw does
+  not make, and for item 3; the entry "A typed condition on a repeated key reads the value
+  upstream's builds read" drops the request's tags from the keys that repeat. A
+  `docs/ceph-upstream-bugs.md` entry for the typed read of a repeated key, mechanism only,
+  possibly security-relevant and sent to rgw-bug-reproduction (PP-4); the rgw-go line of the
+  repeated-key entry above.
+- **Depends on:** S13. **PR:** one. **Brief:** about 55 lines.
+
 ## Order
 
-1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, S6 once V2 lands, S7 once V10, BC-17, BC-23, BC-10 and BC-28a land, S8 and S11 at once, S9 and S10 once L7 lands, S12 once S8 lands, S13 once S12 lands, S14 once S9 lands, and S15 once S13 lands.
+1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, S6 once V2 lands, S7 once V10, BC-17, BC-23, BC-10 and BC-28a land, S8 and S11 at once, S9 and S10 once L7 lands, S12 once S8 lands, S13 once S12 lands, S14 once S9 lands, and S15 and S16 once S13 lands.
 2. **Then the units in parallel**, each in its own file's waves. V's foundation (V0 to V3b) comes first among the units, because L and C consume its OLH seams. B and WP start with S2, and the T and SM units start at once. Within the waves:
    - The cluster tasks of every unit run one at a time.
    - The recording tasks, which append to the parity ledgers, land one at a time through the controller.
