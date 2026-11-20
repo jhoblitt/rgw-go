@@ -35685,17 +35685,17 @@ Every new entry adds its row to this table, in document order.
     retrieved 2026-11-15). Whether Amazon S3 supplies the keys to the checks
     of those two operations is not verified here.
 - **Releases:** v19.2.7 and v20.2.4; older releases not checked.
-- **rgw-go:** reproduces it. A copy's s3:PutObject check carries the copy
-  source and the metadata directive, and a multipart upload's the encryption
-  headers (`copyKeys` and `cryptKeys`, `internal/authz/env.go`). The
-  s3:PutObjectAcl check S12 adds carries `s3:x-amz-acl` and the grant keys,
-  and its s3:PutObjectTagging check the request-tag keys, on all three
-  writes (`docs/differences.md`, "A write's ACL and tag headers need
-  s3:PutObjectAcl and s3:PutObjectTagging"). Adding the keys to s3:PutObject
-  for the two operations is plan task S13.
-  A Deny whose negated operator tests one of those keys holds for the two
-  operations, as for any key the request lacks (`docs/differences.md`, "A
-  Deny's condition holds where Amazon S3's evaluation or radosgw's holds").
+- **rgw-go:** does not reproduce it. The s3:PutObject checks of CopyObject
+  and CreateMultipartUpload carry, after the keys radosgw's operations add,
+  the grant keys, `s3:x-amz-acl` and the request's tag keys, as PutObject's
+  does; a copy carries the tag keys only under the REPLACE metadata
+  directive, the one under which it stores its header's tags (`writeKeys`,
+  `internal/authz/env.go`; `docs/differences.md`, "CopyObject and
+  CreateMultipartUpload evaluate s3:PutObject with the keys of the ACL and
+  the tags they set"). Its s3:PutObjectAcl and s3:PutObjectTagging checks
+  carry their keys on all three writes too (`docs/differences.md`, "A
+  write's ACL and tag headers need s3:PutObjectAcl and
+  s3:PutObjectTagging").
 - **Upstream:** pending; prior art not searched: sent to
   rgw-bug-reproduction.
 - **Found:** phase 2 task S12's adversarial review, 2026-11-15, probing which
