@@ -1880,6 +1880,30 @@ Found by V20's implementer and confirmed by its task review, and numbered here b
   version removes it as today.
 - **Depends on:** V20. **PR:** one. **Brief:** about 35 lines.
 
+### Task V22: a replay's removal keeps a version a link lands on after the replay read the log
+
+Found by V21's adversarial review and confirmed by its task re-review, and numbered here before
+V21 merged (PP-12). Pre-existing on main: V21 keeps a version a later entry of the same log links,
+but a link that lands after a replay has read the log, and before that replay removes the version,
+still leaves the version's list entry naming a version whose head and instance entry are gone.
+
+- **Layer:** driver. **Files:** the replay's removal of a version in `internal/driver/olh_head.go`
+  and its specs; the registry entry V20 adds and V21 extends; `docs/differences.md`.
+  **Cluster:** no.
+- **Security boundary:** the versioned write's replay; adversarial review applies (PP-14).
+- **Behaviour:**
+  1. The replay removes a version only while the version's list entry is still absent: the
+     removal's first index op compares the list entry it read, so a link that has landed since the
+     replay read the log refuses the removal, and the replay keeps the version as V21 keeps one a
+     later entry of its log links.
+  2. The window between that index op and the removal of the version's head object stays; record
+     it, and the state it leaves, in `docs/differences.md` and the registry entry.
+  3. The RADOS state the replay writes otherwise stays the one radosgw writes for that log.
+- **Specs:** an emulator interleaving where a link of the version lands after the replay's read and
+  before its removal keeps the version listed and readable on both releases; the interleavings V21's
+  specs and its adversarial harness pin stay as they are.
+- **Depends on:** V21. **PR:** one. **Brief:** about 30 lines.
+
 ## Order
 
 At most three implementers at once. A wave starts when the tasks it depends on have merged;
@@ -1899,7 +1923,7 @@ recordings land one at a time through the controller.
 | 8 | V7b, V8b, V8c | V7a, V8a, V9 |
 | 9 | V11, V12b | V7b, V8b |
 | 10 | V12a, V14a | V11, V13d |
-| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21 | everything above, WP-22 |
+| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22 | everything above, WP-22 |
 
 - V10's recording PR is a cluster task the controller schedules after its first PR merges.
 - The critical path is V1, V3b, V4, V5a, V5b, V5c, V7a, V7b, V11, V14a, V15a. L and C start
