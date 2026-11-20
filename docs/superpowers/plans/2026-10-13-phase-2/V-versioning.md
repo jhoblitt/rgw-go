@@ -1886,23 +1886,86 @@ Found by V21's adversarial review and confirmed by its task re-review, and numbe
 V21 merged (PP-12). Pre-existing on main: V21 keeps a version a later entry of the same log links,
 but a link that lands after a replay has read the log, and before that replay removes the version,
 still leaves the version's list entry naming a version whose head and instance entry are gone.
+V21's adversarial re-run found four cases of it:
 
-- **Layer:** driver. **Files:** the replay's removal of a version in `internal/driver/olh_head.go`
-  and its specs; the registry entry V20 adds and V21 extends; `docs/differences.md`.
-  **Cluster:** no.
+1. The CompleteMultipartUpload retry's link (`linkRecorded`) lands after a replay has read the
+   removal: the OLH names a gone version and the key refuses every later write. Reproduced at
+   V21's head and at main.
+2. A refused removal's relist links the version after another request's replay has read that
+   removal: a list entry naming nothing, 4 of 2000 runs at V21's head and 5 at main.
+3. The lifecycle transition's link and `keepCurrent`'s land below the epoch a delete's unlink
+   moved the OLH entry to, ahead of that delete's replay: a list entry naming nothing. By reading
+   only.
+4. radosgw is the linker or the replay on a mixed fleet; rgw-go cannot fix radosgw's side.
+
+- **Layer:** driver. **Files:** the replay's removal of a version (`removeInstance` in
+  `internal/driver/olh.go`, called from `applyOLHLog` in `internal/driver/olh_head.go`) and its
+  specs; the lifecycle transition's link (`linkVersion` in `internal/driver/put_versioned.go`, for
+  a transition's write) and `keepCurrent` in `internal/driver/lc_transition.go`, and their specs;
+  specs only for the multipart completion's retry link (`linkRecorded` in
+  `internal/driver/mp_complete.go`) and the relist (`relistVersion` and `relistBelow` in
+  `internal/driver/delete_versioned.go`); the registry entry V20 adds and V21 extends;
+  `docs/differences.md`. **Cluster:** no.
 - **Security boundary:** the versioned write's replay; adversarial review applies (PP-14).
 - **Behaviour:**
   1. The replay removes a version only while the version's list entry is still absent: the
      removal's first index op compares the list entry it read, so a link that has landed since the
      replay read the log refuses the removal, and the replay keeps the version as V21 keeps one a
-     later entry of its log links.
-  2. The window between that index op and the removal of the version's head object stays; record
-     it, and the state it leaves, in `docs/differences.md` and the registry entry.
-  3. The RADOS state the replay writes otherwise stays the one radosgw writes for that log.
-- **Specs:** an emulator interleaving where a link of the version lands after the replay's read and
-  before its removal keeps the version listed and readable on both releases; the interleavings V21's
-  specs and its adversarial harness pin stay as they are.
-- **Depends on:** V21. **PR:** one. **Brief:** about 30 lines.
+     later entry of its log links. The delete whose removal it was answers as when V21's drop
+     keeps its version. The list entry the compare holds must be the one as of the replay's read of
+     the log page that holds the removal. Read before that, it may predate the unlink that logged
+     the removal. Read after, it lets a link between the two reads pass.
+  2. The compare closes cases 1 and 2, and does not close case 3:
+     - Case 1: the retry's link writes the version's list entry, current, and logs its LINK_OLH
+       after the replay's read, so the removal's compare is refused. The version stays and the next
+       replay links it, the outcome the differences entry already records for a link that lands
+       before the read.
+     - Case 2: the relist's link writes the version's list entry, below a newer version at the
+       entry's old epoch or current at a new one, before the other replay's removal, so the compare
+       is refused. The version stays listed, which is right, since the delete answered
+       ConcurrentModification and no delete was acknowledged.
+     - Case 3: the transition's link takes the class's old-epoch path, which writes the list entry
+       and logs nothing, so the delete's replay is refused as well. The compare alone keeps a
+       version whose delete was acknowledged and that lifecycle, not a client write, relisted. That
+       trades a list entry naming nothing for a lost delete.
+  3. For case 3, the transition's link and `keepCurrent`'s relink get the guards V21 gives the
+     relist. Each reads the OLH entry, gives way when the entry's pending log holds a removal of the
+     version, and sends its link compared with the entry as read. An unlink that lands between the
+     read and the link refuses the link, and the next round gives way. A transition that gives way
+     answers as one whose link a delete refused: no `keepCurrent`, no notification. Its rewritten
+     head and tails go to the delete's replay, so no tail is left without a head that names it and
+     none is removed twice. These guards land with the compare in the same PR, never after it.
+  4. The window between the removal's first index op and its index completion stays. A link that
+     lands there finds the instance entry still present. Record that window, and the state it
+     leaves, in `docs/differences.md` and the registry entry.
+  5. Case 4 is recorded, not fixed. radosgw's replay removes a version whenever it has read the
+     removal, whoever links after. radosgw's links carry neither the compare nor the guards: its
+     PutObject naming a version id is case 1's link, which rgw-go's replay keeps, and its
+     transition's old-epoch link after an unlink is case 3's, which rgw-go's replay then keeps
+     though a delete was acknowledged. The states a mixed fleet reaches go in `docs/differences.md`
+     and the registry entry V20 adds.
+  6. The RADOS state the replay writes otherwise stays the one radosgw writes for that log.
+  7. Trace, before implementing: a delete's removal that completes between a transition's head
+     write and its index completion. Say whether that index completion re-creates an instance
+     entry with no head; if it does, its fix belongs here, with a spec.
+- **Specs:** on both releases, against the emulator:
+  - an interleaving where a link of the version lands after the replay's read and before its
+    removal keeps the version listed and readable;
+  - case 1: a CompleteMultipartUpload records itself and writes version X; a delete of X unlinks
+    it; a replay reads the log; the retry's link lands; then the replay removes. X stays stored,
+    listed current and readable, the OLH names it once the next replay runs, and a later PutObject
+    of the key links;
+  - case 2: a guarded delete unlinks X after an attr write moved X's write tag; a PutObject's
+    replay reads the log; the delete's own replay refuses its removal and trims it; its relist links
+    X; then the PutObject's replay removes. X stays stored and listed and the delete answers
+    ConcurrentModification. Run it once with a newer version listed, the relist's old-epoch link,
+    and once without, its link at a new epoch;
+  - case 3: the transition reads X; a delete unlinks X; the transition's link, and in a second run
+    `keepCurrent`'s relink, gives way; then the delete's replay removes. X's head, instance entry and
+    list entry are gone and no tail is left. The same with the unlink landing between the
+    transition's read of the OLH entry and its link;
+  - the interleavings V21's specs and its adversarial harness pin stay as they are.
+- **Depends on:** V21. **PR:** one. **Brief:** about 70 lines.
 
 ## Order
 
