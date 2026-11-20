@@ -176,14 +176,30 @@ func (s *Statement) EvalPrincipal(id Identity) Effect {
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1282-L1289 at v20.2.4):
 // Allow when every condition holds in env under sem, Deny otherwise. Each
 // condition is evaluated for the statement's Effect, as Condition.EvalFor
-// says: a Deny statement's holds where Amazon S3's or radosgw's does.
+// says: a Deny statement's holds where Amazon S3's or radosgw's does. A Deny
+// statement is also judged on env without the keys env.MarkUnsent names,
+// those radosgw adds for a header the request does not send, and its
+// conditions hold where they all hold on either, so that a Deny written for
+// the header's absence, by Null or an IfExists operator, still refuses.
 func (s *Statement) EvalConditions(env Env, sem Semantics) Effect {
-	for _, c := range s.Conditions {
-		if !c.EvalFor(env, sem, s.Effect) {
-			return Deny
+	if s.conditionsHold(env, sem) {
+		return Allow
+	}
+	if s.Effect == Deny {
+		if bare, ok := env.withoutUnsent(); ok && s.conditionsHold(bare, sem) {
+			return Allow
 		}
 	}
-	return Allow
+	return Deny
+}
+
+func (s *Statement) conditionsHold(env Env, sem Semantics) bool {
+	for _, c := range s.Conditions {
+		if !c.EvalFor(env, sem, s.Effect) {
+			return false
+		}
+	}
+	return true
 }
 
 func matchesAny(patterns []ARN, res ARN) bool {

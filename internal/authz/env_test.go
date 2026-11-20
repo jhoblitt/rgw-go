@@ -78,6 +78,11 @@ func mustParse(text string) *policy.Policy {
 	return p
 }
 
+// aclAndTags are a grant, a canned ACL and tags, a repeated key among them.
+func aclAndTags() []string {
+	return []string{"X-Amz-Grant-Read", `id="bob"`, "X-Amz-Acl", "public-read", "X-Amz-Tagging", "k=b&k=a&k2=v2"}
+}
+
 func sourceIP(cfg authz.Config, r *op.Request) []string {
 	env := authz.BuildEnv(cfg, r, policy.S3GetObject)
 	return env.Lookup("aws:SourceIp")
@@ -403,19 +408,32 @@ var _ = Describe("BuildEnv", func() {
 			Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(with(baseFor(""), "s3:x-amz-acl", "")), "a ranged copy source")
 		})
 
-		It("adds the copy source and the metadata directive for CopyObject, after the tags", func() {
+		It("adds the copy source and the metadata directive for CopyObject, after the tags, then the ACL's keys", func() {
 			r := envRequest(http.MethodPut, "b", "o", "",
 				"X-Amz-Copy-Source", "/src/k%20", "X-Amz-Metadata-Directive", "REPLACE", "X-Amz-Acl", "private")
 			pairs, tagsFirst := authz.EnvPairs(cfg, r, policy.S3PutObject)
 			Expect(pairs).To(Equal(with(baseFor(""),
-				"s3:x-amz-copy-source", "/src/k%20", "s3:x-amz-metadata-directive", "REPLACE")))
+				"s3:x-amz-copy-source", "/src/k%20", "s3:x-amz-metadata-directive", "REPLACE", "s3:x-amz-acl", "private")))
 			Expect(tagsFirst).To(BeTrue())
 			r = envRequest(http.MethodPut, "b", "o", "", "X-Amz-Copy-Source", "/src/k")
-			Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(with(baseFor(""), "s3:x-amz-copy-source", "/src/k")), "no directive")
+			Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(with(baseFor(""),
+				"s3:x-amz-copy-source", "/src/k")), "no directive and no canned ACL")
 		})
 
-		It("adds only the encryption headers for CreateMultipartUpload and CompleteMultipartUpload, after the tags, on a route that reads the query", func() {
-			for _, q := range []string{"uploads", "uploadId=u"} {
+		It("takes a copy source with an empty bucket as RGWPutObj's, as the dispatch does", func() {
+			for _, src := range []string{"//k", "/%2Fk", "%2Fk"} {
+				r := envRequest(http.MethodPut, "b", "o", "", "X-Amz-Copy-Source", src, "X-Amz-Metadata-Directive", "REPLACE")
+				Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(with(baseFor(""), "s3:x-amz-acl", "")), src)
+			}
+			for _, src := range []string{"/src/k", "src/k", "", "/src", "/src/"} {
+				r := envRequest(http.MethodPut, "b", "o", "", "X-Amz-Copy-Source", src)
+				Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(with(baseFor(""), "s3:x-amz-copy-source", src)),
+					"%q, which the dispatch sends to the copy", src)
+			}
+		})
+
+		It("adds only the encryption headers for CompleteMultipartUpload, after the tags, on a route that reads the query", func() {
+			for _, q := range []string{"uploadId=u", "uploads&uploadId=u"} {
 				r := envRequest(http.MethodPost, "b", "o", q+"&x-amz-server-side-encryption=aws:kms",
 					"X-Amz-Acl", "public-read", "X-Amz-Tagging", "k=v", "X-Amz-Server-Side-Encryption", "AES256")
 				r.AuthRoute = op.RouteSigV4Header
@@ -425,6 +443,74 @@ var _ = Describe("BuildEnv", func() {
 				r = envRequest(http.MethodPost, "b", "o", q)
 				Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(baseFor("")), q+" without encryption")
 			}
+		})
+
+		// radosgw adds none of the ACL's and the tags' keys for CopyObject and
+		// CreateMultipartUpload; rgw-go adds RGWPutObj's, after radosgw's own.
+		Describe("the ACL's and the tags' keys of CopyObject and CreateMultipartUpload", func() {
+			It("adds CreateMultipartUpload's grants, canned ACL and tags in RGWPutObj's order, after the encryption headers", func() {
+				r := envRequest(http.MethodPost, "b", "o", "uploads", append(aclAndTags(), "X-Amz-Server-Side-Encryption", "AES256")...)
+				pairs, tagsFirst := authz.EnvPairs(cfg, r, policy.S3PutObject)
+				Expect(pairs).To(Equal(with(baseFor(""),
+					"s3:x-amz-server-side-encryption", "AES256",
+					"s3:x-amz-grant-read", `id="bob"`,
+					"s3:x-amz-acl", "public-read",
+					"s3:RequestObjectTag/k", "b", "s3:RequestObjectTag/k", "a", "s3:RequestObjectTag/k2", "v2")))
+				Expect(tagsFirst).To(BeTrue())
+				r = envRequest(http.MethodPost, "b", "o", "uploads")
+				Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(baseFor("")),
+					"no canned ACL key when none is sent, where RGWPutObj adds one empty")
+				r = envRequest(http.MethodPost, "b", "o", "uploads", "X-Amz-Acl", "")
+				Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(baseFor("")),
+					"no canned ACL key for an empty one sent, which names none")
+				r = envRequest(http.MethodPut, "b", "o", "", "X-Amz-Copy-Source", "/src/k", "X-Amz-Acl", "")
+				Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(with(baseFor(""), "s3:x-amz-copy-source", "/src/k")),
+					"nor for a copy's")
+				r = envRequest(http.MethodPost, "b", "o", "uploads", "X-Amz-Grant-Read", "", "X-Amz-Grant-Write", "w")
+				Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(with(baseFor(""), "s3:x-amz-grant-write", "w")),
+					"no grant key for an empty grant header, which grants nothing")
+				r = envRequest(http.MethodPost, "b", "o", "uploads", "X-Amz-Grant-Read", ",", "X-Amz-Grant-Write", ", ,")
+				Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(with(baseFor(""), "s3:x-amz-grant-write", ", ,")),
+					"none for one that names no grantee, and one for one whose item does not parse")
+				r = envRequest(http.MethodPost, "b", "o", "uploads", "X-Amz-Tagging", "k=v&")
+				Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(baseFor("")),
+					"no tags from a header the upload refuses once authorized")
+			})
+
+			It("adds a copy's tags only when it replaces the source's metadata, the one directive under which it stores them", func() {
+				for _, d := range []string{"REPLACE", "replace", "Replace\x00x"} {
+					r := envRequest(http.MethodPut, "b", "o", "", append(aclAndTags(),
+						"X-Amz-Copy-Source", "/src/k", "X-Amz-Metadata-Directive", d)...)
+					Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(with(baseFor(""),
+						"s3:x-amz-copy-source", "/src/k", "s3:x-amz-metadata-directive", d,
+						"s3:x-amz-grant-read", `id="bob"`,
+						"s3:x-amz-acl", "public-read",
+						"s3:RequestObjectTag/k", "b", "s3:RequestObjectTag/k", "a", "s3:RequestObjectTag/k2", "v2")), "%q", d)
+				}
+				r := envRequest(http.MethodPut, "b", "o", "", append(aclAndTags(), "X-Amz-Copy-Source", "/src/k")...)
+				Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(with(baseFor(""),
+					"s3:x-amz-copy-source", "/src/k", "s3:x-amz-grant-read", `id="bob"`, "s3:x-amz-acl", "public-read")),
+					"no directive, which copies the source's tags")
+				r = envRequest(http.MethodPut, "b", "o", "", append(aclAndTags(), "X-Amz-Copy-Source", "/src/k",
+					"X-Amz-Metadata-Directive", "COPY", "X-Amz-Tagging-Directive", "REPLACE")...)
+				Expect(pairsOf(cfg, r, policy.S3PutObject)).To(Equal(with(baseFor(""),
+					"s3:x-amz-copy-source", "/src/k", "s3:x-amz-metadata-directive", "COPY",
+					"s3:x-amz-grant-read", `id="bob"`, "s3:x-amz-acl", "public-read")),
+					"COPY, with a tagging directive the copy does not read")
+			})
+
+			It("adds them to the s3:PutObject check alone", func() {
+				for _, r := range []*op.Request{
+					envRequest(http.MethodPost, "b", "o", "uploads", aclAndTags()...),
+					envRequest(http.MethodPut, "b", "o", "", append(aclAndTags(),
+						"X-Amz-Copy-Source", "/src/k", "X-Amz-Metadata-Directive", "REPLACE")...),
+				} {
+					Expect(pairsOf(cfg, r, policy.S3GetObject)).To(Equal(baseFor("")), "%s s3:GetObject", r.Method)
+					Expect(pairsOf(cfg, r, policy.S3PutObjectTagging)).To(Equal(with(baseFor(""),
+						"s3:RequestObjectTag/k", "b", "s3:RequestObjectTag/k", "a", "s3:RequestObjectTag/k2", "v2")),
+						"%s s3:PutObjectTagging, its own keys alone", r.Method)
+				}
+			})
 		})
 	})
 
@@ -510,6 +596,26 @@ var _ = Describe("BuildEnv", func() {
 			Expect(v).To(Equal("first"), "tentacle")
 			v, _ = env.Find("s3:ResourceTag/k", policy.SemanticsFor(denc.Squid))
 			Expect(v).To(Equal("second"), "squid")
+		})
+
+		// Before the tags, the grants, the canned ACL and the request's tags
+		// would put these environments past 20 pairs.
+		It("is before the ACL's and the tags' keys CopyObject and CreateMultipartUpload add, which radosgw lacks", func() {
+			hdr := []string{
+				"X-Amz-Tagging", manyTags,
+				"X-Amz-Grant-Read", "r", "X-Amz-Grant-Write", "w", "X-Amz-Grant-Read-Acp", "ra",
+			}
+			for _, r := range []*op.Request{
+				envRequest(http.MethodPost, "b", "o", "uploads", hdr...),
+				envRequest(http.MethodPut, "b", "o", "", append(hdr,
+					"X-Amz-Copy-Source", "/src/k", "X-Amz-Metadata-Directive", "REPLACE")...),
+			} {
+				env := authz.BuildEnvWithTags(envConfig(denc.Tentacle), r, policy.S3PutObject, bucketTags)
+				Expect(env.Lookup("s3:RequestObjectTag/j")).To(Equal([]string{"10"}), r.Method)
+				v, ok := env.Find("s3:ResourceTag/k", policy.SemanticsFor(denc.Tentacle))
+				Expect(ok).To(BeTrue())
+				Expect(v).To(Equal("first"), "%s on tentacle", r.Method)
+			}
 		})
 	})
 })

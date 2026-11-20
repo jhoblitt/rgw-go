@@ -11,6 +11,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/rgwtext"
+	"github.com/jhoblitt/rgw-go/internal/tags"
 	"github.com/jhoblitt/rgw-go/internal/xmltext"
 )
 
@@ -91,8 +92,9 @@ func (wr *objectWrites) copyObject(ctx context.Context, w http.ResponseWriter, r
 // legal hold (objectLockHeaders, with the messages a copy sets), which r.Lock
 // gives the policies' object-lock keys before the op authorizes;
 // x-amz-metadata-directive, COPY or REPLACE in any case and anything else
-// InvalidArgument, "Unknown metadata directive."; the storage-class check of
-// a copy onto itself that does not replace the metadata
+// InvalidArgument, "Unknown metadata directive."; under REPLACE, an
+// x-amz-tagging that does not parse refused InvalidArgument (replaceTags); the
+// storage-class check of a copy onto itself that does not replace the metadata
 // (need_to_check_storage_class); a request that asks for encryption refused,
 // and one that sends a header emptyMessage covers with no value
 // (refuseEncryption); and the attrs, the headers' alone (requestAttrs), with
@@ -113,6 +115,11 @@ func (wr *objectWrites) copyObjectParams(r *op.Request, o *op.CopyObject) error 
 			return op.ErrInvalidArgument.WithMessage("Unknown metadata directive.")
 		}
 	}
+	if o.Replace {
+		if err := replaceTags(r); err != nil {
+			return err
+		}
+	}
 	o.CheckStorageClass = r.Tenant == o.SrcTenant && r.Bucket == o.SrcBucket && r.Object.Name == o.SrcKey.Name &&
 		o.SrcKey.Instance == "" && !o.Replace
 	if err := refuseEncryption(r, false); err != nil {
@@ -124,6 +131,33 @@ func (wr *objectWrites) copyObjectParams(r *op.Request, o *op.CopyObject) error 
 	}
 	lock.addAttrs(attrs)
 	o.Attrs = attrs
+	return nil
+}
+
+// replaceTags refuses, InvalidArgument as PutObject's get_params refuses one
+// that does not parse, the x-amz-tagging header of a copy that replaces its
+// metadata, and so stores the header, when the header does not parse as a tag
+// set or when formatXattr would store it rewritten, as text that is not the
+// tag set parsed and that the tag set's decode does not read. radosgw parses no
+// tag header for a copy: its get_params reads none
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3508-L3581 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3758-L3831 at v20.2.4),
+// and init_common stores it as sent, once authorized
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5526 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6089 at v20.2.4).
+// The copy's s3:PutObject and s3:PutObjectTagging checks take the request's
+// tag keys from the parsed header, so either would leave the checks judging
+// tags other than those stored: a Deny conditioned on a tag unevaluated, or
+// an Allow conditioned on one granting a copy that stores none
+// (docs/differences.md).
+func replaceTags(r *op.Request) error {
+	v, ok := op.HeaderValue(r.Header, "X-Amz-Tagging")
+	if !ok {
+		return nil
+	}
+	if _, err := tags.ParseHeader(v, tags.MaxObjectTags); err != nil || formatXattr(v) != v {
+		return op.ErrInvalidArgument
+	}
 	return nil
 }
 

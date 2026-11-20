@@ -4,9 +4,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/meta"
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 )
 
 // Scope is the resource level a request addresses.
@@ -188,6 +190,26 @@ func HeaderValue(h http.Header, name string) (string, bool) {
 		return "", false
 	}
 	return vs[len(vs)-1], true
+}
+
+// CopySourceBucket is the bucket RGWCopyObj::parse_copy_location reads from
+// an x-amz-copy-source value
+// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5329-L5374 at v19.2.6,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5895-L5940 at v20.2.4):
+// the value up to its first "?", less one leading "/", decoded, then split
+// at its first "/". It is false where parse_copy_location fails, an empty
+// value or a missing or empty key, which init answers with 400 before
+// authentication.
+func CopySourceBucket(v string) (string, bool) {
+	name, _, _ := strings.Cut(v, "?")
+	if name == "" {
+		return "", false
+	}
+	bucket, key, ok := strings.Cut(rgwtext.URLDecode(strings.TrimPrefix(name, "/"), false), "/")
+	if !ok || key == "" {
+		return "", false
+	}
+	return bucket, true
 }
 
 // Scope reports the resource level the request addresses.

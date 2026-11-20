@@ -25,6 +25,8 @@ import "slices"
 // answers as either release does.
 type Env struct {
 	keys map[string]*envValues
+	// unsent are the keys MarkUnsent names.
+	unsent []string
 }
 
 // envValues are one key's values.
@@ -137,9 +139,34 @@ func (e *Env) Remove(key, value string) {
 
 // Clone returns a copy of e that shares no storage with it.
 func (e *Env) Clone() Env {
-	c := Env{keys: make(map[string]*envValues, len(e.keys))}
+	c := Env{keys: make(map[string]*envValues, len(e.keys)), unsent: slices.Clone(e.unsent)}
 	for key, v := range e.keys {
 		c.keys[key] = &envValues{added: slices.Clone(v.added), linked: slices.Clone(v.linked)}
 	}
 	return c
+}
+
+// MarkUnsent records that key holds only the value radosgw adds for a header
+// the request does not send, or sends setting nothing, as it adds
+// s3:x-amz-acl empty. A statement that allows is judged with the key as
+// radosgw holds it; one that denies is judged with it and without it, and
+// holds where either holds (Statement.EvalConditions).
+func (e *Env) MarkUnsent(key string) {
+	if !slices.Contains(e.unsent, key) {
+		e.unsent = append(e.unsent, key)
+	}
+}
+
+// withoutUnsent is a copy of e with the keys MarkUnsent names absent, and
+// whether it names any.
+func (e *Env) withoutUnsent() (Env, bool) {
+	if len(e.unsent) == 0 {
+		return Env{}, false
+	}
+	c := e.Clone()
+	for _, key := range c.unsent {
+		delete(c.keys, key)
+	}
+	c.unsent = nil
+	return c, true
 }

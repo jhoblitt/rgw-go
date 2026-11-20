@@ -1,6 +1,8 @@
 package authz
 
 import (
+	"slices"
+
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/policy"
 )
@@ -23,14 +25,15 @@ var (
 )
 
 // EnvPairs returns the keys BuildEnv adds, as key and value, in the order
-// radosgw emplaces them, then the object-lock keys, which radosgw does not
-// add, and whether the op for a adds tags before its own keys.
+// radosgw emplaces them, then the write's ACL and tag keys and the
+// object-lock keys, which radosgw does not add, and whether the op for a adds
+// tags before its own keys.
 func EnvPairs(cfg Config, r *op.Request, a policy.Action) (pairs [][2]string, tagsFirst bool) {
 	for _, p := range baseKeys(cfg, r) {
 		pairs = append(pairs, [2]string{p.key, p.value})
 	}
 	keys, tagsFirst := opKeys(cfg, r, a)
-	for _, p := range append(keys, lockKeys(cfg, r, a)...) {
+	for _, p := range slices.Concat(keys, writeKeys(r, a), lockKeys(cfg, r, a)) {
 		pairs = append(pairs, [2]string{p.key, p.value})
 	}
 	return pairs, tagsFirst

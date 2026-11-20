@@ -533,6 +533,25 @@ var _ = Describe("FromHeaders", func() {
 			func(m mapResolver) { m.emails["d@x"] = meta.ParseOwner("dave") }, acl.ErrGranteeNotFound),
 	)
 
+	DescribeTable("reports the values NamesNoGrantee reports as giving no grants",
+		func(ctx SpecContext, header string, none bool) {
+			Expect(acl.NamesNoGrantee(header)).To(Equal(none), "%q", header)
+			p, err := acl.FromHeaders(ctx, r, aliceOwner, acl.GrantHeaders{Read: header})
+			if none {
+				Expect(err).NotTo(HaveOccurred(), "%q", header)
+				Expect(p).To(Equal(acl.Policy{Owner: aliceOwner}), "%q", header)
+			} else if err == nil {
+				Expect(p).NotTo(Equal(acl.Policy{Owner: aliceOwner}), "%q names a grantee or fails", header)
+			}
+		},
+		Entry("an empty value", "", true),
+		Entry("a comma", ",", true),
+		Entry("commas alone", ",,,", true),
+		Entry("an item of a space between commas, which fails the parse", ", ,", false),
+		Entry("a grantee", `id=bob`, false),
+		Entry("a grantee between commas", `,id=bob,`, false),
+	)
+
 	It("returns a miss as ErrGranteeNotFound alone, not the resolver's sentinel", func(ctx SpecContext) {
 		_, err := acl.FromHeaders(ctx, r, aliceOwner, acl.GrantHeaders{Read: `id=mallory`})
 		Expect(err).NotTo(MatchError(acl.ErrNoSuchOwner))
