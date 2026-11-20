@@ -1218,6 +1218,9 @@ byte-identical at the two tags.
   `internal/op/uploadpart.go:214`, `internal/op/initmultipart.go:84`) and `refuseEncryption`
   (`internal/s3/putobject.go:144-171`, called at `internal/s3/putobject.go:87`,
   `internal/s3/multipart.go:101`, `internal/s3/multipart.go:194`, `internal/s3/copyobject.go:102`).
+  It also reads, and must not weaken, `completeMultipart`'s `AskedEncryption` in
+  `internal/s3/multipart.go` (WP-32), which calls `askedRefusal` directly rather than through
+  `refuseEncryption` (item 5).
   **Cluster:** no.
 - **Consumes:** BC-23. **Produces:** `EncryptionDefaults(r *Request, asked map[string]string)
   (Encryption, error)`, the effective algorithm, key id, bucket-key flag and context;
@@ -1275,19 +1278,47 @@ byte-identical at the two tags.
      [rgw_rest_s3.cc:2984-3002](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2984-L3002)).
      PR (b) first reads how CopyObject chooses its destination's encryption at both tags and
      cites it in its notes, then replaces phase 1's 501 in both with that behaviour.
+  5. **CompleteMultipartUpload keeps WP-32's 501.** A completion that sends any encryption
+     name with a value, SSE-S3 and SSE-KMS names included, stays 501 after this task lands,
+     after authorization and before the op reads the body or the upload. radosgw is no model
+     here: its completion adds the encryption condition keys from the headers
+     ([rgw_op.cc:6355](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6355),
+     [rgw_op.cc:7028](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7028)) but
+     calls neither `get_encryption_defaults` nor `rgw_s3_prepare_encrypt`
+     ([rgw_rest_s3.cc:4094-4104](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4094-L4104),
+     [rgw_rest_s3.cc:4565-4602](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4565-L4602)),
+     so its answer, with or without a key server, is to complete. Following it would let a
+     valued `x-amz-server-side-encryption` satisfy a bucket policy's `Null` condition that
+     requires encryption and complete an upload stored in the clear, the bypass WP-32 closes.
+     - Rewiring `askedRefusal` or `refuseEncryption` to the no-key-server answers leaves the
+       completion's refusal as it is; if the shared helper changes, the completion keeps a
+       refusal of its own covering the same names.
+     - The completion takes no bucket default and fills no `Request.CryptAttrs`, as radosgw's
+       does not.
+     - No phase 2 design gives a completion's encryption names a meaning. If a later task
+       does, the completion follows the upload's own encryption, and a header asking for
+       encryption never completes an upload stored in the clear.
 - **Specs:** every refusal of the two functions; TLS and plain HTTP, per floor; the policy keys
   with and without a default; a default without an algorithm, alone and with a key id or a
-  bucket key; an UploadPart under a default item 1 refuses; an undecodable default after a 403.
+  bucket key; an UploadPart under a default item 1 refuses; an undecodable default after a 403;
+  after the rewiring, on both releases, a CompleteMultipartUpload of an upload without a crypt
+  mode that sends `x-amz-server-side-encryption: AES256`, or `aws:kms` with a KMS key id, is
+  still 501 with the upload and its part kept and no object written, with and without a
+  stored default, and under a `Null` Deny on `s3:x-amz-server-side-encryption` it is 403 with
+  no header and 501 with the header (WP-32's specs in `internal/s3/completeencryption_test.go`
+  stay green unchanged).
 - **Exclusions and registry:** retires the SSE-S3 and SSE-KMS half of "Writes that ask for
-  encryption answer 501, SSE-S3 and SSE-KMS until phase 2 and SSE-C until phase 4." and "A
+  encryption answer 501, SSE-S3 and SSE-KMS until phase 2 and SSE-C until phase 4." but its
+  CompleteMultipartUpload bullet, whose refusal outlives phase 2 (item 5), and "A
   PUT's encryption condition keys leave out the bucket's default encryption."; extends "PutObject
   and CopyObject authorize a request before they read what the store holds for it" with the
   undecodable default (B16).
 - **Depends on:** BC-23; BC-27 (a), whose recorded statuses the no-backend specs pin; the
-  write-path unit on the same files: PR (a) after WP-6 and WP-7, PR (b) after WP-6, WP-7 and
-  WP-13 (index Order 3), never in parallel with V11, L5b or C8 on a file they share.
+  write-path unit on the same files: PR (a) after WP-6, WP-7 and WP-32, PR (b) after WP-6,
+  WP-7 and WP-13 (index Order 3), never in parallel with V11, L5b or C8 on a file they share.
 - **PR split:** (a) the helper, `CryptAttrs` and `cryptKeys`, with PutObject and
-  CreateMultipartUpload; (b) CopyObject and UploadPart. **Brief:** about 240 lines.
+  CreateMultipartUpload, and item 5's completion specs, since PR (a) is the one that changes
+  the shared refusal; (b) CopyObject and UploadPart. **Brief:** about 240 lines.
 
 ### Task BC-27: Encryption recording and gate
 

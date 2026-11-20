@@ -512,3 +512,42 @@ Spec §9: "Every phase gate includes writing with one gateway and reading with t
 - each unit's cross-gateway cases;
 - zero open findings;
 - a benchmark run of the phase 2 paths.
+
+## Deferred to phase 4
+
+Work a phase 2 task leaves to phase 4. Phase 4's planning reads this list and turns each item
+into a task.
+
+1. **A CompleteMultipartUpload of an SSE-C upload takes its SSE-C names (WP-32).** WP-32
+   answers 501 to a completion that sends any encryption name with a value, the SSE-C names
+   included, so over the S3 API an SSE-C upload with a checksum type cannot be completed until
+   phase 4, where radosgw and Amazon S3 complete it for the holder of its key. Phase 4, which
+   serves SSE-C:
+   - lets the SSE-C names through on the completion of an SSE-C upload. The SSE-S3 and SSE-KMS
+     names keep their 501 (BC-26 item 5). On an upload without a crypt mode the SSE-C names
+     keep it too, unless phase 4 shows that letting them through cannot let a valued SSE-C
+     algorithm satisfy Tentacle's `Null` condition on
+     `s3:x-amz-server-side-encryption-customer-algorithm` and complete an upload stored in the
+     clear;
+   - restores the WP-26 handler specs that WP-32 deleted or turned into 501 pins, as they stand
+     in `internal/s3/completemultipart_crypt_test.go` at 5865b07:
+     - "answers a Tentacle SSE-C upload's combined checksum to the holder of its key, as for
+       any upload";
+     - "echoes the key MD5 as the request sent it, white space the decode skips included";
+     - "sends the key's headers on an error after the decision passed, as radosgw does", which
+       WP-32 moved to an SSE-KMS upload; the SSE-C case returns beside it;
+     - "answers the key holder's retry with the combined checksum and no SSE-C pair, as no
+       radosgw echoes one there, on Tentacle";
+     - "reads the last of a repeated SSE-C header, as radosgw's environment keeps it";
+     - "completes an upload without a crypt mode whatever SSE-C headers the request sends,
+       echoing none, on both releases", only if the first bullet lets those names through;
+     - the SSE-C entries of the table "answers an SSE-C upload's completion as Amazon S3 does,
+       echoing the key's headers on Tentacle" and of the retry table's "SSE-C, its own id,
+       another key", back to the decision's own answers (200 with the echo, 400
+       InvalidArgument, 400 InvalidRequest, 400 InvalidEncryptionAlgorithmError), and, in
+       `internal/s3/emptyencryption_test.go`, the KMS key id sent empty beside the right SSE-C
+       key;
+   - accounts for the s3-tests that send SSE-C on a completion and are out under the
+     `encryption` marker until then, among them test_encryption_sse_c_multipart_upload,
+     test_encryption_sse_c_unaligned_multipart_upload and
+     test_encryption_sse_c_multipart_bad_download.
