@@ -2217,6 +2217,155 @@ behind with the data gone (Behaviour 1's last path, and Behaviour 7).
     V21's adversarial harness's J5 leaves no record on its null-only row.
 - **Depends on:** V21. **PR split:** three (Behaviour 6 and 7). **Brief:** about 50 lines.
 
+### Task V25: a link refuses to land on a version a replay's removal has prepared
+
+Found by V22's task review (its central question 3) and its adversarial review (M3), and numbered
+here before V22 merged (PP-12). V22's compare refuses a replay's removal of a version a link has
+listed since the replay read the log, up to the removal's first index op, its prepare. V22's
+Behaviour 4 leaves the window after it open: between the removal's prepare and its index
+completion, a link of the version finds the instance entry still present, and the completion then
+removes that entry from under the list entry the link wrote. The class's link refuses only a
+missing instance entry and never reads its `exists`
+([cls_rgw.cc:1668-1688](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1668-L1688),
+[cls_rgw.cc:1809-1829](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1809-L1829)),
+so it also lands on the placeholder a removal's prepare writes, `exists=false`, once another removal
+has taken the version
+([cls_rgw.cc:851-867](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L851-L867),
+[cls_rgw.cc:983-999](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L983-L999)).
+rgw-go's own linkers give way only to a removal still in the OLH log, and any replay that read the
+removal trims it on its own schedule: the refused delete's own replay before its relist, or a third
+request's. The linkers that land there:
+
+- the relist (`relistVersion`, `relistBelow` and `relistNull`,
+  `internal/driver/delete_versioned.go:698`, `internal/driver/delete_versioned.go:1001` and
+  `internal/driver/delete_versioned.go:818`): its epoch-0 link at a new epoch, and its link at the
+  version's own epoch, below a newer one;
+- the CompleteMultipartUpload retry (`linkRecorded`, `internal/driver/mp_complete.go:628`), which
+  gives way to nothing: a link at a new epoch, and once the OLH names the gone version the key
+  refuses every later write (V22's case 1);
+- the lifecycle transition (`linkVersion`, `internal/driver/put_versioned.go:337`, which V22 routes
+  through its `linkTransition`): at the OLH entry's epoch when the entry names the version, and at
+  the version's own epoch, below the entry's, otherwise;
+- `keepCurrent` (`internal/driver/lc_transition.go:230`): at the OLH entry's epoch as read;
+- radosgw, on a mixed fleet: its PutObject naming a version's id, and its transition.
+
+Each leaves a list entry naming a version whose head and instance entry are gone. A link at a new
+epoch or at the entry's own logs a LINK_OLH, and only one below the entry's takes the class's
+old-epoch path
+([cls_rgw.cc:1503-1517](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1503-L1517),
+[cls_rgw.cc:1630-1644](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1630-L1644)),
+so after a logged link the next replay also leaves the OLH naming the gone version. The figures,
+from V21's adversarial harness, 2000 schedules a random family:
+- V22's gate, main to V22's head: the retry's link landing after a removal's prepare (B6,
+  scripted) 2 and 2; the swept write after a disconnect (I7) 24 and 8; the random families H1 2
+  and 4, H3 2 and 1, H4 6 and 18, G8 5 and 6, H5 0 and 1, H10 0 and 3. Every dangling schedule
+  V22's review and implementer traced lies in this window.
+- V22's adversarial review: a link of the version at each op of a replay's removal (P1) is kept up
+  to the prepare and dangles after it, on both releases, with the OLH naming the version for a link
+  at a new epoch. A transition racing a plain delete and two readers (T1) dangles in 12 runs at
+  V22's head, 776 at main, with the transition and the delete both answered success. H5's seed
+  1877 is the placeholder case: the relist linked a version whose head had been gone for 31 steps.
+- Part of H4's and H10's rise is V22's own retry (its adversarial I2), which V22's fix round removes.
+
+- **Layer:** driver. **Files:** the relists (`refusedRemoval`, `relistVersion`, `relinkOLHEntry`,
+  `relistNull`, `relinkOrMove` and `relistBelow` in `internal/driver/delete_versioned.go`); the
+  CompleteMultipartUpload retry (`linkRecorded` and `recordedLinkState` in
+  `internal/driver/mp_complete.go`); the link's compare (`olhLinkFields` and `linkOLH` in
+  `internal/driver/olh_index.go`, and `setOLH` in `internal/driver/olh.go`, which fills it); the
+  transition's link (`linkVersion` and V22's `linkTransition` in `internal/driver/put_versioned.go`)
+  and `keepCurrent` in `internal/driver/lc_transition.go`; their specs; `docs/differences.md`, the
+  window's paragraph in the entry V22 adds ("A replay keeps a version a link lists again after it
+  read the log"); the registry entry V20 adds. **Cluster:** no.
+- **Security boundary:** the versioned write's replay; adversarial review applies (PP-14).
+- **Behaviour:**
+  1. Each rgw-go linker reads the version's instance entry before its link, after its own last
+     write to that entry: the relist's reset (`resetCurrent`), the retry's completion
+     (`completeRecordedEntry`), the transition's index completion. For the null version that is
+     the null data's entry (`nullDataEntry`). An entry with `exists=false` names no data, a
+     removal's placeholder or a completed DEL with another op still pending, and the linker gives
+     way to it at once. A pending DEL in the entry is a removal between its prepare and its
+     completion, and the linker waits it out. A pending op of any other kind is no reason to wait.
+  2. The wait's bound is the one a conditional link spends on another writer's pending
+     modification: `olhCondBackoffs` backoffs, 318-635 ms in all
+     (`internal/driver/olh_cond.go:34-47`), the entry read again after each. A DEL still pending
+     after them is given way to, whatever its age. No linker cancels it or links over it. The
+     reasons:
+     - A live removal sends its head removal and its awaited completion straight after its
+       prepare (`removeInstance`, `internal/driver/olh.go:1012`), so a DEL that outlives the wait
+       is a removal stalled in RADOS or one whose gateway stopped.
+     - The two cannot be told apart before the shard's tag timeout, 120 s by default. That is the
+       age at which the class drops a pending op
+       ([cls_rgw.cc:2215-2226](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2215-L2226)
+       and [cls_rgw.cc:2283-2299](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2283-L2299),
+       [cls_rgw.cc:2385-2396](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2385-L2396)
+       and [cls_rgw.cc:2453-2469](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2453-L2469)),
+       and at which rgw-go's abort cancels one (`expireStaleOps`,
+       `internal/driver/mp_abort.go:387-435`). Waiting that long would hold a client's
+       CompleteMultipartUpload, and a lifecycle pass, for two minutes a version.
+     - A link over a removal that then completes leaves the state this task closes. Giving way
+       leaves the version as its removal leaves it: removed, or, where the remover stopped, stored
+       and unlisted. V24 makes lifecycle and DeleteBucket find that state, so the cost is a
+       version left unlisted after a stopped removal, as a relist that ends before its link leaves
+       one today. Add the path to V24's Behaviour 1 and to the differences entry it updates.
+  3. A link that gives way answers:
+     - the relist: as its give-way to a logged removal does today, nothing linked, and the delete
+       whose refusal it serves answers ConcurrentModification
+       (`internal/driver/delete_versioned.go:241`);
+     - the CompleteMultipartUpload retry: InternalError with the upload's meta object kept, as
+       `linkRecorded` answers today for a version it cannot link safely, its instance entry gone or
+       another write's (`internal/driver/mp_complete.go:622-627`). Success would answer for a
+       version a delete is removing, and would retire the meta object, the record of the upload's
+       parts, while a stopped remover may have left those parts stored. Such a version is then on
+       V24's path of a CompleteMultipartUpload version whose link never landed;
+     - the transition and `keepCurrent`: as V22's give-way, NoSuchKey, with no `keepCurrent` and no
+       notification, the rewritten head and its tails going to the removal.
+  4. Each link compares the instance entry as read in Behaviour 1, beside the OLH entry the relist's,
+     the transition's and `keepCurrent`'s links already compare (`olhRelink.olh`). A removal's
+     prepare that lands after the read adds its DEL to the entry, so the link's op is refused with
+     nothing linked, and the next round reads the DEL. `olhLinkFields.cmp` holds one entry today
+     (`internal/driver/olh_index.go:63-70`), which `linkOLH` sends as one OMAP_CMP
+     (`internal/driver/olh_index.go:120-125`) and `setOLH` fills from `olhRelink.olh` alone
+     (`internal/driver/olh.go:280-283`). It becomes a list, each entry an OMAP_CMP in the link's op
+     before the class's call. The CompleteMultipartUpload retry, which compares nothing today
+     (`internal/driver/mp_complete.go:654-655`), sends the instance entry alone. A refused compare is
+     the linker's lost round, under its existing bound; the retry reads again within Behaviour 2's
+     wait and answers as a give-way once it is spent.
+  5. The relist refuses a version whose head is gone. `relistVersion` reads the head at a round's
+     start only (`internal/driver/delete_versioned.go:710-713`), and `relistBelow` not at all
+     (`internal/driver/delete_versioned.go:1001-1057`). Each relist reads the head after its
+     instance-entry read and before its link, the OLH head's data for the null version as
+     `relistNull` reads it (`internal/driver/delete_versioned.go:839-841`), and links nothing when
+     it is gone.
+  6. radosgw's links are recorded, not fixed. They carry neither the wait nor the compare, and
+     radosgw's replay compares nothing, so a mixed fleet keeps the window. The differences entry's
+     window paragraph and the registry entry V20 adds then name radosgw's links and replay alone as
+     reaching it, and the registry entry's rgw-go line says what rgw-go's linkers do.
+  7. The RADOS state stays radosgw's. The compares are OMAP_CMP steps in the link's own op, as V21's
+     and V22's are, and the waits only read. Nothing is written that radosgw does not write.
+- **Specs:** on both releases, against the emulator:
+  - each linker landing in the window: a replay's removal of X parked after its prepare, once
+    before its head removal and once before its index completion; then the relist, its epoch-0
+    link and its link below a newer version, the CompleteMultipartUpload retry, the transition and
+    `keepCurrent`; then the removal completes. Each waits, then gives way and answers as Behaviour 3
+    says. X's head, instance entry and list entry are gone, the OLH does not name X, and a later
+    PutObject of the key links;
+  - the same with the removal held past the wait: each gives way, linking nothing, and X stays as
+    the removal left it;
+  - H5's shape: another removal takes X, a third request's replay trims, a later removal's prepare
+    writes the placeholder, and the relist gives way;
+  - a prepare landing between a linker's instance-entry read and its link refuses that link, for
+    each linker; an attr write's pending op on the entry does not make it wait;
+  - the relist of a version whose head is gone while its instance entry stays links nothing;
+  - the null version, through the relist and the transition;
+  - V21's adversarial harness with V22's adversarial additions, 2000 schedules a family: the
+    dangling outcomes from Behaviour 4's window go to zero in every family rgw-go runs alone (B6,
+    G8, H1, H3, H4, H5, H10, I7, T1, T4, T5, and P1's positions after the prepare), and any left is
+    traced and shown to lie outside the window. The radosgw families (D1 to D3) stay as V22 leaves
+    them. No new acknowledged-and-kept outcome and no new lost delete;
+  - V22's specs, and the interleavings V21's specs pin, stay as they are.
+- **Depends on:** V22 and V23. V23 also reworks the relists in `internal/driver/delete_versioned.go`,
+  so V25 goes after it. **PR:** one. **Brief:** about 60 lines.
+
 ## Order
 
 At most three implementers at once. A wave starts when the tasks it depends on have merged;
@@ -2236,7 +2385,7 @@ recordings land one at a time through the controller.
 | 8 | V7b, V8b, V8c | V7a, V8a, V9 |
 | 9 | V11, V12b | V7b, V8b |
 | 10 | V12a, V14a | V11, V13d |
-| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22, then V23, then V24 | everything above, WP-22 |
+| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22, then V23, then V25, then V24 | everything above, WP-22 |
 
 - V10's recording PR is a cluster task the controller schedules after its first PR merges.
 - The critical path is V1, V3b, V4, V5a, V5b, V5c, V7a, V7b, V11, V14a, V15a. L and C start
