@@ -4,6 +4,7 @@ package goceph_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1292,18 +1293,39 @@ func stableMod(h, pgNum uint32) uint32 {
 // service map on its tick and hears a status with the client's next report.
 const serviceMapTimeout = time.Minute
 
-// serviceCloseTimeout bounds the wait for an entry to leave the service map
-// after Close. It is under mgr_service_beacon_grace, a minute by default,
-// after which the manager drops a daemon whose beacons stopped anyway, so only
-// the close librados sends at shutdown removes the entry within it
-// (https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/mgr.yaml.in#L113-L118 at v19.2.7,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/mgr.yaml.in#L113-L118 at v20.2.4).
-const serviceCloseTimeout = 30 * time.Second
+// forcedUnregisterWait replaces mgr_client_service_daemon_unregister_timeout,
+// 1 s, the wait a registered connection's shutdown makes on the manager's
+// answer to its close
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/global.yaml.in#L6422-L6426 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/global.yaml.in#L6588-L6592 at v20.2.4;
+// https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/MgrClient.cc#L82-L94 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/MgrClient.cc#L83-L95 at v20.2.4).
+// The manager answers a registration with the report period
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/DaemonServer.cc#L564 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/DaemonServer.cc#L568 at v20.2.4),
+// and the client sends a stats report at once and then every
+// mgr_stats_period, 5 s
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/MgrClient.cc#L484-L488 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/MgrClient.cc#L478-L482 at v20.2.4;
+// https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/MgrClient.cc#L312-L323 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/MgrClient.cc#L313-L324 at v20.2.4;
+// https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/mgr.yaml.in#L25-L35 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/mgr.yaml.in#L25-L35 at v20.2.4).
+// A wait longer than the period therefore holds a due report whenever Close
+// comes, and the 2 s past the period leave the manager's rejection of it,
+// the reconnect and the new registration time to land within the wait. It
+// assumes the manager's period: one whose dispatch queue backs up past
+// mgr_stats_period_autotune_queue_threshold, 100, raises it
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/mgr.yaml.in#L36-L64 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/mgr.yaml.in#L36-L64 at v20.2.4).
+const forcedUnregisterWait = 7 * time.Second
 
 // serviceMapDaemon is a daemon's entry in the manager's service dump.
 type serviceMapDaemon struct {
 	GID      uint64            `json:"gid"`
 	Metadata map[string]string `json:"metadata"`
+	// ServiceRegistration's Raw is the entry compacted.
+	cephtest.ServiceRegistration
 }
 
 // serviceMapReader reads the manager's service map over a bare librados
@@ -1358,8 +1380,12 @@ func (r *serviceMapReader) daemons(service string) (map[string]serviceMapDaemon,
 		if name == "summary" {
 			continue
 		}
-		var d serviceMapDaemon
-		if err := json.Unmarshal(raw, &d); err != nil {
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, raw); err != nil {
+			return nil, err
+		}
+		d := serviceMapDaemon{Raw: compact.String()}
+		if err := json.Unmarshal(compact.Bytes(), &d); err != nil {
 			return nil, err
 		}
 		daemons[name] = d
@@ -1385,6 +1411,7 @@ func (r *serviceMapReader) status(service string) (map[string]map[string]string,
 
 var _ = Describe("goceph registering in the manager's service map", Label("integration"), func() {
 	var (
+		cfg       goceph.Config
 		reader    *serviceMapReader
 		service   string
 		daemon    string
@@ -1392,13 +1419,16 @@ var _ = Describe("goceph registering in the manager's service map", Label("integ
 		registrar radosclient.ServiceRegistrar
 	)
 
-	BeforeEach(func(ctx SpecContext) {
-		cfg := goceph.Config{ConfigFile: cephtest.Conf()}
+	BeforeEach(func() {
+		cfg = goceph.Config{ConfigFile: cephtest.Conf()}
 		reader = newServiceMapReader(cfg)
 		// Not rgw, which the cluster's gateway registers under: no reader
 		// of the radosgw entries or dashboard sees the spec's.
 		service = fmt.Sprintf("goceph-spec-%d", time.Now().UnixNano())
+	})
 
+	// Connected after every BeforeEach, so that a nested one can change cfg.
+	JustBeforeEach(func(ctx SpecContext) {
 		var err error
 		cluster, err = goceph.Connect(ctx, cfg)
 		Expect(err).NotTo(HaveOccurred())
@@ -1423,6 +1453,33 @@ var _ = Describe("goceph registering in the manager's service map", Label("integ
 		}).WithContext(ctx).WithTimeout(timeout).WithPolling(500 * time.Millisecond).Should(Succeed())
 	}
 
+	// closesAfterRegistering registers the connection, waits for service dump
+	// to list it, closes it, and returns its departure from the map.
+	closesAfterRegistering := func(ctx SpecContext) cephtest.ServiceDeparture {
+		GinkgoHelper()
+		Expect(registrar.ServiceRegister(service, daemon, nil)).To(Succeed())
+		var ours cephtest.ServiceRegistration
+		listed(ctx, serviceMapTimeout, func(g Gomega, daemons map[string]serviceMapDaemon) {
+			g.Expect(daemons).To(HaveKey(daemon))
+			ours = daemons[daemon].ServiceRegistration
+		})
+		Expect(cluster.Close()).To(Succeed())
+		return cephtest.ServiceDeparture{
+			Who: "the connection's", Key: daemon, Registered: ours, Exit: "Close returned", Exited: time.Now(),
+		}
+	}
+
+	// entry is the entry service dump lists under the connection's name, nil
+	// when it lists none.
+	entry := func(g Gomega) *cephtest.ServiceRegistration {
+		daemons, err := reader.daemons(service)
+		g.Expect(err).NotTo(HaveOccurred())
+		if d, ok := daemons[daemon]; ok {
+			return &d.ServiceRegistration
+		}
+		return nil
+	}
+
 	It("lists the connection under its instance id, with its metadata and librados's own", func(ctx SpecContext) {
 		metadata := map[string]string{"goceph_spec": "register", "empty_value": ""}
 		Expect(registrar.ServiceRegister(service, daemon, metadata)).To(Succeed())
@@ -1430,13 +1487,13 @@ var _ = Describe("goceph registering in the manager's service map", Label("integ
 		listed(ctx, serviceMapTimeout, func(g Gomega, daemons map[string]serviceMapDaemon) {
 			g.Expect(daemons).To(HaveLen(1), "service %s", service)
 			g.Expect(daemons).To(HaveKey(daemon))
-			entry := daemons[daemon]
-			g.Expect(entry.GID).To(Equal(cluster.InstanceID()))
+			listing := daemons[daemon]
+			g.Expect(listing.GID).To(Equal(cluster.InstanceID()))
 			for k, v := range metadata {
-				g.Expect(entry.Metadata).To(HaveKeyWithValue(k, v))
+				g.Expect(listing.Metadata).To(HaveKeyWithValue(k, v))
 			}
-			g.Expect(entry.Metadata).To(HaveKeyWithValue("ceph_version", Not(BeEmpty())))
-			g.Expect(entry.Metadata).To(HaveKeyWithValue("hostname", Not(BeEmpty())))
+			g.Expect(listing.Metadata).To(HaveKeyWithValue("ceph_version", Not(BeEmpty())))
+			g.Expect(listing.Metadata).To(HaveKeyWithValue("hostname", Not(BeEmpty())))
 		})
 	})
 
@@ -1505,15 +1562,27 @@ var _ = Describe("goceph registering in the manager's service map", Label("integ
 		Expect(registrar.ServiceUpdateStatus(map[string]string{"goceph_spec": "closed"})).To(MatchError(radosclient.ErrClosed))
 	})
 
-	It("removes the entry from service dump once Close returns", func(ctx SpecContext) {
-		Expect(registrar.ServiceRegister(service, daemon, nil)).To(Succeed())
-		listed(ctx, serviceMapTimeout, func(g Gomega, daemons map[string]serviceMapDaemon) {
-			g.Expect(daemons).To(HaveKey(daemon))
+	It("leaves service dump after Close returns", func(ctx SpecContext) {
+		closesAfterRegistering(ctx).Await(ctx, entry)
+	})
+
+	// While Close waits on the manager's answer to its close, a stats report
+	// that falls due makes librados register the connection again
+	// (docs/ceph-upstream-bugs.md, "librados registers a service daemon again
+	// while it shuts down"). A connection that closes a few seconds after it
+	// registers seldom meets one in the 1 s wait; a wait longer than the
+	// report period does while the manager keeps its default period.
+	Context("when a stats report falls due while Close waits", func() {
+		BeforeEach(func() {
+			cfg.Args = []string{fmt.Sprintf("--mgr_client_service_daemon_unregister_timeout=%g", forcedUnregisterWait.Seconds())}
 		})
 
-		Expect(cluster.Close()).To(Succeed())
-		listed(ctx, serviceCloseTimeout, func(g Gomega, daemons map[string]serviceMapDaemon) {
-			g.Expect(daemons).To(BeEmpty(), "service %s after Close", service)
+		It("waits out the entry librados registers again until the manager's beacon grace drops it", func(ctx SpecContext) {
+			again := closesAfterRegistering(ctx).Await(ctx, entry)
+			Expect(again).NotTo(BeNil(),
+				"the connection's registration left service dump by its close alone, although its shutdown waited %s, "+
+					"longer than a stats report period: librados no longer registers a closing daemon again, "+
+					"or no report fell due in the wait", forcedUnregisterWait)
 		})
 	})
 })

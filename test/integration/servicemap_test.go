@@ -40,42 +40,6 @@ const (
 	// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L1192-L1221 at v20.2.4).
 	serviceMapID       = "rgw-go-servicemap"
 	serviceMapUniqueID = "rgw-go-servicemap-spec"
-
-	// serviceCloseTimeout bounds the wait, from rgw-go's exit, for its
-	// registration to leave the map. The close librados sends as it shuts
-	// down removes the entry from the manager's pending map at once
-	// (https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/MgrClient.cc#L67-L101 at v19.2.7,
-	// https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/MgrClient.cc#L68-L102 at v20.2.4;
-	// https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/DaemonServer.cc#L686-L710 at v19.2.7,
-	// https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/DaemonServer.cc#L690-L714 at v20.2.4),
-	// and the map service dump reads follows on the manager's next report
-	// to the mon, each mgr_tick_period, 2 s
-	// (https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/mgr.yaml.in#L410-L419 at v19.2.7,
-	// https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/mgr.yaml.in#L439-L448 at v20.2.4),
-	// and the mon's commit. It is goceph's bound for the same close, and under
-	// mgr_service_beacon_grace, 60 s
-	// (https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/mgr.yaml.in#L113-L118 at v19.2.7,
-	// https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/mgr.yaml.in#L113-L118 at v20.2.4),
-	// after which the manager drops a silent daemon anyway, so only the close
-	// removes the registration within it.
-	serviceCloseTimeout = 30 * time.Second
-	// serviceReregisteredTimeout bounds the wait, from rgw-go's exit, for an
-	// entry librados registered again as it shut down to leave the map
-	// (docs/ceph-upstream-bugs.md, "librados registers a service daemon
-	// again while it shuts down"). No close follows that registration and it
-	// sends no beacon, so the manager's first prune after it stamps its
-	// beacon and a prune mgr_service_beacon_grace, 60 s, later drops it
-	// (https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/DaemonServer.cc#L2677-L2711 at v19.2.7,
-	// https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/DaemonServer.cc#L3156-L3190 at v20.2.4),
-	// both on the manager's 2 s tick, then the mon publishes the map: about
-	// 65 s, and 90 s leaves margin.
-	serviceReregisteredTimeout = 90 * time.Second
-	// serviceSettle is how long the map must list nothing under rgw-go's key
-	// before the spec takes the entry as gone. The close and the
-	// registration librados can send after it reach the manager up to 1 s
-	// apart, so a map published between them lists neither, and the next,
-	// one 2 s tick later, lists the new one; five ticks leave margin.
-	serviceSettle = 10 * time.Second
 )
 
 // podKeys are the metadata keys librados takes from the container a daemon
@@ -114,12 +78,8 @@ type serviceMapEntry struct {
 	Key      string            `json:"-"`
 	GID      uint64            `json:"gid"`
 	Metadata map[string]string `json:"metadata"`
-	// StartEpoch and StartStamp are the map's epoch and the manager's clock
-	// when it last registered the daemon.
-	StartEpoch uint64 `json:"start_epoch"`
-	StartStamp string `json:"start_stamp"`
-	// Raw is the entry as the map gives it, compacted, for messages.
-	Raw string `json:"-"`
+	// ServiceRegistration's Raw is the entry compacted.
+	cephtest.ServiceRegistration
 }
 
 // inPod tells whether e is a daemon Rook runs: Rook sets POD_NAME on every
@@ -190,28 +150,6 @@ func entryUnder(entries []serviceMapEntry, key string) *serviceMapEntry {
 		}
 	}
 	return nil
-}
-
-// registration names e's registration, or none.
-func registration(e *serviceMapEntry) string {
-	if e == nil {
-		return "no entry"
-	}
-	return fmt.Sprintf("start_epoch %d, start_stamp %s", e.StartEpoch, e.StartStamp)
-}
-
-// sameRegistration tells whether a and b are one registration: the manager
-// stamps an entry anew whenever it adds it.
-func sameRegistration(a, b serviceMapEntry) bool {
-	return a.StartEpoch == b.StartEpoch && a.StartStamp == b.StartStamp
-}
-
-// rawOf is e as the map gave it, or none.
-func rawOf(e *serviceMapEntry) string {
-	if e == nil {
-		return "no entry"
-	}
-	return e.Raw
 }
 
 // onlyEntry is the one entry of entries that match picks; what names it.
@@ -438,67 +376,18 @@ var _ = Describe("rgw-go's service map entry against the radosgw's", Ordered, Co
 			Should(BeEmpty(), "the rgw entries of the rgw-go with pid %d, started under %s", pid, cephtest.ServiceMapOff)
 	})
 
-	// librados's close removes rgw-go's registration within
-	// serviceCloseTimeout of its exit. While it shuts down librados can also
-	// register the daemon again under the same key, with a later start_stamp,
-	// and that entry leaves only within serviceReregisteredTimeout of the
-	// exit. The spec takes either and records which held: a registration
-	// other than the one it found, seen under the key at any poll, is the
-	// second. A re-registered entry stays listed for about a minute, so the
-	// 1 s polls cannot miss it; only one the map first listed more than
-	// serviceSettle after it stopped listing the key would go unrecorded, and
-	// the spec would pass on the close.
 	It("leaves the map once it stops on SIGTERM", func(ctx SpecContext) {
 		rgwgo.Terminate()
 		Eventually(rgwgo).WithTimeout(frontend.DrainTimeout+10*time.Second).WithPolling(100*time.Millisecond).
 			Should(gexec.Exit(0), "rgw-go after SIGTERM")
-		exited := time.Now()
-		var (
-			// last is the entry under rgw-go's key the last poll found.
-			last *serviceMapEntry
-			// again is the first entry under the key with another
-			// registration than the one BeforeAll found.
-			again *serviceMapEntry
-			// absent is when the polls began to find no entry under the key.
-			absent time.Time
-		)
-		since := func() time.Duration { return time.Since(exited).Round(100 * time.Millisecond) }
-		Eventually(func(g Gomega) bool {
-			last = entryUnder(rgwServiceEntries(ctx, g), ours.Key)
-			if last == nil {
-				if absent.IsZero() {
-					absent = time.Now()
-				}
-				return time.Since(absent) >= serviceSettle
-			}
-			absent = time.Time{}
-			switch {
-			case sameRegistration(*last, ours):
-				if time.Since(exited) > serviceCloseTimeout {
-					StopTrying(fmt.Sprintf("rgw-go's registration under %s (%s) %s after it exited, past %s: %s",
-						ours.Key, registration(&ours), since(), serviceCloseTimeout, last.Raw)).Now()
-				}
-			case time.Since(exited) > serviceReregisteredTimeout:
-				StopTrying(fmt.Sprintf("rgw-go's entry under %s, registered again (%s), %s after it exited, past %s: %s",
-					ours.Key, registration(last), since(), serviceReregisteredTimeout, last.Raw)).Now()
-			case again == nil:
-				e := *last
-				again = &e
-			}
-			return false
-		}).WithContext(ctx).WithTimeout(serviceReregisteredTimeout+serviceSettle+5*time.Second).WithPolling(time.Second).
-			Should(BeTrue(), func() string {
-				return fmt.Sprintf("rgw-go's entry under %s %s after it exited, the last poll finding %s: %s",
-					ours.Key, since(), registration(last), rawOf(last))
-			})
-		left := absent.Sub(exited).Round(100 * time.Millisecond)
-		if again != nil {
-			AddReportEntry("rgw-go's entry was registered again as it stopped", fmt.Sprintf(
-				"%s, where it was %s; the entry left the map %s after rgw-go exited: %s",
-				registration(again), registration(&ours), left, again.Raw))
-		} else {
-			AddReportEntry("rgw-go's registration left the map by its close", fmt.Sprintf(
-				"%s after rgw-go exited, and no other registration under %s in the %s after", left, ours.Key, serviceSettle))
+		departure := cephtest.ServiceDeparture{
+			Who: "rgw-go's", Key: ours.Key, Registered: ours.ServiceRegistration, Exit: "rgw-go exited", Exited: time.Now(),
 		}
+		departure.Await(ctx, func(g Gomega) *cephtest.ServiceRegistration {
+			if e := entryUnder(rgwServiceEntries(ctx, g), ours.Key); e != nil {
+				return &e.ServiceRegistration
+			}
+			return nil
+		})
 	})
 })
