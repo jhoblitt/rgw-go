@@ -1345,11 +1345,12 @@ Found by T-3 (its copy tests over T-2's classes), and numbered here before T-3 m
 
 ### Task WP-31: CopyObject honours x-amz-tagging-directive
 
-Found by S12's task review (Important 4), and numbered here before S12 merged (PP-12).
+Found by S12's task review (Important 4), and numbered here before S12 merged (PP-12). Item 6
+and the mixed-directive specs were added by S13's task review (Important 3), before S13 merged.
 
-- **Layer:** op. **Files:** CopyObject's tag handling and its authorization in `internal/op` and
-  `internal/authz`, their specs; `docs/differences.md`; the registry entry S12 adds. **Cluster:**
-  no.
+- **Layer:** op. **Files:** CopyObject's tag handling and its authorization in `internal/op`,
+  `internal/s3` and `internal/authz`, their specs; `docs/differences.md`; the registry entry S12
+  adds. **Cluster:** no.
 - **Behaviour:**
   1. CopyObject reads `x-amz-tagging-directive`. REPLACE stores the request's `x-amz-tagging` as
      the destination's tags, none when it is absent. COPY, the default, copies the source's tags.
@@ -1365,6 +1366,22 @@ Found by S12's task review (Important 4), and numbered here before S12 merged (P
      differences entry says so.
   5. The in-memory store keeps the source's tags under COPY, as the RADOS driver and radosgw do.
      Today it applies a request's `x-amz-tagging` over them (found by S12's adversarial review).
+  6. A copy's s3:PutObject check carries the request-tag condition keys, and its `x-amz-tagging`
+     is validated, one that S13's `replaceTags` refuses (it does not parse, or it would be stored
+     in an encoded form) refused 400 InvalidArgument before authorization,
+     exactly when the copy stores the header's tags. Once this task serves the directive, that is
+     under `x-amz-tagging-directive: REPLACE`, whatever `x-amz-metadata-directive` says.
+     - S13 decides both by the metadata directive, the one under which a copy stores its header's
+       tags until this task: `replacesMetadata` in `internal/authz/env.go` for the keys, and
+       `replaceTags` in `internal/s3/copyobject.go` for the validation. Both follow the tagging
+       directive once the copy does.
+     - The constraint: the keys the check sees and the tags the copy stores must be one set. A
+       copy under metadata REPLACE and tagging COPY must not add keys for tags it does not store,
+       or an Allow conditioned on a tag grants a copy that keeps its source's tags. A copy under
+       metadata COPY and tagging REPLACE must add them and validate the header, or it stores tags
+       that neither the s3:PutObject check nor the parser saw.
+     - The ACL and grant keys are unchanged: a copy takes its ACL from its headers under every
+       directive.
 - **Why:** radosgw reads no `x-amz-tagging-directive` at v19.2.7 or v20.2.4. Its CopyObject takes
   the request's `x-amz-tagging` through the request attrs whatever the directive says (S12's
   registry evidence). rgw-go has no reader of the header either. Both baselines record
@@ -1375,9 +1392,14 @@ Found by S12's task review (Important 4), and numbered here before S12 merged (P
     GetObjectTagging.
   - The authorization of REPLACE under a Deny of s3:PutObjectTagging.
   - COPY's rule, as decided.
+  - Mixed directives, per release: metadata COPY with tagging REPLACE, and metadata REPLACE with
+    tagging COPY, each under a bucket policy conditioning s3:PutObject on a request tag (a Deny,
+    and an Allow as the only grant) and with an `x-amz-tagging` that `replaceTags` refuses. The keys and
+    the 400 follow the tagging directive alone, and GetObjectTagging reads back the tags the check
+    judged.
   - The three s3-tests pass on rgw-go. Each gains a known-differences line in both files, in this
     task's PR (PP-19).
-- **Depends on:** S12. **PR:** one. **Brief:** about 40 lines.
+- **Depends on:** S12. **PR:** one. **Brief:** about 50 lines.
 
 ### Task WP-32: a CompleteMultipartUpload that asks for encryption answers as the writes do
 

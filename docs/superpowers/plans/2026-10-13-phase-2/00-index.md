@@ -34,7 +34,7 @@ The set's files:
 
 | File | Unit | Tasks |
 |---|---|---|
-| `00-index.md` | this index, and the shared tasks S1 to S14 | 14 |
+| `00-index.md` | this index, and the shared tasks S1 to S16 | 16 |
 | `V-versioning.md` | the OLH protocol, versioned ops, ListObjectVersions, MFA delete | V0-V24 |
 | `L-object-lock.md` | object lock: configuration, retention, legal hold, enforcement | L1-L5b |
 | `C-lifecycle.md` | lifecycle configuration and the worker | C1-C15 |
@@ -489,9 +489,200 @@ Found by S9's implementation and task review, and numbered here before S9 merged
   registry entries and of the time-swap entry.
 - **Depends on:** S9. **PR:** one. **Brief:** about 40 lines.
 
+### Task S15: CompleteMultipartUpload under a Deny on `s3:x-amz-acl`
+
+Found by S13's implementation (concern 3) and task review (Minor 1), and numbered here before S13
+merged (PP-12).
+
+- **Layer:** authz, and under outcome (b) the multipart op. **Files:** the policy environment of
+  CompleteMultipartUpload (`internal/authz/env.go`); under outcome (b), CreateMultipartUpload's
+  record of the keys it carried (`internal/op/initmultipart.go`) and the completion's read of it;
+  their specs; `docs/differences.md`; `docs/ceph-upstream-bugs.md`. **Cluster:** no.
+- **Security boundary:** request authorization; adversarial review applies (PP-14).
+- **Why:**
+  - Under a bucket policy that denies s3:PutObject with `StringNotEquals` `s3:x-amz-acl`
+    `bucket-owner-full-control`, the Deny form of "require bucket-owner-full-control", rgw-go
+    refuses every CompleteMultipartUpload. The completion sends no ACL header, its s3:PutObject
+    check carries no `s3:x-amz-acl`, and S9 holds a Deny's negated operator on an absent key true,
+    as the IAM User Guide says Amazon does
+    ([reference_policies_elements_condition_operators.md:10](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L10)).
+    So no multipart upload completes under that policy, whatever its CreateMultipartUpload sent.
+  - radosgw completes them. `RGWCompleteMultipart::verify_permission` adds only the encryption
+    keys
+    ([rgw_op.cc:6348-6363](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6348-L6363),
+    [rgw_op.cc:7021-7036](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7021-L7036)),
+    and `Condition::eval` answers a negated operator on an absent key false
+    ([rgw_iam_policy.cc:854-869](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L854-L869),
+    [rgw_iam_policy.cc:873-889](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L873-L889);
+    the registry's "radosgw's negated condition operators are false on an absent key").
+  - Under Amazon's own recommended form, an Allow with `StringEquals` `s3:x-amz-acl`
+    `bucket-owner-full-control` as the only grant
+    ([ensure-object-ownership.md:41-67](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/ensure-object-ownership.md?plain=1#L41-L67)),
+    both gateways refuse every completion.
+  - No pinned Amazon text says whether Amazon S3 sets `s3:x-amz-acl` on a completion, for
+    example from the upload's CreateMultipartUpload. The user guide requires s3:PutObject "to
+    complete a multipart upload"
+    ([mpuoverview.md:125](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/mpuoverview.md?plain=1#L125))
+    and names no condition key there, and none of its pages that name `s3:x-amz-acl` or
+    `bucket-owner-full-control` says how a multipart upload is judged against them (read at
+    that commit). If Amazon omits the key, it refuses as rgw-go does; if it carries the
+    upload's, it completes an upload created with the ACL.
+- **Behaviour:**
+  1. **Establish Amazon's answer first:** whether Amazon S3 serves a CompleteMultipartUpload under
+     the Deny above, for an upload whose CreateMultipartUpload sent
+     `x-amz-acl: bucket-owner-full-control`, one that sent another ACL, and one that sent none.
+     The sources are pinned AWS documentation (the S3 user guide and API reference, the IAM User
+     Guide, the Service Authorization Reference), AWS knowledge-center articles cited with the
+     date they were read, and an s3-test that records Amazon's answer (one asserting the
+     completion and not marked `fails_on_aws`). One lead, which does not settle it alone:
+     [ensure-object-ownership.md:69-77](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/ensure-object-ownership.md?plain=1#L69-L77)
+     gives `aws s3 cp --acl bucket-owner-full-control` as the write that satisfies the Allow form,
+     and names PutObject in the refusal. The CLI makes a multipart upload of a file above its
+     multipart threshold; whether the page speaks for such a file is to be checked, not assumed.
+     The task records each source read and its answer. If nothing settles it, the task says so
+     and stops for the owner's ruling between (a) and (b). An answer that is neither (a) nor (b), such as completing an upload created
+     without the ACL, also goes to the owner.
+  2. **Outcome (a), refuse as now:** Amazon refuses, or the owner rules (a). It is fail-closed and
+     follows the IAM rule. The completion's environment is unchanged. The differences entry of
+     S9's absent-key rule, and S13's sentence that CompleteMultipartUpload adds no ACL key, state
+     that under a negated Deny on `s3:x-amz-acl` no multipart upload completes on rgw-go, where
+     radosgw completes it.
+  3. **Outcome (b), the upload's keys:** Amazon completes the upload created with the ACL, or the
+     owner rules (b). CreateMultipartUpload records the `s3:x-amz-acl` and `s3:x-amz-grant-*`
+     keys it was judged with, those whose headers it sent, and the completion's s3:PutObject
+     check carries them. An ACL header the completion itself sends still adds nothing, since the
+     completion does not set the ACL.
+     - The record keeps the RADOS formats byte-identical: the completed head carries exactly the
+       attrs radosgw's completion writes, and radosgw still completes an upload rgw-go created.
+       The upload stores its ACL as an encoded policy, not as the headers that made it
+       (`internal/op/initmultipart.go`), so the task shows where the record lives, or how the
+       keys are recovered, without a new attr reaching the head.
+     - An upload with no record, one that radosgw created on the same zone among them, is judged
+       as under (a): on an absent key.
+     - Whether the recorded keys reach an Allow statement's conditions, or a Deny's alone as S14's
+       added keys do, is the owner's, in the same ruling. If a Deny's alone, the Allow form above
+       still refuses every completion, as radosgw does, and the differences entry says so.
+  4. UploadPart is not changed here: both gateways judge it by its own headers, and an UploadPart
+     that does not repeat the ACL header is refused under either policy form on both. Step 1
+     records Amazon's answer for it too; one that differs becomes a numbered task (PP-12).
+- **Specs:** per release, uploads created with `bucket-owner-full-control`, with `public-read`
+  and with no ACL header, before the bucket policy is set (S13 judges a CreateMultipartUpload by
+  its own headers), each completed:
+  - under the `StringNotEquals` Deny: (a) 403 for all three; (b) 200, 403, 403;
+  - under a positive Deny, `StringEquals` `s3:x-amz-acl` `public-read`: (a) 200 for all three;
+    (b) 200, 403, 200;
+  - under the Allow form as the only grant, as the owner's ruling sets it;
+  - a completion that itself sends `x-amz-acl`, judged as one that sends none;
+  - under (b), an upload with no record judged as under (a), and a completed head whose attrs are
+    those radosgw's completion writes;
+  - the encryption keys a completion adds, unchanged;
+  - an s3-test of the completion under the Deny, where reasonable, with its pin move in this
+    task's PR (PP-19); it is the natural home for S13's review's missing `StringNotEquals` case.
+- **Exclusions and registry:** a `docs/differences.md` entry, or the lines above, for each
+  answer that differs from radosgw's; the rgw-go line of the registry's "radosgw's negated
+  condition operators are false on an absent key" names the completion's answer.
+- **Depends on:** S13. **PR:** one. **Brief:** about 60 lines.
+
+### Task S16: a Deny's typed operator over a repeated tag key
+
+Found by S13's adversarial review (outside the PR, older than it), and numbered here before S13
+merged (PP-12).
+
+- **Layer:** tags and the S3 handlers, and policy for item 3. **Files:** the tag set's parse of a
+  request (`internal/tags`); the tag reads of PutObject, CopyObject, CreateMultipartUpload and
+  PutObjectTagging in `internal/s3`; for item 3, condition evaluation
+  (`internal/policy/condition.go`); their specs; `docs/differences.md`;
+  `docs/ceph-upstream-bugs.md`. **Cluster:** no.
+- **Security boundary:** request authorization; adversarial review applies (PP-14).
+- **Why:**
+  - A Deny of s3:PutObject with `NumericGreaterThan` `s3:RequestObjectTag/level` `5` is evaded by
+    repeating the key: Squid serves `level=9&level=1` and stores level=9, and Tentacle serves
+    `level=1&level=9`, alone or after eight other tags. Each release refuses the other order.
+    It holds for PutObject on main since S12, and for CopyObject under REPLACE and
+    CreateMultipartUpload since S13 gave them the tag keys.
+  - radosgw adds every pair of `x-amz-tagging` to the environment, a repeated key as one key
+    with several values
+    ([rgw_op.cc:3970-3972](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3970-L3972),
+    [rgw_op.cc:4179-4181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4179-L4181)),
+    and its Numeric, Date, Bool, Binary and IpAddress operators compare the one value
+    `env.find` returns
+    ([rgw_iam_policy.cc:880](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L880)
+    and the typed cases from
+    [rgw_iam_policy.cc:918](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L918),
+    [rgw_iam_policy.cc:900](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L900)
+    and from
+    [rgw_iam_policy.cc:938](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L938)).
+    rgw-go's `policy.Env.Find` reproduces which value each release reads (`docs/differences.md`,
+    "A typed condition on a repeated key reads the value upstream's builds read").
+  - radosgw takes a repeated key on every write: `check_and_add_tag` refuses only a full set,
+    an empty key and an overlong key or value, and the set is a `std::multimap`
+    ([rgw_tag.cc:23-35](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.cc#L23-L35),
+    [rgw_tag.cc:23-35](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.cc#L23-L35);
+    [rgw_tag.h:13-16](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.h#L13-L16),
+    [rgw_tag.h:13-16](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.h#L13-L16)).
+    PutObjectTagging's body goes through the same check
+    ([rgw_tag_s3.cc:32-53](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag_s3.cc#L32-L53),
+    [rgw_tag_s3.cc:32-53](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag_s3.cc#L32-L53)).
+    rgw-go's `tags.ParseHeader` keeps a repeated key too.
+  - Amazon S3 refuses it. Its user guide: "Tags that are associated with an object must have
+    unique tag keys"
+    ([object-tagging.md:6](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/object-tagging.md?plain=1#L6)).
+    Its PutObjectTagging reference names the error, `InvalidTag`, "if the tag did not pass input
+    validation", pointing to that page
+    ([service-2.json:1307](https://github.com/boto/botocore/blob/6411f5c81a991cc868f29eddf1a8eb0beb9da37d/botocore/data/s3/2006-03-01/service-2.json#L1307),
+    botocore 1.35.0). No pinned text names the error a header write gives.
+  - The registry's "radosgw evaluates a repeated x-amz-tagging key as one multivalued
+    s3:RequestObjectTag condition key" covers the negated string operators only, not the typed
+    read.
+- **Behaviour:**
+  1. **Item 1 applies: refuse the repeated key.** Refusing is Amazon's documented answer, so a
+     tag set that names a key twice is refused on every write that takes one, before the
+     request is authorized:
+     - PutObject's `x-amz-tagging`;
+     - CopyObject's, exactly when the copy stores the header's tags (`replaceTags` today, the
+       tagging directive once WP-31 serves it);
+     - CreateMultipartUpload's. It parses its header once authorized today, as radosgw does
+       (S13's report); the refusal moves ahead of the check, so no request passes a check that
+       read one value of the key;
+     - PutObjectTagging's body. It adds no `s3:RequestObjectTag` key in either gateway, so the
+       evasion does not reach it, but Amazon's rule is about the set an object holds.
+     Each op answers as it answers a tag set that fails `check_and_add_tag` today: 400
+     InvalidArgument on the header writes, as PutObject refuses an eleven-tag header, and 400
+     InvalidTag on PutObjectTagging, as the reference names. A later write that takes a tag set,
+     such as the POST upload's `tagging` field, refuses it the same way.
+     Whether Amazon counts keys that differ only in case as one is taken from Amazon's text at
+     implementation. If no text decides, they stay distinct, as both gateways hold them today,
+     and S10's Deny reading covers them.
+  2. **Item 2, holding a Deny's typed operator over every value of a request key, does not
+     apply** to the request's tags: once item 1 refuses a repeated key, no `s3:RequestObjectTag`
+     key reaches the environment with two values.
+  3. A repeated key still reaches the environment from a tag set radosgw stored on the same
+     zone, through `s3:ExistingObjectTag/<key>`, since the decode of a stored set must not refuse
+     it. There a Deny's typed operator holds if any value of the key makes it hold, which fails
+     closed. An Allow keeps radosgw's read, as S9 keeps its evaluation, until the owner decides.
+- **Specs:** per release:
+  - under a bucket Deny of s3:PutObject with `NumericGreaterThan` `s3:RequestObjectTag/level`
+    `5`: `level=9&level=1`, `level=1&level=9` and the latter after eight other tags, on PutObject,
+    CopyObject under REPLACE and CreateMultipartUpload, each refused 400 with nothing stored and
+    no upload left; `level=9` refused 403 and `level=1` served, unchanged;
+  - PutObjectTagging with a body that repeats a key: 400 InvalidTag, the object's tags unchanged;
+  - a copy under COPY with such a header: as before, since it does not store the header;
+  - an object whose stored tag set repeats `level`, under a Deny of s3:GetObject with
+    `NumericGreaterThan` `s3:ExistingObjectTag/level` `5`: refused for either order of the
+    values; under an Allow so conditioned, unchanged;
+  - an s3-test of the header writes and of PutObjectTagging, with its pin move in this task's
+    PR (PP-19).
+- **Exclusions and registry:** a `docs/differences.md` entry for the refusal, which radosgw does
+  not make, and for item 3; the entry "A typed condition on a repeated key reads the value
+  upstream's builds read" drops the request's tags from the keys that repeat. A
+  `docs/ceph-upstream-bugs.md` entry for the typed read of a repeated key, mechanism only,
+  possibly security-relevant and sent to rgw-bug-reproduction (PP-4); the rgw-go line of the
+  repeated-key entry above.
+- **Depends on:** S13. **PR:** one. **Brief:** about 55 lines.
+
 ## Order
 
-1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, S6 once V2 lands, S7 once V10, BC-17, BC-23, BC-10 and BC-28a land, S8 and S11 at once, S9 and S10 once L7 lands, S12 once S8 lands, S13 once S12 lands, and S14 once S9 lands.
+1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, S6 once V2 lands, S7 once V10, BC-17, BC-23, BC-10 and BC-28a land, S8 and S11 at once, S9 and S10 once L7 lands, S12 once S8 lands, S13 once S12 lands, S14 once S9 lands, and S15 and S16 once S13 lands.
 2. **Then the units in parallel**, each in its own file's waves. V's foundation (V0 to V3b) comes first among the units, because L and C consume its OLH seams. B and WP start with S2, and the T and SM units start at once. Within the waves:
    - The cluster tasks of every unit run one at a time.
    - The recording tasks, which append to the parity ledgers, land one at a time through the controller.

@@ -68,6 +68,8 @@ flowchart LR
   t_S12["S12"]
   t_S13["S13"]
   t_S14["S14"]
+  t_S15["S15"]
+  t_S16["S16"]
   t_V2["V2"]:::ext
   t_V10["V10"]:::ext
   t_BC_10["BC-10"]:::ext
@@ -88,6 +90,8 @@ flowchart LR
   t_S12 --> t_WP_31
   t_S12 --> t_S13
   t_S9 --> t_S14
+  t_S13 --> t_S15
+  t_S13 --> t_S16
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_S3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s3-one-aws-correct-ispublic" "S3: one AWS-correct IsPublic"
@@ -102,6 +106,8 @@ flowchart LR
   click t_S12 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s12-the-object-writes-authorize-the-acl-and-tags-they-set-as-amazon-s3-does" "S12: the object writes authorize the ACL and tags they set as Amazon S3 does"
   click t_S13 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s13-copyobject-and-createmultipartupload-evaluate-s3putobject-with-the-acl-and-tag-condition-keys" "S13: CopyObject and CreateMultipartUpload evaluate s3:PutObject with the ACL and tag condition keys"
   click t_S14 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s14-a-deny-reads-the-request-context-amazon-s3-builds" "S14: a Deny reads the request context Amazon S3 builds"
+  click t_S15 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s15-completemultipartupload-under-a-deny-on-s3x-amz-acl" "S15: CompleteMultipartUpload under a Deny on `s3:x-amz-acl`"
+  click t_S16 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s16-a-denys-typed-operator-over-a-repeated-tag-key" "S16: a Deny's typed operator over a repeated tag key"
   click t_V2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v2-meta-olh-head-types-and-bucket-helpers" "V2: meta OLH head types and bucket helpers"
   click t_V10 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v10-op-and-s3-putbucketversioning-and-getbucketversioning" "V10: op and s3, PutBucketVersioning and GetBucketVersioning"
   click t_BC_10 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-10-website-semantics-and-xml" "BC-10: Website semantics and XML"
@@ -126,6 +132,8 @@ flowchart LR
 - [S12](00-index.md#task-s12-the-object-writes-authorize-the-acl-and-tags-they-set-as-amazon-s3-does): the object writes authorize the ACL and tags they set as Amazon S3 does
 - [S13](00-index.md#task-s13-copyobject-and-createmultipartupload-evaluate-s3putobject-with-the-acl-and-tag-condition-keys): CopyObject and CreateMultipartUpload evaluate s3:PutObject with the ACL and tag condition keys
 - [S14](00-index.md#task-s14-a-deny-reads-the-request-context-amazon-s3-builds): a Deny reads the request context Amazon S3 builds
+- [S15](00-index.md#task-s15-completemultipartupload-under-a-deny-on-s3x-amz-acl): CompleteMultipartUpload under a Deny on `s3:x-amz-acl`
+- [S16](00-index.md#task-s16-a-denys-typed-operator-over-a-repeated-tag-key): a Deny's typed operator over a repeated tag key
 
 ### F: floor 19.2.7
 
