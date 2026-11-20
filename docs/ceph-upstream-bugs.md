@@ -537,6 +537,10 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw reads PutObjectRetention's document before it sends 100 Continue](#radosgw-reads-putobjectretentions-document-before-it-sends-100-continue) | pending | pending | ✓ |
 | [radosgw's negated condition operators are false on an absent key](#radosgws-negated-condition-operators-are-false-on-an-absent-key) | pending | pending | ✓ |
 | [radosgw matches condition key names case-sensitively](#radosgw-matches-condition-key-names-case-sensitively) | pending | pending | ✓ |
+| [radosgw evaluates a repeated x-amz-tagging key as one multivalued s3:RequestObjectTag condition key](#radosgw-evaluates-a-repeated-x-amz-tagging-key-as-one-multivalued-s3requestobjecttag-condition-key) | pending | pending | ✓ |
+| [radosgw's policy patterns are fnmatch patterns](#radosgws-policy-patterns-are-fnmatch-patterns) | pending | pending | ✓ |
+| [radosgw's date conditions read no UTC offset](#radosgws-date-conditions-read-no-utc-offset) | pending | pending | ✓ |
+| [radosgw's base64 decoder takes the URL-safe alphabet and ignores what follows the padding](#radosgws-base64-decoder-takes-the-url-safe-alphabet-and-ignores-what-follows-the-padding) | none | none | ✓ |
 | [radosgw-admin mfa check names the serial number when --totp-pin is missing](#radosgw-admin-mfa-check-names-the-serial-number-when---totp-pin-is-missing) | pending | pending | ✓ |
 | [radosgw skips a bucket's default encryption for a write that sends an empty encryption header](#radosgw-skips-a-buckets-default-encryption-for-a-write-that-sends-an-empty-encryption-header) | [#79506](https://tracker.ceph.com/issues/79506), [#80258](https://tracker.ceph.com/issues/80258), [#80260](https://tracker.ceph.com/issues/80260) | [ceph/ceph#71073](https://github.com/ceph/ceph/pull/71073), [ceph/ceph#71534](https://github.com/ceph/ceph/pull/71534), [ceph/ceph#71535](https://github.com/ceph/ceph/pull/71535) | ✓ |
 | [radosgw's CopyObject ignores x-amz-tagging-directive](#radosgws-copyobject-ignores-x-amz-tagging-directive) | pending | pending | ✓ |
@@ -6260,7 +6264,10 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6, v20.2.4 and main (8aa24c51928, 2026-10-30); older
   releases not checked.
 - **rgw-go:** reproduces it: `internal/authz/env.go` sets both keys as
-  radosgw does, so `docs/differences.md` records no difference.
+  radosgw does. `docs/differences.md` records what follows from it in a
+  statement that denies and names `aws:EpochTime` in another ASCII case: a
+  numeric operator holds there, the key's value being no number ("A Deny's
+  condition key names match whatever their case").
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-12; awaiting response.
 - **Found:** phase 1 planning of unit Z, recorded by unit Z's Task 12,
@@ -35159,12 +35166,276 @@ Every new entry adds its row to this table, in document order.
     ([reference_policies_elements_condition.md:11](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition.md#L11)
     in the IAM User Guide's archived source).
 - **Releases:** v19.2.7 and v20.2.4.
-- **rgw-go:** reproduces it: `policy.Env` holds each key under its exact
-  string (`internal/policy/env.go`), until plan task S10 lands.
+- **rgw-go:** reproduces it in a statement that allows, whose condition
+  finds a key only under its exact string, as radosgw's does. In a
+  statement that denies, the condition holds where that finding makes it
+  hold, or where Amazon S3's answer for a key the request holds under the
+  same name in another ASCII case, each such key taken alone, makes it
+  hold; it also holds where the IAM User Guide gives no answer for one of
+  those keys (`policy.Condition.EvalFor`, `internal/policy/condition.go`;
+  `docs/differences.md`, "A Deny's condition key names match whatever their
+  case").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task L7's adversarial review, 2026-11-14, judging
   how a policy can name an object-lock condition key; derived from the
   source, not reproduced.
+
+## radosgw evaluates a repeated x-amz-tagging key as one multivalued s3:RequestObjectTag condition key
+
+- **Kind:** defect, possibly security-relevant. Unreproduced: derived from
+  the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWObjTags` holds its tags in a `std::multimap`
+    ([rgw_tag.h:13-16](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.h#L13-L16),
+    [rgw_tag.h:13-16](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.h#L13-L16)),
+    and `set_from_string` adds every pair of the `x-amz-tagging` header, a
+    repeated key included
+    ([rgw_tag.cc:36-57](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.cc#L36-L57),
+    [rgw_tag.cc:36-57](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.cc#L36-L57)).
+    It is the sink the entry "[radosgw's lifecycle tag filter counts an
+    object's repeated tag key toward the rule's other
+    tags](#radosgws-lifecycle-tag-filter-counts-an-objects-repeated-tag-key-toward-the-rules-other-tags)"
+    names, which also records that S3 refuses a tag set that repeats a key.
+  - radosgw stores the repeated key with the object too: `set_from_string`
+    adds every pair to the `std::multimap` with no check for a key it
+    already holds
+    ([rgw_tag.cc:14-57](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.cc#L14-L57),
+    [rgw_tag.cc:14-57](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.cc#L14-L57);
+    [rgw_tag.h:13](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.h#L13),
+    [rgw_tag.h:13](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.h#L13)),
+    and the set is encoded whole
+    ([rgw_tag.h:26-30](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.h#L26-L30),
+    [rgw_tag.h:26-30](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.h#L26-L30)).
+  - PutObject adds each pair to the request's environment as
+    `s3:RequestObjectTag/<key>`, so a repeated key becomes one condition
+    key with several values
+    ([rgw_op.cc:3970-3972](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3970-L3972),
+    [rgw_op.cc:4179-4181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4179-L4181)).
+  - `StringNotEquals` and the other negated string and ARN operators are
+    `multimap_none` on v20.2.4, false when any value of the key matches a
+    condition value
+    ([rgw_iam_policy.cc:910-912](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L910-L912),
+    [rgw_iam_policy.h:514-525](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L514-L525)),
+    so on Tentacle such an operator on `s3:RequestObjectTag/<key>` is false
+    for a request that repeats the key with one value that matches and
+    another that does not. v19.2.7's is `orrible` over the negated
+    comparison, true when any pair differs
+    ([rgw_iam_policy.cc:890-892](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L890-L892),
+    [rgw_iam_policy.h:482-493](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L482-L493)),
+    so Squid holds it for the same request ("[Squid's negated condition
+    operators hold when any pair differs, and its Null ignores its
+    values](#squids-negated-condition-operators-hold-when-any-pair-differs-and-its-null-ignores-its-values)").
+- **Releases:** v20.2.4; v19.2.7 differs as above.
+- **rgw-go:** reproduces it: `tags.ParseHeader` keeps a repeated key
+  (`internal/tags/tags.go`), and `requestTagKeys` adds each pair
+  (`internal/authz/env.go`), so on Tentacle a negated string operator on
+  the key as written is false for such a request, in an Allow and in a
+  Deny. On Squid, for the key as written, it holds, as Squid's radosgw's
+  does. In a Deny on the key in another ASCII case, which the IAM User Guide
+  gives no answer for there, it holds on both releases (`docs/differences.md`,
+  "A Deny's condition key names match whatever their case").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task S10's adversarial review, 2026-11-19, probing a
+  request tag key repeated in another case; derived from the source, not
+  reproduced on a cluster.
+
+## radosgw's policy patterns are fnmatch patterns
+
+- **Kind:** defect, possibly security-relevant. Unreproduced: derived from
+  the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `match_wildcards` is `fnmatch(3)` with no flags, or `FNM_CASEFOLD`
+    ([rgw_string.cc:7-22](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_string.cc#L7-L22),
+    [rgw_string.cc:7-22](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_string.cc#L7-L22)).
+    fnmatch reads a complete bracket expression, `[` with a matching `]`,
+    as a set of characters, and `\` as an escape of the character after it;
+    an unpaired `[` or `]` is itself.
+  - `StringLike`, `StringNotLike` and their `ForAnyValue` and
+    `ForAllValues` forms compare through `string_like`, which is
+    `match_wildcards`
+    ([rgw_iam_policy.h:450-455](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L450-L455),
+    [rgw_iam_policy.h:469-474](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L469-L474)).
+    The ARN operators compare through `arn_like`, which is `match_policy`
+    ([rgw_iam_policy.cc:845-852](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L845-L852),
+    [rgw_iam_policy.cc:864-871](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L864-L871)),
+    which hands `match_wildcards` the text at each colon-delimited
+    component (how much of it is the entry "[radosgw's ARN conditions
+    compare each ARN component with the text after
+    it](#radosgws-arn-conditions-compare-each-arn-component-with-the-text-after-it)")
+    ([rgw_common.cc:2167-2192](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2167-L2192),
+    [rgw_common.cc:2230-2255](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2230-L2255)).
+    A statement's `Action` names go through `match_policy` as well
+    ([rgw_iam_policy.cc:638](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L638),
+    [rgw_iam_policy.cc:651](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L651)),
+    and its `Resource` and `NotResource` through `ARN::match`, which
+    compares the region, account and resource with `match_wildcards`
+    ([rgw_arn.cc:319-344](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_arn.cc#L319-L344),
+    [rgw_arn.cc:319-344](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_arn.cc#L319-L344)).
+  - The IAM User Guide names two wildcards for these operators and no
+    other pattern syntax: "The values can include multi-character match
+    wildcards (\*) and single-character match wildcards (?) anywhere in the
+    string"
+    ([reference_policies_elements_condition_operators.md:36](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L36),
+    and the ARN operators per component, [:290](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L290)).
+    So a pattern that holds a complete bracket expression or a `\` does not
+    match the text it spells, and matches other text: `[a]` matches `a` and
+    not `[a]`, and `a\b` matches `ab` and not `a\b`. A pattern whose `[`
+    or `]` is unpaired matches the text it spells.
+  - It is the same function the entry "[radosgw's policy match cuts an
+    object name at a NUL that its RADOS name
+    keeps](#radosgws-policy-match-cuts-an-object-name-at-a-nul-that-its-rados-name-keeps)"
+    names.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it wherever it evaluates as radosgw does:
+  `MatchWildcards` and `MatchPolicy` are fnmatch's
+  (`internal/policy/match.go`), for every `Allow`, `Action`, `Resource` and
+  `NotResource`, and for a Deny's condition on a key the request holds as
+  written. Amazon S3's answer, which a Deny takes for a key the request
+  holds in another ASCII case than the condition's where the IAM User Guide
+  gives one, matches with `*` and `?` alone
+  (`amazonLike`, `internal/policy/condition.go`; `docs/differences.md`, "A
+  Deny's condition key names match whatever their case").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task S10's adversarial review, its first re-run,
+  2026-11-19, comparing radosgw's matcher with the IAM User Guide's
+  wildcards; derived from the source, not reproduced on a cluster.
+
+## radosgw's date conditions read no UTC offset
+
+- **Kind:** defect, possibly security-relevant, conditional on a date
+  condition meeting a date written with a UTC offset. Unreproduced: derived
+  from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's;
+  `iso_8601.cc` is the same at both tags.
+  - `Condition::as_date` converts a date condition's values and the
+    environment's value: a value `std::stod` converts whole is a count of
+    seconds, and any other goes to `from_iso_8601`
+    ([rgw_iam_policy.h:384-401](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L384-L401),
+    [rgw_iam_policy.h:403-420](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L403-L420)).
+  - `from_iso_8601` ends a time only at a `Z` that ends the string
+    (`time_end`,
+    [iso_8601.cc:74-78](https://github.com/ceph/ceph/blob/v19.2.7/src/common/iso_8601.cc#L74-L78),
+    [iso_8601.cc:74-78](https://github.com/ceph/ceph/blob/v20.2.4/src/common/iso_8601.cc#L74-L78)).
+    After the hour, the minute and the second it takes that `Z` or the next
+    field's delimiter, and after a digit of the fraction that `Z` or
+    another digit, and it converts nothing when it meets any other
+    character
+    ([iso_8601.cc:120-151](https://github.com/ceph/ceph/blob/v19.2.7/src/common/iso_8601.cc#L120-L151),
+    [iso_8601.cc:120-151](https://github.com/ceph/ceph/blob/v20.2.4/src/common/iso_8601.cc#L120-L151)),
+    so it converts no date and time that ends in `+hh:mm` or `-hh:mm`.
+  - A date operator is false when the environment's value does not
+    convert, and leaves out a condition value that does not (`shortible`,
+    [rgw_iam_policy.h:495-514](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L495-L514);
+    `typed_any` and `typed_none`,
+    [rgw_iam_policy.h:527-567](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L527-L567);
+    the operators,
+    [rgw_iam_policy.cc:940-959](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L940-L959),
+    [rgw_iam_policy.cc:961-979](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L961-L979)).
+    So every date operator, `DateNotEquals` included, is false over a key
+    whose value is written with an offset, and a condition value written
+    with one takes no part in the comparison: where it is the only value,
+    v19.2.7's operators are all false and, of v20.2.4's, `DateNotEquals`
+    alone holds.
+  - The IAM User Guide takes "one of the W3C implementations of the ISO
+    8601 date formats" for a date condition
+    ([reference_policies_elements_condition_operators.md:131](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L131)
+    in its archived source), and its policy checks name one with an offset,
+    `YYYY-MM-DDThh:mm:ssTZD (1997-07-16T19:20:30+01:00)`
+    ([access-analyzer-reference-policy-checks.md:1963](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/access-analyzer-reference-policy-checks.md?plain=1#L1963)).
+    The W3C note those forms come from ends every date and time in a time
+    zone designator, "Z or +hh:mm or -hh:mm", the offset being the local
+    time's distance ahead of or behind UTC
+    ([W3C-NOTE-datetime.html:141-166](https://github.com/exelearning/iteexe/blob/3f4452780a4b2cfd2bc9d9152e92dfd86d2ff0cc/exe/webui/docs/W3C-NOTE-datetime.html#L141-L166),
+    [:175-186](https://github.com/exelearning/iteexe/blob/3f4452780a4b2cfd2bc9d9152e92dfd86d2ff0cc/exe/webui/docs/W3C-NOTE-datetime.html#L175-L186)
+    in eXeLearning's copy of the note).
+  - `from_iso_8601` is the function the entries "[radosgw's date conditions
+    wrap past 2554 and before
+    1970](#radosgws-date-conditions-wrap-past-2554-and-before-1970)",
+    "[radosgw's object-lock dates wrap past
+    2554](#radosgws-object-lock-dates-wrap-past-2554)" and "[radosgw's
+    lifecycle Date wraps past 2554 and expires at
+    once](#radosgws-lifecycle-date-wraps-past-2554-and-expires-at-once)"
+    name for its arithmetic; this one is its grammar.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it wherever it evaluates as radosgw does:
+  `policy.AsDate` converts through `iso8601.ParseWrapped`, which reads the
+  forms `from_iso_8601` reads (`internal/policy/convert.go`,
+  `internal/iso8601/iso8601.go`), for every Allow and for a Deny's condition
+  on a key the request holds as written. Amazon S3's answer, which a Deny
+  takes for a key the request holds in another ASCII case than the
+  condition's, reads a date and time with an offset as the instant it
+  names (`internal/policy/condition.go`; `docs/differences.md`, "A Deny's
+  condition key names match whatever their case").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task S10's adversarial review, its third re-run,
+  2026-11-19, comparing the date forms radosgw converts with the W3C
+  forms the IAM User Guide names; derived from the source, not reproduced
+  on a cluster.
+
+## radosgw's base64 decoder takes the URL-safe alphabet and ignores what follows the padding
+
+- **Kind:** defect, not security-relevant: `BinaryEquals` compares the
+  decoded bytes of both sides, so two encodings of the same bytes matching
+  is the data being equal. Unreproduced: derived from the source. The other
+  callers of `decode_base64` share the decoder. A survey of them finds none
+  where the lenience changes an outcome beyond accepting a malformed value.
+  One compatibility note: a service that checks a client's base64 POST
+  policy with a stricter or different decoder, and then signs that same
+  string, may see radosgw enforce a different document from the one it
+  approved; the signature still covers the raw string.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's; `armor.c`
+  is the same at both tags.
+  - `BinaryEquals` converts the environment's value and each condition
+    value with `Condition::as_binary` and compares what they convert to
+    ([rgw_iam_policy.cc:966-968](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L966-L968),
+    [rgw_iam_policy.cc:986-988](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L986-L988)).
+    `as_binary` is `bufferlist::decode_base64`
+    ([rgw_iam_policy.h:422-438](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L422-L438),
+    [rgw_iam_policy.h:441-457](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L441-L457)),
+    which hands the whole value to `ceph_unarmor`
+    ([buffer.cc:1634-1637](https://github.com/ceph/ceph/blob/v19.2.7/src/common/buffer.cc#L1634-L1637),
+    [buffer.cc:1703-1706](https://github.com/ceph/ceph/blob/v20.2.4/src/common/buffer.cc#L1703-L1706)).
+  - `decode_bits` gives one value to two characters, 62 to `+` and to `-`
+    and 63 to `/` and to `_`
+    ([armor.c:19-34](https://github.com/ceph/ceph/blob/v19.2.7/src/common/armor.c#L19-L34),
+    [armor.c:19-34](https://github.com/ceph/ceph/blob/v20.2.4/src/common/armor.c#L19-L34)),
+    so `ceph_unarmor` reads the standard alphabet, the URL-safe one and a
+    mix of the two alike.
+  - `ceph_unarmor` reads the value in groups of four characters and returns
+    at the first group whose third or fourth character is `=`
+    ([armor.c:99-131](https://github.com/ceph/ceph/blob/v19.2.7/src/common/armor.c#L99-L131),
+    [armor.c:99-131](https://github.com/ceph/ceph/blob/v20.2.4/src/common/armor.c#L99-L131)),
+    so it reads nothing that follows the padding, base64 or not.
+    `decode_bits` gives `=` the value 0 wherever it stands, so a group's
+    first or second character may be one too. It skips a line break before
+    a group, and refuses a value whose last group is short of four
+    characters.
+  - So values that differ as strings convert to the same bytes, among them
+    values that a decoder of the standard alphabet refuses. The IAM User
+    Guide describes the operator's value as "a base-64 encoded
+    representation of the binary value in the policy"
+    ([reference_policies_elements_condition_operators.md:210](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L210)
+    in its archived source).
+  - This decoder is not `rgw::from_base64`, whose own defect is the entry
+    "[radosgw's from_base64 reads before an all-'='
+    input](#radosgws-from_base64-reads-before-an-all--input)". `ceph_unarmor`
+    decodes for every caller of `bufferlist::decode_base64`; this entry
+    records the condition operator, where rgw-go's work met it.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it wherever it evaluates as radosgw does:
+  `policy.AsBinary` is `ceph_unarmor` (`internal/policy/convert.go`), for
+  every Allow and for a Deny's condition on a key the request holds as
+  written. For a key the request holds in another ASCII case than the
+  condition's, a Deny's `BinaryEquals` holds wherever any reading of the
+  two values finds them equal, this decoder's among them
+  (`amazonBinaryEquals`, `internal/policy/condition.go`;
+  `docs/differences.md`, "A Deny's condition key names match whatever their
+  case").
+- **Upstream:** none.
+- **Found:** phase 2 task S10's adversarial review, its fifth re-run,
+  2026-11-20, comparing the decoder rgw-go gave Amazon S3's reading of
+  `BinaryEquals` with radosgw's; derived from the source, not reproduced on
+  a cluster.
 
 ## radosgw-admin mfa check names the serial number when --totp-pin is missing
 

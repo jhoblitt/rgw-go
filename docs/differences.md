@@ -6798,11 +6798,13 @@ rgw-go does the following.
   key](ceph-upstream-bugs.md#radosgws-negated-condition-operators-are-false-on-an-absent-key)").
   A Deny statement's condition takes Amazon S3's answer as well ("A Deny's
   condition holds where Amazon S3's evaluation or radosgw's holds", below).
-  A key is found only under the case it is written in here, as radosgw
-  finds it, where AWS takes key names in any case, so a condition on
-  `S3:Object-Lock-Mode` finds no key (docs/ceph-upstream-bugs.md,
-  "[radosgw matches condition key names
-  case-sensitively](ceph-upstream-bugs.md#radosgw-matches-condition-key-names-case-sensitively)").
+  An Allow statement's condition finds a key only under the case it is
+  written in here, as radosgw finds it, where AWS takes key names in any
+  case, so its condition on `S3:Object-Lock-Mode` finds no key
+  (docs/ceph-upstream-bugs.md, "[radosgw matches condition key names
+  case-sensitively](ceph-upstream-bugs.md#radosgw-matches-condition-key-names-case-sensitively)");
+  a Deny statement's finds it in any case ("A Deny's condition key names
+  match whatever their case", below).
   On Squid, `Null` ignores its value, as Squid's radosgw does: it is true
   when the key is absent and false when it is present, whether the
   condition gives `true` or `false` (docs/ceph-upstream-bugs.md, "[Squid's
@@ -6914,41 +6916,43 @@ rgw-go does the following.
   rgw-go evaluates every condition of a statement that denies so that it
   holds where either evaluation holds, in bucket and identity policies
   alike (`policy.Statement.Eval`, `policy.Condition.EvalFor`): a negated
-  operator holds on a key the request lacks, on both releases; on Squid a
-  `Null` holds when the key is absent or when its values say so as Amazon
-  S3's do; and a string or ARN operator, negated, positive or `ForAllValues`,
-  whose values name policy variables holds where Amazon S3's answer over the
-  values with their variables replaced does, which on Squid reaches what its
-  `orrible` leaves false. The replacement reads `${key}` and `${key,
-  'default'}`, which takes the default unless the request has exactly one
-  value for the key ("To add a default value to a variable, surround the
-  default value with single quotes (' '), and separate the variable text and
-  the default value with a comma and space (, )",
+  operator holds on a key the request lacks in every ASCII case, on both
+  releases; on Squid a `Null` holds when the key is absent or when its values
+  say so as Amazon S3's do; and a string or ARN operator, negated, positive
+  or `ForAllValues`, whose values name policy variables holds where Amazon
+  S3's answer over the values with their variables replaced does, which on
+  Squid reaches what its `orrible` leaves false. The replacement reads
+  `${key}` and `${key, 'default'}`, which takes the default unless the
+  request has exactly one value for the key ("To add a default value to
+  a variable, surround the default value with single quotes (' '), and
+  separate the variable text and the default value with a comma and
+  space (, )",
   [reference_policies_variables.md:305](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_variables.md?plain=1#L305)).
   It finds the variable's key whatever its ASCII case, and takes a key the
   request holds under several names that differ only in case, as one holding
-  several values, for no value, where the condition's own key is found in the
-  case written, as radosgw finds it, until condition key names fold case in a
-  Deny. A value with `${*}`, `${?}` or `${$}`, which stand for a character
-  that the matching cannot express, holds the operator, whichever it is, for
-  every request whose key is present, so that such a Deny refuses where Amazon
-  S3 may serve. The typed operators take no variable, as radosgw's do, though
-  the IAM User Guide's archived operators page lets the Boolean operator take
-  one
+  several values, for no value; the condition's own key folds case too ("A
+  Deny's condition key names match whatever their case", below). A value
+  with `${*}`, `${?}` or `${$}`, which stand for a character that the
+  matching cannot express, holds the operator, whichever it is, for every
+  request whose key is present, so that such a Deny refuses where Amazon S3
+  may serve. The typed operators take no variable, as radosgw's do, though
+  the IAM User Guide's archived operators page lets the Boolean operator
+  take one
   ([reference_policies_elements_condition_operators.md:206](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L206));
-  an empty value list, a typed negated operator none of whose values converts
-  and one whose key value does not keep radosgw's answer. So a Deny whose
-  condition is
-  `"Null": {"aws:Referer": "false"}` refuses a request that sends a Referer
-  on both releases, where Squid's radosgw serves it, and on Squid refuses one
-  that sends none too, where Amazon S3 serves it and Squid's radosgw refuses
-  it. The s3-test `test_bucket_policy_deny_stringnotlike_key_absent` checks
-  the first rule and `test_bucket_policy_deny_null_false_key_present` the
-  Null one. A key the request holds is evaluated as radosgw evaluates it, in
-  either effect, except where a condition value names a policy variable, and
-  so are the `IfExists` and `ForAllValues` forms on an absent one, which
-  hold on both evaluations. A statement that names no Effect counts as a
-  Deny, as radosgw's does, so it takes this rule.
+  an empty value list, a typed negated operator none of whose values
+  converts and one whose key value does not keep radosgw's answer. So a
+  Deny whose condition is `"Null": {"aws:Referer": "false"}` refuses a
+  request that sends a Referer on both releases, where Squid's radosgw
+  serves it, and on Squid refuses one that sends none too, where Amazon S3
+  serves it and Squid's radosgw refuses it. The s3-test
+  `test_bucket_policy_deny_stringnotlike_key_absent` checks the first rule
+  and `test_bucket_policy_deny_null_false_key_present` the Null one. A key
+  the request holds is evaluated as radosgw evaluates it, in either effect,
+  except where a condition value names a policy variable or, in a Deny, the
+  request holds the key in another case, and so are the `IfExists` and
+  `ForAllValues` forms on an absent one, which hold on both evaluations. A
+  statement that names no Effect counts as a Deny, as radosgw's does, so it
+  takes this rule.
 
   A statement that allows keeps radosgw's evaluation of every condition:
   Amazon S3's answer would grant a request that a radosgw serving the same
@@ -6960,7 +6964,7 @@ rgw-go does the following.
   is absent from every request's environment, so the operator holds for each.
   rgw-go sets no key radosgw does not set, but for the object-lock keys ("A
   lock a request sets is evaluated with Amazon S3's object-lock condition
-  keys"). A key it does not set is one of three kinds. Keys of AWS
+  keys"). A key it does not set is one of two kinds. Keys of AWS
   infrastructure that an on-premises gateway has no value for, among them
   the VPC, organization, MFA, service-chain and EC2-instance keys, which
   Amazon S3 leaves absent too for a request that does not come through
@@ -6971,10 +6975,255 @@ rgw-go does the following.
   (docs/ceph-upstream-bugs.md, "[radosgw sets few of the condition keys
   Amazon S3 sets on S3
   requests](ceph-upstream-bugs.md#radosgw-sets-few-of-the-condition-keys-amazon-s3-sets-on-s3-requests)";
-  plan task S14). And a key spelled in another case than rgw-go sets it,
-  which finds no key until condition key names fold case in a Deny
+  plan task S14). A key spelled in another case than rgw-go sets it is
+  found, and the Deny then holds where Amazon S3's answer over the key's
+  values holds, and where the IAM User Guide gives Amazon S3 no answer ("A
+  Deny's condition key names match whatever their case", below).
+- **A Deny's condition key names match whatever their case.** radosgw keeps
+  a condition's key as the policy writes it
+  ([rgw_iam_policy.cc:477-483](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L477-L483),
+  [rgw_iam_policy.cc:487-493](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L487-L493))
+  and finds it in the request's environment, a
+  `std::unordered_multimap<std::string, std::string>` whose keys compare
+  byte for byte
+  ([rgw_iam_policy.h:326](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L326),
+  [rgw_iam_policy.h:345](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L345)),
+  so a condition on `AWS:SourceIP` finds no `aws:SourceIp`
   (docs/ceph-upstream-bugs.md, "[radosgw matches condition key names
   case-sensitively](ceph-upstream-bugs.md#radosgw-matches-condition-key-names-case-sensitively)").
+  AWS takes a key's name in any case: "Condition key *names* are not
+  case-sensitive. For example, including the `aws:SourceIP` condition key
+  is equivalent to testing for `AWS:SourceIp`."
+  ([reference_policies_elements_condition.md:11](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition.md?plain=1#L11)
+  in the IAM User Guide's archived source; the live page,
+  https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements_condition.html,
+  read 2026-11-19, says the same of "Context key names").
+
+  In a statement that denies, rgw-go's condition holds where any one of
+  these holds (`policy.Condition.EvalFor`):
+
+  - The key as the policy writes it. Where the request holds that spelling,
+    this is the Deny's whole evaluation of it ("A Deny's condition holds
+    where Amazon S3's evaluation or radosgw's holds", above), with radosgw's
+    matcher and arithmetic. Where the request holds the key only in other
+    spellings, it is radosgw's answer for a key it does not find: true for
+    an `IfExists` form, a `ForAllValues` operator, `Null` with `true`, and
+    on Squid `Null` with `false`.
+  - Each other spelling the request holds, one that differs from the
+    policy's in ASCII case alone, taken alone: Amazon S3's answer for that
+    key, or true where the IAM User Guide gives Amazon S3 no answer for it.
+
+  radosgw finds no key under another spelling, so its reading of that key's
+  values takes no part. Only the name folds: each operator keeps its own
+  rule for the values, so `StringEquals` still compares them byte for byte.
+  The absent-key rule of the entry above applies only when the request holds
+  the key in no ASCII case.
+
+  Amazon S3's answer is the IAM User Guide's. It matches a `Like` or ARN
+  pattern as the guide describes, `*` for any run of characters, none
+  included, and `?` for one: "The values can include multi-character match
+  wildcards (\*) and single-character match wildcards (?) anywhere in the
+  string"
+  ([reference_policies_elements_condition_operators.md:36](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L36)),
+  and the ARN operators the same within each of the six colon-delimited
+  components ([:290](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L290)).
+  Every other character is itself, `[`, `]` and `\` included, where
+  radosgw's matcher is fnmatch's and reads a bracket expression or a
+  backslash escape (docs/ceph-upstream-bugs.md, "[radosgw's policy
+  patterns are fnmatch patterns](ceph-upstream-bugs.md#radosgws-policy-patterns-are-fnmatch-patterns)").
+  Its typed operators compare exactly: a number digit by digit, and a date
+  as an instant that does not wrap, where radosgw's arithmetic is a double
+  and a 64-bit count of nanoseconds that wraps past 2554-07-21. A date and
+  time written with a UTC offset is the instant it names. The guide takes
+  "one of the W3C implementations of the ISO 8601 date formats"
+  ([:131](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L131)),
+  and its policy checks name one with an offset,
+  `YYYY-MM-DDThh:mm:ssTZD (1997-07-16T19:20:30+01:00)`
+  ([access-analyzer-reference-policy-checks.md:1963](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/access-analyzer-reference-policy-checks.md?plain=1#L1963)).
+  The W3C note defines that designator, "Z or +hh:mm or -hh:mm", as an
+  offset ahead of or behind UTC, so that `1994-11-05T08:15:30-05:00` and
+  `1994-11-05T13:15:30Z` are "the same instant"
+  ([W3C-NOTE-datetime.html:165](https://github.com/exelearning/iteexe/blob/3f4452780a4b2cfd2bc9d9152e92dfd86d2ff0cc/exe/webui/docs/W3C-NOTE-datetime.html#L165),
+  [:180-185](https://github.com/exelearning/iteexe/blob/3f4452780a4b2cfd2bc9d9152e92dfd86d2ff0cc/exe/webui/docs/W3C-NOTE-datetime.html#L180-L185) and
+  [:195-198](https://github.com/exelearning/iteexe/blob/3f4452780a4b2cfd2bc9d9152e92dfd86d2ff0cc/exe/webui/docs/W3C-NOTE-datetime.html#L195-L198)
+  in eXeLearning's copy of the note). radosgw reads no offset
+  (docs/ceph-upstream-bugs.md, "[radosgw's date conditions read no UTC
+  offset](ceph-upstream-bugs.md#radosgws-date-conditions-read-no-utc-offset)").
+  An address range written with host bits set is the network it names, as
+  it is to radosgw: "When you include non-zero bits after the masked bits,
+  they are not considered for the condition"
+  ([access-analyzer-reference-policy-checks.md:2951](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/access-analyzer-reference-policy-checks.md?plain=1#L2951);
+  [rgw_iam_policy.h:341-346](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L341-L346),
+  [rgw_iam_policy.h:360-365](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L360-L365)).
+  An address is within a list of ranges when one of them holds it, and a
+  range of the other family holds no address of this one: the guide's own
+  example mixes "IPv4 and IPv6 addresses to cover all of your organization's
+  valid IP addresses" in one list, `203.0.113.0/24` and
+  `2001:DB8:1234:5678::/64`
+  ([reference_policies_elements_condition_operators.md:258](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L258),
+  [:268-272](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L268-L272)).
+  So a Deny on `IpAddress` over that list holds for an address within either
+  range and for no other.
+
+  Where the guide's text reads more than one way, Amazon S3's answer is the
+  one every reading gives, and it has none where the readings differ:
+
+  - **A date without a time, a year and month, or a year.** The guide's
+    policy checks recommend the form: "We recommend that you use the
+    YYYY-MM-DD format", and "you could specify a complete date, such as
+    YYYY-MM-DD (1997-07-16)"
+    ([access-analyzer-reference-policy-checks.md:1952](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/access-analyzer-reference-policy-checks.md?plain=1#L1952),
+    [:1963](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/access-analyzer-reference-policy-checks.md?plain=1#L1963)).
+    Neither the guide nor the W3C note says which instant such a date is:
+    the note leaves "the meaning of the dates and times with reduced
+    precision" to the standard that adopts it
+    ([W3C-NOTE-datetime.html:124-131](https://github.com/exelearning/iteexe/blob/3f4452780a4b2cfd2bc9d9152e92dfd86d2ff0cc/exe/webui/docs/W3C-NOTE-datetime.html#L124-L131)).
+    So it may be any instant of that day, month or year, in a time zone at
+    any offset from -14:00 to +14:00: `2020-01-01` is any instant from
+    2019-12-31T10:00:00Z up to, and not including, 2020-01-02T14:00:00Z. A
+    Deny on `DateLessThan` `2020-01-01` is false for a request made today,
+    whichever instant is meant, and does not hold; one on `DateLessThan`
+    today's date has no answer for a request made today, and holds.
+  - **Four digits alone,** which are a W3C year and a count of seconds: any
+    instant of that year, or that many seconds past the epoch.
+  - **A `?` over a character outside the Basic Multilingual Plane** in the
+    key's value, under a `Like` or ARN operator: "single-character" does not
+    say whether the character is its one code point or one of its two UTF-16
+    units.
+  - **An `IgnoreCase` operator over a letter outside ASCII.** "Exact
+    matching, ignoring case"
+    ([reference_policies_elements_condition_operators.md:34](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L34))
+    does not say which letters have a case, or how two are compared. One
+    reading folds ASCII's letters alone, as radosgw does. Another folds
+    every letter, by Unicode's simple case folding, under which `é` and `É`
+    are equal. A third maps each character to upper case and then to lower
+    case, under which `İ` (U+0130) and `ı` (U+0131) are each equal to `I`
+    and to `i`, as they are under neither fold.
+  - **`BinaryEquals`.** "It compares the value of the specified key byte for
+    byte against a base-64 encoded representation of the binary value in the
+    policy"
+    ([:210](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L210)).
+    One reading takes the key's value for the binary value itself and sets
+    it against what the policy's value decodes to. The other takes it for
+    base64 too and decodes both, as radosgw does. Its decoder may be
+    radosgw's, which takes the URL-safe alphabet as well as the standard
+    one, skips a line break between groups of four characters and ignores
+    what follows the padding
+    ([rgw_iam_policy.h:422-438](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L422-L438),
+    [rgw_iam_policy.h:441-457](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L441-L457);
+    [armor.c:19-34](https://github.com/ceph/ceph/blob/v19.2.7/src/common/armor.c#L19-L34) and
+    [:99-131](https://github.com/ceph/ceph/blob/v19.2.7/src/common/armor.c#L99-L131),
+    [armor.c:19-34](https://github.com/ceph/ceph/blob/v20.2.4/src/common/armor.c#L19-L34) and
+    [:99-131](https://github.com/ceph/ceph/blob/v20.2.4/src/common/armor.c#L99-L131);
+    docs/ceph-upstream-bugs.md, "[radosgw's base64 decoder takes the
+    URL-safe alphabet and ignores what follows the
+    padding](ceph-upstream-bugs.md#radosgws-base64-decoder-takes-the-url-safe-alphabet-and-ignores-what-follows-the-padding)"),
+    or another, which may take or refuse a value without its padding or with
+    a line break. A value is longer than what it decodes to, so the first
+    reading and the second never both find the values equal: the answer is
+    false where no reading does, and there is none where any does.
+
+  For a key found in another case, a condition with no Amazon S3 answer
+  holds, whatever its operator, negated or positive, so the Deny refuses:
+  radosgw finds no key there, so its reading of the found key's values
+  decides nothing. The Deny then refuses where both radosgw, which finds no
+  key, and Amazon S3's evaluation, whatever it is, may serve. These are the
+  forms with no answer, and why each has none:
+
+  - the forms above, where their readings differ;
+  - an empty value list, which the guide gives no meaning;
+  - a key holding several values under an operator that is not a
+    `ForAnyValue` or `ForAllValues` one: the guide does not say how such an
+    operator reads them;
+  - a typed operator that names a policy variable: the guide lets none but
+    `Bool` take one
+    ([:127](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L127),
+    [:164](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L164),
+    [:222](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L222),
+    [:256](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L256);
+    [:206](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L206)),
+    and rgw-go's `Bool` takes none, as radosgw's takes none;
+  - a number other than "an integer or decimal value"
+    ([:97](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L97)),
+    such as a hexadecimal one, one with an exponent or one after a space:
+    forms that radosgw converts and the guide does not name;
+  - a date that is neither epoch seconds nor in one of the W3C note's forms,
+    such as an hour without minutes, and a date, time or offset whose fields
+    do not exist, such as month 13, 30 February, hour 24 or an offset of 24
+    hours: the guide does not say whether those are refused or carried over;
+  - a `Bool` other than `true` or `false`, the two values the guide names
+    ([:168](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L168));
+  - a binary condition value that is empty, holds a line break or is other
+    than padded base64, which names no binary value;
+  - an address or a range in another form than a plain address or CIDR, one
+    with a zone, and one written in an IPv6 form that holds an IPv4 address,
+    which the guide does not place in either family;
+  - a `Null` with `IfExists`, or with any values but one `true` or `false`,
+    forms the guide does not describe;
+  - an ARN operator over a value or a pattern of fewer than six components,
+    where the components the guide's rule checks one by one are not there;
+  - a string or ARN operator whose values hold `${*}`, `${?}` or `${$}`,
+    whose character the matching cannot express; a variable whose key the
+    request holds several values for, under one name or several that differ
+    in case, where the guide takes only a single-valued key as a variable; a
+    variable written in another form than `${key}` or `${key, 'default'}`;
+    and, under a `Like` or ARN operator, a variable whose value, or whose
+    default where the request has no value, holds `*` or `?`, which the
+    guide does not say then matches as a wildcard or as itself.
+
+  A request can hold keys whose names differ only in case, as the keys of
+  an object's tags under `s3:ExistingObjectTag/` and of a write's under
+  `s3:RequestObjectTag/` can, one key for each tag key as it is written
+  (`internal/authz/load.go`, `internal/authz/env.go`). AWS says a condition
+  naming such a key "matches a resource tag key named either `TagKey1` or
+  `tagkey1`, but not both", and that "the key name matches both tags, but
+  only one value matches. This can result in unexpected condition failures"
+  ([reference_policies_elements_condition.md:25](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition.md?plain=1#L25),
+  [:26](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition.md?plain=1#L26)):
+  Amazon S3 evaluates one of the spellings, and the guide does not say
+  which. So each spelling counts alone, by the rule above, whether or not
+  the request holds the key as written too: the Deny holds when the key as
+  written makes it hold, or when any other spelling's Amazon S3 answer holds
+  or is undefined. Where every other spelling's answer is defined and they
+  agree, that is the answer whichever spelling Amazon S3 takes, false
+  included; where they disagree it has none, and the Deny holds. The name's
+  fold is ASCII's, as the policy variables' is; a letter outside ASCII
+  matches only as written. Only a tag key can carry such a letter into a
+  key's name, so a Deny whose positive operator names a tag key that differs
+  from the request's or the object's in the case of a letter outside ASCII
+  does not hold, as on radosgw, where Amazon S3's may; the IAM User Guide
+  does not say which fold Amazon S3 uses.
+
+  radosgw sets `aws:EpochTime` to an ISO 8601 date and time and
+  `aws:CurrentTime` to a count of seconds, the reverse of AWS's
+  ([rgw_op.cc:853-854](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L853-L854),
+  [rgw_op.cc:888-889](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L888-L889);
+  docs/ceph-upstream-bugs.md, "[radosgw swaps aws:CurrentTime and
+  aws:EpochTime](ceph-upstream-bugs.md#radosgw-swaps-awscurrenttime-and-awsepochtime)"),
+  and rgw-go sets what radosgw sets. So a Numeric operator on
+  `aws:EpochTime`, a key AWS says "Works with date operators or numeric
+  operators"
+  ([reference_policies_condition-keys.md:234](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_condition-keys.md?plain=1#L234)),
+  meets a value that is no number. On the key as written it is false, as on
+  radosgw. In a Deny that names the key in another case it has no answer and
+  holds, so the Deny refuses every request its statement covers, where
+  Amazon S3 refuses those the comparison picks and radosgw none. A Date
+  operator on either key, in any case, compares the request's time.
+
+  A statement that allows keeps radosgw's evaluation of the key as written,
+  which the request lacks when it holds the key only in another case: an
+  Allow's condition then holds as radosgw's does on an absent key: true for
+  an `IfExists` form, a `ForAllValues` operator, `Null` with `true`, and
+  on Squid `Null` with `false`, and false for every other condition. So
+  such an Allow grants nothing where its condition needs the key, and grants
+  where radosgw's does.
+
+  The s3-tests `test_bucket_policy_deny_stringlike_key_other_case` and
+  `test_bucket_policy_deny_stringnotlike_key_other_case` check the Deny with
+  a positive and a negated operator on `S3:Prefix`, each also beside a
+  pattern that holds a `?` and against a prefix that ends in a character
+  outside the Basic Multilingual Plane, and the first with a pattern whose
+  brackets match themselves.
 
 ### Bucket metadata differences
 

@@ -20,7 +20,8 @@
     {"source":"5e0ea2e71db86992093d55b6168da5f1059cdc8b","admitted":"additive"},
     {"source":"02599604861e23fc75441b715679d9e4949a0a98","admitted":"additive"},
     {"source":"632e2341d3c7cdc81fcfaf73f2fd787a85858615","admitted":"additive"},
-    {"source":"94617ce22d0cddf418091c9080092f562177c9d7","admitted":"additive"}
+    {"source":"94617ce22d0cddf418091c9080092f562177c9d7","admitted":"additive"},
+    {"source":"dade633ae637fb967062a9fcc76efa74ca156ded","admitted":"additive"}
   ],
   "tests": {
     "s3tests.functional.test_headers::test_bucket_create_bad_authorization_empty": [
@@ -2152,8 +2153,14 @@
     "s3tests.functional.test_s3::test_bucket_policy_deny_put_object_tagging_header": [
       {"outcome":"failed","source":"02599604861e23fc75441b715679d9e4949a0a98","ceph_version":"19.2.7","recorded":"2026-11-15T21:58:27Z","runs":2,"unstable":false,"meta":{"deselect":"d121159f1d35","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
     ],
+    "s3tests.functional.test_s3::test_bucket_policy_deny_stringlike_key_other_case": [
+      {"outcome":"failed","source":"dade633ae637fb967062a9fcc76efa74ca156ded","ceph_version":"19.2.7","recorded":"2026-11-20T11:04:39Z","runs":2,"unstable":false,"meta":{"deselect":"8b0f11d9d849","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
     "s3tests.functional.test_s3::test_bucket_policy_deny_stringnotlike_key_absent": [
       {"outcome":"failed","source":"94617ce22d0cddf418091c9080092f562177c9d7","ceph_version":"19.2.7","recorded":"2026-11-16T06:01:02Z","runs":2,"unstable":false,"meta":{"deselect":"d121159f1d35","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
+    ],
+    "s3tests.functional.test_s3::test_bucket_policy_deny_stringnotlike_key_other_case": [
+      {"outcome":"failed","source":"dade633ae637fb967062a9fcc76efa74ca156ded","ceph_version":"19.2.7","recorded":"2026-11-20T11:04:39Z","runs":2,"unstable":false,"meta":{"deselect":"8b0f11d9d849","gateway":"radosgw","lc":"off","pytest_freeze":"20202734bd43"}}
     ],
     "s3tests.functional.test_s3::test_bucket_policy_different_tenant": [
       {"outcome":"passed","source":"f6f2529dd9efccf7710c8a2b561e5a2ab9d48bd3","ceph_version":"19.2.6","recorded":"2026-10-12T16:55:39Z","runs":2,"unstable":false,"meta":{"deselect":"999e22cc41a0","gateway":"radosgw","pytest_freeze":"c53be7f8edea"}},
