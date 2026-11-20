@@ -43,7 +43,7 @@ The set's files:
 | `T-gate-tooling.md` | the s3-tests selection in Go, the include list, the harness, the phase 2 gate | T-tasks, with WP-22 and WP-23 |
 | `F-floor-19.2.7.md` | the floor bump to Squid v19.2.7: phase 1 maintenance that lands before phase 2 | F1-F20 |
 | `CL-citation-links.md` | Ceph citations as clickable links, in the docs and in Go comments | CL1-CL6 |
-| `SM-service-map.md` | rgw-go's registration in the manager's service map: the go-ceph binding, the harness's radosgw readers, the gateway's metadata and status | SM1-SM5 |
+| `SM-service-map.md` | rgw-go's registration in the manager's service map: the go-ceph binding, the harness's radosgw readers, the gateway's metadata and status | SM1-SM6 |
 
 The dependencies between the tasks are drawn in [dependencies.md](dependencies.md), one graph per unit.
 

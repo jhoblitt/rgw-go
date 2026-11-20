@@ -409,6 +409,46 @@ type ServiceRegistrar interface {
 - **Exclusions and registry:** none.
 - **Depends on:** SM4. **PR:** one. **Brief:** about 80 lines.
 
+### Task SM6: radosclient, goceph's service map spec survives librados's shutdown race
+
+Found by SM5's implementer and confirmed by its re-review, and numbered here before SM5 merged
+(PP-12).
+
+- **Layer:** radosclient, goceph's integration spec; no security boundary (Threat model).
+  **Cluster:** yes.
+- **Files:** `internal/radosclient/goceph/goceph_integration_test.go`; with behaviour 3's shared
+  helper, also a file in `internal/testutil/cephtest` and SM5's
+  `test/integration/servicemap_test.go`.
+- **Behaviour:** "removes the entry from service dump once Close returns" waits 30 s for the service
+  to empty. While `Close`'s `rados_shutdown` waits 1 s on its close, librados can register the
+  daemon again (`docs/ceph-upstream-bugs.md`, "librados registers a service daemon again while it
+  shuts down"), and that entry leaves only with `mgr_service_beacon_grace`, 60 s
+  ([mgr.yaml.in:113-118](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/mgr.yaml.in#L113-L118),
+  [mgr.yaml.in:113-118](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/mgr.yaml.in#L113-L118)),
+  about 65 s after. Here the exit is `Close`'s return, which follows that wait.
+  1. The spec tells the close path from the re-registration path as SM5's step 7 does:
+     - the original registration, the `start_epoch` and `start_stamp` read before `Close`, is gone
+       within 30 s of the exit;
+     - an entry registered again under the same key is gone within the grace plus margin, SM5's
+       90 s, measured from the exit and not from the end of the first wait;
+     - an absence counts only once it has held past the 1 s by which a re-registration can trail
+       the close, and a re-registered entry seen at any poll decides the path (SM5's re-review,
+       N1 and N2).
+  2. On failure it records which path held, the entry's `start_epoch` and `start_stamp`, and the
+     time since the exit; on success, the path and the time.
+  3. The two-phase wait is shared with SM5's spec if both packages can import it. SM5's helpers sit
+     in a `_test.go` file of `integration_test`, which no package imports; both specs import
+     `internal/testutil/cephtest`, so the wait can move there over a reader each spec supplies
+     (SM5's reads `ceph service dump` through the toolbox, goceph's its connection's `MgrCommand`),
+     and SM5's spec moves onto it. If it is copied, the spec's comment says why.
+- **Specs:** the spec passes on both releases with the race forced, or carries a note saying why it
+  cannot be forced. The race needs a stats report due inside the 1 s wait: the first follows the
+  registration and the next comes `mgr_stats_period`, 5 s, later (SM5's re-review, item 7), so a
+  `Close` timed into that window should force it. A cluster-wide `mgr_stats_period` change reaches
+  every client of the shared cluster, so a spec that makes one restores it in a `DeferCleanup`.
+- **Exclusions and registry:** none; the race is SM5's registry entry.
+- **Depends on:** SM5. **PR:** one. **Brief:** about 25 lines.
+
 ## Order
 
 | Wave | Tasks | Waits for |
@@ -417,9 +457,10 @@ type ServiceRegistrar interface {
 | 2 | SM3 | SM1's bump |
 | 3 | SM4 | SM2, SM3 |
 | 4 | SM5 | SM4 |
+| 5 | SM6 | SM5 |
 
-The unit runs beside phase 2's units and waits for none of them. Its cluster tasks, SM3 and SM5,
-run one at a time with every other unit's.
+The unit runs beside phase 2's units and waits for none of them. Its cluster tasks, SM3, SM5 and
+SM6, run one at a time with every other unit's.
 
 ## Defects
 
