@@ -6263,7 +6263,10 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** v19.2.6, v20.2.4 and main (8aa24c51928, 2026-10-30); older
   releases not checked.
 - **rgw-go:** reproduces it: `internal/authz/env.go` sets both keys as
-  radosgw does, so `docs/differences.md` records no difference.
+  radosgw does. `docs/differences.md` records what follows from it in a
+  statement that denies and names `aws:EpochTime` in another ASCII case: a
+  numeric operator holds there, the key's value being no number ("A Deny's
+  condition key names match whatever their case").
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-12; awaiting response.
 - **Found:** phase 1 planning of unit Z, recorded by unit Z's Task 12,
@@ -35157,8 +35160,15 @@ Every new entry adds its row to this table, in document order.
     ([reference_policies_elements_condition.md:11](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition.md#L11)
     in the IAM User Guide's archived source).
 - **Releases:** v19.2.7 and v20.2.4.
-- **rgw-go:** reproduces it: `policy.Env` holds each key under its exact
-  string (`internal/policy/env.go`), until plan task S10 lands.
+- **rgw-go:** reproduces it in a statement that allows, whose condition
+  finds a key only under its exact string, as radosgw's does. In a
+  statement that denies, the condition holds where that finding makes it
+  hold, or where Amazon S3's answer for a key the request holds under the
+  same name in another ASCII case, each such key taken alone, makes it
+  hold; it also holds where the IAM User Guide gives no answer for one of
+  those keys (`policy.Condition.EvalFor`, `internal/policy/condition.go`;
+  `docs/differences.md`, "A Deny's condition key names match whatever their
+  case").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task L7's adversarial review, 2026-11-14, judging
   how a policy can name an object-lock condition key; derived from the
