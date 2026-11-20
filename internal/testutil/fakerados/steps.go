@@ -270,7 +270,10 @@ func (p *Pool) run(name, oid string, steps []radosclient.Step, writeOp bool, fla
 	}
 	if err != nil {
 		failResults(steps, err)
-		return 0, err
+		if !writeOp {
+			return 0, err
+		}
+		return p.store.failedVersion(oid, x.stored, err), err
 	}
 	for _, fill := range fills {
 		fill()
@@ -436,6 +439,29 @@ func failResults(steps []radosclient.Step, err error) {
 			s.Result.Set(nil, rval)
 		}
 	}
+}
+
+// failedVersion is the version a write op on oid that failed with err
+// returns, stored being the object as the op found it. For an error an OSD's
+// reply carries (radosclient.ReplyVersion) it is the reply's: for ENOENT the
+// placement group's last user version, a floor for the next one, which the
+// fake, with no placement group, takes as the last version oid had, removed
+// or not; for any other the object's own version, 0 when it does not exist.
+// For any other error, an injected timeout among them, it is 0, unknown
+// (radosclient.Pool's Write). A read op that fails returns 0, as the OSD's
+// reply to a read of a missing object carries.
+func (s *store) failedVersion(oid string, stored *Object, err error) uint64 {
+	if !radosclient.ReplyVersion(err) {
+		return 0
+	}
+	var ver uint64
+	if stored != nil {
+		ver = stored.Version
+	}
+	if errnoOf(err) == int32(syscall.ENOENT) {
+		ver = max(ver, s.lastVer[oid])
+	}
+	return ver
 }
 
 // errnoOf is the positive errno err carries, EIO for an error without one.

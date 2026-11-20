@@ -12048,13 +12048,10 @@ does the following.
   `linkedLater`, `internal/driver/olh.go`). A removal after the last such
   link is applied as before, and so is one that a delete marker's link at
   the same instance follows, after which the class logs a removal of its
-  own. The drop needs the link in the log when the replay reads it: a link
+  own. The drop needs the link in the log when the replay reads it. A link
   that lands after a replay has read the log, and before that replay
-  removes the version, leaves the state radosgw's replay leaves, in rgw-go
-  too. That dangling state is known, and plan task V22 tracks it: a
-  CompleteMultipartUpload retry's link, a relist whose refused removal
-  another replay had already read, the lifecycle transition's link and its
-  `keepCurrent`, and radosgw on a mixed fleet still reach it.
+  removes the version, is kept by the removal itself ("A replay keeps a
+  version a link lists again after it read the log").
   The state the replay writes is the one radosgw's writes for that log in
   every respect but this version: the head op, the other removals, and
   the trim or clear are radosgw's. The version's objects stay, its head and
@@ -12229,6 +12226,197 @@ does the following.
   naming it. On a mixed fleet, radosgw's replay still removes
   the version whenever it has read the removal from the log, before an
   rgw-go replay trimmed it, whichever replay then applies the log.
+- **A replay keeps a version a link lists again after it read the log.** A
+  delete's unlink of a version takes its list entry and logs its removal
+  ("A replay keeps a named version that a later link in the same log
+  names"). Only a link writes the list entry again, rewriting the version's
+  instance entry at the link's epoch and flags as it does
+  ([cls_rgw.cc:1410-1427](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1410-L1427),
+  [cls_rgw.cc:1537-1554](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1537-L1554)).
+  A link above the OLH entry's epoch also logs a LINK_OLH. A link below it
+  takes the class's old-epoch path and logs nothing
+  ([cls_rgw.cc:1751-1760](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1751-L1760),
+  [cls_rgw.cc:1892-1901](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1892-L1901)).
+  A link that lands after a replay has read the log is not in what that
+  replay read. radosgw's replay removes every version it has read the
+  removal of, whoever links it since, and its removal compares neither entry
+  ([rgw_rados.cc:8529-8541](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8529-L8541),
+  [rgw_rados.cc:9275-9287](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9275-L9287)).
+  It leaves the list entry the link wrote naming a version whose head and
+  instance entry are gone. Once a link that logged a LINK_OLH is applied,
+  the OLH names that version too, and the key takes no write that would
+  become current (`docs/ceph-upstream-bugs.md`, "[radosgw's replay of an OLH
+  log removes a version that a later entry of the same log
+  links](ceph-upstream-bugs.md#radosgws-replay-of-an-olh-log-removes-a-version-that-a-later-entry-of-the-same-log-links)").
+
+  rgw-go's removal goes on only while the version is unlisted
+  (`removeInstance`, `internal/driver/olh.go`). Its first index op, the
+  prepare, compares two entries:
+  - the version's instance entry with the bytes read just before it, the
+    null version's data entry for the null version, never its delete
+    marker's;
+  - the list entry that instance entry names, as absent.
+
+  A link landed since the replay read the log makes the prepare find the
+  version listed. The version is then kept, its head, tails, instance entry
+  and list entry as the link left them, and the replay passes the removal
+  over as it passes over one a later link in its log drops. The delete
+  whose removal it was answers as it does after that drop. Any other change
+  to the instance entry, such as another writer's prepare, sends the
+  removal round again from a fresh read of the version's head, after a
+  relist's backoff, but only while the key's OLH log, read again after the
+  backoff, still holds a removal of the version that no later link of its
+  data drops. Once another replay has applied, refused or kept the removal
+  and trimmed it, the log the replay read has been overtaken: its pass ends
+  there, before its next removal and its head op, and it reads the log
+  again, up to the 10 passes a replay runs again, so that no prepare goes
+  out from a read the trim overtook. A read whose replay runs out of its
+  passes, other writers having overtaken each, answers SlowDown, 503, which
+  a client retries; a write answers as if another replay had overtaken it.
+  radosgw's replay runs one pass. A trim cannot overtake it, as its removal
+  compares nothing, so where rgw-go's passes end on removals that left the
+  log, radosgw's read answers the version. Where another writer's guard
+  refuses that pass, `follow_olh` turns `update_olh`'s ECANCELED into ENOENT
+  and the read answers 404
+  ([rgw_rados.cc:8989-8995](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8989-L8995),
+  [rgw_rados.cc:9735-9741](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9735-L9741)),
+  as rgw-go's read did when its own passes ran out, before it answered 503.
+  The rounds end at 100, the relist's bound, or at the relist's cap, 32 s
+  after the first round any removal of the same driver call lost: one
+  versioned write, delete or read through the store, whose replays, their
+  passes and removals, and the check below share that one deadline. The
+  removal is then deferred. The replay stops before its head op, leaving
+  its log and pending attrs to the next replay, and the request that ran it
+  answers as if another replay had overtaken it. So a delete whose unlink
+  has landed answers 204, after up to 32 s of backoff in its delete call,
+  and:
+  - the version stays stored, readable and writable by its id, until a
+    later replay of the key wins;
+  - a write of the version accepted in that time is lost to the deferred
+    removal;
+  - nothing bounds this across replays: a writer that changes the instance
+    entry inside every gap between a removal's read and its prepare defers
+    each replay.
+
+  The deadline does not span the driver calls of one S3 request:
+  - a DELETE makes two, the stat's, whose follow of the OLH replays the
+    log, and then the delete's, and can back off for 32 s in each;
+  - DeleteObjects runs each of its up to 1000 keys through DeleteObject,
+    16 at a time by default (`rgw_multi_obj_del_max_aio`,
+    `internal/op/deleteobjects.go`), so its backoff is bounded per key,
+    about 1000/16 × 32 s in the worst case;
+  - a guarded removal its own replay refuses lists the version again, and
+    that relist's retries add their own 32 s cap.
+
+  radosgw's removal compares nothing, and has taken the version by the time
+  the delete answers. A delete whose entries another replay applied,
+  keeping the version for its lock, removes the version itself afterwards
+  (`checkRemoval`, `internal/driver/olh.go`). A deferral there leaves no
+  removal in the log for a later replay to carry out, so the delete answers
+  SlowDown, 503, where an earlier rgw-go answered UnknownError, 500, and
+  radosgw 204 with the version removed: the version stays stored and
+  unlisted, its instance entry counted, until the client's retry of the
+  delete removes it. A version whose delete the client never retries stays
+  stored, readable by its id and counted until an admin bucket check. The
+  two compares are in the prepare's op, where radosgw's prepare carries
+  none. Each removal reads the version's instance entry once more,
+  twice for the null version behind its version marker, and a refused
+  prepare reads the instance and list entries again. Otherwise the replay
+  writes the state radosgw's writes for that log: the head op, the other
+  removals, and the trim or clear. The exception is a kept null version,
+  whose data is the OLH head's, so the replay trims the log where it would
+  clear the OLH.
+
+  What rgw-go links after a replay may have read the removal, and what each
+  leaves:
+  - a CompleteMultipartUpload retry's link of the version its earlier
+    completion wrote (`linkRecorded`, `internal/driver/mp_complete.go`): the
+    version stays listed current and readable, the OLH names it once the
+    next replay runs, and a later write of the key links. That is what a
+    write of the version after the delete leaves;
+  - a relist after a refused removal (`relistVersion` and `relistBelow`,
+    `internal/driver/delete_versioned.go`), whose own removal another
+    request's replay read before the refused replay trimmed it. The delete
+    answers ConcurrentModification, so no delete was acknowledged. The
+    version stays listed when the relist links before that other replay's
+    removal begins, and lands in the window below when it links after;
+  - the lifecycle transition's link and `keepCurrent`'s. Each reads the
+    OLH entry, gives way while its log holds a removal of the version that
+    no later link of its data drops, and compares that entry in its link (`linkTransition`,
+    `internal/driver/put_versioned.go`; `keepCurrent`,
+    `internal/driver/lc_transition.go`). A delete's unlink that lands after
+    the read refuses the link, and the next round gives way. A transition
+    that gives way ends as one whose link a delete refused: no `keepCurrent`
+    and no notification. The delete's replay removes the rewritten head and
+    hands its tails to the garbage collector. Without these guards the
+    link, at the epoch read, would land below the epoch the unlink moved the
+    entry to, on the class's old-epoch path. The removal would then find
+    the version listed and keep it, losing a delete that may already have
+    been answered. radosgw's transition links at the version's own epoch
+    with neither guard
+    ([rgw_lc.cc:1515-1516](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1515-L1516),
+    [rgw_lc.cc:1561-1562](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1561-L1562)).
+
+  Before its rounds the transition reads the version's head again
+  (`dataGone`, `internal/driver/put_versioned.go`). A delete's removal that
+  takes the head between the rewrite's head write and its index completion
+  leaves that completion stale, a cancel, which removes the entry. But an
+  attribute write that read the head before the removal took it finds the
+  head gone and cancels at pool -1, and the class sets the entry's version
+  back to that. The rewrite's completion, landing after it, then makes the
+  entry again with no head (`docs/ceph-upstream-bugs.md`, "[cls_rgw
+  complete_op writes a stale epoch back when it
+  cancels](ceph-upstream-bugs.md#cls_rgw-complete_op-writes-a-stale-epoch-back-when-it-cancels)").
+  A transition whose head is gone links nothing and gives way. It removes
+  the entry its completion made, as `delete_obj_index` removes the entry of
+  an object that is gone, while that entry is still the one it completed
+  and unlisted, reading it again when another writer's prepare changes it
+  (`dropHeadless`). radosgw's transition links that entry, lists it and
+  notifies. The same cancel before an attribute write's own late
+  completion leaves the version's instance entry with no head, unlisted
+  and counted in the bucket's stats, in rgw-go as in radosgw, whose
+  `set_attrs` cancels at the same version; this is tracked by V26.
+
+  One window stays, between the removal's prepare and its index
+  completion; plan task V25 tracks it. A link landing there finds the
+  instance entry still in place, or, where another removal of the version
+  has completed first, the placeholder entry the prepare wrote under its
+  pending tag, and lists the version; the completion then removes the
+  entry from under the list entry the link wrote. That leaves radosgw's
+  state: a list entry naming nothing and, for a link that logged a
+  LINK_OLH, the OLH naming the version, after which the key takes no write
+  that would become current. Every linker of an existing version reaches
+  it:
+  - a CompleteMultipartUpload retry's link, which gives way to nothing: its
+    version listed, current, with no head, and once the next replay runs
+    the OLH naming it;
+  - a relist after a refused removal, which gives way while the removal is
+    in the log: the refused delete's own replay trims it before the relist
+    runs, so another request's removal already prepared is not seen, and
+    the version is left listed with no head, at its own epoch below a newer
+    version, or current at a new epoch, which the next replay makes the OLH
+    name; the delete answered ConcurrentModification;
+  - the lifecycle transition's link and `keepCurrent`'s, which give way
+    the same way: the removal stays in the log until after the replay that
+    carries it out has awaited its completion (`completeDelSync`,
+    `internal/driver/indexop.go`), but a second replay of the same removal
+    can trim it while the first one's completion is still to land. The
+    version is left listed, with no head, and the transition notified;
+  - radosgw's links, which carry neither guard nor compare: its PutObject
+    naming a version's id leaves what the retry leaves, its transition what
+    rgw-go's transition leaves.
+
+  On a mixed fleet, rgw-go cannot change radosgw's side:
+  - radosgw's replay removes the version whenever it has read the removal,
+    whoever links after, and leaves the state above;
+  - radosgw's PutObject naming a version's id links it with neither
+    compare nor guard, as a CompleteMultipartUpload retry does. rgw-go's
+    replay keeps the version, as above;
+  - radosgw's transition, linking at the version's own epoch after a
+    delete's unlink of the version, lands on the old-epoch path and lists
+    the version again without logging. rgw-go's replay of that delete then
+    finds the version listed and keeps it, though the delete was answered:
+    the version stays stored and listed, noncurrent.
 - **rgw-go removes the instance a failed versioned write made.** A
   versioned write writes its version's head and completes the version's
   instance entry in the bucket index before it links the version under the

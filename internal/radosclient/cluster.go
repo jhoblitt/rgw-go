@@ -87,15 +87,35 @@ type Pool interface {
 	// WithLocator returns a Pool whose operations set the given object locator key.
 	WithLocator(loc string) Pool
 	// Read runs a read op and returns the object version the OSD reports for
-	// it, the epoch radosgw stores from a stat; it is 0 when err is not nil.
-	// Results are available on the op's steps afterwards. After a context
-	// error the results are undefined and must not be read: the
-	// implementation may still fill them when the completion fires.
+	// it, the epoch radosgw stores from a stat. Beside an error the version is
+	// unspecified and no caller may read it: an implementation may return 0,
+	// or the version a failed read's reply carries, which depends on where
+	// the OSD failed it. Results are available on the op's steps afterwards.
+	// After a context error the results are undefined and must not be read:
+	// the implementation may still fill them when the completion fires.
 	Read(ctx context.Context, oid string, op *ReadOp, flags OpFlags) (version uint64, err error)
 	// Write runs a write op and returns the object version the OSD reports
-	// for it; it is 0 when err is not nil. After a context error the results
-	// are undefined and must not be read: the implementation may still fill
-	// them when the completion fires.
+	// for it, on an error as well: librados copies the reply's user version
+	// before it looks at the result
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/osdc/Objecter.cc#L3507-L3508 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.cc#L3680-L3681 at v20.2.4).
+	// A write that fails ENOENT carries the placement group's last user
+	// version, a floor for the next one
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L4275-L4287 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L4352-L4364 at v20.2.4),
+	// and radosgw completes a removal that found its object gone at it, so
+	// that a later stale completion is a cancel; any other failed write
+	// carries the object's own version, 0 for one that does not exist
+	// (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L4170-L4171 at v19.2.7,
+	// https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L4247-L4248 at v20.2.4).
+	// A pure-Go client must carry the reply's user version on an error too.
+	// The version is reported only for an error ReplyVersion takes for an
+	// OSD's reply; for any other it is 0, unknown, since such an error may
+	// have come with no reply, after which librados's own version can be
+	// undefined (docs/cgo-limitations.md, "A synchronous op's version is
+	// undefined when no reply came"). After a context error the results are
+	// undefined and must not be read: the implementation may still fill them
+	// when the completion fires.
 	Write(ctx context.Context, oid string, op *WriteOp, flags OpFlags) (version uint64, err error)
 	// ListObjects calls fn for every object in the namespace until fn returns an error.
 	ListObjects(ctx context.Context, fn func(oid, locator string) error) error

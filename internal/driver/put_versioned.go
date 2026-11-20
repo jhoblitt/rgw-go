@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
@@ -229,6 +230,7 @@ func (in *nullInit) inited() *olhInited {
 // guards leave unheld is in docs/differences.md, "A conditional write to a
 // versioned bucket commits only if its condition held when it linked".
 func (s *Store) writeNullVersion(ctx context.Context, hw *headWrite, x *indexOp, head *op.ObjectState, mtime time.Time) (headResult, error) {
+	ctx = withRemovalDeadline(ctx)
 	idx := s.newOLHIndex(hw.rec, hw.key)
 	cond := s.writeCond(hw)
 	fail := func(err error) (headResult, error) {
@@ -349,13 +351,188 @@ func (s *Store) linkVersion(ctx context.Context, hw *headWrite, x *indexOp, ver 
 		return op.FromRADOS(fmt.Errorf("completing the index entry of %s: %w", versionName(x.rec, hw.key), err), op.ScopeObject)
 	}
 	l := olhLink{Epoch: *hw.olhEpoch, Cond: s.linkCond(hw), Inited: in.inited(), KeepVersion: rewrite}
-	if !hw.keepLock {
+	if hw.keepLock {
 		// keepLock marks a lifecycle transition, whose raw copy alone sets
 		// it (headWrite.keepLock). A transition keeps the refusal of a link
 		// whose version a delete took first: its success would run
 		// keepCurrent and, on Tentacle, notify a transition of a version
 		// that is gone (lcBucket.transition).
-		l.WriteTag = []byte(hw.tag + "\x00")
+		return op.FromRADOS(s.linkTransition(ctx, x.rec, hw.key, hw.tag, l), op.ScopeObject)
 	}
+	l.WriteTag = []byte(hw.tag + "\x00")
 	return op.FromRADOS(s.setOLH(ctx, x.rec, hw.key, l), op.ScopeObject)
+}
+
+// errTransitionGaveWay ends a lifecycle transition's link, or keepCurrent's,
+// that gave way to a delete's pending removal of the version: NoSuchKey, as
+// a link the class refuses for a version a delete took first answers.
+var errTransitionGaveWay = fmt.Errorf("%w: a delete's removal of the version is pending", op.ErrNoSuchKey)
+
+// linkTransition is the link l of key's version, of rec's bucket, that a
+// lifecycle transition rewrote in place under write tag tag, its index
+// completion landed.
+//
+// It first reads the version's head again, the OLH head for the null
+// version, which must still hold the version's data. A delete's removal
+// landing between the rewrite's head write and its completion took the head,
+// and the class then applies or cancels that completion as the version the
+// entry carries says. The removal's DEL completion leaves the entry at the
+// removal's version, above the rewrite's, so the completion is a stale one, a
+// cancel, and removes the entry left behind. But a cancel at pool -1 and
+// epoch 0 landing between the two, that of an attribute write that read the
+// head before the removal took it and then found it gone, sets the entry's
+// version back, and the completion then lands as an ADD, making the entry
+// again with no head (docs/ceph-upstream-bugs.md, "cls_rgw complete_op
+// writes a stale epoch back when it cancels"). A transition
+// whose head is gone links nothing, removes the entry its completion made,
+// if it is still that one (dropHeadless), and answers errTransitionGaveWay:
+// radosgw's transition links that entry, lists it and notifies.
+//
+// Then it links in rounds, each guarded as a relist's link is. A round reads
+// the name's OLH entry and gives way, linking nothing, while the entry's
+// pending log holds a removal of the version that a replay is still to carry
+// out, one no later link of the version's data drops (unpairedRemovals): a
+// delete's unlink has landed and its replay, which removes the rewritten head
+// and hands its tails to the GC, has not. Its link compares the entry as
+// read, so an unlink landing after the read refuses it (errRelinkMoved), and
+// the next round gives way. Without the guard the link would land below the
+// epoch that unlink moved the entry to, on the class's old-epoch path, which
+// writes the version's list entry and logs nothing
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1751-L1760 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1892-L1901 at v20.2.4),
+// and the delete's replay would then find the version listed and keep it
+// (removeInstance), losing a delete it may already have acknowledged. A
+// round refused for any other writer's change of the entry links again at
+// the same epoch, up to olhAttempts rounds, as setOLH links again after a
+// repair. The modification l.Inited names is the first round's, and a
+// transition that gives way before any link cancels it. radosgw's transition
+// links with neither guard (docs/differences.md, "A replay keeps a version a
+// link lists again after it read the log").
+func (s *Store) linkTransition(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, tag string, l olhLink) error {
+	cancelInited := func() {
+		if l.Inited != nil {
+			s.olhCancelModification(context.WithoutCancel(ctx), l.Inited.head, l.Inited.opTag)
+		}
+	}
+	idx := s.newOLHIndex(rec, key)
+	gone, err := s.dataGone(ctx, rec, key)
+	switch {
+	case err != nil:
+		cancelInited()
+		return err
+	case gone:
+		cancelInited()
+		idx.dropHeadless(context.WithoutCancel(ctx), key, tag)
+		return fmt.Errorf("linking %s: a delete took its head: %w", versionName(rec, key), errTransitionGaveWay)
+	}
+	for range olhAttempts {
+		e, bi, err := idx.getOLHBI(ctx, &op.ObjectState{Bucket: rec, Key: olhHeadKey(key)})
+		switch {
+		case errors.Is(err, radosclient.ErrNotFound):
+			bi = rgw.BIEntry{Type: rgw.BIIndexOLH, Idx: rgw.OLHDataKey(idx.olhKey().Name)}
+		case err != nil:
+			cancelInited()
+			return fmt.Errorf("reading the olh entry of %s before its transition's link: %w", versionName(rec, key), err)
+		case unpairedRemovals(e.PendingLog)[key.Instance]:
+			cancelInited()
+			return fmt.Errorf("linking %s: %w", versionName(rec, key), errTransitionGaveWay)
+		}
+		l.Relink = &olhRelink{olh: &bi}
+		if err = s.setOLH(ctx, rec, key, l); !errors.Is(err, errRelinkMoved) {
+			return err
+		}
+		l.Inited = nil
+	}
+	return fmt.Errorf("%w: linking %s: every one of %d rounds lost to another writer", op.ErrUnknown, versionName(rec, key), olhAttempts)
+}
+
+// dataGone reports whether key's version of rec's bucket no longer has the
+// head that holds its data: a named version's own head is gone, or the OLH
+// head no longer holds the null version's data.
+func (s *Store) dataGone(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey) (bool, error) {
+	st, err := s.readOLHHead(ctx, rec, key)
+	if err != nil {
+		return false, fmt.Errorf("reading the head of %s before its transition's link: %w", versionName(rec, key), err)
+	}
+	if key.Instance == "" {
+		return !holdsNullData(st), nil
+	}
+	return !st.Exists, nil
+}
+
+// dropHeadless removes key's data entry when it is the one a write under tag
+// completed and the version's head is gone: the DEL completion
+// delete_obj_index sends for an object that no longer exists, with no tag,
+// pool -1 and epoch 0 (deleteObjIndex), in an op that compares the entry as
+// read and, when the entry names a list entry, that list entry as absent.
+// The class uncounts the entry and takes it out or, while another writer's
+// prepare is pending on it, keeps it as not existing, for that writer's
+// completion or cancel to remove. An op the compares refuse is sent again,
+// up to olhAttempts rounds, from a fresh read of the head and of the entry:
+// an attribute write that read the head before the removal took it prepares
+// on the entry and then, finding the head gone, cancels, which leaves an
+// existing entry in place. A version listed, when read or by a link landing
+// before the op, is left as the link left it, its instance entry under its
+// list entry: removing the one would leave the other naming nothing
+// (docs/differences.md, "A replay keeps a version a link lists again after it
+// read the log"). Its failure is logged.
+func (b *bucketOLHIndex) dropHeadless(ctx context.Context, key meta.ObjKey, tag string) {
+	s, rec := b.x.s, b.x.rec
+	bucket, name, instance := slog.String("bucket", rec.Info.Bucket.Name), slog.String("key", key.Name), slog.String("instance", key.Instance)
+	for round := range olhAttempts {
+		if round > 0 {
+			gone, err := s.dataGone(ctx, rec, key)
+			switch {
+			case err != nil:
+				slog.WarnContext(ctx, "reading again the head of a version a transition completed over its removal failed; its index entry stays for bucket check",
+					bucket, name, instance, slog.Any("error", err))
+				return
+			case !gone:
+				return
+			}
+		}
+		en, bi, err := b.dataEntry(ctx, key)
+		switch {
+		case errors.Is(err, radosclient.ErrNotFound):
+			return
+		case err != nil:
+			slog.WarnContext(ctx, "reading the index entry a transition completed over a removed version failed; it stays for bucket check",
+				bucket, name, instance, slog.Any("error", err))
+			return
+		case !en.Exists || en.Tag != tag:
+			return
+		}
+		cmps := []rgw.BIEntry{bi}
+		if listsData(en) {
+			listed, lerr := s.listed(ctx, rec, key, en)
+			switch {
+			case lerr != nil:
+				slog.WarnContext(ctx, "reading the list entry of a version a transition completed over its removal failed; its index entry stays for bucket check",
+					bucket, name, instance, slog.Any("error", lerr))
+				return
+			case listed:
+				slog.DebugContext(ctx, "a link listed a version whose head a removal took under its transition; its index entries stay",
+					bucket, name, instance)
+				return
+			}
+			cmps = append(cmps, rgw.BIEntry{Type: rgw.BIIndexPlain, Idx: rgw.ListIndexKey(en.Key, en.VersionedEpoch)})
+		}
+		x := &indexOp{s: s, rec: rec, obj: meta.Obj{Bucket: rec.Info.Bucket, Key: key}, blind: rec.Info.Layout.Current.Layout.Type == meta.IndexIndexless}
+		c := x.completion(rgw.OpDel, rgw.EntryVer{Pool: -1}, rgw.DirEntryMeta{Category: rgw.CategoryNone, Mtime: en.Meta.Mtime})
+		err = x.guardedWrite(ctx, func(w *radosclient.WriteOp) {
+			for _, e := range cmps {
+				w.OmapCmp(e.Idx, radosclient.CmpEQ, e.Data)
+			}
+			rgw.BucketCompleteOp(w, c, s.release)
+		})
+		if !errors.Is(err, radosclient.ErrCanceled) {
+			if err != nil {
+				slog.WarnContext(ctx, "removing the index entry a transition completed over a removed version failed; it stays for bucket check",
+					bucket, name, instance, slog.Any("error", err))
+			}
+			return
+		}
+	}
+	slog.WarnContext(ctx, "removing the index entry a transition completed over a removed version lost every round to another writer; it stays for bucket check",
+		bucket, name, instance, slog.Int("rounds", olhAttempts))
 }

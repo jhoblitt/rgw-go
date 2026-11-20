@@ -626,6 +626,43 @@ var _ = Describe("Abort", func() {
 			Expect(allGCEntries(c)).To(BeEmpty(), "whoever removed it owns the parts")
 			Expect(statsDelta()).To(Equal([]int64{0, 0}), "delete_obj returns -ENOENT before the quota cache update")
 		})
+		// The removal's ENOENT reply carries the meta object's last version,
+		// at or above the removal that took it, and the meta object's index
+		// entry is completed at it, as radosgw's delete_obj completes it
+		// (removeHeadFlagged says why the version matters).
+		DescribeTable("completes the meta object's index entry at the version its removal's ENOENT carries",
+			func(ctx SpecContext, r denc.Release) {
+				s = openPutStore(ctx, c, r, nil, mtime)
+				driver.SetClock(s, clock.Now)
+				stores = append(stores, s)
+				Expect(s.CheckQuota(ctx, rec, rec.Info.Owner, 0, 0)).To(Succeed())
+				up, _ := uploadWithParts(ctx, 5<<20)
+				mOID := metaOID(rec, "k", up.ID)
+				writes := 0
+				var last uint64
+				cl := c
+				cl.BeforeWrite(extraPoolName, "", mOID, func(o *fakerados.Object) {
+					writes++
+					if writes == 2 {
+						last = o.Version
+						cl.Remove(extraPoolName, "", mOID)
+					}
+				})
+				Expect(s.Abort(ctx, up)).To(MatchError(op.ErrNoSuchUpload))
+				settle(s)
+				Expect(last).NotTo(BeZero())
+				var dels []rgwcls.CompleteOp
+				for _, d := range indexCompletions(c, shard, rgwcls.OpDel) {
+					if d.Key.Name == metaIndexKey("k", up.ID) {
+						dels = append(dels, d)
+					}
+				}
+				Expect(dels).To(HaveLen(1))
+				Expect(dels[0].Ver).To(Equal(rgwcls.EntryVer{Pool: c.PoolID(extraPoolName), Epoch: last}), "the meta object's last version, not 0")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
 		It("removes the meta object before it queues the parts", func(ctx SpecContext) {
 			up, _ := uploadWithParts(ctx, 5<<20)
 			mOID := metaOID(rec, "k", up.ID)

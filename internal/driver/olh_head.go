@@ -48,6 +48,10 @@ var errRefusalUnsettled = errors.New("the refused removal is still in an OLH log
 // object lock holds, for a replay removing it on another writer's behalf.
 var errRemovalLocked = errors.New("the version's object lock holds; a removal logged by another writer is left to that writer")
 
+// errRemovalRelisted marks an olhIndex.removeInstance that kept a version a
+// link listed again after the unlink that logged its removal.
+var errRemovalRelisted = errors.New("a link listed the version again since its removal was logged; it is kept")
+
 // olhIndex is what the OLH head operations ask of the bucket index, on the
 // shard of the head's name and with the head's OLH tag: the pending log's
 // read after marker, its trim up to ver, the clear of the name's OLH entry,
@@ -59,7 +63,8 @@ var errRemovalLocked = errors.New("the version's object lock holds; a removal lo
 // (lockHolds), is kept, answering an error wrapping errRemovalLocked, and any
 // other is removed guarded on the write tag its head carries as read, absent
 // read as empty, so that a lock written since that read refuses the
-// removal.
+// removal. A version a link has listed again by the removal's first index
+// op is kept, answering an error wrapping errRemovalRelisted.
 //
 // A removal that expectTag refuses removes nothing and answers an error
 // wrapping errRemovalRefused: the version's head and instance entry stay,
@@ -350,7 +355,12 @@ func (s *Store) expireOLHPending(ctx context.Context, head *op.ObjectState) ([]s
 // resolves the current version from head: its key, or not found with the
 // delete-marker flag set when that version is a delete marker, as v20.2.4
 // sets is_dm. update's ECANCELED, the OLH tag changed in the index or on the
-// head, means the OLH was removed, so it answers not found. Without olh.ver
+// head, means the OLH was removed, so it answers not found. A replay that ran
+// out of passes, other writers having overtaken each (errReplayOvertaken),
+// proves nothing of the OLH, and answers SlowDown, 503, which a client
+// retries, where radosgw's single pass answers the version, or not found
+// when another writer's guard refused it (docs/differences.md, "A replay
+// keeps a version a link lists again after it read the log"). Without olh.ver
 // head is no OLH (EINVAL); without olh.info it has no current version. The
 // version is resolved from head as given, which radosgw's update_olh leaves
 // as read, so a follow that ran update answers the version current before
@@ -362,11 +372,12 @@ func (s *Store) followOLH(ctx context.Context, head *op.ObjectState, update func
 	}
 	what := head.Bucket.Info.Bucket.Name + "/" + head.Key.Name
 	if len(pending) > 0 {
-		err = update(ctx, head)
-		if errors.Is(err, radosclient.ErrCanceled) {
+		switch err = update(ctx, head); {
+		case errors.Is(err, errReplayOvertaken):
+			return meta.ObjKey{}, false, fmt.Errorf("%w: following the olh of %s: %w", op.ErrSlowDown, what, err)
+		case errors.Is(err, radosclient.ErrCanceled):
 			return meta.ObjKey{}, false, fmt.Errorf("following the olh of %s: it was replaced while it was updated: %w", what, radosclient.ErrNotFound)
-		}
-		if err != nil {
+		case err != nil:
 			return meta.ObjKey{}, false, err
 		}
 	}
@@ -434,7 +445,15 @@ func (s *Store) followOLH(ctx context.Context, head *op.ObjectState, update func
 // replay keeps the null data a later null link names" and "A replay keeps a
 // named version that a later link in the same log names"). A delete
 // marker's link drops nothing: the class logs a removal of its own after a
-// marker that lands on a version's data. After the head op, finishOLHLog
+// marker that lands on a version's data. A link that lands after the replay
+// read the log is not in log: the removal then finds the version listed
+// again and keeps it (errRemovalRelisted, olhIndex), and the replay passes it
+// over as it passes over a dropped removal. A removal another replay has
+// carried out and trimmed from the log since this one read it
+// (errRemovalLeftLog) shows the read overtaken: the apply ends there, with no
+// later removal sent and no head op, answering 0 and ECANCELED, and the
+// replay reads the log again as for an apply another writer's guard refused
+// (replayOLH). After the head op, finishOLHLog
 // clears the OLH marked for removal, and otherwise trims the log to the last
 // epoch. It returns the last epoch whenever the head op landed, and 0 when
 // the replay wrote nothing; a tail that did not finish comes with the last
@@ -546,6 +565,18 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 		case guard != nil && errors.Is(err, errRemovalRefused):
 			refused = errors.Join(refused, fmt.Errorf("replaying the olh log of %s: removing version %q: %w", what, key.Instance, err))
 			keepHead = keepHead || key.Instance == ""
+		case errors.Is(err, errRemovalRelisted):
+			slog.DebugContext(ctx, "a replay passes over a removal a link has listed the version again since",
+				slog.Any("error", err),
+				slog.String("bucket", head.Bucket.Info.Bucket.Name), slog.String("key", key.Name), slog.String("instance", key.Instance),
+				slog.String("op_tag", e.OpTag))
+			keepHead = keepHead || key.Instance == ""
+		case errors.Is(err, errRemovalLeftLog):
+			// Another replay has trimmed the log this one read, so the rest
+			// of what it read may be gone too: the pass ends before its next
+			// removal, writing nothing more, and the replay reads the log
+			// again (replayOLH).
+			return 0, fmt.Errorf("replaying the olh log of %s: removing version %q: %w: %w", what, key.Instance, err, radosclient.ErrCanceled)
 		case !own && errors.Is(err, errRemovalLocked):
 			slog.InfoContext(ctx, "a replay keeps another writer's version under a lock no delete passes, leaving its removal to that writer",
 				slog.String("bucket", head.Bucket.Info.Bucket.Name), slog.String("key", key.Name), slog.String("instance", key.Instance),

@@ -271,6 +271,46 @@ var _ = Describe("translating seam ops", func() {
 	})
 })
 
+// librados reports a failed op's version too: on ENOENT the OSD's last user
+// version, which radosgw completes a removal of a missing object at.
+var _ = Describe("the version an operation returns", func() {
+	DescribeTable("is the one librados reported, beside the operation's error",
+		func(result func(opErr error, version uint64) (uint64, error)) {
+			ver, err := result(rados.OperationError{OpError: codeErr(-2)}, 7)
+			Expect(err).To(MatchError(radosclient.ErrNotFound))
+			Expect(ver).To(BeEquivalentTo(7), "a removal that found its object gone")
+			ver, err = result(rados.OperationError{OpError: codeErr(-125)}, 5)
+			Expect(err).To(MatchError(radosclient.ErrCanceled))
+			Expect(ver).To(BeEquivalentTo(5), "a guarded write refused")
+			Expect(result(nil, 9)).To(BeEquivalentTo(9), "a success")
+			// An error no OSD reply need carry: the version librados holds may
+			// be garbage, so it is unknown, 0.
+			ver, err = result(rados.OperationError{OpError: codeErr(-110)}, 12345)
+			Expect(err).To(MatchError(radosclient.ErrTimedOut))
+			Expect(ver).To(BeZero(), "a timeout")
+			ver, err = result(rados.OperationError{OpError: codeErr(-107)}, 12345)
+			Expect(err).To(HaveOccurred())
+			Expect(ver).To(BeZero(), "a lost connection")
+			ver, err = result(rados.ErrInvalidIOContext, 12345)
+			Expect(err).To(HaveOccurred())
+			Expect(ver).To(BeZero(), "a client-side error")
+		},
+		Entry("from an AioCompletion", goceph.OpResult),
+		Entry("from the blocking Operate and rados_get_last_version", func(opErr error, version uint64) (uint64, error) {
+			return goceph.SyncResult(opErr, version, nil)
+		}),
+	)
+
+	It("is 0 when rados_get_last_version failed, beside the operation's error first", func() {
+		ver, err := goceph.SyncResult(rados.OperationError{OpError: codeErr(-2)}, 7, rados.ErrInvalidIOContext)
+		Expect(err).To(MatchError(radosclient.ErrNotFound))
+		Expect(ver).To(BeZero())
+		ver, err = goceph.SyncResult(nil, 7, rados.ErrInvalidIOContext)
+		Expect(err).To(HaveOccurred())
+		Expect(ver).To(BeZero())
+	})
+})
+
 var _ = Describe("mapping go-ceph errors", func() {
 	DescribeTable("an errno maps to its sentinel",
 		func(errno int, sentinel error) {

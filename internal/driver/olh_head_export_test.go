@@ -57,6 +57,12 @@ var ErrRemovalRefused = errRemovalRefused
 // ErrRemovalLocked is errRemovalLocked for the external specs.
 var ErrRemovalLocked = errRemovalLocked
 
+// ErrRemovalRelisted is errRemovalRelisted for the external specs.
+var ErrRemovalRelisted = errRemovalRelisted
+
+// ErrTransitionGaveWay is errTransitionGaveWay for the external specs.
+var ErrTransitionGaveWay = errTransitionGaveWay
+
 func (f *FakeOLHIndex) record(c OLHIndexCall) {
 	if f.WritesBefore != nil {
 		c.Writes = f.WritesBefore()

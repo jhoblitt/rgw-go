@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -719,6 +720,70 @@ var _ = Describe("a versioned CompleteMultipartUpload", func() {
 			settle(s)
 			Expect(listed()).To(Equal([]string{"v1"}), "no link landed")
 			retry(ctx, up, etags)
+		})
+
+		// A delete of the version unlinks it and its replay reads the removal;
+		// the retry's link lands before that replay removes the version. The
+		// removal finds the version listed again and keeps it, so the key
+		// does not end naming a version that is gone.
+		It("keeps the version when the retry's link lands after a delete's replay read the delete's removal of it", func(ctx SpecContext) {
+			mustPut(ctx, "v1", "one")
+			up, etags := upload(ctx, reprefix, 5<<20)
+			up.WriteTag = "tx-first"
+			ac.set(onFirst("bucket_link_olh", failWith(syscall.ETIMEDOUT)))
+			_, err := complete(ctx, up, "c1", etags)
+			Expect(err).To(MatchError(op.ErrRequestTimedOut))
+			settle(s)
+			Expect(listed()).To(Equal([]string{"v1"}), "no link landed")
+
+			linked, resume := make(chan struct{}), make(chan struct{})
+			release := sync.OnceFunc(func() { close(resume) })
+			DeferCleanup(release)
+			retried := make(chan error, 1)
+			retry := func() {
+				defer GinkgoRecover()
+				u := *up
+				u.WriteTag = "tx-retry"
+				_, rerr := complete(ctx, &u, "c2", etags)
+				retried <- rerr
+			}
+			var unlinked, held atomic.Bool
+			ac.set(func(w *radosclient.WriteOp, send sendFunc) (uint64, error) {
+				ver, serr := send()
+				switch {
+				case serr == nil && callsMethod(w.Steps(), "bucket_unlink_instance") && unlinked.CompareAndSwap(false, true):
+					oid := instanceHeadOID(version("c1"))
+					c.BeforeRead(testDataPool, "", oid, func() {
+						c.BeforeRead(testDataPool, "", oid, nil)
+						go retry()
+						Eventually(linked).WithTimeout(10*time.Second).Should(BeClosed(), "the retry's link")
+					})
+				case serr == nil && callsMethod(w.Steps(), "bucket_link_olh") && held.CompareAndSwap(false, true):
+					close(linked)
+					<-resume
+				}
+				return ver, serr
+			})
+			res, err := s.DeleteObject(ctx, rec, version("c1"), op.DeleteParams{})
+			Expect(err).NotTo(HaveOccurred(), "the delete, its replay having read its removal before the retry's link")
+			Expect(res).To(Equal(&op.DeleteObjectResult{VersionID: "c1"}))
+			Expect(head("c1")).NotTo(BeNil(), "the version the retry's link listed again")
+			Expect(listed()).To(Equal([]string{"c1", "v1"}))
+			list := c.ListEntries(rookIndexPool, "", shard, "k")
+			Expect(list[0].Flags&rgwcls.FlagCurrent).To(Equal(rgwcls.FlagCurrent), "c1 listed current")
+			Expect(list[1].Flags&rgwcls.FlagCurrent).To(BeZero(), "v1 no longer current")
+			Expect(target()).To(Equal(version("v1")), "the link is still to be applied")
+
+			release()
+			Eventually(retried).WithTimeout(10*time.Second).Should(Receive(BeNil()), "the retry, which answers 200")
+			ac.set(nil)
+			settle(s)
+			Expect(target()).To(Equal(version("c1")), "the retry's replay applied its link")
+			Expect(readBack(ctx, version(""))).To(Equal(bytes.Repeat([]byte("a"), 5<<20)))
+			Expect(readBack(ctx, version("c1"))).To(Equal(bytes.Repeat([]byte("a"), 5<<20)))
+			mustPut(ctx, "v3", "three")
+			Expect(target()).To(Equal(version("v3")), "a later PutObject of the key links")
+			Expect(listed()).To(Equal([]string{"v3", "c1", "v1"}))
 		})
 
 		It("completes its index entry and links it after a gateway stopped once the head was written", func(ctx SpecContext) {
