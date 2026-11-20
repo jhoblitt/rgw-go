@@ -35722,10 +35722,10 @@ Every new entry adds its row to this table, in document order.
 
 ## librados registers a service daemon again while it shuts down
 
-- **Kind:** defect, observed once in CI and traced through the source;
-  not reproduced on demand. Not security-relevant: it costs only a stale
-  entry in the manager's service map. A service daemon's `rados_shutdown`
-  can send the manager a new registration after its close. The entry it
+- **Kind:** defect, observed in CI, traced through the source, and
+  reproduced on demand on both releases. Not security-relevant: it costs
+  only a stale entry in the manager's service map. A service daemon's
+  `rados_shutdown` can send the manager a new registration after its close. The entry it
   leaves outlives the process by about a minute, until the manager's beacon
   grace drops it.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
@@ -35801,6 +35801,19 @@ Every new entry adds its row to this table, in document order.
   five for a daemon that, like this one, ran for a while before it stopped.
   The manager's log was not collected, so the rejected report and the
   reconnect are inferred from the source.
+
+  Reproduced on demand on Squid v19.2.7 and Tentacle v20.2.4 by goceph's
+  forced spec, in rgw-go's CI run 44695333240 (jobs 136150665337 and
+  136150665046). The spec's connection sets
+  `mgr_client_service_daemon_unregister_timeout` to 7 s, longer than the
+  5 s report period, so a report falls due during its shutdown's wait. The
+  evidence is the spec's pass on both releases: it passes only when its
+  entry comes back under the same key with a new registration. goceph's
+  integration package, which the spec waits out the beacon grace in, took
+  109.7 s on Squid and 108.2 s on Tentacle, against 21.7 s and 22.4 s in
+  run 44683517996 before the spec existed. The job logs hold only go
+  test's result lines, not the spec's report entries, so the new entries'
+  `start_epoch` and `start_stamp` were not captured.
 - **Impact:**
   - For about a minute after a gateway stops, `ceph service dump`, `ceph -s`
     and `ceph versions` still count it, and so does the dashboard's gateway
@@ -35808,8 +35821,9 @@ Every new entry adds its row to this table, in document order.
   - A check that a stopped daemon leaves the map promptly fails about one
     time in five when the daemon stops at a random point in its report
     cycle.
-- **Releases:** v19.2.7 and v20.2.4 by the source: between the two tags,
-  MgrClient.cc changes only `_send_report`'s counter filter. Main at
+- **Releases:** v19.2.7 and v20.2.4, by the source and reproduced on both
+  (Observed): between the two tags, MgrClient.cc changes only
+  `_send_report`'s counter filter. Main at
   aed03d3789c4 (2026-11-19) keeps the same shutdown, dispatch and reset
   handler
   ([MgrClient.cc:83-125](https://github.com/ceph/ceph/blob/aed03d3789c46202c588d03d5b8344299997c9d2/src/mgr/MgrClient.cc#L83-L125),
@@ -35824,11 +35838,12 @@ Every new entry adds its row to this table, in document order.
     (`internal/radosclient/goceph/cluster.go`).
 
   The test suite's handling: SM5's cluster spec (`test/integration/servicemap_test.go`)
-  waits for such an entry up to the beacon grace and records it. goceph's
-  service map spec waits 30 s for the entry to leave
-  (internal/radosclient/goceph/goceph_integration_test.go:1301), so this
-  race can fail it too. It closes 1 to 4 s after it registers, usually
-  before its second report, so its odds are lower.
+  and goceph's service map specs
+  (`internal/radosclient/goceph/goceph_integration_test.go`) wait for such
+  an entry up to the beacon grace and record which path held, through
+  `cephtest.ServiceDeparture` (`internal/testutil/cephtest/servicemap.go`).
+  One of goceph's specs forces the race and requires the entry registered
+  again (Observed).
 - **Upstream:** none. A search of tracker.ceph.com's issues and ceph/ceph's
   pull requests on 2026-11-20 found no report or fix. Related, none the same
   defect:
