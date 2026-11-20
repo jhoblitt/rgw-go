@@ -545,6 +545,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw skips a bucket's default encryption for a write that sends an empty encryption header](#radosgw-skips-a-buckets-default-encryption-for-a-write-that-sends-an-empty-encryption-header) | [#79506](https://tracker.ceph.com/issues/79506), [#80258](https://tracker.ceph.com/issues/80258), [#80260](https://tracker.ceph.com/issues/80260) | [ceph/ceph#71073](https://github.com/ceph/ceph/pull/71073), [ceph/ceph#71534](https://github.com/ceph/ceph/pull/71534), [ceph/ceph#71535](https://github.com/ceph/ceph/pull/71535) | ✓ |
 | [radosgw's CopyObject ignores x-amz-tagging-directive](#radosgws-copyobject-ignores-x-amz-tagging-directive) | pending | pending | ✓ |
 | [radosgw's CopyObject and CreateMultipartUpload evaluate s3:PutObject without the request's ACL and tag condition keys](#radosgws-copyobject-and-createmultipartupload-evaluate-s3putobject-without-the-requests-acl-and-tag-condition-keys) | pending | pending | ✓ |
+| [radosgw adds an empty s3:x-amz-acl key to a PutObject that sends no x-amz-acl](#radosgw-adds-an-empty-s3x-amz-acl-key-to-a-putobject-that-sends-no-x-amz-acl) | pending | pending | ✓ |
 | [radosgw's replay of an OLH log removes a version that a later entry of the same log links](#radosgws-replay-of-an-olh-log-removes-a-version-that-a-later-entry-of-the-same-log-links) | pending | [ceph/ceph#67661](https://github.com/ceph/ceph/pull/67661) (partial) |  |
 | [radosgw never sets aws:SecureTransport to false](#radosgw-never-sets-awssecuretransport-to-false) | none; [#42521](https://tracker.ceph.com/issues/42521) is related | none |  |
 | [radosgw sets few of the condition keys Amazon S3 sets on S3 requests](#radosgw-sets-few-of-the-condition-keys-amazon-s3-sets-on-s3-requests) | pending | pending | ✓ |
@@ -35701,6 +35702,55 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task S12's adversarial review, 2026-11-15, probing which
   condition keys the s3:PutObject check of each write carries; derived from
   the source and seen in rgw-go, not reproduced on a cluster.
+
+## radosgw adds an empty s3:x-amz-acl key to a PutObject that sends no x-amz-acl
+
+- **Kind:** defect, possibly security-relevant, conditional on a policy that
+  conditions s3:PutObject, s3:PutObjectAcl, s3:PutObjectVersionAcl or
+  s3:PutBucketAcl on `s3:x-amz-acl` with `Null` or an `IfExists` operator.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWHandler_REST_S3::init` sets `s->canned_acl` only when the request
+    sends `x-amz-acl`, and it is otherwise the empty string
+    ([rgw_rest_s3.cc:5050-5052](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5050-L5052),
+    [rgw_rest_s3.cc:5580-5582](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5580-L5582)).
+  - `RGWPutObj::verify_permission`, which also serves UploadPart and
+    UploadPartCopy, and `RGWPutACLs::verify_permission`, which serves
+    PutObjectAcl, PutObjectVersionAcl and PutBucketAcl, an ACL set by the
+    body among them, add it as `s3:x-amz-acl` whatever its value
+    ([rgw_op.cc:3968](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3968),
+    [rgw_op.cc:5745](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5745);
+    [rgw_op.cc:4177](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4177),
+    [rgw_op.cc:6320](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6320)), through
+    `rgw_add_to_iam_environment`, which skips an empty key and keeps an
+    empty value
+    ([rgw_op.cc:701-706](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L701-L706),
+    [rgw_op.cc:731-736](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L731-L736)).
+  - So a request that sends no `x-amz-acl` is evaluated with the key
+    present and empty: a `Null` condition on it reads it as present
+    ([rgw_iam_policy.cc:857-859](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L857-L859),
+    [rgw_iam_policy.cc:876-879](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L876-L879)),
+    and an `IfExists` operator compares the empty value rather than
+    holding on an absent key. A Deny conditioned `Null` `s3:x-amz-acl`
+    `true`, written to refuse a write that names no canned ACL, refuses
+    none of these requests. Whether Amazon S3 adds the key for a request
+    that sends no header is not verified here.
+- **Releases:** v19.2.7 and v20.2.4; older releases not checked.
+- **rgw-go:** adds the empty key where radosgw does, the s3:PutObject check
+  of PutObject, UploadPart and UploadPartCopy and the s3:PutObjectAcl,
+  s3:PutObjectVersionAcl and s3:PutBucketAcl checks, and judges an Allow
+  with it, as radosgw does, but a Deny both with it and without it,
+  refusing if it holds either way (`policy.Env.MarkUnsent`,
+  `policy.Statement.EvalConditions`; `docs/differences.md`, "CopyObject and
+  CreateMultipartUpload evaluate s3:PutObject with the keys of the ACL and
+  the tags they set"). It judges a request that sends `x-amz-acl` empty,
+  whose canned ACL is empty too, the same way. So it does not reproduce the
+  Deny's failure; a CopyObject or a CreateMultipartUpload that sends no
+  `x-amz-acl`, or sends it empty, has no such key, as on radosgw.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task S13's review, 2026-11-20, checking which keys a
+  write that sends no ACL header carries; derived from the source, not
+  reproduced on a cluster.
 
 ## radosgw's replay of an OLH log removes a version that a later entry of the same log links
 
