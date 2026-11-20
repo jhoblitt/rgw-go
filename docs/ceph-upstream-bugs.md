@@ -33275,15 +33275,20 @@ Every new entry adds its row to this table, in document order.
   (`ListParts.checksumsShown`, `internal/op/listparts.go`;
   `docs/differences.md`, "ListParts shows an encrypted upload's checksums
   only to a requester who could read its data"). Its
-  CompleteMultipartUpload differs too: it asks for an SSE-C upload's key as
-  v20.2.5's `verify_encryption` does, Amazon S3's rule, for one made with
-  a checksum or a request that sends SSE-C headers, and on Tentacle refuses
-  an SSE-KMS upload made with a checksum, whose `kms:Decrypt` it cannot
-  evaluate. It decides an answer from the object already completed the same
-  way, over that head's crypt attrs, so it gives an SSE-C object's
-  combined checksum only to a holder of its key and an SSE-KMS object's to
-  no Tentacle requester, an upload id that names no upload included
-  (`verifyEncryption` and `completedHead`,
+  CompleteMultipartUpload differs too. It refuses with 501 a request that
+  sends an SSE-C header with a value, a key included, before it reads the
+  upload, as rgw-go serves no SSE-C yet; otherwise it asks for an SSE-C
+  upload's key as v20.2.5's `verify_encryption` does, Amazon S3's rule, for
+  one made with a checksum or a request that sends SSE-C headers, which can
+  then only be sent empty, and on Tentacle refuses an SSE-KMS upload made
+  with a checksum, whose `kms:Decrypt` it cannot evaluate. It decides an
+  answer from the object already completed the same way, over that head's
+  crypt attrs. So it gives an SSE-C object's combined checksum to no
+  requester, until phase 4 serves SSE-C and restores the key holder's
+  path (`docs/superpowers/plans/2026-10-13-phase-2/00-index.md`, "Deferred
+  to phase 4", item 1), and an SSE-KMS object's to no Tentacle requester, an upload id that
+  names no upload included (`CompleteMultipart.AskedEncryption`,
+  `verifyEncryption` and `completedHead`,
   `internal/op/completemultipart.go`; `docs/differences.md`,
   "CompleteMultipartUpload asks for an SSE-C upload's key as Amazon S3 and
   v20.2.5 do, and completes a key-server upload where Amazon S3 needs no

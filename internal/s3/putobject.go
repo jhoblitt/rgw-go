@@ -321,11 +321,13 @@ func refuseEncryption(r *op.Request, query bool) error {
 // one carrying a value in an X-Amz- header that init_meta_info files in
 // crypt_attribute_map, X-Amz-Server-Side-Encryption among them; in one
 // naming a copy source's SSE-C key; and, when query is set, in a query
-// parameter map_qs_metadata files there for a PutObject. radosgw encrypts
-// SSE-C and fails SSE-S3 and SSE-KMS without a key server; rgw-go encrypts
-// nothing in phase 1, and must not store in the clear what a client asked to
-// have encrypted (docs/exclusions.md). A value anywhere wins over an empty
-// instance of the same or another name (emptyRefusal).
+// parameter map_qs_metadata files there for a PutObject or a
+// CompleteMultipartUpload. radosgw encrypts SSE-C and fails SSE-S3 and
+// SSE-KMS without a key server; rgw-go encrypts nothing in phase 1, and must
+// not store in the clear what a client asked to have encrypted
+// (docs/exclusions.md). A completion is refused for another reason, the
+// policy keys its headers set (completeMultipart). A value anywhere wins
+// over an empty instance of the same or another name (emptyRefusal).
 func (c cryptRequest) askedRefusal() error {
 	if c.asked {
 		return fmt.Errorf("%w: server-side encryption is not served yet", op.ErrNotImplemented)
