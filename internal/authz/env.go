@@ -9,10 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/iso8601"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/policy"
+	"github.com/jhoblitt/rgw-go/internal/rgwtext"
 	"github.com/jhoblitt/rgw-go/internal/tags"
 )
 
@@ -24,9 +26,10 @@ type envPair struct{ key, value string }
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L848-L910 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L884-L946 at v20.2.4),
 // then the keys the op for a adds in its verify_permission. Tag keys are not
-// among them; the evaluator adds those where the op does. Last come the
-// object-lock keys of the lock the request sets (lockKeys), which radosgw
-// does not add.
+// among them; the evaluator adds those where the op does. Last come keys
+// radosgw does not add: those of the ACL and the tags a CopyObject or a
+// CreateMultipartUpload sets (writeKeys), then the object-lock keys of the
+// lock the request sets (lockKeys).
 //
 // radosgw's environment is an unordered_multimap, and on Tentacle which of a
 // key's values a typed condition reads depends on how many pairs the
@@ -52,10 +55,71 @@ func buildEnv(cfg Config, r *op.Request, a policy.Action, addTags func(*policy.E
 	if !tagsFirst && addTags != nil {
 		addTags(&env)
 	}
-	for _, p := range lockKeys(cfg, r, a) {
+	for _, p := range append(writeKeys(r, a), lockKeys(cfg, r, a)...) {
 		env.Add(p.key, p.value)
 	}
+	markUnsent(&env, r)
 	return env
+}
+
+// markUnsent marks the ACL keys that hold the empty value of a header that
+// sets nothing: s3:x-amz-acl, which radosgw adds as s->canned_acl, empty
+// whether x-amz-acl is absent or sent empty
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5050-L5052 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5580-L5582 at v20.2.4),
+// and a grant key whose header names no grantee, empty or of commas alone,
+// which grants nothing as the write parses it (acl.NamesNoGrantee). A Deny
+// written for the header's absence then holds for a request that sends it
+// so as for one that does not send it.
+func markUnsent(env *policy.Env, r *op.Request) {
+	if v, _ := op.HeaderValue(r.Header, "X-Amz-Acl"); v == "" && env.Lookup("s3:x-amz-acl") != nil {
+		env.MarkUnsent("s3:x-amz-acl")
+	}
+	for _, g := range grantHeaders {
+		if v, sent := op.HeaderValue(r.Header, g.header); sent && acl.NamesNoGrantee(v) && env.Lookup(g.key) != nil {
+			env.MarkUnsent(g.key)
+		}
+	}
+}
+
+// writeKeys are, for the s3:PutObject check of a CopyObject or a
+// CreateMultipartUpload, the keys RGWPutObj adds for the ACL and the tags a
+// write sets, in its order (putObjectKeys). radosgw adds them for neither op
+// (docs/ceph-upstream-bugs.md, "radosgw's CopyObject and
+// CreateMultipartUpload evaluate s3:PutObject without the request's ACL and
+// tag condition keys"), so a policy on s3:PutObject that names one, such as
+// one requiring bucket-owner-full-control, would bind a PutObject alone
+// (docs/differences.md). A copy sets
+// the tags of its x-amz-tagging header only when it replaces its source's
+// metadata, and keeps the source's otherwise, so only then does it add
+// their keys: an Allow conditioned on a tag must not grant a copy that does
+// not set it.
+func writeKeys(r *op.Request, a policy.Action) []envPair {
+	if a != policy.S3PutObject {
+		return nil
+	}
+	var withTags bool
+	switch {
+	case r.Method == http.MethodPut && isCopyObject(r):
+		withTags = replacesMetadata(r)
+	case isCreateMultipartUpload(r):
+		withTags = true
+	default:
+		return nil
+	}
+	ps := sentACLKeys(r)
+	if withTags {
+		ps = append(ps, requestTagKeys(r)...)
+	}
+	return ps
+}
+
+// replacesMetadata reports whether a copy's x-amz-metadata-directive is
+// REPLACE as the copy reads it (internal/s3/copyobject.go,
+// copyObjectParams): up to a NUL, in any case.
+func replacesMetadata(r *op.Request) bool {
+	d, ok := op.HeaderValue(r.Header, "X-Amz-Metadata-Directive")
+	return ok && strings.EqualFold(rgwtext.CString(d), "REPLACE")
 }
 
 // lockKeys are the object-lock condition keys of r.Lock, the lock the
@@ -348,12 +412,28 @@ func listKeys(cfg Config, r *op.Request) []envPair {
 // copy source, and neither a source range nor an upload id
 // (RGWHandler_REST_S3::init,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_rest_s3.cc#L5026-L5029 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5586-L5589 at v20.2.4).
-// Any other PUT that checks s3:PutObject is RGWPutObj.
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5586-L5589 at v20.2.4),
+// and the source's bucket part (op.CopySourceBucket) is not empty, as the
+// dispatch decides (internal/s3/dispatch.go, copiesObject): op_put returns
+// RGWPutObj for a source such as //k, whose parse sets no source bucket. Any
+// other PUT that checks s3:PutObject is RGWPutObj.
 func isCopyObject(r *op.Request) bool {
-	_, src := op.HeaderValue(r.Header, "X-Amz-Copy-Source")
+	v, src := op.HeaderValue(r.Header, "X-Amz-Copy-Source")
 	_, ranged := op.HeaderValue(r.Header, "X-Amz-Copy-Source-Range")
-	return src && !ranged && !hasQuery(r, "uploadId")
+	if !src || ranged || hasQuery(r, "uploadId") {
+		return false
+	}
+	bucket, parsed := op.CopySourceBucket(v)
+	return !parsed || bucket != ""
+}
+
+// isCreateMultipartUpload reports whether a request is routed to
+// RGWInitMultipart: a POST with uploads and no uploadId, whose presence
+// op_post routes to RGWCompleteMultipart first
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4894-L4900 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5421-L5427 at v20.2.4).
+func isCreateMultipartUpload(r *op.Request) bool {
+	return r.Method == http.MethodPost && hasQuery(r, "uploads") && !hasQuery(r, "uploadId")
 }
 
 // copyKeys are RGWCopyObj's: the copy source header as sent, and the
@@ -396,8 +476,24 @@ func requestTagKeys(r *op.Request) []envPair {
 	return ps
 }
 
-// cannedACL is s->canned_acl, x-amz-acl or empty, which the ops add even when
-// empty.
+// sentACLKeys are the keys a copy and an upload carry for the ACL they set,
+// where radosgw carries none: each grant header's key and the canned ACL's,
+// only for a header that sets something. A grant header that names no
+// grantee grants nothing and an empty x-amz-acl names no canned ACL, as
+// absent ones do.
+func sentACLKeys(r *op.Request) []envPair {
+	ps := slices.DeleteFunc(grantKeys(r), func(p envPair) bool { return acl.NamesNoGrantee(p.value) })
+	if v, _ := op.HeaderValue(r.Header, "X-Amz-Acl"); v != "" {
+		ps = append(ps, envPair{"s3:x-amz-acl", v})
+	}
+	return ps
+}
+
+// cannedACL is s->canned_acl, x-amz-acl or empty, which RGWPutObj and
+// RGWPutACLs add even when empty (docs/ceph-upstream-bugs.md, "radosgw adds
+// an empty s3:x-amz-acl key to a PutObject that sends no x-amz-acl").
+// buildEnv marks it unsent when empty, so that a Deny is judged with and
+// without it (docs/differences.md).
 func cannedACL(r *op.Request) string {
 	v, _ := op.HeaderValue(r.Header, "X-Amz-Acl")
 	return v

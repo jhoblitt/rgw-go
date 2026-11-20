@@ -6957,7 +6957,11 @@ rgw-go does the following.
   A statement that allows keeps radosgw's evaluation of every condition:
   Amazon S3's answer would grant a request that a radosgw serving the same
   zone refuses, so an Allow guarded by a negated operator on an absent key
-  grants nothing, as on radosgw.
+  grants nothing, as on radosgw. Where radosgw adds `s3:x-amz-acl` empty for
+  a request that sends no `x-amz-acl`, a Deny is also judged without that
+  key, and an Allow only with it ("CopyObject and CreateMultipartUpload
+  evaluate s3:PutObject with the keys of the ACL and the tags they set",
+  below).
 
   A Deny whose negated operator names a key rgw-go does not set refuses
   every request the statement covers, where radosgw serves them all: the key
@@ -10829,14 +10833,10 @@ does the following.
   pinned to a commit). The canned ACL gives the bucket's owner control of the
   object and no one else access. If Amazon S3 does ask for s3:PutObjectAcl,
   rgw-go serves a write that it refuses, which a Deny of s3:PutObjectAcl does
-  not reach either. A policy that conditions s3:PutObject on `s3:x-amz-acl`,
-  a grant key or a request tag binds a PutObject but not a CopyObject or a
-  CreateMultipartUpload, whose s3:PutObject checks carry none of them, in
-  rgw-go as in radosgw (`docs/ceph-upstream-bugs.md`, "[radosgw's CopyObject
-  and CreateMultipartUpload evaluate s3:PutObject without the request's ACL
-  and tag condition
-  keys](ceph-upstream-bugs.md#radosgws-copyobject-and-createmultipartupload-evaluate-s3putobject-without-the-requests-acl-and-tag-condition-keys)"):
-  plan task S13 adds the keys. CreateBucket still counts the canned ACL,
+  not reach either. A policy that conditions s3:PutObject on `s3:x-amz-acl`
+  reaches it on all three writes ("CopyObject and CreateMultipartUpload
+  evaluate s3:PutObject with the keys of the ACL and the tags they set",
+  below), where radosgw's reaches it on a PutObject alone. CreateBucket still counts the canned ACL,
   whose reference says of it as of any other ACL it does not name. An
   `x-amz-grant-*` header
   stays counted when it names the bucket's owner alone, the pattern the same
@@ -10850,10 +10850,13 @@ does the following.
   replaces it
   ([rgw_op.h:2175-2237](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2175-L2237),
   [rgw_op.h:2338-2408](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2338-L2408)):
-  a CopyObject that replaces its metadata keeps any value as sent, which
-  the tag set's decode reads as the text older objects stored
+  a CopyObject that replaces its metadata keeps as sent a value that parses
+  and that format_xattr stores unchanged, which the tag set's decode reads as
+  the text older objects stored
   ([rgw_tag.h:32-62](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.h#L32-L62),
   [rgw_tag.h:32-62](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.h#L32-L62)),
+  and refuses any other ("CopyObject and CreateMultipartUpload evaluate
+  s3:PutObject with the keys of the ACL and the tags they set", below),
   though radosgw and rgw-go read no `x-amz-tagging-directive`
   (`docs/ceph-upstream-bugs.md`, "[radosgw's CopyObject ignores
   x-amz-tagging-directive](ceph-upstream-bugs.md#radosgws-copyobject-ignores-x-amz-tagging-directive)").
@@ -10873,6 +10876,136 @@ does the following.
   not parse is 400 InvalidArgument for every requester, as its get_params
   reads it before the permission check. The POST object upload is not served
   yet; its form's `acl` and `tagging` fields are to need the same actions.
+- **CopyObject and CreateMultipartUpload evaluate s3:PutObject with the keys
+  of the ACL and the tags they set.** radosgw's PutObject adds
+  `s3:x-amz-acl`, the `s3:x-amz-grant-*` keys and an
+  `s3:RequestObjectTag/<key>` for each tag of its `x-amz-tagging` header to
+  its s3:PutObject check, and its CopyObject and CreateMultipartUpload add
+  none of them to theirs (`docs/ceph-upstream-bugs.md`, "[radosgw's
+  CopyObject and CreateMultipartUpload evaluate s3:PutObject without the
+  request's ACL and tag condition
+  keys](ceph-upstream-bugs.md#radosgws-copyobject-and-createmultipartupload-evaluate-s3putobject-without-the-requests-acl-and-tag-condition-keys)").
+  No Amazon text says which keys Amazon S3 supplies to the s3:PutObject check
+  of either operation. Its user guide makes s3:PutObject the action of both
+  ("In the PUT Object request, when you specify a source object, it is a copy
+  operation",
+  [amazon-s3-policy-keys.md:141](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L141);
+  "You must be allowed to perform the `s3:PutObject` action on an object to
+  create multipart upload",
+  [mpuoverview.md:120](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/mpuoverview.md?plain=1#L120)),
+  and recommends a bucket policy that requires the
+  `bucket-owner-full-control` canned ACL "for all `PUT` requests to your
+  bucket", an s3:PutObject statement conditioned on `s3:x-amz-acl`
+  ([ensure-object-ownership.md:5](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/ensure-object-ownership.md?plain=1#L5),
+  in the user guide's archived source). rgw-go adds the keys to the two checks
+  as radosgw's PutObject adds them, so that a policy written to govern every
+  write of an object binds the three: the grant headers that grant something,
+  the canned ACL when `x-amz-acl` names one, and the tags the header sets,
+  none for one that does not parse (`writeKeys`, `internal/authz/env.go`). A
+  copy or an upload that sends no `x-amz-acl`, or sends it empty, which names
+  no canned ACL, has no `s3:x-amz-acl` key, as on radosgw, nor a grant key for
+  a grant header it does not send or that names no grantee, an empty one or
+  one of commas alone, which grants nothing (`sentACLKeys`). They come after
+  the keys radosgw's two operations add, the object's or the bucket's tags
+  among them, so no value Tentacle's typed operators read from those moves. A
+  CopyObject adds the tag keys only under `x-amz-metadata-directive: REPLACE`,
+  in any case, the one directive under which it stores its header's tags:
+  under COPY it keeps its source's tag set, and an Allow conditioned on a tag
+  must not grant a copy that does not set it. The header still needs
+  s3:PutObjectTagging under every directive ("A write's ACL and tag headers
+  need s3:PutObjectAcl and s3:PutObjectTagging", above).
+  CompleteMultipartUpload, which sets neither, adds none, and UploadPart has
+  PutObject's keys already, as radosgw's RGWPutObj serves it. So under a Deny
+  by a negated operator on `s3:x-amz-acl`, such as `StringNotEquals`
+  `bucket-owner-full-control`, which rgw-go holds on the completion's absent
+  key ("A Deny's condition holds where Amazon S3's evaluation or radosgw's
+  holds", above), an upload that carries the header now begins and its
+  completion is refused, 403 AccessDenied, leaving it in progress, where
+  radosgw completes it; plan task S15 tracks it.
+
+  Where radosgw adds `s3:x-amz-acl` empty for a request that sends no
+  `x-amz-acl` (`docs/ceph-upstream-bugs.md`, "[radosgw adds an empty
+  s3:x-amz-acl key to a PutObject that sends no
+  x-amz-acl](ceph-upstream-bugs.md#radosgw-adds-an-empty-s3x-amz-acl-key-to-a-putobject-that-sends-no-x-amz-acl)"),
+  rgw-go adds it empty too: the s3:PutObject check of a PutObject, an
+  UploadPart and an UploadPartCopy, the s3:PutObjectAcl check of an object
+  write that sets its ACL by grant headers alone, and the s3:PutObjectAcl,
+  s3:PutObjectVersionAcl and s3:PutBucketAcl checks of the ACL operations,
+  which may set their ACL by the body. On those checks an Allow is judged as
+  radosgw judges it, with the empty key, and a Deny is judged both with the
+  empty key and without it, and refuses if it holds either way
+  (`policy.Env.MarkUnsent`, `policy.Statement.EvalConditions`). So a Deny
+  conditioned `Null` `s3:x-amz-acl` `true`, or `StringEqualsIfExists`
+  `s3:x-amz-acl` `public-read`, refuses with 403 AccessDenied such a request
+  that sends no `x-amz-acl`, an ACL operation that sets its ACL by its body
+  among them, where radosgw serves it; every Allow is judged on radosgw's keys
+  alone. A request that sends `x-amz-acl` empty is judged as one that sends
+  none, as its canned ACL is empty either way
+  ([rgw_rest_s3.cc:5050-5052](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5050-L5052),
+  [rgw_rest_s3.cc:5580-5582](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5580-L5582)),
+  and so is a grant header that names no grantee as the write parses it, an
+  empty one or one of commas alone such as `,`, which grants nothing, though
+  radosgw adds its key as sent (`acl.NamesNoGrantee`): an Allow is judged with
+  the key, a Deny with it and without it. So a Deny conditioned `Null`
+  `s3:x-amz-grant-read` `true` refuses a write that sends such an
+  `x-amz-grant-read`, where radosgw serves it, as it refuses one that sends
+  none; on the s3:PutObjectAcl check, which a write makes for any grant
+  header, such a Deny refuses a write that sends one naming no grantee, though
+  a write that sends no ACL header makes no such check. A grant header naming
+  the owner names a grantee, and one with an item that does not parse, such as
+  `, ,`, is judged as sent and refused with a 400 once authorized.
+
+  A CopyObject that replaces its metadata refuses an `x-amz-tagging` header
+  that does not parse as a tag set, an empty tag key or more than ten tags
+  among them, with 400 InvalidArgument before it is authorized, as a
+  PutObject refuses it, and refuses the same way one that format_xattr would
+  store rewritten, a value holding a control character, a tab among them, or
+  a byte that is not UTF-8, which it stores as `=?UTF-8?Q?...?=` text that
+  the tag set's decode reads as no tags
+  ([rgw_op.h:2145-2164](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2145-L2164),
+  [rgw_op.h:2308-2327](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2308-L2327))
+  (`replaceTags`, `internal/s3/copyobject.go`). A PutObject and a
+  CreateMultipartUpload store the parsed set, so they serve such a header.
+  radosgw's copy parses no tag header: its get_params reads none
+  ([rgw_rest_s3.cc:3508-3581](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3508-L3581),
+  [rgw_rest_s3.cc:3758-3831](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3758-L3831)),
+  and its init_common, which execute runs once the request is authorized,
+  stores the header as sent among the request's attrs
+  ([rgw_op.cc:5526](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5526),
+  [rgw_op.cc:6089](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6089)),
+  so radosgw serves the copy and stores tags no reader decodes
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's CopyObject stores an
+  x-amz-tagging header it does not
+  validate](ceph-upstream-bugs.md#radosgws-copyobject-stores-an-x-amz-tagging-header-it-does-not-validate)"). rgw-go's
+  checks of the copy take the request's tag keys from the parsed header, so
+  either header would leave them judging tags other than those stored: a
+  Deny conditioned on a tag unevaluated, or an Allow conditioned on one
+  granting a copy that stores none. A copy under COPY, which does not store
+  the header, is served as before,
+  and a CreateMultipartUpload refuses such a header once authorized, before
+  it creates the upload, as radosgw's does.
+
+  So, on both releases, a bucket or identity policy that conditions
+  s3:PutObject on one of the keys judges a CopyObject or a
+  CreateMultipartUpload by its headers, where radosgw judges it on an absent
+  key. A Deny by a positive operator, such as `StringEquals` `s3:x-amz-acl`
+  `public-read`, refuses with 403 AccessDenied, before anything is written,
+  a write whose header it names, which radosgw serves. An Allow so
+  conditioned, such as Amazon's `StringEquals` `s3:x-amz-acl`
+  `bucket-owner-full-control`, grants a write whose header it names, which
+  radosgw refuses unless another permission grants it. A Deny by a negated
+  operator, which rgw-go holds on an absent key ("A Deny's condition holds
+  where Amazon S3's evaluation or radosgw's holds", above), such as
+  `StringNotEquals` `s3:x-amz-acl` `bucket-owner-full-control`, serves a
+  write whose header it names, as radosgw does, and refuses one whose header
+  differs or is absent, which radosgw serves. The s3-tests
+  `test_bucket_policy_deny_put_obj_acl_copy_and_multipart`,
+  `test_bucket_policy_put_obj_bucket_owner_full_control_copy_and_multipart`,
+  `test_bucket_policy_deny_put_obj_not_bucket_owner_full_control_copy_and_multipart`
+  and `test_bucket_policy_deny_put_obj_request_tag_copy_and_multipart` check
+  the three writes alike, and `test_copy_object_replace_tagging_too_many_tags`
+  and `test_copy_object_replace_tagging_control_character` the copy's
+  refusals.
 - **A date whose time names a conversion rgw-go does not run is refused.**
   radosgw reads DeleteObject's `x-amz-delete-if-unmodified-since` and the
   admin API's date arguments, such as the usage API's `start` and `end`,

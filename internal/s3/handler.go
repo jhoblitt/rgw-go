@@ -349,7 +349,7 @@ func (h *Handler) parse(req *http.Request, now time.Time) (Parsed, error) {
 		return p, op.ErrMethodNotAllowed
 	}
 	if v, ok := copySource(r); ok {
-		if _, parsed := copySourceBucket(v); !parsed {
+		if _, parsed := op.CopySourceBucket(v); !parsed {
 			return p, op.ErrInvalidArgument // parse_copy_location's false is -EINVAL
 		}
 	}

@@ -545,6 +545,9 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw skips a bucket's default encryption for a write that sends an empty encryption header](#radosgw-skips-a-buckets-default-encryption-for-a-write-that-sends-an-empty-encryption-header) | [#79506](https://tracker.ceph.com/issues/79506), [#80258](https://tracker.ceph.com/issues/80258), [#80260](https://tracker.ceph.com/issues/80260) | [ceph/ceph#71073](https://github.com/ceph/ceph/pull/71073), [ceph/ceph#71534](https://github.com/ceph/ceph/pull/71534), [ceph/ceph#71535](https://github.com/ceph/ceph/pull/71535) | ✓ |
 | [radosgw's CopyObject ignores x-amz-tagging-directive](#radosgws-copyobject-ignores-x-amz-tagging-directive) | pending | pending | ✓ |
 | [radosgw's CopyObject and CreateMultipartUpload evaluate s3:PutObject without the request's ACL and tag condition keys](#radosgws-copyobject-and-createmultipartupload-evaluate-s3putobject-without-the-requests-acl-and-tag-condition-keys) | pending | pending | ✓ |
+| [radosgw adds an empty s3:x-amz-acl key to a PutObject that sends no x-amz-acl](#radosgw-adds-an-empty-s3x-amz-acl-key-to-a-putobject-that-sends-no-x-amz-acl) | pending | pending | ✓ |
+| [radosgw's CopyObject stores an x-amz-tagging header it does not validate](#radosgws-copyobject-stores-an-x-amz-tagging-header-it-does-not-validate) | pending | pending | ✓ |
+| [radosgw's typed condition operators read one value of a repeated tag key](#radosgws-typed-condition-operators-read-one-value-of-a-repeated-tag-key) | pending | pending | ✓ |
 | [radosgw's replay of an OLH log removes a version that a later entry of the same log links](#radosgws-replay-of-an-olh-log-removes-a-version-that-a-later-entry-of-the-same-log-links) | pending | [ceph/ceph#67661](https://github.com/ceph/ceph/pull/67661) (partial) |  |
 | [radosgw never sets aws:SecureTransport to false](#radosgw-never-sets-awssecuretransport-to-false) | none; [#42521](https://tracker.ceph.com/issues/42521) is related | none |  |
 | [radosgw sets few of the condition keys Amazon S3 sets on S3 requests](#radosgw-sets-few-of-the-condition-keys-amazon-s3-sets-on-s3-requests) | pending | pending | ✓ |
@@ -35685,22 +35688,180 @@ Every new entry adds its row to this table, in document order.
     retrieved 2026-11-15). Whether Amazon S3 supplies the keys to the checks
     of those two operations is not verified here.
 - **Releases:** v19.2.7 and v20.2.4; older releases not checked.
-- **rgw-go:** reproduces it. A copy's s3:PutObject check carries the copy
-  source and the metadata directive, and a multipart upload's the encryption
-  headers (`copyKeys` and `cryptKeys`, `internal/authz/env.go`). The
-  s3:PutObjectAcl check S12 adds carries `s3:x-amz-acl` and the grant keys,
-  and its s3:PutObjectTagging check the request-tag keys, on all three
-  writes (`docs/differences.md`, "A write's ACL and tag headers need
-  s3:PutObjectAcl and s3:PutObjectTagging"). Adding the keys to s3:PutObject
-  for the two operations is plan task S13.
-  A Deny whose negated operator tests one of those keys holds for the two
-  operations, as for any key the request lacks (`docs/differences.md`, "A
-  Deny's condition holds where Amazon S3's evaluation or radosgw's holds").
+- **rgw-go:** does not reproduce it. The s3:PutObject checks of CopyObject
+  and CreateMultipartUpload carry, after the keys radosgw's operations add,
+  the grant keys, `s3:x-amz-acl` and the request's tag keys, as PutObject's
+  does; a copy carries the tag keys only under the REPLACE metadata
+  directive, the one under which it stores its header's tags (`writeKeys`,
+  `internal/authz/env.go`; `docs/differences.md`, "CopyObject and
+  CreateMultipartUpload evaluate s3:PutObject with the keys of the ACL and
+  the tags they set"). Its s3:PutObjectAcl and s3:PutObjectTagging checks
+  carry their keys on all three writes too (`docs/differences.md`, "A
+  write's ACL and tag headers need s3:PutObjectAcl and
+  s3:PutObjectTagging").
 - **Upstream:** pending; prior art not searched: sent to
   rgw-bug-reproduction.
 - **Found:** phase 2 task S12's adversarial review, 2026-11-15, probing which
   condition keys the s3:PutObject check of each write carries; derived from
   the source and seen in rgw-go, not reproduced on a cluster.
+
+## radosgw adds an empty s3:x-amz-acl key to a PutObject that sends no x-amz-acl
+
+- **Kind:** defect, possibly security-relevant, conditional on a policy that
+  conditions s3:PutObject, s3:PutObjectAcl, s3:PutObjectVersionAcl or
+  s3:PutBucketAcl on `s3:x-amz-acl` with `Null` or an `IfExists` operator.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWHandler_REST_S3::init` sets `s->canned_acl` only when the request
+    sends `x-amz-acl`, and it is otherwise the empty string
+    ([rgw_rest_s3.cc:5050-5052](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5050-L5052),
+    [rgw_rest_s3.cc:5580-5582](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5580-L5582)).
+  - `RGWPutObj::verify_permission`, which also serves UploadPart and
+    UploadPartCopy, and `RGWPutACLs::verify_permission`, which serves
+    PutObjectAcl, PutObjectVersionAcl and PutBucketAcl, an ACL set by the
+    body among them, add it as `s3:x-amz-acl` whatever its value
+    ([rgw_op.cc:3968](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3968),
+    [rgw_op.cc:5745](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5745);
+    [rgw_op.cc:4177](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4177),
+    [rgw_op.cc:6320](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6320)), through
+    `rgw_add_to_iam_environment`, which skips an empty key and keeps an
+    empty value
+    ([rgw_op.cc:701-706](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L701-L706),
+    [rgw_op.cc:731-736](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L731-L736)).
+  - So a request that sends no `x-amz-acl` is evaluated with the key
+    present and empty: a `Null` condition on it reads it as present
+    ([rgw_iam_policy.cc:857-859](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L857-L859),
+    [rgw_iam_policy.cc:876-879](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L876-L879)),
+    and an `IfExists` operator compares the empty value rather than
+    holding on an absent key. A Deny conditioned `Null` `s3:x-amz-acl`
+    `true`, written to refuse a write that names no canned ACL, refuses
+    none of these requests. Whether Amazon S3 adds the key for a request
+    that sends no header is not verified here.
+- **Releases:** v19.2.7 and v20.2.4; older releases not checked.
+- **rgw-go:** adds the empty key where radosgw does, the s3:PutObject check
+  of PutObject, UploadPart and UploadPartCopy and the s3:PutObjectAcl,
+  s3:PutObjectVersionAcl and s3:PutBucketAcl checks, and judges an Allow
+  with it, as radosgw does, but a Deny both with it and without it,
+  refusing if it holds either way (`policy.Env.MarkUnsent`,
+  `policy.Statement.EvalConditions`; `docs/differences.md`, "CopyObject and
+  CreateMultipartUpload evaluate s3:PutObject with the keys of the ACL and
+  the tags they set"). It judges a request that sends `x-amz-acl` empty,
+  whose canned ACL is empty too, the same way. So it does not reproduce the
+  Deny's failure; a CopyObject or a CreateMultipartUpload that sends no
+  `x-amz-acl`, or sends it empty, has no such key, as on radosgw.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task S13's review, 2026-11-20, checking which keys a
+  write that sends no ACL header carries; derived from the source, not
+  reproduced on a cluster.
+
+## radosgw's CopyObject stores an x-amz-tagging header it does not validate
+
+- **Kind:** defect, possibly security-relevant, conservatively: a copy
+  under the REPLACE metadata directive can create an object whose tag attr
+  no tag reader decodes, so a policy, lifecycle rule or replication rule
+  conditioned on the object's tags evaluates it without them.
+  Unreproduced: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - PutObject's get_params parses `x-amz-tagging` and refuses a header
+    that does not parse
+    ([rgw_rest_s3.cc:2633-2644](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2633-L2644),
+    [rgw_rest_s3.cc:2786-2797](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2786-L2797)).
+    `RGWCopyObj_ObjStore_S3::get_params` reads none, and sets the
+    directive under which the copy keeps the request's attrs in place of
+    its source's
+    ([rgw_rest_s3.cc:3508-3581](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L3508-L3581),
+    [rgw_rest_s3.cc:3758-3831](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L3758-L3831)).
+  - `RGWCopyObj::init_common` builds those attrs with
+    `rgw_get_request_metadata`
+    ([rgw_op.cc:5526](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5526),
+    [rgw_op.cc:6089](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6089)), which stores
+    each `x-amz-*` header under its attr name, the tag set's among them,
+    after `format_xattr`
+    ([rgw_op.h:2175-2237](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2175-L2237),
+    [rgw_op.h:2338-2408](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2338-L2408)).
+    `format_xattr` rewrites a value holding a control character or a byte
+    that is not UTF-8 as `=?UTF-8?Q?...?=` text
+    ([rgw_op.h:2145-2164](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.h#L2145-L2164),
+    [rgw_op.h:2308-2327](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.h#L2308-L2327)).
+  - The tag set's decode reads such text through `set_from_string`
+    ([rgw_tag.h:32-62](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.h#L32-L62),
+    [rgw_tag.h:32-62](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.h#L32-L62)), whose
+    `check_and_add_tag` refuses an eleventh tag and an empty key
+    ([rgw_tag.cc:23-34](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.cc#L23-L34),
+    [rgw_tag.cc:23-34](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.cc#L23-L34)). A header
+    with more than ten tags, with an empty key, or rewritten by
+    `format_xattr`, whose first item then has an empty key, decodes to no
+    tag set, and `rgw_iam_add_tags_from_bl` fails with -EIO
+    ([rgw_op.cc:708-725](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L708-L725),
+    [rgw_op.cc:738-755](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L738-L755)), the sink
+    the entry "[radosgw evaluates a tag-conditioned policy without the tags
+    it fails to
+    read](#radosgw-evaluates-a-tag-conditioned-policy-without-the-tags-it-fails-to-read)"
+    records.
+- **Releases:** v19.2.7 and v20.2.4; older releases not checked.
+- **rgw-go:** does not reproduce it: a CopyObject under the REPLACE
+  metadata directive refuses, with 400 InvalidArgument before it is
+  authorized, an `x-amz-tagging` header that does not parse or that
+  `formatXattr` would rewrite (`replaceTags`, `internal/s3/copyobject.go`;
+  `docs/differences.md`, "CopyObject and CreateMultipartUpload evaluate
+  s3:PutObject with the keys of the ACL and the tags they set").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task S13's review and adversarial review, 2026-11-20,
+  checking what a copy stores of its tag header; derived from the source,
+  not reproduced on a cluster.
+
+## radosgw's typed condition operators read one value of a repeated tag key
+
+- **Kind:** defect, possibly security-relevant, conditional on a Deny or an
+  Allow with a typed condition operator over a request or existing object
+  tag key.
+  Unreproduced on radosgw: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `set_from_string` adds every pair of a tag header, and
+    `check_and_add_tag` refuses no key the set already holds
+    ([rgw_tag.cc:23-57](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.cc#L23-L57),
+    [rgw_tag.cc:23-57](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.cc#L23-L57)), so a
+    repeated key enters the request's environment as one
+    `s3:RequestObjectTag/<key>` with several values
+    ([rgw_op.cc:3970-3972](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3970-L3972),
+    [rgw_op.cc:4179-4181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4179-L4181)), and
+    a stored one as one `s3:ExistingObjectTag/<key>`
+    ([rgw_op.cc:708-725](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L708-L725),
+    [rgw_op.cc:738-755](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L738-L755)).
+  - `Condition::eval` takes one value of the key, `env.find(key)`'s
+    ([rgw_iam_policy.cc:856](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L856),
+    [rgw_iam_policy.cc:880](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L880);
+    [rgw_iam_policy.cc:875](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L875),
+    [rgw_iam_policy.cc:900](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L900)),
+    and the Numeric, Date, Bool, Binary and IpAddress operators compare
+    that value alone
+    ([rgw_iam_policy.cc:918-972](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L918-L972),
+    [rgw_iam_policy.cc:938-992](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L938-L992)).
+    Which value it is follows the order the values were added, and on
+    v20.2.4 the environment's size too, and the two releases pick
+    differently. So a Deny or an Allow with a typed operator on such a key
+    is judged on one value: a tag set that repeats the key with a value the
+    statement names and one it does not escapes a Deny, or meets an Allow,
+    when the value taken is the one that decides it, and stores both.
+  - Amazon S3 refuses such a tag set: "Tags that are associated with an
+    object must have unique tag keys"
+    ([object-tagging.md:6](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/object-tagging.md?plain=1#L6), in the user
+    guide's archived source).
+  - The negated string operators over the same key are the entry
+    "[radosgw evaluates a repeated x-amz-tagging key as one multivalued
+    s3:RequestObjectTag condition
+    key](#radosgw-evaluates-a-repeated-x-amz-tagging-key-as-one-multivalued-s3requestobjecttag-condition-key)",
+    at the same sink.
+- **Releases:** v19.2.7 and v20.2.4; older releases not checked.
+- **rgw-go:** reproduces it: `tags.ParseHeader` keeps a repeated key
+  (`internal/tags/tags.go`), and `policy.Env.Find` returns the one value
+  each release's `find` returns (`internal/policy/env.go`), on PutObject,
+  CreateMultipartUpload and a CopyObject under the REPLACE metadata
+  directive. Plan task S16 fixes rgw-go's side.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task S13's adversarial review, 2026-11-20, probing a
+  numeric Deny on a request tag; seen in rgw-go, which mirrors the source,
+  not reproduced on a cluster.
 
 ## radosgw's replay of an OLH log removes a version that a later entry of the same log links
 

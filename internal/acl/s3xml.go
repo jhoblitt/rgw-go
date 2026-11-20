@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"log/slog"
 	"strings"
 
@@ -509,8 +510,8 @@ type GrantHeaders struct {
 // miss is ErrGranteeNotFound, the -ENOENT radosgw's lookups return, and any
 // other lookup error is returned unchanged, as parse_grantee_str returns it
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_acl_s3.cc#L356-L371).
-// An empty item is skipped, as ceph::split skips it, so an empty header gives
-// no grants.
+// Its items are grantItems', so a header NamesNoGrantee reports gives no
+// grants.
 func FromHeaders(ctx context.Context, r Resolver, owner Owner, h GrantHeaders) (Policy, error) {
 	p := Policy{Owner: owner}
 	for _, hdr := range []struct {
@@ -523,10 +524,7 @@ func FromHeaders(ctx context.Context, r Resolver, owner Owner, h GrantHeaders) (
 		{h.WriteACP, PermWriteACP},
 		{h.FullControl, PermFullControl},
 	} {
-		for item := range strings.SplitSeq(hdr.value, ",") {
-			if item == "" {
-				continue
-			}
+		for item := range grantItems(hdr.value) {
 			g, err := parseGrantee(ctx, r, item, hdr.perm)
 			if err != nil {
 				return Policy{}, err
@@ -535,6 +533,34 @@ func FromHeaders(ctx context.Context, r Resolver, owner Owner, h GrantHeaders) (
 		}
 	}
 	return p, nil
+}
+
+// grantItems are the items parse_acl_header parses from a grant header's
+// value: the value split at each ",", an empty item skipped, as ceph::split
+// skips it
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_acl_s3.cc#L395 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_acl_s3.cc#L395 at v20.2.4;
+// https://github.com/ceph/ceph/blob/v19.2.7/src/common/split.h#L32-L38 at v19.2.7).
+// An item of spaces is kept, so it fails the parse; each item names a grantee
+// or fails it.
+func grantItems(value string) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for item := range strings.SplitSeq(value, ",") {
+			if item != "" && !yield(item) {
+				return
+			}
+		}
+	}
+}
+
+// NamesNoGrantee reports whether a grant header's value holds no item for
+// FromHeaders to parse, an empty one or one of commas alone, so that the
+// header grants nothing.
+func NamesNoGrantee(value string) bool {
+	for range grantItems(value) {
+		return false
+	}
+	return true
 }
 
 // parseGrantee is parse_grantee_str

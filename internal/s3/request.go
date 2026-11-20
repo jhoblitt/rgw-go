@@ -250,7 +250,7 @@ func PostAuthInit(ctx context.Context, p Parsed) error {
 		return op.ErrInvalidObjectName
 	}
 	if v, ok := copySource(r); ok {
-		if src, parsed := copySourceBucket(v); parsed && src != "" {
+		if src, parsed := op.CopySourceBucket(v); parsed && src != "" {
 			tenant, bucket := authTenant, src
 			if t, b, found := strings.Cut(src, ":"); found {
 				if b == "" {
@@ -354,26 +354,6 @@ func copySource(r *op.Request) (string, bool) {
 		return "", false
 	}
 	return v, true
-}
-
-// copySourceBucket is the bucket RGWCopyObj::parse_copy_location reads from
-// an x-amz-copy-source value
-// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L5329-L5374 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5895-L5940 at v20.2.4):
-// the value up to its first "?", less one leading "/", decoded, then split
-// at its first "/". It is false where parse_copy_location fails, an empty
-// value or a missing or empty key, which init answers with 400 before
-// authentication.
-func copySourceBucket(v string) (string, bool) {
-	name, _, _ := strings.Cut(v, "?")
-	if name == "" {
-		return "", false
-	}
-	bucket, key, ok := strings.Cut(rgwtext.URLDecode(strings.TrimPrefix(name, "/"), false), "/")
-	if !ok || key == "" {
-		return "", false
-	}
-	return bucket, true
 }
 
 // nameArgs are the query arguments whose value becomes part of a RADOS

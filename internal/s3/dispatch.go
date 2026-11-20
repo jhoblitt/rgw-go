@@ -347,7 +347,7 @@ func copiesObject(r *op.Request) bool {
 	if !ok {
 		return false
 	}
-	bucket, parsed := copySourceBucket(v)
+	bucket, parsed := op.CopySourceBucket(v)
 	return !parsed || bucket != ""
 }
 
