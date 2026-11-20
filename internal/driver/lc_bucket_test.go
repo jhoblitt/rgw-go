@@ -13,6 +13,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/types"
 
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	rgwcls "github.com/jhoblitt/rgw-go/internal/cls/rgw"
@@ -1504,6 +1505,77 @@ var _ = Describe("the lifecycle bucket pass", func() {
 			Expect(versions(ctx, rec, "k")).To(Equal([]string{"v2*", "v1"}))
 			Expect(notes.NotifyCallCount()).To(BeZero())
 		})
+
+		// An attr write refuses the expiry's removal of v1 after its unlink, and
+		// other writers' links of the key refuse its relist's links, each
+		// landing just before one. The pass reads its stop time at each page
+		// alone, so an entry of the page that crosses it is handled past it, as
+		// here, where the time passes just before the removal. The relist reads
+		// no stop time: its bound is the one a client's delete has, olhAttempts
+		// tries, so one lost link leaves v1 to the next, and only an unbroken
+		// stream up to that bound leaves it unlisted, the window the
+		// differences entry records.
+		DescribeTable("gives a refused expiry's relist its own bound once the pass's stop time has passed",
+			func(ctx SpecContext, foreign, links int, want types.GomegaMatcher) {
+				ac = &aroundCluster{Cluster: c}
+				open(ctx, map[string]string{"rgw_lc_max_wp_worker": "1"})
+				driver.SetCondSleepForTest(s, func(context.Context, time.Duration) error { return nil })
+				rec, _ := versioned(ctx, 0, noncurrentRule("0"), "v1", "v2")
+				v1 := versionOf(ctx, rec, "k", "v1")
+				clk.Advance(lcDay)
+				var mu sync.Mutex
+				passed, refused, relinks := false, false, 0
+				h.SetHook(func(_ context.Context, step driver.LCStep, _ meta.ObjKey) {
+					mu.Lock()
+					defer mu.Unlock()
+					if step == driver.LCStepReread && !passed {
+						clk.Advance(lcDay + time.Second)
+						passed = true
+					}
+				})
+				ac.set(func(w *radosclient.WriteOp, send sendFunc) (uint64, error) {
+					defer GinkgoRecover()
+					steps := w.Steps()
+					relink := callsMethod(steps, "bucket_link_olh") && slices.ContainsFunc(steps, func(st radosclient.Step) bool {
+						_, ok := st.(*radosclient.OmapCmpStep)
+						return ok
+					})
+					mu.Lock()
+					unlink := !refused && callsMethod(steps, "bucket_unlink_instance")
+					refused = refused || unlink
+					if relink {
+						relinks++
+					}
+					n := relinks
+					mu.Unlock()
+					switch {
+					case unlink:
+						ver, err := send()
+						st, rerr := s.ReadOLHHeadForTest(ctx, rec, v1.Key)
+						Expect(rerr).NotTo(HaveOccurred())
+						policy := encode(acl.DefaultPolicy(meta.UserOwner(meta.UserID{ID: "carol"}), "Carol"))
+						Expect(s.SetObjectAttrs(ctx, st, map[string][]byte{meta.AttrACL: policy}, nil)).To(Succeed())
+						return ver, err
+					case relink && n <= foreign:
+						putVersion(ctx, rec, "k", fmt.Sprintf("w%03d", n))
+					}
+					return send()
+				})
+				pass(ctx)
+				mu.Lock()
+				crossed, sent := passed, relinks
+				mu.Unlock()
+				Expect(crossed).To(BeTrue(), "the stop time passed before the removal")
+				Expect(sent).To(Equal(links), "the relist's links sent")
+				Expect(versions(ctx, rec, "k")).To(want)
+				st, err := s.StatObject(ctx, rec, v1.Key)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(st.Exists).To(BeTrue(), "v1 is stored")
+				Expect(notes.NotifyCallCount()).To(BeZero(), "the refused expiry notifies nothing")
+			},
+			Entry("one link lost to another writer: the next lists the version again", 1, 2, Equal([]string{"w001*", "v2", "v1"})),
+			Entry("an unbroken stream of other writers' links: unlisted at the bound", 2*driver.OLHAttempts, driver.OLHAttempts, Not(ContainElement("v1"))),
+		)
 
 		It("checks the lock of a bucket whose object lock is set during the pass, on the version as read again", func(ctx SpecContext) {
 			open(ctx, map[string]string{"rgw_lc_max_wp_worker": "1"})

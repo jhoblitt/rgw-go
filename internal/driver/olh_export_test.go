@@ -97,3 +97,31 @@ func OLHCondStaleForTest() time.Duration { return olhCondStale() }
 func SetCondSleepForTest(s *Store, sleep func(ctx context.Context, d time.Duration) error) {
 	s.condSleep = sleep
 }
+
+// RelistCap is relistCap for the external specs.
+const RelistCap = relistCap
+
+// ErrRelistCap is errRelistCap for the external specs.
+var ErrRelistCap = errRelistCap
+
+// SetRelistCapForTest caps the retries of s's relists at d in place of
+// relistCap.
+func SetRelistCapForTest(s *Store, d time.Duration) { s.relistTimeout = d }
+
+// ReshardWait is reshardWait for the external specs.
+const ReshardWait = reshardWait
+
+// RelistBackstop is relistBackstop for the external specs.
+const RelistBackstop = relistBackstop
+
+// ErrRelistBackstop is errRelistBackstop for the external specs.
+var ErrRelistBackstop = errRelistBackstop
+
+// SetRelistBackstopForTest bounds each of s's relists at d in place of
+// relistBackstop.
+func SetRelistBackstopForTest(s *Store, d time.Duration) { s.relistBackstopTimeout = d }
+
+// PairContextForTest is pairContext for the external specs.
+func PairContextForTest(ctx context.Context) (context.Context, context.CancelFunc) {
+	return pairContext(ctx)
+}

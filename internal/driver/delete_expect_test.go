@@ -3,6 +3,7 @@ package driver_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/meta"
+	"github.com/jhoblitt/rgw-go/internal/objectlock"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/testutil/fakerados"
@@ -27,14 +29,16 @@ import (
 // across every write the cluster sees, those fn itself sends included: after
 // the op lands, or before it when before is set. With late set it sends
 // nothing: the op answers success at once and late keeps its send, to land
-// it later.
+// it later. With abandoned set the op lands and its sender is answered
+// abandoned's error in place of the op's success.
 type writeHook struct {
-	match  func(*radosclient.WriteOp) bool
-	n      int
-	before bool
-	fn     func()
-	late   func(send sendFunc)
-	seen   int
+	match     func(*radosclient.WriteOp) bool
+	n         int
+	before    bool
+	fn        func()
+	late      func(send sendFunc)
+	abandoned func() error
+	seen      int
 }
 
 // writeHooks is the aroundCluster hook list a spec arms, each run once.
@@ -75,6 +79,11 @@ func (h *writeHooks) around(op *radosclient.WriteOp, send sendFunc) (uint64, err
 	case w.late != nil:
 		w.late(send)
 		return 0, nil
+	case w.abandoned != nil:
+		if ver, err := send(); err != nil {
+			return ver, err
+		}
+		return 0, w.abandoned()
 	case w.before:
 		w.fn()
 		return send()
@@ -215,6 +224,53 @@ var _ = Describe("DeleteObject with an expected state", func() {
 		})
 		DeferCleanup(land)
 		return land
+	}
+	// abandon makes the n-th later write op match takes one whose sender's
+	// context ended while it was in flight: the op lands, and d later its
+	// sender is answered a context's error, as goceph's asynchronous
+	// completion modes answer a call whose context ends before its completion
+	// and leave the operation to librados.
+	abandon := func(match func(*radosclient.WriteOp) bool, n int, d time.Duration) {
+		hooks.add(&writeHook{match: match, n: n, abandoned: func() error {
+			time.Sleep(d)
+			return context.Canceled
+		}})
+	}
+	// holdWrite is attrWrite with a legal hold ON.
+	holdWrite := func(ctx context.Context, instance string) {
+		GinkgoHelper()
+		hold := objectlock.EncodeLegalHold(meta.ObjectLegalHold{Status: "ON"})
+		Expect(s.SetObjectAttrs(ctx, head(ctx, instance), map[string][]byte{meta.AttrObjectLegalHold: hold}, nil)).To(Succeed())
+		settle(s)
+	}
+	// relinks takes a relist's link, the one link that compares the OLH entry
+	// it read.
+	relinks := func(w *radosclient.WriteOp) bool {
+		return callsMethod(w.Steps(), "bucket_link_olh") && slices.ContainsFunc(w.Steps(), func(st radosclient.Step) bool {
+			_, ok := st.(*radosclient.OmapCmpStep)
+			return ok
+		})
+	}
+	// afterListing arms fn to run once, just before the first later read of
+	// the key's OLH entry that directly follows a read of the listing: the
+	// read a named version's relist sends before its epoch-0 link
+	// (relinkOLHEntry), in a round that did not wait. A round that waits goes
+	// from the listing to the next round's reads.
+	afterListing := func(fn func()) {
+		var lastListed atomic.Bool
+		ac.setBeforeRead(func(r *radosclient.ReadOp) {
+			steps := r.Steps()
+			if !lastListed.Swap(callsMethod(steps, "bucket_list")) {
+				return
+			}
+			for _, st := range steps {
+				if x, ok := st.(*radosclient.ExecStep); ok && x.Method == "bi_get" && rgwcls.DecodeBIGetOp(denc.NewDecoder(x.In)).Type == rgwcls.BIIndexOLH {
+					ac.setBeforeRead(nil)
+					fn()
+					return
+				}
+			}
+		})
 	}
 	// attrWriteLate is attrWrite whose index completion, which radosgw sends
 	// unawaited, lands only at release, as another gateway's attr write that
@@ -780,6 +836,576 @@ var _ = Describe("DeleteObject with an expected state", func() {
 			Expect(del(ctx, "v1", op.DeleteParams{Expect: head(ctx, "v1"), SkipOLHUpdate: true})).To(Equal(&op.DeleteObjectResult{VersionID: "v1"}))
 			settle(s)
 			Expect(versionHead("v1")).To(BeNil(), "the replay that removes it ran")
+			settledOn(ctx, "v2")
+		})
+
+		// A second delete of the refused version unlinks it while the refused
+		// delete lists it again: a DeleteObjects entry, whose replay waits for
+		// the request's last delete of the key, or a plain delete. Its removal
+		// is in the log before the relist would link the version, or its
+		// unlink changes the OLH entry the relist's link compares, so the
+		// relist links nothing, and the second delete's replay removes the
+		// version: a link logged after that removal would make the replay
+		// keep it, undoing the second delete.
+		DescribeTable("a second delete of the refused version during its relist is honored",
+			func(ctx SpecContext, current, skip bool, when func(fn func())) {
+				put(ctx, "v1")
+				put(ctx, "v2")
+				target, other := "v1", "v2"
+				if current {
+					target, other = "v2", "v1"
+				}
+				expect := head(ctx, target)
+				at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, target) })
+				var res *op.DeleteObjectResult
+				var derr error
+				when(func() { res, derr = del(ctx, target, op.DeleteParams{SkipOLHUpdate: skip}) })
+				_, err := del(ctx, target, op.DeleteParams{Expect: expect})
+				concurrent(err)
+				Expect(derr).NotTo(HaveOccurred(), "the second delete")
+				Expect(res).To(Equal(&op.DeleteObjectResult{VersionID: target}))
+				settle(s)
+				if skip {
+					Expect(s.UpdateOLHForTest(ctx, rec, head(ctx, ""))).To(Succeed(), "the second delete's request replays the key")
+				}
+				settle(s)
+				Expect(versionHead(target)).To(BeNil(), "the second delete removed the version")
+				_, ok := instanceEntry(target)
+				Expect(ok).To(BeFalse(), "its instance entry")
+				Expect(listed()).To(Equal([]string{other}), "no list entry is left for it")
+				settledOn(ctx, other)
+			},
+			// The trim is the refused delete's own replay's; the inits are the
+			// refused delete's unlink's, then the relist's.
+			Entry("the current version, a DeleteObjects entry before the relist reads the key", true, true,
+				func(fn func()) { at(calls("bucket_trim_olh_log"), 1, fn) }),
+			Entry("the current version, a DeleteObjects entry before the relist's init", true, true,
+				func(fn func()) { before(inits, 2, fn) }),
+			Entry("the current version, a DeleteObjects entry between the relist's init and its link", true, true,
+				func(fn func()) { before(calls("bucket_link_olh"), 1, fn) }),
+			Entry("the current version, a plain delete between the relist's init and its link", true, false,
+				func(fn func()) { before(calls("bucket_link_olh"), 1, fn) }),
+			Entry("the current version, a plain delete before the relist reads the key", true, false,
+				func(fn func()) { at(calls("bucket_trim_olh_log"), 1, fn) }),
+			Entry("a noncurrent version listed below, a DeleteObjects entry before the relist reads the key", false, true,
+				func(fn func()) { at(calls("bucket_trim_olh_log"), 1, fn) }),
+			Entry("a noncurrent version listed below, a DeleteObjects entry just before its link", false, true,
+				func(fn func()) { before(calls("bucket_link_olh"), 1, fn) }),
+			Entry("a noncurrent version listed below, a plain delete just before its link", false, false,
+				func(fn func()) { before(calls("bucket_link_olh"), 1, fn) }),
+		)
+
+		// Another writer's link of the key just before each of the relist's
+		// first n links changes the OLH entry the link compares, which refuses
+		// it: contention, after which the relist reads again and tries again.
+		DescribeTable("lists the refused version again once the writers contending with its relist stop",
+			func(ctx SpecContext, current bool, n int) {
+				put(ctx, "v1")
+				put(ctx, "v2")
+				target := "v1"
+				if current {
+					target = "v2"
+				}
+				backoffs := 0
+				driver.SetCondSleepForTest(s, func(context.Context, time.Duration) error {
+					backoffs++
+					return nil
+				})
+				expect := head(ctx, target)
+				at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, target) })
+				for k := 1; k <= n; k++ {
+					before(relinks, k, func() { put(ctx, fmt.Sprintf("w%02d", k)) })
+				}
+				_, err := del(ctx, target, op.DeleteParams{Expect: expect})
+				concurrent(err)
+				settle(s)
+				Expect(backoffs).To(BeNumerically(">=", n), "a backoff after each refused link")
+				Expect(versionHead(target)).NotTo(BeNil())
+				Expect(listed()).To(ContainElement(target), "listed again")
+				Expect(listing(ctx, true)).To(ContainElement("k@"+target), "ListObjectVersions lists it")
+				settledOn(ctx, fmt.Sprintf("w%02d", n))
+			},
+			Entry("a noncurrent version, six links in a row", false, 6),
+			Entry("the current version, six links in a row", true, 6),
+			Entry("a noncurrent version, a writer contending for twenty-five links", false, 25),
+		)
+
+		It("lists the refused version though its client cancels the request mid-relist", func(ctx SpecContext) {
+			put(ctx, "v1")
+			put(ctx, "v2")
+			rctx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			expect := head(ctx, "v1")
+			at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v1") })
+			for k := 1; k <= 3; k++ {
+				before(relinks, k, func() {
+					put(ctx, fmt.Sprintf("w%02d", k))
+					if k == 3 {
+						cancel()
+					}
+				})
+			}
+			_, err := s.DeleteObject(rctx, rec, version("v1"), op.DeleteParams{Expect: expect})
+			concurrent(err)
+			settle(s)
+			Expect(versionHead("v1")).NotTo(BeNil())
+			Expect(listed()).To(ContainElement("v1"), "the relist went on past the cancellation")
+			settledOn(ctx, "w03")
+		})
+
+		// Each of the relist's links meets another writer's link of the key
+		// first: the relist stops at its bound, olhAttempts tries, and the
+		// version stays stored and unlisted, the window the differences entry
+		// records.
+		It("leaves the refused version unlisted once an unbroken stream of other writers' links has refused its relist olhAttempts times", func(ctx SpecContext) {
+			put(ctx, "v1")
+			put(ctx, "v2")
+			expect := head(ctx, "v1")
+			at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v1") })
+			sent := 0
+			for k := 1; k <= 2*driver.OLHAttempts; k++ {
+				before(relinks, k, func() {
+					sent++
+					put(ctx, fmt.Sprintf("w%03d", k))
+				})
+			}
+			_, err := del(ctx, "v1", op.DeleteParams{Expect: expect})
+			concurrent(err)
+			settle(s)
+			Expect(sent).To(BeNumerically(">=", driver.OLHAttempts), "relist links sent")
+			Expect(sent).To(BeNumerically("<", 2*driver.OLHAttempts), "the relist stopped at its bound")
+			Expect(versionHead("v1")).NotTo(BeNil(), "stored")
+			_, ok := instanceEntry("v1")
+			Expect(ok).To(BeTrue(), "its instance entry")
+			Expect(listed()).NotTo(ContainElement("v1"), "listed nowhere")
+		})
+
+		// As above, each of the relist's links meets another writer's link of
+		// the key first, and here each also takes 15 ms to send, under a cap of
+		// 40 ms on its retries, whose clock the first lost link starts: the
+		// relist ends at the cap, most of its tries unspent, and the version
+		// stays stored and unlisted, as at the try bound.
+		It("leaves the refused version unlisted once its relist's cap passes while its RADOS operations are slow", func(ctx SpecContext) {
+			const slow, limit = 15 * time.Millisecond, 40 * time.Millisecond
+			driver.SetRelistCapForTest(s, limit)
+			logs := &syncBuffer{}
+			DeferCleanup(driver.CaptureLog(logs))
+			put(ctx, "v1")
+			put(ctx, "v2")
+			expect := head(ctx, "v1")
+			at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v1") })
+			sent := 0
+			for k := 1; k <= 2*driver.OLHAttempts; k++ {
+				before(relinks, k, func() {
+					sent++
+					put(ctx, fmt.Sprintf("w%03d", k))
+					time.Sleep(slow)
+				})
+			}
+			_, err := del(ctx, "v1", op.DeleteParams{Expect: expect})
+			concurrent(err)
+			settle(s)
+			Expect(sent).To(BeNumerically("<", driver.OLHAttempts), "relist links sent: ended by the cap, not by the try bound")
+			Expect(logs.String()).To(ContainSubstring(driver.ErrRelistCap.Error()), "the relist's end, as logged")
+			Expect(versionHead("v1")).NotTo(BeNil(), "stored")
+			_, ok := instanceEntry("v1")
+			Expect(ok).To(BeTrue(), "its instance entry")
+			Expect(listed()).NotTo(ContainElement("v1"), "listed nowhere")
+		})
+
+		It("caps a relist at 32 s, the figure the differences entry gives", func() {
+			Expect(driver.RelistCap).To(Equal(32 * time.Second))
+		})
+
+		// No other writer refuses the relist, so no retry starts the cap's
+		// clock, and the relist's first read never returns: it answers only
+		// when its context ends, as goceph's asynchronous completion modes
+		// answer a call whose operation librados has not finished. The
+		// backstop, 50 ms here, ends the relist, and the version stays stored
+		// and unlisted.
+		It("ends a relist whose first attempt's RADOS call never returns at its backstop", func(ctx SpecContext) {
+			const backstop = 50 * time.Millisecond
+			driver.SetRelistBackstopForTest(s, backstop)
+			logs := &syncBuffer{}
+			DeferCleanup(driver.CaptureLog(logs))
+			put(ctx, "v1")
+			put(ctx, "v2")
+			expect := head(ctx, "v2")
+			at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v2") })
+			var stalled atomic.Int32
+			at(calls("bucket_trim_olh_log"), 1, func() {
+				ac.setReadCtx(func(ctx context.Context, _ *radosclient.ReadOp) error {
+					if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > time.Second {
+						return nil
+					}
+					stalled.Add(1)
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-time.After(10 * time.Second):
+						return errors.New("the stalled read outlived its spec")
+					}
+				})
+			})
+			DeferCleanup(func() { ac.setReadCtx(nil) })
+			start := time.Now()
+			_, err := del(ctx, "v2", op.DeleteParams{Expect: expect})
+			ac.setReadCtx(nil)
+			concurrent(err)
+			Expect(time.Since(start)).To(BeNumerically(">=", backstop), "the relist waited for its backstop")
+			settle(s)
+			Expect(stalled.Load()).To(BeEquivalentTo(1), "the relist's calls: its first, which stalled until the backstop")
+			Expect(logs.String()).To(ContainSubstring(driver.ErrRelistBackstop.Error()), "the relist's end, as logged")
+			Expect(versionHead("v2")).NotTo(BeNil(), "stored")
+			_, ok := instanceEntry("v2")
+			Expect(ok).To(BeTrue(), "its instance entry")
+			Expect(listed()).To(Equal([]string{"v1"}), "listed nowhere, v1 current")
+		})
+
+		// The second write of a pair is sent past the cap on the relist's
+		// retries, and a call that stalls there still ends at the backstop.
+		It("sends the second write of a relist's pair past its cap, under its backstop", func() {
+			relist, stop := context.WithTimeout(context.Background(), time.Hour)
+			defer stop()
+			retries, capPassed := context.WithCancelCause(relist)
+			pair, done := driver.PairContextForTest(retries)
+			defer done()
+			capPassed(driver.ErrRelistCap)
+			Expect(pair.Err()).NotTo(HaveOccurred(), "the pair's context once the cap has passed")
+			backstop, _ := relist.Deadline()
+			deadline, ok := pair.Deadline()
+			Expect(ok).To(BeTrue(), "the pair's context has a deadline")
+			Expect(deadline).To(Equal(backstop), "the relist's backstop")
+		})
+
+		It("bounds a relist up to its link at 512 s, sixteen times its cap, the figure the differences entry gives", func() {
+			Expect(driver.RelistBackstop).To(Equal(16 * driver.RelistCap))
+			Expect(driver.RelistBackstop).To(Equal(512 * time.Second))
+		})
+
+		// The relist's first link meets a reshard of the bucket's index that
+		// lasts 70 reshard waits, longer than half the backstop: the link's
+		// reshard guard waits up to 90, up to ten calls each followed by up to
+		// ten reads of the shard's status reshardWait apart. The reshard wait
+		// and the backstop, 102.4 waits, are both scaled by the same factor from
+		// their defaults, and the backstop lets the link wait the reshard out:
+		// the version is listed, no pending attr stays. A backstop of half that,
+		// 51.2 waits, would end the relist before the reshard ends; load only
+		// lengthens the link's wait.
+		It("lists the refused version when its link waits out a reshard that lasts longer than half its backstop", func(ctx SpecContext) {
+			const wait = 20 * time.Millisecond
+			lasts := 70 * wait
+			s.SetReshardWaitForTest(wait)
+			driver.SetRelistBackstopForTest(s, driver.RelistBackstop/(driver.ReshardWait/wait))
+			logs := &syncBuffer{}
+			DeferCleanup(driver.CaptureLog(logs))
+			put(ctx, "v1")
+			put(ctx, "v2")
+			expect := head(ctx, "v2")
+			at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v2") })
+			reshard := func(status uint8) error {
+				p, err := c.Pool(context.Background(), rookIndexPool, "")
+				if err != nil {
+					return err
+				}
+				w := radosclient.NewWriteOp()
+				rgwcls.SetBucketResharding(w, rgwcls.InstanceEntry{ReshardStatus: status}, denc.Squid)
+				_, err = p.Write(context.Background(), shard, w, radosclient.OpFlagNone)
+				return err
+			}
+			var started time.Time
+			ended := make(chan error, 1)
+			before(relinks, 1, func() {
+				Expect(reshard(rgwcls.ReshardInProgress)).To(Succeed())
+				started = time.Now()
+				time.AfterFunc(lasts, func() { ended <- reshard(rgwcls.ReshardNone) })
+			})
+			DeferCleanup(func() error { return reshard(rgwcls.ReshardNone) })
+			_, err := del(ctx, "v2", op.DeleteParams{Expect: expect})
+			concurrent(err)
+			Expect(started).NotTo(BeZero(), "the reshard began at the relist's link")
+			Expect(<-ended).To(Succeed(), "the reshard's end")
+			Expect(time.Since(started)).To(BeNumerically(">=", lasts), "the link waited the reshard out")
+			settle(s)
+			Expect(logs.String()).NotTo(ContainSubstring("it stays unlisted"), "the relist's end, as logged")
+			Expect(listed()).To(Equal([]string{"v2", "v1"}), "the versions listed")
+			Expect(pending()).To(BeEmpty(), "the pending attrs on the OLH head")
+			settledOn(ctx, "v2")
+		})
+
+		// A relist resets the version's instance record with a prepare and a
+		// cancel. A first link lost to another writer starts the cap's clock,
+		// and the cap then passes at the retry's prepare: the cancel is sent all
+		// the same. Left without it, the prepare's pending tag stays on the
+		// record, which nothing expires, and a delete of the version then
+		// leaves the record behind, marked as not existing.
+		DescribeTable("cancels a retry's reset though the cap passes at its prepare, leaving no pending tag on the version's record",
+			func(ctx SpecContext, cut func(limit time.Duration)) {
+				const limit = 20 * time.Millisecond
+				driver.SetRelistCapForTest(s, limit)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				expect := head(ctx, "v1")
+				at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v1") })
+				before(relinks, 1, func() { put(ctx, "w01") })
+				cut(limit)
+				_, err := del(ctx, "v1", op.DeleteParams{Expect: expect})
+				concurrent(err)
+				settle(s)
+				ie, ok := instanceEntry("v1")
+				Expect(ok).To(BeTrue(), "its instance entry")
+				Expect(ie.PendingMap).To(BeEmpty(), "the pending tags on its instance record")
+				Expect(versionHead("v1")).NotTo(BeNil(), "stored")
+				Expect(listed()).NotTo(ContainElement("v1"), "the relist ended at its cap")
+				Expect(del(ctx, "v1", op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "v1"}))
+				settle(s)
+				_, ok = instanceEntry("v1")
+				Expect(ok).To(BeFalse(), "the record a delete of the version by its id leaves")
+			},
+			// The prepares of an ADD of v1 are the attr write's, the first try's
+			// reset's, then the retry's.
+			Entry("the cap passes between the prepare and the cancel", func(limit time.Duration) {
+				at(prepares("v1", rgwcls.OpAdd), 3, func() { time.Sleep(5 * limit) })
+			}),
+			Entry("the cap abandons the prepare in flight, and it lands", func(limit time.Duration) {
+				abandon(prepares("v1", rgwcls.OpAdd), 3, 5*limit)
+			}),
+		)
+
+		// A link follows an init on the key's OLH head, which leaves a pending
+		// attr there until the link's replay or a cancel removes it. The cap
+		// passes between a retry's init and its link, and the link is sent all
+		// the same, under its compare: the version is listed, and no pending
+		// attr stays.
+		DescribeTable("sends a retry's link though the cap passes after its init, leaving no pending attr on the head",
+			func(ctx SpecContext, arm func(ctx context.Context, past time.Duration) (target string, want []string, current string)) {
+				const limit = 20 * time.Millisecond
+				driver.SetRelistCapForTest(s, limit)
+				put(ctx, "v0")
+				put(ctx, "v1")
+				put(ctx, "v2")
+				target, want, current := arm(ctx, 5*limit)
+				expect := head(ctx, target)
+				at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, target) })
+				_, err := del(ctx, target, op.DeleteParams{Expect: expect})
+				concurrent(err)
+				settle(s)
+				Expect(pending()).To(BeEmpty(), "the pending attrs on the OLH head")
+				Expect(listed()).To(Equal(want), "the retry's link landed")
+				settledOn(ctx, current)
+			},
+			// A writer's link refuses the first try's link, and the retry lists
+			// the version below that writer's, at its own epoch.
+			Entry("a link at the version's own epoch", func(ctx context.Context, past time.Duration) (string, []string, string) {
+				before(relinks, 1, func() { put(ctx, "w01") })
+				before(relinks, 2, func() { time.Sleep(past) })
+				return "v1", []string{"w01", "v2", "v1", "v0"}, "w01"
+			}),
+			// The inits are the refused delete's unlink's, then the first try's,
+			// which a delete of another version refuses by moving the head. The
+			// retry then links the version current again, at epoch 0.
+			Entry("a link at epoch 0", func(ctx context.Context, past time.Duration) (string, []string, string) {
+				before(inits, 2, func() {
+					Expect(del(ctx, "v0", op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "v0"}))
+				})
+				before(relinks, 1, func() { time.Sleep(past) })
+				return "v2", []string{"v2", "v1"}, "v2"
+			}),
+		)
+
+		// As above, and another writer's link lands in the same gap, so the
+		// retry's link is refused by its compare: the cancel of its pending
+		// modification is sent past the cap too.
+		It("cancels a retry's pending modification when the cap passes after its init and its link is then refused", func(ctx SpecContext) {
+			const limit = 20 * time.Millisecond
+			driver.SetRelistCapForTest(s, limit)
+			put(ctx, "v1")
+			put(ctx, "v2")
+			expect := head(ctx, "v1")
+			at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v1") })
+			before(relinks, 1, func() { put(ctx, "w01") })
+			before(relinks, 2, func() {
+				put(ctx, "w02")
+				time.Sleep(5 * limit)
+			})
+			_, err := del(ctx, "v1", op.DeleteParams{Expect: expect})
+			concurrent(err)
+			settle(s)
+			Expect(pending()).To(BeEmpty(), "the pending attrs on the OLH head")
+			Expect(versionHead("v1")).NotTo(BeNil(), "stored")
+			Expect(listed()).NotTo(ContainElement("v1"), "the relist ended at its cap")
+			settledOn(ctx, "w02")
+		})
+
+		// The cap passes while a retry's init is in flight: the init lands, and
+		// its call answers its context's end only if that context has ended,
+		// as goceph's asynchronous completion modes answer. The init and its
+		// link are one pair, sent on the context the cap does not end, so the
+		// link follows, and no pending attr stays. The inits are the refused
+		// delete's unlink's, the first try's, the writer's, then the retry's.
+		It("sends a retry's init and its link though the cap passes while the init is in flight, leaving no pending attr", func(ctx SpecContext) {
+			const limit = 20 * time.Millisecond
+			driver.SetRelistCapForTest(s, limit)
+			put(ctx, "v1")
+			put(ctx, "v2")
+			expect := head(ctx, "v1")
+			at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v1") })
+			before(relinks, 1, func() { put(ctx, "w01") })
+			var n atomic.Int32
+			ac.setWriteCtx(func(ctx context.Context, w *radosclient.WriteOp, send sendFunc) (uint64, error) {
+				if !inits(w) || n.Add(1) != 4 {
+					return send()
+				}
+				ver, err := send()
+				time.Sleep(5 * limit)
+				if cerr := ctx.Err(); err == nil && cerr != nil {
+					return 0, cerr
+				}
+				return ver, err
+			})
+			DeferCleanup(func() { ac.setWriteCtx(nil) })
+			_, err := del(ctx, "v1", op.DeleteParams{Expect: expect})
+			ac.setWriteCtx(nil)
+			concurrent(err)
+			settle(s)
+			Expect(n.Load()).To(BeNumerically(">=", 4), "the retry's init was sent")
+			Expect(pending()).To(BeEmpty(), "the pending attrs on the OLH head")
+			Expect(listed()).To(Equal([]string{"w01", "v2", "v1"}), "the retry's link landed")
+			settledOn(ctx, "w01")
+		})
+
+		// What a relist can still leave: the backstop passes while an init is
+		// in flight, which lands. Its pair's link is held to the backstop too,
+		// so nothing removes the pending attr until rgw_olh_pending_timeout_sec
+		// expires it, as a writer's that stops between its init and its link.
+		// The inits are the refused delete's unlink's, then the relist's.
+		It("leaves the pending attr of an init the backstop cuts in flight, until it expires", func(ctx SpecContext) {
+			const backstop = 50 * time.Millisecond
+			driver.SetRelistBackstopForTest(s, backstop)
+			put(ctx, "v1")
+			put(ctx, "v2")
+			expect := head(ctx, "v2")
+			at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v2") })
+			var n atomic.Int32
+			ac.setWriteCtx(func(ctx context.Context, w *radosclient.WriteOp, send sendFunc) (uint64, error) {
+				if !inits(w) || n.Add(1) != 2 {
+					return send()
+				}
+				ver, err := send()
+				if err != nil {
+					return ver, err
+				}
+				select {
+				case <-ctx.Done():
+					return 0, ctx.Err()
+				case <-time.After(10 * time.Second):
+					return 0, errors.New("the stalled init outlived its spec")
+				}
+			})
+			DeferCleanup(func() { ac.setWriteCtx(nil) })
+			_, err := del(ctx, "v2", op.DeleteParams{Expect: expect})
+			ac.setWriteCtx(nil)
+			concurrent(err)
+			settle(s)
+			Expect(pending()).To(HaveLen(1), "the cut init's pending attr")
+			Expect(listed()).To(Equal([]string{"v1"}), "the relist ended there")
+			clock.Add(int64(2 * time.Hour))
+			st, err := s.StatObject(ctx, rec, version(""))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Key.Instance).To(Equal("v1"), "the key's current version, read by following its OLH")
+			Expect(pending()).To(BeEmpty(), "expired, and removed by the read's follow")
+		})
+
+		// A writer inits and stalls before its link, and the relist's rounds
+		// wait on its pending modification until their wait has passed, after
+		// which that pending attr no longer refuses the relist's link. The
+		// writer's link then lands between a round's read of the listing and
+		// its read of the OLH entry, so the entry the relist's link compares
+		// already holds it: the listing read after that entry shows the
+		// writer's version, the round is lost, and the next lists v2 below it.
+		// A relist that linked there would put v2 current over a write its
+		// client is then told succeeded.
+		It("lists the refused version below a writer's version whose link lands between a round's read of the listing and its read of the OLH entry", func(ctx SpecContext) {
+			put(ctx, "v1")
+			put(ctx, "v2")
+			expect := head(ctx, "v2")
+			at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v2") })
+			w := newRGWWriter(c, s, rec, denc.Squid, "w")
+			linked := false
+			at(calls("bucket_trim_olh_log"), 1, func() {
+				w.Prepare(ctx)
+				w.HeadWrite(ctx)
+				w.Complete(ctx)
+				w.ReadHead(ctx)
+				Expect(w.Init(ctx)).To(BeTrue(), "the writer's modification is pending")
+				afterListing(func() {
+					w.Link(ctx)
+					linked = true
+				})
+			})
+			_, err := del(ctx, "v2", op.DeleteParams{Expect: expect})
+			concurrent(err)
+			Expect(linked).To(BeTrue(), "the writer linked between the relist's two reads")
+			w.ReadLog(ctx)
+			w.Apply(ctx)
+			w.Trim(ctx)
+			settle(s)
+			Expect(listed()).To(Equal([]string{"w", "v2", "v1"}), "the writer's version current, v2 listed below it")
+			Expect(listEntry("v2").Flags).To(Equal(rgwcls.FlagVer), "v2 non-current")
+			settledOn(ctx, "w")
+		})
+
+		// A link of the version logged after the delete's removal makes the
+		// replay drop that removal: the delete removed nothing, and while a
+		// lock holds the kept version it must not answer success.
+		DescribeTable("a delete whose removal a later link of the version kept answers from the version's lock",
+			func(ctx SpecContext, hold bool) {
+				put(ctx, "v1")
+				put(ctx, "v2")
+				expect := head(ctx, "v2")
+				at(calls("bucket_unlink_instance"), 1, func() {
+					if hold {
+						holdWrite(ctx, "v2")
+					} else {
+						attrWrite(ctx, "v2")
+					}
+					Expect(s.SetOLHForTest(ctx, rec, version("v2"), driver.OLHLink{KeepVersion: true, SkipUpdate: true})).To(Succeed(), "a link of v2, as a completion's retry sends")
+				})
+				res, err := del(ctx, "v2", op.DeleteParams{Expect: expect})
+				settle(s)
+				Expect(versionHead("v2")).NotTo(BeNil(), "the version is kept")
+				Expect(listed()).To(ContainElement("v2"))
+				if hold {
+					concurrent(err)
+					Expect(versionHead("v2").Xattrs).To(HaveKey(meta.AttrObjectLegalHold))
+					return
+				}
+				Expect(err).NotTo(HaveOccurred())
+				Expect(res).To(Equal(&op.DeleteObjectResult{VersionID: "v2"}))
+			},
+			Entry("under a legal hold: ConcurrentModification, which the lock check after it answers", true),
+			Entry("with no lock: success, as for the version a later write lists again", false),
+		)
+
+		// Another replay that read the delete's removal keeps the version for
+		// its hold and leaves the removal to the delete, and a link lists the
+		// version again before the delete's own replay finds its entries gone
+		// (checkRemoval).
+		It("answers ConcurrentModification, not success, when another replay kept the version for its legal hold and a link listed it", func(ctx SpecContext) {
+			put(ctx, "v1")
+			put(ctx, "v2")
+			expect := head(ctx, "v2")
+			at(calls("bucket_unlink_instance"), 1, func() {
+				holdWrite(ctx, "v2")
+				Expect(s.UpdateOLHForTest(ctx, rec, head(ctx, ""))).To(Succeed(), "another reader's replay")
+				Expect(versionHead("v2")).NotTo(BeNil(), "kept for its hold")
+				Expect(s.SetOLHForTest(ctx, rec, version("v2"), driver.OLHLink{KeepVersion: true})).To(Succeed())
+			})
+			_, err := del(ctx, "v2", op.DeleteParams{Expect: expect})
+			concurrent(err)
+			settle(s)
+			Expect(versionHead("v2")).NotTo(BeNil())
+			Expect(versionHead("v2").Xattrs).To(HaveKey(meta.AttrObjectLegalHold))
 			settledOn(ctx, "v2")
 		})
 	})
@@ -1365,6 +1991,177 @@ var _ = Describe("DeleteObject with an expected state", func() {
 			settledOn(ctx, "")
 		})
 
+		// atOLHRead arms fn to run once, just before the first later read of
+		// the key's OLH entry, the relist's (relinkOLHEntry).
+		atOLHRead := func(fn func()) {
+			ac.setBeforeRead(func(r *radosclient.ReadOp) {
+				for _, st := range r.Steps() {
+					if x, ok := st.(*radosclient.ExecStep); ok && x.Method == "bi_get" && rgwcls.DecodeBIGetOp(denc.NewDecoder(x.In)).Type == rgwcls.BIIndexOLH {
+						ac.setBeforeRead(nil)
+						fn()
+						return
+					}
+				}
+			})
+		}
+
+		// v2 > v1 > the null data: the null marker demotes v2, and another
+		// delete unlinks v2 just before the relist reads the OLH entry to link
+		// it again. The relist gives way and its next round, which no longer
+		// lists v2, makes v1 current again, listing the older null data below
+		// it.
+		It("makes current again the next version when another delete is removing the one the marker demoted, not the older null data", func(ctx SpecContext) {
+			suspend()
+			nullPut(ctx, "tag-old", "old")
+			rec.Info.Flags &^= meta.BucketVersionsSuspended
+			put(ctx, "v1")
+			put(ctx, "v2")
+			suspend()
+			expect := head(ctx, "")
+			at(calls("bucket_link_olh"), 1, func() { attrWrite(ctx, "") })
+			at(calls("bucket_trim_olh_log"), 1, func() {
+				atOLHRead(func() {
+					Expect(del(ctx, "v2", op.DeleteParams{SkipOLHUpdate: true})).To(Equal(&op.DeleteObjectResult{VersionID: "v2"}))
+				})
+			})
+			_, err := del(ctx, "", op.DeleteParams{Expect: expect})
+			concurrent(err)
+			settle(s)
+			Expect(s.UpdateOLHForTest(ctx, rec, head(ctx, ""))).To(Succeed(), "the DeleteObjects request replays the key")
+			settle(s)
+			Expect(versionHead("v2")).To(BeNil(), "the second delete removed v2")
+			Expect(nullMarker()).To(BeFalse())
+			Expect(listed()).To(Equal([]string{"v1", ""}), "v1 current, the older null data below it")
+			settledOn(ctx, "v1")
+		})
+
+		// A delete of a named delete marker logs no removal and takes the
+		// marker's entries itself; landing just before the relist reads the
+		// OLH entry, it is in the listing the relist reads after that entry.
+		It("does not list again a delete marker the null marker demoted when a delete of it lands just before the relist reads the OLH entry", func(ctx SpecContext) {
+			nullCurrent(ctx)
+			rec.Info.Flags &^= meta.BucketVersionsSuspended
+			res, err := del(ctx, "", op.DeleteParams{})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.DeleteMarker).To(BeTrue())
+			dm := res.VersionID
+			suspend()
+			expect := head(ctx, "")
+			at(calls("bucket_link_olh"), 1, func() { attrWrite(ctx, "") })
+			at(calls("bucket_trim_olh_log"), 1, func() {
+				atOLHRead(func() {
+					Expect(del(ctx, dm, op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: dm, DeleteMarker: true}), "the delete of the marker, answered")
+				})
+			})
+			_, err = del(ctx, "", op.DeleteParams{Expect: expect})
+			concurrent(err)
+			settle(s)
+			_, ok := instanceEntry(dm)
+			Expect(ok).To(BeFalse(), "the deleted marker's entry")
+			Expect(listed()).NotTo(ContainElement(dm), "not listed again")
+			Expect(nullMarker()).To(BeFalse())
+			Expect(listed()).To(Equal([]string{"", "v1"}), "the null data current again")
+			settledOn(ctx, "")
+		})
+
+		// A newer version is listed, so the relist lists the null data below
+		// it, at its own epoch. A null writer whose pending modification the
+		// relist has waited out links between that link's read of the null
+		// record and its read of the OLH entry, which then holds the writer's
+		// link and passes the compare. The record read again after the entry
+		// shows the writer's epoch, and the relist ends: its reset and its link
+		// at the old epoch would leave the write, which the key's OLH names,
+		// below v3 with no entry of the name flagged current.
+		It("leaves a null write current when it links between the fallback's read of the null record and its read of the OLH entry", func(ctx SpecContext) {
+			nullCurrent(ctx)
+			expect := head(ctx, "")
+			at(calls("bucket_link_olh"), 1, func() { attrWrite(ctx, "") })
+			w := newRGWWriter(c, s, rec, denc.Squid, "")
+			linked := false
+			at(calls("bucket_trim_olh_log"), 1, func() {
+				put(ctx, "v3")
+				w.Prepare(ctx)
+				w.HeadWrite(ctx)
+				w.Complete(ctx)
+				w.ReadHead(ctx)
+				Expect(w.Init(ctx)).To(BeTrue(), "the null writer's modification is pending")
+				atOLHRead(func() {
+					w.Link(ctx)
+					linked = true
+				})
+			})
+			_, err := del(ctx, "", op.DeleteParams{Expect: expect})
+			concurrent(err)
+			Expect(linked).To(BeTrue(), "the null writer linked before the fallback's read of the OLH entry")
+			w.ReadLog(ctx)
+			w.Apply(ctx)
+			w.Trim(ctx)
+			settle(s)
+			Expect(olhHead().Data).To(Equal([]byte("data-")), "the null writer's data")
+			Expect(nullMarker()).To(BeFalse())
+			Expect(listed()).To(Equal([]string{"", "v3", "v1"}), "the null write lists first, at its own epoch")
+			settledOn(ctx, "")
+		})
+
+		It("lists the null data again once six writers' links in a row have each refused its relist's link", func(ctx SpecContext) {
+			nullCurrent(ctx)
+			expect := head(ctx, "")
+			at(calls("bucket_link_olh"), 1, func() { attrWrite(ctx, "") })
+			for k := 1; k <= 6; k++ {
+				before(relinks, k, func() { put(ctx, fmt.Sprintf("w%02d", k)) })
+			}
+			_, err := del(ctx, "", op.DeleteParams{Expect: expect})
+			concurrent(err)
+			settle(s)
+			Expect(listEntry("").Flags).To(Equal(rgwcls.FlagVer), "the null data listed again, non-current")
+			Expect(nullMarker()).To(BeFalse())
+			settledOn(ctx, "w06")
+		})
+
+		// The marker's replay finds its own entries gone: another replay kept
+		// the null data for its hold, and a null link listed it again
+		// (checkRemoval).
+		It("answers ConcurrentModification, not success, when another replay kept the null data for its legal hold and a link listed it", func(ctx SpecContext) {
+			nullCurrent(ctx)
+			expect := head(ctx, "")
+			at(calls("bucket_link_olh"), 1, func() {
+				holdWrite(ctx, "")
+				Expect(s.UpdateOLHForTest(ctx, rec, head(ctx, ""))).To(Succeed(), "another reader's replay")
+				Expect(olhHead().Xattrs).To(HaveKey(meta.AttrETag), "the null data kept for its hold")
+				Expect(s.SetOLHForTest(ctx, rec, version(""), driver.OLHLink{KeepVersion: true})).To(Succeed())
+			})
+			_, err := del(ctx, "", op.DeleteParams{Expect: expect})
+			concurrent(err)
+			settle(s)
+			Expect(olhHead().Xattrs).To(HaveKey(meta.AttrETag), "the null data")
+			Expect(olhHead().Xattrs).To(HaveKey(meta.AttrObjectLegalHold), "under its hold")
+			Expect(listed()).To(ContainElement(""))
+			Expect(nullMarker()).To(BeFalse())
+		})
+
+		// The links are the marker's, then the re-link's of the version the
+		// marker demoted.
+		It("honors a DeleteObjects entry of the demoted version that unlinks it between the re-link's init and its link", func(ctx SpecContext) {
+			nullCurrent(ctx)
+			put(ctx, "v2")
+			expect := head(ctx, "")
+			at(calls("bucket_link_olh"), 1, func() { attrWrite(ctx, "") })
+			before(calls("bucket_link_olh"), 2, func() {
+				Expect(del(ctx, "v2", op.DeleteParams{SkipOLHUpdate: true})).To(Equal(&op.DeleteObjectResult{VersionID: "v2"}))
+			})
+			_, err := del(ctx, "", op.DeleteParams{Expect: expect})
+			concurrent(err)
+			settle(s)
+			Expect(s.UpdateOLHForTest(ctx, rec, head(ctx, ""))).To(Succeed(), "the DeleteObjects request replays the key")
+			settle(s)
+			Expect(versionHead("v2")).To(BeNil(), "the second delete removed v2")
+			_, ok := instanceEntry("v2")
+			Expect(ok).To(BeFalse())
+			Expect(nullMarker()).To(BeFalse())
+			Expect(listed()).To(Equal([]string{"", "v1"}), "the null version current again")
+			settledOn(ctx, "")
+		})
+
 		It("leaves the null data unlisted when a second null delete marker lands between the re-link's read and its init", func(ctx SpecContext) {
 			nullCurrent(ctx)
 			expect := head(ctx, "")
@@ -1411,6 +2208,90 @@ var _ = Describe("DeleteObject with an expected state", func() {
 			Expect(listed()).To(Equal([]string{""}))
 			settledOn(ctx, "")
 		})
+	})
+
+	// With no other writer refusing its link, a relist has no bound in time:
+	// the cap is on its retries, and its clock starts at the first try a
+	// writer's change loses. Each read and write from the refused replay's
+	// trim on takes longer here than the whole cap, as a call does that waits
+	// for the gateway's in-flight budget or for a reshard, and the version is
+	// listed again all the same, on each of the relist's paths.
+	Describe("a relist no other writer refuses", func() {
+		type slowRelist struct {
+			instance string
+			first    func(*radosclient.WriteOp) bool
+			atTrim   func()
+			listed   []string
+			check    func()
+		}
+
+		DescribeTable("lists the refused version again however slow its reads and writes are",
+			func(ctx SpecContext, arrange func(ctx context.Context) slowRelist) {
+				const limit, slow = 2 * time.Millisecond, 5 * time.Millisecond
+				driver.SetRelistCapForTest(s, limit)
+				logs := &syncBuffer{}
+				DeferCleanup(driver.CaptureLog(logs))
+				r := arrange(ctx)
+				expect := head(ctx, r.instance)
+				at(r.first, 1, func() { attrWrite(ctx, r.instance) })
+				at(calls("bucket_trim_olh_log"), 1, func() {
+					if r.atTrim != nil {
+						r.atTrim()
+					}
+					ac.setBeforeRead(func(*radosclient.ReadOp) { time.Sleep(slow) })
+					ac.set(func(w *radosclient.WriteOp, send sendFunc) (uint64, error) {
+						time.Sleep(slow)
+						return hooks.around(w, send)
+					})
+				})
+				_, err := del(ctx, r.instance, op.DeleteParams{Expect: expect})
+				ac.setBeforeRead(nil)
+				ac.set(hooks.around)
+				concurrent(err)
+				settle(s)
+				Expect(logs.String()).NotTo(ContainSubstring("it stays unlisted"), "the relist's end, as logged")
+				Expect(listed()).To(Equal(r.listed), "the versions listed")
+				r.check()
+			},
+			Entry("a named version, current again at epoch 0", func(ctx context.Context) slowRelist {
+				put(ctx, "v1")
+				put(ctx, "v2")
+				return slowRelist{instance: "v2", first: calls("bucket_unlink_instance"), listed: []string{"v2", "v1"}, check: func() { settledOn(ctx, "v2") }}
+			}),
+			Entry("a named version, below a newer one at its own epoch", func(ctx context.Context) slowRelist {
+				put(ctx, "v1")
+				put(ctx, "v2")
+				return slowRelist{instance: "v1", first: calls("bucket_unlink_instance"), listed: []string{"v2", "v1"}, check: func() { settledOn(ctx, "v2") }}
+			}),
+			// The relist's rounds wait on the pending attr of a writer that
+			// stopped after its init: a wait is no lost try, so it starts no
+			// clock either.
+			Entry("a named version whose rounds first wait on another writer's pending modification", func(ctx context.Context) slowRelist {
+				put(ctx, "v1")
+				put(ctx, "v2")
+				rw := newRGWWriter(c, s, rec, denc.Squid, "dead")
+				rw.ReadHead(ctx)
+				Expect(rw.Init(ctx)).To(BeTrue(), "a writer that stops after its init")
+				stuck := pending()
+				return slowRelist{instance: "v2", first: calls("bucket_unlink_instance"), listed: []string{"v2", "v1"}, check: func() {
+					Expect(currents()).To(Equal([]string{"v2"}))
+					Expect(olhInfo().Target.Key.Instance).To(Equal("v2"))
+					Expect(pending()).To(Equal(stuck), "the stopped writer's pending attr alone stays")
+				}}
+			}),
+			Entry("the null version, current again at epoch 0", func(ctx context.Context) slowRelist {
+				put(ctx, "v1")
+				suspend()
+				nullPut(ctx, "tag-old", "old")
+				return slowRelist{first: calls("bucket_link_olh"), listed: []string{"", "v1"}, check: func() { settledOn(ctx, "") }}
+			}),
+			Entry("the null version, below a newer one at its own epoch", func(ctx context.Context) slowRelist {
+				put(ctx, "v1")
+				suspend()
+				nullPut(ctx, "tag-old", "old")
+				return slowRelist{first: calls("bucket_link_olh"), atTrim: func() { put(ctx, "v3") }, listed: []string{"v3", "", "v1"}, check: func() { settledOn(ctx, "v3") }}
+			}),
+		)
 	})
 })
 

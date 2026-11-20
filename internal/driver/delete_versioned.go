@@ -10,6 +10,7 @@ import (
 
 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
 	"github.com/jhoblitt/rgw-go/internal/meta"
+	"github.com/jhoblitt/rgw-go/internal/objectlock"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
 )
@@ -80,7 +81,8 @@ func (s *Store) deleteVersioned(ctx context.Context, rec *op.BucketRecord, key m
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1853-L1872 and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1947-L1951 at v20.2.4).
 // The replay runs whatever p.SkipOLHUpdate says, as the guard is in it. A
-// removal it refuses is answered as refusedRemoval says. A marker with
+// removal it refuses is answered as refusedRemoval says, and one it dropped
+// or another replay kept as keptUnderLock says. A marker with
 // conditions and no Expect takes the write tag of the head each attempt
 // follows instead (olhLink.ExpectHead), so its own replay removes only the
 // null data its condition was evaluated on, or none. On an enabled
@@ -120,6 +122,11 @@ func (s *Store) writeDeleteMarker(ctx context.Context, rec *op.BucketRecord, key
 	}
 	err := s.setOLH(ctx, rec, marker, link)
 	switch {
+	case err == nil && suspended && p.Expect != nil:
+		if kerr := s.keptUnderLock(ctx, rec, olhHeadKey(key)); kerr != nil {
+			return nil, fmt.Errorf("deleting %s: %w", versionName(rec, key), kerr)
+		}
+		return res, nil
 	case err == nil:
 		return res, nil
 	case (link.ExpectTag != nil || link.ExpectHead) && finalRefusal(err):
@@ -173,17 +180,55 @@ func expectTag(e *op.ObjectState) []byte {
 // (errRemovalRefused), so relist lists the version again, and the delete is
 // ConcurrentModification whatever relist does. A relist that finds the
 // version gone, its record or its instance entry removed since by another
-// replay, has nothing to list; one that fails otherwise leaves the version
-// unlisted and is logged.
+// replay, has nothing to list; one that fails otherwise, or that other
+// writers kept refusing until one of its bounds (relistBackoff), leaves the
+// version unlisted and is logged. The relist runs on ctx detached from ctx's
+// cancellation and deadline: when it ends is the server's to choose. A
+// client's disconnect, which cancels ctx, does not end it, and neither does
+// a time its caller stops at, such as the stop time of a lifecycle pass,
+// which the pass reads at each page alone (lcBucket.atPage): a relist that
+// ended there would leave the version unlisted at its first lost link.
+//
+// Until a try is lost the relist is bounded by relistBackstop alone: with no
+// other writer refusing its link, the version is listed however long the
+// cluster, a reshard or the gateway's in-flight budget makes its calls wait,
+// short of a stall. Its retries have two bounds more, the try count and
+// relistCap from the first lost try (relistClock), whichever comes first.
+// The cap and the backstop end the relist's waits and fail each RADOS call
+// begun past them. A call in flight ends with them only where the seam's
+// client returns at the context's end: goceph's asynchronous completion
+// modes do, leaving the operation to librados, so a write so abandoned may
+// still land; its synchronous mode returns once the operation has. Both
+// writes of a link's pair, the init and the link, and the second write of
+// the reset's, are sent whatever the cap does, under the backstop
+// (pairContext). The backstop bounds the relist up to its link: once the
+// link has landed, its replay runs to its end on a context of its own, as
+// every write's does (finishOLHModification).
 func (s *Store) refusedRemoval(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, refusal error,
-	relist func(context.Context, *op.BucketRecord, meta.ObjKey) error,
+	relist func(context.Context, *relistClock, *op.BucketRecord, meta.ObjKey) error,
 ) error {
 	what := versionName(rec, key)
 	v := key
 	if v.Instance == meta.NullInstance {
 		v.Instance = ""
 	}
-	err := relist(context.WithoutCancel(ctx), rec, v)
+	limit := s.relistTimeout
+	if limit <= 0 {
+		limit = relistCap
+	}
+	backstop := s.relistBackstopTimeout
+	if backstop <= 0 {
+		backstop = relistBackstop
+	}
+	bctx, stop := context.WithTimeoutCause(context.WithoutCancel(ctx), backstop, errRelistBackstop)
+	defer stop()
+	rctx, end := context.WithCancelCause(bctx)
+	clock := &relistClock{limit: limit, end: end}
+	defer clock.stop()
+	err := relist(rctx, clock, rec, v)
+	if cause := context.Cause(rctx); err != nil && cause != nil {
+		err = fmt.Errorf("%w: %w", cause, err)
+	}
 	switch {
 	case err == nil:
 	case errors.Is(err, radosclient.ErrNotFound), errors.Is(err, op.ErrNoSuchKey):
@@ -278,7 +323,8 @@ func headNullData(head *op.ObjectState, p op.DeleteParams) bool {
 // the null version's data must find the key's OLH head showing what they
 // judged (nullDataJudged), its write tag then guarding the removal as
 // Expect's does. A removal the replay refuses is answered as refusedRemoval
-// says.
+// says, and one given p.Expect that the replay dropped or another replay kept
+// as keptUnderLock says.
 func (s *Store) removeVersion(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) (*op.DeleteObjectResult, error) {
 	v := key
 	null := key.Instance == meta.NullInstance
@@ -315,11 +361,16 @@ func (s *Store) removeVersion(ctx context.Context, rec *op.BucketRecord, key met
 	}
 	_, olhTag, err := s.unlinkVersion(ctx, rec, v, u)
 	switch {
+	case err == nil && p.Expect != nil && !u.Marker:
+		if kerr := s.keptUnderLock(ctx, rec, v); kerr != nil {
+			return nil, fmt.Errorf("deleting %s: %w", versionName(rec, key), kerr)
+		}
+		return &op.DeleteObjectResult{VersionID: key.Instance, DeleteMarker: en.Flags&rgw.FlagDeleteMarker != 0}, nil
 	case err == nil:
 		return &op.DeleteObjectResult{VersionID: key.Instance, DeleteMarker: en.Flags&rgw.FlagDeleteMarker != 0}, nil
 	case u.ExpectTag != nil && finalRefusal(err):
-		relist := func(ctx context.Context, rec *op.BucketRecord, v meta.ObjKey) error {
-			return s.relistVersion(ctx, rec, v, olhTag)
+		relist := func(ctx context.Context, clock *relistClock, rec *op.BucketRecord, v meta.ObjKey) error {
+			return s.relistVersion(ctx, clock, rec, v, olhTag)
 		}
 		if null {
 			relist = s.relistNull
@@ -375,6 +426,36 @@ func (s *Store) expectRemoval(ctx context.Context, rec *op.BucketRecord, v meta.
 		return nil, fmt.Errorf("%w: its head's write tag is not the one expected", op.ErrConcurrentModification)
 	}
 	return tag, nil
+}
+
+// keptUnderLock answers a delete given DeleteParams.Expect whose unlink, or
+// on a suspended bucket whose null delete marker, and replay succeeded while
+// v, the version it removes, the OLH head's null data for the null version,
+// is still stored: a link of v logged after the delete's removal made the
+// replay drop that removal (applyOLHLog), or another replay kept v for its
+// lock and listed it again (checkRemoval). For the null version the data
+// stored then may be a newer null write's, which a null link put in the head
+// after the delete's read. Such a delete removed nothing it expected, and
+// while that data carries a retention or a legal hold,
+// or a lock attr that does not decode, success would report a locked version
+// deleted: it answers ConcurrentModification, on which deleteUnderLock reads
+// the version and checks its lock again, answering AccessDenied under a lock
+// its bypass does not pass. A version kept with no lock leaves the success as
+// it is (docs/differences.md, "A replay keeps a named version that a later
+// link in the same log names").
+func (s *Store) keptUnderLock(ctx context.Context, rec *op.BucketRecord, v meta.ObjKey) error {
+	st, err := s.readOLHHead(ctx, rec, v)
+	if err != nil {
+		return fmt.Errorf("reading its head after the removal: %w", err)
+	}
+	stored := st.Exists
+	if v.Instance == "" {
+		stored = holdsNullData(st)
+	}
+	if !stored || objectlock.VerifyDelete(st.Attrs, s.now(), false, false) == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: the version was kept, and an object lock holds it", op.ErrConcurrentModification)
 }
 
 // comparesData reports whether p's conditions compare a version's data: an
@@ -481,14 +562,113 @@ func versionConditions(m rgw.DirEntryMeta, p op.DeleteParams) error {
 	return nil
 }
 
-// relistRounds bounds relistVersion's and relistNull's rounds: each reads
-// the key afresh, and one whose link another writer's change refused gives
-// way to the next. A round's wait on pending modifications is not one.
+// relistRounds bounds relistVersion's rounds at epoch 0, current again: each
+// reads the key afresh, and one whose link another writer's change refused
+// gives way to the next, until relistBelow lists the version behind the
+// newest. A round's wait on pending modifications is not one.
 const relistRounds = 5
 
 // errNullOwned ends a relist of the null version's data whose record a newer
 // null write has taken over (relistNull).
 var errNullOwned = errors.New("a newer null write owns the null version")
+
+// relistCap is the wall-clock cap on one relist's retries (relistClock):
+// twice olhAttempts backoffs of olhCondBackoffMax, 32 s. The try bound ends a
+// relist that other writers keep refusing, which spends under half the cap in
+// its backoffs. The cap ends one whose retries' reads and writes are slow as
+// well, which the try bound does not: a try's RADOS operations have no bound
+// of their own, and a lifecycle pass sends a page of removals, each of which
+// may relist.
+const relistCap = 2 * olhAttempts * olhCondBackoffMax
+
+// relistBackstop is the bound on a relist from its start up to its link
+// (refusedRemoval), sixteen times relistCap, 512 s. It is for a call that
+// never returns, which nothing else ends once the relist is detached from
+// its request: librados's rados_osd_op_timeout is 0, no timeout, by default,
+// and the wait for the gateway's in-flight budget has none either. One index
+// write that meets a reshard can wait 450 s: its guard sends the call up to
+// reshardRetries times (guardReshard), and after each refusal reads the
+// shard's status up to reshardRetries times reshardWait apart
+// (blockWhileResharding), 45 s. With relistCap spent on its retries a
+// healthy relist takes up to about 482 s, so the backstop ends only a relist
+// whose calls have stalled.
+const relistBackstop = 16 * relistCap
+
+// errRelistBackstop is the cause a relist's context ends with at
+// relistBackstop.
+var errRelistBackstop = errors.New("the backstop on a relist passed")
+
+// pairContext is the context of a pair of writes a relist sends, ctx being
+// the relist's: free of the cap on its retries, so that the pair completes
+// or is undone once its first write has been sent, and held to the
+// backstop's deadline, so that a call that stalls there still ends.
+func pairContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	free := context.WithoutCancel(ctx)
+	if deadline, ok := ctx.Deadline(); ok {
+		return context.WithDeadline(free, deadline)
+	}
+	return free, func() {}
+}
+
+// errRelistEnded ends a relist that other writers kept refusing until one of
+// its bounds (relistBackoff).
+var errRelistEnded = errors.New("other writers kept refusing the relist's link until its bound")
+
+// errRelistCap is the cause a relist's context ends with at the cap on its
+// retries (relistClock).
+var errRelistCap = errors.New("the cap on a relist's retries passed")
+
+// relistClock is the cap on one relist's retries (refusedRemoval): start,
+// which each lost try calls (relistBackoff), starts the clock at the first,
+// and limit later the relist's context ends, with errRelistCap as its cause.
+// A context's deadline is fixed when the context is made, so the clock ends
+// this one through end, its cancel, and the context's own error is then
+// context.Canceled. It serves the one goroutine its relist runs in.
+type relistClock struct {
+	limit time.Duration
+	end   context.CancelCauseFunc
+	timer *time.Timer
+}
+
+func (c *relistClock) start() {
+	if c.timer == nil {
+		c.timer = time.AfterFunc(c.limit, func() { c.end(errRelistCap) })
+	}
+}
+
+// stop releases the clock and its context once the relist has returned.
+func (c *relistClock) stop() {
+	if c.timer != nil {
+		c.timer.Stop()
+	}
+	c.end(nil)
+}
+
+// relistBackoff waits before a relist tries again after another writer's
+// change refused its link or moved the key under its reads, n being the tries
+// lost so far: a conditional link's backoff (olhCondBackoff), which doubles up
+// to olhCondBackoffMax and stays there. A refused link is contention, not a
+// reason to stop, so the relist goes on until one of its two bounds, both the
+// server's, whichever comes first: olhAttempts tries, the bound radosgw's
+// set_olh puts on the links other writers refuse, MAX_ECANCELED_RETRY
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8688-L8689 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9434-L9435 at v20.2.4),
+// or the end of ctx, the relist's context, relistCap after the first lost
+// try, which starts clock here. Past either it answers errRelistEnded.
+func (s *Store) relistBackoff(ctx context.Context, clock *relistClock, n *int) error {
+	*n++
+	clock.start()
+	switch {
+	case *n >= olhAttempts:
+		return fmt.Errorf("%w: every one of %d tries lost to another writer", errRelistEnded, olhAttempts)
+	case ctx.Err() != nil:
+		return fmt.Errorf("%w: %w", errRelistEnded, ctx.Err())
+	}
+	if err := s.condBackoff(ctx, olhCondBackoff(min(*n-1, olhCondBackoffs))); err != nil {
+		return fmt.Errorf("%w: %w", errRelistEnded, err)
+	}
+	return nil
+}
 
 // relistVersion lists again v, a named version whose removal its write tag
 // refused once the unlink had taken its list entry, olhTag being the OLH tag
@@ -508,10 +688,17 @@ var errNullOwned = errors.New("a newer null write owns the null version")
 // relistBelow, at its own epoch, when a newer version is listed, which lists
 // it behind that version, when the name's OLH entry was made again since
 // (remade), or when every one of relistRounds rounds lost its link to
-// another writer.
-func (s *Store) relistVersion(ctx context.Context, rec *op.BucketRecord, v meta.ObjKey, olhTag []byte) error {
+// another writer, each lost round followed by a backoff (relistBackoff).
+// Before a round's link it gives way to another delete of v whose removal is
+// pending, linking nothing, reads the listing again after the name's OLH
+// entry, and compares that entry in its link (relinkOrMove), so that a delete
+// of v that unlinks it during the relist is not undone, and a writer's link
+// that lands during the round leaves v below that writer's version. ctx is
+// the relist's context and clock the cap on its retries (refusedRemoval).
+func (s *Store) relistVersion(ctx context.Context, clock *relistClock, rec *op.BucketRecord, v meta.ObjKey, olhTag []byte) error {
 	idx := s.newOLHIndex(rec, v)
 	var w olhCondWait
+	tries := 0
 	for round := 0; round < relistRounds; {
 		en, err := s.getInstanceEntry(ctx, rec, v)
 		switch {
@@ -532,7 +719,7 @@ func (s *Store) relistVersion(ctx context.Context, rec *op.BucketRecord, v meta.
 		if err != nil {
 			return err
 		}
-		newest, _, err := idx.newestListed(ctx)
+		newest, next, err := idx.newestListed(ctx)
 		if err != nil {
 			return err
 		}
@@ -547,12 +734,49 @@ func (s *Store) relistVersion(ctx context.Context, rec *op.BucketRecord, v meta.
 			continue
 		}
 		round++
-		err = s.setOLH(ctx, rec, v, olhLink{Relink: &olhRelink{head: head, pendingOK: !refuse}})
-		if !errors.Is(err, errRelinkMoved) {
+		err = s.relinkOrMove(ctx, idx, rec, v, olhLink{Relink: &olhRelink{head: head, pendingOK: !refuse}}, newest, next)
+		switch {
+		case errors.Is(err, errRelistGaveWay):
+			return nil
+		case !errors.Is(err, errRelinkMoved):
 			return err
 		}
+		if berr := s.relistBackoff(ctx, clock, &tries); berr != nil {
+			return fmt.Errorf("listing %s again: %w", versionName(rec, v), berr)
+		}
 	}
-	return s.relistBelow(ctx, rec, v, nil, 0, olhTag)
+	return s.relistBelow(ctx, clock, rec, v, nil, 0, olhTag)
+}
+
+// relinkOLHEntry reads the OLH entry of key's name before a relist links
+// key's version again, and reports removed when the entry's pending log holds
+// a removal of that version: another delete's unlink of it has landed, its
+// replay not yet run, and a link logged after it would make every replay
+// drop the removal (applyOLHLog), undoing a delete that may have answered
+// already. The relist then links nothing and that replay removes the
+// version. The refused removal the relist answers was trimmed from the log
+// before the relist ran (finalRefusal), so any removal of the version there
+// is another writer's. Otherwise it returns the entry as read, a missing one
+// as its key with no value, for the link to compare unchanged
+// (olhRelink.olh), so that an unlink landing after this read refuses the link
+// and the relist's next round finds its removal.
+func (s *Store) relinkOLHEntry(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey) (olh *rgw.BIEntry, removed bool, err error) {
+	idx := s.newOLHIndex(rec, key)
+	e, bi, err := idx.getOLHBI(ctx, &op.ObjectState{Bucket: rec, Key: olhHeadKey(key)})
+	switch {
+	case errors.Is(err, radosclient.ErrNotFound):
+		return &rgw.BIEntry{Type: rgw.BIIndexOLH, Idx: rgw.OLHDataKey(idx.olhKey().Name)}, false, nil
+	case err != nil:
+		return nil, false, fmt.Errorf("reading the olh entry of %s before listing it again: %w", versionName(rec, key), err)
+	}
+	for _, entries := range e.PendingLog {
+		for _, le := range entries {
+			if le.Op == rgw.OLHOpRemoveInstance && le.Key.Instance == key.Instance {
+				return nil, true, nil
+			}
+		}
+	}
+	return &bi, false, nil
 }
 
 // relistNull lists again the null version's data, of key's name, whose
@@ -580,15 +804,23 @@ func (s *Store) relistVersion(ctx context.Context, rec *op.BucketRecord, v meta.
 //     null data, at epoch 0;
 //   - otherwise the null data below the newest version (relistBelow).
 //
-// A round whose link the guard refuses gives way to the next, up to
-// relistRounds. While another writer's modification is pending a round
-// waits, and once the wait has passed those pending attrs no longer refuse
-// the link, as relistVersion's rounds do.
-func (s *Store) relistNull(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey) error {
+// A round whose link the guard or the compare refuses, or whose listing moved
+// under it, is followed by another after a backoff, until a link lands or
+// the relist reaches its bound (relistBackoff). While another writer's
+// modification is pending a round waits, and once the wait has passed those
+// pending attrs no longer refuse the link, as relistVersion's rounds do.
+// Each epoch-0 link gives way to another delete's pending removal of the
+// version it would link, reads the listing again after the OLH entry, and
+// compares that entry (relinkOrMove): a round whose demoted version another
+// delete is removing goes on to the next, which no longer lists it, and one
+// whose null data another delete is removing ends the relist. ctx is the
+// relist's context and clock the cap on its retries (refusedRemoval).
+func (s *Store) relistNull(ctx context.Context, clock *relistClock, rec *op.BucketRecord, key meta.ObjKey) error {
 	idx := s.newOLHIndex(rec, key)
 	var first uint64
 	var w olhCondWait
-	for round, read := 0, false; round < relistRounds; {
+	tries := 0
+	for read := false; ; {
 		dn, err := s.nullDataEntry(ctx, rec, key)
 		switch {
 		case errors.Is(err, radosclient.ErrNotFound):
@@ -617,37 +849,104 @@ func (s *Store) relistNull(ctx context.Context, rec *op.BucketRecord, key meta.O
 		case wait:
 			continue
 		}
-		round++
 		newest, next, err := idx.newestListed(ctx)
 		if err != nil {
 			return err
 		}
 		marker := newest != nil && newest.Key.Instance == "" && newest.Flags&rgw.FlagDeleteMarker != 0
 		guard := &olhRelink{head: head, pendingOK: !refuse}
+		target, demoted := key, marker && next != nil && listsBefore(*next, dn)
+		l := olhLink{Relink: guard}
 		switch {
-		case marker && next != nil && listsBefore(*next, dn):
-			l := olhLink{Relink: guard}
+		case demoted:
+			target = indexToObjKey(next.Key)
 			if next.Flags&rgw.FlagDeleteMarker != 0 {
 				l.DeleteMarker, l.Meta = true, next.Meta
 			}
-			if err = s.setOLH(ctx, rec, indexToObjKey(next.Key), l); err == nil {
-				continue
-			}
 		case marker, newest == nil, listsBefore(dn, *newest):
-			if err = s.setOLH(ctx, rec, key, olhLink{Relink: guard}); err == nil {
-				return nil
-			}
 		default:
-			err = s.relistBelow(ctx, rec, key, guard, first, nil)
+			err = s.relistBelow(ctx, clock, rec, key, guard, first, nil)
 			if err == nil || errors.Is(err, errNullOwned) {
 				return nil
+			}
+		}
+		if err == nil {
+			err = s.relinkOrMove(ctx, idx, rec, target, l, newest, next)
+			switch {
+			case err == nil && demoted:
+				continue
+			case err == nil, errors.Is(err, errRelistGaveWay) && !demoted:
+				return nil
+			case errors.Is(err, errRelistGaveWay):
+				// Another delete's removal of the version the marker demoted is
+				// pending: the next round, which no longer lists it, looks past it.
+				err = errRelinkMoved
 			}
 		}
 		if !errors.Is(err, errRelinkMoved) {
 			return err
 		}
+		if berr := s.relistBackoff(ctx, clock, &tries); berr != nil {
+			return fmt.Errorf("listing %s again: %w", versionName(rec, key), berr)
+		}
 	}
-	return fmt.Errorf("listing %s again: every one of %d rounds lost to another writer", versionName(rec, key), relistRounds)
+}
+
+// errRelistGaveWay ends a relist's link that gave way to another delete's
+// pending removal of the version it would link (relinkOLHEntry).
+var errRelistGaveWay = errors.New("another delete's removal of the version is pending")
+
+// relinkOrMove is a relist round's link at epoch 0 of target, a version of
+// idx's name, as l says, newest and next being the round's read of the
+// listing: errRelistGaveWay when another delete's removal of target is
+// pending; then the listing read again, after the OLH entry relinkOLHEntry
+// read, and errRelinkMoved when it no longer lists those two as they were,
+// with nothing linked; and otherwise the link, comparing that entry. Two
+// kinds of change, landing between the round's listing and that entry's
+// read, would pass both the give-way and the compare. The listing read after
+// the entry shows them, and one landing after the entry's read moves the
+// entry, which refuses the link:
+//   - a delete of a delete marker, which logs no removal, the class taking
+//     the marker's entries itself
+//     (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1970-L1978 at v19.2.7,
+//     https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2117-L2126 at v20.2.4),
+//     while the class's link of a marker writes its entries anew
+//     (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1682-L1688 at v19.2.7,
+//     https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1823-L1829 at v20.2.4),
+//     so the link would list the deleted marker again;
+//   - a writer's link, whose version the link at epoch 0 would go current
+//     over, though that writer is then answered success.
+func (s *Store) relinkOrMove(ctx context.Context, idx *bucketOLHIndex, rec *op.BucketRecord, target meta.ObjKey, l olhLink,
+	newest, next *rgw.DirEntry,
+) error {
+	olh, removed, err := s.relinkOLHEntry(ctx, rec, target)
+	switch {
+	case err != nil:
+		return err
+	case removed:
+		return errRelistGaveWay
+	}
+	n2, x2, err := idx.newestListed(ctx)
+	if err != nil {
+		return err
+	}
+	if !sameListEntry(newest, n2) || !sameListEntry(next, x2) {
+		return fmt.Errorf("linking %s: the listing changed since the round read it: %w", versionName(rec, target), errRelinkMoved)
+	}
+	g := *l.Relink
+	g.olh, g.finish = olh, true
+	l.Relink = &g
+	return s.setOLH(ctx, rec, target, l)
+}
+
+// sameListEntry reports whether a and b, two reads of one place in a name's
+// listing, are the same entry as listed: both absent, or the same version at
+// the same epoch with the same flags.
+func sameListEntry(a, b *rgw.DirEntry) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Key == b.Key && a.VersionedEpoch == b.VersionedEpoch && a.Flags == b.Flags
 }
 
 // readRelinkHead is the OLH head of key's name as a re-link round reads it:
@@ -684,35 +983,77 @@ func (s *Store) readRelinkHead(ctx context.Context, rec *op.BucketRecord, key me
 // is at the version's own epoch, which the class writes back non-current
 // with its list entry while it is below the OLH entry's, or, when the entry
 // was made again since (remade), at epoch 1, below every version it holds.
-func (s *Store) relistBelow(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, guard *olhRelink, first uint64, olhTag []byte) error {
+// That link logs nothing, so a removal of the version another delete has
+// logged would still remove the version and leave the list entry it wrote,
+// naming nothing: the relist gives way to such a removal, and its link
+// compares the OLH entry as read (relinkOLHEntry). The null version's record
+// is read once more after that entry, and the relist ends with errNullOwned
+// when its epoch has moved: a null write's link landing between the record's
+// first read and the entry's is in the entry the link compares, and the reset
+// and the link at the old epoch would then take that write's list entry back
+// below the newer versions, with no entry of the name flagged current. One
+// landing after the second read moves the entry and refuses the link, and the
+// reset before that link leaves the write's record FLAG_VER alone, as any
+// index completion on a record does, its list entry untouched. Without guard,
+// a link that compare refuses is tried again from a fresh read after a
+// backoff, until the link lands, the relist gives way, or it reaches a bound
+// (relistBackoff, on clock); with guard, the caller's round does that.
+func (s *Store) relistBelow(ctx context.Context, clock *relistClock, rec *op.BucketRecord, key meta.ObjKey, guard *olhRelink, first uint64, olhTag []byte) error {
 	read := s.getInstanceEntry
 	if key.Instance == "" {
 		read = s.nullDataEntry
 	}
-	en, err := read(ctx, rec, key)
-	switch {
-	case errors.Is(err, radosclient.ErrNotFound):
-		return nil
-	case err != nil:
-		return err
-	case key.Instance == "" && en.VersionedEpoch != first:
-		return errNullOwned
+	for tries := 0; ; {
+		en, err := read(ctx, rec, key)
+		switch {
+		case errors.Is(err, radosclient.ErrNotFound):
+			return nil
+		case err != nil:
+			return err
+		case key.Instance == "" && en.VersionedEpoch != first:
+			return errNullOwned
+		}
+		olh, removed, err := s.relinkOLHEntry(ctx, rec, key)
+		switch {
+		case err != nil:
+			return err
+		case removed:
+			return nil
+		}
+		if key.Instance == "" {
+			again, aerr := read(ctx, rec, key)
+			switch {
+			case errors.Is(aerr, radosclient.ErrNotFound):
+				return nil
+			case aerr != nil:
+				return aerr
+			case again.VersionedEpoch != first:
+				return errNullOwned
+			}
+		}
+		if rerr := s.resetCurrent(ctx, rec, key, en); rerr != nil {
+			return rerr
+		}
+		remade, err := s.newOLHIndex(rec, key).remade(ctx, rec, olhTag)
+		if err != nil {
+			return err
+		}
+		epoch := en.VersionedEpoch
+		if remade || epoch == 0 {
+			epoch = 1
+		}
+		g := olhRelink{olh: olh, finish: true}
+		if guard != nil {
+			g.head, g.pendingOK = guard.head, guard.pendingOK
+		}
+		err = s.setOLH(ctx, rec, key, olhLink{Epoch: epoch, Relink: &g})
+		if guard != nil || !errors.Is(err, errRelinkMoved) {
+			return err
+		}
+		if berr := s.relistBackoff(ctx, clock, &tries); berr != nil {
+			return fmt.Errorf("listing %s again below the newest version: %w", versionName(rec, key), berr)
+		}
 	}
-	if rerr := s.resetCurrent(ctx, rec, key, en); rerr != nil {
-		return rerr
-	}
-	remade, err := s.newOLHIndex(rec, key).remade(ctx, rec, olhTag)
-	if err != nil {
-		return err
-	}
-	epoch := en.VersionedEpoch
-	if remade || epoch == 0 {
-		epoch = 1
-	}
-	if guard == nil {
-		guard = &olhRelink{}
-	}
-	return s.setOLH(ctx, rec, key, olhLink{Epoch: epoch, Relink: guard})
 }
 
 // resetCurrent clears every flag but FLAG_VER on en, key's instance record
@@ -726,13 +1067,39 @@ func (s *Store) relistBelow(ctx context.Context, rec *op.BucketRecord, key meta.
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1196-L1260 at v20.2.4),
 // where an ADD completion would write the placeholder back as an entry that
 // exists. A cancel touches neither the record's meta nor the bucket's stats.
+//
+// The prepare's tag stays in the record's pending map until the cancel takes
+// it out, and a record that holds a pending tag is written back, marked as
+// not existing, where the version's removal would remove it
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1141-L1166 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1275-L1299 at v20.2.4).
+// So once the prepare has been sent the cancel follows whatever the relist's
+// cap does (pairContext): after a prepare that returned, and after one whose
+// outcome is unknown (outcomeUnknown), which may have landed. librados
+// applies one client's operations on an object in the order it was given
+// them (docs/cgo-limitations.md, "Bucket index completions to one shard can
+// land out of order"), so the cancel reaches the shard after such a prepare,
+// and where the prepare never landed the class refuses it, EINVAL, with
+// nothing written
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1066-L1073 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1201-L1208 at v20.2.4).
 func (s *Store) resetCurrent(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, en rgw.DirEntry) error {
 	x := s.newIndexOp(rec, key, "")
-	if err := x.prepare(ctx, rgw.OpAdd); err != nil {
-		return err
+	perr := x.prepare(ctx, rgw.OpAdd)
+	if perr != nil && !outcomeUnknown(perr) {
+		return perr
 	}
 	c := x.completion(rgw.OpCancel, en.Ver, rgw.DirEntryMeta{Category: rgw.CategoryNone})
-	return x.guardedWrite(ctx, func(w *radosclient.WriteOp) { rgw.BucketCompleteOp(w, c, x.s.release) })
+	pctx, done := pairContext(ctx)
+	defer done()
+	cerr := x.guardedWrite(pctx, func(w *radosclient.WriteOp) { rgw.BucketCompleteOp(w, c, x.s.release) })
+	switch {
+	case perr == nil:
+		return cerr
+	case cerr == nil, errors.Is(cerr, radosclient.ErrInvalid):
+		return perr
+	}
+	return fmt.Errorf("%w; canceling it: %w", perr, cerr)
 }
 
 // remade reports whether b's name's OLH entry carries another tag than

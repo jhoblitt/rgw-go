@@ -265,7 +265,18 @@ type DeleteParams struct {
 	// modifications; otherwise it goes non-current at its own epoch, behind
 	// the newer version listed, below every version of a key whose OLH was
 	// made again since, or, when every round lost its link to another writer,
-	// ahead of the current version, which then lists second. The delete runs
+	// ahead of the current version, which then lists second. A link another
+	// writer's change refuses is tried again until it lands or a bound the
+	// server sets passes, 100 tries or 32 s of wall-clock time from the first
+	// so refused, or 512 s from the relist's start up to its link, for calls
+	// that stall, which leaves the version unlisted; neither a client's
+	// cancellation of
+	// the request nor a deadline of its context ends it. None is sent while
+	// another delete's removal of the version is pending, which that delete's
+	// replay applies. A delete whose own removal a later link of the version
+	// dropped, or another replay kept for its lock, answers
+	// ErrConcurrentModification while a retention or legal hold holds the data
+	// kept, and success otherwise. The delete runs
 	// its own replay whatever SkipOLHUpdate says. The unversioned delete and
 	// memstore answer ErrNotImplemented for it.
 	Expect *ObjectState

@@ -28,17 +28,42 @@ import (
 type sendFunc = func() (uint64, error)
 
 // aroundCluster is a fakerados cluster whose pools hand each write op to
-// around, when it is set, with the call that sends the op.
+// around, when it is set, with the call that sends the op, and each read op
+// to beforeRead, when it is set, before it is sent. A read that readCtx,
+// when it is set, answers an error for answers that error, unsent. Each write
+// goes to writeCtx, when it is set, with its call's context and the call
+// that sends it through around.
 type aroundCluster struct {
 	*fakerados.Cluster
-	mu     sync.Mutex
-	around func(op *radosclient.WriteOp, send sendFunc) (uint64, error)
+	mu         sync.Mutex
+	around     func(op *radosclient.WriteOp, send sendFunc) (uint64, error)
+	beforeRead func(op *radosclient.ReadOp)
+	readCtx    func(ctx context.Context, op *radosclient.ReadOp) error
+	writeCtx   func(ctx context.Context, op *radosclient.WriteOp, send sendFunc) (uint64, error)
 }
 
 func (c *aroundCluster) set(around func(op *radosclient.WriteOp, send sendFunc) (uint64, error)) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.around = around
+}
+
+func (c *aroundCluster) setBeforeRead(fn func(op *radosclient.ReadOp)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.beforeRead = fn
+}
+
+func (c *aroundCluster) setReadCtx(fn func(ctx context.Context, op *radosclient.ReadOp) error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.readCtx = fn
+}
+
+func (c *aroundCluster) setWriteCtx(fn func(ctx context.Context, op *radosclient.WriteOp, send sendFunc) (uint64, error)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.writeCtx = fn
 }
 
 func (c *aroundCluster) Pool(ctx context.Context, pool, namespace string) (radosclient.Pool, error) {
@@ -56,13 +81,32 @@ type aroundPool struct {
 
 func (p *aroundPool) Write(ctx context.Context, oid string, op *radosclient.WriteOp, flags radosclient.OpFlags) (uint64, error) {
 	p.c.mu.Lock()
-	around := p.c.around
+	around, withCtx := p.c.around, p.c.writeCtx
 	p.c.mu.Unlock()
 	send := func() (uint64, error) { return p.Pool.Write(ctx, oid, op, flags) }
-	if around == nil {
-		return send()
+	if around != nil {
+		direct := send
+		send = func() (uint64, error) { return around(op, direct) }
 	}
-	return around(op, send)
+	if withCtx != nil {
+		return withCtx(ctx, op, send)
+	}
+	return send()
+}
+
+func (p *aroundPool) Read(ctx context.Context, oid string, op *radosclient.ReadOp, flags radosclient.OpFlags) (uint64, error) {
+	p.c.mu.Lock()
+	before, withCtx := p.c.beforeRead, p.c.readCtx
+	p.c.mu.Unlock()
+	if before != nil {
+		before(op)
+	}
+	if withCtx != nil {
+		if err := withCtx(ctx, op); err != nil {
+			return 0, err
+		}
+	}
+	return p.Pool.Read(ctx, oid, op, flags)
 }
 
 // callsMethod reports whether steps hold an exec of the cls method.

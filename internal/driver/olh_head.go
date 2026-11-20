@@ -408,18 +408,33 @@ func (s *Store) followOLH(ctx context.Context, head *op.ObjectState, update func
 // to remove. Those versions are removed through idx before the head op, the
 // entries carrying opTag guarded on expectTag when it is not nil and every
 // other writer's with keepLocked; one already gone is passed over, and any
-// other failure stops the replay before the head op, as radosgw's does. A
-// removal of the null version that a later LINK_OLH of null data follows, in
-// log or, with nullLinkLater, on a later page of the replay (replayPass), is
-// dropped: the null version's removal names its key, not the data it
-// replaced
+// other failure stops the replay before the head op, as radosgw's does.
+//
+// A removal of a version that a later LINK_OLH of that version's data
+// follows, in log or, through linkedLater, on a later page of the replay
+// (replayPass), is dropped, whether or not the link is taken. The class
+// logs such a link only once it has found the version's instance entry,
+// and lists the version again
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1682-L1688 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1823-L1827 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1823-L1829 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1964-L1968 at v20.2.4).
+// The null version's removal names its key, not the data it replaced
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1806-L1810 and
 // https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1970-L1971 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1947-L1951 and
 // https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2117-L2118 at v20.2.4),
-// and that link's write has put its own data in the head the two share,
-// where radosgw's replay removes it (docs/differences.md, "A replay keeps the
-// null data a later null link names"). After the head op, finishOLHLog
+// and a null link's write has put its own data in the head the two share.
+// radosgw's replay removes every version its log names
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8479-L8481 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9225-L9227 at v20.2.4),
+// and main's spares only a key it links after an UNLINK_OLH
+// (https://github.com/ceph/ceph/blob/75c7b8ece796b813ce734a14b7354593d03d3cfc/src/rgw/driver/rados/rgw_rados.cc#L9355-L9358),
+// each leaving the OLH naming a version that is gone (docs/differences.md, "A
+// replay keeps the null data a later null link names" and "A replay keeps a
+// named version that a later link in the same log names"). A delete
+// marker's link drops nothing: the class logs a removal of its own after a
+// marker that lands on a version's data. After the head op, finishOLHLog
 // clears the OLH marked for removal, and otherwise trims the log to the last
 // epoch. It returns the last epoch whenever the head op landed, and 0 when
 // the replay wrote nothing; a tail that did not finish comes with the last
@@ -460,7 +475,7 @@ func (s *Store) followOLH(ctx context.Context, head *op.ObjectState, update func
 // which its set_olh and unlink_obj_instance return where they take the
 // ECANCELED of the same race for success (docs/differences.md, "A versioned
 // write or delete whose replay finds the OLH head removed succeeds").
-func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectState, log map[uint64][]rgw.OLHLogEntry, opTag string, expectTag []byte, nullLinkLater bool) (uint64, error) {
+func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectState, log map[uint64][]rgw.OLHLogEntry, opTag string, expectTag []byte, linkedLater map[string]bool) (uint64, error) {
 	if len(log) == 0 {
 		return 0, nil
 	}
@@ -496,8 +511,8 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 			case rgw.OLHOpRemoveInstance:
 				removals = append(removals, e)
 			case rgw.OLHOpLinkOLH:
-				if nullDataLink(e) {
-					removals = slices.DeleteFunc(removals, func(r rgw.OLHLogEntry) bool { return r.Key.Instance == "" })
+				if dataLink(e) {
+					removals = slices.DeleteFunc(removals, func(r rgw.OLHLogEntry) bool { return r.Key.Instance == e.Key.Instance })
 				}
 				if remove || linkEpoch < epoch || cur.Instance == "" || cur.Instance > e.Key.Instance {
 					link, remove = true, false
@@ -511,9 +526,7 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 			w.RmXattr(meta.AttrOLHPendingPrefix + e.OpTag)
 		}
 	}
-	if nullLinkLater {
-		removals = slices.DeleteFunc(removals, func(r rgw.OLHLogEntry) bool { return r.Key.Instance == "" })
-	}
+	removals = slices.DeleteFunc(removals, func(r rgw.OLHLogEntry) bool { return linkedLater[r.Key.Instance] })
 	if link {
 		target := meta.OLHInfo{Target: meta.Obj{Bucket: head.Bucket.Info.Bucket, Key: indexToObjKey(cur)}, Removed: deleteMarker}
 		w.SetXattr(meta.AttrOLHInfo, encodeAt(target, s.release))
