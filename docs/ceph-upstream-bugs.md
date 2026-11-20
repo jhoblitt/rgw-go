@@ -547,6 +547,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's CopyObject and CreateMultipartUpload evaluate s3:PutObject without the request's ACL and tag condition keys](#radosgws-copyobject-and-createmultipartupload-evaluate-s3putobject-without-the-requests-acl-and-tag-condition-keys) | pending | pending | ✓ |
 | [radosgw adds an empty s3:x-amz-acl key to a PutObject that sends no x-amz-acl](#radosgw-adds-an-empty-s3x-amz-acl-key-to-a-putobject-that-sends-no-x-amz-acl) | pending | pending | ✓ |
 | [radosgw's CopyObject stores an x-amz-tagging header it does not validate](#radosgws-copyobject-stores-an-x-amz-tagging-header-it-does-not-validate) | pending | pending | ✓ |
+| [radosgw's typed condition operators read one value of a repeated tag key](#radosgws-typed-condition-operators-read-one-value-of-a-repeated-tag-key) | pending | pending | ✓ |
 | [radosgw's replay of an OLH log removes a version that a later entry of the same log links](#radosgws-replay-of-an-olh-log-removes-a-version-that-a-later-entry-of-the-same-log-links) | pending | [ceph/ceph#67661](https://github.com/ceph/ceph/pull/67661) (partial) |  |
 | [radosgw never sets aws:SecureTransport to false](#radosgw-never-sets-awssecuretransport-to-false) | none; [#42521](https://tracker.ceph.com/issues/42521) is related | none |  |
 | [radosgw sets few of the condition keys Amazon S3 sets on S3 requests](#radosgw-sets-few-of-the-condition-keys-amazon-s3-sets-on-s3-requests) | pending | pending | ✓ |
@@ -35807,6 +35808,59 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task S13's review and adversarial review, 2026-11-20,
   checking what a copy stores of its tag header; derived from the source,
+  not reproduced on a cluster.
+
+## radosgw's typed condition operators read one value of a repeated tag key
+
+- **Kind:** defect, possibly security-relevant, conditional on a Deny or an
+  Allow with a typed condition operator over a request or existing object
+  tag key.
+  Unreproduced on radosgw: derived from the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `set_from_string` adds every pair of a tag header, and
+    `check_and_add_tag` refuses no key the set already holds
+    ([rgw_tag.cc:23-57](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.cc#L23-L57),
+    [rgw_tag.cc:23-57](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.cc#L23-L57)), so a
+    repeated key enters the request's environment as one
+    `s3:RequestObjectTag/<key>` with several values
+    ([rgw_op.cc:3970-3972](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3970-L3972),
+    [rgw_op.cc:4179-4181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4179-L4181)), and
+    a stored one as one `s3:ExistingObjectTag/<key>`
+    ([rgw_op.cc:708-725](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L708-L725),
+    [rgw_op.cc:738-755](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L738-L755)).
+  - `Condition::eval` takes one value of the key, `env.find(key)`'s
+    ([rgw_iam_policy.cc:856](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L856),
+    [rgw_iam_policy.cc:880](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L880);
+    [rgw_iam_policy.cc:875](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L875),
+    [rgw_iam_policy.cc:900](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L900)),
+    and the Numeric, Date, Bool, Binary and IpAddress operators compare
+    that value alone
+    ([rgw_iam_policy.cc:918-972](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L918-L972),
+    [rgw_iam_policy.cc:938-992](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L938-L992)).
+    Which value it is follows the order the values were added, and on
+    v20.2.4 the environment's size too, and the two releases pick
+    differently. So a Deny or an Allow with a typed operator on such a key
+    is judged on one value: a tag set that repeats the key with a value the
+    statement names and one it does not escapes a Deny, or meets an Allow,
+    when the value taken is the one that decides it, and stores both.
+  - Amazon S3 refuses such a tag set: "Tags that are associated with an
+    object must have unique tag keys"
+    ([object-tagging.md:6](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/object-tagging.md?plain=1#L6), in the user
+    guide's archived source).
+  - The negated string operators over the same key are the entry
+    "[radosgw evaluates a repeated x-amz-tagging key as one multivalued
+    s3:RequestObjectTag condition
+    key](#radosgw-evaluates-a-repeated-x-amz-tagging-key-as-one-multivalued-s3requestobjecttag-condition-key)",
+    at the same sink.
+- **Releases:** v19.2.7 and v20.2.4; older releases not checked.
+- **rgw-go:** reproduces it: `tags.ParseHeader` keeps a repeated key
+  (`internal/tags/tags.go`), and `policy.Env.Find` returns the one value
+  each release's `find` returns (`internal/policy/env.go`), on PutObject,
+  CreateMultipartUpload and a CopyObject under the REPLACE metadata
+  directive. Plan task S16 fixes rgw-go's side.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task S13's adversarial review, 2026-11-20, probing a
+  numeric Deny on a request tag; seen in rgw-go, which mirrors the source,
   not reproduced on a cluster.
 
 ## radosgw's replay of an OLH log removes a version that a later entry of the same log links
