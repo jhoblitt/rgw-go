@@ -2038,20 +2038,26 @@ versions only through the listing:
   (`internal/driver/stats.go:408-417`) and the owner's stats synced from it count it until the
   bucket is deleted, and nothing counts its objects after.
 
+V21's adversarial review adds one more path in its re-run 4, as R4-M3, older than V21 and the same
+on main: a null version that was its key's only one, where a delete leaves the data's index record
+behind with the data gone (Behaviour 1's last path, and Behaviour 7).
+
 - **Layer:** driver. **Files:** the lifecycle walk (`lcBucket.rule`, `lcBucket.walk` and
   `lcVersionPager` in `internal/driver/lc_bucket.go`); DeleteBucket's emptiness check and removal
   (`checkBucketEmpty`, `DeleteBucket` and `cleanIndex` in `internal/driver/bucketops.go`); the
   relist paths (`refusedRemoval`, `relistVersion`, `relistNull` and `relistBelow` in
   `internal/driver/delete_versioned.go`), and, where design (A) puts its marker, the replay's keep
   and the writer's check (`applyOLHLog` in `internal/driver/olh_head.go`, `removeInstance` and
-  `checkRemoval` in `internal/driver/olh.go`); their
+  `checkRemoval` in `internal/driver/olh.go`); for Behaviour 7, the delete naming `null` in
+  `internal/driver/delete_versioned.go` and the replay's clear of the OLH (`applyOLHLog`,
+  `finishOLHLog` and `clearOLHHead` in `internal/driver/olh_head.go`); their
   specs; `docs/differences.md`; `docs/ceph-upstream-bugs.md`; `docs/rados-format-opportunities.md`
   under (A). **Cluster:** no for the emulator specs. A cluster spec is needed only if (B) is chosen:
   `bi_list` is a class call rgw-go has not made, and the emulator's must be pinned against the
   class on both releases.
-- **Security boundary:** quota accounting and the bucket-deletion path; adversarial review applies
-  (PP-14). Every text on the quota side, here, in `docs/differences.md` and in the registry, states
-  the mechanism only.
+- **Security boundary:** quota accounting, the bucket-deletion path and, for Behaviour 7, the
+  versioned delete's replay; adversarial review applies (PP-14). Every text on the quota side,
+  here, in `docs/differences.md` and in the registry, states the mechanism only.
 - **Behaviour:**
   1. The paths that leave a version stored and unlisted, as `docs/differences.md` records them
      (verify each at implementation, and add any found since):
@@ -2076,7 +2082,22 @@ versions only through the listing:
        bucket's uploads after its emptiness check, so confirm that the abort takes it;
      - a write that goes on behind a stranded version marker as radosgw's does ("An unversioned
        write of a key whose OLH a delete left pending removal clears it first, and is listed"): an
-       index entry that does not decode, or a write that meets a reshard.
+       index entry that does not decode, or a write that meets a reshard;
+     - a delete naming `null` after a refused null delete whose relist ended without linking,
+       when the null data was the key's only version (R4-M3; V21's adversarial harness, J5, the
+       same at V21's head, at main and at the head of its re-run 3). The one path here that leaves
+       nothing stored. The refused delete's null delete marker stays current after its 409: the
+       key reads 404, ListObjectVersions shows that marker alone, latest, and a read naming `null`
+       finds the data. One delete naming `null` takes the marker first, and the data with it: the
+       key's head object, which holds the null data, is gone and ListObjectVersions is empty. The
+       data's instance record stays in the index, `exists=true`, and the bucket index header still
+       counts it, so `BucketStats` and the owner's stats do; no listing shows it and no request
+       reaches it, a second delete naming `null` answering NoSuchKey. J5 observed that state and
+       did not trace the delete. By reading, the step is the delete's replay, which finds no
+       version left and clears the key's OLH: `clearOLHHead` (`internal/driver/olh_head.go:688-709`)
+       removes the head with a plain remove and sends no index op for the record. So, by reading
+       and not run, any tails of the data stay in the data pool with nothing naming them.
+       DeleteBucket, finding the listing empty, removes the record with the index shards.
   2. A version in that state is either listed again, or found and handled by lifecycle and by
      DeleteBucket: lifecycle's rules act on it as on a listed version, and DeleteBucket answers 409
      BucketNotEmpty while it exists, or removes its head, tails and index entries with the bucket.
@@ -2142,15 +2163,59 @@ versions only through the listing:
   6. Two PRs, in this order. The first: DeleteBucket never deletes a bucket while such a version
      exists, or removes that version's objects with it. That step turns a repairable state into a
      permanent one, so it goes first, and it lands before the second PR's design is settled when
-     the design chosen, (A) or (B), allows. The second: lifecycle and the listing.
+     the design chosen, (A) or (B), allows. The second: lifecycle and the listing. Behaviour 7
+     is a third PR, outside that order: it changes the delete path, needs neither design, and
+     can land first.
+  7. A delete naming `null` leaves no counted, unreachable index record. Behaviour 1's last path
+     leaves no version stored, so Behaviour 2 does not reach it; this does. When the delete takes
+     a null delete marker over null data an earlier refusal kept, it does one of two things,
+     chosen by the implementer:
+     - leaves the data whole: head, tails and instance record kept and counted, the data
+       readable and deletable by `null`, the next delete naming `null` taking it, as the same
+       state with an older version below already behaves. The key's replay keeps the head where
+       the delete's own refusal or lock kept the null data (`keepHead`,
+       `internal/driver/olh_head.go:609-617`); here the refusal was an earlier delete's and is no
+       longer in the log, so a replay about to clear the OLH cannot tell from its log alone that
+       the data is there. What the key reads after the marker goes, the data neither listed nor
+       current, is Behaviour 2's state and is handled there;
+     - or takes the data in that same delete: its head, its tails, and its instance record with
+       the header's count, so that nothing of the key stays.
+
+     Either way no step leaves the record counted with its head gone, and no tail without a
+     record naming it. radosgw never reaches the state. The class's link of a null delete marker
+     over null data logs the data's removal in the same call
+     ([cls_rgw.cc:1705-1734](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1705-L1734)
+     and [cls_rgw.cc:1806-1810](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1806-L1810),
+     [cls_rgw.cc:1846-1875](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1846-L1875)
+     and [cls_rgw.cc:1947-1951](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1947-L1951)),
+     and the replay removes it through `delete_obj` with no write-tag guard
+     ([rgw_rados.cc:8530-8541](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8530-L8541),
+     [rgw_rados.cc:9276-9287](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9276-L9287)),
+     so the data, its record and its count are gone once the marker is written, and a delete
+     naming `null` takes the marker alone and leaves nothing of the key. The first choice
+     differs from radosgw in keeping data radosgw removed, as the refusal already does; the
+     second ends where radosgw does, one delete later. Record the choice, what the key reads in
+     between, and the state Behaviour 1 records today in `docs/differences.md`, in the entry "A
+     refused versioned removal re-links the version, unless a newer null write owns the null
+     key".
 - **Specs:** against the emulator, on both releases, a version left unlisted by each path in
   Behaviour 1 that the emulator can reach:
   - lifecycle expires it under a rule that matches it, or it is listed again;
   - DeleteBucket answers 409 BucketNotEmpty, or deletes the bucket with no head, tail or index
     object of the version left;
   - the bucket's stats match the versions stored, before and after;
-  - a bucket with no such version deletes, and a pass expires, as today.
-- **Depends on:** V21. **PR split:** two (Behaviour 6). **Brief:** about 40 lines.
+  - a bucket with no such version deletes, and a pass expires, as today;
+  - Behaviour 7, on both releases against the emulator: on a suspended bucket, null data as the
+    key's only version; a null delete refused (an attr write moves the head's write tag after
+    the marker's link) and its relist ended before it links (stopped after the refused replay's
+    trim, as J5 stops it); then deletes naming `null` until nothing of the key is left. After
+    each delete the header's count and `BucketStats` equal the versions stored, every instance
+    record of the key belongs to a version a read or a delete naming it reaches, and no tail is
+    left that no record names; at the end no head, tail or index record of the key remains.
+    Under the first choice a read naming `null` returns the data until the delete that takes
+    it. The same with an older version below the null data, whose outcome stays as today; and
+    V21's adversarial harness's J5 leaves no record on its null-only row.
+- **Depends on:** V21. **PR split:** three (Behaviour 6 and 7). **Brief:** about 50 lines.
 
 ## Order
 
