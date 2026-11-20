@@ -2019,6 +2019,139 @@ listing, and v1 is relisted below it.
     0 schedules leave the older version current, the other families' tallies as V21 leaves them.
 - **Depends on:** V21. **PR:** one. **Brief:** about 30 lines.
 
+### Task V24: a version left unlisted is still expired and blocks DeleteBucket
+
+Found by V21's task re-review and numbered here before V21 merged (PP-12). Its re-review 3 reports
+it as N7, pre-existing on main. A version whose head (the OLH head, for the null version's data)
+and instance entry stay while its list entry is gone is in no listing, and each reader below finds
+versions only through the listing:
+
+- lifecycle's expiration walks `ListObjects` with `ListVersions` (`lcBucket.rule` and
+  `lcBucket.walk`, `internal/driver/lc_bucket.go:280` and `internal/driver/lc_bucket.go:360`), so
+  no rule expires it;
+- DeleteBucket's emptiness check reads the same unordered listing, versions included
+  (`checkBucketEmpty`, `internal/driver/bucketops.go:366-383`), so the bucket reads as empty.
+  DeleteBucket then removes the index shards whole (`cleanIndex`,
+  `internal/driver/bucketops.go:141-165`), the instance entry with them, and the version's head and
+  tails stay in the data pool with nothing naming them. The purging removals end in the same check;
+- the bucket index header keeps counting it, since no DEL completed for it, so `BucketStats`
+  (`internal/driver/stats.go:408-417`) and the owner's stats synced from it count it until the
+  bucket is deleted, and nothing counts its objects after.
+
+- **Layer:** driver. **Files:** the lifecycle walk (`lcBucket.rule`, `lcBucket.walk` and
+  `lcVersionPager` in `internal/driver/lc_bucket.go`); DeleteBucket's emptiness check and removal
+  (`checkBucketEmpty`, `DeleteBucket` and `cleanIndex` in `internal/driver/bucketops.go`); the
+  relist paths (`refusedRemoval`, `relistVersion`, `relistNull` and `relistBelow` in
+  `internal/driver/delete_versioned.go`), and, where design (A) puts its marker, the replay's keep
+  and the writer's check (`applyOLHLog` in `internal/driver/olh_head.go`, `removeInstance` and
+  `checkRemoval` in `internal/driver/olh.go`); their
+  specs; `docs/differences.md`; `docs/ceph-upstream-bugs.md`; `docs/rados-format-opportunities.md`
+  under (A). **Cluster:** no for the emulator specs. A cluster spec is needed only if (B) is chosen:
+  `bi_list` is a class call rgw-go has not made, and the emulator's must be pinned against the
+  class on both releases.
+- **Security boundary:** quota accounting and the bucket-deletion path; adversarial review applies
+  (PP-14). Every text on the quota side, here, in `docs/differences.md` and in the registry, states
+  the mechanism only.
+- **Behaviour:**
+  1. The paths that leave a version stored and unlisted, as `docs/differences.md` records them
+     (verify each at implementation, and add any found since):
+     - a refused versioned removal whose relist does not link the version ("A refused versioned
+       removal re-links the version, unless a newer null write owns the null key"): on main, the
+       null relist's five refused rounds; after V21, the four cases its entry lists: an unbroken
+       stream of other writers' changes up to the relist's bound, a relist that gave way to a removal
+       whose delete never replays and whose replay keeps the version for its lock, a gateway stop
+       between the refused replay's trim and the relist's link, and a failed read or write of the
+       relist;
+     - a replay's keep of a locked version ("A replay keeps another writer's version whose object
+       lock holds"): radosgw's removal of a locked version that an rgw-go replay applies first; a
+       writer whose gateway stops between its unlink and its replay, or whose request ends while
+       its unlink is in flight; a writer whose own replay runs out of passes with its entries still
+       logged; a writer with no `Expect` whose version another replay kept and whose lock ended
+       before its check;
+     - a failed versioned write ("rgw-go removes the instance a failed versioned write made"): a
+       link whose outcome is unknown, or a removal that fails, leaves the head and an instance
+       entry never linked, as radosgw's `set_olh` does;
+     - a CompleteMultipartUpload version whose link never landed ("AbortMultipartUpload leaves a
+       completed upload's parts alone"), until an abort removes it; DeleteBucket aborts the
+       bucket's uploads after its emptiness check, so confirm that the abort takes it;
+     - a write that goes on behind a stranded version marker as radosgw's does ("An unversioned
+       write of a key whose OLH a delete left pending removal clears it first, and is listed"): an
+       index entry that does not decode, or a write that meets a reshard.
+  2. A version in that state is either listed again, or found and handled by lifecycle and by
+     DeleteBucket: lifecycle's rules act on it as on a listed version, and DeleteBucket answers 409
+     BucketNotEmpty while it exists, or removes its head, tails and index entries with the bucket.
+     DeleteBucket never orphans its objects, and the bucket's stats count exactly the versions
+     stored.
+  3. The two candidate designs; the implementer costs both before choosing:
+     - (A) Each path that leaves the state also leaves a durable marker naming the version, which
+       a later operation consumes: lifecycle's pass and DeleteBucket's check read the markers and
+       list each version again, or expire or remove it. No record in radosgw's formats serves.
+       The OLH log carries only the class's link, unlink and instance-removal ops
+       ([cls_rgw_types.h:514-517](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_types.h#L514-L517),
+       [cls_rgw_types.h:513-516](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_types.h#L513-L516)).
+       A pending attr sits on the OLH head, which no listing reaches, and expires after
+       `rgw_olh_pending_timeout_sec`
+       ([rgw_rados.cc:8904-8934](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8904-L8934),
+       [rgw_rados.cc:9650-9680](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9650-L9680)).
+       So the marker is expected to be a new rgw-go object, such as an omap object per bucket that
+       names the versions, which radosgw neither reads nor removes. That is a format addition:
+       record it in `docs/rados-format-opportunities.md`, with what a mixed fleet's radosgw
+       DeleteBucket then leaves. Cost: a write on each path rgw-go observes, which are rare. A
+       gateway stop or an unknown outcome needs the marker written before the step that can leave
+       the state, a write on every versioned write or delete; otherwise those cases stay uncovered,
+       and the task says which.
+     - (B) Lifecycle and DeleteBucket's emptiness check read the instance-entry namespace through
+       `bi_list` and take an instance entry with no list entry for a version in this state. That
+       conflicts with D8, which keeps `bi_list` out of scope, and needs the owner's ruling before it
+       is chosen. Cost: for DeleteBucket, a bucket whose listing reads empty holds only such
+       entries, so one `bi_list` read per shard; for lifecycle, a scan of every instance entry on
+       each pass, joined against the listing, at least doubling the pass's index reads.
+     - Whether the index header's count, which still counts such a version, can serve as
+       DeleteBucket's detector without either is for the implementer to settle; a count that
+       drifts from the index for other reasons must not make a bucket undeletable.
+  4. radosgw reaches the state too, through its failed links and its own stranded writes, and
+     handles it as rgw-go does today. Its DeleteBucket checks through the listing, never `bi_list`:
+     `RadosBucket::remove` lists the bucket's versions unordered and refuses on any entry
+     ([rgw_sal_rados.cc:362-383](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L362-L383),
+     [rgw_sal_rados.cc:379-400](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L379-L400)),
+     then `delete_bucket`'s `check_bucket_empty` reads `cls_bucket_list_unordered` again
+     ([rgw_rados.cc:5259-5304](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5259-L5304)
+     and [rgw_rados.cc:5320-5325](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5320-L5325),
+     [rgw_rados.cc:5723-5768](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5723-L5768)
+     and [rgw_rados.cc:5945-5950](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5945-L5950)),
+     whose class method drops every key in the 0x80 namespace
+     ([cls_rgw.cc:194-244](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L194-L244),
+     [cls_rgw.cc:244-294](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L244-L294)).
+     Its lifecycle lists through `bucket->list` with `list_versions`
+     ([rgw_lc.cc:365-380](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L365-L380),
+     [rgw_lc.cc:365-380](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L365-L380)).
+     The class accounts a version on its instance entry's ADD
+     ([cls_rgw.cc:1168-1185](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1168-L1185),
+     [cls_rgw.cc:1301-1318](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1301-L1318)).
+     Its only reader of instance entries, `radosgw-admin bucket check unlinked`, reads `bi_list`
+     and takes only never-linked entries, at `versioned_epoch` 0
+     ([rgw_bucket.cc:690-762](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L690-L762),
+     [rgw_bucket.cc:841-913](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L841-L913)),
+     so it reaches the failed-write case alone.
+  5. Record the differences in `docs/differences.md`: DeleteBucket's refusal or removal where
+     radosgw deletes the bucket and leaves the objects; lifecycle acting on, or the listing
+     showing, a version radosgw leaves unlisted; what a mixed fleet's radosgw still leaves; and
+     the marker under (A) or the `bi_list` reads under (B). Add or update the registry entry for
+     radosgw's DeleteBucket leaving such a version's objects, mechanism only, and update the
+     differences entries in Behaviour 1 that say nothing finds the version.
+  6. Two PRs, in this order. The first: DeleteBucket never deletes a bucket while such a version
+     exists, or removes that version's objects with it. That step turns a repairable state into a
+     permanent one, so it goes first, and it lands before the second PR's design is settled when
+     the design chosen, (A) or (B), allows. The second: lifecycle and the listing.
+- **Specs:** against the emulator, on both releases, a version left unlisted by each path in
+  Behaviour 1 that the emulator can reach:
+  - lifecycle expires it under a rule that matches it, or it is listed again;
+  - DeleteBucket answers 409 BucketNotEmpty, or deletes the bucket with no head, tail or index
+    object of the version left;
+  - the bucket's stats match the versions stored, before and after;
+  - a bucket with no such version deletes, and a pass expires, as today.
+- **Depends on:** V21. **PR split:** two (Behaviour 6). **Brief:** about 40 lines.
+
 ## Order
 
 At most three implementers at once. A wave starts when the tasks it depends on have merged;
@@ -2038,7 +2171,7 @@ recordings land one at a time through the controller.
 | 8 | V7b, V8b, V8c | V7a, V8a, V9 |
 | 9 | V11, V12b | V7b, V8b |
 | 10 | V12a, V14a | V11, V13d |
-| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22, then V23 | everything above, WP-22 |
+| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22, then V23, then V24 | everything above, WP-22 |
 
 - V10's recording PR is a cluster task the controller schedules after its first PR merges.
 - The critical path is V1, V3b, V4, V5a, V5b, V5c, V7a, V7b, V11, V14a, V15a. L and C start
