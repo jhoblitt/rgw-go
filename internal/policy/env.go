@@ -104,6 +104,19 @@ func (e *Env) Find(key string, sem Semantics) (value string, ok bool) {
 	return v.added[len(v.added)-1], true
 }
 
+// keysFolding returns the keys e holds whose names equal name once ASCII
+// letters are folded, name itself among them when e holds it, in no
+// particular order.
+func (e *Env) keysFolding(name string) []string {
+	var keys []string
+	for k := range e.keys {
+		if asciiEqualFold(k, name) {
+			keys = append(keys, k)
+		}
+	}
+	return keys
+}
+
 // Remove erases every pair equal to (key, value), as rgw_iam_remove_objtags
 // erases a copy source's tags
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L651-L699 at v19.2.6,
