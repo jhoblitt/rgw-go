@@ -2044,7 +2044,9 @@ behind with the data gone (Behaviour 1's last path, and Behaviour 7).
 
 - **Layer:** driver. **Files:** the lifecycle walk (`lcBucket.rule`, `lcBucket.walk` and
   `lcVersionPager` in `internal/driver/lc_bucket.go`); DeleteBucket's emptiness check and removal
-  (`checkBucketEmpty`, `DeleteBucket` and `cleanIndex` in `internal/driver/bucketops.go`); the
+  (`checkBucketEmpty`, `DeleteBucket` and `cleanIndex` in `internal/driver/bucketops.go`, and
+  `claimRemoval` in `internal/driver/bucketadmin.go`) and the admin bucket removal
+  (`DeleteBucketWithChildren` in `internal/op/adminpurge.go`); the
   relist paths (`refusedRemoval`, `relistVersion`, `relistNull` and `relistBelow` in
   `internal/driver/delete_versioned.go`), and, where design (A) puts its marker, the replay's keep
   and the writer's check (`applyOLHLog` in `internal/driver/olh_head.go`, `removeInstance` and
@@ -2127,9 +2129,10 @@ behind with the data gone (Behaviour 1's last path, and Behaviour 7).
        is chosen. Cost: for DeleteBucket, a bucket whose listing reads empty holds only such
        entries, so one `bi_list` read per shard; for lifecycle, a scan of every instance entry on
        each pass, joined against the listing, at least doubling the pass's index reads.
-     - Whether the index header's count, which still counts such a version, can serve as
-       DeleteBucket's detector without either is for the implementer to settle; a count that
-       drifts from the index for other reasons must not make a bucket undeletable.
+     - DeleteBucket's detector needs neither design: it is each shard's recount, which still
+       counts such a version, and not the stored header, which drifts (Behaviour 6). A count that
+       drifts from the index for other reasons must not make a bucket undeletable. (A) or (B)
+       stays the choice for lifecycle and the listing.
   4. radosgw reaches the state too, through its failed links and its own stranded writes, and
      handles it as rgw-go does today. Its DeleteBucket checks through the listing, never `bi_list`:
      `RadosBucket::remove` lists the bucket's versions unordered and refuses on any entry
@@ -2160,12 +2163,69 @@ behind with the data gone (Behaviour 1's last path, and Behaviour 7).
      the marker under (A) or the `bi_list` reads under (B). Add or update the registry entry for
      radosgw's DeleteBucket leaving such a version's objects, mechanism only, and update the
      differences entries in Behaviour 1 that say nothing finds the version.
-  6. Two PRs, in this order. The first: DeleteBucket never deletes a bucket while such a version
-     exists, or removes that version's objects with it. That step turns a repairable state into a
-     permanent one, so it goes first, and it lands before the second PR's design is settled when
-     the design chosen, (A) or (B), allows. The second: lifecycle and the listing. Behaviour 7
-     is a third PR, outside that order: it changes the delete path, needs neither design, and
-     can land first.
+  6. Three PRs, in this order:
+     - Behaviour 7's PR first. It changes the delete path and needs neither design. It lands
+       before the DeleteBucket PR because the DeleteBucket check refuses a bucket that a counted
+       record with no data occupies, and an S3 user reaches that record through Behaviour 7's
+       path, a null delete under contention on a suspended bucket (Behaviour 1's last path). With
+       the check in place and Behaviour 7 not, that bucket refuses DeleteBucket for good, through
+       S3 and through the admin index fix, whose recount keeps the record (V24's adversarial
+       review, V24-2, its probe P4 on both releases).
+     - The DeleteBucket PR: DeleteBucket never deletes a bucket while such a version exists. A
+       deleted bucket turns a repairable state into a permanent one, so this goes before lifecycle
+       and the listing. Its design, chosen in its review:
+       - DeleteBucket decides on each shard's recount, the calculated header the class's
+         read-only check-index op returns, summed over every category, never on the stored
+         header
+         ([cls_rgw.cc:3035-3114](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L3035-L3114)
+         and [cls_rgw.cc:3128-3140](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L3128-L3140),
+         [cls_rgw.cc:3361-3434](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L3361-L3434)
+         and [cls_rgw.cc:3461-3478](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L3461-L3478)).
+         The stored header drifts above the index through ordinary traffic. The class's link of
+         a null delete marker over null data writes the marker's instance entry with `exists`
+         kept from the data it read, since `init_as_delete_marker` resets the key, flags, meta
+         and tag and leaves `exists`
+         ([cls_rgw.cc:1350-1358](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1350-L1358),
+         [cls_rgw.cc:1476-1484](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1476-L1484)).
+         The header never counted that entry, but the recount and a reshard do, and the
+         marker's later removal takes the entry without uncounting it
+         ([cls_rgw.cc:1970-1978](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1970-L1978),
+         [cls_rgw.cc:2117-2126](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2117-L2126)).
+         So a suspended bucket's DELETE, then a reshard or the admin index fix, then the
+         marker's removal, leave the header one above an empty index, and a check on the stored
+         header would refuse that empty bucket until another admin fix (V24's task review, F1,
+         reproduced in the emulator on both releases). The recount counts only entries that
+         exist.
+       - The check-index op is the one rgw-go's admin index check already sends (`CheckIndex`,
+         `internal/driver/bucketadmin.go:139`). It writes nothing and returns counts, not entries,
+         so D8's exclusion of `bi_list`, `bi_put` and the repair paths does not reach it. The
+         rebuild op is never sent. A bucket whose listing reads empty holds only unlisted
+         entries, so the recount's scan is small.
+       - It counts the generation the removal removes, read after the removal's claim has read
+         the bucket instance again (`claimRemoval`, `internal/driver/bucketadmin.go:903`). A
+         reshard that commits between DeleteBucket's first read and its claim moves the index to
+         a new generation. A count of the old one reads its removed shards, and the removal then
+         takes the new one with the version's entry and leaves its head (V24's adversarial
+         review, V24-1, its probe P1 on both releases). When the generation differs from the one
+         the listing read, DeleteBucket lists and counts again on the new one, or refuses; the PR
+         records which. A shard that cannot be read refuses, and never counts as 0.
+       - An admin bucket removal with `purge-objects` (`DeleteBucketWithChildren`,
+         `internal/op/adminpurge.go:119`) skips the check and keeps today's behaviour. That is the
+         operator's way out. A counted record with no data that no S3 request reaches stays
+         possible after Behaviour 7: a gateway stop between a version's head removal and its
+         awaited completion, a failed awaited completion, or a radosgw that drops a failed
+         completion. The admin index fix's recount keeps such a record, and without the way out
+         rgw-go would offer none, since its admin removal goes through the same DeleteBucket
+         (`internal/op/adminpurge.go:31`, `internal/op/adminpurge.go:126`). What the purge leaves
+         is radosgw's behaviour, already in the registry. S3 DeleteBucket and an admin removal
+         without `purge-objects` refuse. `docs/differences.md` says so.
+     - The lifecycle-and-listing PR last, with its design, (A) or (B). Once the DeleteBucket check
+       has landed, a bucket holding an unlisted version refuses DeleteBucket, and its owner cannot
+       always name that version through S3: no one holds the id of a version whose lifecycle
+       expiration was refused and whose relist ended (V24's adversarial review, V24-3). So this
+       PR must make every unlisted version reachable through S3, by the listing or by lifecycle,
+       or the bucket stays undeletable through S3 for its owner. Until it lands, the admin
+       removal with `purge-objects` is the only way out, and `docs/differences.md` says so.
   7. A delete naming `null` leaves no counted, unreachable index record. Behaviour 1's last path
      leaves no version stored, so Behaviour 2 does not reach it; this does. When the delete takes
      a null delete marker over null data an earlier refusal kept, it does one of two things,
@@ -2205,6 +2265,11 @@ behind with the data gone (Behaviour 1's last path, and Behaviour 7).
     object of the version left;
   - the bucket's stats match the versions stored, before and after;
   - a bucket with no such version deletes, and a pass expires, as today;
+  - the DeleteBucket PR's design (Behaviour 6): a null delete marker over null data, counted by
+    a reshard or by the admin index fix and then removed, leaves a bucket that deletes; a reshard
+    that commits between DeleteBucket's first read and its count leaves no head behind; an admin
+    removal with `purge-objects` deletes a bucket a counted record with no data occupies, and S3
+    DeleteBucket and an admin removal without it refuse that bucket;
   - Behaviour 7, on both releases against the emulator: on a suspended bucket, null data as the
     key's only version; a null delete refused (an attr write moves the head's write tag after
     the marker's link) and its relist ended before it links (stopped after the refused replay's
