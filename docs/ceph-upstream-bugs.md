@@ -538,6 +538,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's negated condition operators are false on an absent key](#radosgws-negated-condition-operators-are-false-on-an-absent-key) | pending | pending | ✓ |
 | [radosgw matches condition key names case-sensitively](#radosgw-matches-condition-key-names-case-sensitively) | pending | pending | ✓ |
 | [radosgw evaluates a repeated x-amz-tagging key as one multivalued s3:RequestObjectTag condition key](#radosgw-evaluates-a-repeated-x-amz-tagging-key-as-one-multivalued-s3requestobjecttag-condition-key) | pending | pending | ✓ |
+| [radosgw's policy patterns are fnmatch patterns](#radosgws-policy-patterns-are-fnmatch-patterns) | pending | pending | ✓ |
 | [radosgw-admin mfa check names the serial number when --totp-pin is missing](#radosgw-admin-mfa-check-names-the-serial-number-when---totp-pin-is-missing) | pending | pending | ✓ |
 | [radosgw skips a bucket's default encryption for a write that sends an empty encryption header](#radosgw-skips-a-buckets-default-encryption-for-a-write-that-sends-an-empty-encryption-header) | [#79506](https://tracker.ceph.com/issues/79506), [#80258](https://tracker.ceph.com/issues/80258), [#80260](https://tracker.ceph.com/issues/80260) | [ceph/ceph#71073](https://github.com/ceph/ceph/pull/71073), [ceph/ceph#71534](https://github.com/ceph/ceph/pull/71534), [ceph/ceph#71535](https://github.com/ceph/ceph/pull/71535) | ✓ |
 | [radosgw's CopyObject ignores x-amz-tagging-directive](#radosgws-copyobject-ignores-x-amz-tagging-directive) | pending | pending | ✓ |
@@ -35219,6 +35220,67 @@ Every new entry adds its row to this table, in document order.
 - **Found:** phase 2 task S10's adversarial review, 2026-11-19, probing a
   request tag key repeated in another case; derived from the source, not
   reproduced on a cluster.
+
+## radosgw's policy patterns are fnmatch patterns
+
+- **Kind:** defect, possibly security-relevant. Unreproduced: derived from
+  the source.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `match_wildcards` is `fnmatch(3)` with no flags, or `FNM_CASEFOLD`
+    ([rgw_string.cc:7-22](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_string.cc#L7-L22),
+    [rgw_string.cc:7-22](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_string.cc#L7-L22)).
+    fnmatch reads a complete bracket expression, `[` with a matching `]`,
+    as a set of characters, and `\` as an escape of the character after it;
+    an unpaired `[` or `]` is itself.
+  - `StringLike`, `StringNotLike` and their `ForAnyValue` and
+    `ForAllValues` forms compare through `string_like`, which is
+    `match_wildcards`
+    ([rgw_iam_policy.h:450-455](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L450-L455),
+    [rgw_iam_policy.h:469-474](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L469-L474)).
+    The ARN operators compare through `arn_like`, which is `match_policy`
+    ([rgw_iam_policy.cc:845-852](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L845-L852),
+    [rgw_iam_policy.cc:864-871](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L864-L871)),
+    which hands `match_wildcards` the text at each colon-delimited
+    component (how much of it is the entry "[radosgw's ARN conditions
+    compare each ARN component with the text after
+    it](#radosgws-arn-conditions-compare-each-arn-component-with-the-text-after-it)")
+    ([rgw_common.cc:2167-2192](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2167-L2192),
+    [rgw_common.cc:2230-2255](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2230-L2255)).
+    A statement's `Action` names go through `match_policy` as well
+    ([rgw_iam_policy.cc:638](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L638),
+    [rgw_iam_policy.cc:651](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L651)),
+    and its `Resource` and `NotResource` through `ARN::match`, which
+    compares the region, account and resource with `match_wildcards`
+    ([rgw_arn.cc:319-344](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_arn.cc#L319-L344),
+    [rgw_arn.cc:319-344](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_arn.cc#L319-L344)).
+  - The IAM User Guide names two wildcards for these operators and no
+    other pattern syntax: "The values can include multi-character match
+    wildcards (\*) and single-character match wildcards (?) anywhere in the
+    string"
+    ([reference_policies_elements_condition_operators.md:36](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L36),
+    and the ARN operators per component, [:290](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L290)).
+    So a pattern that holds a complete bracket expression or a `\` does not
+    match the text it spells, and matches other text: `[a]` matches `a` and
+    not `[a]`, and `a\b` matches `ab` and not `a\b`. A pattern whose `[`
+    or `]` is unpaired matches the text it spells.
+  - It is the same function the entry "[radosgw's policy match cuts an
+    object name at a NUL that its RADOS name
+    keeps](#radosgws-policy-match-cuts-an-object-name-at-a-nul-that-its-rados-name-keeps)"
+    names.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it wherever it evaluates as radosgw does:
+  `MatchWildcards` and `MatchPolicy` are fnmatch's
+  (`internal/policy/match.go`), for every `Allow`, `Action`, `Resource` and
+  `NotResource`, and for a Deny's condition on a key the request holds as
+  written. Amazon S3's answer, which a Deny takes for a key the request
+  holds in another ASCII case than the condition's where the IAM User Guide
+  gives one, matches with `*` and `?` alone
+  (`amazonLike`, `internal/policy/condition.go`; `docs/differences.md`, "A
+  Deny's condition key names match whatever their case").
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task S10's adversarial review, its first re-run,
+  2026-11-19, comparing radosgw's matcher with the IAM User Guide's
+  wildcards; derived from the source, not reproduced on a cluster.
 
 ## radosgw-admin mfa check names the serial number when --totp-pin is missing
 
