@@ -28,7 +28,6 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/radosclient"
-	"github.com/jhoblitt/rgw-go/internal/testutil/cephtest"
 	"github.com/jhoblitt/rgw-go/test/gate"
 )
 
@@ -427,32 +426,16 @@ func loopbackAddr(ctx context.Context) string {
 	return addr
 }
 
-// startWebsiteRGWGo runs rgw-go serve on the populated site beside the
-// radosgw, with websiteName and the website configuration routes on,
-// until the container ends, and returns its endpoint. It runs as
-// client.admin, whose config section the harness leaves alone, with the
-// background workers off on its command line, as the parity options hold
-// them for rgw-go-up's.
+// startWebsiteRGWGo runs rgw-go serve as startSiteRGWGo does, with
+// websiteName and the website configuration routes on, until the container
+// ends, and returns its endpoint. It runs as client.admin, whose config
+// section the harness leaves alone.
 func startWebsiteRGWGo(ctx context.Context) string {
 	GinkgoHelper()
-	addr := loopbackAddr(ctx)
-	cephtest.StartRGWGo(cephtest.Serve, slices.Concat([]string{"--", "--name=client.admin", "-c", conf},
-		manifest.AdminFlags(), []string{
-			"--rgw-frontends=beast endpoint=" + addr,
-			"--rgw-dns-s3website-name=" + websiteName, "--rgw-enable-static-website=true",
-			"--rgw-enable-gc-threads=false", "--rgw-enable-lc-threads=false",
-			"--rgw-dynamic-resharding=false", "--rgw-run-sync-thread=false",
-		}))
-	base := "http://" + addr
-	Eventually(func(g Gomega) int {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/", http.NoBody)
-		g.Expect(err).NotTo(HaveOccurred())
-		resp, err := webClient.Do(req)
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(resp.Body.Close()).To(Succeed())
-		return resp.StatusCode
-	}).WithContext(ctx).WithTimeout(time.Minute).WithPolling(250*time.Millisecond).Should(Equal(http.StatusOK), "rgw-go at %s", base)
-	return base
+	return startSiteRGWGo(ctx, nil, []string{
+		"--name=client.admin",
+		"--rgw-dns-s3website-name=" + websiteName, "--rgw-enable-static-website=true",
+	}).base
 }
 
 // v1Site is a bucket whose instance holds indexSite's configuration written

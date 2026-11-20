@@ -546,6 +546,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw sets few of the condition keys Amazon S3 sets on S3 requests](#radosgw-sets-few-of-the-condition-keys-amazon-s3-sets-on-s3-requests) | pending | pending | ✓ |
 | [radosgw refuses a condition value that starts with a policy variable and goes on after it](#radosgw-refuses-a-condition-value-that-starts-with-a-policy-variable-and-goes-on-after-it) | none | none | ✓ |
 | [radosgw-admin olh get decodes olh.ver on Squid](#radosgw-admin-olh-get-decodes-olhver-on-squid) | [#69536](https://tracker.ceph.com/issues/69536), [#69578](https://tracker.ceph.com/issues/69578) | [ceph/ceph#61370](https://github.com/ceph/ceph/pull/61370) |  |
+| [librados registers a service daemon again while it shuts down](#librados-registers-a-service-daemon-again-while-it-shuts-down) | none | none | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -35718,3 +35719,128 @@ Every new entry adds its row to this table, in document order.
   2026-11-16, reading `get_olh` at v19.2.7 and v20.2.4; reproduced by that
   task's versioning gate, integration run 43876112553, the same day, on
   v19.2.7.
+
+## librados registers a service daemon again while it shuts down
+
+- **Kind:** defect, observed once in CI and traced through the source;
+  not reproduced on demand. Not security-relevant: it costs only a stale
+  entry in the manager's service map. A service daemon's `rados_shutdown`
+  can send the manager a new registration after its close. The entry it
+  leaves outlives the process by about a minute, until the manager's beacon
+  grace drops it.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `MgrClient::shutdown` sets `dead` and sends the close. It then waits on
+    `shutdown_cond` with the client's lock released, for up to
+    `mgr_client_service_daemon_unregister_timeout`, 1 s. Only after the wait
+    does it shut its timer down and mark the session down
+    ([MgrClient.cc:67-101](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/MgrClient.cc#L67-L101),
+    [MgrClient.cc:68-102](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/MgrClient.cc#L68-L102);
+    [global.yaml.in:6422-6426](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/global.yaml.in#L6422-L6426),
+    [global.yaml.in:6588-6592](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/global.yaml.in#L6588-L6592)).
+  - The wait always runs its full second. `ms_dispatch2` drops every message
+    once `dead` is set
+    ([MgrClient.cc:103-109](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/MgrClient.cc#L103-L109),
+    [MgrClient.cc:104-110](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/MgrClient.cc#L104-L110)).
+    That includes the manager's reply to the close, so `handle_mgr_close`
+    never runs during a shutdown. It is the only code that signals the wait
+    and the only code that clears `service_daemon`
+    ([MgrClient.cc:493-498](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/MgrClient.cc#L493-L498),
+    [MgrClient.cc:487-492](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/MgrClient.cc#L487-L492)).
+  - The timer shares that lock, so during the wait its report callback can
+    still send a stats report. It does so every `mgr_stats_period`, 5 s,
+    on the same connection, after the close
+    ([MgrClient.cc:312-323](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/MgrClient.cc#L312-L323),
+    [MgrClient.cc:313-324](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/MgrClient.cc#L313-L324);
+    [mgr.yaml.in:25-35](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/mgr.yaml.in#L25-L35),
+    [mgr.yaml.in:25-35](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/mgr.yaml.in#L25-L35)).
+  - The manager handles the close first. It removes the daemon's state and
+    its service map entry
+    ([DaemonServer.cc:686-710](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/DaemonServer.cc#L686-L710),
+    [DaemonServer.cc:690-714](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/DaemonServer.cc#L690-L714)).
+    When the report follows, the manager has no state for the daemon, so it
+    rejects the report and marks the connection down
+    ([DaemonServer.cc:756-790](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/DaemonServer.cc#L756-L790),
+    [DaemonServer.cc:760-794](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/DaemonServer.cc#L760-L794)).
+  - `MgrClient::ms_handle_reset` does not check `dead`
+    ([MgrClient.cc:295-304](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/MgrClient.cc#L295-L304),
+    [MgrClient.cc:296-305](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/MgrClient.cc#L296-L305)).
+    It reconnects, and `service_daemon` is still set, so it sends a new open
+    that carries the registration
+    ([MgrClient.cc:140-203](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/MgrClient.cc#L140-L203),
+    [MgrClient.cc:141-204](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/MgrClient.cc#L141-L204)).
+  - The manager builds new state for the daemon. It adds its entry again
+    under the same key, with a new `start_epoch` and `start_stamp`
+    ([DaemonServer.cc:571-614](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/DaemonServer.cc#L571-L614),
+    [DaemonServer.cc:575-618](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/DaemonServer.cc#L575-L618)).
+  - When the wait ends, the client marks the new session down without a
+    close. The manager's reset handler does nothing for a client
+    ([DaemonServer.cc:317-336](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/DaemonServer.cc#L317-L336),
+    [DaemonServer.cc:327-346](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/DaemonServer.cc#L327-L346)).
+  - The new state never receives a beacon. The manager's first prune stamps
+    it as alive, and a later prune drops it once that stamp is older than
+    `mgr_service_beacon_grace`, 60 s. Both prunes run on the manager's
+    2 s tick
+    ([DaemonServer.cc:2677-2711](https://github.com/ceph/ceph/blob/v19.2.7/src/mgr/DaemonServer.cc#L2677-L2711),
+    [DaemonServer.cc:3156-3190](https://github.com/ceph/ceph/blob/v20.2.4/src/mgr/DaemonServer.cc#L3156-L3190);
+    [mgr.yaml.in:113-118](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/mgr.yaml.in#L113-L118),
+    [mgr.yaml.in:113-118](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/mgr.yaml.in#L113-L118)).
+- **Trigger:** a registered service daemon, radosgw or any librados client
+  that called `rados_service_register`, shuts down while a stats report
+  falls due. The window is the second of the wait out of each 5 s report
+  period, so a daemon that stops at a random point in its report cycle
+  meets it about one time in five. A daemon that stops at a fixed delay
+  after it registers is locked to the cycle: its first report goes out as
+  it registers, so its odds can be far lower or far higher.
+- **Observed:** in rgw-go's CI run 44675057081, on Tentacle (job
+  136084843309). rgw-go logged its SIGTERM at 04:44:14.377 and exited 0.
+  At 04:44:25.481 its entry under the same key was still listed, with
+  `start_epoch` 16 and `start_stamp` 04:44:15.185, after the SIGTERM. The
+  manager writes `start_stamp` only when it adds an entry or the entry's
+  gid changes, and the key is the gid. Squid's job in the same run saw the
+  entry leave within 10 s. That fits a race that hits about one shutdown in
+  five for a daemon that, like this one, ran for a while before it stopped.
+  The manager's log was not collected, so the rejected report and the
+  reconnect are inferred from the source.
+- **Impact:**
+  - For about a minute after a gateway stops, `ceph service dump`, `ceph -s`
+    and `ceph versions` still count it, and so does the dashboard's gateway
+    list. The entry carries the stopped process's metadata.
+  - A check that a stopped daemon leaves the map promptly fails about one
+    time in five when the daemon stops at a random point in its report
+    cycle.
+- **Releases:** v19.2.7 and v20.2.4 by the source: between the two tags,
+  MgrClient.cc changes only `_send_report`'s counter filter. Main at
+  aed03d3789c4 (2026-11-19) keeps the same shutdown, dispatch and reset
+  handler
+  ([MgrClient.cc:83-125](https://github.com/ceph/ceph/blob/aed03d3789c46202c588d03d5b8344299997c9d2/src/mgr/MgrClient.cc#L83-L125),
+  [MgrClient.cc:311-320](https://github.com/ceph/ceph/blob/aed03d3789c46202c588d03d5b8344299997c9d2/src/mgr/MgrClient.cc#L311-L320)).
+- **rgw-go:** affected as radosgw is. Both shut down through
+  `rados_shutdown`, and rgw-go makes no service map call once it starts
+  stopping:
+  - serve's status loop returns when its context ends;
+  - `run` closes the cluster only after every goroutine has returned
+    (`internal/cli/serve.go`);
+  - goceph's `Close` refuses new calls before it shuts the handle down
+    (`internal/radosclient/goceph/cluster.go`).
+
+  The test suite's handling: SM5's cluster spec (`test/integration/servicemap_test.go`)
+  waits for such an entry up to the beacon grace and records it. goceph's
+  service map spec waits 30 s for the entry to leave
+  (internal/radosclient/goceph/goceph_integration_test.go:1301), so this
+  race can fail it too. It closes 1 to 4 s after it registers, usually
+  before its second report, so its odds are lower.
+- **Upstream:** none. A search of tracker.ceph.com's issues and ceph/ceph's
+  pull requests on 2026-11-20 found no report or fix. Related, none the same
+  defect:
+  - [#23042](https://tracker.ceph.com/issues/23042), "Prompt ServiceMap
+    removal on clean shutdown", resolved in 2018 by
+    [ceph/ceph#20761](https://github.com/ceph/ceph/pull/20761), which added
+    the close and the wait this race slips into;
+  - [#83016](https://tracker.ceph.com/issues/83016): `MgrClient::shutdown`
+    drops pending commands without completing them, another defect in the
+    same function;
+  - [ceph/ceph#73838](https://github.com/ceph/ceph/pull/73838) (open):
+    MgrClient unit tests, one of which pins the drop of every message once
+    `dead` is set. It fixes nothing.
+- **Found:** phase 2 task SM5's first CI run, 2026-11-20, and traced
+  through the source by that task's fix round the same day.
