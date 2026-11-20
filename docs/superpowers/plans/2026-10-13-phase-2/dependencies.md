@@ -259,6 +259,7 @@ flowchart LR
   t_V20["V20"]
   t_V21["V21"]
   t_V22["V22"]
+  t_V23["V23"]
   t_S1["S1"]:::ext
   t_S2["S2"]:::ext
   t_WP_16["WP-16"]:::ext
@@ -327,6 +328,7 @@ flowchart LR
   t_V18 --> t_V20
   t_V20 --> t_V21
   t_V21 --> t_V22
+  t_V21 --> t_V23
   click t_V0 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v0-a-failed-class-call-keeps-its-output" "V0: a failed class call keeps its output"
   click t_V1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v1-clsrgw-olh-methods-bi_get-and-the-index-key-encoders" "V1: cls/rgw OLH methods, `bi_get` and the index key encoders"
   click t_V2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v2-meta-olh-head-types-and-bucket-helpers" "V2: meta OLH head types and bucket helpers"
@@ -363,6 +365,7 @@ flowchart LR
   click t_V20 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v20-a-key-left-with-an-olh-entry-pending-removal-stays-listable" "V20: a key left with an OLH entry pending removal stays listable"
   click t_V21 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v21-a-replay-keeps-a-version-a-later-link-of-the-same-log-names" "V21: a replay keeps a version a later link of the same log names"
   click t_V22 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v22-a-replays-removal-keeps-a-version-a-link-lands-on-after-the-replay-read-the-log" "V22: a replay's removal keeps a version a link lands on after the replay read the log"
+  click t_V23 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v23-two-refused-deletes-keep-the-newest-version-current" "V23: two refused deletes keep the newest version current"
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_WP_16 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-16-the-otp-class-client" "WP-16: the otp class client"
