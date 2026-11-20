@@ -547,6 +547,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw refuses a condition value that starts with a policy variable and goes on after it](#radosgw-refuses-a-condition-value-that-starts-with-a-policy-variable-and-goes-on-after-it) | none | none | ✓ |
 | [radosgw-admin olh get decodes olh.ver on Squid](#radosgw-admin-olh-get-decodes-olhver-on-squid) | [#69536](https://tracker.ceph.com/issues/69536), [#69578](https://tracker.ceph.com/issues/69578) | [ceph/ceph#61370](https://github.com/ceph/ceph/pull/61370) |  |
 | [librados registers a service daemon again while it shuts down](#librados-registers-a-service-daemon-again-while-it-shuts-down) | none | none | ✓ |
+| [radosgw's CompleteMultipartUpload evaluates encryption condition keys from headers it ignores](#radosgws-completemultipartupload-evaluates-encryption-condition-keys-from-headers-it-ignores) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -33275,15 +33276,20 @@ Every new entry adds its row to this table, in document order.
   (`ListParts.checksumsShown`, `internal/op/listparts.go`;
   `docs/differences.md`, "ListParts shows an encrypted upload's checksums
   only to a requester who could read its data"). Its
-  CompleteMultipartUpload differs too: it asks for an SSE-C upload's key as
-  v20.2.5's `verify_encryption` does, Amazon S3's rule, for one made with
-  a checksum or a request that sends SSE-C headers, and on Tentacle refuses
-  an SSE-KMS upload made with a checksum, whose `kms:Decrypt` it cannot
-  evaluate. It decides an answer from the object already completed the same
-  way, over that head's crypt attrs, so it gives an SSE-C object's
-  combined checksum only to a holder of its key and an SSE-KMS object's to
-  no Tentacle requester, an upload id that names no upload included
-  (`verifyEncryption` and `completedHead`,
+  CompleteMultipartUpload differs too. It refuses with 501 a request that
+  sends an SSE-C header with a value, a key included, before it reads the
+  upload, as rgw-go serves no SSE-C yet; otherwise it asks for an SSE-C
+  upload's key as v20.2.5's `verify_encryption` does, Amazon S3's rule, for
+  one made with a checksum or a request that sends SSE-C headers, which can
+  then only be sent empty, and on Tentacle refuses an SSE-KMS upload made
+  with a checksum, whose `kms:Decrypt` it cannot evaluate. It decides an
+  answer from the object already completed the same way, over that head's
+  crypt attrs. So it gives an SSE-C object's combined checksum to no
+  requester, until phase 4 serves SSE-C and restores the key holder's
+  path (`docs/superpowers/plans/2026-10-13-phase-2/00-index.md`, "Deferred
+  to phase 4", item 1), and an SSE-KMS object's to no Tentacle requester, an upload id that
+  names no upload included (`CompleteMultipart.AskedEncryption`,
+  `verifyEncryption` and `completedHead`,
   `internal/op/completemultipart.go`; `docs/differences.md`,
   "CompleteMultipartUpload asks for an SSE-C upload's key as Amazon S3 and
   v20.2.5 do, and completes a key-server upload where Amazon S3 needs no
@@ -35239,7 +35245,11 @@ Every new entry adds its row to this table, in document order.
     ([rgw_op.cc:4277-4278](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_op.cc#L4277-L4278) and
     [rgw_op.cc:7210-7211](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_op.cc#L7210-L7211) at v20.2.5). It adds
     `s3:x-amz-server-side-encryption-aws-kms-key-id` for an empty
-    `x-amz-server-side-encryption-aws-kms-key-id` header the same way.
+    `x-amz-server-side-encryption-aws-kms-key-id` header the same way. The
+    completion's keys, whatever their values, describe headers it otherwise
+    ignores ("[radosgw's CompleteMultipartUpload evaluates encryption
+    condition keys from headers it
+    ignores](#radosgws-completemultipartupload-evaluates-encryption-condition-keys-from-headers-it-ignores)").
 - **Trigger:** a write into a bucket with a default encryption whose
   request carries an SSE-C header, or `x-amz-server-side-encryption`, with
   an empty value; a write that sends `x-amz-server-side-encryption` empty
@@ -35859,3 +35869,57 @@ Every new entry adds its row to this table, in document order.
     `dead` is set. It fixes nothing.
 - **Found:** phase 2 task SM5's first CI run, 2026-11-20, and traced
   through the source by that task's fix round the same day.
+
+## radosgw's CompleteMultipartUpload evaluates encryption condition keys from headers it ignores
+
+- **Kind:** defect, not security-relevant on its own. Unreproduced: derived
+  from the source.
+- **Evidence:** paths are under `src/rgw/`.
+  - `RGWCompleteMultipart::verify_permission` adds the encryption condition
+    keys from `crypt_attribute_map`, which `init_meta_info` fills from the
+    completion request's own headers, and then checks `s3:PutObject`
+    ([rgw_op.cc:6348-6363](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6348-L6363),
+    [rgw_op.cc:7021-7036](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7021-L7036);
+    [rgw_common.cc:455-457](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L455-L457),
+    [rgw_common.cc:468-470](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L468-L470)).
+    `rgw_iam_add_crypt_attrs` adds `s3:x-amz-server-side-encryption` and
+    `s3:x-amz-server-side-encryption-aws-kms-key-id`, and at v20.2.4
+    `s3:x-amz-server-side-encryption-customer-algorithm`, for a name that is
+    present, whatever it holds
+    ([rgw_op.cc:760-774](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L760-L774),
+    [rgw_op.cc:790-810](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L790-L810)).
+  - The completion never compares those names with the upload's crypt
+    mode. At v19.2.7 its `get_params` reads no crypt attr
+    ([rgw_rest_s3.cc:4094-4104](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4094-L4104));
+    at v20.2.4 it runs `rgw_s3_prepare_decrypt` over the upload's attrs
+    ([rgw_rest_s3.cc:4565-4602](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4565-L4602)),
+    which reads the request's headers only for an SSE-C upload and takes a
+    mode it does not name, none included, for none
+    ([rgw_crypt.cc:1503-1504](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_crypt.cc#L1503-L1504),
+    [rgw_crypt.cc:1525-1526](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1525-L1526)).
+    `execute` gives the completed head the upload's attrs, whatever the
+    request named
+    ([rgw_op.cc:6470](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6470),
+    [rgw_op.cc:7293-7343](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7293-L7343)).
+  - So the keys a `Null` condition reads attest nothing about the object the
+    completion writes: a completion of an upload without a crypt mode that
+    sends `x-amz-server-side-encryption: AES256`, or a KMS key id with a
+    value, satisfies the condition and completes the upload unencrypted.
+    Facet of the same sink as the empty-header facet of "radosgw skips a
+    bucket's default encryption for a write that sends an empty encryption
+    header" (`rgw_iam_add_crypt_attrs`, which adds a key for a name whatever
+    its value).
+- **Releases:** v19.2.7 and v20.2.4; v20.2.5 too, whose
+  `verify_permission` adds the same keys
+  ([rgw_op.cc:7204-7219](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_op.cc#L7204-L7219))
+  and whose `verify_encryption` reads the request only for an SSE-C upload
+  ([rgw_rest_s3.cc:4622-4635](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_rest_s3.cc#L4622-L4635)).
+- **rgw-go:** does not reproduce it: a CompleteMultipartUpload carrying a
+  value in any encryption header or query parameter is refused 501 once the
+  requester is authorized and before anything is read or written
+  (`CompleteMultipart.AskedEncryption`, `internal/op/completemultipart.go`;
+  `docs/differences.md`, "Writes that ask for encryption answer 501, SSE-S3
+  and SSE-KMS until phase 2 and SSE-C until phase 4").
+- **Upstream:** pending.
+- **Found:** phase 2 task WP-29's scoped re-review, 2026-11-15, and WP-32's
+  reviews, 2026-11-20; derived from the source, not reproduced.

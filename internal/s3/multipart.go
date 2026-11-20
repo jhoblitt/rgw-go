@@ -392,22 +392,29 @@ type completeMultipartUploadResult struct {
 // (completeChecksum). The value a completion supplies is read from the
 // headers (checksumField); the SSE-C headers, the algorithm's nil when it
 // is not sent, whether any header of their prefix is sent (sendsSSEC), and
-// the transport are what the op's decision reads. A header sent empty that
-// emptyMessage covers is refused once the decision has passed, as
-// radosgw's environment for the policy holds its key
-// (op.CompleteMultipart.EmptyEncryption); a header with a value is not
-// asked of a completion (docs/differences.md).
+// the transport are what the op's decision reads. A request that asks for
+// encryption, by a header or by the query, which radosgw's get_params files
+// beside the headers
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4101 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4575 at v20.2.4),
+// is refused once the requester is authorized and before the op reads the
+// body or the upload (op.CompleteMultipart.AskedEncryption): radosgw's
+// environment for the policy holds a header's key, so a value passes a Null
+// condition, and rgw-go encrypts nothing. A header sent empty
+// that emptyMessage covers is refused once the decision has passed, for the
+// same key (op.CompleteMultipart.EmptyEncryption); the query's empty
+// parameters are not, as that environment is built before get_params files
+// them (docs/differences.md).
 func completeMultipart(ctx context.Context, w http.ResponseWriter, r *op.Request) error {
 	o := &op.CompleteMultipart{
 		UploadID: r.Query.Get("uploadId"), IfMatch: headerPtr(r, "If-Match"), IfNoneMatch: headerPtr(r, "If-None-Match"),
-		ChecksumField: checksumField(r),
-		SSECAlgorithm: headerPtr(r, "x-amz-server-side-encryption-customer-algorithm"),
-		SSECKey:       header(r, "x-amz-server-side-encryption-customer-key"),
-		SSECKeyMD5:    header(r, "x-amz-server-side-encryption-customer-key-MD5"),
-		SSECSent:      sendsSSEC(r),
-		Secure:        secure(r),
-		// A completion's query is read by neither radosgw nor the policy's
-		// environment, as a CreateMultipartUpload's is not.
+		ChecksumField:   checksumField(r),
+		SSECAlgorithm:   headerPtr(r, "x-amz-server-side-encryption-customer-algorithm"),
+		SSECKey:         header(r, "x-amz-server-side-encryption-customer-key"),
+		SSECKeyMD5:      header(r, "x-amz-server-side-encryption-customer-key-MD5"),
+		SSECSent:        sendsSSEC(r),
+		Secure:          secure(r),
+		AskedEncryption: cryptRequestOf(r, true).askedRefusal(),
 		EmptyEncryption: cryptRequestOf(r, false).emptyRefusal(),
 	}
 	err := op.Run(ctx, o, r)

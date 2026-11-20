@@ -8575,8 +8575,9 @@ does the following.
   phase 2 and SSE-C until phase 4"), so only an upload a radosgw began can
   be encrypted. Squid's radosgw stores no checksum in a part record, so
   the rule changes nothing on Squid. rgw-go's CompleteMultipartUpload
-  answers an SSE-C upload's combined checksum only to a requester whose
-  SSE-C headers name its key, and on Tentacle refuses an SSE-KMS upload
+  answers an SSE-C upload's combined checksum to no requester, as it asks
+  for the key and refuses a request that names one 501 until phase 4 serves
+  SSE-C, and on Tentacle refuses an SSE-KMS upload
   made with a checksum, a completion its store answers from the object
   already completed included ("CompleteMultipartUpload asks for an SSE-C
   upload's key as Amazon S3 and v20.2.5 do, and completes a key-server
@@ -9495,7 +9496,58 @@ does the following.
     also for its source's SSE-C key; a CreateMultipartUpload
     once the requester is authorized, as its `get_params` runs in `execute`,
     from its headers alone. A refused upload creates no upload, a refused part
-    stores no part, and no such header is stored as an attr.
+    stores no part, and no such header is stored as an attr;
+  - to a CompleteMultipartUpload carrying a value in such a header, its
+    query string read too, once the requester is authorized and before the
+    body is read and the upload looked up, so no part is assembled, nothing
+    is written and the upload and its parts stay. A completion encrypts
+    nothing, but `RGWCompleteMultipart::verify_permission` adds the
+    encryption condition keys from its headers, as a PutObject's does
+    ([rgw_op.cc:6348-6363](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6348-L6363) at v19.2.7,
+    [rgw_op.cc:7021-7036](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7021-L7036) at v20.2.4,
+    [rgw_op.cc:7204-7219](https://github.com/ceph/ceph/blob/v20.2.5/src/rgw/rgw_op.cc#L7204-L7219) at v20.2.5),
+    so a completion that sends `x-amz-server-side-encryption: AES256`, or a
+    KMS key id or, on Tentacle, an SSE-C algorithm with a value, passes a
+    bucket policy `Deny` on a `Null` condition of that key, written to
+    require encryption, and radosgw completes an upload stored in the
+    clear: one begun before the `Deny`, or by a principal it does not name
+    (`docs/ceph-upstream-bugs.md`, "[radosgw's CompleteMultipartUpload
+    evaluates encryption condition keys from headers it
+    ignores](ceph-upstream-bugs.md#radosgws-completemultipartupload-evaluates-encryption-condition-keys-from-headers-it-ignores)").
+    Its `get_params` files the query's encryption parameters only after that
+    check (`map_qs_metadata`,
+    [rgw_rest_s3.cc:4101](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4101) at v19.2.7,
+    [rgw_rest_s3.cc:4575](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4575) at v20.2.4),
+    so a query parameter passes no `Deny`, and a completion that sends one
+    under a `Null` `Deny` is 403, in rgw-go too, whose policy environment
+    does not read the query for a completion (`cryptKeys`,
+    `internal/authz/env.go`). The SSE-C names are refused the same way:
+    Amazon S3 takes them on a completion of an SSE-C upload, but rgw-go
+    begins no SSE-C upload and refuses such an upload's parts, so a
+    completion of one a radosgw on the same zone began, its key named, is
+    refused too, where radosgw completes it
+    ("CompleteMultipartUpload asks for an SSE-C upload's key as Amazon S3
+    and v20.2.5 do, and completes a key-server upload where Amazon S3 needs
+    no key"). radosgw completes every such completion of an upload without
+    a crypt mode at v19.2.7 and v20.2.4, whichever name holds the value, the context, the bucket key,
+    a name only the first 20 bytes of the prefix match, a copy source's key
+    and a query parameter among them, which set no condition key; rgw-go
+    refuses them all under the one rule. A completion of an SSE-S3 or
+    SSE-KMS upload a radosgw on the same zone began is refused alike: under a
+    `Deny` on a `Null` condition of the key, a principal it names gets 403
+    without the header and 501 with it, so rgw-go cannot complete that
+    upload for that principal, where radosgw completes it once the header is
+    sent. This refusal outlives phase 2's answer to SSE-S3 and SSE-KMS:
+    radosgw without a key server has no failure for a completion, it
+    completes, so carrying that failure to the completion would bring the
+    bypass back. It stands until the completion checks its names against
+    the upload's crypt mode. A value anywhere wins over an empty instance,
+    as on the other writes; a completion with only empty names is the
+    empty-header rule's ("A write that sends `x-amz-server-side-encryption`,
+    its KMS key id or an SSE-C header with no value is refused 400"), and
+    one with none is unchanged (`completeMultipart`,
+    `internal/s3/multipart.go`; `CompleteMultipart.AskedEncryption`,
+    `internal/op/completemultipart.go`).
 - **A part radosgw would encrypt with an SSE-C key, or under a crypt mode
   rgw-go does not know, answers 501.** radosgw writes each part of an
   upload under the upload's crypt mode: `get_encrypt_filter` runs
@@ -9737,17 +9789,21 @@ does the following.
     assembled and before anything is written: a completion of an SSE-C
     upload answers that decision's refusal of its headers first, an
     algorithm sent empty included, and a refusal echoes none of the headers
-    the decision gathers. The query is not read, as neither the policy's
-    environment nor rgw-go's completion reads it
-    (`cryptKeys`, `internal/authz/env.go`). An upload that is not found is
-    the store's to answer, as it answers a completion retried after it
-    succeeded, and the refusal does not apply. The rule's valued half is
-    not asked of a completion, which asks for no encryption: a completion
-    that sends `x-amz-server-side-encryption: AES256`, or a KMS key id with a
-    value, passes a `Null` Deny on its key and completes an upload without a
-    crypt mode, as radosgw's does. That is rgw-go's current behaviour, and
-    the scope of "Writes that ask for encryption answer 501, SSE-S3 and
-    SSE-KMS until phase 2 and SSE-C until phase 4", not of this rule.
+    the decision gathers. A query parameter sent empty is not refused: the
+    policy's environment does not read the query for a completion, as
+    radosgw's completion files it only after `verify_permission`
+    (`cryptKeys`, `internal/authz/env.go`), so it passes no `Null` Deny. An
+    upload that is not found is the store's to answer, as it answers a
+    completion retried after it succeeded, and the refusal does not apply:
+    a retried completion, or one whose upload id is made up, that sends
+    `x-amz-server-side-encryption` empty under a `Null` Deny on its key
+    answers 200 from the object a completion already wrote under the key,
+    and writes nothing, as radosgw answers it.
+    A completion that holds a value among its encryption names, in a header
+    or the query, asks for encryption and is refused 501 before all of this,
+    before the body is read ("Writes that ask for encryption answer 501,
+    SSE-S3 and SSE-KMS until phase 2 and SSE-C until phase 4"), so a value
+    wins over an empty instance on a completion too.
 
   A header or parameter sent more than once is judged on every instance,
   where radosgw reads the last and the query's over the header's: any
@@ -9886,6 +9942,13 @@ does the following.
     InvalidEncryptionAlgorithmError, the latter for an algorithm header
     sent empty too, which beast files as sent
     ([rgw_crypt.cc:1333-1421](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_crypt.cc#L1333-L1421) at v20.2.4).
+    Until phase 4 serves SSE-C, a request that names a key, any header of
+    that prefix with a value, is refused 501 before this decision ("Writes
+    that ask for encryption answer 501, SSE-S3 and SSE-KMS until phase 2
+    and SSE-C until phase 4"), so over the S3 API the decision meets only
+    a request that sends no such header or sends them empty: an upload with
+    a checksum type is then refused for want of the key, so none completes,
+    where Amazon S3 and radosgw complete it for the holder of its key.
     A v20.2.4 radosgw asks for the key on every SSE-C completion
     ([rgw_rest_s3.cc:4591-4598](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L4591-L4598) at v20.2.4),
     so it refuses one that rgw-go completes: without a checksum and

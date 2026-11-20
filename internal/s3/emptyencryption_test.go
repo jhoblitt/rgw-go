@@ -759,31 +759,18 @@ var _ = Describe("an encryption header sent empty on a write", func() {
 // header but an SSE-C upload's key. rgw-go refuses a header sent empty that
 // emptyMessage covers, once the upload's decision has passed, so that a Null
 // Deny written to require encryption does not complete an upload in the
-// clear; a header with a value is not asked of a completion (docs/differences.md).
+// clear; a request with a value among its encryption names asks for
+// encryption and is refused 501 first (docs/differences.md).
 var _ = Describe("an encryption header sent empty on a CompleteMultipartUpload", func() {
-	// withPart begins alice's upload of k in plain, with no crypt mode and a
-	// part of "x", and returns its id.
-	withPart := func(ctx SpecContext, w *writeWorld) string {
-		GinkgoHelper()
-		id := w.initUpload(w.alice, "/plain/k")
-		Expect(w.send(w.alice, http.MethodPut, overTLS+"/plain/k?uploadId="+id+"&partNumber=1", "x").Code).To(Equal(200))
-		return id
-	}
 	complete := func(w *writeWorld, id, query string, hdr ...string) *httptest.ResponseRecorder {
-		return w.sendAll(w.alice, http.MethodPost, overTLS+withQuery("/plain/k?uploadId="+id, query), completion(md5Hex("x")), hdr...)
-	}
-	expectNotCompleted := func(ctx SpecContext, w *writeWorld, id string, rel denc.Release) {
-		GinkgoHelper()
-		Expect(w.stat(ctx, "k").Exists).To(BeFalse(), "release %d: nothing is completed", rel)
-		Expect(w.uploads(ctx)).To(HaveLen(1), "release %d: the upload stays", rel)
-		Expect(w.parts(ctx, "k", id)).To(HaveLen(1), "release %d: its part stays", rel)
+		return completePlain(w, op.RouteUnknown, id, query, hdr...)
 	}
 
 	DescribeTable("is refused or accepted by the rule, for an upload without a crypt mode, per release",
 		func(ctx SpecContext, c emptyEncryption) {
 			for _, rel := range sseReleases {
 				w := newWriteWorld(ctx, rel)
-				id := withPart(ctx, w)
+				id := plainUploadWithPart(w)
 				rec := complete(w, id, "", c.hdr...)
 				if c.status == 200 {
 					Expect(rec.Code).To(Equal(200), "release %d: %s", rel, rec.Body.String())
@@ -802,18 +789,18 @@ var _ = Describe("an encryption header sent empty on a CompleteMultipartUpload",
 		Entry("the key", refused(emptySSECMsg, sseKeyHeader, "")),
 		Entry("the key MD5", refused(emptySSECMsg, sseKeyMD5Header, "")),
 		Entry("x-amz-server-side-encryption and the KMS key id: the SSE name first", refused(emptySSEMsg, sseHeaderName, "", sseKMSKeyHeader, "")),
-		Entry("x-amz-server-side-encryption sent twice, a value then empty: the empty instance is refused, a value being no refusal here",
-			refused(emptySSEMsg, sseHeaderName, "AES256", sseHeaderName, "")),
+		Entry("x-amz-server-side-encryption sent twice, a value then empty: the value wins, 501",
+			emptyEncryption{hdr: []string{sseHeaderName, "AES256", sseHeaderName, ""}, status: 501, code: "NotImplemented"}),
 		Entry("the bucket key, which sets no condition key", emptyEncryption{hdr: []string{sseBucketKeyHdr, ""}, status: 200}),
 		Entry("the context, which sets no condition key", emptyEncryption{hdr: []string{sseContextHeader, ""}, status: 200}),
 		Entry("a name only the first 20 bytes of the prefix match", emptyEncryption{hdr: []string{sseTwentyBytesHdr, ""}, status: 200}),
 		Entry("the copy source's algorithm", emptyEncryption{hdr: []string{sseCCopyAlgorithm, ""}, status: 200}),
 	)
 
-	It("leaves the query alone, as the policy's environment and map_qs_metadata do not read it for a completion", func(ctx SpecContext) {
+	It("leaves a query parameter sent empty alone, as the policy's environment does not read the query for a completion", func(ctx SpecContext) {
 		for _, rel := range sseReleases {
 			w := newWriteWorld(ctx, rel)
-			id := withPart(ctx, w)
+			id := plainUploadWithPart(w)
 			rec := complete(w, id, "x-amz-server-side-encryption=&x-amz-server-side-encryption-aws-kms-key-id=")
 			Expect(rec.Code).To(Equal(200), "release %d: %s", rel, rec.Body.String())
 		}
@@ -830,7 +817,7 @@ var _ = Describe("an encryption header sent empty on a CompleteMultipartUpload",
 			}
 			for key, header := range keys {
 				w := newWriteWorld(ctx, rel)
-				id := withPart(ctx, w)
+				id := plainUploadWithPart(w)
 				w.setBucketAttrs(ctx, map[string][]byte{op.AttrIAMPolicy: []byte(`{"Version":"2012-10-17","Statement":[{"Effect":"Deny",` +
 					`"Principal":{"AWS":["arn:aws:iam:::user/alice"]},"Action":["s3:PutObject"],"Resource":["arn:aws:s3:::plain/*"],` +
 					`"Condition":{"Null":{"` + key + `":"true"}}}]}`)})
@@ -844,7 +831,7 @@ var _ = Describe("an encryption header sent empty on a CompleteMultipartUpload",
 		}
 	})
 
-	It("keeps an SSE-C upload's own answer to its key headers, and refuses a header sent empty beside the right key", func(ctx SpecContext) {
+	It("keeps an SSE-C upload's own answer to an algorithm sent empty, and refuses a header sent empty once its decision passes", func(ctx SpecContext) {
 		for _, rel := range sseReleases {
 			w := newWriteWorld(ctx, rel)
 			id := w.beganEncrypted(ctx, "SSE-C-AES256")
@@ -854,7 +841,7 @@ var _ = Describe("an encryption header sent empty on a CompleteMultipartUpload",
 			Expect(err).NotTo(HaveOccurred())
 			rec := complete(w, id, "", sseCAlgorithmHeader, "")
 			expectError(rec, 400, "InvalidEncryptionAlgorithmError")
-			rec = complete(w, id, "", append(sseCRequest(encryptedUploadKey()), sseKMSKeyHeader, "")...)
+			rec = complete(w, id, "", sseKMSKeyHeader, "")
 			expectError(rec, 400, "InvalidArgument")
 			Expect(rec.Body.String()).To(ContainSubstring(emptyKMSMsg), "release %d", rel)
 			Expect(w.stat(ctx, "k").Exists).To(BeFalse(), "release %d", rel)
