@@ -9510,7 +9510,10 @@ does the following.
     KMS key id or, on Tentacle, an SSE-C algorithm with a value, passes a
     bucket policy `Deny` on a `Null` condition of that key, written to
     require encryption, and radosgw completes an upload stored in the
-    clear: one begun before the `Deny`, or by a principal it does not name.
+    clear: one begun before the `Deny`, or by a principal it does not name
+    (`docs/ceph-upstream-bugs.md`, "[radosgw's CompleteMultipartUpload
+    evaluates encryption condition keys from headers it
+    ignores](ceph-upstream-bugs.md#radosgws-completemultipartupload-evaluates-encryption-condition-keys-from-headers-it-ignores)").
     Its `get_params` files the query's encryption parameters only after that
     check (`map_qs_metadata`,
     [rgw_rest_s3.cc:4101](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4101) at v19.2.7,
