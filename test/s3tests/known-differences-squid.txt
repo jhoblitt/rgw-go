@@ -222,3 +222,21 @@
 
 # A bucket policy Deny on StringNotLike over S3:Prefix, a key spelled in another case than the request's s3:prefix, with a pattern holding ?: refused 403 AccessDenied or served as Amazon S3 answers; radosgw finds the key only as the policy spells it and serves every listing (differences: "A Deny's condition key names match whatever their case")
 ^s3tests\.functional\.test_s3::test_bucket_policy_deny_stringnotlike_key_other_case$
+
+# A bucket policy conditioning s3:PutObject on s3:x-amz-acl or s3:RequestObjectTag judges a CopyObject and a CreateMultipartUpload by the headers they send, as a PutObject: a Deny refuses, and an Allow serves, the write whose header it names; radosgw adds the keys to PutObject's check alone (differences: "CopyObject and CreateMultipartUpload evaluate s3:PutObject with the keys of the ACL and the tags they set")
+^s3tests\.functional\.test_s3::test_bucket_policy_deny_put_obj_acl_copy_and_multipart$
+^s3tests\.functional\.test_s3::test_bucket_policy_put_obj_bucket_owner_full_control_copy_and_multipart$
+^s3tests\.functional\.test_s3::test_bucket_policy_deny_put_obj_request_tag_copy_and_multipart$
+
+# A CopyObject replacing its metadata with an x-amz-tagging header that does not parse, here eleven tags, is refused 400 InvalidArgument before it is authorized, as PutObject is; radosgw's copy parses no tag header and stores it as sent (differences: "CopyObject and CreateMultipartUpload evaluate s3:PutObject with the keys of the ACL and the tags they set")
+^s3tests\.functional\.test_s3::test_copy_object_replace_tagging_too_many_tags$
+
+# A bucket policy Deny of s3:PutObject unless s3:x-amz-acl is bucket-owner-full-control refuses a CopyObject and a CreateMultipartUpload that name another canned ACL or none, as a PutObject; radosgw adds the key to PutObject's check alone and serves them (differences: "CopyObject and CreateMultipartUpload evaluate s3:PutObject with the keys of the ACL and the tags they set")
+^s3tests\.functional\.test_s3::test_bucket_policy_deny_put_obj_not_bucket_owner_full_control_copy_and_multipart$
+
+# A CopyObject replacing its metadata with an x-amz-tagging value holding a tab is refused 400 InvalidArgument before it is authorized; radosgw stores it quoted-printable, as text that decodes to no tags (differences: "CopyObject and CreateMultipartUpload evaluate s3:PutObject with the keys of the ACL and the tags they set")
+^s3tests\.functional\.test_s3::test_copy_object_replace_tagging_control_character$
+
+# A Deny written for the absence of x-amz-acl (Null s3:x-amz-acl true) refuses a PutObject that sends no x-amz-acl and a PutObjectAcl that sets its ACL by its body; radosgw adds the key empty to those checks and serves both (differences: "CopyObject and CreateMultipartUpload evaluate s3:PutObject with the keys of the ACL and the tags they set")
+^s3tests\.functional\.test_s3::test_bucket_policy_deny_put_obj_null_acl$
+^s3tests\.functional\.test_s3::test_bucket_policy_deny_put_obj_acl_body_null_acl$
