@@ -2431,6 +2431,189 @@ from V21's adversarial harness, 2000 schedules a random family:
 - **Depends on:** V22 and V23. V23 also reworks the relists in `internal/driver/delete_versioned.go`,
   so V25 goes after it. **PR:** one. **Brief:** about 60 lines.
 
+### Task V26: a cancel never lowers an index entry below a landed write
+
+Found by V22's adversarial review in its re-run 2 (R2-M1), pre-existing on main, and numbered here
+before V22 merged (PP-12). An attribute write whose head write finds the version's head gone cancels
+its index op (`internal/driver/attrs.go:92-98`), and `indexOp.cancel` sends pool -1 and epoch 0
+whatever the entry holds (`internal/driver/indexop.go:383-388`). The class copies the op's version
+onto the entry on every completion and cancel
+([cls_rgw.cc:1080-1094](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1080-L1094),
+[cls_rgw.cc:1215-1229](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1215-L1229)).
+A removal that completed first left the entry not existing, at the removal's version, because
+another write's op was still pending on it
+([cls_rgw.cc:1141-1166](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1141-L1166),
+[cls_rgw.cc:1275-1299](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1275-L1299)).
+The cancel lowers that version, so the other write's late ADD completion is no longer stale and runs
+as a fresh ADD
+([cls_rgw.cc:1168-1198](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1168-L1198),
+[cls_rgw.cc:1301-1329](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1301-L1329)):
+the instance entry is made again with no head, unlisted and counted in the bucket's stats. V22's
+adversarial schedule Q3 (writer AW) leaves it at main and at each V22 head the review ran. radosgw's
+`set_attrs` cancels at the same version
+([rgw_rados.cc:6912-6917](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6912-L6917)
+and [rgw_rados.cc:9749-9759](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9749-L9759),
+[rgw_rados.cc:7562-7567](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7562-L7567)
+and [rgw_rados.cc:10485-10495](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10485-L10495)).
+The copy is the registry's "cls_rgw complete_op writes a stale epoch back when it cancels", whose
+rgw-go line says no client can work around it. By reading, two more forms reach the same state:
+
+- a completion the class skips as stale copies its own, older version the same way, so two late
+  completions of in-place rewrites after a removal, the older landing first, make the entry again
+  with no cancel at all (that registry entry's completions at 10, 5 and 7);
+- a cancel at a version read before a later write landed: `resetCurrent` cancels at the version its
+  caller read before its prepare (`internal/driver/delete_versioned.go:1086-1103`, read at
+  `internal/driver/delete_versioned.go:1007`) and compares nothing.
+
+V22 restores the transition's head check, which covers the transition's own completion (its R2-I1).
+The paths on which rgw-go cancels an index op or completes one late, each opened at origin/main:
+
+- `indexOp.cancel`'s callers: an attribute write's failed head write (`SetObjectAttrs`,
+  `internal/driver/attrs.go:97`); a failed head write through `writeMeta`, which PutObject,
+  CopyObject, the lifecycle transition's raw copy, CompleteMultipartUpload's head write, the
+  multipart meta object's create and a part's head all take (`cancelWrite`,
+  `internal/driver/headwrite.go:595-600`, from `internal/driver/headwrite.go:408`);
+  `writeNullVersion`'s failure (`internal/driver/put_versioned.go:234-239`); `linkVersion` after a
+  completion that failed (`internal/driver/put_versioned.go:343-345`); a refused head removal, which
+  a plain delete, a part's removal and a replay's removal of a version reach (`removeHeadFlagged`,
+  `internal/driver/delete.go:169-170`); CompleteMultipartUpload's cleanup and the abort's removal of
+  the meta object (`deleteMeta`, `internal/driver/mp_cleanup.go:692-696`); the abort's refused
+  removal of a recorded version (`removeUnlinkedRecorded`, `internal/driver/mp_abort.go:341-343`);
+  the bypass purge's failed head removal (`bypassPurge.head`, `internal/driver/purge.go:299-300`);
+- the cancels sent around it: the abort's cancel of an op past the tag timeout, at pool -1
+  (`expireStaleOps`, `internal/driver/mp_abort.go:425-428`), and `resetCurrent`'s;
+- the completions of a write that rewrites an existing entry in place, which can land after a
+  removal: `SetObjectAttrs`'s (`internal/driver/attrs.go:100`), unawaited but for a plain or null
+  entry on a versioned bucket (`completePlain`, `internal/driver/headwrite.go:575-584`); a write
+  with `headWrite.expect`, a copy onto itself or the transition's raw copy
+  (`internal/driver/copy.go:309`, `internal/driver/copy.go:575`), completed by `linkVersion` when
+  versioned (`internal/driver/put_versioned.go:338-339`) and by `completePlain` otherwise; and
+  `completeRecordedEntry`, at the head's epoch as read, from CompleteMultipartUpload's retry and from
+  the abort (`internal/driver/mp_complete.go:669-677`, called at
+  `internal/driver/mp_complete.go:649-653` and `internal/driver/mp_abort.go:327-331`).
+
+Two need no change. The abort's compared DEL (`completeDelAsRead`,
+`internal/driver/mp_abort.go:479-500`) runs only once the abort's prepare is the one op pending
+(`removableEntry`, `internal/driver/mp_abort.go:508-518`), so it removes the entry. `deleteObjIndex`'s
+untagged DEL at pool -1 (`internal/driver/delete.go:221-230`) is radosgw's `delete_obj_index`
+([rgw_rados.cc:6173-6190](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6173-L6190),
+[rgw_rados.cc:6787-6804](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6787-L6804)).
+The bypass purge sends it ahead of the bucket's removal, which takes the shards whole. The listing's
+sweep sends it for a completed upload's part entries (`internal/driver/list.go:795-812`), whose
+heads are that object's tails and stay, so an entry a late completion makes again names a stored
+object.
+
+- **Layer:** driver. **Files:** `indexOp.cancel` in `internal/driver/indexop.go` and its callers
+  above; `expireStaleOps` in `internal/driver/mp_abort.go`; `resetCurrent` in
+  `internal/driver/delete_versioned.go`; `SetObjectAttrs` in `internal/driver/attrs.go` and
+  `completePlain` in `internal/driver/headwrite.go`; `linkVersion` in
+  `internal/driver/put_versioned.go`; `completeRecordedEntry` in `internal/driver/mp_complete.go`;
+  their specs, `indexop_test.go`'s pin of the cancel's request and of the version it leaves among
+  them; `docs/differences.md`, the text V22 marks "tracked by V26" and the entry "A versioned write
+  awaits its index completion"; in `docs/ceph-upstream-bugs.md`, the rgw-go lines of "cls_rgw
+  complete_op writes a stale epoch back when it cancels" and of the entry V22 adds for R2-M1.
+  **Cluster:** no.
+- **Security boundary:** the versioned write's replay and quota accounting; adversarial review
+  applies (PP-14). Every text on the quota side, here, in `docs/differences.md` and in the registry,
+  states the mechanism only.
+- **Behaviour:**
+  1. No rgw-go cancel changes an index entry's version. Each reads the entry the cancel changes, as
+     `bi_get` answers it (`getInstanceEntryBI`, `internal/driver/olh_index.go:301-312`), and sends
+     its cancel at the entry's own version, with an OMAP_CMP of the bytes read ahead of the class
+     call in the same op, as the abort's DEL compares (`completeDelAsRead`). A write that lands
+     between the read and the cancel changes the bytes: the compare refuses the cancel, nothing is
+     written, and the next round reads again.
+  2. No completion of an in-place rewrite, the third group above, lands on an entry a removal has
+     completed on, or below the version the entry holds. After its head write the writer reads the
+     entry the same way and sends:
+     - nothing when its op's tag is no longer pending, a completion the class would refuse
+       ([cls_rgw.cc:1066-1073](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1066-L1073),
+       [cls_rgw.cc:1201-1208](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1201-L1208));
+     - Behaviour 1's cancel when the entry does not exist, a removal having completed since the
+       prepare, or holds a version at or above the completion's on its pool;
+     - otherwise its ADD, under the same compare.
+
+     A removal completing between the read and the ADD refuses the ADD, and the next round cancels.
+     Each writer answers as today, except that a rewrite with `headWrite.expect` whose completion
+     cancels links nothing and answers as its head write answers a removed head, NoSuchKey
+     (`internal/driver/headwrite.go:602-605`), and `completeRecordedEntry`'s callers answer as for a
+     completion that fails (`internal/driver/mp_complete.go:650-652`,
+     `internal/driver/mp_abort.go:328-330`). `SetObjectAttrs` then awaits its completion of every
+     entry, as it already awaits one of a plain or null entry on a versioned bucket.
+  3. The mechanism, and why. Each candidate leaves a path:
+     - a cancel at the version of the head the op read: another write of that head between the read
+       and the removal carries a higher version, and its late completion still passes;
+     - a cancel at the entry's version read earlier and not compared, `resetCurrent`'s form: a
+       removal completing between the read and the cancel is lowered just the same;
+     - a head check before the completion: the head is in a data pool and the entry in an index
+       shard, so no op covers both, and a removal between the check and the completion leaves the
+       state; the cancels still lower the version;
+     - the cancels alone: a stale completion lowers it too, the first form above.
+
+     Reading the entry and comparing it in the op that changes it closes each, and is the shape the
+     abort's DEL has and V25's link compares take. Its cost is one index read for each cancel, a
+     failure path, and for each in-place completion, and `SetObjectAttrs` waits for its completion
+     of a version. The completions of PutObject's, CopyObject's and CompleteMultipartUpload's other
+     writes of a plain or null key keep their form: a read before each would add an index read to
+     every such write. The registry entry records that they meet the defect as radosgw's do, and
+     Behaviour 8 traces the null version.
+  4. Each read and its op run within `olhAttempts` rounds (`internal/driver/olh.go:33`). Once those
+     are spent the op is left pending and logged, as a head write that times out leaves its prepare
+     (`internal/driver/headwrite.go:596-600`), and the request answers as it does today. A cancel
+     after a prepare whose outcome is unknown must still reach the shard after that prepare, as
+     `resetCurrent` requires today (`internal/driver/delete_versioned.go:1076-1085`), with the read
+     in between. The read and the op run past the request's end, as the unawaited cancel does today.
+  5. The RADOS state stays one radosgw writes. A cancel at the entry's own version writes the bytes
+     the class writes for a completion it skips as stale at the entry's own epoch, an ADD is
+     radosgw's ADD, and the compare writes nothing. Record in `docs/differences.md` the cancel's
+     version, the entry's where radosgw's is pool -1 and epoch 0, and the awaited attribute write;
+     replace the text V22 marks "tracked by V26".
+  6. radosgw is recorded, not fixed. Its `set_attrs` cancel, every `cls_obj_complete_cancel` it
+     sends and its stale completions still lower an entry's version on a mixed fleet. An rgw-go
+     completion that meets an entry radosgw lowered still reads it as not existing and cancels, so
+     the state then needs radosgw's own late completion. The two registry entries' rgw-go lines say
+     what rgw-go does now and what still meets the defect (Behaviour 3). The counted entry with no
+     head that radosgw can still leave goes among the counted records with no data that no S3
+     request reaches, which V24's DeleteBucket PR names.
+  7. V22's transition head check stays.
+  8. Trace, before implementing: the null version. Its data's head is the OLH head, which a removal
+     leaves, so a second removal of its data is refused by its guard and cancels (V22's adversarial
+     R1.4, not run). Say whether a late completion then meets the null data's entry; the specs pin
+     the answer.
+- **Specs:** on both releases, against the emulator:
+  - Q3: an attribute write AW reads version X's head, prepares and writes it, its completion held; a
+    second attribute write AW2 reads X's head and prepares; a delete unlinks X, and its replay removes
+    the head and completes; AW2's head write finds the head gone and cancels; then AW's completion
+    lands. X's head, instance entry and list entry are gone, and the bucket's stats count the
+    versions stored. The same with the transition as the late writer (V22's R2-I1);
+  - two late completions: AW and AW3 both write X's head before the removal, and their completions
+    land after it, AW's first. X is gone as in Q3;
+  - each cancel of the first two groups, landing on an entry a removal completed on while another op
+    stayed pending, leaves the entry at the removal's version; the cancel of a failed write's fresh
+    entry still removes it;
+  - a prepare, a completion or a removal landing between a cancel's or a completion's read and its op
+    refuses the op, and the next round acts on the entry as it then is; the spent bound leaves the op
+    pending and the answer as today;
+  - CompleteMultipartUpload's retry and the abort, `completeRecordedEntry` after a removal of the
+    recorded version completed: no entry is made again, and each answers as Behaviour 2 says;
+  - an attribute write that meets no race completes as today, its entry's meta and the stats as
+    today;
+  - the null version, as Behaviour 8 finds;
+  - Q3 with AW2's cancel sent as radosgw's, at pool -1 and epoch 0: with AW's completion rgw-go's,
+    X is gone; with a late completion sent as radosgw's, the state stays, pinned as recorded;
+  - V21's adversarial harness with V22's adversarial additions, Q3 and RS1 among them, 2000
+    schedules a family, its radosgw model completing an ENOENT removal as radosgw does (V22's
+    adversarial R1.4): no instance entry without its head in any family rgw-go runs alone, Q/P3 and
+    Q3 gone for both late writers, the radosgw families as V25 leaves them, and no new dangling,
+    lost-delete or acknowledged-and-kept outcome;
+  - V22's and V25's specs, and the interleavings V21's specs pin, stay as they are.
+- **Depends on:** V22 and V25. V25 changes `linkVersion`, the CompleteMultipartUpload retry around
+  `completeRecordedEntry` and the relist around `resetCurrent`, and its linkers read the instance
+  entry these completions and cancels write, so V26 goes after it. V26 does not gate V24: V24's
+  DeleteBucket check refuses a bucket that a counted record with no data occupies (its Behaviour 6),
+  the entry this task closes is one, and the admin bucket removal with purge-objects is the
+  operator's way out until V26 lands. **PR:** one. **Brief:** about 45 lines.
+
 ## Order
 
 At most three implementers at once. A wave starts when the tasks it depends on have merged;
@@ -2450,7 +2633,7 @@ recordings land one at a time through the controller.
 | 8 | V7b, V8b, V8c | V7a, V8a, V9 |
 | 9 | V11, V12b | V7b, V8b |
 | 10 | V12a, V14a | V11, V13d |
-| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22, then V23, then V25, then V24 | everything above, WP-22 |
+| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22, then V23, then V25, then V24, then V26 | everything above, WP-22 |
 
 - V10's recording PR is a cluster task the controller schedules after its first PR merges.
 - The critical path is V1, V3b, V4, V5a, V5b, V5c, V7a, V7b, V11, V14a, V15a. L and C start
