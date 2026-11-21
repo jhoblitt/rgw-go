@@ -2614,6 +2614,184 @@ object.
   the entry this task closes is one, and the admin bucket removal with purge-objects is the
   operator's way out until V26 lands. **PR:** one. **Brief:** about 45 lines.
 
+### Task V27: a delete naming `null` takes the null marker over kept data on an object-lock bucket
+
+Found by V24 Behaviour 7's adversarial review (B7A-5), pre-existing on main, and numbered here
+before that PR merged (PP-12). That PR's fix round closed B7A-1 and B7A-4 in the delete naming
+`null` and left this one, whose fix lies in the op layer's read and in lifecycle's, outside that
+PR's change. On an object-lock bucket no delete naming `null` can take a null delete marker that
+sits above null data an earlier refusal kept (V24's Behaviour 1, the refused null delete whose
+relist ended). The state arises on a suspended bucket whose versioning, and then object lock, are
+enabled later: PutObjectLockConfiguration gives a versioning-enabled bucket the flag
+(`internal/op/bucketobjectlock.go:155-159`).
+
+The op layer's lock check reads the version through `StatObject` (`deleteUnderLock`,
+`internal/op/objectlock.go:61`). `null` names the key's OLH head, and `headState` answers a head
+with OLH attrs and a manifest as the null data (`internal/driver/stat.go:61-71`); the index lookup
+that finds a marker runs only for a state that does not exist (`namedVersion`, reached at
+`internal/driver/stat.go:50-52`). The store's delete resolves `null` in the class's
+`read_key_entry` order, the marker first (`getInstanceEntryBI`,
+`internal/driver/delete_versioned.go:334`). So the check reads the data and the delete meets the
+marker:
+
+- With a legal hold or a COMPLIANCE retention on the data, `verifyDeleteLock` answers 403
+  AccessDenied before any unlink (`internal/op/objectlock.go:65`), though the marker holds no lock.
+- Without one, the data's state becomes the removal's `Expect` (`guardRemoval`,
+  `internal/op/objectlock.go:156-158`), which `expectRemoval` refuses against the marker's entry,
+  "one a delete marker and the other not" (`internal/driver/delete_versioned.go:413-414`). Each of
+  `deleteUnderLock`'s retries reads the data again (`internal/op/objectlock.go:60-77`), and the
+  lost race is the answer: 204 with nothing removed for DeleteObject
+  (`internal/op/deleteobject.go:172-173`), the key's ConcurrentModification for DeleteObjects
+  (`internal/op/deleteobjects.go:435-437`).
+- Lifecycle's removal of the marker reads it again through `StatObject` and skips it unless that
+  state is a marker (`lcBucket.removeVersion`, `internal/driver/lc_actions.go:393-408`). The skip
+  comes before the bucket's object-lock check (`internal/driver/lc_actions.go:418`), so lifecycle
+  skips the marker on any versioned bucket, with object lock or without. By reading, not run.
+
+The marker, and the key's 404 above the data, stay through S3 and lifecycle. V24 Behaviour 7's
+adversarial spec OL, which emulates the op layer, reproduces the case without a lock on both
+releases, at main and at that PR's head; the hold's 403 is by reading.
+
+- **Layer:** op and driver. **Files:** the op layer's object-lock check (`deleteUnderLock`,
+  `verifyDeleteLock` and `guardRemoval` in `internal/op/objectlock.go`) and the store read it makes
+  (`op.ObjectStore` in `internal/op/object.go`, with the fakes and memstore its hot-file row names;
+  `objectState`, `headState` and `namedVersion` in `internal/driver/stat.go`); lifecycle's removal
+  (`lcBucket.removeVersion` in `internal/driver/lc_actions.go`); their specs, the op layer's over
+  the RADOS store in `internal/driver/delete_lock_op_test.go`; `docs/differences.md`, the entry "A
+  refused versioned removal re-links the version, unless a newer null write owns the null key",
+  where V24 Behaviour 7 records the kept state, and "Lifecycle removes an object only as it was
+  listed". **Cluster:** no.
+- **Security boundary:** object lock and the versioned delete path; adversarial review applies
+  (PP-14). No change may let a delete remove data its lock holds.
+- **Behaviour:**
+  1. The read that decides a removal naming `null` resolves the null version in the index's order:
+     the null delete marker first, then the null data. `deleteUnderLock` makes it for the lock
+     check of a delete whose request names `null`, and lifecycle's removal for its re-read of a
+     version it lists as `null`. A marker there is answered as `namedVersion`
+     answers one: a state that does not exist, `DeleteMarker` set when it is listed, with its
+     entry's mtime and versioned_epoch. Otherwise the answer is the head's, the null data with its
+     attrs, as today. The marker holds no lock, so the check passes it
+     (`internal/op/objectlock.go:107-109`), and its state becomes the removal's `Expect`, which
+     `expectRemoval` takes as a marker (`internal/driver/delete_versioned.go:411-418`), the unlink
+     comparing the marker's entry as read (`olhMarkerCmp`). V24 Behaviour 7's keep then leaves the
+     data whole for the next delete naming `null`, as on a bucket without object lock.
+  2. The data's lock still holds when a delete reaches it. With the marker gone the read finds the
+     data, the check reads its lock, and a hold or a COMPLIANCE retention answers 403 AccessDenied
+     with nothing removed. A removal stays held to what its check read:
+     - a delete whose check read the marker, and whose removal finds the data because another
+       delete took the marker in between, is refused by `expectRemoval` and checks again on the
+       data, within `lockedDeleteRetries`;
+     - a delete whose check read the data, and whose removal finds a marker linked since, is
+       refused and takes the marker in a later round, as today.
+
+     No order of reads and writes lets an unlink of the data follow a check that read the marker.
+     That includes a head with no write tag: a marker read as no version, an unlisted one, carries
+     no tag, `expectTag` reads an absent tag as empty
+     (`internal/driver/delete_versioned.go:173-175`), and a head without one would pass the
+     compare at `internal/driver/delete_versioned.go:420-427`. The implementer shows that path
+     refused, or refuses it.
+  3. The read adds up to three index reads, D8's `read_key_entry` reads, made only where they can
+     change the answer: `null` named on a key whose head carries OLH attrs and holds null data. A
+     head without OLH attrs has no version marker, so no null delete marker, and a head with OLH
+     attrs and no manifest already goes to `namedVersion`. Every other delete reads as today.
+  4. Only the reads that decide a removal of a version named `null` change. A delete naming no
+     version on a suspended object-lock bucket, which `lockTarget` also checks as `null`
+     (`internal/op/objectlock.go:97-99`), keeps today's read: its null delete marker replaces the
+     marker's entry and logs the null data's removal
+     ([cls_rgw.cc:1712-1731](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1712-L1731),
+     [cls_rgw.cc:1853-1872](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1853-L1872)),
+     so the version it removes for good is the data, whose lock it must check, and the index's
+     order would hand it the marker's state, which `nullMarkerExpect` then refuses on a head
+     holding data (`internal/driver/delete_versioned.go:147-159`).
+
+     `StatObject` stays as it is, so GET and HEAD naming `null`, the attr and lock writes and
+     lifecycle's other reads keep reading the head first, as radosgw's `get_obj_state` reads
+     `null`: it follows the OLH only for an empty instance and answers -ENOENT only for a head
+     without a manifest
+     ([rgw_rados.cc:6269](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6269)
+     and [rgw_rados.cc:6427-6433](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6427-L6433),
+     [rgw_rados.cc:6883](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6883)
+     and [rgw_rados.cc:7041-7047](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7041-L7047)).
+     The reasons:
+     - Behaviour 3's index reads would fall on every GET naming `null` of such a key, a read path,
+       where only a removal needs them.
+     - `StatObject` is the seam V6 produces for L3, WP and C (Seams).
+     - What a read naming `null` answers in the kept state, the data, stays as V24 Behaviour 7
+       records it.
+
+     So `op.ObjectStore` gains the read beside `StatObject`, and `deleteUnderLock` makes it in
+     `StatObject`'s place when the request names a version. For every key but `null` on such a
+     head it answers what `StatObject` answers.
+  5. Lifecycle's removal makes the same read (`internal/driver/lc_actions.go:393`). A null marker
+     above kept data then passes the marker check at `internal/driver/lc_actions.go:398` and is
+     removed with that marker as `Expect`, on every versioned bucket, and the data stays whole.
+     Lifecycle reaches the data, unlisted once the marker goes, only as V24's lifecycle-and-listing
+     PR makes such a version reachable. A listed null data version whose index entry has become a
+     marker since the listing reads as no data, and `listedAs` skips it
+     (`internal/driver/lc_actions.go:331-332`), where today the delete's `Expect` refuses it later.
+     The outcome, a skip, is the same.
+  6. radosgw never reaches the state. The class's link of a null delete marker over null data logs
+     the data's removal in the same call
+     ([cls_rgw.cc:1705-1734](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1705-L1734)
+     and [cls_rgw.cc:1806-1810](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1806-L1810),
+     [cls_rgw.cc:1846-1875](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1846-L1875)
+     and [cls_rgw.cc:1947-1951](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1947-L1951)),
+     and the replay removes it, so the head keeps only OLH attrs, `get_obj_state` of `null` answers
+     -ENOENT, and RGWDeleteObj takes that as a delete marker and skips the check
+     ([rgw_op.cc:5186-5221](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5186-L5221),
+     [rgw_op.cc:5576-5611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5576-L5611)).
+     The read answers as radosgw's check does in every state radosgw reaches, and differs only where
+     the head holds data an rgw-go refusal kept. Record in the entry V24 Behaviour 7 updates that a
+     delete naming `null` on an object-lock bucket takes the marker and leaves the data, whose lock
+     then holds, and in "Lifecycle removes an object only as it was listed" that a null marker is
+     read in the index's order.
+  7. Trace, before implementing: radosgw's lifecycle removal of a null delete marker at v19.2.7.
+     `remove_expired_obj` names the empty instance `null`, reads its state with `get_obj_state` and
+     returns any failure
+     ([rgw_lc.cc:617-628](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L617-L628)),
+     and a null marker's state is Behaviour 4's -ENOENT. v20.2.4 accepts -ENOENT for a marker
+     ([rgw_lc.cc:624-643](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L624-L643)).
+     Say whether v19.2.7's lifecycle removes a null delete marker at all. If it does not, add the
+     registry entry (PP-4) and record rgw-go's removal of it in the lifecycle entry.
+- **Specs:** on both releases, against the emulator:
+  - V24 Behaviour 7's precondition, with the null data the key's only version and over an older
+    version: on a suspended bucket, null data with tails, a null delete refused by an attr write
+    after the marker's link, and its relist ended; then versioning enabled and object lock
+    configured. Then DeleteObject and DeleteObjects naming `null`, through the op layer over the
+    RADOS store:
+    - a legal hold on the data, written by a write naming `null` while the marker is current: the
+      first delete answers 204 with `x-amz-delete-marker: true`, a delete marker for DeleteObjects,
+      and takes the marker alone. The data stays whole, its head, tails and counted record kept and
+      its hold on. The next delete answers 403 AccessDenied, "forbidden by object lock", with
+      nothing removed, and once the hold is off the next takes the data;
+    - a COMPLIANCE retention: the same, the data taken once the clock passes its retain-until date;
+    - no lock: the first delete takes the marker, the second the data;
+    - after each delete the header's count and `BucketStats` equal the versions stored, and no tail
+      is left that no record names;
+  - Behaviour 2's races, through `statHook` (`internal/driver/delete_lock_op_test.go`): another
+    delete takes the marker between the check and the removal, with a hold on the data, and the
+    delete answers 403 with the data kept; a marker linked over the data between the check and the
+    removal, and the delete takes the marker;
+  - lifecycle, with object lock and without, with a hold on the data and without: in the null-only
+    shape the marker expires by an expired-delete-marker rule, and over an older version, once a
+    newer version is written, by the noncurrent expiration. Each removes the marker and leaves the
+    data whole, the counts and stats as stored;
+  - a bucket without object lock, a key whose head holds no null data, and a plain key: as today;
+  - a delete naming no version on an object-lock bucket stored as suspended, over the marker and
+    the kept data with a hold: 403 AccessDenied as today, the data's lock checked;
+  - V24 Behaviour 7's specs, and its adversarial spec OL, which fails with the marker over the data
+    at that PR's head, pass.
+
+  No s3-tests test: no S3 client can make the precondition, as for V24 Behaviour 7.
+- **Depends on:** V24, its Behaviour 7 PR. Without that PR's keep, a delete that takes the marker
+  of a null-only key ends in the replay's clear, which removes the OLH head, and the null data in
+  it, with a plain remove (`clearOLHHead`, `internal/driver/olh_head.go:732-753`; V24's Behaviour
+  1, last path). V27 alone would then let a delete naming `null` destroy data a hold or a retention
+  locks, which today's misread check refuses. V27 shares no code file with V25 or V26, whose
+  changes lie in the replay, the links, the relists and the index ops, and it edits other entries
+  of `docs/differences.md`, so it is not ordered against them. **PR:** one. **Brief:** about 50
+  lines.
+
 ## Order
 
 At most three implementers at once. A wave starts when the tasks it depends on have merged;
@@ -2633,7 +2811,7 @@ recordings land one at a time through the controller.
 | 8 | V7b, V8b, V8c | V7a, V8a, V9 |
 | 9 | V11, V12b | V7b, V8b |
 | 10 | V12a, V14a | V11, V13d |
-| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22, then V23, then V25, then V24, then V26 | everything above, WP-22 |
+| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22, then V23, then V25, then V24, then V26, then V27 | everything above, WP-22 |
 
 - V10's recording PR is a cluster task the controller schedules after its first PR merges.
 - The critical path is V1, V3b, V4, V5a, V5b, V5c, V7a, V7b, V11, V14a, V15a. L and C start
