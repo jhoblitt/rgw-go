@@ -103,7 +103,7 @@ func (e *Evaluator) VerifyUser(ctx context.Context, r *op.Request, a policy.Acti
 	if createBucketActions[a] {
 		arn = policy.BucketARN(r.Tenant, r.Bucket)
 	}
-	env := buildEnv(e.cfg, r, a, nil)
+	env := buildEnv(e.cfg, r, a, nil, requestVersion(r))
 	effect, rule := e.evaluate(env, id, id.IdentityType() == meta.IdentityRoot, a, arn, nil, ids)
 	switch effect {
 	case policy.Deny:
@@ -484,9 +484,13 @@ func (e *Evaluator) verifyBucket(ctx context.Context, r *op.Request, a policy.Ac
 	if err != nil {
 		return e.decided(ctx, a, "tags unreadable", tagReadError(ctx, err))
 	}
+	v := requestVersion(r)
+	if f == formBucketIn {
+		v = keyVersion(key)
+	}
 	c := check{
 		a: a, perm: perm, arn: arn, ids: ids, bucket: b, reqBlock: reqBlock,
-		env: buildEnv(e.cfg, r, a, add), ownerOnly: ownerOnly,
+		env: buildEnv(e.cfg, r, a, add, v), ownerOnly: ownerOnly,
 	}
 	ok, rule := e.permit(r, &c)
 	return e.decided(ctx, a, rule, denial(ok))
@@ -501,10 +505,14 @@ func (e *Evaluator) verifyObject(ctx context.Context, r *op.Request, a policy.Ac
 		return e.decided(ctx, a, "tags unreadable", tagReadError(ctx, err))
 	}
 	bid := b.rec.Info.Bucket
+	v := requestVersion(r)
+	if f == formObjectIn {
+		v = stateVersion(obj)
+	}
 	c := check{
 		a: a, perm: perm, arn: policy.ObjectARN(bid.Tenant, bid.Name, key), ids: ids,
 		bucket: b, reqBlock: reqBlock, object: &oacl,
-		env: buildEnv(e.cfg, r, a, add),
+		env: buildEnv(e.cfg, r, a, add, v),
 	}
 	ok, rule := e.permit(r, &c)
 	return e.decided(ctx, a, rule, denial(ok))

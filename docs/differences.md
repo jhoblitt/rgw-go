@@ -6968,18 +6968,21 @@ rgw-go does the following.
   is absent from every request's environment, so the operator holds for each.
   rgw-go sets no key radosgw does not set, but for the object-lock keys ("A
   lock a request sets is evaluated with Amazon S3's object-lock condition
-  keys"). A key it does not set is one of two kinds. Keys of AWS
+  keys") and, for a Deny alone, the keys of Amazon S3's request context it
+  knows the value of ("A Deny reads the condition keys Amazon S3 sets",
+  below). A key it does not set is one of two kinds. Keys of AWS
   infrastructure that an on-premises gateway has no value for, among them
   the VPC, organization, MFA, service-chain and EC2-instance keys, which
   Amazon S3 leaves absent too for a request that does not come through
   those services, so there the Deny holds on Amazon S3 as well. Keys Amazon
-  S3 sets on S3 requests that radosgw does not, such as `s3:signatureversion`,
-  `s3:authType`, `s3:TlsVersion` and `s3:x-amz-content-sha256`, where Amazon
-  S3 refuses only the requests whose value fails the condition
+  S3 sets on S3 requests that rgw-go does not, `s3:signatureAge`,
+  `s3:TlsVersion` and `s3:LocationConstraint` among them, where Amazon S3
+  refuses only the requests whose value fails the condition
   (docs/ceph-upstream-bugs.md, "[radosgw sets few of the condition keys
   Amazon S3 sets on S3
   requests](ceph-upstream-bugs.md#radosgw-sets-few-of-the-condition-keys-amazon-s3-sets-on-s3-requests)";
-  plan task S14). A key spelled in another case than rgw-go sets it is
+  "A Deny reads the condition keys Amazon S3 sets", below, names each and
+  why). A key spelled in another case than rgw-go sets it is
   found, and the Deny then holds where Amazon S3's answer over the key's
   values holds, and where the IAM User Guide gives Amazon S3 no answer ("A
   Deny's condition key names match whatever their case", below).
@@ -7204,15 +7207,16 @@ rgw-go does the following.
   [rgw_op.cc:888-889](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L888-L889);
   docs/ceph-upstream-bugs.md, "[radosgw swaps aws:CurrentTime and
   aws:EpochTime](ceph-upstream-bugs.md#radosgw-swaps-awscurrenttime-and-awsepochtime)"),
-  and rgw-go sets what radosgw sets. So a Numeric operator on
-  `aws:EpochTime`, a key AWS says "Works with date operators or numeric
-  operators"
+  and rgw-go's environment holds what radosgw sets. So an Allow's Numeric
+  operator on `aws:EpochTime`, a key AWS says "Works with date operators or
+  numeric operators"
   ([reference_policies_condition-keys.md:234](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_condition-keys.md?plain=1#L234)),
-  meets a value that is no number. On the key as written it is false, as on
-  radosgw. In a Deny that names the key in another case it has no answer and
-  holds, so the Deny refuses every request its statement covers, where
-  Amazon S3 refuses those the comparison picks and radosgw none. A Date
-  operator on either key, in any case, compares the request's time.
+  meets a value that is no number and is false, as on radosgw. A Deny reads
+  the two keys in Amazon S3's forms too ("A Deny reads the condition keys
+  Amazon S3 sets", below), so its Numeric operator on `aws:EpochTime`, in any
+  case, compares the request's time in seconds, and holds where Amazon S3's
+  does. A Date operator on either key, in any case, compares the request's
+  time.
 
   A statement that allows keeps radosgw's evaluation of the key as written,
   which the request lacks when it holds the key only in another case: an
@@ -7228,6 +7232,256 @@ rgw-go does the following.
   pattern that holds a `?` and against a prefix that ends in a character
   outside the Basic Multilingual Plane, and the first with a pattern whose
   brackets match themselves.
+
+- **A Deny reads the condition keys Amazon S3 sets.** radosgw's request
+  environment holds few of the condition keys Amazon S3's request context
+  holds for an S3 request, and holds some of them with other values
+  (docs/ceph-upstream-bugs.md, "[radosgw sets few of the condition keys
+  Amazon S3 sets on S3
+  requests](ceph-upstream-bugs.md#radosgw-sets-few-of-the-condition-keys-amazon-s3-sets-on-s3-requests)").
+  It adds `aws:SecureTransport` with the value `true` for a secure request and
+  adds no such key otherwise
+  ([rgw_op.cc:865-867](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L865-L867),
+  [rgw_op.cc:900-902](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L900-L902);
+  "[radosgw never sets aws:SecureTransport to
+  false](ceph-upstream-bugs.md#radosgw-never-sets-awssecuretransport-to-false)"),
+  and it sets `aws:CurrentTime` to a count of seconds and `aws:EpochTime` to an
+  ISO 8601 date and time, the reverse of AWS's
+  ([rgw_op.cc:853-854](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L853-L854),
+  [rgw_op.cc:888-889](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L888-L889);
+  "[radosgw swaps aws:CurrentTime and
+  aws:EpochTime](ceph-upstream-bugs.md#radosgw-swaps-awscurrenttime-and-awsepochtime)").
+  A Deny's negated operator holds on a key the request lacks ("A Deny's
+  condition holds where Amazon S3's evaluation or radosgw's holds", above), so
+  on radosgw's environment alone a Deny whose negated operator names one of the
+  keys Amazon S3 always sets would refuse every request it covers, where Amazon
+  S3 refuses only the requests whose value fails it. And a condition on a value
+  radosgw never sets, such as `aws:SecureTransport`'s `false`, would never
+  hold.
+
+  rgw-go judges each condition of a statement that denies twice, and the
+  condition holds where either judgement holds
+  (`policy.Statement.EvalConditions`): by the evaluation "A Deny's condition
+  holds where Amazon S3's evaluation or radosgw's holds" gives a Deny, on
+  Amazon S3's request context and with a negated operator over several values
+  read as Amazon S3 reads it (below); and by radosgw's evaluation, on
+  radosgw's environment. Amazon S3's request context is radosgw's environment
+  with each key below holding the value Amazon S3 gives it, alone
+  (`amazonKeys`, `internal/authz/env.go`). A
+  statement that allows reads radosgw's environment alone, so that rgw-go never
+  grants what a radosgw serving the same zone refuses: an Allow conditioned on
+  one of these keys answers as radosgw's does.
+
+  The keys, each with the value Amazon's documentation of it gives:
+
+  - `aws:CurrentTime`: the request's date and time in UTC, to the second, as
+    `2026-11-20T12:00:00Z`. "Use this key to compare the date and time of the
+    request" with the date operators
+    ([reference_policies_condition-keys.md:128-134](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_condition-keys.md?plain=1#L128-L134)
+    in the IAM User Guide's archived source), which take "one of the W3C
+    implementations of the ISO 8601 date formats"
+    ([reference_policies_elements_condition_operators.md:131](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L131)).
+    The guide gives no precision; rgw-go writes the whole seconds
+    `aws:EpochTime` counts.
+  - `aws:EpochTime`: the request's time in whole seconds since the epoch, "the
+    date and time of the request in epoch or Unix time", which works "with date
+    operators or numeric operators"
+    ([reference_policies_condition-keys.md:232-238](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_condition-keys.md?plain=1#L232-L238)).
+  - `aws:SecureTransport`: `false` for a request that is not secure and `true`
+    for one that is, secure as rgw-go judges it for radosgw's key, over TLS or
+    from a trusted proxy that says so: "The request context returns `true` or
+    `false`", and "This key is always included in the request context"
+    ([reference_policies_condition-keys.md:984-990](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_condition-keys.md?plain=1#L984-L990)).
+  - `s3:signatureversion`: `AWS` for a request signed by Signature Version 2,
+    in the header or presigned, and `AWS4-HMAC-SHA256` for one signed by
+    Signature Version 4: "Valid values: "AWS" identifies Signature Version 2
+    "AWS4-HMAC-SHA256" identifies Signature Version 4", for "authenticated
+    requests" (the S3 API Reference's page of the Signature Version 4 condition
+    keys,
+    [bucket-policy-s3-sigv4-conditions.html](http://web.archive.org/web/20260520053457/https://docs.aws.amazon.com/AmazonS3/latest/API/bucket-policy-s3-sigv4-conditions.html),
+    as the Wayback Machine held it on 2026-05-20, read 2026-11-21; the live
+    page now redirects to the reference's welcome page). Once POST object
+    uploads are served (BC-32; the route is not wired yet), a browser upload
+    takes the version that signs its form, `AWS4-HMAC-SHA256` for a form whose
+    `x-amz-algorithm` is that and `AWS` for any other, as its authentication
+    reads it (`op.AuthResult.FormSigV4`). An anonymous request has none.
+  - `s3:authType`: `REST-HEADER` for a request signed in its `Authorization`
+    header, by Signature Version 2 or 4, `REST-QUERY-STRING` for a presigned URL
+    and `POST` for a browser upload's form once BC-32 serves one: "Valid values:
+    REST-HEADER REST-QUERY-STRING POST", where the key restricts "incoming
+    requests to use a specific authentication method", such as "only the HTTP
+    Authorization header" (the same page). An anonymous request has none.
+  - `s3:x-amz-content-sha256`: for a request signed by Signature Version 4, in
+    its `Authorization` header or presigned, the payload hash its signature
+    covers, `x-amz-content-sha256` or `UNSIGNED-PAYLOAD` for a request that
+    sends none (`internal/auth/sigv4.go`, `expectedPayloadHash`): "for requests
+    that use the Authorization header, you add the x-amz-content-sha256 header
+    in the signature calculation and then set its value to the hash payload",
+    and "Valid value: UNSIGNED-PAYLOAD" (the same page). That page adds that
+    the key "doesn't support the x-amz-content-sha256 header as a query string
+    parameter" and gives no value for a presigned request; the S3 user guide's
+    page of the same keys for S3 on Outposts has a Deny of
+    `s3-outposts:x-amz-content-sha256` `UNSIGNED-PAYLOAD` that "denies any
+    uploads with unsigned payloads, such as uploads that are using presigned
+    URLs"
+    ([s3-outposts-bucket-policy-s3-sigv4-conditions.md:64](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/s3-outposts-bucket-policy-s3-sigv4-conditions.md?plain=1#L64)
+    in the S3 user guide's archived source). Every form whose payload the
+    verifier reads with no signature gives `UNSIGNED-PAYLOAD`, so that a Deny
+    on that value refuses each of them: a hash that contains
+    `UNSIGNED-PAYLOAD` and does not end in `TRAILER`, whose body nothing
+    verifies, as radosgw reads it (`op.PayloadUnsigned`), such as
+    `XUNSIGNED-PAYLOAD` or `UNSIGNED-PAYLOAD-X`, and
+    `STREAMING-UNSIGNED-PAYLOAD-TRAILER`, aws-chunked with unsigned chunks and
+    a trailing checksum (`op.PayloadUnsignedChunked`). Every other value is
+    reported as sent: a hash of the body, which the verifier checks; a signed
+    aws-chunked form, `STREAMING-AWS4-HMAC-SHA256-PAYLOAD` or its `-TRAILER`
+    form, whose chunk signatures the verifier checks; and any other value, for
+    which the verifier hashes the body or checks each chunk's signature.
+    Where Amazon's texts leave the value open, a Deny's condition on the key
+    is judged on each reading they allow, and holds where it holds on any
+    (`payloadHashOthers`, `internal/authz/env.go`): a presigned request is
+    read with that value and also without the key, as the page's silence on
+    the query form allows, and an unsigned form other than `UNSIGNED-PAYLOAD`
+    itself is read as `UNSIGNED-PAYLOAD` and also as sent, as "set its value
+    to the hash payload" allows. So a Deny of `StringEquals` or
+    `StringNotEquals` `UNSIGNED-PAYLOAD` refuses every presigned request and
+    every unsigned aws-chunked upload, and one of `StringEquals`
+    `STREAMING-UNSIGNED-PAYLOAD-TRAILER`, or `StringLike` `STREAMING-*`, refuses
+    the unsigned aws-chunked uploads it names but no presigned request that
+    sends no `x-amz-content-sha256`. This can refuse where Amazon S3, which
+    holds one of the readings, serves: `StringEquals` `UNSIGNED-PAYLOAD` on a
+    presigned request, where Amazon S3 may hold the key absent;
+    `StringNotEquals` `UNSIGNED-PAYLOAD` on every presigned request, whatever
+    Amazon S3 holds for it, and on a `STREAMING-UNSIGNED-PAYLOAD-TRAILER`
+    upload, where it may hold `UNSIGNED-PAYLOAD`; `StringEquals` or `StringLike`
+    naming `STREAMING-UNSIGNED-PAYLOAD-TRAILER` on that upload, where it may
+    hold `UNSIGNED-PAYLOAD`; and two conditions on the key that different
+    readings meet, which refuse together. A
+    request on any other route has none, nor has a check of
+    `s3:GetBucketObjectLockConfiguration` or
+    `s3:PutBucketObjectLockConfiguration`, the two S3 actions rgw-go checks
+    whose keys AWS's Service Authorization Reference for Amazon S3
+    (https://servicereference.us-east-1.amazonaws.com/v1/s3/s3.json, Version
+    v1.5, as "[radosgw sets few of the condition keys Amazon S3 sets on S3
+    requests](ceph-upstream-bugs.md#radosgw-sets-few-of-the-condition-keys-amazon-s3-sets-on-s3-requests)"
+    read it on 2026-11-15; mirrored at
+    [iam_definition.json](https://github.com/iann0036/iam-dataset/blob/78b22a950d5e7ec10d7174e22e9e1f4412a8e8f3/aws/iam_definition.json))
+    lists without it.
+  - `s3:x-amz-storage-class`: `x-amz-storage-class` as the request sends it,
+    the storage class an upload asks for
+    ([amazon-s3-policy-keys.md:244](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L244),
+    [:260](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L260)),
+    for the checks of the four actions the Service Authorization Reference
+    lists it for,
+    `s3:PutObject`, `s3:PutObjectAcl`, `s3:PutObjectVersionAcl` and
+    `s3:BypassGovernanceRetention`. A request that sends no
+    `x-amz-storage-class` has none.
+  - `s3:VersionId`: the version the check is on, the version a request asks
+    for by its version ID
+    ([amazon-s3-policy-keys.md:200](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L200),
+    [:227](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L227)),
+    for the checks of the version actions the Service Authorization Reference
+    lists it for, `s3:GetObjectVersion`, `s3:DeleteObjectVersion`, the version
+    ACL, tagging and attributes actions and `s3:GetObjectVersionTorrent`. For a
+    check of the request's own object it is the `versionId` parameter; for a
+    CopyObject's or UploadPartCopy's source, the version `x-amz-copy-source`
+    names, `null` for the null version; for a DeleteObjects key, the version
+    its document names. So a parameter a request adds does not stand for the
+    version of a source or a key, and a header a request has no use for, such
+    as an `x-amz-copy-source` on a GET, does not take the key away.
+
+  The S3 keys are set for the checks of S3's actions, and the three global
+  keys for every check, the missing-object check's `s3:ListBucket` among
+  them.
+
+  On Amazon S3's request context a negated operator over several values holds
+  only where the key's value matches none of them, on both releases: "When
+  multiple values are listed in a policy for negated matching condition
+  operators such as `StringNotEquals` and `DateNotEquals`, the effective
+  permissions work like a logical `AND`"
+  ([reference_policies_multi-value-conditions.md:36](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_multi-value-conditions.md?plain=1#L36)).
+  Squid's radosgw holds one where some value differs
+  ([rgw_iam_policy.cc:890-892](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L890-L892);
+  docs/ceph-upstream-bugs.md, "[Squid's negated condition operators hold when
+  any pair differs, and its Null ignores its
+  values](ceph-upstream-bugs.md#squids-negated-condition-operators-hold-when-any-pair-differs-and-its-null-ignores-its-values)"),
+  which its reading of radosgw's environment still applies. So on Squid a Deny
+  of `StringNotEquals` `s3:authType` `[REST-HEADER, REST-QUERY-STRING]` serves
+  the requests signed in the header and the presigned ones, as Tentacle's does,
+  and one of `StringNotEquals` over two values of a key radosgw holds refuses
+  as Squid's radosgw does. A typed negated operator over several values none
+  of which converts holds there on both releases, as on Tentacle. Values that
+  name policy variables keep the release's reading, which "A Deny's condition
+  holds where Amazon S3's evaluation or radosgw's holds" already extends.
+
+  rgw-go leaves these keys as radosgw does, absent, and a Deny's negated
+  operator on one still holds for every request its statement covers:
+
+  - `s3:signatureAge`, "the age in milliseconds of the request signature"
+    ([list_amazons3.md:76](https://github.com/awsdocs/amazon-s3-developer-guide/blob/e5e6bbd2771d39e8ce3736849548a94b98d5094b/doc_source/list_amazons3.md?plain=1#L76))
+    of a presigned URL
+    ([using-presigned-url.md:48](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/using-presigned-url.md?plain=1#L48)):
+    rgw-go authorizes without the signing time its authentication read.
+  - `s3:TlsVersion`
+    ([amazon-s3-policy-keys.md:288](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L288)):
+    rgw-go authorizes without the connection's TLS version, which a proxy that
+    terminates TLS does not pass on either.
+  - `s3:LocationConstraint`
+    ([amazon-s3-policy-keys.md:369](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L369)):
+    CreateBucket reads its document only once it is authorized, as radosgw's
+    does.
+  - `s3:x-amz-website-redirect-location`, a redirect location "for buckets
+    that are configured as static websites"
+    ([list_amazons3.md:91](https://github.com/awsdocs/amazon-s3-developer-guide/blob/e5e6bbd2771d39e8ce3736849548a94b98d5094b/doc_source/list_amazons3.md?plain=1#L91)):
+    the guide does not say which requests carry it.
+  - The global keys `aws:PrincipalArn`, `aws:PrincipalAccount`, `aws:userid`
+    outside a role session, `aws:ResourceAccount` and `aws:RequestedRegion`:
+    AWS gives their values for its own principals, accounts and Regions, and
+    no text for radosgw's users, accounts and zonegroups.
+
+  Under a Deny whose condition holds only on Amazon S3's request context,
+  rgw-go refuses requests radosgw serves. A Deny of `Bool`
+  `aws:SecureTransport` `false`, AWS's usual policy for refusing requests that
+  do not use TLS, refuses every request that reaches rgw-go over plain HTTP.
+  That includes one from a proxy that terminates TLS, unless
+  `rgw_trust_forwarded_https` is set and the proxy sends `Forwarded` with
+  `proto=https` or `X-Forwarded-Proto: https`; radosgw serves all of them. One
+  of `NumericGreaterThan` `aws:EpochTime` a past count of seconds refuses every
+  request, where radosgw's `aws:EpochTime` is no number. One of `StringEquals`
+  `s3:signatureversion` `AWS` refuses every request signed by Signature
+  Version 2, a browser upload's form included. One of `StringEquals`
+  `s3:authType` `REST-QUERY-STRING` refuses presigned URLs, and one of
+  `StringEquals` `s3:x-amz-content-sha256` `UNSIGNED-PAYLOAD` refuses every
+  request signed by Signature Version 4 whose payload no signature covers,
+  presigned uploads and unsigned aws-chunked uploads among them, which radosgw
+  serves. A browser upload, once BC-32 serves one, has no
+  `s3:x-amz-content-sha256`, so that Deny does not reach it; an operator who
+  wants unsigned uploads refused there too also denies `s3:authType` `POST`. One
+  of `StringNotEquals` `s3:x-amz-content-sha256` `UNSIGNED-PAYLOAD` refuses
+  every request but one signed in its header by Signature Version 4 whose
+  `x-amz-content-sha256` is `UNSIGNED-PAYLOAD` or absent; radosgw serves every
+  one of these requests. A Deny whose negated
+  operator names one of the keys holds only where the request's value fails
+  it: `StringNotEquals` `s3:authType` `REST-HEADER`
+  refuses presigned URLs and serves requests signed in the header, both of
+  which radosgw serves. The Deny still holds where radosgw's evaluation of its
+  environment holds: one written to radosgw's times, such as
+  `NumericGreaterThan` `aws:CurrentTime` a count of seconds, refuses as
+  radosgw's does, and an `IfExists` form or `Null` on a key radosgw lacks holds
+  as radosgw judges it, so a Deny of `StringNotEqualsIfExists` `s3:authType`
+  `REST-HEADER` refuses every request, as radosgw's does. Each condition is
+  judged on its own, as "A Deny's condition holds where Amazon S3's evaluation
+  or radosgw's holds" judges each, so a Deny whose one condition holds on
+  Amazon S3's request context alone and whose other holds on radosgw's alone
+  refuses, where neither would.
+
+  The s3-tests `test_bucket_policy_deny_secure_transport_false`,
+  `test_bucket_policy_deny_request_time_amazon_forms`,
+  `test_bucket_policy_deny_signature_version`,
+  `test_bucket_policy_deny_auth_type`,
+  `test_bucket_policy_deny_unsigned_payload`,
+  `test_bucket_policy_deny_storage_class` and
+  `test_bucket_policy_deny_version_id` check the Deny on each key.
 
 ### Bucket metadata differences
 

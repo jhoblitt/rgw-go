@@ -145,6 +145,7 @@ var _ = Describe("Verifier.AuthenticateBrowserUpload", func() {
 			Expect(res.Identity.Anonymous).To(BeFalse())
 			Expect(res.Identity.Unverified).To(BeFalse())
 			Expect(res.Route).To(Equal(op.RouteBrowserUpload))
+			Expect(res.FormSigV4).To(BeFalse(), "a SigV2 form")
 			Expect(res.PayloadSHA256).To(Equal("UNSIGNED-PAYLOAD"))
 			Expect(res.Body).To(BeNil(), "the form's body is the request's own")
 			Expect(res.QueryMeta).To(BeEmpty())
@@ -185,6 +186,7 @@ var _ = Describe("Verifier.AuthenticateBrowserUpload", func() {
 				res, err := v.AuthenticateBrowserUpload(ctx, creds)
 				Expect(err).NotTo(HaveOccurred(), "algorithm %q", alg)
 				Expect(res.Identity.AccessKey).To(Equal(accessKeyOf("alice")), "algorithm %q", alg)
+				Expect(res.FormSigV4).To(BeFalse(), "algorithm %q", alg)
 			}
 			creds := aliceV4()
 			creds.Algorithm = "aws4-hmac-sha256"
@@ -245,6 +247,7 @@ var _ = Describe("Verifier.AuthenticateBrowserUpload", func() {
 			Expect(res.Identity.User.UserID).To(Equal(meta.UserID{ID: "example"}))
 			Expect(res.Identity.AccessKey).To(Equal(awsPostKey))
 			Expect(res.Route).To(Equal(op.RouteBrowserUpload))
+			Expect(res.FormSigV4).To(BeTrue(), "a SigV4 form")
 		})
 
 		It("signs as these specs do: their signer reproduces AWS's example", func() {

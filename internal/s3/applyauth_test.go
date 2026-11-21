@@ -55,6 +55,15 @@ var _ = Describe("ApplyAuth", func() {
 		Expect(r.Trailers).To(BeNil())
 	})
 
+	It("gives a browser upload the signature version of its form", func() {
+		r := &op.Request{}
+		s3.ApplyAuth(r, &op.AuthResult{Route: op.RouteBrowserUpload, FormSigV4: true})
+		Expect(r.AuthRoute).To(Equal(op.RouteBrowserUpload))
+		Expect(r.FormSigV4).To(BeTrue(), "a SigV4 form")
+		s3.ApplyAuth(r, &op.AuthResult{Route: op.RouteBrowserUpload})
+		Expect(r.FormSigV4).To(BeFalse(), "a SigV2 form")
+	})
+
 	It("gives the request its route, and leaves a header-signed SigV2 request's query as it is", func() {
 		r := &op.Request{Query: url.Values{"x-amz-meta-b": {"2"}}}
 		s3.ApplyAuth(r, &op.AuthResult{Route: op.RouteSigV2Header})
