@@ -34,7 +34,7 @@ The set's files:
 
 | File | Unit | Tasks |
 |---|---|---|
-| `00-index.md` | this index, and the shared tasks S1 to S16 | 16 |
+| `00-index.md` | this index, and the shared tasks S1 to S18 | 18 |
 | `V-versioning.md` | the OLH protocol, versioned ops, ListObjectVersions, MFA delete | V0-V24 |
 | `L-object-lock.md` | object lock: configuration, retention, legal hold, enforcement | L1-L5b |
 | `C-lifecycle.md` | lifecycle configuration and the worker | C1-C15 |
@@ -680,9 +680,284 @@ merged (PP-12).
   repeated-key entry above.
 - **Depends on:** S13. **PR:** one. **Brief:** about 55 lines.
 
+### Task S17: a Deny reads s3:signatureAge, s3:TlsVersion and s3:LocationConstraint
+
+Found by S14's task review (Important 2), and numbered here before S14 merged (PP-12).
+
+- **Layer:** auth, the S3 handler, op and authz, in one slice per key. **Files:** (a) the auth
+  result and the request (`internal/op/identity.go`, `internal/op/request.go`), the verifier's
+  results (`internal/auth/verifier.go`, `internal/auth/sigv4.go`,
+  `internal/auth/browserupload.go`, `internal/op/browserupload.go`) and `s3.ApplyAuth`
+  (`internal/s3/handler.go`); (b) `s3.ParseRequest` (`internal/s3/request.go`) and the request;
+  (c) CreateBucket (`internal/op/bucketops.go`, `internal/s3/bucket.go`) and the request; for
+  each, S14's Deny-only context in `internal/authz/env.go`; their specs; `docs/differences.md`;
+  `docs/ceph-upstream-bugs.md`. **Cluster:** no.
+- **Security boundary:** policy evaluation is authorization, and (c) parses a client's document
+  before the request is authorized; adversarial review applies (PP-14).
+- **Why:** S14 leaves the three keys absent, as radosgw does, because rgw-go does not hold their
+  values when it authorizes (S14's report, ruling 3):
+  - SigV4's signing time stays inside auth. `parseV4Query` and `parseV4Header` parse
+    `X-Amz-Date` into private credentials (`internal/auth/sigv4.go:137-150`, `:191-195`), and
+    `op.AuthResult` (`internal/op/identity.go:92-139`), which `s3.ApplyAuth` copies into the
+    request (`internal/s3/handler.go:540-562`), carries no time.
+  - The request holds TLS as a bool (`internal/op/request.go:81`), set from
+    `http.Request.TLS != nil` (`internal/s3/request.go:109`). v20.2.4's frontend holds the
+    version as `TLS_VERSION`, for bucket logging alone
+    ([rgw_asio_frontend.cc:326-334](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_frontend.cc#L326-L334)).
+  - CreateBucket reads its `CreateBucketConfiguration` in `Params`, which Execute runs once
+    VerifyPermission has passed (`internal/op/bucketops.go:139-155`, `:253-258`;
+    `internal/s3/bucket.go:109-126`), as radosgw's `execute` calls `get_params` after
+    `verify_permission`
+    ([rgw_op.cc:3215-3244](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3215-L3244)
+    and [rgw_op.cc:3458-3462](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3458-L3462),
+    [rgw_op.cc:3443-3472](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3443-L3472)
+    and [rgw_op.cc:3686-3690](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L3686-L3690)).
+
+  radosgw sets none of the three at either tag: a search of its rgw sources finds
+  `s3:LocationConstraint` and `s3:signatureAge` only in rows its keyword table comments out
+  ([rgw_iam_policy_keywords.gperf:110](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy_keywords.gperf#L110),
+  [:116](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy_keywords.gperf#L116);
+  [rgw_iam_policy_keywords.gperf:111](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy_keywords.gperf#L111),
+  [:117](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy_keywords.gperf#L117))
+  and `s3:TlsVersion` nowhere. So AWS's own Denies are judged on an absent key. The one that
+  denies "any Amazon S3 presigned URL request ... if the signature is more than 10 minutes old"
+  ([using-presigned-url.md:48](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/using-presigned-url.md?plain=1#L48),
+  [:62](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/using-presigned-url.md?plain=1#L62))
+  and the one of TLS below 1.2 never hold, and the one of every Region but one refuses every
+  CreateBucket, by S9's absent-key rule.
+- **Behaviour:** each key is visible to a Deny alone, through S14's Deny-only context
+  (`policy.Env.SetForDeny`), so every Allow answer is unchanged (S14's Behaviour 3). The keys
+  go on the actions S14 puts its S3 keys on, every `s3:` action rgw-go checks (S14's report,
+  ruling 5), but for `s3:LocationConstraint`.
+  1. **(a) `s3:signatureAge`** is "the length of time, in milliseconds", for "Presigned URLs" and
+     "Presigned POST", and "In Signature Version 2, this value is always set to 0" (the S3 API
+     Reference's
+     [bucket-policy-s3-sigv4-conditions](http://web.archive.org/web/20260520053457/https://docs.aws.amazon.com/AmazonS3/latest/API/bucket-policy-s3-sigv4-conditions.html)
+     as archived on 2026-05-20, read 2026-11-21); "the age in milliseconds of the request
+     signature"
+     ([list_amazons3.md:76](https://github.com/awsdocs/amazon-s3-developer-guide/blob/e5e6bbd2771d39e8ce3736849548a94b98d5094b/doc_source/list_amazons3.md?plain=1#L76)
+     in the S3 developer guide's archived source).
+     - **Seam:** `op.AuthResult` carries the version of the signature auth verified and, for
+       SigV4, its signing time, and `s3.ApplyAuth` copies both into `op.Request` as it copies
+       `Route`. The verifier sets them where it builds its result
+       (`internal/auth/verifier.go:167-170`), from the time it parsed. `AuthenticateBrowserUpload`
+       sets them from the form's algorithm and its `x-amz-date`, which
+       `op.BrowserUploadCredentials` gains (`internal/op/browserupload.go:14-30`), parsed as
+       SigV4's basic form (`internal/auth/encoding.go:130`) and refused nowhere, since radosgw
+       checks it nowhere (`internal/auth/browserupload.go:23-28`).
+     - **Values:** whole milliseconds, in decimal, from the signing time to the clock reading S14
+       takes for `aws:CurrentTime`: a SigV4 presigned URL's from its `X-Amz-Date`; a SigV4 form's
+       from its `x-amz-date`, a field the form's signed policy must name, since BC-30's `Check`
+       refuses a field no condition checked (`internal/postpolicy/policy.go:194-221`,
+       `internal/postpolicy/env.go:49-61`); `0` for a SigV2 presigned URL and a SigV2 form. A
+       SigV4 form whose `x-amz-date` does not parse, which an uploader can send only where the
+       signed policy admits it, gives none. A route Amazon does not name gets none, as radosgw
+       leaves it (S14's Behaviour 2): the header route of either version, an anonymous request
+       and an unknown route.
+     - **A signing time in the future,** which a presigned SigV4 URL may carry since auth checks
+       no skew on that route (`internal/auth/sigv4.go:177-178`), counts by its distance from the
+       clock reading. A Deny on `NumericGreaterThan` then refuses a URL dated further ahead than
+       its bound as it refuses one signed longer ago, so whatever date a URL names, such a Deny
+       serves it only within the bound of that date. No Amazon text read gives a value there.
+     - POST object is not served until BC-32 and BC-33 (`internal/s3/postobject.go:10`). Whichever
+       of (a) and BC-32 lands second fills the credentials' `x-amz-date` from the form.
+  2. **(b) `s3:TlsVersion`** is "the TLS version used by the client", compared as a number:
+     Amazon's examples deny "lower than 1.2, for example, 1.1 or 1.0" under `NumericLessThan`
+     `1.2` and allow "higher than 1.1, for example, 1.2, 1.3"
+     ([amazon-s3-policy-keys.md:288](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L288),
+     [:291](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L291),
+     [:306-307](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L306-L307),
+     [:316](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L316)).
+     - **Seam:** `op.Request` carries the negotiated version, which `ParseRequest` sets from
+       `http.Request.TLS.Version` beside the bool.
+     - **Value:** the version as `major.minor`, `1.2` or `1.3`, the two the frontend negotiates.
+     - **None without TLS.** A plain-HTTP request carries no version, and nor does one a
+       TLS-terminating proxy forwards, even under `rgw_trust_forwarded_https`, which makes
+       `aws:SecureTransport` true from `Forwarded` or `X-Forwarded-Proto`
+       (`internal/authz/env.go:232-244`) but passes no version. No Amazon text read gives a value
+       for a request without TLS. So the Deny of TLS below 1.2 refuses neither, the TLS-only
+       Deny on `aws:SecureTransport` being the one that refuses plain HTTP (S14), and a negated
+       form, such as `NumericNotEquals` `1.3`, refuses both by S9's absent-key rule.
+     - **Today the Deny of TLS below 1.2 never fires,** on rgw-go or radosgw: the key is absent
+       and `NumericLessThan` is not negated. What keeps TLS 1.0 and 1.1 out is the frontend's
+       floor, TLS 1.2, which rgw-go sets itself whatever `ssl_options` says
+       (`internal/frontend/tls.go:39-42`; the one TLS listener, `internal/frontend/server.go:49`,
+       `:163`), not Go's default. The task keeps that floor; (b) lets the policy see the version
+       above it.
+  3. **(c) `s3:LocationConstraint`** is "a specific Region"
+     ([list_amazons3.md:61](https://github.com/awsdocs/amazon-s3-developer-guide/blob/e5e6bbd2771d39e8ce3736849548a94b98d5094b/doc_source/list_amazons3.md?plain=1#L61)),
+     the constraint a CreateBucket's configuration names: Amazon's example grants
+     `s3:CreateBucket` under `StringLike` `sa-east-1` and denies it under `StringNotLike`, "a
+     create bucket request is denied if the location constraint is not `sa-east-1`"
+     ([amazon-s3-policy-keys.md:351](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L351),
+     [:369](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L369),
+     [:380](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L380),
+     [:403-404](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L403-L404)).
+     - **Order:** CreateBucket reads and parses its document before its s3:CreateBucket check
+       and after its anonymous refusal (`internal/op/bucketops.go:145-147`), so an anonymous
+       request's body stays unread, as radosgw's does. The read keeps its bounds, the
+       `rgw_max_put_param_size` of `readParamBody` (`internal/s3/bucket.go:149-174`) and S11's.
+       PutObjectRetention is the pattern (`internal/op/objectretention.go:101-158`): a document
+       that does not read or parse sets no key, and its error is kept and answered where
+       `Params` answers it today, after the name and ACL checks (`internal/s3/bucket.go:95-118`).
+     - **Seam:** `op.Request` carries the constraint for the environment, as it carries `List`
+       and `Lock` (`internal/op/request.go:120-126`), set before the s3:CreateBucket check; the op
+       keeps the parsed document, or its error, for `Params`.
+     - **Value:** the zonegroup the constraint names, the text before a `:`, the part that picks
+       the bucket's zonegroup (`internal/s3/bucket.go:120-126`,
+       `internal/op/bucketops.go:398-411`), so that a Deny of one zonegroup is not passed by
+       naming a placement after it. None for a request with no document, or with a constraint
+       absent or empty, which creates the bucket in the gateway's own zonegroup. Set for
+       s3:CreateBucket alone, the one rgw-go action of the two the Service Authorization
+       Reference lists the key for (`docs/ceph-upstream-bugs.md`, "radosgw sets few of the
+       condition keys Amazon S3 sets on S3 requests"), so the further checks a CreateBucket
+       makes, s3:PutBucketAcl among them (`internal/op/bucketops.go:259-273`), do not carry it.
+     - **Error precedence, a `docs/differences.md` decision:** a malformed document under a Deny
+       whose condition holds on the key's absence, a negated operator by S9's rule, is refused
+       403 AccessDenied, where radosgw, whose Deny does not hold on an absent key, answers 400
+       InvalidArgument, as rgw-go answers it today (`internal/s3/bucket.go:238-249`). Every other
+       answer keeps radosgw's order. Rejected: answering the 400 before authorization, which
+       would tell a requester its policies refuse whether its document parses, and reorder
+       every refused request.
+- **Specs:** per release, in a Deny and in an Allow statement, each Allow answer unchanged:
+  - (a) under a bucket Deny of s3:GetObject on `NumericGreaterThan` `s3:signatureAge` `600000`:
+    a SigV4 presigned GET dated 11 minutes ago refused, one dated now served, one dated 11
+    minutes ahead refused; a SigV2 presigned GET, a header-signed GET of either version and an
+    anonymous GET served. Under `NumericEquals` `0` the SigV2 presigned GET refused; under
+    `NumericNotEquals` `0` a header-signed GET refused, the key absent. Bounds of `1000` and
+    `2000` against a URL 1.5 s old, holding and not (milliseconds). The auth result's version
+    and time on each route, a SigV4 form's from its `x-amz-date`, none for one that does not
+    parse, a SigV2 form's version alone. An Allow on `NumericLessThan` `600000` as the only
+    grant refuses every route, as now.
+  - (b) through `ParseRequest` and the evaluator, over TLS 1.2 and TLS 1.3 (the client's
+    `MaxVersion`), over plain HTTP, and over plain HTTP from a trusted proxy that says https:
+    under `NumericLessThan` `1.2` all served; under `NumericLessThan` `1.3` TLS 1.2 alone
+    refused; under `NumericNotEquals` `1.3` TLS 1.2, plain and proxied refused. An Allow on
+    `NumericGreaterThan` `1.1` as the only grant refuses all, as now.
+  - (c) under an identity Deny of s3:CreateBucket on `StringNotLike` `s3:LocationConstraint`
+    the zonegroup's api name (CreateBucket reads the identity's policies alone,
+    `internal/op/bucketops.go:148`): that name served, and with a placement after it; another
+    zonegroup's refused 403, ahead of the location error it gets today; no document, an empty
+    constraint and Tentacle's document with a `BucketIndex` and no constraint refused. Under
+    `StringEquals` another zonegroup's name, that name with a placement refused. A malformed
+    document refused 403 under the `StringNotLike` Deny, and 400 InvalidArgument with no Deny
+    and under the `StringEquals` one. An anonymous CreateBucket refused 403 with its body
+    unread. The s3:PutBucketAcl check of a CreateBucket with `x-amz-acl` `public-read` without
+    the key. An Allow on `StringLike` the name as the only grant refuses every create, as now.
+- **s3-tests (PP-19):**
+  - (a): a bucket Deny of s3:GetObject on `NumericLessThan` `s3:signatureAge` `600000`, which
+    refuses a fresh signature, refuses a SigV4 and a SigV2 presigned GET and serves a
+    header-signed one; one on `NumericEquals` `0` refuses the SigV2 presigned GET. radosgw
+    serves all of them, so the test is `fails_on_rgw`.
+  - (b): a Deny on `NumericLessThan` `s3:TlsVersion` `1.4` refuses a GET over TLS, which radosgw
+    serves, so `fails_on_rgw`. The test skips on a plain-HTTP run, as the harness's is
+    (`hack/s3tests/run.sh:273`).
+  - (c) needs an identity policy, which s3-tests sets through IAM under the `user_policy`
+    marker, and the harness leaves IAM out until phase 3 (`hack/s3tests/excluded-markers.txt:49-55`).
+    Its test is written with that marker and `fails_on_rgw`, and runs once phase 3 lifts it.
+  - Each PR that adds a test moves the pin, with the known-differences lines its run needs.
+- **Exclusions and registry:** S14's `docs/differences.md` entry, "A Deny reads the condition
+  keys Amazon S3 sets", takes each key with its value, and drops it from the keys it leaves
+  absent; (a)'s value for a future signing time and (c)'s error precedence are recorded there.
+  The rgw-go line of the registry's "radosgw sets few of the condition keys Amazon S3 sets on S3
+  requests" names the keys set.
+- **Depends on:** S14. **PR split:** (a), (b) and (c), each with its specs, its s3-test and pin
+  move, and its differences and registry edits, in any order. **Brief:** about 110 lines.
+
+### Task S18: a Date Deny reads every W3C time form
+
+Found by S14's adversarial review (outside the PR, older than it), and numbered here before S14
+merged (PP-12).
+
+- **Layer:** policy (`internal/policy`). **Files:** a Deny's evaluation of the Date operators in
+  `internal/policy/condition.go` and its specs; `docs/differences.md`;
+  `docs/ceph-upstream-bugs.md`. **Cluster:** no.
+- **Security boundary:** policy evaluation is authorization; adversarial review applies (PP-14).
+- **Why:**
+  - A Deny whose Date condition is written with a UTC offset never holds: under
+    `DateGreaterThan` `aws:CurrentTime` `2026-01-01T00:00:00+00:00`, or `-05:00`, a GetObject is
+    served on main and at S14's head, on both releases (S14's adversarial review, probe P5).
+    For a key the request holds as written, a Deny's Date operators convert through radosgw's
+    reading (`internal/policy/condition.go:341-352`): `policy.AsDate` ends a time only at an
+    upper-case `Z` (`internal/policy/convert.go:84-102`, `internal/iso8601/iso8601.go:84-86`),
+    and the typed operators skip a condition value it cannot convert and are false where it
+    cannot convert the key's value (`internal/policy/condition.go:1290-1327`).
+  - radosgw reads them the same way at both tags: `as_date` hands a value that is not a number
+    to `from_iso_8601`, whose `time_end` takes `Z` alone
+    ([rgw_iam_policy.h:384-401](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.h#L384-L401),
+    [rgw_iam_policy.h:403-420](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L403-L420);
+    [iso_8601.cc:74-78](https://github.com/ceph/ceph/blob/v19.2.7/src/common/iso_8601.cc#L74-L78),
+    [iso_8601.cc:74-78](https://github.com/ceph/ceph/blob/v20.2.4/src/common/iso_8601.cc#L74-L78)),
+    and its Date operators, `DateEquals` to `DateGreaterThanEquals`, skip such a value
+    ([rgw_iam_policy.cc:940-959](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L940-L959),
+    [rgw_iam_policy.cc:961-979](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L961-L979)).
+    The registry's "radosgw's date conditions read no UTC offset" records it.
+  - IAM takes "one of the W3C implementations of the ISO 8601 date formats" or epoch time
+    ([reference_policies_elements_condition_operators.md:131](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L131)),
+    whose time zone designator is "Z or +hh:mm or -hh:mm"
+    ([W3C-NOTE-datetime.html:165](https://github.com/exelearning/iteexe/blob/3f4452780a4b2cfd2bc9d9152e92dfd86d2ff0cc/exe/webui/docs/W3C-NOTE-datetime.html#L165),
+    as `docs/differences.md` cites the note), and its policy checks name
+    `YYYY-MM-DDThh:mm:ssTZD (1997-07-16T19:20:30+01:00)`
+    ([access-analyzer-reference-policy-checks.md:1963](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/access-analyzer-reference-policy-checks.md?plain=1#L1963)).
+  - rgw-go already reads those forms as Amazon S3 does, but only for a key the request holds in
+    another case than the condition's (S10): `amazonAnswer` and its `amazonDates`
+    (`internal/policy/condition.go:373-450`, `:761-794`), whose `amazonInstantValue` reads a
+    date and time with an offset as the instant it names (`:863-916`).
+- **Behaviour:**
+  1. In a Deny, a Date operator over a key the request holds as written holds where radosgw's
+     evaluation holds, or where Amazon S3's answer over that key, S10's `amazonAnswer`, is
+     defined and holds. That reads an offset in the condition's values and in the key's value
+     alike, so a request's or an object's tag written with one is read too, and `DateNotEquals`
+     holds when no value names the key's instant.
+  2. Where Amazon S3's answer is undefined, radosgw's evaluation alone decides, as it does for
+     every other typed operator on a key held as written. It is undefined in the cases
+     `docs/differences.md`'s "A Deny's condition key names match whatever their case" lists:
+     where the readings of a date without a time, or of four digits, differ; for a value in no
+     W3C form; and for a key holding several values. So the task adds a hold only where the IAM
+     text decides one. It differs from the other-case path, where a condition with no answer
+     holds, because there radosgw finds no key.
+  3. **Which forms hold:** epoch seconds and every W3C form: a date and time with `Z`,
+     `+hh:mm` or `-hh:mm`, to the minute, to the second or with a fraction of it; and a date, a
+     year and month or a year, which Amazon S3's answer reads as any instant of it, as
+     `docs/differences.md` says. A lower-case `t` or `z` is in none of them. It has no Amazon
+     answer, and radosgw converts nothing that holds one, so a condition does not hold on such
+     a value, in a Deny as in an Allow, on either gateway. The policy checks' wider "YYYY-MM-DD
+     or other ISO 8601 date/time format"
+     ([access-analyzer-reference-policy-checks.md:2198](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/access-analyzer-reference-policy-checks.md?plain=1#L2198))
+     names no further form. Rejected: holding such a condition, as the other-case path holds one
+     with no answer, which would refuse every request at every time for one mistyped letter;
+     and reading a lower-case `z` as `Z`, a form no Amazon text names.
+  4. An Allow keeps radosgw's evaluation, as S9 keeps it.
+- **Specs:** per release, in a Deny and in an Allow statement, under each of the six Date
+  operators, on `aws:CurrentTime` and `aws:EpochTime` in S14's Deny context and in radosgw's
+  environment, and on a request tag:
+  - a condition value with `Z`, `+00:00`, `-05:00`, and an offset that moves the instant across
+    the request's time (a clock face ahead of it naming an instant behind it), each to the
+    minute, to the second and with a fraction;
+  - a lower-case `t` and a lower-case `z`, holding in neither statement;
+  - a date alone, four digits and epoch seconds, unchanged;
+  - the key's value written with an offset; the same key in another case, unchanged (S10);
+  - `DateNotEquals` whose only value has an offset, which radosgw's half holds on Tentacle and
+    not on Squid;
+  - every Allow answer unchanged.
+- **s3-tests (PP-19):** a bucket Deny of s3:GetObject on `DateGreaterThan` `aws:CurrentTime` an
+  hour before the request, written with `+00:00`, with `-05:00`, and as a clock face ahead of
+  the request whose offset names that past instant, each refused, where radosgw serves them, so
+  `fails_on_rgw`; the same instant with a lower-case `z`, served by both. The task moves the pin
+  with the known-differences lines.
+- **Exclusions and registry:** `docs/differences.md`: the entry "A Deny's condition holds where
+  Amazon S3's evaluation or radosgw's holds" adds the Date operators to the cases where a key
+  held as written takes Amazon S3's answer, and says a lower-case `t` or `z` holds nowhere; "A
+  Deny's condition key names match whatever their case" points to it. No registry entry is
+  added: radosgw reads the offset forms as `policy.AsDate` does, which "radosgw's date
+  conditions read no UTC offset" records at both tags, and that entry's rgw-go line says a Deny
+  reads them for a key held as written too.
+- **Depends on:** S14, which changes the same Deny evaluation (`policy.Statement`'s conditions
+  and `policy.Condition.EvalFor`). **PR:** one. **Brief:** about 50 lines.
+
 ## Order
 
-1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, S6 once V2 lands, S7 once V10, BC-17, BC-23, BC-10 and BC-28a land, S8 and S11 at once, S9 and S10 once L7 lands, S12 once S8 lands, S13 once S12 lands, S14 once S9 lands, and S15 and S16 once S13 lands.
+1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, S6 once V2 lands, S7 once V10, BC-17, BC-23, BC-10 and BC-28a land, S8 and S11 at once, S9 and S10 once L7 lands, S12 once S8 lands, S13 once S12 lands, S14 once S9 lands, S15 and S16 once S13 lands, and S17 and S18 once S14 lands.
 2. **Then the units in parallel**, each in its own file's waves. V's foundation (V0 to V3b) comes first among the units, because L and C consume its OLH seams. B and WP start with S2, and the T and SM units start at once. Within the waves:
    - The cluster tasks of every unit run one at a time.
    - The recording tasks, which append to the parity ledgers, land one at a time through the controller.
