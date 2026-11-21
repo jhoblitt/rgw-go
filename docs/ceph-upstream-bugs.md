@@ -537,17 +537,17 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw reads PutObjectRetention's document before it sends 100 Continue](#radosgw-reads-putobjectretentions-document-before-it-sends-100-continue) | pending | pending | ✓ |
 | [radosgw's negated condition operators are false on an absent key](#radosgws-negated-condition-operators-are-false-on-an-absent-key) | pending | pending | ✓ |
 | [radosgw matches condition key names case-sensitively](#radosgw-matches-condition-key-names-case-sensitively) | pending | pending | ✓ |
-| [radosgw evaluates a repeated x-amz-tagging key as one multivalued s3:RequestObjectTag condition key](#radosgw-evaluates-a-repeated-x-amz-tagging-key-as-one-multivalued-s3requestobjecttag-condition-key) | pending | pending | ✓ |
+| [radosgw evaluates a repeated x-amz-tagging key as one multivalued s3:RequestObjectTag condition key](#radosgw-evaluates-a-repeated-x-amz-tagging-key-as-one-multivalued-s3requestobjecttag-condition-key) | [#58373](https://tracker.ceph.com/issues/58373), [#73329](https://tracker.ceph.com/issues/73329) | pending | ✓ |
 | [radosgw's policy patterns are fnmatch patterns](#radosgws-policy-patterns-are-fnmatch-patterns) | pending | pending | ✓ |
 | [radosgw's date conditions read no UTC offset](#radosgws-date-conditions-read-no-utc-offset) | pending | pending | ✓ |
 | [radosgw's base64 decoder takes the URL-safe alphabet and ignores what follows the padding](#radosgws-base64-decoder-takes-the-url-safe-alphabet-and-ignores-what-follows-the-padding) | none | none | ✓ |
 | [radosgw-admin mfa check names the serial number when --totp-pin is missing](#radosgw-admin-mfa-check-names-the-serial-number-when---totp-pin-is-missing) | pending | pending | ✓ |
 | [radosgw skips a bucket's default encryption for a write that sends an empty encryption header](#radosgw-skips-a-buckets-default-encryption-for-a-write-that-sends-an-empty-encryption-header) | [#79506](https://tracker.ceph.com/issues/79506), [#80258](https://tracker.ceph.com/issues/80258), [#80260](https://tracker.ceph.com/issues/80260) | [ceph/ceph#71073](https://github.com/ceph/ceph/pull/71073), [ceph/ceph#71534](https://github.com/ceph/ceph/pull/71534), [ceph/ceph#71535](https://github.com/ceph/ceph/pull/71535) | ✓ |
 | [radosgw's CopyObject ignores x-amz-tagging-directive](#radosgws-copyobject-ignores-x-amz-tagging-directive) | pending | pending | ✓ |
-| [radosgw's CopyObject and CreateMultipartUpload evaluate s3:PutObject without the request's ACL and tag condition keys](#radosgws-copyobject-and-createmultipartupload-evaluate-s3putobject-without-the-requests-acl-and-tag-condition-keys) | pending | pending | ✓ |
+| [radosgw's CopyObject and CreateMultipartUpload evaluate s3:PutObject without the request's ACL and tag condition keys](#radosgws-copyobject-and-createmultipartupload-evaluate-s3putobject-without-the-requests-acl-and-tag-condition-keys) | [#72646](https://tracker.ceph.com/issues/72646) | [ceph/ceph#70051](https://github.com/ceph/ceph/pull/70051), [ceph/ceph#70681](https://github.com/ceph/ceph/pull/70681) | ✓ |
 | [radosgw adds an empty s3:x-amz-acl key to a PutObject that sends no x-amz-acl](#radosgw-adds-an-empty-s3x-amz-acl-key-to-a-putobject-that-sends-no-x-amz-acl) | pending | pending | ✓ |
-| [radosgw's CopyObject stores an x-amz-tagging header it does not validate](#radosgws-copyobject-stores-an-x-amz-tagging-header-it-does-not-validate) | pending | pending | ✓ |
-| [radosgw's typed condition operators read one value of a repeated tag key](#radosgws-typed-condition-operators-read-one-value-of-a-repeated-tag-key) | pending | pending | ✓ |
+| [radosgw's CopyObject stores an x-amz-tagging header it does not validate](#radosgws-copyobject-stores-an-x-amz-tagging-header-it-does-not-validate) | [#72646](https://tracker.ceph.com/issues/72646) | [ceph/ceph#70051](https://github.com/ceph/ceph/pull/70051), [ceph/ceph#70681](https://github.com/ceph/ceph/pull/70681) | ✓ |
+| [radosgw's typed condition operators read one value of a repeated tag key](#radosgws-typed-condition-operators-read-one-value-of-a-repeated-tag-key) | [#58373](https://tracker.ceph.com/issues/58373), [#73329](https://tracker.ceph.com/issues/73329) | pending | ✓ |
 | [radosgw's replay of an OLH log removes a version that a later entry of the same log links](#radosgws-replay-of-an-olh-log-removes-a-version-that-a-later-entry-of-the-same-log-links) | pending | [ceph/ceph#67661](https://github.com/ceph/ceph/pull/67661) (partial) |  |
 | [radosgw never sets aws:SecureTransport to false](#radosgw-never-sets-awssecuretransport-to-false) | none; [#42521](https://tracker.ceph.com/issues/42521) is related | none |  |
 | [radosgw sets few of the condition keys Amazon S3 sets on S3 requests](#radosgw-sets-few-of-the-condition-keys-amazon-s3-sets-on-s3-requests) | pending | pending | ✓ |
@@ -35283,7 +35283,8 @@ Every new entry adds its row to this table, in document order.
   does. In a Deny on the key in another ASCII case, which the IAM User Guide
   gives no answer for there, it holds on both releases (`docs/differences.md`,
   "A Deny's condition key names match whatever their case").
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** pending: sent to rgw-bug-reproduction. The root, a tag set
+  that keeps a repeated key, is reported as [#58373](https://tracker.ceph.com/issues/58373) and [#73329](https://tracker.ceph.com/issues/73329).
 - **Found:** phase 2 task S10's adversarial review, 2026-11-19, probing a
   request tag key repeated in another case; derived from the source, not
   reproduced on a cluster.
@@ -35745,8 +35746,12 @@ Every new entry adds its row to this table, in document order.
   carry their keys on all three writes too (`docs/differences.md`, "A
   write's ACL and tag headers need s3:PutObjectAcl and
   s3:PutObjectTagging").
-- **Upstream:** pending; prior art not searched: sent to
-  rgw-bug-reproduction.
+- **Upstream:** in part: [ceph/ceph#70051](https://github.com/ceph/ceph/pull/70051) ([#72646](https://tracker.ceph.com/issues/72646)), at main e82ccd0873677ffd0cac1d081ecdea512dbc05bd, backported in
+  [ceph/ceph#70681](https://github.com/ceph/ceph/pull/70681) for v21.1.2, adds an `s3:RequestObjectTag/<key>` for each
+  tag a copy stores, its header's or its source's, and requires
+  s3:PutObjectTagging when it stores any. It adds no ACL or grant key to
+  a copy, and changes nothing for CreateMultipartUpload. Neither v19.2.7
+  nor v20.2.4 has it. Sent to rgw-bug-reproduction.
 - **Found:** phase 2 task S12's adversarial review, 2026-11-15, probing which
   condition keys the s3:PutObject check of each write carries; derived from
   the source and seen in rgw-go, not reproduced on a cluster.
@@ -35756,7 +35761,7 @@ Every new entry adds its row to this table, in document order.
 - **Kind:** defect, possibly security-relevant, conditional on a policy that
   conditions s3:PutObject, s3:PutObjectAcl, s3:PutObjectVersionAcl or
   s3:PutBucketAcl on `s3:x-amz-acl` with `Null` or an `IfExists` operator.
-  Unreproduced: derived from the source.
+  Reproduced on a running radosgw at v19.2.7 and v20.2.4.
 - **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
   - `RGWHandler_REST_S3::init` sets `s->canned_acl` only when the request
     sends `x-amz-acl`, and it is otherwise the empty string
@@ -35797,8 +35802,8 @@ Every new entry adds its row to this table, in document order.
   `x-amz-acl`, or sends it empty, has no such key, as on radosgw.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task S13's review, 2026-11-20, checking which keys a
-  write that sends no ACL header carries; derived from the source, not
-  reproduced on a cluster.
+  write that sends no ACL header carries; derived from the source, then
+  reproduced on a running radosgw at both releases.
 
 ## radosgw's CopyObject stores an x-amz-tagging header it does not validate
 
@@ -35851,7 +35856,12 @@ Every new entry adds its row to this table, in document order.
   `formatXattr` would rewrite (`replaceTags`, `internal/s3/copyobject.go`;
   `docs/differences.md`, "CopyObject and CreateMultipartUpload evaluate
   s3:PutObject with the keys of the ACL and the tags they set").
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** [#72646](https://tracker.ceph.com/issues/72646), fixed for a copy whose
+  `x-amz-tagging-directive` is REPLACE by
+  [ceph/ceph#70051](https://github.com/ceph/ceph/pull/70051), at main e82ccd0873677ffd0cac1d081ecdea512dbc05bd, which then parses
+  `x-amz-tagging` through `set_from_string` and refuses a header that does not
+  parse; backported in [ceph/ceph#70681](https://github.com/ceph/ceph/pull/70681), which v21.1.2 carries. Neither v19.2.7
+  nor v20.2.4 has it. Sent to rgw-bug-reproduction.
 - **Found:** phase 2 task S13's review and adversarial review, 2026-11-20,
   checking what a copy stores of its tag header; derived from the source,
   not reproduced on a cluster.
@@ -35904,7 +35914,8 @@ Every new entry adds its row to this table, in document order.
   each release's `find` returns (`internal/policy/env.go`), on PutObject,
   CreateMultipartUpload and a CopyObject under the REPLACE metadata
   directive. Plan task S16 fixes rgw-go's side.
-- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Upstream:** pending: sent to rgw-bug-reproduction. The root, a tag set
+  that keeps a repeated key, is reported as [#58373](https://tracker.ceph.com/issues/58373) and [#73329](https://tracker.ceph.com/issues/73329).
 - **Found:** phase 2 task S13's adversarial review, 2026-11-20, probing a
   numeric Deny on a request tag; seen in rgw-go, which mirrors the source,
   not reproduced on a cluster.
