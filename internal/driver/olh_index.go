@@ -231,6 +231,23 @@ func (b *bucketOLHIndex) clearUnchanged(ctx context.Context, head *op.ObjectStat
 	})
 }
 
+// nullDataStored is olhIndex's: whether the null version's data entry of
+// head's name, as the class's link and unlink read it (dataEntry), never the
+// null delete marker's, is in the index marked as existing.
+func (b *bucketOLHIndex) nullDataStored(ctx context.Context, head *op.ObjectState) (bool, error) {
+	if err := b.ofName(head.Key); err != nil {
+		return false, err
+	}
+	en, _, err := b.dataEntry(ctx, olhHeadKey(head.Key))
+	switch {
+	case errors.Is(err, radosclient.ErrNotFound):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return en.Exists, nil
+}
+
 // getOLH is bi_get_olh
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9465-L9485 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10214-L10234 at v20.2.4):

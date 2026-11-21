@@ -555,6 +555,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw-admin olh get decodes olh.ver on Squid](#radosgw-admin-olh-get-decodes-olhver-on-squid) | [#69536](https://tracker.ceph.com/issues/69536), [#69578](https://tracker.ceph.com/issues/69578) | [ceph/ceph#61370](https://github.com/ceph/ceph/pull/61370) |  |
 | [librados registers a service daemon again while it shuts down](#librados-registers-a-service-daemon-again-while-it-shuts-down) | none | none | ✓ |
 | [radosgw's CompleteMultipartUpload evaluates encryption condition keys from headers it ignores](#radosgws-completemultipartupload-evaluates-encryption-condition-keys-from-headers-it-ignores) | pending | pending | ✓ |
+| [radosgw decides a delete's object-lock check on bucket info loaded before object lock was enabled](#radosgw-decides-a-deletes-object-lock-check-on-bucket-info-loaded-before-object-lock-was-enabled) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -36507,3 +36508,66 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending.
 - **Found:** phase 2 task WP-29's scoped re-review, 2026-11-15, and WP-32's
   reviews, 2026-11-20; derived from the source, not reproduced.
+
+## radosgw decides a delete's object-lock check on bucket info loaded before object lock was enabled
+
+- **Kind:** defect, possibly security-relevant (object lock). A delete that
+  names a version checks the version's retention and legal hold only when
+  the bucket info its request holds has object lock enabled, and that info
+  can predate an enable of object lock on the bucket. Unreproduced: derived
+  from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - PutObjectLockConfiguration enables object lock on an existing bucket
+    whose versioning is enabled: it sets `BUCKET_OBJ_LOCK_ENABLED` and
+    writes the bucket info
+    ([rgw_op.cc:8289-8302](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8289-L8302),
+    [rgw_op.cc:9224-9237](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9224-L9237)).
+  - A request loads `s->bucket` once, "the only place that s->bucket is
+    created"
+    ([rgw_op.cc:525-530](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L525-L530),
+    [rgw_op.cc:555-560](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L555-L560)),
+    through the bucket instance cache, whose hit returns the cached info
+    ([svc_bucket_sobj.cc:284-298](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_bucket_sobj.cc#L284-L298),
+    [svc_bucket_sobj.cc:235-249](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bucket_sobj.cc#L235-L249)).
+  - A cached entry lives until a notify invalidates it or
+    `rgw_cache_expiry_interval` passes
+    ([svc_sys_obj_cache.h:175-185](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_sys_obj_cache.h#L175-L185),
+    [svc_sys_obj_cache.h:177-187](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_sys_obj_cache.h#L177-L187)),
+    and the gateway that writes the info only logs a notify that fails
+    ([svc_sys_obj_cache.cc:345-348](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_sys_obj_cache.cc#L345-L348),
+    [svc_sys_obj_cache.cc:345-348](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_sys_obj_cache.cc#L345-L348)).
+    A request in flight across the enable holds the earlier info too.
+  - PutObjectLegalHold stores a hold for a request whose info has object
+    lock enabled
+    ([rgw_op.cc:8503-8509](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8503-L8509),
+    [rgw_op.cc:9451-9457](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9451-L9457)).
+  - DeleteObject and DeleteObjects set `check_obj_lock` from
+    `have_instance()` and their request's `obj_lock_enabled()`, and call
+    `verify_object_lock` only when it holds
+    ([rgw_op.cc:5186-5221](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5186-L5221) and
+    [rgw_op.cc:6854-6879](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6854-L6879),
+    [rgw_op.cc:5576-5611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5576-L5611) and
+    [rgw_op.cc:7782-7807](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7782-L7807)).
+  - The removal of a named version goes through `unlink_obj_instance`,
+    whose replay removes the version's head with no lock check
+    ([rgw_rados.cc:5905-5953](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5905-L5953) and
+    [rgw_rados.cc:8530-8541](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8530-L8541),
+    [rgw_rados.cc:6517-6565](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6517-L6565) and
+    [rgw_rados.cc:9276-9287](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9276-L9287)).
+  - Lifecycle's `pass_object_lock_check` passes whenever its bucket's info
+    has no object lock
+    ([rgw_lc.cc:304-307](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L304-L307),
+    [rgw_lc.cc:304-307](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L304-L307)),
+    and a pass loads that info once, at its start ("[radosgw's lifecycle
+    pass acts on the bucket record it loaded at its
+    start](#radosgws-lifecycle-pass-acts-on-the-bucket-record-it-loaded-at-its-start)").
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** the same exposure. A delete's lock check, and the `Expect`
+  that holds its removal to the state checked, are decided on the
+  request's bucket record (`lockTarget`, internal/op/objectlock.go:91-102),
+  so a request holding a record read before object lock was enabled checks
+  no lock. Tracked by plan task V28.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** phase 2 task V24's adversarial review, re-run 1, 2026-11-20,
+  reading both tags; derived from the source, not reproduced.

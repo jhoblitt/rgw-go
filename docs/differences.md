@@ -12204,8 +12204,11 @@ does the following.
   two leaves that version current, the key reading it, and the marker
   listed as a noncurrent delete marker, with the null data unlisted. Where
   the null version was the key's only version, the delete that takes the
-  marker takes the data with it and leaves the data's instance entry in the
-  index, counted, which no later delete reaches; plan task V24 tracks that.
+  marker leaves the data whole all the same, the key answering 404 with
+  `x-amz-delete-marker: true` and a read naming `null` returning the data,
+  and the next delete naming `null` takes it (entry "A refused versioned
+  removal re-links the version, unless a newer null write owns the null
+  key").
 
   No listing shows a version left so. Lifecycle's expiration walks the
   bucket's listing, so it does not find one, and no rule expires it.
@@ -13113,6 +13116,48 @@ does the following.
     bytes read now. A marker owns no data, so its unlink compares no head,
     and its replay guards any removal on a write tag no head carries.
 
+  A delete naming `null` without `Expect` compares too (`removeVersion`,
+  `internal/driver/delete_versioned.go`), where radosgw's unlink compares
+  nothing and the class takes whichever null entry it finds first, the
+  marker before the data
+  ([cls_rgw.cc:946-978](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L946-L978),
+  [cls_rgw.cc:1076-1108](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1076-L1108)).
+  - One whose read found the null delete marker compares the marker's
+    instance entry as above. A second suspended delete's null marker, or a
+    null write's link, that replaced the marker refuses the unlink, which
+    the class would otherwise take out of what replaced it while the delete
+    answered the marker it read. Its unlink, a marker's, logs no removal,
+    so no check follows its replay (entry "A replay keeps another writer's
+    version whose object lock holds").
+  - One whose read found the null version's data, with no condition on that
+    data, compares the marker's entry as absent: a null delete marker
+    linked over the data since the read refuses the unlink, which the class
+    would take in the data's place while the delete answered
+    `x-amz-delete-marker` false.
+
+  Either refusal starts the delete again from a fresh read, which takes
+  what is then the null version, as a later delete naming `null` would:
+  the second marker, answering `x-amz-delete-marker: true`; the null
+  write's data, answering no marker; or the marker linked over the data,
+  answering `x-amz-delete-marker: true` and leaving the data below it as
+  that marker's refused removal left it, for the next delete naming `null`.
+  radosgw's class reaches the same end state. The delete starts again up
+  to 100 times, and its unlink retries a refusal that leaves the null
+  version as read up to 100 times. Past either bound
+  it answers ConcurrentModification with nothing unlinked, 204 with
+  neither header for DeleteObject and that key's error in DeleteObjects,
+  where an unlink without these compares answers radosgw's EIO, 500. One
+  state refuses every try: a null delete marker's instance entry left
+  under a plain entry that is no version marker, which the class never
+  resolves `null` to, so the delete answers so and removes nothing, where
+  radosgw's unlink removes the plain entry's data. Only multisite leaves
+  that entry, through the class's unlink at an older epoch
+  (`docs/ceph-upstream-bugs.md`, "[cls_rgw's bucket_unlink_instance at an
+  older epoch leaves a delete marker's instance
+  entry](ceph-upstream-bugs.md#cls_rgws-bucket_unlink_instance-at-an-older-epoch-leaves-a-delete-markers-instance-entry)")
+  followed by an OLH clear and a suspended bucket's plain write, and
+  rgw-go serves no multisite (`docs/exclusions.md`, "Multisite").
+
   When the head is rewritten after the unlink or the marker's link, by a
   retention, an ACL or a new null write, the replay refuses the removal,
   and the version would stay readable by its id but absent from
@@ -13215,6 +13260,67 @@ does the following.
     version has the replay trim the log where it would clear the key's
     OLH: the clear removes the OLH head object, which holds the data the
     refusal kept, where radosgw's replay has removed that data first.
+  - So does a later replay that leaves the key no listed version while the
+    OLH head still holds null data a refusal kept, though that refusal's
+    removal has left the log: when none of the replay's own removals took
+    the null version and the index still holds the null data's record,
+    marked as existing, the replay reads that record and trims in the
+    clear's place, keeping the head (`finishOLHLog`,
+    `internal/driver/olh_head.go`). The clear removes the head with a plain
+    removal and takes only the OLH entry and the version marker from the
+    index, so it would leave the record there, counted in the bucket's
+    stats, with its head gone and its tails named by nothing, and no
+    request would reach it. Two deletes meet this after a suspended
+    bucket's refused null delete whose relist ended. Where the null data
+    was the key's only version, the delete naming `null` takes the null
+    delete marker, the key's last listed version. Where an older version
+    was below it, that delete makes the older version current and clears
+    nothing, and a later delete of that version, then the key's last
+    listed one, meets it instead. Either leaves the null data whole, its
+    head, its tails and its record kept and counted. A GET or HEAD of the
+    key then answers 404: after the marker's delete with
+    `x-amz-delete-marker: true`, since the OLH head still names the marker
+    that went (`followHead`, `internal/driver/stat.go`;
+    `currentDeleteMarker`, `internal/s3/deletemarker.go`), and after the
+    older version's delete as for any missing key, the version the OLH head
+    names having no head: Tentacle sends `x-amz-delete-marker: false`,
+    Squid no such header. No listing shows the key or any marker. A read
+    naming `null` returns the data, and the next delete naming `null` takes
+    the data, its record and the bucket's count of it, and clears the key's
+    OLH, leaving nothing of the key. Until then the null data is in the
+    state a relist that ends leaves a refused version in, stored, counted
+    and in no listing, which lifecycle does not expire and the bucket
+    delete does not see (entry "A replay keeps a named version that a later
+    link in the same log names"). radosgw never reaches the state: the
+    class's link of a null delete marker over null data logs the data's
+    removal in the same call
+    ([cls_rgw.cc:1705-1734](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1705-L1734) and
+    [cls_rgw.cc:1806-1810](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1806-L1810),
+    [cls_rgw.cc:1846-1875](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1846-L1875) and
+    [cls_rgw.cc:1947-1951](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1947-L1951)),
+    and its replay removes the data, its record and the count of it
+    through `delete_obj` with no write-tag guard
+    ([rgw_rados.cc:8530-8541](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8530-L8541),
+    [rgw_rados.cc:9276-9287](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9276-L9287)),
+    so a delete naming `null` after the marker takes the marker alone and
+    leaves nothing of the key. rgw-go keeps the data radosgw removed, as
+    the refusal already does, and a second delete naming `null` ends where
+    radosgw's first does. On a mixed fleet, a radosgw replay that applies
+    the delete's unlink before rgw-go's still clears the key's OLH and
+    leaves the record behind. So does `radosgw-admin bucket check olh
+    --fix`, which rgw-go keeps as its admin tool, on the state this leaves
+    and on the one the bullet above leaves once the relist ends: an OLH
+    entry not existing and pending removal, with an empty log and an epoch
+    equal to the head's `olh.ver`, which the tool takes as left behind and
+    clears
+    ([rgw_bucket.cc:527-537](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L527-L537),
+    [rgw_bucket.cc:664-674](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L664-L674)),
+    removing the head with a plain removal under the entry's tag and epoch
+    and then the OLH entry and the version marker
+    ([rgw_rados.cc:8568-8634](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8568-L8634),
+    [rgw_rados.cc:9314-9380](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9314-L9380)).
+    That leaves the null data's record counted with its head gone and its
+    tails named by nothing.
 
   Exactly one entry of the name is then flagged current, but for one window
   of rgw-go's own, since radosgw never re-links, and one of radosgw's. A
@@ -13302,7 +13408,18 @@ does the following.
   conditional write, removes the version when its lock is one a replay
   keeps, the null version's data only while it carries the write tag the
   writer's op saw, and clears the key's OLH when the null version it
-  removed was the key's last. What stays:
+  removed was the key's last. A writer whose unlink takes a delete marker,
+  with `Expect` or without, logged no removal, since the class takes a
+  marker's entries itself
+  ([cls_rgw.cc:1970-1979](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1970-L1979),
+  [cls_rgw.cc:2117-2126](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2117-L2126)),
+  and checks nothing after its replay (`removeVersion`,
+  `internal/driver/delete_versioned.go`). So a delete naming `null` that
+  takes the null delete marker over null data a refused removal kept
+  (entry "A refused versioned removal re-links the version, unless a newer
+  null write owns the null key") leaves that data as it is, with or
+  without a legal hold or a COMPLIANCE retention, whichever replay applies
+  its unlink first. What stays:
   - A GOVERNANCE retention set after a delete was logged and before the
     replay does not keep the version: another request's replay of that
     removal removes it, as radosgw's does. One set after the delete's check

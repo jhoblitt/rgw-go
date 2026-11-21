@@ -56,6 +56,9 @@ var errRemovalRelisted = errors.New("a link listed the version again since its r
 // shard of the head's name and with the head's OLH tag: the pending log's
 // read after marker, its trim up to ver, the clear of the name's OLH entry,
 // and bi_get of that entry, which answers not found when the name has none.
+// nullDataStored reports whether the index holds the record of the null
+// version's data of head's name marked as existing, the record the clear
+// leaves behind (finishOLHLog).
 // removeInstance removes the version key names as the unversioned delete
 // does, guarded on its head's write tag or, when expectTag is not nil, on
 // expectTag; a version already gone answers not found. With keepLocked a
@@ -98,6 +101,7 @@ type olhIndex interface {
 	clear(ctx context.Context, head *op.ObjectState) error
 	removeInstance(ctx context.Context, key meta.ObjKey, expectTag []byte, keepLocked bool) error
 	getOLH(ctx context.Context, head *op.ObjectState) (rgw.OLHEntry, error)
+	nullDataStored(ctx context.Context, head *op.ObjectState) (bool, error)
 }
 
 // olhCondGuard makes an init commit only on the OLH its caller evaluated a
@@ -455,9 +459,11 @@ func (s *Store) followOLH(ctx context.Context, head *op.ObjectState, update func
 // replay reads the log again as for an apply another writer's guard refused
 // (replayOLH). After the head op, finishOLHLog
 // clears the OLH marked for removal, and otherwise trims the log to the last
-// epoch. It returns the last epoch whenever the head op landed, and 0 when
-// the replay wrote nothing; a tail that did not finish comes with the last
-// epoch and an olhTailError naming the step left.
+// epoch; it trims in place of the clear, too, while the head holds null data
+// that none of the replay's removals took and whose record the index still
+// holds (olhLogTail.heldNull). It returns the last epoch whenever the head op
+// landed, and 0 when the replay wrote nothing; a tail that did not finish
+// comes with the last epoch and an olhTailError naming the step left.
 //
 // A removal expectTag refuses (errRemovalRefused, olhIndex) does not stop the
 // replay: it is passed over, and once the head op and the clear or trim have
@@ -551,7 +557,7 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 		w.SetXattr(meta.AttrOLHInfo, encodeAt(target, s.release))
 	}
 	var refused error
-	var keepHead bool
+	var keepHead, nullTaken bool
 	for _, e := range removals {
 		own := opTag != "" && e.OpTag == opTag
 		var guard []byte
@@ -562,6 +568,7 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 		err := idx.removeInstance(ctx, key, guard, !own)
 		switch {
 		case err == nil, errors.Is(err, radosclient.ErrNotFound), errors.Is(err, op.ErrNoSuchKey):
+			nullTaken = nullTaken || key.Instance == ""
 		case guard != nil && errors.Is(err, errRemovalRefused):
 			refused = errors.Join(refused, fmt.Errorf("replaying the olh log of %s: removing version %q: %w", what, key.Instance, err))
 			keepHead = keepHead || key.Instance == ""
@@ -602,7 +609,10 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 		}
 		return 0, err
 	}
-	t := olhLogTail{last: last, clear: remove, keep: refused != nil, keepHead: keepHead, opTag: opTag}
+	t := olhLogTail{
+		last: last, clear: remove, keep: refused != nil, keepHead: keepHead,
+		heldNull: !keepHead && !nullTaken && holdsNullData(head), opTag: opTag,
+	}
 	if err := s.finishOLHLog(ctx, idx, head, t); err != nil {
 		return last, errors.Join(err, refused)
 	}
@@ -614,13 +624,15 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 // or otherwise the log's trim to last. keep is set while a removal the
 // writer's expected write tag refused is pending, keepHead when that removal,
 // or another writer's the replay passed over for its object lock, was the
-// null version's, whose data is the OLH head's, and opTag is the writer's op
-// tag, which its entries in the log carry.
+// null version's, whose data is the OLH head's, heldNull when the head as
+// the replay read it holds null data that none of its removals took, and
+// opTag is the writer's op tag, which its entries in the log carry.
 type olhLogTail struct {
 	last     uint64
 	clear    bool
 	keep     bool
 	keepHead bool
+	heldNull bool
 	opTag    string
 }
 
@@ -654,10 +666,38 @@ func (e *olhTailError) Unwrap() error { return e.err }
 // clear's place: the clear removes the OLH head object, which holds the null
 // version's data the refusal or its object lock kept, where radosgw's replay
 // has removed that data before its clear.
+//
+// With t.heldNull the clear first reads the null data's record
+// (nullDataStored), and while the index holds it the trim takes the clear's
+// place too, the head kept: no removal left in the log names such data, as
+// none does once an earlier delete's refusal has been trimmed, and the
+// clear's plain removal of the head would take it and leave its record
+// counted in the index and its tails named by nothing, where no request
+// reaches either.
+// radosgw never reaches that state: the class's link of a null delete
+// marker over null data logs the data's removal in the same call
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1705-L1734 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1806-L1810 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1846-L1875 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1947-L1951 at v20.2.4),
+// which its replay carries out unguarded
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8530-L8541 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9276-L9287 at v20.2.4).
+// A read that fails returns an olhTailError naming the clear, whose run
+// again reads once more.
 func (s *Store) finishOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectState, t olhLogTail) error {
 	what := head.Bucket.Info.Bucket.Name + "/" + head.Key.Name
 	if t.keepHead {
 		t.clear = false
+	}
+	if t.clear && t.heldNull {
+		stored, err := idx.nullDataStored(ctx, head)
+		if err != nil {
+			return &olhTailError{tail: t, err: fmt.Errorf("replaying the olh log of %s: reading the record of the null data its head holds before clearing it: %w", what, err)}
+		}
+		if stored {
+			t.clear = false
+		}
 	}
 	if t.clear {
 		err := s.clearOLHHead(ctx, idx, head, t.last)

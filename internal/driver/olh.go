@@ -162,7 +162,12 @@ type olhInited struct {
 // (markerRemovalTag): nothing compares it before the unlink, and the replay
 // guards on it as it is. Any other unlink logs the version's removal, which
 // is checked after the replay (checkRemoval). MarkerCmp, when not nil, is
-// the null delete marker the unlink must find (olhMarkerCmp).
+// the null delete marker the unlink must find (olhMarkerCmp). NoMarker, for
+// an unlink of the null version's data, has the unlink's op compare the null
+// delete marker's instance entry as absent, as a missing omap key reads
+// empty, so a marker linked since its caller read the data refuses it,
+// answering errMarkerLinked: the class would unlink that marker in the
+// data's place.
 type olhUnlink struct {
 	Epoch       uint64
 	NullVersion bool
@@ -170,6 +175,7 @@ type olhUnlink struct {
 	ExpectTag   []byte
 	Marker      bool
 	MarkerCmp   *olhMarkerCmp
+	NoMarker    bool
 }
 
 // olhMarkerCmp is the null delete marker an unlink must find, as its caller
@@ -187,6 +193,29 @@ type olhMarkerCmp struct {
 // errMarkerGone ends an unlink whose null delete marker is no longer the one
 // its caller read.
 var errMarkerGone = fmt.Errorf("%w: the null delete marker is not the one expected", op.ErrConcurrentModification)
+
+// errMarkerLinked ends an unlink of the null version's data over which a
+// null delete marker was linked since its caller read the data
+// (olhUnlink.NoMarker).
+var errMarkerLinked = fmt.Errorf("%w: a null delete marker was linked over the null data since it was read", op.ErrConcurrentModification)
+
+// nullMarkerLinked reports, after an unlink of key's null data that its
+// compare of the null delete marker as absent refused, whether key's null
+// version now resolves to a delete marker: errMarkerLinked when it does, nil
+// when it does not, another guard having refused the unlink, or when the
+// name holds no null version, which the next attempt's unlink answers.
+func (s *Store) nullMarkerLinked(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey) error {
+	en, err := s.getInstanceEntry(ctx, rec, key)
+	switch {
+	case errors.Is(err, radosclient.ErrNotFound):
+		return nil
+	case err != nil:
+		return err
+	case en.Flags&rgw.FlagDeleteMarker != 0:
+		return errMarkerLinked
+	}
+	return nil
+}
 
 // recheck reads key's null delete marker again after an unlink its compare
 // refused: errMarkerGone when the entry is gone, no longer a marker, or
@@ -464,7 +493,12 @@ func takeInitedTag(head *op.ObjectState, inited **olhInited) string {
 // marker's instance entry with the bytes its caller read, and a refusal
 // reads the marker again (olhMarkerCmp.recheck): another marker, or none,
 // is ConcurrentModification with nothing unlinked; the same marker rewritten
-// is tried again, within the attempts, with the bytes read now.
+// is tried again, within the attempts, with the bytes read now. With
+// p.NoMarker the op compares that entry as absent, and a refusal reads the
+// null version again: a marker is errMarkerLinked with nothing unlinked, and
+// anything else is tried again. An unlink that carries either compare and
+// runs out of attempts answers ConcurrentModification, nothing unlinked,
+// where one without them answers EIO, as unlink_obj_instance does.
 func (s *Store) unlinkObjInstance(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p olhUnlink) error {
 	_, _, err := s.unlinkVersion(ctx, rec, key, p)
 	return err
@@ -494,6 +528,9 @@ func (s *Store) unlinkVersion(ctx context.Context, rec *op.BucketRecord, key met
 	what := versionName(rec, key)
 	idx := s.newOLHIndex(rec, key)
 	f := olhUnlinkFields{epoch: p.Epoch, nullVersion: p.NullVersion}
+	if p.NoMarker {
+		f.cmp = &rgw.BIEntry{Type: rgw.BIIndexInstance, Idx: rgw.InstanceIndexKey(versionKey(olhHeadKey(key)), true)}
+	}
 	cmp := p.MarkerCmp
 	for range olhAttempts {
 		if cmp != nil {
@@ -540,6 +577,11 @@ func (s *Store) unlinkVersion(ctx context.Context, rec *op.BucketRecord, key met
 					return unlinkNotSent, nil, fmt.Errorf("unlinking %s: %w", what, err)
 				}
 			}
+			if p.NoMarker {
+				if err = s.nullMarkerLinked(ctx, rec, key); err != nil {
+					return unlinkNotSent, nil, fmt.Errorf("unlinking %s: %w", what, err)
+				}
+			}
 			continue
 		}
 		if !p.SkipUpdate {
@@ -552,6 +594,9 @@ func (s *Store) unlinkVersion(ctx context.Context, rec *op.BucketRecord, key met
 			return unlinkGone, nil, unlinkError(what, err)
 		}
 		return unlinkNotSent, nil, unlinkError(what, err)
+	}
+	if p.NoMarker || p.MarkerCmp != nil {
+		return unlinkNotSent, nil, fmt.Errorf("%w: unlinking %s: every one of %d attempts was refused, its compare of the null delete marker among the guards", op.ErrConcurrentModification, what, olhAttempts)
 	}
 	return unlinkNotSent, nil, fmt.Errorf("%w: unlinking %s: every one of %d attempts lost to another writer", op.ErrUnknown, what, olhAttempts)
 }

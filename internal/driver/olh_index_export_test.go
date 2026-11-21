@@ -76,6 +76,11 @@ func (b *OLHIndex) TrimLog(ctx context.Context, head *op.ObjectState, ver uint64
 // Clear is clear for the external specs.
 func (b *OLHIndex) Clear(ctx context.Context, head *op.ObjectState) error { return b.clear(ctx, head) }
 
+// NullDataStored is nullDataStored for the external specs.
+func (b *OLHIndex) NullDataStored(ctx context.Context, head *op.ObjectState) (bool, error) {
+	return b.nullDataStored(ctx, head)
+}
+
 // GetOLH is getOLH for the external specs.
 func (b *OLHIndex) GetOLH(ctx context.Context, head *op.ObjectState) (rgw.OLHEntry, error) {
 	return b.getOLH(ctx, head)

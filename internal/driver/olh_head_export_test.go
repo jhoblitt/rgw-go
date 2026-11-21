@@ -47,6 +47,9 @@ type FakeOLHIndex struct {
 	RemoveErr map[string]error
 	OLH       rgw.OLHEntry
 	OLHErr    error
+	// NullData and NullDataErr answer nullDataStored.
+	NullData    bool
+	NullDataErr error
 }
 
 var _ olhIndex = (*FakeOLHIndex)(nil)
@@ -111,6 +114,11 @@ func (f *FakeOLHIndex) getOLH(_ context.Context, head *op.ObjectState) (rgw.OLHE
 	return f.OLH, f.OLHErr
 }
 
+func (f *FakeOLHIndex) nullDataStored(_ context.Context, head *op.ObjectState) (bool, error) {
+	f.record(OLHIndexCall{Method: "nullDataStored", Head: head})
+	return f.NullData, f.NullDataErr
+}
+
 // OLHCondGuard is olhCondGuard with its fields exported for the specs.
 type OLHCondGuard struct {
 	Info      []byte
@@ -170,6 +178,7 @@ type OLHTail struct {
 	Clear    bool
 	Keep     bool
 	KeepHead bool
+	HeldNull bool
 	OpTag    string
 }
 
@@ -180,7 +189,8 @@ func UnfinishedOLHTail(err error) (OLHTail, bool) {
 	if !errors.As(err, &te) {
 		return OLHTail{}, false
 	}
-	return OLHTail{Last: te.tail.last, Clear: te.tail.clear, Keep: te.tail.keep, KeepHead: te.tail.keepHead, OpTag: te.tail.opTag}, true
+	t := te.tail
+	return OLHTail{Last: t.last, Clear: t.clear, Keep: t.keep, KeepHead: t.keepHead, HeldNull: t.heldNull, OpTag: t.opTag}, true
 }
 
 // ErrRefusalUnsettled is errRefusalUnsettled for the external specs.
@@ -188,7 +198,7 @@ var ErrRefusalUnsettled = errRefusalUnsettled
 
 // FinishOLHLogForTest is finishOLHLog over idx for the external specs.
 func (s *Store) FinishOLHLogForTest(ctx context.Context, idx *FakeOLHIndex, head *op.ObjectState, t OLHTail) error {
-	return s.finishOLHLog(ctx, idx, head, olhLogTail{last: t.Last, clear: t.Clear, keep: t.Keep, keepHead: t.KeepHead, opTag: t.OpTag})
+	return s.finishOLHLog(ctx, idx, head, olhLogTail{last: t.Last, clear: t.Clear, keep: t.Keep, keepHead: t.KeepHead, heldNull: t.HeldNull, opTag: t.OpTag})
 }
 
 // ClearOLHHeadForTest is clearOLHHead over idx for the external specs.

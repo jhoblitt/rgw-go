@@ -317,15 +317,47 @@ func headNullData(head *op.ObjectState, p op.DeleteParams) bool {
 // p.Expect is the version as its caller read it (expectRemoval), checked
 // before the unlink, a mismatch being ConcurrentModification with nothing
 // written; the unlink's replay then removes the head only under the write
-// tag it carries, running whatever p.SkipOLHUpdate says. For the null delete
-// marker the unlink's op compares the marker's instance entry with the raw
-// entry this read returned (olhMarkerCmp). Without p.Expect, conditions on
-// the null version's data must find the key's OLH head showing what they
-// judged (nullDataJudged), its write tag then guarding the removal as
-// Expect's does. A removal the replay refuses is answered as refusedRemoval
-// says, and one given p.Expect that the replay dropped or another replay kept
-// as keptUnderLock says.
+// tag it carries, running whatever p.SkipOLHUpdate says. Without p.Expect,
+// conditions on the null version's data must find the key's OLH head showing
+// what they judged (nullDataJudged), its write tag then guarding the removal
+// as Expect's does. A removal the replay refuses is answered as
+// refusedRemoval says, and one given p.Expect that the replay dropped or
+// another replay kept as keptUnderLock says.
+//
+// An entry that is a delete marker makes the unlink a marker's whatever
+// p.Expect says (olhUnlink.Marker): the class takes a marker's entries itself
+// and logs no removal
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1970-L1979 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2117-L2126 at v20.2.4),
+// so no check of a removal follows its replay, which would otherwise take
+// the null data below a null marker for a lock its writer never checked
+// (checkRemoval). For the null delete marker the unlink's op compares the
+// marker's instance entry with the raw entry this read returned
+// (olhMarkerCmp), so a second null marker or a null write that replaced it
+// refuses the unlink, where the class would unlink what replaced it in the
+// marker's place while the result named the marker read. The null version's
+// data, read with nothing holding the unlink to it, neither p.Expect nor a
+// condition on its data, has the unlink's op compare the null delete
+// marker's entry as absent (olhUnlink.NoMarker): a marker linked over the
+// data since the read, which the class's unlink would take in its place
+// (read_key_entry order), refuses the unlink. Either refusal of a delete
+// without p.Expect starts it again from a fresh read, which finds what is
+// then the null version and takes it, up to olhAttempts times; one given
+// p.Expect, which a replaced version no longer matches, answers the refusal,
+// ConcurrentModification.
 func (s *Store) removeVersion(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) (*op.DeleteObjectResult, error) {
+	for tries := 1; ; tries++ {
+		res, err := s.removeVersionOnce(ctx, rec, key, p)
+		restart := errors.Is(err, errMarkerLinked) || p.Expect == nil && errors.Is(err, errMarkerGone)
+		if !restart || tries >= olhAttempts {
+			return res, err
+		}
+	}
+}
+
+// removeVersionOnce is one try of removeVersion, from its read of the
+// version's index entry.
+func (s *Store) removeVersionOnce(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) (*op.DeleteObjectResult, error) {
 	v := key
 	null := key.Instance == meta.NullInstance
 	if null {
@@ -341,24 +373,24 @@ func (s *Store) removeVersion(ctx context.Context, rec *op.BucketRecord, key met
 	if cerr := versionConditions(en.Meta, p); cerr != nil {
 		return nil, fmt.Errorf("deleting %s: %w", versionName(rec, key), cerr)
 	}
-	u := olhUnlink{NullVersion: null, SkipUpdate: p.SkipOLHUpdate}
+	u := olhUnlink{NullVersion: null, SkipUpdate: p.SkipOLHUpdate, Marker: en.Flags&rgw.FlagDeleteMarker != 0}
+	if u.Marker && v.Instance == "" {
+		u.MarkerCmp = &olhMarkerCmp{bi: bi, en: en}
+	}
 	if p.Expect != nil {
 		tag, eerr := s.expectRemoval(ctx, rec, v, en, p.Expect)
 		if eerr != nil {
 			return nil, fmt.Errorf("deleting %s: %w", versionName(rec, key), eerr)
 		}
 		u.ExpectTag, u.SkipUpdate = tag, false
-		u.Marker = en.Flags&rgw.FlagDeleteMarker != 0
-		if u.Marker && v.Instance == "" {
-			u.MarkerCmp = &olhMarkerCmp{bi: bi, en: en}
-		}
-	} else if null && en.Flags&rgw.FlagDeleteMarker == 0 && comparesData(p) {
+	} else if null && !u.Marker && comparesData(p) {
 		tag, jerr := s.nullDataJudged(ctx, rec, v, en, p)
 		if jerr != nil {
 			return nil, fmt.Errorf("deleting %s: %w", versionName(rec, key), jerr)
 		}
 		u.ExpectTag, u.SkipUpdate = tag, false
 	}
+	u.NoMarker = null && !u.Marker && u.ExpectTag == nil
 	_, olhTag, err := s.unlinkVersion(ctx, rec, v, u)
 	switch {
 	case err == nil && p.Expect != nil && !u.Marker:
