@@ -558,6 +558,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw decides a delete's object-lock check on bucket info loaded before object lock was enabled](#radosgw-decides-a-deletes-object-lock-check-on-bucket-info-loaded-before-object-lock-was-enabled) | pending | pending | ✓ |
 | [radosgw's bucket delete leaves the objects of a version no listing shows](#radosgws-bucket-delete-leaves-the-objects-of-a-version-no-listing-shows) | pending | pending | ✓ |
 | [cls_rgw counts a null delete marker that replaced existing data once its header is recounted](#cls_rgw-counts-a-null-delete-marker-that-replaced-existing-data-once-its-header-is-recounted) | pending | pending | ✓ |
+| [radosgw's bucket delete leaves the OLH head of a key whose last delete could not clear it](#radosgws-bucket-delete-leaves-the-olh-head-of-a-key-whose-last-delete-could-not-clear-it) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -36700,3 +36701,56 @@ Every new entry adds its row to this table, in document order.
 - **Found:** V24's task review, 2026-11-20, reading the class's accounting
   against the null delete marker's link; reproduced in the emulator on both
   releases.
+
+## radosgw's bucket delete leaves the OLH head of a key whose last delete could not clear it
+
+- **Kind:** defect, cosmetic: a RADOS object with no data, the key's OLH
+  head with its OLH attrs, left in the data pool once its bucket is gone.
+  Not security-relevant: no stats count the head and it holds no data.
+  Unreproduced on radosgw: derived from the source, and reproduced on rgw-go
+  in its RADOS emulator.
+- **Evidence:** paths are under `src/`; each pair of links is v19.2.7's,
+  then v20.2.4's.
+  - The delete of a key's last version clears its OLH through `clear_olh`,
+    which removes the head only while no pending attr is on it and
+    otherwise answers ECANCELED before it clears the index entry
+    ([rgw_rados.cc:8617-8624](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8617-L8624),
+    [rgw_rados.cc:9363-9370](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9363-L9370)).
+    `apply_olh_log` takes that for success and trims nothing
+    ([rgw_rados.cc:8550-8556](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8550-L8556),
+    [rgw_rados.cc:9296-9302](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9296-L9302)),
+    so the head stays, and the key's version marker and OLH entry stay in
+    the index. A pending attr is left there by a writer that stopped
+    between its init and its link or cancel, and the head is left with
+    none by the DeleteObjects race in "[radosgw's DeleteObjects leaves an
+    OLH head with no version when a skipped delete's pending attr refuses
+    another replay's
+    clear](#radosgws-deleteobjects-leaves-an-olh-head-with-no-version-when-a-skipped-deletes-pending-attr-refuses-another-replays-clear)".
+  - The bucket delete's emptiness checks see neither: the class's listing
+    skips a version marker
+    ([cls_rgw.cc:603-607](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L603-L607),
+    [cls_rgw.cc:653-657](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L653-L657);
+    [cls_rgw_types.h:458-460](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_types.h#L458-L460),
+    [cls_rgw_types.h:458-460](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_types.h#L458-L460))
+    and every key in the 0x80 namespace, the OLH entry's
+    ([cls_rgw.cc:194-244](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L194-L244),
+    [cls_rgw.cc:244-294](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L244-L294)).
+    `delete_bucket` then removes the index shard objects
+    ([rgw_rados.cc:5368-5371](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5368-L5371),
+    [rgw_rados.cc:6008-6009](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6008-L6009))
+    and nothing removes the head, which no request reaches once the bucket
+    is gone.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it. rgw-go's relist whose init its backstop or a
+  stalled call cut in flight leaves that init's pending attr until it
+  expires (`docs/differences.md`, "A replay keeps a named version that a
+  later link in the same log names"); a delete of the key's last version
+  inside that hour cannot clear the OLH, and a bucket delete then leaves the
+  head, in the emulator after the relist's version was listed again and
+  removed by its id. Tracked by V29.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task V24's lifecycle-and-listing work, 2026-11-21, in
+  its run of V21's adversarial harness (parts K1 and K2): a key emptied
+  through S3 within the hour after such a cut init, its bucket then
+  deleted, left an OLH head with one pending attr and no data; with the
+  attr expired first, the same runs left nothing.
