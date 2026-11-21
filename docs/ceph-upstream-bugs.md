@@ -35995,13 +35995,14 @@ Every new entry adds its row to this table, in document order.
   listing links nothing that a removal of that version pending in the log
   precedes, a relist that ends before its link leaves that version stored
   and counted, with or without a lock, and out of every listing and
-  lifecycle pass. A request naming the version's id reads it. Where it was
+  lifecycle pass until a lifecycle pass or a bucket delete lists it again
+  from the record the refused replay wrote before its trim. A request naming the version's id reads it. Where it was
   the key's current version the key no longer does: after a delete naming
   the version's id, `null` included, the key reads the next older version
   listed, or answers 404 when none is, except that a delete naming `null`
   where null was the key's only version leaves the key reading the null
   data, in the OLH head the refused replay kept, while no listing shows the
-  key (tracked by plan task V24). After a suspended bucket's delete of the
+  key. After a suspended bucket's delete of the
   null version the null delete marker that delete wrote stays current once
   it has answered 409, so the key answers 404 and a delete naming `null`
   takes the marker before the data; where that marker demoted a version
@@ -36629,10 +36630,20 @@ Every new entry adds its row to this table, in document order.
   it will remove; any entry the recount finds answers 409 BucketNotEmpty,
   with nothing removed (`Store.checkIndexCount`,
   `internal/driver/bucketops.go`; `docs/differences.md`, "A bucket delete
-  refuses a bucket whose index counts an entry no listing shows"). The
-  admin removal with `purge-objects` skips the check and leaves such a
-  version's objects as radosgw does. On a mixed fleet radosgw's
-  DeleteBucket still deletes such a bucket.
+  refuses a bucket whose index counts an entry no listing shows"). Its
+  replay records each version it leaves so, a removal its writer's write
+  tag refused or another writer's removal it kept for an object lock, in an
+  object of rgw-go's own before its trim, and a lifecycle pass or a bucket
+  delete lists each again once that record has settled, the delete
+  answering 409 with them listed, so the bucket's owner can remove them by
+  id (`relistUnlisted`, `internal/driver/unlisted.go`; `docs/differences.md`,
+  "Lifecycle and a bucket delete list again a version a replay left
+  unlisted"). The admin removal with `purge-objects` lists those recorded
+  versions again first, whatever the age of their records, and removes
+  them; it skips the check and leaves any other such version's objects as
+  radosgw does. On a mixed fleet
+  radosgw's DeleteBucket still deletes such a bucket, and its lifecycle
+  lists none of these versions.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** V21's task re-review 3 (N7), 2026-11-20, reading the bucket
   delete against the versions a refused removal's relist leaves unlisted;
