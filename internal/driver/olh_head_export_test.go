@@ -50,6 +50,14 @@ type FakeOLHIndex struct {
 	// NullData and NullDataErr answer nullDataStored.
 	NullData    bool
 	NullDataErr error
+	// Unlisted collects the versions recordUnlisted took, and RecordErr
+	// answers it.
+	Unlisted  []meta.ObjKey
+	RecordErr error
+	// Pruned collects the keys of each pruneUnlisted call, and PrunedDetached
+	// whether its context was one no cancellation reaches.
+	Pruned         [][]meta.ObjKey
+	PrunedDetached []bool
 }
 
 var _ olhIndex = (*FakeOLHIndex)(nil)
@@ -117,6 +125,21 @@ func (f *FakeOLHIndex) getOLH(_ context.Context, head *op.ObjectState) (rgw.OLHE
 func (f *FakeOLHIndex) nullDataStored(_ context.Context, head *op.ObjectState) (bool, error) {
 	f.record(OLHIndexCall{Method: "nullDataStored", Head: head})
 	return f.NullData, f.NullDataErr
+}
+
+func (f *FakeOLHIndex) recordUnlisted(_ context.Context, head *op.ObjectState, keys []meta.ObjKey) error {
+	f.record(OLHIndexCall{Method: "recordUnlisted", Head: head})
+	if f.RecordErr != nil {
+		return f.RecordErr
+	}
+	f.Unlisted = append(f.Unlisted, keys...)
+	return nil
+}
+
+func (f *FakeOLHIndex) pruneUnlisted(ctx context.Context, keys []meta.ObjKey) {
+	f.Pruned = append(f.Pruned, slices.Clone(keys))
+	f.PrunedDetached = append(f.PrunedDetached, ctx.Done() == nil)
+	f.record(OLHIndexCall{Method: "pruneUnlisted"})
 }
 
 // OLHCondGuard is olhCondGuard with its fields exported for the specs.

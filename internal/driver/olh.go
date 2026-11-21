@@ -1104,6 +1104,19 @@ func (b *bucketOLHIndex) removeInstance(ctx context.Context, key meta.ObjKey, ex
 	return b.removeVersion(ctx, key, expectTag, keepLocked, true)
 }
 
+// recordUnlisted records keys, versions of head's name a replay leaves
+// unlisted, in the bucket's unlisted-version object (Store.recordUnlisted),
+// under head's OLH tag, the one the replay read the log under.
+func (b *bucketOLHIndex) recordUnlisted(ctx context.Context, head *op.ObjectState, keys []meta.ObjKey) error {
+	return b.x.s.recordUnlisted(ctx, b.x.rec, keys, head.Attrs[meta.AttrOLHIDTag])
+}
+
+// pruneUnlisted prunes the bucket's unlisted-version object after a replay
+// recorded keys (Store.pruneUnlisted).
+func (b *bucketOLHIndex) pruneUnlisted(ctx context.Context, keys []meta.ObjKey) {
+	b.x.s.pruneUnlisted(ctx, b.x.rec, keys)
+}
+
 // removeVersion is removeInstance, logged set when the removal is a
 // replay's of an entry of the name's OLH log. A prepare the compares refuse,
 // on a version still unlisted, is followed by a relist's backoff

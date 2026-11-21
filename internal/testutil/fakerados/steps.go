@@ -214,6 +214,32 @@ func validate(steps []radosclient.Step, write bool, flags radosclient.OpFlags) e
 		if !ok {
 			return fmt.Errorf("fakerados: step %d, %T, in a %s op: %w", i, st, kind, radosclient.ErrBadOp)
 		}
+		if err := omapBounds(st); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// omapBounds refuses an omap listing's start key or prefix that holds a NUL,
+// as goceph does: librados takes both as C strings and would cut them there
+// (docs/cgo-limitations.md, "go-ceph cuts object names at a NUL byte"). A key
+// set, removed, compared or read by key goes with its length and may hold
+// one.
+func omapBounds(st radosclient.Step) error {
+	switch s := st.(type) {
+	case *radosclient.OmapGetValsStep:
+		return errors.Join(cBound("omap start key", s.StartAfter), cBound("omap key prefix", s.FilterPrefix))
+	case *radosclient.OmapGetKeysStep:
+		return cBound("omap start key", s.StartAfter)
+	}
+	return nil
+}
+
+// cBound refuses s, what, when it holds a NUL.
+func cBound(what, s string) error {
+	if strings.IndexByte(s, 0) >= 0 {
+		return fmt.Errorf("fakerados: %s holds a NUL byte: %w", what, radosclient.ErrNULName)
 	}
 	return nil
 }

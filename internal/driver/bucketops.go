@@ -428,6 +428,30 @@ func (s *Store) checkIndexCount(ctx context.Context, cur *op.BucketRecord, liste
 	return fmt.Errorf("bucket %s: its index holds %d entries no listing shows: %w", name, n, op.ErrBucketNotEmpty)
 }
 
+// relistBeforeDelete lists again, once rec's listing reads empty, the
+// versions a replay left unlisted whose records have settled
+// (relistUnlisted), starting none after indexAwaitCap, and refuses the bucket
+// as BucketNotEmpty when it listed any: the listing then shows each to the
+// bucket's owner, who can remove it by its id, where radosgw deletes the
+// bucket and leaves its objects. A read of the records that fails otherwise
+// than by ctx's end is logged and left to the index check, which refuses a
+// bucket whose index still counts such a version (checkIndexCount).
+func (s *Store) relistBeforeDelete(ctx context.Context, rec *op.BucketRecord) error {
+	name := rec.Info.Bucket.Name
+	deadline := s.now().Add(indexAwaitCap)
+	n, err := s.relistUnlisted(ctx, rec, unlistedSettle, func() bool { return s.now().After(deadline) })
+	switch {
+	case err != nil && ctx.Err() != nil:
+		return err
+	case err != nil:
+		slog.WarnContext(ctx, "could not read the versions a replay left unlisted; the index check decides", slog.String("bucket", name), slog.Any("error", err))
+	}
+	if n == 0 {
+		return nil
+	}
+	return fmt.Errorf("bucket %s: %d versions no listing showed are listed again: %w", name, n, op.ErrBucketNotEmpty)
+}
+
 // indexEntries is the number of entries the class's recount finds in the
 // shards of info's current index generation (checkIndexCount).
 func (s *Store) indexEntries(ctx context.Context, info *meta.BucketInfo) (uint64, error) {
@@ -533,7 +557,9 @@ const maxRemoveRetries = 20
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L161-L169).
 // rgw-go forwards nothing (docs/differences.md). For a bucket of this
 // zonegroup it syncs the owner's stats, logging a failure, refuses a bucket
-// with objects, and aborts the bucket's multipart uploads (abortMultiparts,
+// with objects, lists again the versions a replay left unlisted, refusing a
+// bucket where it listed any (relistBeforeDelete), and aborts the bucket's
+// multipart uploads (abortMultiparts,
 // https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_sal_rados.cc#L395-L400;
 // v20.2.4
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L412-L417),
@@ -553,7 +579,8 @@ const maxRemoveRetries = 20
 // the index in between, or any other failure of the removal, writing the
 // entry point back and clearing the claim (restoreRemoval), then the index of
 // the generation that read names, whose
-// failure is logged, the owner's list entry, whose failure is returned, and
+// failure is logged, the bucket's unlisted-version object
+// (removeUnlistedRecords), the owner's list entry, whose failure is returned, and
 // last the bucket's lifecycle entry (removeLCEntry). The steps from the
 // entry point's read through the owner's list entry run past the end of
 // ctx; the lifecycle entry's removal does not.
@@ -669,6 +696,11 @@ func (s *Store) deleteBucket(ctx context.Context, rec *op.BucketRecord, purged b
 	if err := s.checkBucketEmpty(ctx, cur); err != nil {
 		return err
 	}
+	if !purged {
+		if err := s.relistBeforeDelete(ctx, cur); err != nil {
+			return err
+		}
+	}
 	n, err := s.abortMultiparts(ctx, cur)
 	if err != nil {
 		return err
@@ -732,6 +764,7 @@ func (s *Store) deleteBucket(ctx context.Context, rec *op.BucketRecord, purged b
 	if err := s.cleanIndex(rctx, &cur.Info); err != nil {
 		slog.WarnContext(rctx, "could not remove bucket index", slog.String("bucket", b.Name), slog.Any("error", err))
 	}
+	s.removeUnlistedRecords(rctx, &cur.Info)
 	if err := s.unlinkInstance(rctx, cur.Info.Owner, b); err != nil {
 		return fmt.Errorf("unlinking bucket %s from %s: %w", b.Name, cur.Info.Owner, op.FromRADOS(err, op.ScopeBucket))
 	}

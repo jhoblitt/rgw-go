@@ -7392,7 +7392,9 @@ differ, rgw-go does the following.
   claims the removal, and runs the class's read-only index check on every
   shard of the generation it will remove. When the recount finds any entry
   it answers 409 BucketNotEmpty, clears its claim and removes nothing
-  (`checkIndexCount`, `internal/driver/bucketops.go`).
+  (`checkIndexCount`, `internal/driver/bucketops.go`). Before the abort it
+  lists again each version a replay left unlisted and recorded, once the
+  record has settled, and answers 409 with them listed (entry "Lifecycle and a bucket delete list again a version a replay left unlisted").
   - The recount counts a plain entry that exists with no flags and an
     instance entry that exists
     ([cls_rgw.cc:3035-3114](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L3035-L3114),
@@ -7446,10 +7448,13 @@ differ, rgw-go does the following.
       The bucket was empty, so no data is involved.
   - The admin bucket removal with `purge-objects`, and the user removal
     with `purge-data`, which purge each bucket the same way, skip the check
-    (`DeleteBucketPurged`), as radosgw's removal does: an entry no listing
-    shows goes with the index, and its version's objects stay in the data
-    pool, as radosgw leaves them. It is the operator's way to remove a
-    bucket whose index holds an entry no request reaches.
+    (`DeleteBucketPurged`), as radosgw's removal does. They first list again
+    each version a replay recorded as unlisted and so remove it ("Lifecycle
+    and a bucket delete list again a version a replay left unlisted"); any
+    other entry no listing shows goes with the index, and its version's
+    objects stay in the data pool, as radosgw leaves them. It is the
+    operator's way to remove a bucket whose index holds an entry no request
+    reaches.
   - An entry still counted whose data is gone is in the index too, so the
     recount keeps it, and an S3 delete is refused until the entry goes.
     Two paths leave one: a version removal whose head went before a gateway
@@ -7462,8 +7467,9 @@ differ, rgw-go does the following.
     whole when a later delete naming `null` takes the marker ("A refused
     versioned removal re-links the version, unless a newer null write owns
     the null key"); it is counted with its head, unlisted once the marker
-    goes, and keeps the bucket as any unlisted version does, until a delete
-    naming `null` takes it.
+    goes, and keeps the bucket as any unlisted version does, until the
+    delete lists it again from its record or a delete naming `null` takes
+    it.
   - A multipart part's entry whose upload's meta entry is gone is a plain
     entry the listing check skips and no abort removes, so it keeps the
     bucket, where radosgw deletes the bucket and leaves the part. The admin
@@ -7500,6 +7506,137 @@ differ, rgw-go does the following.
     nowhere, so the check does not see it, and the delete leaves its head.
   - On a mixed fleet, radosgw's bucket delete and purge still delete a
     bucket in this state and leave its versions' objects.
+- **Lifecycle and a bucket delete list again a version a replay left
+  unlisted.** radosgw's lifecycle finds versions through its listing alone
+  ([rgw_lc.cc:365-380](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L365-L380),
+  [rgw_lc.cc:365-380](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L365-L380)),
+  and so does its bucket delete's emptiness check ("A bucket delete refuses
+  a bucket whose index counts an entry no listing shows"), so no rule
+  expires a version whose head and instance entry stay while its list entry
+  is gone, and its bucket is deleted with the version's objects left.
+  rgw-go's replay leaves a version so in two cases: a removal its writer
+  guarded on a write tag, which it refuses, whose relist then does not link
+  the version ("A refused versioned removal re-links the version, unless a
+  newer null write owns the null key"), and another writer's removal of a
+  version it keeps for its object lock ("A replay keeps another writer's
+  version whose object lock holds"). For each, the replay records the
+  version in an rgw-go object before its head op, so before the trim that
+  drops the removal from the OLH log (`applyOLHLog`,
+  `internal/driver/olh_head.go`). A keep is recorded only once an rgw-go
+  replay of the key runs: a writer whose gateway stops between its unlink
+  and its replay, whose request ends with its unlink in flight, or whose own
+  replay runs out of passes leaves its removal logged, and nothing is
+  recorded until a later request of the key, a read of its name, a write or
+  a delete, replays the log and keeps the version. Until then, where the
+  version is its key's last, no listing shows the key and a bucket delete
+  answers 409 with nothing to list again.
+  - The object is `rgw-go.unlisted.<bucket id>` in the bucket's index pool,
+    with one omap key per version: its index key name and its instance, each
+    with `%`, `/` and NUL percent-encoded, joined by `/`, so that no key
+    holds the NUL at which librados cuts an omap listing's start key
+    (`docs/cgo-limitations.md`, "go-ceph cuts object names at a NUL byte").
+    Each value is a JSON record of when it was written, of the OLH tag the
+    replay read the log under, and, while a reader relists the version, of
+    that reader's claim. radosgw neither writes, reads nor removes it
+    (`docs/rados-format-opportunities.md`, "[An rgw-go object naming the
+    versions a replay left
+    unlisted](rados-format-opportunities.md#an-rgw-go-object-naming-the-versions-a-replay-left-unlisted)").
+  - A record that fails stops the replay before its head op, as a removal
+    that fails does: the removal stays in the log, where a later replay
+    removes the version, or keeps it and records it. So a gateway that stops
+    after the record leaves the version recorded, and one that stops before
+    it leaves the removal logged.
+  - Each lifecycle pass of a bucket ever versioned, before its rules, and
+    each S3 DeleteBucket and admin bucket removal without `purge-objects`,
+    once its listing reads empty and before its multipart abort, read the
+    object (`relistUnlisted`, `internal/driver/unlisted.go`). A version
+    recorded at least 512 s before, the relist's backstop, that is still
+    stored and unlisted is claimed and listed again by the relist a refused
+    removal runs: current at a fresh epoch when no listed version of its
+    name is newer, and otherwise at its own epoch below the newest, the null
+    version's data as its own relist links it. The record of a version
+    listed, gone or without its head is removed, as is the record of one the
+    relist listed; one the relist did not list gets its unclaimed record
+    back for the next reader. A pass starts no relist past its stop time,
+    and a bucket delete none more than 32 s after it began.
+  - The 512 s is measured from the recording gateway's clock on the
+    reader's, so it assumes clocks that agree within a few seconds, and it
+    usually keeps a reader from relisting while the writer's own relist or
+    its check after its replay still runs. It guarantees neither: the
+    backstop counts from the relist's start, after the record, and bounds
+    the relist up to its link, and the relist's replay after its link runs
+    to its end. Two relists of one version are safe without it. A reader
+    claims a record before its relist by rewriting it, under a compare of
+    the value it read, with a claim naming itself and the time; another
+    reader skips a claim younger than 512 s, and one that loses the compare
+    does nothing. The read after the relist, the claim's release and the
+    record's removal run whatever the reader's request does, as the relist
+    does, so a client that leaves mid-relist leaves no claim behind. Any
+    relist, the writer's or a reader's, links nothing once the version's
+    instance entry names a list entry that is there, judged on the instance
+    entry read after the OLH entry its link compares: an earlier relist's
+    link may have made the key's OLH again under a fresh tag, which a later
+    relist would otherwise take for an OLH made again and link the version
+    below it, taking its current flag. The reset of the version's instance
+    record before a link below the newest compares that OLH entry too, so a
+    link another relist lands after that check refuses the reset rather
+    than let it take the current flag that link set.
+  - Once a replay that recorded versions has landed its head op and its
+    trim or clear, it prunes the object, on a context its request's end
+    does not cut: for k versions recorded it examines the 2k records after
+    a cursor the object keeps in an xattr, wrapping to the first, and
+    removes, under a compare, each whose version is not stored and
+    unlisted, then moves the cursor. Each write adds k records and its
+    prune examines 2k, so the object holds at most about twice the records
+    of versions still left unlisted, whether those versions were then
+    listed again by their writers or deleted by id. For k records it costs
+    three reads of the object, up to 6k index or head reads and up to 2k+1
+    writes, on the replays that record, which are rare, after their head op.
+    A prune that fails is logged and changes no answer.
+  - Lifecycle's rules then act on such a version as on any listed version,
+    its object lock included. A bucket delete that listed any answers 409
+    BucketNotEmpty, so the bucket's owner sees each in ListObjectVersions
+    and can remove it by its id, where radosgw deletes the bucket. A version
+    radosgw's removal answered as deleted while a legal hold or a COMPLIANCE
+    retention held it is listed again under that lock, current again where
+    it was current.
+  - On a bucket without a lifecycle configuration only a bucket delete reads
+    the object. Until one does, such a version stays out of every listing
+    while the bucket's stats and its owner's count it, and a bucket delete
+    within 512 s of the record answers 409 with nothing listed, the
+    recount's refusal.
+  - The admin removal with `purge-objects`, and the user removal with
+    `purge-data`, list again every recorded version before they list the
+    bucket, whatever the age of its record, since they remove everything,
+    and so remove it with its head and tails (`PurgeBucket`,
+    `internal/op/adminpurge.go`). A failure to read the object is logged and
+    the purge goes on, leaving such a version as radosgw's purge does. A
+    bucket delete and the purge remove the object with the bucket.
+  - Not recorded, so found by no listing, lifecycle pass or bucket delete:
+    a versioned write's version whose link's outcome is unknown, or whose
+    removal after a failed link failed ("rgw-go removes the instance a
+    failed versioned write made"; the latter tracked by V30), one whose
+    gateway stopped between its index completion and its link, a version
+    radosgw's own failed link leaves on a mixed fleet, and a version left
+    unlisted before rgw-go wrote records. The bucket delete refuses a bucket
+    whose index counts one, and the admin removal with `purge-objects`
+    removes the bucket and leaves its objects, as radosgw's does. A
+    completed multipart upload's version whose link never landed is removed
+    by the upload's abort ("AbortMultipartUpload leaves a completed
+    upload's parts alone"), and a write that went on behind a stranded
+    version marker is the key's object, read and replaced through its name
+    ("An unversioned write of a key whose OLH a delete left pending removal
+    clears it first, and is listed").
+  - A bucket delete leaves the OLH head of a key whose last delete could
+    not clear it, a pending attr on the head refusing the clear, such as
+    the one a relist's init leaves when its backstop cuts it
+    (`docs/ceph-upstream-bugs.md`, "[radosgw's bucket delete leaves the OLH
+    head of a key whose last delete could not clear
+    it](ceph-upstream-bugs.md#radosgws-bucket-delete-leaves-the-olh-head-of-a-key-whose-last-delete-could-not-clear-it)"),
+    as radosgw's does; tracked by V29.
+  - On a mixed fleet radosgw's lifecycle lists none of these versions, and
+    its bucket delete and purge leave the object, a few omap keys in the
+    index pool, beside the versions' heads and tails.
 - **A bucket delete removes the lifecycle entry once the bucket is gone.**
   For a bucket whose attrs carry `user.rgw.lc`, both gateways remove its
   entry from its lifecycle shard after the multipart abort, and neither
@@ -12323,8 +12460,8 @@ does the following.
   delete naming `null` where the null version was the key's only version:
   the refused replay trims the key's OLH log where it would clear the OLH,
   so the OLH head, which holds the null data, stays, and the key still
-  reads that data though no listing shows the key; plan task V24 tracks
-  that. With the null version left so by a suspended bucket's delete, the
+  reads that data though no listing shows the key, until a lifecycle pass
+  or a bucket delete lists it again. With the null version left so by a suspended bucket's delete, the
   null delete marker that delete wrote stays current after its 409: the key
   answers 404, a listing without versions omits it, and ListObjectVersions
   shows the marker as latest. `versionId=null` then names both. A read
@@ -12341,25 +12478,25 @@ does the following.
   removal re-links the version, unless a newer null write owns the null
   key").
 
-  No listing shows a version left so. Lifecycle's expiration walks the
-  bucket's listing, so it does not find one, and no rule expires it.
-  DeleteBucket's emptiness check reads the same listing (`checkBucketEmpty`,
-  `internal/driver/bucketops.go`) and does not see it, but the class's
-  recount of the bucket's index counts its instance entry, and DeleteBucket
-  refuses the bucket while it does ("A bucket delete refuses a bucket whose
-  index counts an entry no listing shows"), until the admin removal with
-  `purge-objects` removes it with the bucket. radosgw's bucket delete checks the listing alone, which holds no
+  No listing shows a version left so, and lifecycle and DeleteBucket find
+  versions through the listing alone, as radosgw's do. The refused replay
+  records the version in the bucket's unlisted-version object before its
+  trim, in each case above, so a lifecycle pass or a bucket delete lists it
+  again once that record is 512 s old (entry "Lifecycle and a bucket delete list again a version a replay left unlisted"). Until then the
+  class's recount of the bucket's index counts its instance entry, and
+  DeleteBucket refuses the bucket while it does ("A bucket delete refuses a
+  bucket whose index counts an entry no listing shows"). radosgw's bucket
+  delete checks the listing alone, which holds no
   instance entry
   ([rgw_rados.cc:5259-5301](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5259-L5301),
   [rgw_rados.cc:5723-5765](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5723-L5765);
   [cls_rgw.cc:194-244](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L194-L244),
   [cls_rgw.cc:244-294](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L244-L294)),
   so on a mixed fleet it deletes such a bucket and leaves the version's head
-  and tails in the data pool, counted by no quota. Plan task V24 tracks
-  lifecycle and the listing. What lists the version again is a
-  later delete of that version whose removal its write tag refuses, whose
-  own relist links it, or on a mixed fleet radosgw's `PUT ?versionId=`
-  naming it. On a mixed fleet, radosgw's replay still removes
+  and tails in the data pool, counted by no quota. What else lists the
+  version again is a later delete of that version whose removal its write
+  tag refuses, whose own relist links it, or on a mixed fleet radosgw's
+  `PUT ?versionId=` naming it. On a mixed fleet, radosgw's replay still removes
   the version whenever it has read the removal from the log, before an
   rgw-go replay trimmed it, whichever replay then applies the log.
 - **A replay keeps a version a link lists again after it read the log.** A
@@ -12583,9 +12720,14 @@ does the following.
   parts ("A CompleteMultipartUpload records itself on the meta object
   before its head write"). A removal that
   fails, such as one a resharding shard still refuses past the reshard
-  guard's waits, leaves the version as radosgw leaves it, logged. A failed
-  versioned delete makes no version and removes none. Versioning is not
-  served yet.
+  guard's waits, leaves the version as radosgw leaves it, logged. Such a
+  version, and one whose link's outcome stays unknown, is not recorded for a
+  lifecycle pass or a bucket delete to list again (entry "Lifecycle and a
+  bucket delete list again a version a replay left unlisted"): a bucket
+  delete refuses its bucket while the index counts it, and the admin removal
+  with `purge-objects` removes the bucket. The removal that fails is
+  tracked by V30. A failed versioned delete makes
+  no version and removes none. Versioning is not served yet.
 - **A versioned write retries when the key's OLH head goes between its read
   and its init.** radosgw's `set_olh` reads the key's OLH head and then
   inits a pending modification on it, which asserts that a head it read
@@ -13422,9 +13564,10 @@ does the following.
     the data, its record and the bucket's count of it, and clears the key's
     OLH, leaving nothing of the key. Until then the null data is in the
     state a relist that ends leaves a refused version in, stored, counted
-    and in no listing, which lifecycle does not expire and the bucket
-    delete does not see (entry "A replay keeps a named version that a later
-    link in the same log names"). radosgw never reaches the state: the
+    and in no listing (entry "A replay keeps a named version that a later
+    link in the same log names"), until a lifecycle pass or a bucket delete
+    lists it again from the record the refused replay wrote, current
+    (entry "Lifecycle and a bucket delete list again a version a replay left unlisted"). radosgw never reaches the state: the
     class's link of a null delete marker over null data logs the data's
     removal in the same call
     ([cls_rgw.cc:1705-1734](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1705-L1734) and
@@ -13572,8 +13715,11 @@ does the following.
     checks nothing after its replay. That is an admin removal or purge, a
     delete whose check came before the hold, or a COMPLIANCE retention whose
     end radosgw's clock puts past and rgw-go's does not. The rate grows with
-    reads of the keys being so removed. Nothing reclaims such a version.
-    No listing shows it, so lifecycle never expires it. `radosgw-admin
+    reads of the keys being so removed. The replay that kept it recorded
+    it, so a lifecycle pass or a bucket delete lists it again once that
+    record is 512 s old, current again where it was current and under its
+    lock (entry "Lifecycle and a bucket delete list again a version a replay left unlisted"); until then no listing shows it, and
+    lifecycle does not expire it. `radosgw-admin
     bucket check unlinked` takes only instance entries at versioned_epoch 0
     ([rgw_bucket.cc:741](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L741),
     [rgw_bucket.cc:892](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L892)),
@@ -13593,7 +13739,10 @@ does the following.
     locked version the same way, where radosgw's next replay removes it, and
     so does a writer whose request ends while its unlink, or a conditional
     link's check of the OLH, is still in flight: the replay is detached from
-    the request only once the unlink returns.
+    the request only once the unlink returns. Such a version is recorded for
+    a lifecycle pass or a bucket delete to list again only once a later
+    rgw-go replay of the key, a read of its name, a write or a delete, keeps
+    it.
     When that version is the key's only one and the null version, the key's
     OLH still names it, so a GET of the key answers it until the key's next
     write.
@@ -13601,7 +13750,8 @@ does the following.
     logged, after a lock was set past its check, answers 204 and leaves the
     version locked and unlisted, where it answered 403 and kept it listed
     before: its removal check acts only once the pending log no longer holds
-    its op tag, and nothing reclaims the version.
+    its op tag, and the next replay that keeps the version records it for a
+    lifecycle pass or a bucket delete to list again.
   - A writer with no `Expect` whose version another replay kept, and whose
     lock ended before the writer's check, a hold removed or a retention
     run out in between, leaves it the same way: its check removes only a

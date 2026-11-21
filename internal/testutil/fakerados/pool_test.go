@@ -937,6 +937,32 @@ var _ = Describe("a read op", func() {
 		Expect(keys.More).To(BeTrue())
 	})
 
+	// goceph refuses these bounds, which librados takes as C strings; a key
+	// read by name goes with its length.
+	DescribeTable("refuses an omap listing bound holding a NUL with ErrNULName, as goceph does",
+		func(ctx SpecContext, build func(op *radosclient.ReadOp)) {
+			c.Put(poolName, ns, "obj", nil)
+			c.Object(poolName, ns, "obj").Omap["a\x00b"] = []byte("v")
+			op := radosclient.NewReadOp()
+			build(op)
+			_, err := p.Read(ctx, "obj", op, radosclient.OpFlagNone)
+			Expect(err).To(MatchError(radosclient.ErrNULName))
+		},
+		Entry("the values' start key", func(op *radosclient.ReadOp) { op.OmapGetVals("a\x00", "", 10) }),
+		Entry("the values' prefix", func(op *radosclient.ReadOp) { op.OmapGetVals("", "a\x00", 10) }),
+		Entry("the keys' start key", func(op *radosclient.ReadOp) { op.OmapGetKeys("a\x00", 10) }),
+	)
+
+	It("reads an omap key holding a NUL by its name", func(ctx SpecContext) {
+		c.Put(poolName, ns, "obj", nil)
+		c.Object(poolName, ns, "obj").Omap["a\x00b"] = []byte("v")
+		op := radosclient.NewReadOp()
+		res := op.OmapGetValsByKeys([]string{"a\x00b"})
+		_, err := p.Read(ctx, "obj", op, radosclient.OpFlagNone)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.Values).To(Equal(map[string][]byte{"a\x00b": []byte("v")}))
+	})
+
 	It("pages omap keys in order after a marker and reads values by key", func(ctx SpecContext) {
 		c.Put(poolName, ns, "obj", nil)
 		for _, k := range []string{"c", "a", "b"} {

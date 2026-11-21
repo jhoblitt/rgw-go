@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/jhoblitt/rgw-go/internal/meta"
 )
@@ -21,13 +22,20 @@ const purgePage = 1000
 // removal is DeleteBucketPurged, which skips the store's index check, so a
 // version no listing shows goes with the index as radosgw's purge leaves it:
 // the operator's way to remove a bucket whose index holds an entry no
-// request reaches.
+// request reaches. Before PurgeObjects, the versions the store recorded as
+// left in no listing are listed again (BucketStore.RelistUnlisted), however
+// recent their records, so that the purge removes them too, where radosgw's
+// purge leaves their objects; a failure there is logged and the purge goes
+// on, leaving such a version as radosgw's does.
 func PurgeBucket(ctx context.Context, env *Env, rec *BucketRecord) error {
 	if err := refuseUnfinishedRename(ctx, env, rec); err != nil {
 		return err
 	}
 	if err := refuseForeignPurge(env, rec); err != nil {
 		return err
+	}
+	if _, err := env.Buckets.RelistUnlisted(ctx, rec); err != nil {
+		slog.WarnContext(ctx, "could not list again the versions left unlisted before a purge; it leaves them", slog.String("bucket", rec.Info.Bucket.Name), slog.Any("error", err))
 	}
 	if err := PurgeObjects(ctx, env, rec); err != nil {
 		return err
