@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
@@ -91,6 +92,25 @@ func (h *writeHooks) around(op *radosclient.WriteOp, send sendFunc) (uint64, err
 	ver, err := send()
 	w.fn()
 	return ver, err
+}
+
+// removalPrepareKey is the instance whose removal w prepares, when w is a
+// replay's prepare of a version's removal, the one prepare that compares
+// index entries.
+func removalPrepareKey(w *radosclient.WriteOp) (string, bool) {
+	steps := w.Steps()
+	if !slices.ContainsFunc(steps, func(st radosclient.Step) bool {
+		_, ok := st.(*radosclient.OmapCmpStep)
+		return ok
+	}) {
+		return "", false
+	}
+	for _, st := range steps {
+		if e, ok := st.(*radosclient.ExecStep); ok && e.Method == "bucket_prepare_op" {
+			return rgwcls.DecodePrepareOp(denc.NewDecoder(e.In)).Key.Instance, true
+		}
+	}
+	return "", false
 }
 
 var _ = Describe("DeleteObject with an expected state", func() {
@@ -1408,6 +1428,559 @@ var _ = Describe("DeleteObject with an expected state", func() {
 			Expect(versionHead("v2").Xattrs).To(HaveKey(meta.AttrObjectLegalHold))
 			settledOn(ctx, "v2")
 		})
+
+		// A PutObject's replay reads the log while it holds the guarded
+		// delete's removal of v2. The delete's own replay refuses that removal
+		// and trims it, and its relist lists v2 again before the PutObject's
+		// replay gets to the removal, which then finds v2 listed and keeps it.
+		// With the PutObject's v3 listed above v2 the relist links v2 below
+		// it, at v2's own epoch; with v2 the PutObject's own version, nothing
+		// is listed above it and the relist links it current at a new epoch.
+		DescribeTable("keeps the refused version another request's replay read the removal of, once its relist lists it",
+			func(ctx SpecContext, r denc.Release, newer bool) {
+				open(ctx, r)
+				put(ctx, "v1")
+				written := "v2"
+				if newer {
+					put(ctx, "v2")
+					written = "v3"
+				}
+				linked, resume, atRemoval, removeNow := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+				resumePut, removeAfter := sync.OnceFunc(func() { close(resume) }), sync.OnceFunc(func() { close(removeNow) })
+				DeferCleanup(removeAfter)
+				DeferCleanup(resumePut)
+				putDone := make(chan error, 1)
+				at(calls("bucket_link_olh"), 1, func() {
+					close(linked)
+					<-resume
+				})
+				go func() {
+					defer GinkgoRecover()
+					_, err := s.PutObject(ctx, rec, version(written), strings.NewReader("data-"+written), op.PutParams{Attrs: attrs, Size: int64(len("data-" + written)), Tag: "tag-" + written})
+					putDone <- err
+				}()
+				Eventually(linked).WithTimeout(10*time.Second).Should(BeClosed(), "the PutObject's link, its replay still to run")
+				expect := head(ctx, "v2")
+				at(calls("bucket_unlink_instance"), 1, func() {
+					attrWrite(ctx, "v2")
+					oid := instanceHeadOID(version("v2"))
+					c.BeforeRead(testDataPool, "", oid, func() {
+						c.BeforeRead(testDataPool, "", oid, nil)
+						close(atRemoval)
+						<-removeNow
+					})
+					resumePut()
+					Eventually(atRemoval).WithTimeout(10*time.Second).Should(BeClosed(), "the PutObject's replay, about to remove v2")
+				})
+				_, err := del(ctx, "v2", op.DeleteParams{Expect: expect})
+				concurrent(err)
+				Expect(err).To(MatchError(driver.ErrRemovalRefused), "the delete's own replay refused the removal")
+				Expect(listed()).To(ContainElement("v2"), "the relist listed v2 again")
+				if newer {
+					Expect(listEntry("v2").Flags).To(Equal(rgwcls.FlagVer), "below v3, at its own epoch")
+				} else {
+					Expect(listEntry("v2").Flags&rgwcls.FlagCurrent).To(Equal(rgwcls.FlagCurrent), "current again at a new epoch")
+				}
+
+				removeAfter()
+				Eventually(putDone).WithTimeout(10*time.Second).Should(Receive(BeNil()), "the PutObject")
+				settle(s)
+				Expect(versionHead("v2")).NotTo(BeNil(), "the removal the PutObject's replay read found v2 listed again")
+				_, ok := instanceEntry("v2")
+				Expect(ok).To(BeTrue())
+				Expect(listing(ctx, true)).To(ContainElement("k@v2"), "ListObjectVersions lists it")
+				if newer {
+					settledOn(ctx, "v3")
+					return
+				}
+				settledOn(ctx, "v2")
+			},
+			Entry("v3 listed above it, on squid", denc.Squid, true),
+			Entry("v3 listed above it, on tentacle", denc.Tentacle, true),
+			Entry("nothing listed above it, on squid", denc.Squid, false),
+			Entry("nothing listed above it, on tentacle", denc.Tentacle, false),
+		)
+
+		// removalPrepareOf takes a replay's prepare of x's removal.
+		removalPrepareOf := func(x string) func(w *radosclient.WriteOp) bool {
+			return func(w *radosclient.WriteOp) bool {
+				k, ok := removalPrepareKey(w)
+				return ok && k == x
+			}
+		}
+
+		// Another request's replay reads a guarded delete's removal of x; its
+		// first prepare of that removal is refused, another writer's prepare
+		// having changed x's instance entry, and the delete's own replay then
+		// refuses the removal and trims it. The other replay's removal has left
+		// the log, so it stops there: a second prepare would land after the
+		// relist's give-way found the log without it and before its link, and
+		// its removal would leave the relist's list entry naming nothing. The
+		// shapes are the harness's H4:220, a reader of the key, and H10:1547,
+		// a suspended bucket's null delete marker over a refused delete of v1.
+		DescribeTable("stops a replay's removal that a refused prepare would send round again once the removal has left the log",
+			func(ctx SpecContext, r denc.Release, nullMarker bool) {
+				open(ctx, r)
+				x := "v2"
+				var other func(ctx context.Context) error
+				if nullMarker {
+					suspend()
+					nullPut(ctx, "tag-null", "null")
+					rec.Info.Flags &^= meta.BucketVersionsSuspended
+					put(ctx, "v1")
+					suspend()
+					x = "v1"
+					other = func(ctx context.Context) error {
+						_, err := del(ctx, "", op.DeleteParams{})
+						return err
+					}
+				} else {
+					put(ctx, "v1")
+					put(ctx, "v2")
+					other = func(ctx context.Context) error { return s.UpdateOLHForTest(ctx, rec, head(ctx, "")) }
+				}
+				expect := head(ctx, x)
+				removalPrepare := removalPrepareOf(x)
+				changer := s.NewIndexOpForTest(rec, version(x), "changer")
+				parked1, go1, parked2, go2 := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+				done, finished := make(chan error, 1), make(chan struct{})
+				letGo1, letGo2 := sync.OnceFunc(func() { close(go1) }), sync.OnceFunc(func() { close(go2) })
+				DeferCleanup(letGo2)
+				DeferCleanup(letGo1)
+				before(removalPrepare, 1, func() {
+					close(parked1)
+					<-go1
+					Expect(changer.Prepare(ctx, rgwcls.OpAdd)).To(Succeed(), "another writer's prepare, which changes x's instance entry")
+				})
+				at(removalPrepare, 2, func() {
+					close(parked2)
+					<-go2
+				})
+				at(calls("bucket_unlink_instance"), 1, func() {
+					attrWrite(ctx, x)
+					at(calls("bucket_trim_olh_log"), 1, func() {
+						letGo1()
+						select {
+						case <-parked2:
+						case <-finished:
+						case <-time.After(10 * time.Second):
+						}
+					})
+					go func() {
+						defer GinkgoRecover()
+						done <- other(ctx)
+						close(finished)
+					}()
+					Eventually(parked1).WithTimeout(10*time.Second).Should(BeClosed(), "the other replay, about to send its first prepare of x's removal")
+				})
+				_, err := del(ctx, x, op.DeleteParams{Expect: expect})
+				concurrent(err)
+				letGo2()
+				Eventually(done).WithTimeout(10 * time.Second).Should(Receive())
+				changer.Cancel()
+				settle(s)
+				Expect(versionHead(x)).NotTo(BeNil(), "x, which no delete was acknowledged for")
+				_, ok := instanceEntry(x)
+				Expect(ok).To(BeTrue())
+				Expect(listing(ctx, true)).To(ContainElement("k@"+x), "ListObjectVersions lists it")
+				if nullMarker {
+					nullPut(ctx, "tag-later", "later")
+					Expect(olhInfo().Target.Key.Instance).To(BeEmpty(), "a later write of the key links")
+					return
+				}
+				_, err = s.PutObject(ctx, rec, version("v9"), strings.NewReader("data-v9"), op.PutParams{Attrs: attrs, Size: 7, Tag: "tag-v9"})
+				Expect(err).NotTo(HaveOccurred(), "a later write of the key links")
+				settledOn(ctx, "v9")
+			},
+			Entry("a reader's replay, on squid", denc.Squid, false),
+			Entry("a reader's replay, on tentacle", denc.Tentacle, false),
+			Entry("a null delete marker's replay, on squid", denc.Squid, true),
+			Entry("a null delete marker's replay, on tentacle", denc.Tentacle, true),
+		)
+
+		// The harness's H1 writers=2 seed 626: another request's replay of a
+		// guarded delete's removal of v2 has its first prepare refused, another
+		// writer's prepare having changed v2's instance entry, and backs off.
+		// During the backoff the delete's own replay refuses the removal and
+		// trims it. The log is read again after the backoff, just before the
+		// next round's head read, so the other replay stops there: a log read
+		// before the backoff still held the removal, and its second prepare
+		// would land before the relist's link and remove v2 from under it.
+		DescribeTable("stops a replay's removal whose removal left the log during its backoff",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				expect := head(ctx, "v2")
+				removalPrepare := removalPrepareOf("v2")
+				changer := s.NewIndexOpForTest(rec, version("v2"), "changer")
+				inBackoff, trimmed, parked2, go2 := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+				done, finished := make(chan error, 1), make(chan struct{})
+				letGo2, letTrimmed := sync.OnceFunc(func() { close(go2) }), sync.OnceFunc(func() { close(trimmed) })
+				DeferCleanup(letGo2)
+				DeferCleanup(letTrimmed)
+				var sleeps atomic.Int32
+				driver.SetCondSleepForTest(s, func(context.Context, time.Duration) error {
+					if sleeps.Add(1) == 1 {
+						close(inBackoff)
+						<-trimmed
+					}
+					return nil
+				})
+				before(removalPrepare, 1, func() {
+					Expect(changer.Prepare(ctx, rgwcls.OpAdd)).To(Succeed(), "another writer's prepare, which changes v2's instance entry")
+				})
+				at(removalPrepare, 2, func() {
+					close(parked2)
+					<-go2
+				})
+				at(calls("bucket_unlink_instance"), 1, func() {
+					attrWrite(ctx, "v2")
+					at(calls("bucket_trim_olh_log"), 1, func() {
+						letTrimmed()
+						select {
+						case <-parked2:
+						case <-finished:
+						case <-time.After(10 * time.Second):
+						}
+					})
+					go func() {
+						defer GinkgoRecover()
+						done <- s.UpdateOLHForTest(ctx, rec, head(ctx, ""))
+						close(finished)
+					}()
+					Eventually(inBackoff).WithTimeout(10*time.Second).Should(BeClosed(), "the other replay, its first prepare refused, in its backoff")
+				})
+				_, err := del(ctx, "v2", op.DeleteParams{Expect: expect})
+				concurrent(err)
+				letGo2()
+				Eventually(done).WithTimeout(10 * time.Second).Should(Receive())
+				changer.Cancel()
+				settle(s)
+				Expect(versionHead("v2")).NotTo(BeNil(), "v2, which no delete was acknowledged for")
+				_, ok := instanceEntry("v2")
+				Expect(ok).To(BeTrue())
+				Expect(listing(ctx, true)).To(ContainElement("k@v2"), "ListObjectVersions lists it")
+				_, err = s.PutObject(ctx, rec, version("v9"), strings.NewReader("data-v9"), op.PutParams{Attrs: attrs, Size: 7, Tag: "tag-v9"})
+				Expect(err).NotTo(HaveOccurred(), "a later write of the key links")
+				settledOn(ctx, "v9")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// The harness's H1 writers=2 seed 668 and H10 seeds 392 and 1441:
+		// another request's replay reads two removals, first's and then a
+		// guarded delete's of x. Its prepare of first's removal is refused,
+		// another writer's prepare having changed first's index entry, and it
+		// backs off. Meanwhile the delete's own replay removes first, refuses
+		// its own removal of x and trims the log. After the backoff the other
+		// replay finds first's removal gone from the log, and its pass ends
+		// there: it reads the log again, finds it empty, and never prepares
+		// x's removal from the read the trim overtook, which would land
+		// before the relist's link and remove x from under it.
+		DescribeTable("ends a replay's pass once one of its removals has left the log, sending nothing more from that read",
+			func(ctx SpecContext, r denc.Release, null bool) {
+				open(ctx, r)
+				first, x := "v2", "v3"
+				if null {
+					suspend()
+					nullPut(ctx, "tag-null", "null")
+					rec.Info.Flags &^= meta.BucketVersionsSuspended
+					put(ctx, "v1")
+					suspend()
+					first, x = "", "v1"
+				} else {
+					put(ctx, "v1")
+					put(ctx, "v2")
+					put(ctx, "v3")
+				}
+				Expect(del(ctx, first, op.DeleteParams{SkipOLHUpdate: true})).Error().To(Succeed(), "first's removal logged, its replay left")
+				expect := head(ctx, x)
+				changer := s.NewIndexOpForTest(rec, version(first), "changer")
+				inBackoff, trimmed, parked2, go2 := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
+				done, finished := make(chan error, 1), make(chan struct{})
+				letGo2, letTrimmed := sync.OnceFunc(func() { close(go2) }), sync.OnceFunc(func() { close(trimmed) })
+				DeferCleanup(letGo2)
+				DeferCleanup(letTrimmed)
+				var sleeps atomic.Int32
+				driver.SetCondSleepForTest(s, func(context.Context, time.Duration) error {
+					if sleeps.Add(1) == 1 {
+						close(inBackoff)
+						<-trimmed
+					}
+					return nil
+				})
+				before(removalPrepareOf(first), 1, func() {
+					Expect(changer.Prepare(ctx, rgwcls.OpAdd)).To(Succeed(), "another writer's prepare, which changes first's index entry")
+				})
+				at(removalPrepareOf(x), 1, func() {
+					close(parked2)
+					<-go2
+				})
+				at(calls("bucket_unlink_instance"), 1, func() {
+					attrWrite(ctx, x)
+					at(calls("bucket_trim_olh_log"), 1, func() {
+						letTrimmed()
+						select {
+						case <-parked2:
+						case <-finished:
+						case <-time.After(10 * time.Second):
+						}
+					})
+					go func() {
+						defer GinkgoRecover()
+						done <- s.UpdateOLHForTest(ctx, rec, head(ctx, ""))
+						close(finished)
+					}()
+					Eventually(inBackoff).WithTimeout(10*time.Second).Should(BeClosed(), "the other replay, its prepare of first's removal refused, in its backoff")
+				})
+				_, err := del(ctx, x, op.DeleteParams{Expect: expect})
+				concurrent(err)
+				letGo2()
+				Eventually(done).WithTimeout(10 * time.Second).Should(Receive())
+				changer.Cancel()
+				settle(s)
+				Expect(versionHead(x)).NotTo(BeNil(), "x, which no delete was acknowledged for")
+				_, ok := instanceEntry(x)
+				Expect(ok).To(BeTrue())
+				Expect(listing(ctx, true)).To(ContainElement("k@"+x), "ListObjectVersions lists it")
+				if null {
+					nullPut(ctx, "tag-later", "later")
+					Expect(olhInfo().Target.Key.Instance).To(BeEmpty(), "a later write of the key links")
+					return
+				}
+				Expect(versionHead(first)).To(BeNil(), "first, removed by the delete's replay")
+				_, err = s.PutObject(ctx, rec, version("v9"), strings.NewReader("data-v9"), op.PutParams{Attrs: attrs, Size: 7, Tag: "tag-v9"})
+				Expect(err).NotTo(HaveOccurred(), "a later write of the key links")
+				settledOn(ctx, "v9")
+			},
+			Entry("a named version first (H1 writers=2:668), on squid", denc.Squid, false),
+			Entry("a named version first (H1 writers=2:668), on tentacle", denc.Tentacle, false),
+			Entry("the null version first (H10:392, :1441), on squid", denc.Squid, true),
+			Entry("the null version first (H10:392, :1441), on tentacle", denc.Tentacle, true),
+		)
+
+		// An attribute write's head write lands; then a delete unlinks v2 and
+		// two replays of its removal run, both prepared before either removes
+		// the head; then the attribute write's index completion lands. The
+		// second removal finds the head gone and completes at the version its
+		// ENOENT reply carries, at or above the first's, so the attribute
+		// write's completion, at its head write's lower version, is a cancel:
+		// nothing of v2 is left. Completed at 0, the class would apply it and
+		// make v2's instance entry again with no head, counted.
+		DescribeTable("leaves nothing of a version an attribute write rewrote before two replays of its removal",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				v2Head := instanceHeadOID(version("v2"))
+				replay := func(ctx context.Context) error { return s.UpdateOLHForTest(ctx, rec, head(ctx, "")) }
+				var replayed bool
+				c.AfterWrite(testDataPool, "", v2Head, func() {
+					defer GinkgoRecover()
+					c.AfterWrite(testDataPool, "", v2Head, nil)
+					written := c.Object(testDataPool, "", v2Head).Version
+					Expect(del(ctx, "v2", op.DeleteParams{SkipOLHUpdate: true})).Error().To(Succeed(), "the delete, its replay left")
+					// The first replay to reach the head's removal waits there
+					// until the second has removed the head and completed.
+					parked, release := make(chan struct{}), make(chan struct{})
+					var removes atomic.Int32
+					c.BeforeWrite(testDataPool, "", v2Head, func(*fakerados.Object) {
+						if removes.Add(1) == 1 {
+							close(parked)
+							<-release
+						}
+					})
+					first := make(chan error, 1)
+					go func() {
+						defer GinkgoRecover()
+						first <- replay(ctx)
+					}()
+					Eventually(parked).WithTimeout(10*time.Second).Should(BeClosed(), "the first replay, prepared and about to remove the head")
+					Expect(replay(ctx)).To(Succeed(), "the second replay, which removes the head")
+					close(release)
+					Eventually(first).WithTimeout(10*time.Second).Should(Receive(Succeed()), "the first replay, which meets the head gone")
+					c.BeforeWrite(testDataPool, "", v2Head, nil)
+					en, ok := instanceEntry("v2")
+					Expect(ok).To(BeTrue(), "the DEL completions write the entry back while the attribute write's tag is pending")
+					Expect(en.Exists).To(BeFalse())
+					Expect(en.Ver.Epoch).To(BeNumerically(">", written), "above the attribute write's head write, whose completion is then stale")
+					replayed = true
+				})
+				policy := encode(acl.DefaultPolicy(meta.UserOwner(meta.UserID{ID: "carol"}), "Carol"))
+				Expect(s.SetObjectAttrs(ctx, head(ctx, "v2"), map[string][]byte{meta.AttrACL: policy}, nil)).To(Succeed(), "its head write landed")
+				settle(s)
+				Expect(replayed).To(BeTrue())
+				Expect(versionHead("v2")).To(BeNil())
+				_, ok := instanceEntry("v2")
+				Expect(ok).To(BeFalse(), "no instance entry of v2 left without its head")
+				Expect(listed()).NotTo(ContainElement("v2"))
+				settledOn(ctx, "v1")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// Another writer changes the version's instance entry between each of
+		// the delete's reads of it and the prepare it compares it in. The
+		// removal backs off between its rounds and, at its bound, leaves the
+		// log to the next replay; the delete, whose unlink has landed, answers
+		// as radosgw's does.
+		It("answers a delete whose removal another writer keeps refusing, leaving the removal in the log for the next replay", func(ctx SpecContext) {
+			put(ctx, "v1")
+			put(ctx, "v2")
+			var changers []*driver.IndexOp
+			var sleeps atomic.Int32
+			driver.SetCondSleepForTest(s, func(context.Context, time.Duration) error {
+				sleeps.Add(1)
+				return nil
+			})
+			ac.set(func(w *radosclient.WriteOp, send sendFunc) (uint64, error) {
+				if callsMethod(w.Steps(), "bucket_prepare_op") && slices.ContainsFunc(w.Steps(), func(st radosclient.Step) bool {
+					_, ok := st.(*radosclient.OmapCmpStep)
+					return ok
+				}) {
+					x := s.NewIndexOpForTest(rec, version("v2"), fmt.Sprintf("changer-%d", len(changers)))
+					changers = append(changers, x)
+					Expect(x.Prepare(ctx, rgwcls.OpAdd)).To(Succeed())
+				}
+				return hooks.around(w, send)
+			})
+			res, err := del(ctx, "v2", op.DeleteParams{})
+			ac.set(hooks.around)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res).To(Equal(&op.DeleteObjectResult{VersionID: "v2"}))
+			Expect(changers).To(HaveLen(driver.OLHAttempts), "one refused prepare a round, up to the bound")
+			Expect(sleeps.Load()).To(BeEquivalentTo(driver.OLHAttempts-1), "a backoff after each lost round but the last")
+			Expect(versionHead("v2")).NotTo(BeNil(), "nothing removed yet")
+			Expect(olhLog()).To(ContainElement(ContainElement(SatisfyAll(
+				HaveField("Op", rgwcls.OLHOpRemoveInstance), HaveField("Key.Instance", "v2")))), "the removal stays in the log")
+			for _, x := range changers {
+				x.Cancel()
+			}
+			settle(s)
+			Expect(s.UpdateOLHForTest(ctx, rec, head(ctx, ""))).To(Succeed(), "the next replay")
+			Expect(versionHead("v2")).To(BeNil(), "removed by the next replay")
+			settledOn(ctx, "v1")
+		})
+
+		// A delete's replay meets two removals that other writers keep
+		// refusing: v2's, another delete's left to the next replay, refused for
+		// 20 rounds, and then the delete's own removal of v3, refused on every
+		// round. Each backoff takes a second. The two share the delete's one
+		// deadline, 32 s after v2's first lost round, so v3's removal is
+		// deferred 14 rounds in, after 33 backoffs in all, and the delete
+		// answers as radosgw's does. With a deadline of its own, v3's removal
+		// would back off for 32 s more.
+		It("shares one backoff deadline among the removals of a delete's replay, deferring once 32 s have passed", func(ctx SpecContext) {
+			put(ctx, "v1")
+			put(ctx, "v2")
+			put(ctx, "v3")
+			Expect(del(ctx, "v2", op.DeleteParams{SkipOLHUpdate: true})).Error().To(Succeed(), "v2's removal logged, its replay left")
+			var sleeps atomic.Int32
+			driver.SetCondSleepForTest(s, func(context.Context, time.Duration) error {
+				sleeps.Add(1)
+				clock.Add(int64(time.Second))
+				return nil
+			})
+			refused := map[string]int{}
+			var changers []*driver.IndexOp
+			ac.set(func(w *radosclient.WriteOp, send sendFunc) (uint64, error) {
+				if x, ok := removalPrepareKey(w); ok && (x == "v3" || x == "v2" && refused["v2"] < 20) {
+					refused[x]++
+					ch := s.NewIndexOpForTest(rec, version(x), fmt.Sprintf("changer-%d", len(changers)))
+					changers = append(changers, ch)
+					Expect(ch.Prepare(ctx, rgwcls.OpAdd)).To(Succeed(), "another writer's prepare, which changes %s's instance entry", x)
+				}
+				return hooks.around(w, send)
+			})
+			res, err := del(ctx, "v3", op.DeleteParams{})
+			ac.set(hooks.around)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res).To(Equal(&op.DeleteObjectResult{VersionID: "v3"}))
+			Expect(refused).To(Equal(map[string]int{"v2": 20, "v3": 14}), "v3's last refused round, past the deadline, defers it")
+			Expect(sleeps.Load()).To(BeEquivalentTo(33), "a backoff after every lost round but the deferred one")
+			Expect(versionHead("v2")).To(BeNil(), "v2, removed on its 21st round")
+			Expect(versionHead("v3")).NotTo(BeNil(), "v3, its removal deferred")
+			Expect(olhLog()).To(ContainElement(ContainElement(SatisfyAll(
+				HaveField("Op", rgwcls.OLHOpRemoveInstance), HaveField("Key.Instance", "v3")))), "v3's removal stays in the log")
+			for _, x := range changers {
+				x.Cancel()
+			}
+			settle(s)
+			Expect(s.UpdateOLHForTest(ctx, rec, head(ctx, ""))).To(Succeed(), "the next replay")
+			Expect(versionHead("v3")).To(BeNil(), "removed by the next replay")
+			settledOn(ctx, "v1")
+		})
+
+		// A reader's replay meets, pass after pass, a removal another writer's
+		// prepare refuses once, which another replay carries out and trims
+		// during the reader's backoff, the next removal logged before the
+		// reader reads the log again. Each of those passes ends there, the log
+		// it read overtaken (errRemovalLeftLog). A reader whose replay runs out
+		// of passes answers SlowDown, which a client retries, never NoSuchKey:
+		// the key's current version is whole all along. With a pass to spare,
+		// it answers that version.
+		DescribeTable("answers a read whose replay other replays overtake on every pass SlowDown, never NoSuchKey",
+			func(ctx SpecContext, r denc.Release, removals int) {
+				open(ctx, r)
+				put(ctx, "v1")
+				var xs []string
+				for i := range removals {
+					x := fmt.Sprintf("x%02d", i)
+					put(ctx, x)
+					xs = append(xs, x)
+				}
+				put(ctx, "vtop")
+				Expect(del(ctx, xs[0], op.DeleteParams{SkipOLHUpdate: true})).Error().To(Succeed(), "the first removal logged, its replay left")
+				var other atomic.Bool
+				next := 0
+				driver.SetCondSleepForTest(s, func(context.Context, time.Duration) error {
+					other.Store(true)
+					defer other.Store(false)
+					Expect(s.UpdateOLHForTest(ctx, rec, head(ctx, ""))).To(Succeed(), "another replay, which carries out %s's removal and trims it", xs[next])
+					if next++; next < len(xs) {
+						Expect(del(ctx, xs[next], op.DeleteParams{SkipOLHUpdate: true})).Error().To(Succeed(), "the next removal logged")
+					}
+					return nil
+				})
+				var changers []*driver.IndexOp
+				ac.set(func(w *radosclient.WriteOp, send sendFunc) (uint64, error) {
+					if x, ok := removalPrepareKey(w); ok && !other.Load() {
+						ch := s.NewIndexOpForTest(rec, version(x), fmt.Sprintf("changer-%d", len(changers)))
+						changers = append(changers, ch)
+						Expect(ch.Prepare(ctx, rgwcls.OpAdd)).To(Succeed(), "another writer's prepare, which changes %s's instance entry", x)
+					}
+					return hooks.around(w, send)
+				})
+				st, err := s.StatObject(ctx, rec, version(""))
+				ac.set(hooks.around)
+				Expect(changers).To(HaveLen(removals), "one refused prepare a pass")
+				Expect(next).To(Equal(removals), "every removal carried out by the other replays")
+				for _, x := range changers {
+					x.Cancel()
+				}
+				settle(s)
+				if removals > driver.OLHReplayRetries {
+					Expect(err).To(MatchError(op.ErrSlowDown))
+					Expect(op.AsError(err).Status).To(Equal(http.StatusServiceUnavailable))
+				} else {
+					Expect(err).NotTo(HaveOccurred())
+					Expect(st.Exists).To(BeTrue())
+					Expect(st.Key.Instance).To(Equal("vtop"))
+				}
+				Expect(versionHead("vtop")).NotTo(BeNil(), "the current version's head")
+				settledOn(ctx, "vtop")
+				st, err = s.StatObject(ctx, rec, version(""))
+				Expect(err).NotTo(HaveOccurred(), "a later read")
+				Expect(st.Key.Instance).To(Equal("vtop"))
+			},
+			Entry("a pass to spare, on squid", denc.Squid, driver.OLHReplayRetries),
+			Entry("a pass to spare, on tentacle", denc.Tentacle, driver.OLHReplayRetries),
+			Entry("out of passes, on squid", denc.Squid, driver.OLHReplayRetries+1),
+			Entry("out of passes, on tentacle", denc.Tentacle, driver.OLHReplayRetries+1),
+		)
 	})
 
 	Describe("versionId=null", func() {

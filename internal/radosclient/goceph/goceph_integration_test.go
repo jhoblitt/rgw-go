@@ -318,6 +318,39 @@ var _ = Describe("goceph against a cluster", Label("integration"), func() {
 				Expect(pool.Read(ctx, oid, r, radosclient.OpFlagNone)).Error().To(Succeed())
 			})
 
+			// The OSD answers a write that fails ENOENT with the placement
+			// group's last user version, which radosgw completes the removal of
+			// a missing object at, and any other failed write with the
+			// object's own version (radosclient.Pool's Write). The group's
+			// version only grows, and other specs may write to it too, so the
+			// second removal's is at or above the first's, never 0.
+			It("returns the reply's version beside an error an OSD's reply carries", func(ctx SpecContext) {
+				w := radosclient.NewWriteOp()
+				w.WriteFull([]byte("v1"))
+				w.SetXattr("user.rgw.idtag", []byte("a"))
+				written, err := pool.Write(ctx, oid, w, radosclient.OpFlagNone)
+				Expect(err).NotTo(HaveOccurred())
+
+				refused := radosclient.NewWriteOp()
+				refused.CmpXattr("user.rgw.idtag", radosclient.CmpEQ, []byte("b"))
+				refused.WriteFull([]byte("v2"))
+				ver, err := pool.Write(ctx, oid, refused, radosclient.OpFlagNone)
+				Expect(err).To(MatchError(radosclient.ErrCanceled))
+				Expect(ver).To(Equal(written), "a refused write: the object's own version")
+
+				rm := radosclient.NewWriteOp()
+				rm.Remove()
+				removed, err := pool.Write(ctx, oid, rm, radosclient.OpFlagNone)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(removed).To(BeNumerically(">", written))
+
+				again := radosclient.NewWriteOp()
+				again.Remove()
+				ver, err = pool.Write(ctx, oid, again, radosclient.OpFlagNone)
+				Expect(err).To(MatchError(radosclient.ErrNotFound))
+				Expect(ver).To(BeNumerically(">=", removed), "a removal of the object gone: the last version, not 0")
+			})
+
 			It("returns the object's version from a read, and 0 with an error", func(ctx SpecContext) {
 				w := radosclient.NewWriteOp()
 				w.WriteFull([]byte("v1"))

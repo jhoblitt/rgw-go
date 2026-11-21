@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
@@ -81,8 +82,9 @@ type olhLink struct {
 }
 
 // olhRelink is a link that lists again a version a refused removal left
-// unlisted (delete_versioned.go): no failure removes the version, which the
-// link did not write. head, when not nil, is the OLH head as the caller read
+// unlisted (delete_versioned.go), or a version a lifecycle transition
+// rewrote (linkTransition, keepCurrent): no failure removes the version,
+// which the link did not write. head, when not nil, is the OLH head as the caller read
 // it before it chose the link's epoch, which each attempt's read must still
 // match, its OLH tag, its olh.info, its olh.ver and no pending attr, or the
 // link answers errRelinkMoved with nothing written; the init is guarded on
@@ -275,6 +277,7 @@ func (s *Store) stopsAfterLink() bool { return olhStopAfterLink != nil && olhSto
 // sends its init, its link, and the cancel after a link that did not land,
 // whatever that cap does (olhRelink).
 func (s *Store) setOLH(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p olhLink) error {
+	ctx = withRemovalDeadline(ctx)
 	what := versionName(rec, key)
 	idx := s.newOLHIndex(rec, key)
 	f := olhLinkFields{deleteMarker: p.DeleteMarker, meta: p.Meta, epoch: p.Epoch, unmodSince: p.UnmodSince, highPrecision: p.HighPrecision}
@@ -487,6 +490,7 @@ const (
 // reads, and, once the unlink landed, the OLH tag the head carried after
 // the attempt's init, the one the unlink sent.
 func (s *Store) unlinkVersion(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p olhUnlink) (unlinkOutcome, []byte, error) {
+	ctx = withRemovalDeadline(ctx)
 	what := versionName(rec, key)
 	idx := s.newOLHIndex(rec, key)
 	f := olhUnlinkFields{epoch: p.Epoch, nullVersion: p.NullVersion}
@@ -664,7 +668,7 @@ func (s *Store) updateOLHAfterFailure(ctx context.Context, idx *bucketOLHIndex, 
 // as its caller read it, as update_olh leaves its caller's state, so a
 // caller that needs the head as the update left it reads it again.
 func (s *Store) updateOLH(ctx context.Context, rec *op.BucketRecord, head *op.ObjectState) error {
-	refused, err := s.replayOLH(ctx, s.newOLHIndex(rec, head.Key), head, &olhReplay{})
+	refused, err := s.replayOLH(withRemovalDeadline(ctx), s.newOLHIndex(rec, head.Key), head, &olhReplay{})
 	return errors.Join(err, refused)
 }
 
@@ -693,8 +697,19 @@ type olhReplay struct {
 // (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8435 at v19.2.7,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9181 at v20.2.4);
 // past the bound, or with the head gone, ECANCELED is returned, as radosgw
-// returns it, and the pending attrs wait for the next reader. Any other
-// failure is returned at once.
+// returns it, and the pending attrs wait for the next reader. Past the bound
+// with the head still there, the ECANCELED also carries errReplayOvertaken,
+// which a read answers as SlowDown (followOLH): the OLH was not removed, as
+// the ECANCELED of a head gone says. A pass one of
+// whose removals another replay had carried out and trimmed from the log
+// since the read (errRemovalLeftLog) ends there too, and runs again from a
+// fresh read within the same bound, so that no prepare is sent from a log
+// another replay has overtaken. A pass that
+// stops before its head op on a removal deferred to the next replay
+// (errRemovalDeferred) ends the replay with no error: its log and pending
+// attrs stay for that replay, and its caller answers as for a replay another
+// writer's has overtaken, where radosgw's removal, comparing nothing, goes
+// on. Any other failure is returned at once.
 //
 // refused is the removals refused by r's expectTag in pages whose head op
 // and tail landed, each final; one whose tail did not finish comes in err.
@@ -705,20 +720,31 @@ func (s *Store) replayOLH(ctx context.Context, idx *bucketOLHIndex, head *op.Obj
 		pass, canceled, err := s.replayPass(ctx, idx, cur, r, &retries)
 		refused = errors.Join(refused, pass)
 		r.raced = r.raced || canceled
-		if !canceled || retries >= olhReplayRetries || ctx.Err() != nil {
+		if errors.Is(err, errRemovalDeferred) {
+			slog.DebugContext(ctx, "a replay leaves its log to the next one, a removal's prepares having been refused until their bound",
+				slog.String("bucket", idx.x.obj.Bucket.Name), slog.String("key", head.Key.Name), slog.Any("error", err))
+			return refused, nil
+		}
+		if !canceled || ctx.Err() != nil {
 			return refused, err
 		}
-		retries++
 		fresh, rerr := s.readOLHHead(ctx, idx.x.rec, head.Key)
 		switch {
 		case rerr != nil:
 			return refused, rerr
 		case !fresh.Exists:
 			return refused, err
+		case retries >= olhReplayRetries:
+			return refused, fmt.Errorf("%w: %w", errReplayOvertaken, err)
 		}
+		retries++
 		cur = fresh
 	}
 }
+
+// errReplayOvertaken ends a replay that ran out of passes, each refused by
+// another writer's guard or overtaken by another replay's trim (replayOLH).
+var errReplayOvertaken = errors.New("other writers overtook every pass of the replay")
 
 // replayPass reads cur's pending log a page at a time from its start, as
 // update_olh reads it from marker 0
@@ -1009,42 +1035,258 @@ func versionName(rec *op.BucketRecord, key meta.ObjKey) string {
 // head whose write tag is not expectTag, as read or as the removal lands,
 // keeps the version, its pending index DEL canceled, and answers
 // errRemovalRefused.
+//
+// The removal goes on only while the version is unlisted. The unlink that
+// logged it took the version's list entry, and only a link writes one again,
+// rewriting the instance entry at the link's epoch and flags as it does
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1410-L1427 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1537-L1554 at v20.2.4),
+// whether it lands above the OLH entry's epoch and logs a LINK_OLH or below
+// it and logs nothing. So the prepare, the removal's first index op,
+// compares the version's instance entry with the bytes read just before it
+// (removalCmps) and the list entry that entry names as absent, and a link
+// landed since the replay read the log answers errRemovalRelisted with
+// nothing removed, the version kept as a later link in the log keeps it
+// (applyOLHLog). A prepare those compares refuse reads the entries again: a
+// version listed is kept, and any other is tried again from a fresh read of
+// its head, up to olhAttempts. radosgw's removal compares neither entry and
+// removes the version whoever links it after the replay read the log
+// (docs/differences.md, "A replay keeps a version a link lists again after it
+// read the log"). A link landing after the prepare and before the removal's
+// completion finds the instance entry still there, and the completion then
+// removes it from under the list entry the link wrote.
 func (b *bucketOLHIndex) removeInstance(ctx context.Context, key meta.ObjKey, expectTag []byte, keepLocked bool) error {
+	return b.removeVersion(ctx, key, expectTag, keepLocked, true)
+}
+
+// removeVersion is removeInstance, logged set when the removal is a
+// replay's of an entry of the name's OLH log. A prepare the compares refuse,
+// on a version still unlisted, is followed by a relist's backoff
+// (relistBackoff's), and the rounds end at olhAttempts or at the request's
+// removalDeadline, whichever comes first, with errRemovalDeferred: nothing is
+// removed, and a logged removal stays in the log for the next replay. A round
+// after the backoff goes on only while there is a removal to carry out: for a
+// logged removal, while the name's OLH log, read just before the round's head
+// read and prepare, still holds a removal of the version that no later link
+// of its data drops (logsRemoval). Once another replay has applied, refused
+// or kept that removal and trimmed it, the backoff included, the removal
+// answers errRemovalLeftLog with nothing removed, which ends the replay's
+// pass and sends it back to a fresh read of the log (applyOLHLog): a prepare
+// sent then would follow a relist's give-way that found the log without the
+// removal, and land in the window above.
+func (b *bucketOLHIndex) removeVersion(ctx context.Context, key meta.ObjKey, expectTag []byte, keepLocked, logged bool) error {
 	if err := b.ofName(key); err != nil {
 		return err
 	}
 	s, rec := b.x.s, b.x.rec
-	st, err := s.readOLHHead(ctx, rec, key)
-	if err != nil {
+	lost := 0
+	deadline := removalDeadlineOf(ctx)
+	for {
+		if lost > 0 && logged {
+			held, herr := b.logsRemoval(ctx, key)
+			switch {
+			case herr != nil:
+				return fmt.Errorf("reading the olh log of %s after its removal was refused: %w", versionName(rec, key), herr)
+			case !held:
+				return fmt.Errorf("%s: %w", versionName(rec, key), errRemovalLeftLog)
+			}
+		}
+		st, err := s.readOLHHead(ctx, rec, key)
+		if err != nil {
+			return err
+		}
+		if !st.Exists {
+			return fmt.Errorf("%w: the version has no head", op.ErrNoSuchKey)
+		}
+		w := radosclient.NewWriteOp()
+		switch {
+		case expectTag != nil:
+			if !bytes.Equal(st.Attrs[meta.AttrIDTag], expectTag) {
+				return errRemovalRefused
+			}
+			w.CmpXattr(meta.AttrIDTag, radosclient.CmpEQ, expectTag)
+		case keepLocked:
+			if s.lockHolds(st) {
+				return fmt.Errorf("%s: %w", versionName(rec, key), errRemovalLocked)
+			}
+			w.CmpXattr(meta.AttrIDTag, radosclient.CmpEQ, st.Attrs[meta.AttrIDTag])
+		case st.WriteTag != "":
+			w.CmpXattr(meta.AttrIDTag, radosclient.CmpEQ, st.Attrs[meta.AttrIDTag])
+		}
+		cmps, err := b.removalCmps(ctx, key)
+		if err != nil {
+			return err
+		}
+		flags := rgw.BILogFlagVersionedOp
+		if key.Instance == "" {
+			flags |= rgw.BILogNullVersion
+		}
+		err = s.removeHeadFlagged(ctx, rec, key, "", st, w, true, headRemoval{bilogFlags: flags, await: true, cmps: cmps})
+		switch {
+		case errors.Is(err, errRemovalEntryMoved):
+			listed, lerr := b.dataListed(ctx, key)
+			switch {
+			case lerr != nil:
+				return fmt.Errorf("reading the index entries of %s again after its removal was refused: %w", versionName(rec, key), lerr)
+			case listed:
+				return fmt.Errorf("%s: %w", versionName(rec, key), errRemovalRelisted)
+			}
+			lost++
+			now := s.now()
+			if lost >= olhAttempts || now.After(deadline.from(now)) {
+				return fmt.Errorf("%w: removing %s: %d prepares found its index entries changed", errRemovalDeferred, versionName(rec, key), lost)
+			}
+			if berr := s.condBackoff(ctx, olhCondBackoff(min(lost-1, olhCondBackoffs))); berr != nil {
+				return fmt.Errorf("%w: removing %s: %w", errRemovalDeferred, versionName(rec, key), berr)
+			}
+			continue
+		case expectTag != nil && errors.Is(err, radosclient.ErrCanceled):
+			return fmt.Errorf("the version's head changed as it was removed: %w", errRemovalRefused)
+		}
 		return err
 	}
-	if !st.Exists {
-		return fmt.Errorf("%w: the version has no head", op.ErrNoSuchKey)
+}
+
+// removalDeadline bounds the backoffs of every removal a request makes
+// (removeVersion), in every pass of every replay it runs and in its
+// checkRemoval: relistCap after the first round any of them lost, unset
+// until then. So the request backs off for relistCap at most, and one more
+// backoff, however many removals and passes it runs. A request is one call
+// of the store that writes, deletes or reads a versioned key, which carries
+// its deadline in its context from the first of its OLH operations that
+// takes one (withRemovalDeadline); a removal with none in its context has
+// its own.
+type removalDeadline struct {
+	mu sync.Mutex
+	at time.Time
+}
+
+// removalDeadlineKey is the context key of a request's removalDeadline.
+type removalDeadlineKey struct{}
+
+// withRemovalDeadline is ctx carrying a removalDeadline, a new one unless
+// ctx carries one already.
+func withRemovalDeadline(ctx context.Context) context.Context {
+	if _, ok := ctx.Value(removalDeadlineKey{}).(*removalDeadline); ok {
+		return ctx
 	}
-	w := radosclient.NewWriteOp()
+	return context.WithValue(ctx, removalDeadlineKey{}, &removalDeadline{})
+}
+
+// removalDeadlineOf is the removalDeadline ctx carries, or a new one.
+func removalDeadlineOf(ctx context.Context) *removalDeadline {
+	if d, ok := ctx.Value(removalDeadlineKey{}).(*removalDeadline); ok {
+		return d
+	}
+	return &removalDeadline{}
+}
+
+// from is the deadline, which a round lost at now sets when it is the
+// request's first.
+func (d *removalDeadline) from(now time.Time) time.Time {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.at.IsZero() {
+		d.at = now.Add(relistCap)
+	}
+	return d.at
+}
+
+// logsRemoval reports whether the OLH log of key's name holds a removal of
+// key's version that no later link of its data drops, one a replay has still
+// to carry out (unpairedRemovals); a name without an OLH entry holds none.
+func (b *bucketOLHIndex) logsRemoval(ctx context.Context, key meta.ObjKey) (bool, error) {
+	e, err := b.getOLH(ctx, &op.ObjectState{Bucket: b.x.rec, Key: olhHeadKey(key)})
 	switch {
-	case expectTag != nil:
-		if !bytes.Equal(st.Attrs[meta.AttrIDTag], expectTag) {
-			return errRemovalRefused
+	case errors.Is(err, radosclient.ErrNotFound):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return unpairedRemovals(e.PendingLog)[key.Instance], nil
+}
+
+// errRemovalLeftLog ends a replay's removal that a refused prepare would
+// have sent round again once the OLH log no longer held it (removeVersion).
+var errRemovalLeftLog = errors.New("another replay has carried out the removal, which has left the log")
+
+// errRemovalDeferred ends a removal whose prepares other writers' changes to
+// the version's index entries kept refusing until its bound (removeVersion):
+// it removed nothing, and a logged removal stays in the log.
+var errRemovalDeferred = errors.New("the version's index entries kept changing under its removal, which is left to the next replay")
+
+// errRemovalEntryMoved ends a removal whose prepare the compares of the
+// version's index entries refused (headRemoval.cmps).
+var errRemovalEntryMoved = errors.New("the version's index entries changed since the removal read them")
+
+// dataEntry is the index entry of key's version of data, as the class's link
+// and unlink read it, with the raw entry bi_get answered: a named version's
+// instance entry, or the null version's data entry, the plain key's or,
+// behind the version marker, the null data key's, never the null delete
+// marker's (nullDataEntry).
+func (b *bucketOLHIndex) dataEntry(ctx context.Context, key meta.ObjKey) (rgw.DirEntry, rgw.BIEntry, error) {
+	x, k := b.x, versionKey(key)
+	var en rgw.DirEntry
+	var bi rgw.BIEntry
+	err := x.readShard(ctx, func(sh indexShard) error {
+		var err error
+		if en, bi, err = x.dirEntryBI(ctx, sh, k, rgw.BIIndexInstance); err != nil || k.Instance != "" || en.Flags&rgw.FlagVerMarker == 0 {
+			return err
 		}
-		w.CmpXattr(meta.AttrIDTag, radosclient.CmpEQ, expectTag)
-	case keepLocked:
-		if s.lockHolds(st) {
-			return fmt.Errorf("%s: %w", versionName(rec, key), errRemovalLocked)
-		}
-		w.CmpXattr(meta.AttrIDTag, radosclient.CmpEQ, st.Attrs[meta.AttrIDTag])
-	case st.WriteTag != "":
-		w.CmpXattr(meta.AttrIDTag, radosclient.CmpEQ, st.Attrs[meta.AttrIDTag])
+		en, bi, err = x.dirEntryBI(ctx, sh, rgw.ObjKey{Name: rgw.InstanceIndexKey(k, false)}, rgw.BIIndexPlain)
+		return err
+	})
+	return en, bi, err
+}
+
+// listsData reports whether en, a version's data entry, names a list entry:
+// it carries FLAG_VER, which only a link and a conversion of a plain entry
+// write, and is no delete marker, whose entry a data removal does not take.
+func listsData(en rgw.DirEntry) bool {
+	return en.Flags&rgw.FlagVer != 0 && en.Flags&rgw.FlagDeleteMarker == 0
+}
+
+// removalCmps is what the prepare of key's removal compares: the version's
+// data entry as dataEntry reads it now and, when that entry names a list
+// entry, the list entry the class keys at its versioned_epoch
+// (get_list_index_key) as absent. A version with no data entry, or whose
+// entry is a delete marker's, gets no compare. A link of its data needs the
+// entry, so none lands before the prepare; but the prepare itself writes a
+// placeholder entry, not existing, under its pending tag
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L847-L875 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L979-L1005 at v20.2.4),
+// which a link landing after it finds and lists, as it finds any entry in the
+// window between a removal's prepare and its completion.
+func (b *bucketOLHIndex) removalCmps(ctx context.Context, key meta.ObjKey) ([]rgw.BIEntry, error) {
+	en, bi, err := b.dataEntry(ctx, key)
+	switch {
+	case errors.Is(err, radosclient.ErrNotFound):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("reading the index entry of %s before its removal: %w", versionName(b.x.rec, key), err)
+	case en.Flags&rgw.FlagDeleteMarker != 0:
+		return nil, nil
 	}
-	flags := rgw.BILogFlagVersionedOp
-	if key.Instance == "" {
-		flags |= rgw.BILogNullVersion
+	cmps := []rgw.BIEntry{bi}
+	if listsData(en) {
+		cmps = append(cmps, rgw.BIEntry{Type: rgw.BIIndexPlain, Idx: rgw.ListIndexKey(en.Key, en.VersionedEpoch)})
 	}
-	err = s.removeHeadFlagged(ctx, rec, key, "", st, w, true, headRemoval{bilogFlags: flags, await: true})
-	if expectTag != nil && errors.Is(err, radosclient.ErrCanceled) {
-		return fmt.Errorf("the version's head changed as it was removed: %w", errRemovalRefused)
+	return cmps, nil
+}
+
+// dataListed reports whether key's version of data is listed: its data entry
+// names a list entry and that entry is there.
+func (b *bucketOLHIndex) dataListed(ctx context.Context, key meta.ObjKey) (bool, error) {
+	en, _, err := b.dataEntry(ctx, key)
+	switch {
+	case errors.Is(err, radosclient.ErrNotFound):
+		return false, nil
+	case err != nil:
+		return false, err
+	case !listsData(en):
+		return false, nil
 	}
-	return err
+	return b.x.s.listed(ctx, b.x.rec, key, en)
 }
 
 // removeFailedVersion removes key, a version of rec's bucket a versioned
@@ -1070,7 +1312,7 @@ func (s *Store) removeUnlinkedVersion(ctx context.Context, rec *op.BucketRecord,
 	if key.Instance == "" {
 		return
 	}
-	err := s.newOLHIndex(rec, key).removeInstance(ctx, key, nil, false)
+	err := s.newOLHIndex(rec, key).removeVersion(ctx, key, nil, false, false)
 	if err != nil && !errors.Is(err, op.ErrNoSuchKey) {
 		slog.WarnContext(ctx, "removing a version whose link failed failed; it stays for bucket check",
 			slog.String("bucket", rec.Info.Bucket.Name), slog.String("key", key.Name), slog.String("instance", key.Instance),
@@ -1165,7 +1407,11 @@ func (s *Store) unlistedVersion(ctx context.Context, rec *op.BucketRecord, key m
 //
 // A null version so removed whose name's OLH entry is left with no version
 // has its OLH cleared, as the replay that kept it would have
-// (clearVersionlessOLH).
+// (clearVersionlessOLH). A removal whose prepares other writers kept
+// refusing until their bound (errRemovalDeferred) answers SlowDown, 503,
+// where main answered UnknownError, 500: no log entry is left for a later
+// replay to remove the version, so the delete must not be acknowledged, and
+// the client's retry of it is what removes the version.
 func (s *Store) checkRemoval(ctx context.Context, idx *bucketOLHIndex, rm *olhRemoval) error {
 	rec := idx.x.rec
 	what := versionName(rec, rm.key)
@@ -1186,10 +1432,12 @@ func (s *Store) checkRemoval(ctx context.Context, idx *bucketOLHIndex, rm *olhRe
 	if !rm.guarded && !s.lockHolds(st) {
 		return nil
 	}
-	err = idx.removeInstance(ctx, rm.key, rm.tag, false)
+	err = idx.removeVersion(ctx, rm.key, rm.tag, false, false)
 	switch {
-	case errors.Is(err, radosclient.ErrNotFound), errors.Is(err, op.ErrNoSuchKey):
+	case errors.Is(err, radosclient.ErrNotFound), errors.Is(err, op.ErrNoSuchKey), errors.Is(err, errRemovalRelisted):
 		return nil
+	case errors.Is(err, errRemovalDeferred):
+		return fmt.Errorf("%w: removing %s after another replay kept it: %w", op.ErrSlowDown, what, err)
 	case errors.Is(err, errRemovalRefused) && rm.guarded:
 		return fmt.Errorf("removing %s after another replay kept it: %w", what, err)
 	case errors.Is(err, errRemovalRefused):

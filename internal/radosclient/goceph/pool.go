@@ -387,7 +387,8 @@ func (p *pool) Read(ctx context.Context, oid string, op *radosclient.ReadOp, fla
 	return asyncResult(name, fs, c)
 }
 
-// Write runs a write op and returns the object version librados reports.
+// Write runs a write op and returns the object version librados reports, on
+// an error as well.
 func (p *pool) Write(ctx context.Context, oid string, op *radosclient.WriteOp, flags radosclient.OpFlags) (uint64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
@@ -478,30 +479,37 @@ func (p *pool) writeSync(h *handle, wop writeOp, oid, name string, fs []finisher
 	return syncResult(name, fs, err, version, verr)
 }
 
-// syncResult fills the results of an operation the blocking Operate ran and
-// returns its version, which rados_get_last_version read from the handle
-// while it was still this operation's alone.
+// syncResult is opResult for an operation the blocking Operate ran, whose
+// version rados_get_last_version read from the handle while it was still
+// this operation's alone; verr is that read's error.
 func syncResult(name string, fs []finisher, opErr error, version uint64, verr error) (uint64, error) {
-	o := newOutcome(name, opErr)
-	finish(fs, o)
-	switch {
-	case o.err != nil:
-		return 0, o.err
-	case verr != nil:
-		return 0, toSeamError(name, verr)
+	if verr == nil {
+		return opResult(name, fs, opErr, version)
 	}
-	return version, nil
+	if _, err := opResult(name, fs, opErr, 0); err != nil {
+		return 0, err
+	}
+	return 0, toSeamError(name, verr)
 }
 
-// asyncResult fills the results of a completed asynchronous operation and
-// returns its version, before c is released.
+// asyncResult is opResult for a completed asynchronous operation, read
+// before c is released.
 func asyncResult(name string, fs []finisher, c *rados.AioCompletion) (uint64, error) {
-	o := newOutcome(name, c.Err())
+	return opResult(name, fs, c.Err(), c.Version())
+}
+
+// opResult fills the results of a finished operation that returned opErr
+// and returns the version librados reported for it beside the operation's
+// error: a failed write's carries a version too, but only an error an OSD's
+// reply carries comes with one librados filled (radosclient.ReplyVersion),
+// and any other's is 0, unknown (radosclient.Pool's Write).
+func opResult(name string, fs []finisher, opErr error, version uint64) (uint64, error) {
+	o := newOutcome(name, opErr)
 	finish(fs, o)
-	if o.err != nil {
+	if o.err != nil && !radosclient.ReplyVersion(o.err) {
 		return 0, o.err
 	}
-	return c.Version(), nil
+	return version, o.err
 }
 
 // timespec converts a modification time for librados. A zero t becomes the

@@ -252,6 +252,40 @@ var _ = Describe("a write op", func() {
 		Expect(v).To(BeNumerically(">", 3), "a recreated object's version is past the removed one's")
 	})
 
+	// The OSD answers an ENOENT write with the placement group's last user
+	// version, and any other failed write with the object's own version.
+	It("reports a failed write's version as the OSD's reply carries it", func(ctx SpecContext) {
+		c.Put(poolName, ns, "obj", []byte("a"))
+		v, err := write(ctx, p, "obj", func(op *radosclient.WriteOp) {
+			op.CmpXattr("x", radosclient.CmpEQ, []byte("1"))
+			op.WriteFull([]byte("b"))
+		})
+		Expect(err).To(MatchError(radosclient.ErrCanceled))
+		Expect(v).To(BeEquivalentTo(1), "a refused write: the object's own version")
+		c.FailNextWrite(poolName, ns, "obj", syscall.ETIMEDOUT)
+		v, err = write(ctx, p, "obj", func(op *radosclient.WriteOp) { op.WriteFull([]byte("c")) })
+		Expect(err).To(MatchError(radosclient.ErrTimedOut))
+		Expect(v).To(BeZero(), "an error no reply need carry, on an object at version 1: unknown")
+		v, err = write(ctx, p, "obj", func(op *radosclient.WriteOp) { op.Remove() })
+		Expect(err).NotTo(HaveOccurred())
+		Expect(v).To(BeEquivalentTo(2), "the removal's version")
+		v, err = write(ctx, p, "obj", func(op *radosclient.WriteOp) { op.Remove() })
+		Expect(err).To(MatchError(radosclient.ErrNotFound))
+		Expect(v).To(BeEquivalentTo(2), "a second removal: at or above the first's, never 0")
+		c.FailNextWrite(poolName, ns, "obj", syscall.ENOENT)
+		v, err = write(ctx, p, "obj", func(op *radosclient.WriteOp) { op.WriteFull([]byte("c")) })
+		Expect(err).To(MatchError(radosclient.ErrNotFound))
+		Expect(v).To(BeEquivalentTo(2), "an injected ENOENT too")
+		v, err = write(ctx, p, "never", func(op *radosclient.WriteOp) { op.Remove() })
+		Expect(err).To(MatchError(radosclient.ErrNotFound))
+		Expect(v).To(BeZero(), "a name that never had a version")
+		rop := radosclient.NewReadOp()
+		rop.Stat()
+		v, err = p.Read(ctx, "obj", rop, radosclient.OpFlagNone)
+		Expect(err).To(MatchError(radosclient.ErrNotFound))
+		Expect(v).To(BeZero(), "a read of a missing object")
+	})
+
 	Describe("the object a step reads", func() {
 		var storedVer version.ObjVersion
 		BeforeEach(func() {

@@ -136,7 +136,8 @@ func (c *Cluster) BeforeWrite(pool, ns, oid string, fn func(o *Object)) {
 
 // Write runs a write op atomically and returns the object's version after
 // it: the next version when the op changed the object, the version it had
-// when the op changed nothing.
+// when the op changed nothing. A failed op returns the version the OSD's
+// reply carries, ENOENT's floor or the object's own (failedVersion).
 func (p *Pool) Write(ctx context.Context, oid string, op *radosclient.WriteOp, flags radosclient.OpFlags) (uint64, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
@@ -178,7 +179,7 @@ func (p *Pool) write(oid string, op *radosclient.WriteOp, steps []radosclient.St
 	p.store.writes[oid] = append(p.store.writes[oid], RecordedWrite{steps: steps, mtime: mtime, hasMtime: ok, flags: flags})
 	if err := p.store.failWrite[oid].take(); err != nil {
 		failResults(steps, err)
-		return 0, err
+		return p.store.failedVersion(oid, p.store.objects[oid], err), err
 	}
 	// librados stamps a write op without an mtime with the client's clock.
 	if !ok {

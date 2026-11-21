@@ -88,3 +88,53 @@ func (e *Error) errno() int32 {
 	}
 	return e.Errno
 }
+
+// ReplyVersion reports whether err, the error of a failed write, is one only
+// an OSD's reply carries, so that the version Pool's Write returned beside
+// it is that reply's. They are:
+//   - ENOENT, the removal of an object that does not exist
+//     (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L8232-L8233 at v19.2.7,
+//     https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L8309-L8310 at v20.2.4);
+//   - EEXIST, an exclusive create of one that does
+//     (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L6865-L6872 at v19.2.7,
+//     https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L6934-L6941 at v20.2.4);
+//   - ECANCELED, a CMPXATTR that compared false
+//     (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L6446-L6449 at v19.2.7,
+//     https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L6515-L6518 at v20.2.4)
+//     or an OMAP_CMP
+//     (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L7845-L7862 at v19.2.7,
+//     https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L7922-L7939 at v20.2.4);
+//   - ERANGE and EOVERFLOW, an ASSERT_VER below or above the object's version
+//     (https://github.com/ceph/ceph/blob/v19.2.7/src/osd/PrimaryLogPG.cc#L6460-L6471 at v19.2.7,
+//     https://github.com/ceph/ceph/blob/v20.2.4/src/osd/PrimaryLogPG.cc#L6529-L6540 at v20.2.4).
+//
+// Any other error, a timeout, a lost connection, a context's or one the
+// implementation reports itself, may come with no reply: its version is
+// unknown, and Write returns 0 for it, which no caller may complete an index
+// entry at.
+//
+// One ENOENT comes with no reply: the Objecter ends an op whose pool has been
+// deleted with ENOENT itself
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/osdc/Objecter.cc#L1556-L1582 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.cc#L1594-L1620 at v20.2.4),
+// and librados then reports the version it started with: 0 for an
+// asynchronous completion
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/librados/AioCompletionImpl.h#L31 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/librados/AioCompletionImpl.h#L31 at v20.2.4),
+// and for the blocking operate a local it never set
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/librados/IoCtxImpl.cc#L639-L680 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/librados/IoCtxImpl.cc#L646-L687 at v20.2.4).
+// The errno cannot tell it from an OSD's, so ReplyVersion takes it for one.
+// radosgw's removal completes at that same version (docs/cgo-limitations.md,
+// "A synchronous op's version is undefined when no reply came").
+func ReplyVersion(err error) bool {
+	e, ok := errors.AsType[*Error](err)
+	if !ok {
+		return false
+	}
+	switch e.errno() {
+	case int32(syscall.ENOENT), int32(syscall.EEXIST), int32(syscall.ECANCELED), int32(syscall.ERANGE), int32(syscall.EOVERFLOW):
+		return true
+	}
+	return false
+}

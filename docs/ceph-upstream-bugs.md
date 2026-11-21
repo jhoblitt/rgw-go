@@ -695,6 +695,40 @@ Every new entry adds its row to this table, in document order.
     entry's version to -1:0; the next completion then fails the pool
     comparison and is applied whatever its epoch, so completion 10, a cancel,
     then completion 5 leaves 5's metadata indexed.
+  - After a removal, that cancel lets a late ADD completion re-create the
+    removed object's entry. A removal of a head on whose entry another write's
+    prepare is pending keeps the entry, not existing, at the removal's
+    version
+    ([cls_rgw.cc:1127-1167](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1127-L1167),
+    [cls_rgw.cc:1261-1300](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1261-L1300)),
+    so the completion of a write that reached the head before the removal,
+    sent without waiting
+    ([rgw_rados.cc:9714](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9714),
+    [rgw_rados.cc:10450](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10450)),
+    would be stale. An attribute write that read the head before the removal
+    took it then finds the head gone and cancels
+    ([rgw_rados.cc:6877-6917](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6877-L6917),
+    [rgw_rados.cc:7490-7567](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7490-L7567))
+    at -1:0
+    ([rgw_rados.cc:9749-9758](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L9749-L9758),
+    [rgw_rados.cc:10485-10494](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L10485-L10494)),
+    which the class copies onto the entry
+    ([cls_rgw.cc:1080-1126](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1080-L1126),
+    [cls_rgw.cc:1215-1260](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1215-L1260)). The late
+    completion fails the pool comparison
+    ([cls_rgw.cc:1082-1087](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1082-L1087),
+    [cls_rgw.cc:1217-1222](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1217-L1222)) and lands
+    as an ADD, which makes the entry exist again, counted, with no head
+    ([cls_rgw.cc:1168-1198](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1168-L1198),
+    [cls_rgw.cc:1301-1329](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1301-L1329)). For a
+    version a delete removed, that is its instance entry, unlisted, and when
+    the late writer is a lifecycle transition, its link then lists the
+    version with no head. Derived from the source and run on rgw-go's
+    emulator of the class, not reproduced on a cluster.
+  - On main at 8aa24c51928 the cancel leaves the removal's version on the
+    entry
+    ([cls_rgw.cc:1240-1245](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/cls/rgw/cls_rgw.cc#L1240-L1245)),
+    so the late completion is stale there.
   - Reproduced on v19.2.6 and v20.2.4, with identical results, by direct
     class calls on a fresh index object: after completions 10 and 5 the entry
     holds 10's metadata under epoch 5, a completion at 7 then replaces it with
@@ -731,6 +765,14 @@ Every new entry adds its row to this table, in document order.
     index completion") orders it before that writer's own link only, not
     against another writer's completion, so on either kind of entry the
     class decides and no client can work around it.
+  - After a removal, an attribute write's late completion following
+    another attribute write's cancel re-creates the removed version's
+    instance entry, unlisted and counted, as behind radosgw
+    (`docs/differences.md`, "A replay keeps a version a link lists again
+    after it read the log"). The lifecycle transition reads the version's
+    head again before its link and, the head gone, links nothing and removes
+    the entry its completion made (`linkTransition` and `dropHeadless`,
+    `internal/driver/put_versioned.go`).
 - **Upstream:** [#80894](https://tracker.ceph.com/issues/80894), filed
   2026-09-26 with the same analysis, both triggers and the regression from
   8b27472bbd8; its backports are tentacle and umbrella. Our
@@ -35875,8 +35917,10 @@ Every new entry adds its row to this table, in document order.
   names a version whose head and instance entry are gone. Two log shapes
   reach it: a link that takes over an OLH entry marked for removal, which
   keeps the entry's log, and a link of a version between a delete's unlink of
-  it and the delete's replay. Unreproduced on radosgw: derived from the
-  source.
+  it and the delete's replay. The second reaches it too when the link lands
+  after the replay has read the log, before its removal of the version,
+  since that removal compares nothing. Reproduced on a running radosgw
+  v20.2.4; derived from the source for v19.2.7.
 - **Evidence:** paths are under `src/`; each pair of links is v19.2.7's,
   then v20.2.4's.
   - A link over an OLH entry marked for removal sets the entry's tag and
@@ -35909,6 +35953,19 @@ Every new entry adds its row to this table, in document order.
     [rgw_rados.cc:8529-8541](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8529-L8541),
     [rgw_rados.cc:9225-9227](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9225-L9227),
     [rgw_rados.cc:9275-9287](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9275-L9287)).
+    That `delete_obj` compares neither the version's instance entry nor its
+    list entry, so a link that lands after the read is not seen either. A
+    link rewrites the instance entry at its epoch and writes the list entry
+    ([cls_rgw.cc:1410-1427](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1410-L1427),
+    [cls_rgw.cc:1537-1554](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1537-L1554)).
+    Below the OLH entry's epoch it logs nothing
+    ([cls_rgw.cc:1751-1760](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1751-L1760),
+    [cls_rgw.cc:1892-1901](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1892-L1901)).
+    radosgw's lifecycle transition links a version at its own epoch
+    ([rgw_lc.cc:1515-1516](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1515-L1516),
+    [rgw_lc.cc:1561-1562](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1561-L1562)),
+    which is below the entry's once a delete's unlink of that version has
+    moved it.
 - **Impact:** a version a write linked, and answered, is removed by the
   replay of that write's log; the key's OLH names it, and its head and
   instance entry are gone. The list entry the link wrote stays, since the
@@ -35928,6 +35985,9 @@ Every new entry adds its row to this table, in document order.
   [cls_rgw.cc:1556-1558](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1556-L1558),
   [cls_rgw.cc:1514-1521](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1514-L1521) and
   [cls_rgw.cc:1458-1466](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1458-L1466)).
+  A link below the OLH entry's epoch, such as a transition's after a delete's
+  unlink, logs nothing, so the OLH does not name the version, and only its
+  list entry is left naming nothing.
   In rgw-go, whose relist of a version a refused removal took off the
   listing links nothing that a removal of that version pending in the log
   precedes, a relist that ends before its link leaves that version stored
@@ -35973,7 +36033,10 @@ Every new entry adds its row to this table, in document order.
     last took with an instance sorting after that link's, as when a log
     another replay applied and did not trim is read again;
   - a removal and its link on different pages of the log, which
-    `update_olh` reads 1000 epochs at a time and applies page by page.
+    `update_olh` reads 1000 epochs at a time and applies page by page;
+  - a link that lands after the replay read the log, which is in no batch
+    that replay reads, or one that logs nothing, below the OLH entry's
+    epoch.
 
   The same fix covers the null-version form of this ordering in "radosgw's
   null version removal takes the data of a null PutObject that links after
@@ -35987,22 +36050,46 @@ Every new entry adds its row to this table, in document order.
   follows (`docs/differences.md`, "A replay keeps a named version that a
   later link in the same log names"). The emulator specs build both shapes
   through the driver's own unlink and link, and the version stays listed
-  and readable, with its head and its instance entry. rgw-go still leaves
-  the state above when the link lands after a replay has read the log and
-  before it removes the version, and on a mixed fleet radosgw's replay
-  removes the version whenever it has read the removal from the log. rgw-go's
-  own relist of a version whose removal was refused links nothing while
-  another delete's removal of that version is in the log, and its link
-  compares the OLH entry it read, so it does not undo that delete
-  (`relinkOLHEntry`, `internal/driver/delete_versioned.go`). A relist whose
-  own refused removal another replay had already read before it was trimmed
-  can still leave a list entry naming nothing, or the state above.
+  and readable, with its head and its instance entry. A link that lands
+  after a replay has read the log is not in it. There the removal's first
+  index op compares the version's instance entry, as read just before it,
+  and the list entry that entry names, as absent, so the version a link
+  listed again is kept (`removeInstance`, `internal/driver/olh.go`;
+  `docs/differences.md`, "A replay keeps a version a link lists again after
+  it read the log"). rgw-go's own relist of a version whose removal was
+  refused links nothing while another delete's removal of that version is
+  in the log, and neither does its lifecycle transition's link or
+  `keepCurrent`'s while one that no later link drops is. Each compares the
+  OLH entry it read, so none undoes that delete (`relinkOLHEntry`,
+  `internal/driver/delete_versioned.go`; `linkTransition`,
+  `internal/driver/put_versioned.go`; `keepCurrent`,
+  `internal/driver/lc_transition.go`). rgw-go still leaves the state above
+  for a link that lands between the removal's first index op and its index
+  completion, which finds the instance entry, or the placeholder the
+  prepare wrote, still in place (tracked by plan task V25):
+  - a CompleteMultipartUpload retry's link, which gives way to nothing: the
+    version listed current with no head, and the OLH naming it;
+  - rgw-go's relist, once the refused delete's own replay has trimmed the
+    removal another request's replay is still carrying out: the version
+    listed with no head, and for a link at a new epoch the OLH naming it;
+  - the lifecycle transition's link and `keepCurrent`'s, once a second
+    replay of the same removal has trimmed it while the first one's
+    completion is still to land: the version listed with no head, and the
+    transition notified;
+  - a radosgw link: the same as the retry's, or as the transition's.
+
+  On a mixed fleet radosgw's replay removes the version whenever it has read
+  the removal from the log. radosgw's transition link, below the OLH
+  entry's epoch after a delete's unlink, lists the version again without
+  logging, and rgw-go's replay of that delete then keeps it, though the
+  delete was answered.
 - **Upstream:** pending: sent to rgw-bug-reproduction. Partial fix:
   [ceph/ceph#67661](https://github.com/ceph/ceph/pull/67661), 75c7b8ece79,
   first tagged in v21.0.1 (see Releases).
 - **Found:** phase 2 task V20, 2026-11-14, reading `apply_olh_log` beside the
-  log a stranded OLH entry keeps; derived from the source, not reproduced on
-  radosgw.
+  log a stranded OLH entry keeps; derived from the source, then reproduced on
+  a running radosgw v20.2.4 by the rgw-bug-reproduction session during task
+  V22, by 2026-11-20.
 
 ## radosgw never sets aws:SecureTransport to false
 

@@ -1064,6 +1064,108 @@ var _ = Describe("the versioned link and unlink", func() {
 				settled(shard, "v3", "v2", "v3")
 				Expect(versionHead("v1")).To(BeNil())
 			})
+
+			// A link of the version that lands after the replay has read the
+			// log is not in the log the replay holds. The removal's prepare
+			// finds the version listed again and keeps it, as the drop keeps a
+			// version a later link in the log names.
+			Describe("a link of the version that lands after the replay read the log", func() {
+				// beforeHeadRead stages fn just before the removal reads the
+				// version's head, the replay's first op after its log read.
+				beforeHeadRead := func(fn func()) {
+					oid := instanceHeadOID(version("v1"))
+					c.BeforeRead(testDataPool, "", oid, func() {
+						c.BeforeRead(testDataPool, "", oid, nil)
+						fn()
+					})
+				}
+				// beforePrepare stages fn just before the removal's prepare, its
+				// first write to the shard, after it has read the version's
+				// index entries.
+				beforePrepare := func(fn func()) {
+					c.BeforeWrite(rookIndexPool, "", shard, func(*fakerados.Object) {
+						c.BeforeWrite(rookIndexPool, "", shard, nil)
+						fn()
+					})
+				}
+				relink := func(ctx context.Context) func() {
+					return func() {
+						Expect(s.SetOLHForTest(ctx, rec, version("v1"), driver.OLHLink{KeepVersion: true, SkipUpdate: true})).
+							To(Succeed(), "a link of v1, as a completion's retry sends")
+					}
+				}
+
+				DescribeTable("keeps the version listed and readable, and the next replay links it",
+					func(ctx SpecContext, r denc.Release, stage func(func()), alone bool) {
+						open(ctx, r)
+						put(ctx, "v1")
+						want := []string{"v1"}
+						if !alone {
+							put(ctx, "v2")
+							want = append(want, "v2")
+						}
+						Expect(unlink(ctx, "v1", driver.OLHUnlink{SkipUpdate: true})).To(Succeed())
+						stage(relink(ctx))
+						Expect(update(ctx)).To(Succeed(), "the replay that read v1's removal before the link")
+						Expect(versionHead("v1")).NotTo(BeNil(), "the version the link listed again")
+						Expect(hasInstanceEntry(shard, "v1")).To(BeTrue())
+						Expect(listed(shard)).To(ContainElement("v1"))
+						Expect(update(ctx)).To(Succeed(), "the next replay, which applies the link")
+						settled(shard, "v1", want...)
+						readable(ctx, want...)
+					},
+					Entry("before its head read, another version current, on squid", denc.Squid, beforeHeadRead, false),
+					Entry("before its head read, another version current, on tentacle", denc.Tentacle, beforeHeadRead, false),
+					Entry("before its prepare, another version current, on squid", denc.Squid, beforePrepare, false),
+					Entry("before its prepare, another version current, on tentacle", denc.Tentacle, beforePrepare, false),
+					Entry("before its head read, the unlink leaving no version, on squid", denc.Squid, beforeHeadRead, true),
+					Entry("before its prepare, the unlink leaving no version, on tentacle", denc.Tentacle, beforePrepare, true),
+				)
+
+				It("removes the version when what changed its instance entry before the prepare lists nothing", func(ctx SpecContext) {
+					put(ctx, "v1")
+					put(ctx, "v2")
+					Expect(unlink(ctx, "v1", driver.OLHUnlink{SkipUpdate: true})).To(Succeed())
+					other := s.NewIndexOpForTest(rec, version("v1"), "other-tag")
+					beforePrepare(func() {
+						Expect(other.Prepare(ctx, rgwcls.OpAdd)).To(Succeed(), "another writer's prepare, which writes v1's instance entry")
+					})
+					c.ResetCounters()
+					Expect(update(ctx)).To(Succeed())
+					compared := 0
+					for _, w := range c.WritesTo(rookIndexPool, "", shard) {
+						if callsMethod(w.Steps(), "bucket_prepare_op") && slices.ContainsFunc(w.Steps(), func(st radosclient.Step) bool {
+							_, ok := st.(*radosclient.OmapCmpStep)
+							return ok
+						}) {
+							compared++
+						}
+					}
+					Expect(compared).To(Equal(2), "the removal's prepare, refused by its compare, then its second from a fresh read")
+					Expect(versionHead("v1")).To(BeNil(), "the removal went on")
+					other.Cancel()
+					settled(shard, "v2", "v2")
+				})
+
+				// The null version's data entry sits behind the version
+				// marker, which the removal reads through (dataEntry).
+				It("keeps the null version a null link lists again after the replay read its removal", func(ctx SpecContext) {
+					put(ctx, "v1")
+					put(ctx, "")
+					Expect(unlink(ctx, "", driver.OLHUnlink{NullVersion: true, SkipUpdate: true})).To(Succeed())
+					beforePrepare(func() {
+						Expect(s.SetOLHForTest(ctx, rec, version(""), driver.OLHLink{KeepVersion: true, SkipUpdate: true})).To(Succeed(), "a link of the null data")
+					})
+					Expect(update(ctx)).To(Succeed(), "the replay that read the null version's removal before the link")
+					Expect(olhHead().Xattrs).To(HaveKey(meta.AttrETag), "the null data the link listed again, in the OLH head")
+					Expect(hasInstanceEntry(shard, "")).To(BeTrue())
+					Expect(listed(shard)).To(ContainElement(""))
+					Expect(update(ctx)).To(Succeed(), "the next replay, which applies the link")
+					Expect(target()).To(BeEmpty(), "the null version current")
+					Expect(listed(shard)).To(ConsistOf("", "v1"))
+					Expect(pending()).To(BeEmpty())
+				})
+			})
 		})
 
 		It("runs a trim that failed once again, without a second head op", func(ctx SpecContext) {
@@ -1213,7 +1315,7 @@ var _ = Describe("the versioned link and unlink", func() {
 			c.ResetCounters()
 			Expect(unlink(ctx, "v1", driver.OLHUnlink{})).To(Succeed())
 			Expect(c.Reads(testDataPool, "", olhHeadOID(version("")))).To(Equal(2), "one head read an attempt")
-			Expect(c.Reads(rookIndexPool, "", shard)).To(Equal(1), "the replay's log read alone: unlink_obj_instance reads no OLH entry to repair")
+			Expect(c.Reads(rookIndexPool, "", shard)).To(Equal(2), "the replay's log read and its removal's read of v1's instance entry: unlink_obj_instance reads no OLH entry to repair")
 			settled(shard, "v2", "v2")
 		})
 
@@ -1567,12 +1669,14 @@ var _ = Describe("the versioned link and unlink", func() {
 			func(ctx SpecContext, instance string, flags uint16) {
 				put(ctx, "v1")
 				put(ctx, instance)
+				Expect(unlink(ctx, instance, driver.OLHUnlink{NullVersion: instance == "", SkipUpdate: true})).To(Succeed(), "the unlink that logs the removal takes the list entry")
 				c.ResetCounters()
 				Expect(s.NewOLHIndexForTest(rec, version(instance)).RemoveInstance(ctx, version(instance), nil)).To(Succeed())
 				settle(s)
 				methods := map[string]uint16{}
 				for _, w := range c.WritesTo(rookIndexPool, "", shard) {
-					x := execStep(w.Steps()[2])
+					steps := w.Steps()
+					x := execStep(steps[len(steps)-1])
 					d := denc.NewDecoder(x.In)
 					switch x.Method {
 					case "bucket_prepare_op":
@@ -1588,6 +1692,46 @@ var _ = Describe("the versioned link and unlink", func() {
 			Entry("a named version", "v2", rgwcls.BILogFlagVersionedOp),
 			Entry("the null version", "", rgwcls.BILogFlagVersionedOp|rgwcls.BILogNullVersion),
 		)
+
+		DescribeTable("compares in its prepare the version's data entry as read and the list entry that entry names as absent",
+			func(ctx SpecContext, instance string) {
+				put(ctx, "v1")
+				put(ctx, instance)
+				Expect(unlink(ctx, instance, driver.OLHUnlink{NullVersion: instance == "", SkipUpdate: true})).To(Succeed())
+				idx := rgwcls.InstanceIndexKey(rgwcls.ObjKey{Name: "k", Instance: instance}, false)
+				stored := slices.Clone(c.Object(rookIndexPool, "", shard).Omap[idx])
+				en, ok := c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k", Instance: instance})
+				Expect(ok).To(BeTrue())
+				c.ResetCounters()
+				Expect(s.NewOLHIndexForTest(rec, version(instance)).RemoveInstance(ctx, version(instance), nil)).To(Succeed())
+				var cmps []radosclient.Step
+				for _, st := range c.WritesTo(rookIndexPool, "", shard)[0].Steps() {
+					if x, ok := st.(*radosclient.OmapCmpStep); ok {
+						cmps = append(cmps, x)
+					}
+				}
+				Expect(cmps).To(Equal([]radosclient.Step{
+					&radosclient.OmapCmpStep{Key: idx, Op: radosclient.CmpEQ, Value: stored},
+					&radosclient.OmapCmpStep{Key: rgwcls.ListIndexKey(en.Key, en.VersionedEpoch), Op: radosclient.CmpEQ},
+				}), "the version's data entry, never the null delete marker's, and its list entry, absent")
+			},
+			Entry("a named version", "v2"),
+			Entry("the null version", ""),
+		)
+
+		It("keeps, preparing nothing, a version a link has listed again", func(ctx SpecContext) {
+			put(ctx, "v1")
+			put(ctx, "v2")
+			Expect(unlink(ctx, "v1", driver.OLHUnlink{SkipUpdate: true})).To(Succeed())
+			Expect(s.SetOLHForTest(ctx, rec, version("v1"), driver.OLHLink{KeepVersion: true, SkipUpdate: true})).To(Succeed())
+			err := s.NewOLHIndexForTest(rec, version("v1")).RemoveInstance(ctx, version("v1"), nil)
+			Expect(err).To(MatchError(driver.ErrRemovalRelisted))
+			settle(s)
+			Expect(versionHead("v1")).NotTo(BeNil())
+			en, ok := c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k", Instance: "v1"})
+			Expect(ok).To(BeTrue())
+			Expect(en.PendingMap).To(BeEmpty(), "no prepare landed")
+		})
 	})
 
 	Describe("removeFailedVersion", func() {

@@ -590,6 +590,42 @@ benchmark was re-run.
   ([Squid](benchmarks/2026-10-02-seam-squid/REPORT.md),
   [Tentacle](benchmarks/2026-10-02-seam-tentacle/REPORT.md)).
 
+### A synchronous op's version is undefined when no reply came
+
+- **Evidence:** a write that fails still carries a version, which rgw-go
+  completes a removal of a missing object at, as radosgw does (the `Write`
+  doc, `internal/radosclient/cluster.go`). librados fills it only from an
+  OSD reply
+  ([Objecter.cc:3507-3508](https://github.com/ceph/ceph/blob/v19.2.7/src/osdc/Objecter.cc#L3507-L3508),
+  [Objecter.cc:3680-3681](https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.cc#L3680-L3681)).
+  An asynchronous completion starts at 0
+  ([AioCompletionImpl.h:31](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/AioCompletionImpl.h#L31),
+  [AioCompletionImpl.h:31](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/AioCompletionImpl.h#L31)),
+  but the blocking `IoCtxImpl::operate` stores an uninitialized local
+  whatever happened
+  ([IoCtxImpl.cc:639-680](https://github.com/ceph/ceph/blob/v19.2.7/src/librados/IoCtxImpl.cc#L639-L680),
+  [IoCtxImpl.cc:646-687](https://github.com/ceph/ceph/blob/v20.2.4/src/librados/IoCtxImpl.cc#L646-L687)).
+  So in sync mode, after an op the Objecter ended itself, such as one whose
+  pool was deleted or one that timed out, `rados_get_last_version` reads
+  stack garbage. radosgw's `rgw_rados_operate` reads the same.
+- **Status:** guarded but for one ENOENT; found in V22's second fix round.
+  goceph reports a failed op's version only for an error an OSD's reply
+  carries, ENOENT, EEXIST, ECANCELED, ERANGE and EOVERFLOW
+  (`radosclient.ReplyVersion`), in every mode, and 0, unknown, for any
+  other, a timeout, a lost connection or one the client raised itself; no
+  caller completes an index entry at an unknown version. rgw-go's removals
+  read the version only after a success or an ENOENT. The guard reads the
+  errno alone, and one ENOENT comes with no reply: the Objecter ends an op
+  whose pool has been deleted with ENOENT itself, in `_check_op_pool_dne`
+  ([Objecter.cc:1556-1582](https://github.com/ceph/ceph/blob/v19.2.7/src/osdc/Objecter.cc#L1556-L1582),
+  [Objecter.cc:1594-1620](https://github.com/ceph/ceph/blob/v20.2.4/src/osdc/Objecter.cc#L1594-L1620)).
+  The guard takes that one for an OSD's, so a removal in a data pool deleted
+  under the gateway completes its index entry at 0 in the asynchronous
+  modes, and at the garbage in sync mode. radosgw's removal completes at the
+  same version, so this is no difference from radosgw.
+- **Note:** a pure-Go client would set the version from the reply, and mark
+  it unknown when there was none.
+
 ### The C API cannot read back an I/O context's full-try
 
 - **Evidence:** goceph sets full-try on every I/O context it opens, as

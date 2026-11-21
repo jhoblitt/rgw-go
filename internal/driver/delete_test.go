@@ -189,13 +189,18 @@ var _ = Describe("DeleteObject", func() {
 
 	It("completes the delete when the head vanished between the stat and the remove", func(ctx SpecContext) {
 		setup(ctx, denc.Squid)
-		c.BeforeWrite(testDataPool, "", headOID, func(*fakerados.Object) { c.Remove(testDataPool, "", headOID) })
+		var last uint64
+		c.BeforeWrite(testDataPool, "", headOID, func(o *fakerados.Object) {
+			last = o.Version
+			c.Remove(testDataPool, "", headOID)
+		})
 		Expect(s.DeleteObject(ctx, rec, key, op.DeleteParams{})).Error().To(Succeed(), "ENOENT from the remove is success, rgw_rados.cc:5955-5967")
 		writes := indexWrites()
 		Expect(writes).To(HaveLen(2))
 		comp := execIn(writes[1], 2, "bucket_complete_op", rgwcls.DecodeCompleteOp)
 		Expect(comp.Op).To(Equal(rgwcls.OpDel))
-		Expect(comp.Ver).To(Equal(rgwcls.EntryVer{Pool: c.PoolID(testDataPool)}), "the failed remove returned no version")
+		Expect(last).NotTo(BeZero())
+		Expect(comp.Ver).To(Equal(rgwcls.EntryVer{Pool: c.PoolID(testDataPool), Epoch: last}), "the version the failed remove's ENOENT reply carries, the head's last")
 		Expect(gcEntries()).To(HaveLen(1), "complete_atomic_modification runs on ENOENT too")
 		Expect(driver.CachedBucketStatsForTest(s, rec).NumObjects).To(BeZero())
 	})

@@ -43,7 +43,9 @@ import (
 // (removeHeadFlagged).
 //
 // p.Expect is refused on that path before anything is read, and
-// p.AssertEpoch on the versioned branch.
+// p.AssertEpoch on the versioned branch. On that branch every removal the
+// delete makes, its own replay's, a relist's and its check's, shares one
+// backoff deadline (removalDeadline).
 func (s *Store) DeleteObject(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, p op.DeleteParams) (*op.DeleteObjectResult, error) {
 	if p.Expect != nil && !rec.Info.Versioned() {
 		return nil, fmt.Errorf("%w: a delete's expected state", op.ErrNotImplemented)
@@ -52,7 +54,7 @@ func (s *Store) DeleteObject(ctx context.Context, rec *op.BucketRecord, key meta
 		if p.AssertEpoch != 0 {
 			return nil, fmt.Errorf("%w: a versioned delete's asserted version", op.ErrNotImplemented)
 		}
-		return s.deleteVersioned(ctx, rec, key, p)
+		return s.deleteVersioned(withRemovalDeadline(ctx), rec, key, p)
 	}
 	if key.Instance == meta.NullInstance {
 		key.Instance = "" // https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5844-L5846
@@ -101,11 +103,14 @@ func (s *Store) removeHead(ctx context.Context, rec *op.BucketRecord, key meta.O
 }
 
 // headRemoval is how removeHeadFlagged changes the index: with bilogFlags,
-// the RGWBILogFlags delete_obj's caller gives it, and with the removal's
-// completion awaited when await is set, or else sent without waiting.
+// the RGWBILogFlags delete_obj's caller gives it, with the removal's
+// completion awaited when await is set, or else sent without waiting, and
+// with cmps, the index entries its prepare compares (indexOp.prepareCmps),
+// whose refusal answers errRemovalEntryMoved with nothing removed.
 type headRemoval struct {
 	bilogFlags uint16
 	await      bool
+	cmps       []rgw.BIEntry
 }
 
 // headKeptAttrs is the attr prefixes a removal or a reset of key's head
@@ -143,7 +148,11 @@ func (s *Store) removeHeadFlagged(ctx context.Context, rec *op.BucketRecord, key
 	x := s.newIndexOp(rec, key, "")
 	x.hashName = hashName
 	x.bilogFlags = how.bilogFlags
+	x.prepareCmps = how.cmps
 	if err = x.prepare(ctx, rgw.OpDel); err != nil {
+		if len(how.cmps) > 0 && errors.Is(err, radosclient.ErrCanceled) {
+			return fmt.Errorf("preparing the removal of %s: %w: %w", key.Name, errRemovalEntryMoved, err)
+		}
 		return op.FromRADOS(err, op.ScopeObject)
 	}
 	rgw.ObjRemove(w, headKeptAttrs(key), s.release)
@@ -155,6 +164,14 @@ func (s *Store) removeHeadFlagged(ctx context.Context, rec *op.BucketRecord, key
 		// (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/driver/rados/rgw_rados.cc#L5951-L5954).
 		return op.FromRADOS(err, op.ScopeObject)
 	case err == nil || errors.Is(err, radosclient.ErrNotFound):
+		// A removal that found the head gone completes at the version its
+		// ENOENT reply carries, as delete_obj does
+		// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6082-L6101 at v19.2.7,
+		// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6697-L6715 at v20.2.4):
+		// at or above the version of the removal that took it, so a late
+		// completion of a write of the same head is stale and cancels. At 0
+		// the class would apply that completion and make the instance entry
+		// again with no head.
 		ver := rgw.EntryVer{Pool: ref.pool.ID(), Epoch: epoch}
 		if !how.await {
 			x.completeDel(ver, st.Mtime)

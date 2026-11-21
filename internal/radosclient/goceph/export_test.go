@@ -42,6 +42,19 @@ func CompleteWrite(b writeBuilder, op *radosclient.WriteOp, err error) error {
 	return o.err
 }
 
+// SyncResult is what Read and Write return for an operation the blocking
+// Operate ran and returned opErr from, with rados_get_last_version's version
+// and error.
+func SyncResult(opErr error, version uint64, verr error) (uint64, error) {
+	return syncResult("write obj", nil, opErr, version, verr)
+}
+
+// OpResult is what Read and Write return for an operation librados finished
+// with opErr and version, as an AioCompletion reports them.
+func OpResult(opErr error, version uint64) (uint64, error) {
+	return opResult("write obj", nil, opErr, version)
+}
+
 // ExecOutput is the part of go-ceph's read exec step a read exec's finisher reads.
 type ExecOutput = execOutput
 

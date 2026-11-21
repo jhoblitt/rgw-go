@@ -108,6 +108,11 @@ type indexOp struct {
 	// the class reads them only when it logs the change to the bucket index
 	// log.
 	bilogFlags uint16
+	// prepareCmps are the omap entries the prepare's op compares ahead of
+	// the class call, each with the bytes given, a missing key reading as
+	// empty: a changed entry answers ECANCELED with nothing prepared, as
+	// bucketOLHIndex.unlinkInstance's compare does.
+	prepareCmps []rgw.BIEntry
 }
 
 // newIndexOp starts the index change of key in rec's bucket under tag, or,
@@ -174,7 +179,12 @@ func (x *indexOp) prepareOp(mod rgw.ModifyOp) *radosclient.WriteOp {
 		p.BILogFlags = x.bilogFlags
 		p.ZonesTrace = x.zonesTrace()
 	}
-	return x.guardedOp(func(w *radosclient.WriteOp) { rgw.BucketPrepareOp(w, p, x.s.release) })
+	return x.guardedOp(func(w *radosclient.WriteOp) {
+		for _, c := range x.prepareCmps {
+			w.OmapCmp(c.Idx, radosclient.CmpEQ, c.Data)
+		}
+		rgw.BucketPrepareOp(w, p, x.s.release)
+	})
 }
 
 // completeOp is cls_obj_complete_op's write op

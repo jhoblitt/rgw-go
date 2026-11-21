@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -736,6 +737,456 @@ var _ = Describe("the lifecycle transition", func() {
 			Expect(currentNames(ctx, rec)).To(Equal([]string{"k"}), "and ListObjects lists the key")
 			Expect(stat(ctx, rec, meta.ObjKey{Name: "k"}).Key).To(Equal(v2))
 			Expect(links(indexShardOID(rec, "k"))).To(Equal(1), "one link, at the OLH entry's epoch, and no re-link")
+		})
+
+		// A delete of the current version v2 unlinks it after the transition
+		// has read it, its replay left to a later request as a DeleteObjects
+		// entry's is. The transition's link, or keepCurrent's relink, gives way
+		// to the removal pending in the OLH entry's log, where a link at the
+		// epoch read would land on the class's old-epoch path and list v2 again.
+		// The delete's replay then removes the rewritten v2 whole, and its tails
+		// with it.
+		Describe("a delete of the version it rewrites, unlinking it before the delete's replay", func() {
+			// tailed is the data of a 5 MiB version, one with tails.
+			tailed := func() string { return strings.Repeat("0123456789abcdef", (5<<20)/16) }
+			// atRead unlinks once the transition has read v2 and the OLH entry.
+			atRead := func(_ context.Context, unlink func(ctx context.Context), _, _ string) {
+				atReread("k", unlink)
+			}
+			// atLink unlinks between the transition's read of the OLH entry
+			// for its link and that link: just after the link's init, the
+			// first after the rewrite's head write.
+			atLink := func(ctx context.Context, unlink func(ctx context.Context), olhHead, v2Head string) {
+				var once sync.Once
+				c.AfterWrite(testDataPool, "", v2Head, func() {
+					once.Do(func() { afterOLHInit(c, olhHead, func() { unlink(ctx) }) })
+				})
+			}
+			// keepCurrentRead has another delete raise the OLH entry's epoch
+			// once the transition has read it, so that its link lands below
+			// it and keepCurrent relinks v2, and unlinks v2 just before
+			// keepCurrent reads the OLH entry: once the transition's link has
+			// landed and its replay found nothing to apply.
+			keepCurrentRead := func(ctx context.Context, unlink func(ctx context.Context), olhHead, v2Head string, v1 meta.ObjKey) {
+				atReread("k", func(ctx context.Context) {
+					Expect(s.DeleteObject(ctx, rec, v1, op.DeleteParams{})).Error().To(Succeed())
+					settle(s)
+				})
+				var once sync.Once
+				c.AfterWrite(testDataPool, "", v2Head, func() {
+					once.Do(func() {
+						afterOLHInit(c, olhHead, func() {
+							c.AfterWrite(testDataPool, "", olhHead, func() {
+								c.AfterWrite(testDataPool, "", olhHead, nil)
+								unlink(ctx)
+							})
+						})
+					})
+				})
+			}
+			// keepCurrentLink is keepCurrentRead with the unlink between
+			// keepCurrent's read of the OLH entry and its link: just after its
+			// link's init.
+			keepCurrentLink := func(ctx context.Context, unlink func(ctx context.Context), olhHead, v2Head string, v1 meta.ObjKey) {
+				atReread("k", func(ctx context.Context) {
+					Expect(s.DeleteObject(ctx, rec, v1, op.DeleteParams{})).Error().To(Succeed())
+					settle(s)
+				})
+				var once sync.Once
+				c.AfterWrite(testDataPool, "", v2Head, func() {
+					once.Do(func() {
+						afterOLHInit(c, olhHead, func() { afterOLHInit(c, olhHead, func() { unlink(ctx) }) })
+					})
+				})
+			}
+
+			DescribeTable("gives way to the delete, whose replay removes the rewritten version and hands its tails to the GC",
+				func(ctx SpecContext, r denc.Release, which, gaveWay string) {
+					rel = r
+					open(ctx)
+					rec, _ = create(ctx, "versioned", meta.BucketVersioned, transitionTo("cold", "", "COLD"))
+					v1 := put(ctx, rec, "k", "v1", nil, "")
+					v2 := put(ctx, rec, "k", tailed(), nil, "")
+					olhHead, v2Head := headOID(rec, meta.ObjKey{Name: "k"}), headOID(rec, v2)
+					stripes, err := stat(ctx, rec, v2).Manifest.Stripes()
+					Expect(err).NotTo(HaveOccurred())
+					var oldTails []string
+					for _, st := range stripes[1:] {
+						oldTails = append(oldTails, st.OID())
+					}
+					Expect(oldTails).NotTo(BeEmpty(), "v2 has tails")
+					unlink := func(ctx context.Context) {
+						defer GinkgoRecover()
+						Expect(s.DeleteObject(ctx, rec, v2, op.DeleteParams{SkipOLHUpdate: true})).Error().To(Succeed(), "the delete of v2, its replay left")
+					}
+					switch which {
+					case "the transition's read":
+						atRead(ctx, unlink, olhHead, v2Head)
+					case "the transition's link":
+						atLink(ctx, unlink, olhHead, v2Head)
+					case "keepCurrent's read":
+						keepCurrentRead(ctx, unlink, olhHead, v2Head, v1)
+					case "keepCurrent's link":
+						keepCurrentLink(ctx, unlink, olhHead, v2Head, v1)
+					}
+					clk.Advance(lcDay)
+					logs := &syncBuffer{}
+					restore := driver.CaptureDebugLog(logs)
+					pass(ctx)
+					restore()
+					c.AfterWrite(testDataPool, "", v2Head, nil)
+					c.AfterWrite(testDataPool, "", olhHead, nil)
+					Expect(logs.String()).To(ContainSubstring(gaveWay))
+					Expect(notes.NotifyCallCount()).To(BeZero(), "no transition notified")
+					Expect(c.Object(testDataPool, "", v2Head)).NotTo(BeNil(), "the rewritten v2, left to the delete's replay")
+					Expect(poolObjects(ctx, c, coldPool, "")).NotTo(BeEmpty(), "the rewrite's tails")
+
+					head, err := s.ReadOLHHeadForTest(ctx, rec, meta.ObjKey{Name: "k"})
+					Expect(err).NotTo(HaveOccurred())
+					Expect(s.UpdateOLHForTest(ctx, rec, head)).To(Succeed(), "the delete's replay")
+					settle(s)
+					Expect(c.Object(testDataPool, "", v2Head)).To(BeNil(), "v2's head")
+					shard := indexShardOID(rec, "k")
+					_, ok := c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k", Instance: v2.Instance})
+					Expect(ok).To(BeFalse(), "v2's instance entry")
+					for _, en := range c.ListEntries(rookIndexPool, "", shard, "k") {
+						Expect(en.Key.Instance).NotTo(Equal(v2.Instance), "v2's list entry")
+					}
+					if strings.HasPrefix(which, "keepCurrent") {
+						Expect(versions(ctx, rec, "k")).To(BeEmpty(), "the pass's other delete took v1")
+					} else {
+						Expect(versions(ctx, rec, "k")).To(Equal([]string{"*"}), "v1 alone")
+					}
+					queued := chainOIDs(allGCEntries(c))
+					Expect(queued).To(ContainElements(oldTails), "v2's tails before the rewrite, which the rewrite's head write queued")
+					newTails := poolObjects(ctx, c, coldPool, "")
+					Expect(queued).To(ContainElements(newTails), "the rewrite's tails, which the delete's replay queued")
+					for _, oid := range append(oldTails, newTails...) {
+						n := 0
+						for _, q := range queued {
+							if q == oid {
+								n++
+							}
+						}
+						Expect(n).To(Equal(1), "tail %s queued once", oid)
+					}
+				},
+				Entry("unlinked once the transition read it, on squid", denc.Squid, "the transition's read", "lifecycle leaves an object written since its read for a later pass"),
+				Entry("unlinked once the transition read it, on tentacle", denc.Tentacle, "the transition's read", "lifecycle leaves an object written since its read for a later pass"),
+				Entry("unlinked between the link's read of the OLH entry and the link, on squid", denc.Squid, "the transition's link", "lifecycle leaves an object written since its read for a later pass"),
+				Entry("unlinked between the link's read of the OLH entry and the link, on tentacle", denc.Tentacle, "the transition's link", "lifecycle leaves an object written since its read for a later pass"),
+				Entry("unlinked before keepCurrent reads the OLH entry, on squid", denc.Squid, "keepCurrent's read", "lifecycle leaves a transitioned version to the delete removing it"),
+				Entry("unlinked before keepCurrent reads the OLH entry, on tentacle", denc.Tentacle, "keepCurrent's read", "lifecycle leaves a transitioned version to the delete removing it"),
+				Entry("unlinked between keepCurrent's read of the OLH entry and its link, on squid", denc.Squid, "keepCurrent's link", "lifecycle leaves a transitioned version to the delete removing it"),
+				Entry("unlinked between keepCurrent's read of the OLH entry and its link, on tentacle", denc.Tentacle, "keepCurrent's link", "lifecycle leaves a transitioned version to the delete removing it"),
+			)
+
+			// The delete's removal lands between the rewrite's head write and
+			// its index completion. With one replay of it, the removal's DEL
+			// completion leaves the instance entry, with the rewrite's pending tag,
+			// at the removal's version, and the class runs the rewrite's
+			// completion, at the head write's lower version, as a cancel
+			// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1082-L1087 at v19.2.7,
+			// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1217-L1222 at v20.2.4),
+			// which removes that entry, no longer pending. With two replays of
+			// it, both prepared before either removes the head, the second meets
+			// the head gone and completes at the version its ENOENT reply
+			// carries, at or above the first's, which the class copies onto the
+			// entry
+			// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1094 at v19.2.7,
+			// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1229 at v20.2.4),
+			// so the rewrite's completion is a cancel there too. The transition's
+			// link then finds no instance entry and is refused. No head, instance
+			// entry or list entry of v2 is left, and nothing is notified.
+			DescribeTable("leaves no instance entry when a delete's removal completes between the rewrite's head write and its index completion",
+				func(ctx SpecContext, r denc.Release, replays int) {
+					rel = r
+					open(ctx)
+					rec, _ = create(ctx, "versioned", meta.BucketVersioned, transitionTo("cold", "", "COLD"))
+					put(ctx, rec, "k", "v1", nil, "")
+					v2 := put(ctx, rec, "k", tailed(), nil, "")
+					v2Head := headOID(rec, v2)
+					shard := indexShardOID(rec, "k")
+					replay := func(ctx context.Context) error {
+						head, err := s.ReadOLHHeadForTest(ctx, rec, meta.ObjKey{Name: "k"})
+						if err != nil {
+							return err
+						}
+						return s.UpdateOLHForTest(ctx, rec, head)
+					}
+					var completed bool
+					c.AfterWrite(testDataPool, "", v2Head, func() {
+						defer GinkgoRecover()
+						c.AfterWrite(testDataPool, "", v2Head, nil)
+						rewrite := c.Object(testDataPool, "", v2Head).Version
+						en, ok := c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k", Instance: v2.Instance})
+						Expect(ok).To(BeTrue())
+						Expect(en.PendingMap).To(HaveLen(1), "the rewrite's prepare, its completion still to come")
+						if replays == 1 {
+							Expect(s.DeleteObject(ctx, rec, v2, op.DeleteParams{})).Error().To(Succeed())
+						} else {
+							Expect(s.DeleteObject(ctx, rec, v2, op.DeleteParams{SkipOLHUpdate: true})).Error().To(Succeed(), "the delete, its replay left")
+							// The first replay to reach the head's removal waits there
+							// until the second has removed the head and completed.
+							parked, release := make(chan struct{}), make(chan struct{})
+							var removes atomic.Int32
+							c.BeforeWrite(testDataPool, "", v2Head, func(*fakerados.Object) {
+								if removes.Add(1) == 1 {
+									close(parked)
+									<-release
+								}
+							})
+							first := make(chan error, 1)
+							go func() {
+								defer GinkgoRecover()
+								first <- replay(ctx)
+							}()
+							Eventually(parked).WithTimeout(10*time.Second).Should(BeClosed(), "the first replay, prepared and about to remove the head")
+							Expect(replay(ctx)).To(Succeed(), "the second replay, which removes the head")
+							close(release)
+							Eventually(first).WithTimeout(10*time.Second).Should(Receive(Succeed()), "the first replay, which meets the head gone")
+							c.BeforeWrite(testDataPool, "", v2Head, nil)
+						}
+						en, ok = c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k", Instance: v2.Instance})
+						Expect(ok).To(BeTrue(), "the DEL completion writes the entry back while the rewrite's tag is pending")
+						Expect(en.Exists).To(BeFalse())
+						Expect(en.Ver.Epoch).To(BeNumerically(">", rewrite), "the removals' completions, above the rewrite's head write, which is stale")
+						completed = true
+					})
+					clk.Advance(lcDay)
+					pass(ctx)
+					c.AfterWrite(testDataPool, "", v2Head, nil)
+					Expect(completed).To(BeTrue(), "the delete ran between the rewrite's head write and its completion")
+					Expect(notes.NotifyCallCount()).To(BeZero())
+					Expect(c.Object(testDataPool, "", v2Head)).To(BeNil(), "v2's head")
+					_, ok := c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k", Instance: v2.Instance})
+					Expect(ok).To(BeFalse(), "no instance entry of v2 left without its head")
+					for _, en := range c.ListEntries(rookIndexPool, "", shard, "k") {
+						Expect(en.Key.Instance).NotTo(Equal(v2.Instance), "v2's list entry")
+					}
+					Expect(versions(ctx, rec, "k")).To(Equal([]string{"*"}), "v1 alone")
+					Expect(chainOIDs(allGCEntries(c))).To(ContainElements(poolObjects(ctx, c, coldPool, "")), "the rewrite's tails, which the delete's removal queued")
+				},
+				Entry("one replay, on squid", denc.Squid, 1),
+				Entry("one replay, on tentacle", denc.Tentacle, 1),
+				Entry("two replays, on squid", denc.Squid, 2),
+				Entry("two replays, on tentacle", denc.Tentacle, 2),
+			)
+
+			// An attribute write reads v2's head after the rewrite's head write
+			// and prepares; the delete of v2 unlinks it and its replay removes the
+			// head; the attribute write's head write then finds the head gone and
+			// cancels at pool -1 and epoch 0, which the class copies onto v2's
+			// instance entry. The rewrite's completion, landing after that cancel,
+			// is no longer stale and makes the entry again with no head
+			// (docs/ceph-upstream-bugs.md, "cls_rgw complete_op writes a stale
+			// epoch back when it cancels"). The transition reads its
+			// head again before its link, links nothing and notifies nothing, and
+			// removes that entry. In the "refused" entries another writer's prepare
+			// lands just before that removal, and that writer then cancels, as an
+			// attribute write that read the head before the removal does: the
+			// removal is refused and sent again. In the "listed" entries a link of
+			// v2 lands just after the rewrite's completion, as a retry's would:
+			// the entry is listed, and the transition leaves it with its list entry
+			// rather than leave the list entry naming nothing.
+			DescribeTable("leaves nothing of a version whose index entry an attribute write's cancel set back before the rewrite's completion",
+				func(ctx SpecContext, r denc.Release, variant string) {
+					rel = r
+					open(ctx)
+					rec, _ = create(ctx, "versioned", meta.BucketVersioned, transitionTo("cold", "", "COLD"))
+					put(ctx, rec, "k", "v1", nil, "")
+					v2 := put(ctx, rec, "k", tailed(), nil, "")
+					v2Head := headOID(rec, v2)
+					shard := indexShardOID(rec, "k")
+					v2Key := rgwcls.ObjKey{Name: "k", Instance: v2.Instance}
+					policy := encode(acl.DefaultPolicy(meta.UserOwner(meta.UserID{ID: "carol"}), "Carol"))
+					var changer *driver.IndexOp
+					var canceled bool
+					c.AfterWrite(testDataPool, "", v2Head, func() {
+						defer GinkgoRecover()
+						c.AfterWrite(testDataPool, "", v2Head, nil)
+						st := stat(ctx, rec, v2)
+						parked, release := make(chan struct{}), make(chan struct{})
+						var writes atomic.Int32
+						c.BeforeWrite(testDataPool, "", v2Head, func(*fakerados.Object) {
+							if writes.Add(1) == 1 {
+								close(parked)
+								<-release
+							}
+						})
+						aw := make(chan error, 1)
+						go func() {
+							defer GinkgoRecover()
+							aw <- s.SetObjectAttrs(ctx, st, map[string][]byte{meta.AttrACL: policy}, nil)
+						}()
+						Eventually(parked).WithTimeout(10*time.Second).Should(BeClosed(), "the attribute write, prepared and about to write the head")
+						Expect(s.DeleteObject(ctx, rec, v2, op.DeleteParams{SkipOLHUpdate: true})).Error().To(Succeed(), "the delete, its replay left")
+						head, err := s.ReadOLHHeadForTest(ctx, rec, meta.ObjKey{Name: "k"})
+						Expect(err).NotTo(HaveOccurred())
+						Expect(s.UpdateOLHForTest(ctx, rec, head)).To(Succeed(), "the delete's replay, which removes the head")
+						close(release)
+						Eventually(aw).WithTimeout(10*time.Second).Should(Receive(MatchError(op.ErrNoSuchKey)), "the attribute write, which finds the head gone")
+						c.BeforeWrite(testDataPool, "", v2Head, nil)
+						settle(s)
+						en, ok := c.InstanceEntry(rookIndexPool, "", shard, v2Key)
+						Expect(ok).To(BeTrue(), "the entry the removal left, the rewrite's prepare still pending")
+						Expect(en.Exists).To(BeFalse())
+						Expect(en.Ver.Pool).To(BeEquivalentTo(-1), "the cancel's version, which the class copied onto the entry")
+						canceled = true
+						// The hooks run again inside the writes they make, so they fire
+						// once through fired, not a sync.Once, whose Do would wait on
+						// itself.
+						var fired atomic.Bool
+						switch variant {
+						case "refused":
+							c.BeforeWrite(rookIndexPool, "", shard, func(*fakerados.Object) {
+								en, ok := c.InstanceEntry(rookIndexPool, "", shard, v2Key)
+								if ok && en.Exists && fired.CompareAndSwap(false, true) {
+									changer = s.NewIndexOpForTest(rec, v2, "changer")
+									Expect(changer.Prepare(ctx, rgwcls.OpAdd)).To(Succeed(), "another writer's prepare, just before the removal of the entry")
+								}
+							})
+						case "listed":
+							c.AfterWrite(rookIndexPool, "", shard, func() {
+								en, ok := c.InstanceEntry(rookIndexPool, "", shard, v2Key)
+								if ok && en.Exists && fired.CompareAndSwap(false, true) {
+									Expect(s.SetOLHForTest(ctx, rec, v2, driver.OLHLink{KeepVersion: true, SkipUpdate: true})).To(Succeed(), "a link of v2")
+								}
+							})
+						}
+					})
+					clk.Advance(lcDay)
+					pass(ctx)
+					c.AfterWrite(testDataPool, "", v2Head, nil)
+					c.BeforeWrite(rookIndexPool, "", shard, nil)
+					c.AfterWrite(rookIndexPool, "", shard, nil)
+					Expect(canceled).To(BeTrue(), "the attribute write canceled between the rewrite's head write and its completion")
+					Expect(notes.NotifyCallCount()).To(BeZero(), "no transition notified")
+					Expect(c.Object(testDataPool, "", v2Head)).To(BeNil(), "v2's head")
+					Expect(chainOIDs(allGCEntries(c))).To(ContainElements(poolObjects(ctx, c, coldPool, "")), "the rewrite's tails, which the delete's removal queued")
+					if variant == "listed" {
+						en, ok := c.InstanceEntry(rookIndexPool, "", shard, v2Key)
+						Expect(ok).To(BeTrue(), "v2's instance entry, under its list entry")
+						Expect(en.Exists).To(BeTrue())
+						Expect(c.ListEntries(rookIndexPool, "", shard, "k")).To(ContainElement(HaveField("Key.Instance", v2.Instance)), "v2's list entry, which names its instance entry")
+						return
+					}
+					if changer != nil {
+						en, ok := c.InstanceEntry(rookIndexPool, "", shard, v2Key)
+						Expect(ok).To(BeTrue(), "the entry the second removal left, the other writer's prepare pending")
+						Expect(en.Exists).To(BeFalse())
+						changer.Cancel()
+						settle(s)
+					} else {
+						Expect(variant).To(BeEmpty(), "the other writer prepared")
+					}
+					_, ok := c.InstanceEntry(rookIndexPool, "", shard, v2Key)
+					Expect(ok).To(BeFalse(), "no instance entry of v2 left without its head")
+					for _, en := range c.ListEntries(rookIndexPool, "", shard, "k") {
+						Expect(en.Key.Instance).NotTo(Equal(v2.Instance), "v2's list entry")
+					}
+					Expect(c.Header(rookIndexPool, "", shard).Stats[rgwcls.CategoryMain].NumEntries).To(BeEquivalentTo(1), "v1 alone counted")
+					Expect(versions(ctx, rec, "k")).To(Equal([]string{"*"}), "v1 alone")
+				},
+				Entry("on squid", denc.Squid, ""),
+				Entry("on tentacle", denc.Tentacle, ""),
+				Entry("refused once by another writer's prepare, on squid", denc.Squid, "refused"),
+				Entry("refused once by another writer's prepare, on tentacle", denc.Tentacle, "refused"),
+				Entry("listed by a link, on squid", denc.Squid, "listed"),
+				Entry("listed by a link, on tentacle", denc.Tentacle, "listed"),
+			)
+
+			// A delete unlinks v2, its replay left, and a link of v2 follows it
+			// in the log, as a CompleteMultipartUpload retry's would: every
+			// replay drops the removal, so there is no delete to give way to,
+			// for the transition's link or for keepCurrent's.
+			DescribeTable("links and notifies a version whose removal a later link in the log drops",
+				func(ctx SpecContext, r denc.Release, which string) {
+					rel = r
+					open(ctx)
+					rec, _ = create(ctx, "versioned", meta.BucketVersioned, transitionTo("cold", "", "COLD"))
+					v1 := put(ctx, rec, "k", "v1", nil, "")
+					v2 := put(ctx, rec, "k", "v2", nil, "")
+					olhHead, v2Head := headOID(rec, meta.ObjKey{Name: "k"}), headOID(rec, v2)
+					dropped := func(ctx context.Context) {
+						defer GinkgoRecover()
+						Expect(s.DeleteObject(ctx, rec, v2, op.DeleteParams{SkipOLHUpdate: true})).Error().To(Succeed())
+						Expect(s.SetOLHForTest(ctx, rec, v2, driver.OLHLink{KeepVersion: true, SkipUpdate: true})).To(Succeed(), "a link of v2, as a completion's retry sends")
+					}
+					want := []string{"COLD*", ""}
+					if which == "keepCurrent's read" {
+						keepCurrentRead(ctx, dropped, olhHead, v2Head, v1)
+						want = []string{"COLD*"}
+					} else {
+						atRead(ctx, dropped, olhHead, v2Head)
+					}
+					clk.Advance(lcDay)
+					logs := &syncBuffer{}
+					restore := driver.CaptureDebugLog(logs)
+					pass(ctx)
+					restore()
+					h.SetHook(nil)
+					c.AfterWrite(testDataPool, "", v2Head, nil)
+					c.AfterWrite(testDataPool, "", olhHead, nil)
+					Expect(logs.String()).NotTo(ContainSubstring("lifecycle leaves an object written since its read for a later pass"))
+					Expect(logs.String()).NotTo(ContainSubstring("lifecycle leaves a transitioned version to the delete removing it"))
+					head, err := s.ReadOLHHeadForTest(ctx, rec, meta.ObjKey{Name: "k"})
+					Expect(err).NotTo(HaveOccurred())
+					Expect(s.UpdateOLHForTest(ctx, rec, head)).To(Succeed())
+					Expect(versions(ctx, rec, "k")).To(Equal(want), "v2 transitioned and current")
+					Expect(stat(ctx, rec, v2).StorageClass).To(Equal("COLD"))
+					if r == denc.Tentacle {
+						Expect(notes.NotifyCallCount()).To(Equal(1), "the transition notified")
+					}
+				},
+				Entry("at the transition's read, on squid", denc.Squid, "the transition's read"),
+				Entry("at the transition's read, on tentacle", denc.Tentacle, "the transition's read"),
+				Entry("at keepCurrent's read, on squid", denc.Squid, "keepCurrent's read"),
+				Entry("at keepCurrent's read, on tentacle", denc.Tentacle, "keepCurrent's read"),
+			)
+
+			// The null version's transition writes the OLH head with its own
+			// modification's pending attr, which its link was to take. A delete
+			// of the null version unlinks it after the transition read it, so the
+			// link gives way and that pending attr is removed with it.
+			DescribeTable("cancels the null version's head-write modification when its link gives way",
+				func(ctx SpecContext, r denc.Release) {
+					rel = r
+					open(ctx)
+					rec, _ = create(ctx, "versioned", meta.BucketVersioned, transitionTo("cold", "", "COLD"))
+					put(ctx, rec, "k", "v1", nil, "")
+					rec = setFlags(ctx, "versioned", meta.BucketVersionsSuspended)
+					put(ctx, rec, "k", "null", nil, "")
+					Expect(versions(ctx, rec, "k")).To(Equal([]string{"@null*", ""}))
+					var deletePending []string
+					atReread("k", func(ctx context.Context) {
+						before := pendingAttrs(rec, "k")
+						Expect(s.DeleteObject(ctx, rec, meta.ObjKey{Name: "k", Instance: meta.NullInstance}, op.DeleteParams{SkipOLHUpdate: true})).Error().To(Succeed(), "the delete of the null version, its replay left")
+						for _, a := range pendingAttrs(rec, "k") {
+							if !slices.Contains(before, a) {
+								deletePending = append(deletePending, a)
+							}
+						}
+					})
+					clk.Advance(lcDay)
+					logs := &syncBuffer{}
+					restore := driver.CaptureDebugLog(logs)
+					pass(ctx)
+					restore()
+					h.SetHook(nil)
+					Expect(logs.String()).To(ContainSubstring("lifecycle leaves an object written since its read for a later pass"), "the link gave way")
+					Expect(notes.NotifyCallCount()).To(BeZero())
+					Expect(deletePending).To(HaveLen(1))
+					Expect(pendingAttrs(rec, "k")).To(ConsistOf(deletePending), "the delete's pending attr alone: the transition's was canceled")
+					head, err := s.ReadOLHHeadForTest(ctx, rec, meta.ObjKey{Name: "k"})
+					Expect(err).NotTo(HaveOccurred())
+					Expect(s.UpdateOLHForTest(ctx, rec, head)).To(Succeed(), "the delete's replay")
+					Expect(pendingAttrs(rec, "k")).To(BeEmpty())
+					Expect(versions(ctx, rec, "k")).To(Equal([]string{"*"}), "v1 alone")
+				},
+				Entry("on squid", denc.Squid),
+				Entry("on tentacle", denc.Tentacle),
+			)
 		})
 
 		It("lists the current version current again when another version's removal lands between its OLH entry's read and its link", func(ctx SpecContext) {

@@ -462,6 +462,96 @@ var _ = Describe("DeleteObject and DeleteObjects over the RADOS store on a bucke
 			Expect(instanceEntry("v1")).To(BeFalse(), "its instance entry")
 			Expect(listed()).To(Equal([]string{"v2"}))
 		})
+		// The delete's check after the GET's replay kept the version removes
+		// it, but another writer changes its instance entry before each of the
+		// removal's compared prepares. At their bound the removal is deferred.
+		// No removal is left in the log for a later replay, so the delete
+		// answers SlowDown, and its retry removes the version.
+		It("answers SlowDown for a delete whose removal after another replay kept the version another writer keeps refusing", func(ctx SpecContext) {
+			lockVersion(ctx, "v1", "COMPLIANCE")
+			var changers []*driver.IndexOp
+			atUnlink(1, func() {
+				getFirst(ctx, "k")
+				ac.set(func(w *radosclient.WriteOp, send sendFunc) (uint64, error) {
+					compared := false
+					for _, st := range w.Steps() {
+						if _, ok := st.(*radosclient.OmapCmpStep); ok {
+							compared = true
+						}
+					}
+					if compared && callsMethod(w.Steps(), "bucket_prepare_op") {
+						x := s.NewIndexOpForTest(rec, version("v1"), fmt.Sprintf("changer-%d", len(changers)))
+						changers = append(changers, x)
+						Expect(x.Prepare(ctx, rgwcls.OpAdd)).To(Succeed())
+					}
+					return hooks.around(w, send)
+				})
+			})
+			_, err := s.DeleteObject(ctx, rec, version("v1"), op.DeleteParams{})
+			ac.set(hooks.around)
+			Expect(err).To(MatchError(op.ErrSlowDown))
+			Expect(op.AsError(err).Status).To(Equal(http.StatusServiceUnavailable))
+			Expect(changers).To(HaveLen(driver.OLHAttempts), "one refused prepare a round, up to the bound")
+			for _, x := range changers {
+				x.Cancel()
+			}
+			settle(s)
+			Expect(head("v1")).NotTo(BeNil(), "the version's head, not removed")
+			Expect(listed()).To(Equal([]string{"v2"}), "unlisted")
+			Expect(s.DeleteObject(ctx, rec, version("v1"), op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "v1"}), "the client's retry")
+			settle(s)
+			Expect(head("v1")).To(BeNil(), "removed by the retry")
+			Expect(instanceEntry("v1")).To(BeFalse())
+			Expect(listed()).To(Equal([]string{"v2"}))
+		})
+		// The delete's own replay, the GET's replay having kept v1 for its
+		// lock, meets v2's removal, which another writer refuses for 20 rounds
+		// of a second each; the delete's check then removes v1, which another
+		// writer refuses on every round. The check shares the deadline the
+		// replay's first lost round started, 32 s on, so it is deferred 14
+		// rounds in, after 33 backoffs in all, and the delete answers
+		// SlowDown. With a deadline of its own the check would back off for
+		// 32 s more.
+		It("answers SlowDown once the backoff deadline its replay started passes in its check", func(ctx SpecContext) {
+			body := []byte("data-v3")
+			_, err := s.PutObject(ctx, rec, version("v3"), bytes.NewReader(body), op.PutParams{Attrs: attrsWithACL(initiator), Size: int64(len(body))})
+			Expect(err).NotTo(HaveOccurred())
+			settle(s)
+			lockVersion(ctx, "v1", "COMPLIANCE")
+			var sleeps atomic.Int32
+			driver.SetCondSleepForTest(s, func(context.Context, time.Duration) error {
+				sleeps.Add(1)
+				clock.Add(int64(time.Second))
+				return nil
+			})
+			refused := map[string]int{}
+			var changers []*driver.IndexOp
+			atUnlink(1, func() {
+				getFirst(ctx, "k")
+				Expect(s.DeleteObject(ctx, rec, version("v2"), op.DeleteParams{SkipOLHUpdate: true})).Error().To(Succeed(), "v2's removal logged, its replay left")
+				ac.set(func(w *radosclient.WriteOp, send sendFunc) (uint64, error) {
+					if x, ok := removalPrepareKey(w); ok && (x == "v1" || x == "v2" && refused["v2"] < 20) {
+						refused[x]++
+						ch := s.NewIndexOpForTest(rec, version(x), fmt.Sprintf("changer-%d", len(changers)))
+						changers = append(changers, ch)
+						Expect(ch.Prepare(ctx, rgwcls.OpAdd)).To(Succeed(), "another writer's prepare, which changes %s's instance entry", x)
+					}
+					return hooks.around(w, send)
+				})
+			})
+			_, err = s.DeleteObject(ctx, rec, version("v1"), op.DeleteParams{})
+			ac.set(hooks.around)
+			Expect(err).To(MatchError(op.ErrSlowDown))
+			Expect(refused).To(Equal(map[string]int{"v2": 20, "v1": 14}), "the check's last refused round, past the deadline, defers it")
+			Expect(sleeps.Load()).To(BeEquivalentTo(33), "a backoff after every lost round but the deferred one")
+			for _, x := range changers {
+				x.Cancel()
+			}
+			settle(s)
+			Expect(head("v2")).To(BeNil(), "v2, removed on its 21st round")
+			Expect(head("v1")).NotTo(BeNil(), "v1, its removal deferred")
+			Expect(listed()).To(Equal([]string{"v3"}), "v1 unlisted")
+		})
 		// A GOVERNANCE retention is one a delete with the bypass passes, so a
 		// replay cannot tell a removal that bypassed it from one that raced it,
 		// and removes the version as radosgw's does (docs/differences.md, "A

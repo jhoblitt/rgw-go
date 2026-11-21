@@ -59,6 +59,10 @@ const attrCryptParts = meta.AttrCryptPrefix + "part-lengths"
 //   - On a bucket ever versioned, a version the OLH entry names once the
 //     link has landed is listed current again should the link have landed
 //     below the entry's epoch (keepCurrent).
+//   - The link, and keepCurrent's, give way to a delete's removal of the
+//     version pending in the OLH entry's log (linkTransition): the transition
+//     then ends as one whose link a delete refused, with no notification,
+//     and that delete's replay removes the rewritten head and its tails.
 //
 // Then, on Tentacle, the notification of its LifecycleTransition and
 // ObjectTransitionCurrent or ObjectTransitionNoncurrent; Squid's in-cluster
@@ -136,7 +140,12 @@ func (b *lcBucket) transition(ctx context.Context, rec *op.BucketRecord, probe *
 		return
 	}
 	if b.versioned {
-		if kerr := b.keepCurrent(ctx, cur, dst); kerr != nil {
+		kerr := b.keepCurrent(ctx, cur, dst)
+		switch {
+		case errors.Is(kerr, errTransitionGaveWay):
+			slog.DebugContext(ctx, "lifecycle leaves a transitioned version to the delete removing it", append(attrs, slog.Any("error", kerr))...)
+			return
+		case kerr != nil:
 			slog.WarnContext(ctx, "lifecycle could not list a transitioned version current again", append(attrs, slog.Any("error", kerr))...)
 		}
 	}
@@ -226,7 +235,13 @@ func olhNames(olh rgw.OLHEntry, key meta.ObjKey) bool {
 // still names the version and the version's instance entry is not flagged
 // current, links the version again at the entry's epoch, guarded on the OLH
 // head as read (olhRelink), waiting on other writers' pending modifications
-// as a re-link does (relistVersion), up to relistRounds rounds.
+// as a re-link does (relistVersion), up to relistRounds rounds. Each round
+// gives way to a delete as the transition's own link does (linkTransition):
+// while the entry's pending log holds a removal of the version that no later
+// link of its data drops (unpairedRemovals) it links nothing and answers
+// errTransitionGaveWay, and its link compares the entry
+// as the round read it, so a delete's unlink landing after that read refuses
+// the link, which the next round's read then gives way to.
 func (b *lcBucket) keepCurrent(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey) error {
 	s := b.p.s
 	idx := s.newOLHIndex(rec, key)
@@ -240,12 +255,14 @@ func (b *lcBucket) keepCurrent(ctx context.Context, rec *op.BucketRecord, key me
 		if err != nil || !head.Exists {
 			return err
 		}
-		olh, err := idx.getOLH(ctx, head)
+		olh, bi, err := idx.getOLHBI(ctx, head)
 		switch {
 		case errors.Is(err, radosclient.ErrNotFound):
 			return nil
 		case err != nil:
 			return err
+		case unpairedRemovals(olh.PendingLog)[key.Instance]:
+			return fmt.Errorf("listing %s current again: %w", versionName(rec, key), errTransitionGaveWay)
 		case !olhNames(olh, key):
 			return nil
 		}
@@ -266,7 +283,7 @@ func (b *lcBucket) keepCurrent(ctx context.Context, rec *op.BucketRecord, key me
 			continue
 		}
 		round++
-		err = s.setOLH(ctx, rec, key, olhLink{Epoch: olh.Epoch, Relink: &olhRelink{head: head, pendingOK: !refuse}})
+		err = s.setOLH(ctx, rec, key, olhLink{Epoch: olh.Epoch, Relink: &olhRelink{head: head, pendingOK: !refuse, olh: &bi}})
 		if !errors.Is(err, errRelinkMoved) {
 			return err
 		}

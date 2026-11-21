@@ -577,7 +577,7 @@ var _ = Describe("a conditional link", func() {
 			c.ResetCounters()
 			conditionFailed(link(ctx, "c", ifNoneMatchAny))
 			Expect(c.Reads(testDataPool, "", olhOID)).To(Equal(1), "the condition fails before any wait")
-			Expect(c.Reads(rookIndexPool, "", shard)).To(Equal(1), "the follow's one log read, which applies nothing")
+			Expect(c.Reads(rookIndexPool, "", shard)).To(Equal(2), "the follow's one log read, which applies nothing, and the void version's removal's read of its instance entry")
 			Expect(backedOff()).To(BeEmpty())
 			gone("c")
 			Expect(target()).To(Equal("v2"))
