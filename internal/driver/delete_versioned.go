@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/jhoblitt/rgw-go/internal/cls/rgw"
@@ -477,7 +479,8 @@ func (s *Store) expectRemoval(ctx context.Context, rec *op.BucketRecord, v meta.
 // v, the version it removes, the OLH head's null data for the null version,
 // is still stored: a link of v logged after the delete's removal made the
 // replay drop that removal (applyOLHLog), or another replay kept v for its
-// lock and listed it again (checkRemoval). For the null version the data
+// lock and a relist listed it again, the record that names that removal
+// gone by the delete's check (checkRemoval). For the null version the data
 // stored then may be a newer null write's, which a null link put in the head
 // after the delete's read. Such a delete removed nothing it expected, and
 // while that data carries a retention or a legal hold,
@@ -732,9 +735,25 @@ func (s *Store) relistBackoff(ctx context.Context, clock *relistClock, n *int) e
 // will remove, such as the one radosgw's link at an old epoch leaves, does
 // not hold the version off, before its expiry or after. v goes to
 // relistBelow, at its own epoch, when a newer version is listed, which lists
-// it behind that version, when the name's OLH entry was made again since
-// (remade), or when every one of relistRounds rounds lost its link to
-// another writer, each lost round followed by a backoff (relistBackoff).
+// it behind that version, as long as that version is still listed then,
+// when the name's OLH entry was made again since (remade), or when every one
+// of relistRounds rounds lost its link to another writer, each lost round
+// followed by a backoff (relistBackoff).
+//
+// Before its link at epoch 0 a round looks for a newer version held out of
+// the listing (heldNewer) and lists it again first, as a reader of its record
+// does (listHeld): linked at epoch 0, v would list ahead of that version at
+// the fresh epoch, and a later relist of it would put it behind v. The next
+// round then finds it listed and goes below it. A held version is listed
+// once, and not by a relist running inside that version's own relist
+// (listingHeld): one not listed is taken as absent, and the round links as
+// if it were not there. A version another writer's replay kept for its lock
+// is no held one (heldNewer). While a newer version unlisted and stored has its removal
+// still logged, its replay not yet having refused it, carried it out or
+// trimmed it, the round waits for that replay within the wait on pending
+// modifications (waitUnsettled), and past that wait links as if the version
+// were not there, the link's own replay then applying the removal.
+//
 // Before a round's link it gives way to another delete of v whose removal is
 // pending, linking nothing, reads the listing again after the name's OLH
 // entry, and compares that entry in its link (relinkOrMove), so that a delete
@@ -745,6 +764,7 @@ func (s *Store) relistVersion(ctx context.Context, clock *relistClock, rec *op.B
 	idx := s.newOLHIndex(rec, v)
 	var w olhCondWait
 	tries := 0
+	tried := map[string]bool{}
 	for round := 0; round < relistRounds; {
 		en, err := s.getInstanceEntry(ctx, rec, v)
 		switch {
@@ -772,29 +792,61 @@ func (s *Store) relistVersion(ctx context.Context, clock *relistClock, rec *op.B
 		if err != nil {
 			return err
 		}
-		if remade || newest != nil && !listsBefore(en, *newest) {
-			break
+		var above *rgw.DirEntry
+		if !remade && newest != nil && !listsBefore(en, *newest) {
+			above = newest
 		}
-		wait, refuse, err := s.waitOLHPending(ctx, idx, head, &w)
-		switch {
-		case err != nil:
-			return err
-		case wait:
-			continue
+		below := remade || above != nil
+		var refuse bool
+		if !below {
+			var wait, unsettled bool
+			wait, refuse, err = s.waitOLHPending(ctx, idx, head, &w)
+			switch {
+			case err != nil:
+				return err
+			case wait:
+				continue
+			}
+			var held *heldVersion
+			held, unsettled, err = s.heldNewer(ctx, idx, rec, en)
+			if err != nil {
+				return err
+			}
+			switch {
+			case held != nil && !tried[held.en.Key.Instance] && !listingHeld(ctx, held.en.Key.Instance):
+				tried[held.en.Key.Instance] = true
+				s.listHeld(ctx, rec, v.Instance, held)
+				continue
+			case unsettled:
+				again, werr := s.waitUnsettled(ctx, &w)
+				if werr != nil {
+					return werr
+				}
+				if again {
+					continue
+				}
+			}
 		}
-		round++
-		err = s.relinkOrMove(ctx, idx, rec, v, olhLink{Relink: &olhRelink{head: head, pendingOK: !refuse}}, newest, next)
-		switch {
-		case errors.Is(err, errRelistGaveWay):
-			return nil
-		case !errors.Is(err, errRelinkMoved):
-			return err
+		if below {
+			err = s.relistBelow(ctx, clock, rec, v, nil, 0, olhTag, above)
+			if !errors.Is(err, errBelowGone) {
+				return err
+			}
+		} else {
+			round++
+			err = s.relinkOrMove(ctx, idx, rec, v, olhLink{Relink: &olhRelink{head: head, pendingOK: !refuse}}, newest, next)
+			switch {
+			case errors.Is(err, errRelistGaveWay):
+				return nil
+			case !errors.Is(err, errRelinkMoved):
+				return err
+			}
 		}
 		if berr := s.relistBackoff(ctx, clock, &tries); berr != nil {
 			return fmt.Errorf("listing %s again: %w", versionName(rec, v), berr)
 		}
 	}
-	return s.relistBelow(ctx, clock, rec, v, nil, 0, olhTag)
+	return s.relistBelow(ctx, clock, rec, v, nil, 0, olhTag, nil)
 }
 
 // relinkOLHEntry reads the OLH entry of key's name before a relist links
@@ -851,7 +903,15 @@ func (s *Store) relinkOLHEntry(ctx context.Context, rec *op.BucketRecord, key me
 //   - with a null delete marker current over nothing newer, with nothing
 //     listed, or with the null data newer than every listed version, the
 //     null data, at epoch 0;
-//   - otherwise the null data below the newest version (relistBelow).
+//   - otherwise the null data below the newest version (relistBelow), as
+//     long as that version is still listed then.
+//
+// Before any of these a round looks for a version newer than the null data
+// held out of the listing (heldNewer) and lists it again first, as a reader
+// of its record does (listHeld), once, as relistVersion's rounds do: the next
+// round then finds it listed, the version the marker demoted or the newest,
+// and lists the null data below it. A round waits for a newer version's
+// removal still logged as relistVersion's does (waitUnsettled).
 //
 // A round whose link the guard or the compare refuses, or whose listing moved
 // under it, is followed by another after a backoff, until a link lands or
@@ -869,6 +929,7 @@ func (s *Store) relistNull(ctx context.Context, clock *relistClock, rec *op.Buck
 	var first uint64
 	var w olhCondWait
 	tries := 0
+	tried := map[string]bool{}
 	for read := false; ; {
 		dn, err := s.nullDataEntry(ctx, rec, key)
 		switch {
@@ -902,6 +963,24 @@ func (s *Store) relistNull(ctx context.Context, clock *relistClock, rec *op.Buck
 		if err != nil {
 			return err
 		}
+		held, unsettled, err := s.heldNewer(ctx, idx, rec, dn)
+		if err != nil {
+			return err
+		}
+		switch {
+		case held != nil && !tried[held.en.Key.Instance] && !listingHeld(ctx, held.en.Key.Instance):
+			tried[held.en.Key.Instance] = true
+			s.listHeld(ctx, rec, "", held)
+			continue
+		case unsettled:
+			again, werr := s.waitUnsettled(ctx, &w)
+			if werr != nil {
+				return werr
+			}
+			if again {
+				continue
+			}
+		}
 		marker := newest != nil && newest.Key.Instance == "" && newest.Flags&rgw.FlagDeleteMarker != 0
 		guard := &olhRelink{head: head, pendingOK: !refuse}
 		target, demoted := key, marker && next != nil && listsBefore(*next, dn)
@@ -914,7 +993,7 @@ func (s *Store) relistNull(ctx context.Context, clock *relistClock, rec *op.Buck
 			}
 		case marker, newest == nil, listsBefore(dn, *newest):
 		default:
-			err = s.relistBelow(ctx, clock, rec, key, guard, first, nil)
+			err = s.relistBelow(ctx, clock, rec, key, guard, first, nil, newest)
 			if err == nil || errors.Is(err, errNullOwned) {
 				return nil
 			}
@@ -1052,7 +1131,15 @@ func (s *Store) readRelinkHead(ctx context.Context, rec *op.BucketRecord, key me
 // that compare refuses is tried again from a fresh read after a backoff,
 // until the link lands, the relist gives way, or it reaches a bound
 // (relistBackoff, on clock); with guard, the caller's round does that.
-func (s *Store) relistBelow(ctx context.Context, clock *relistClock, rec *op.BucketRecord, key meta.ObjKey, guard *olhRelink, first uint64, olhTag []byte) error {
+//
+// above, when not nil, is the newer version the caller's round read listed
+// and goes below, its list entry as read. It must still be listed after the
+// OLH entry's read: a delete of it that landed since would leave the version
+// the delete's unlink promoted, older than key's, current, with key's listed
+// non-current ahead of it. One gone answers errBelowGone, nothing written, for
+// the caller's round to read the listing again; one that lands after that
+// read moves the OLH entry, which refuses the reset and the link.
+func (s *Store) relistBelow(ctx context.Context, clock *relistClock, rec *op.BucketRecord, key meta.ObjKey, guard *olhRelink, first uint64, olhTag []byte, above *rgw.DirEntry) error {
 	read := s.getInstanceEntry
 	if key.Instance == "" {
 		read = s.nullDataEntry
@@ -1073,6 +1160,15 @@ func (s *Store) relistBelow(ctx context.Context, clock *relistClock, rec *op.Buc
 			return err
 		case removed:
 			return nil
+		}
+		if above != nil {
+			_, still, lerr := s.listEntry(ctx, rec, indexToObjKey(above.Key), *above)
+			switch {
+			case lerr != nil:
+				return lerr
+			case !still:
+				return fmt.Errorf("listing %s again: %w", versionName(rec, key), errBelowGone)
+			}
 		}
 		again, aerr := read(ctx, rec, key)
 		switch {
@@ -1098,6 +1194,10 @@ func (s *Store) relistBelow(ctx context.Context, clock *relistClock, rec *op.Buc
 		}
 	}
 }
+
+// errBelowGone ends a relistBelow whose newer version, the one it would list
+// below, is no longer listed.
+var errBelowGone = fmt.Errorf("%w: the newer version it would go below is no longer listed", errRelinkMoved)
 
 // relinkBelow is relistBelow's link of key's version, en its instance record
 // as read, at its own epoch, or at epoch 1 when the name's OLH entry was made
@@ -1238,4 +1338,218 @@ func (b *bucketOLHIndex) newestListed(ctx context.Context) (first, second *rgw.D
 // taken from its instance record.
 func listsBefore(a, b rgw.DirEntry) bool {
 	return rgw.ListIndexKey(a.Key, a.VersionedEpoch) < rgw.ListIndexKey(b.Key, b.VersionedEpoch)
+}
+
+// heldVersion is a version heldNewer found held out of the listing: its
+// instance record, and its record in the bucket's unlisted-version object as
+// read.
+type heldVersion struct {
+	en     rgw.DirEntry
+	record unlistedEntry
+}
+
+// heldNewer finds, for a relist of en, the instance record of a version of
+// idx's name, the versions of that name newer than en that are stored and in
+// no listing: each one, but en's own, that the name's OLH entry logs a
+// removal of or the bucket's unlisted-version object records
+// (recordUnlisted), whose instance record lists before en's (listsBefore),
+// is no delete marker, names no list entry, and whose head is there, the OLH
+// head holding the data for the null version. Instance records keep the
+// order the versions were written in while they are unlisted: the class's
+// unlink leaves the unlinked version's record as it was, and promotes the
+// next version at its own epoch, its record read anew before it is written
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1388-L1427 and
+// https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1936-L1958 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1514-L1554 and
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2083-L2105 at v20.2.4).
+//
+// held is the newest such version whose removal the log no longer holds and
+// whose record names a refused removal and none pending (listableFirst): a
+// replay refused that removal for the write tag its writer held it to,
+// recording the version before its head op and trimming the removal after
+// (applyOLHLog), or the writer's check after its replay refused it
+// (checkRemoval), and that writer removes nothing more, so the version stays
+// until a relist lists it again, whatever its lock. A version whose record
+// names a removal a replay kept for its lock, still pending, is no held one,
+// whatever its lock now: that removal's writer's check after its own replay
+// decides it, and a relist that listed it first would have that check find
+// it listed again. A record written before records named their removals is
+// taken as such a one. unsettled reports a version newer than held whose
+// removal the log still holds: no replay has yet carried that removal out,
+// refused it, or trimmed it, so whether the version stays is not yet known.
+// A record whose version was listed again since, or removed, names no such
+// version.
+func (s *Store) heldNewer(ctx context.Context, idx *bucketOLHIndex, rec *op.BucketRecord, en rgw.DirEntry) (held *heldVersion, unsettled bool, err error) {
+	name := idx.x.obj.Key
+	logged := map[string]bool{}
+	e, err := idx.getOLH(ctx, &op.ObjectState{Bucket: rec, Key: olhHeadKey(name)})
+	switch {
+	case errors.Is(err, radosclient.ErrNotFound):
+	case err != nil:
+		return nil, false, fmt.Errorf("reading the olh entry of %s before listing it again: %w", versionName(rec, name), err)
+	}
+	for _, entries := range e.PendingLog {
+		for _, le := range entries {
+			if le.Op == rgw.OLHOpRemoveInstance {
+				logged[le.Key.Instance] = true
+			}
+		}
+	}
+	recorded, err := s.recordedInstances(ctx, rec, name)
+	if err != nil {
+		return nil, false, err
+	}
+	candidates := map[string]bool{}
+	for k := range recorded {
+		candidates[k] = true
+	}
+	maps.Copy(candidates, logged)
+	var pending *rgw.DirEntry
+	for _, instance := range slices.Sorted(maps.Keys(candidates)) {
+		if instance == en.Key.Instance {
+			continue
+		}
+		c, st, cerr := s.unlistedNewer(ctx, rec, meta.ObjKey{Name: name.Name, NS: name.NS, Instance: instance}, en)
+		switch {
+		case cerr != nil:
+			return nil, false, cerr
+		case st == nil:
+		case logged[instance]:
+			if pending == nil || listsBefore(c, *pending) {
+				pending = &c
+			}
+		case !listableFirst(recorded[instance]):
+		case held == nil || listsBefore(c, held.en):
+			held = &heldVersion{en: c, record: recorded[instance]}
+		}
+	}
+	return held, pending != nil && (held == nil || listsBefore(*pending, held.en)), nil
+}
+
+// unlistedNewer reads key's version, of rec's bucket, for heldNewer: its
+// instance record, the null data's for the null version (nullDataEntry), and,
+// when it lists before en, is no delete marker, names no list entry, and has
+// its head, the OLH head holding the null version's data, that head as read;
+// otherwise a nil head.
+func (s *Store) unlistedNewer(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, en rgw.DirEntry) (rgw.DirEntry, *op.ObjectState, error) {
+	read := s.getInstanceEntry
+	if key.Instance == "" {
+		read = s.nullDataEntry
+	}
+	c, err := read(ctx, rec, key)
+	switch {
+	case errors.Is(err, radosclient.ErrNotFound):
+		return c, nil, nil
+	case err != nil:
+		return c, nil, err
+	case c.Flags&rgw.FlagDeleteMarker != 0, !listsBefore(c, en):
+		return c, nil, nil
+	}
+	if listed, lerr := s.listed(ctx, rec, key, c); lerr != nil || listed {
+		return c, nil, lerr
+	}
+	st, err := s.readOLHHead(ctx, rec, key)
+	switch {
+	case err != nil:
+		return c, nil, err
+	case key.Instance == "" && !holdsNullData(st), !st.Exists:
+		return c, nil, nil
+	}
+	return c, st, nil
+}
+
+// recordedInstances is the records of key's name in the unlisted-version
+// object of rec's bucket (recordUnlisted), by instance, none when the object
+// does not exist.
+func (s *Store) recordedInstances(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey) (map[string]unlistedEntry, error) {
+	pool, err := s.indexPool(ctx, &rec.Info)
+	if err != nil {
+		return nil, err
+	}
+	prefix := unlistedEscaper.Replace(key.IndexKeyName()) + "/"
+	out := map[string]unlistedEntry{}
+	for after := ""; ; {
+		rop := radosclient.NewReadOp()
+		res := rop.OmapGetVals(after, prefix, unlistedPage)
+		_, err := pool.Read(ctx, unlistedOID(&rec.Info), rop, radosclient.OpFlagNone)
+		switch {
+		case errors.Is(err, radosclient.ErrNotFound):
+			return out, nil
+		case err != nil:
+			return nil, fmt.Errorf("reading the unlisted versions of %s/%s: %w", rec.Info.Bucket.Name, key.Name, err)
+		}
+		for k, v := range res.Values {
+			if o, ok := parseUnlistedKey(k); ok && o.Name == key.Name && o.NS == key.NS {
+				out[o.Instance] = unlistedEntry{k: k, v: v}
+			}
+			after = max(after, k)
+		}
+		if uint64(len(res.Values)) < unlistedPage {
+			return out, nil
+		}
+	}
+}
+
+// listHeld lists again h, a version heldNewer found held out of the listing,
+// through the relist a reader of its record runs (settleUnlisted): the record
+// claimed, the version read again and left as it is when it is listed, gone
+// or without its head, then the relist its refused removal runs, and the
+// refused removals taken out of the record once the version is listed, a
+// pending one merged in since kept (takeListed), or the record given back
+// unclaimed. The record's age is not waited for: that wait keeps a late
+// reader off a version whose writer may still be relisting it or checking
+// its removal, and here the version must be listed before the version older
+// than it, and two relists of one version list it once (relistVersion,
+// relistBelow). What it leaves is logged by settleUnlisted; the caller's next
+// round reads the listing again whatever it did. own is the instance of the
+// version the caller relists, which the relist of h, and any relist it runs
+// in turn, does not list (listingHeld).
+func (s *Store) listHeld(ctx context.Context, rec *op.BucketRecord, own string, h *heldVersion) {
+	pool, err := s.indexPool(ctx, &rec.Info)
+	if err != nil {
+		slog.WarnContext(ctx, "could not open the index pool to list again a newer version held out of the listing",
+			slog.String("bucket", rec.Info.Bucket.Name), slog.Any("error", err))
+		return
+	}
+	chain := map[string]bool{own: true}
+	if up, ok := ctx.Value(heldListingKey{}).(map[string]bool); ok {
+		maps.Copy(chain, up)
+	}
+	s.settleUnlisted(context.WithValue(ctx, heldListingKey{}, chain), rec, pool, unlistedOID(&rec.Info), h.record, 0)
+}
+
+// heldListingKey keys, in the context of a relist listHeld runs, the
+// instances of the versions whose relists are listing it, its caller's and
+// theirs. An instance record moves up the listing order when its version is
+// linked at epoch 0, so a version held now may be one of those, and a relist
+// that listed it in turn would run inside its own.
+type heldListingKey struct{}
+
+// listingHeld reports whether instance's version is one whose relist ctx's
+// relist runs inside (heldListingKey).
+func listingHeld(ctx context.Context, instance string) bool {
+	chain, ok := ctx.Value(heldListingKey{}).(map[string]bool)
+	return ok && chain[instance]
+}
+
+// waitUnsettled spends one backoff of w, a relist round's wait on pending
+// modifications (waitOLHPending), on a newer version whose removal is still
+// logged (heldNewer), and reports whether the round should read again: false
+// once w has passed its bound, which it then marks, as waitOLHPending does,
+// so that a removal whose writer stopped before its replay holds the relist
+// no longer than a pending attr does.
+func (s *Store) waitUnsettled(ctx context.Context, w *olhCondWait) (bool, error) {
+	switch {
+	case w.pastBound:
+		return false, nil
+	case w.backoffs >= olhCondBackoffs:
+		w.pastBound = true
+		return false, nil
+	}
+	d := olhCondBackoff(w.backoffs)
+	w.backoffs++
+	if err := s.condBackoff(ctx, d); err != nil {
+		return false, err
+	}
+	return true, nil
 }

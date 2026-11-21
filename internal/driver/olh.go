@@ -649,15 +649,32 @@ func unlinkError(what string, err error) error {
 // An entry another writer applied and trimmed had its attr removed by that
 // apply, so the removal finds nothing, and an entry still in the log keeps
 // its attr, which makes the next follow apply it.
+//
+// A writer whose replay refused its own removal in any pass answers that
+// refusal, in place of the success its later passes or its check would
+// answer, while the version is still stored (ownRefusal). The pass that
+// refused it recorded the version before its head op; when another replay
+// then overtakes that head op and trims the removal, the writer's later
+// passes find nothing of its own, and a relist may have listed the version
+// first and taken that record (heldNewer) before the check reads it.
 func (s *Store) finishOLHModification(ctx context.Context, idx *bucketOLHIndex, head *op.ObjectState, opTag string, skip bool, expectTag []byte, rm *olhRemoval) error {
 	if skip || s.stopsAfterLink() {
 		return nil
 	}
 	ctx = context.WithoutCancel(ctx)
 	r := olhReplay{opTag: opTag, expectTag: expectTag}
-	refused, err := s.replayOLH(ctx, idx, head, &r)
+	if err := s.replayAndCheck(ctx, idx, head, &r, rm); err != nil || len(r.ownRefused) == 0 {
+		return err
+	}
+	return s.ownRefusal(ctx, idx.x.rec, r.ownRefused)
+}
+
+// replayAndCheck is finishOLHModification's replay of head's log for the
+// writer r names, and its check of rm after it.
+func (s *Store) replayAndCheck(ctx context.Context, idx *bucketOLHIndex, head *op.ObjectState, r *olhReplay, rm *olhRemoval) error {
+	refused, err := s.replayOLH(ctx, idx, head, r)
 	if r.readAll && !r.own {
-		s.olhCancelModification(ctx, head, opTag)
+		s.olhCancelModification(ctx, head, r.opTag)
 	}
 	if errors.Is(err, radosclient.ErrCanceled) {
 		err = nil
@@ -666,12 +683,30 @@ func (s *Store) finishOLHModification(ctx context.Context, idx *bucketOLHIndex, 
 		return err
 	}
 	if !r.readAll {
-		logged, lerr := ownEntriesLogged(ctx, idx, head, opTag)
+		logged, lerr := ownEntriesLogged(ctx, idx, head, r.opTag)
 		if lerr != nil || logged {
 			return lerr
 		}
 	}
-	return s.checkRemoval(ctx, idx, rm)
+	return s.checkRemoval(ctx, idx, rm, r.opTag)
+}
+
+// ownRefusal answers a writer that would answer success after a pass of its
+// replay refused its own removal of a version keys names: that refusal while
+// the version is still stored (versionStored), whatever later passes read,
+// since the write tag its guard found moved never comes back, and success
+// once another writer's removal has taken it.
+func (s *Store) ownRefusal(ctx context.Context, rec *op.BucketRecord, keys []meta.ObjKey) error {
+	for _, key := range keys {
+		stored, err := s.versionStored(ctx, rec, key)
+		switch {
+		case err != nil:
+			return fmt.Errorf("reading the head of %s again after its replay: %w", versionName(rec, key), err)
+		case stored:
+			return fmt.Errorf("removing %s: a pass of its replay found its write tag moved: %w", versionName(rec, key), errRemovalRefused)
+		}
+	}
+	return nil
 }
 
 // ownEntriesLogged reports whether the OLH entry of head's name still holds,
@@ -723,14 +758,16 @@ func (s *Store) updateOLH(ctx context.Context, rec *op.BucketRecord, head *op.Ob
 // replay. readAll is set when the last pass read every page of the log, and
 // own when one of those pages held an entry under opTag; applied once any
 // pass's head op has landed, and raced once another writer's guard has
-// refused one.
+// refused one. ownRefused names the versions whose removal under opTag
+// expectTag refused in any pass, whether or not that pass's head op landed.
 type olhReplay struct {
-	opTag     string
-	expectTag []byte
-	readAll   bool
-	own       bool
-	applied   bool
-	raced     bool
+	opTag      string
+	expectTag  []byte
+	readAll    bool
+	own        bool
+	applied    bool
+	raced      bool
+	ownRefused []meta.ObjKey
 }
 
 // replayOLH replays head's pending log through idx, the index of head's
@@ -833,7 +870,12 @@ func (s *Store) replayPass(ctx context.Context, idx *bucketOLHIndex, cur *op.Obj
 		if err != nil {
 			return refused, false, err
 		}
-		last, err := s.applyOLHLog(ctx, idx, cur, ret.Log, r.opTag, r.expectTag, later)
+		last, met, err := s.applyOLHLog(ctx, idx, cur, ret.Log, r.opTag, r.expectTag, later)
+		for _, k := range met {
+			if !slices.Contains(r.ownRefused, k) {
+				r.ownRefused = append(r.ownRefused, k)
+			}
+		}
 		if last == 0 && err != nil {
 			return refused, errors.Is(err, radosclient.ErrCanceled), err
 		}
@@ -1104,11 +1146,12 @@ func (b *bucketOLHIndex) removeInstance(ctx context.Context, key meta.ObjKey, ex
 	return b.removeVersion(ctx, key, expectTag, keepLocked, true)
 }
 
-// recordUnlisted records keys, versions of head's name a replay leaves
-// unlisted, in the bucket's unlisted-version object (Store.recordUnlisted),
-// under head's OLH tag, the one the replay read the log under.
-func (b *bucketOLHIndex) recordUnlisted(ctx context.Context, head *op.ObjectState, keys []meta.ObjKey) error {
-	return b.x.s.recordUnlisted(ctx, b.x.rec, keys, head.Attrs[meta.AttrOLHIDTag])
+// recordUnlisted records vs, versions of head's name a replay leaves
+// unlisted and why, in the bucket's unlisted-version object
+// (Store.recordUnlisted), under head's OLH tag, the one the replay read the
+// log under.
+func (b *bucketOLHIndex) recordUnlisted(ctx context.Context, head *op.ObjectState, vs []unlistedVersion) error {
+	return b.x.s.recordUnlisted(ctx, b.x.rec, vs, head.Attrs[meta.AttrOLHIDTag])
 }
 
 // pruneUnlisted prunes the bucket's unlisted-version object after a replay
@@ -1451,12 +1494,73 @@ func (s *Store) unlistedVersion(ctx context.Context, rec *op.BucketRecord, key m
 	return !listed && err == nil, err
 }
 
-// checkRemoval finishes rm, the removal a writer's link or unlink logged,
-// once the writer's replay has found the writer's entries applied by another
-// replay, which keeps a version under a lock no delete passes (applyOLHLog).
-// The version's head is read again, the OLH head for the null version, and a
-// version still stored and still unlisted (unlistedVersion) is removed
-// through idx:
+// errKeptStored marks a removal that its writer's check found still stored
+// after another replay kept or refused it: the delete removed nothing it
+// meant to, so it is not acknowledged, and answers ConcurrentModification
+// as keptUnderLock does.
+var errKeptStored = fmt.Errorf("%w: another replay kept the version's removal, and the version is still stored", op.ErrConcurrentModification)
+
+// checkRemoval finishes rm, the removal a writer's link or unlink logged
+// under opTag, once the writer's replay has found the writer's entries
+// applied by another replay, which keeps a version under a lock no delete
+// passes (applyOLHLog): removeKept removes the version where that replay
+// left it stored and unlisted. Whatever that answers, the removal is then
+// settled in the version's record (settleRemoval): a guarded refusal marks it
+// refused, and any other end takes it out.
+//
+// A replay that keeps or refuses the removal names it in that record before
+// its trim, so before this check reads it. A record naming it, or one that
+// does not say, its read having failed, means no replay removed the version
+// for this writer, and the check then answers no success while the version
+// is still stored, its head there or, for the null version, null data in the
+// OLH head, whoever wrote it: it answers errKeptStored. That covers a version
+// a relist has listed again since that replay kept it, which removeKept takes
+// for one a later link listed, and whose success would leave it listed and
+// current after the delete's 204. A record no longer naming the removal
+// leaves removeKept's answer: one a lifecycle pass or a bucket delete took
+// once older than unlistedSettle, or one a relist took once it listed the
+// version first, every removal it named refused.
+func (s *Store) checkRemoval(ctx context.Context, idx *bucketOLHIndex, rm *olhRemoval, opTag string) error {
+	rec := idx.x.rec
+	what := versionName(rec, rm.key)
+	err := s.removeKept(ctx, idx, rm)
+	named, serr := s.settleRemoval(ctx, rec, rm.key, opTag, rm.guarded && errors.Is(err, errRemovalRefused))
+	if serr != nil {
+		slog.WarnContext(ctx, "could not settle a removal another replay kept in its version's record",
+			slog.String("version", what), slog.Any("error", serr))
+		named = true
+	}
+	if err != nil || !named {
+		return err
+	}
+	stored, err := s.versionStored(ctx, rec, rm.key)
+	switch {
+	case err != nil:
+		return fmt.Errorf("reading the head of %s again after its check: %w", what, err)
+	case stored:
+		return fmt.Errorf("%s: %w", what, errKeptStored)
+	}
+	return nil
+}
+
+// versionStored reports whether key's version, of rec's bucket, is still
+// stored: its head there or, for the null version, null data in the OLH
+// head, whoever wrote it, since a lock write gives the null data a fresh
+// write tag.
+func (s *Store) versionStored(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey) (bool, error) {
+	st, err := s.readOLHHead(ctx, rec, key)
+	if err != nil {
+		return false, err
+	}
+	if key.Instance == "" {
+		return holdsNullData(st), nil
+	}
+	return st.Exists, nil
+}
+
+// removeKept is checkRemoval's removal of rm's version. The version's head
+// is read again, the OLH head for the null version, and a version still
+// stored and still unlisted (unlistedVersion) is removed through idx:
 //   - guarded, under rm.tag, the write tag the writer's check read, whose
 //     refusal is final, as its own replay's is (refusedRemoval);
 //   - otherwise only when lockHolds, the one case another replay keeps a
@@ -1470,7 +1574,7 @@ func (s *Store) unlistedVersion(ctx context.Context, rec *op.BucketRecord, key m
 // where main answered UnknownError, 500: no log entry is left for a later
 // replay to remove the version, so the delete must not be acknowledged, and
 // the client's retry of it is what removes the version.
-func (s *Store) checkRemoval(ctx context.Context, idx *bucketOLHIndex, rm *olhRemoval) error {
+func (s *Store) removeKept(ctx context.Context, idx *bucketOLHIndex, rm *olhRemoval) error {
 	rec := idx.x.rec
 	what := versionName(rec, rm.key)
 	st, err := s.readOLHHead(ctx, rec, rm.key)

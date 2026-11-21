@@ -291,18 +291,39 @@ var _ = Describe("DeleteObject with an expected state", func() {
 		}
 	}
 	// claimWrite takes a reader's compared rewrite of a record, its claim
-	// first: the one write that compares and sets an omap key.
+	// first: a write that compares and sets an omap key of an object it does
+	// not create, as a replay's record does.
 	claimWrite := func(w *radosclient.WriteOp) bool {
-		var cmp, set bool
+		var cmp, set, create bool
 		for _, st := range w.Steps() {
 			switch st.(type) {
 			case *radosclient.OmapCmpStep:
 				cmp = true
 			case *radosclient.OmapSetStep:
 				set = true
+			case *radosclient.CreateStep:
+				create = true
 			}
 		}
-		return cmp && set
+		return cmp && set && !create
+	}
+	// recordWrite takes a replay's record of version instance: the write that
+	// creates the unlisted-version object when it is missing and sets the
+	// version's key in it.
+	recordWrite := func(instance string) func(*radosclient.WriteOp) bool {
+		k := driver.UnlistedKeyForTest(version(instance))
+		return func(w *radosclient.WriteOp) bool {
+			var create, set bool
+			for _, st := range w.Steps() {
+				switch x := st.(type) {
+				case *radosclient.CreateStep:
+					create = true
+				case *radosclient.OmapSetStep:
+					_, set = x.Values[k]
+				}
+			}
+			return create && set
+		}
 	}
 	// afterListing arms fn to run once, just before the first later read of
 	// the key's OLH entry that directly follows a read of the listing: the
@@ -1214,7 +1235,10 @@ var _ = Describe("DeleteObject with an expected state", func() {
 		)
 
 		// As above for a version another reader's replay kept for its legal
-		// hold, whose writer never replayed its unlink.
+		// hold, whose writer never replayed its unlink. The record names that
+		// writer's removal pending, which the listing leaves for the writer's
+		// check, so the record stays until the next pass reads it, the version
+		// listed, or the bucket goes.
 		DescribeTable("lists the last version a replay kept for its legal hold again once its record settles",
 			func(ctx SpecContext, r denc.Release) {
 				open(ctx, r)
@@ -1235,7 +1259,9 @@ var _ = Describe("DeleteObject with an expected state", func() {
 				Expect(s.DeleteBucket(ctx, rec)).To(MatchError(op.ErrBucketNotEmpty))
 				Expect(listing(ctx, true)).To(Equal([]string{"k@v2"}), "ListObjectVersions shows v2")
 				Expect(versionHead("v2").Xattrs).To(HaveKey(meta.AttrObjectLegalHold), "under its hold")
-				Expect(records()).To(BeEmpty())
+				rm, ok := s.UnlistedRemovalsForTest(ctx, rec, version("v2"))
+				Expect(ok).To(BeTrue(), "v2's record, left for its writer's check")
+				Expect(rm).To(ConsistOf(driver.RemovalPending))
 
 				off := objectlock.EncodeLegalHold(meta.ObjectLegalHold{Status: "OFF"})
 				Expect(s.SetObjectAttrs(ctx, head(ctx, "v2"), map[string][]byte{meta.AttrObjectLegalHold: off}, nil)).To(Succeed())
@@ -1304,7 +1330,8 @@ var _ = Describe("DeleteObject with an expected state", func() {
 		// A record's key holds no NUL, which librados would cut an omap
 		// listing's start key at, so a reader pages past the first thousand
 		// records. Here the thousand records of versions gone sort first and
-		// v2's comes on the second page.
+		// v2's comes on the second page. v2's record names its writer's
+		// removal pending, so it stays once v2 is listed, until the next pass.
 		DescribeTable("lists again a version whose record lies past the first page of records",
 			func(ctx SpecContext, r denc.Release) {
 				open(ctx, r)
@@ -1324,7 +1351,11 @@ var _ = Describe("DeleteObject with an expected state", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(n).To(Equal(1), "v2, from the second page")
 				Expect(listed()).To(ContainElement("v2"))
-				Expect(records()).To(BeEmpty(), "every record taken, the versions gone and v2")
+				Expect(records()).To(Equal([]string{recordOf("v2")}), "the versions gone take theirs; v2's names a removal pending")
+				n, err = s.RelistUnlistedForTest(ctx, rec)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(n).To(BeZero())
+				Expect(records()).To(BeEmpty(), "the next pass takes v2's, v2 listed")
 			},
 			Entry("on Squid", denc.Squid),
 			Entry("on Tentacle", denc.Tentacle),
@@ -3843,6 +3874,1085 @@ var _ = Describe("DeleteObject with an expected state", func() {
 				nullPut(ctx, "tag-old", "old")
 				return slowRelist{first: calls("bucket_link_olh"), atTrim: func() { put(ctx, "v3") }, listed: []string{"v3", "", "v1"}, check: func() { settledOn(ctx, "v3") }}
 			}),
+		)
+	})
+
+	// Two guarded deletes of one key, each refused because an attr write moved
+	// its version's write tag after its unlink or its null marker's link, so
+	// that each relist runs while the other version is still out of the
+	// listing.
+	Describe("two refused deletes of one key", func() {
+		// reads checks a GET of the key reads version instance.
+		reads := func(ctx context.Context, instance string) {
+			GinkgoHelper()
+			st, err := s.StatObject(ctx, rec, version(""))
+			Expect(err).NotTo(HaveOccurred())
+			Expect([]any{st.Exists, st.Key.Instance}).To(Equal([]any{true, instance}), "a GET of the key")
+		}
+		// stored checks each of instances has its head and its instance entry.
+		stored := func(instances ...string) {
+			GinkgoHelper()
+			for _, v := range instances {
+				Expect(versionHead(v)).NotTo(BeNil(), "%s's head", v)
+				_, ok := instanceEntry(v)
+				Expect(ok).To(BeTrue(), "%s's instance entry", v)
+			}
+		}
+		// olderNull is k's null data on a suspended bucket, then v1 over it.
+		olderNull := func(ctx context.Context) {
+			GinkgoHelper()
+			suspend()
+			nullPut(ctx, "tag-old", "old")
+			rec.Info.Flags &^= meta.BucketVersionsSuspended
+			put(ctx, "v1")
+			suspend()
+		}
+		// nullDataKept checks the null data is stored and listed, non-current,
+		// and the refused delete's null marker gone, the null data's link
+		// having taken its entries.
+		nullDataKept := func() {
+			GinkgoHelper()
+			Expect(olhHead().Data).To(Equal([]byte("old")), "the null data, in the OLH head")
+			_, ok := instanceEntry("")
+			Expect(ok).To(BeTrue(), "the null data's instance entry")
+			Expect(listEntry("").Flags).To(Equal(rgwcls.FlagVer), "the null data, non-current")
+			Expect(nullMarker()).To(BeFalse(), "no null delete marker")
+		}
+
+		// The outer delete unlinks first; once its refused replay has trimmed,
+		// the inner one runs whole, its unlink, its refused replay and its
+		// relist, before the outer delete's relist reads the listing.
+		DescribeTable("keep the newer of two named versions current",
+			func(ctx SpecContext, r denc.Release, outer, inner string) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				put(ctx, "v3")
+				eOuter, eInner := head(ctx, outer), head(ctx, inner)
+				var innerErr error
+				at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, outer) })
+				at(calls("bucket_trim_olh_log"), 1, func() {
+					at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, inner) })
+					_, innerErr = del(ctx, inner, op.DeleteParams{Expect: eInner})
+				})
+				_, err := del(ctx, outer, op.DeleteParams{Expect: eOuter})
+				concurrent(err)
+				concurrent(innerErr)
+				settle(s)
+				stored("v1", "v2", "v3")
+				Expect(listed()).To(Equal([]string{"v3", "v2", "v1"}))
+				settledOn(ctx, "v3")
+				reads(ctx, "v3")
+			},
+			Entry("v2's relist linking before v3's reads the listing, on squid", denc.Squid, "v3", "v2"),
+			Entry("v2's relist linking before v3's reads the listing, on tentacle", denc.Tentacle, "v3", "v2"),
+			Entry("v3's relist first, on squid", denc.Squid, "v2", "v3"),
+			Entry("v3's relist first, on tentacle", denc.Tentacle, "v2", "v3"),
+		)
+
+		DescribeTable("keep v1 current over the older null data",
+			func(ctx SpecContext, r denc.Release, nullFirst bool) {
+				open(ctx, r)
+				olderNull(ctx)
+				eNull, e1 := head(ctx, ""), head(ctx, "v1")
+				var errNull, err1 error
+				deleteNull := func() {
+					at(calls("bucket_link_olh"), 1, func() { attrWrite(ctx, "") })
+					_, errNull = del(ctx, "", op.DeleteParams{Expect: eNull})
+				}
+				deleteV1 := func() {
+					at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v1") })
+					_, err1 = del(ctx, "v1", op.DeleteParams{Expect: e1})
+				}
+				// The inner delete runs whole once the outer one's refused
+				// replay has trimmed, so the inner relist runs first.
+				outer, inner := deleteNull, deleteV1
+				if nullFirst {
+					outer, inner = deleteV1, deleteNull
+				}
+				at(calls("bucket_trim_olh_log"), 1, inner)
+				outer()
+				concurrent(errNull)
+				concurrent(err1)
+				settle(s)
+				stored("v1")
+				nullDataKept()
+				Expect(listed()).To(Equal([]string{"v1", ""}))
+				settledOn(ctx, "v1")
+				reads(ctx, "v1")
+			},
+			Entry("the null marker's link and v1's unlink before either relist, the null relist linking first, on squid", denc.Squid, true),
+			Entry("the null marker's link and v1's unlink before either relist, the null relist linking first, on tentacle", denc.Tentacle, true),
+			Entry("v1's relist first, on squid", denc.Squid, false),
+			Entry("v1's relist first, on tentacle", denc.Tentacle, false),
+		)
+
+		// refusedAlone is a guarded delete of version instance refused for an
+		// attr write after its unlink, whose relist ends before it links, as it
+		// does when its gateway stops after its refused replay's trim: here its
+		// backstop passes at once. The version is left stored, unlisted and
+		// recorded.
+		refusedAlone := func(ctx context.Context, instance string) {
+			GinkgoHelper()
+			expect := head(ctx, instance)
+			at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, instance) })
+			driver.SetRelistBackstopForTest(s, time.Nanosecond)
+			_, err := del(ctx, instance, op.DeleteParams{Expect: expect})
+			concurrent(err)
+			driver.SetRelistBackstopForTest(s, 0)
+			settle(s)
+			Expect(listed()).NotTo(ContainElement(instance), "%s, unlisted", instance)
+			Expect(records()).To(ContainElement(recordOf(instance)), "%s, recorded", instance)
+		}
+
+		// v3's delete is refused and its relist never links; later, alone, a
+		// guarded delete of v2 is refused. v2's relist lists v3 again first, as
+		// a reader of v3's record would, then lists v2 below it: the key reads
+		// v3, the version current before either delete.
+		DescribeTable("list a newer version an earlier refusal left unlisted before a later refused delete lists its own below it",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				put(ctx, "v3")
+				refusedAlone(ctx, "v3")
+				Expect(listed()).To(Equal([]string{"v2", "v1"}), "v2 current, promoted by v3's unlink")
+				e2 := head(ctx, "v2")
+				at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v2") })
+				_, err := del(ctx, "v2", op.DeleteParams{Expect: e2})
+				concurrent(err)
+				settle(s)
+				stored("v1", "v2", "v3")
+				Expect(listed()).To(Equal([]string{"v3", "v2", "v1"}))
+				settledOn(ctx, "v3")
+				reads(ctx, "v3")
+				Expect(records()).NotTo(ContainElement(recordOf("v3")), "v3's record, taken once v3 was listed")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// Once v2's relist has listed v3 and gone below it, a client deletes
+		// v3 by its id: v3's unlink makes v2, the next listed, current.
+		DescribeTable("leave the newest listed version current when a client deletes by its id the held version a relist listed",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				put(ctx, "v3")
+				e2, e3 := head(ctx, "v2"), head(ctx, "v3")
+				var err2, errPlain error
+				at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v3") })
+				at(calls("bucket_trim_olh_log"), 1, func() {
+					at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v2") })
+					_, err2 = del(ctx, "v2", op.DeleteParams{Expect: e2})
+					_, errPlain = del(ctx, "v3", op.DeleteParams{})
+				})
+				_, err3 := del(ctx, "v3", op.DeleteParams{Expect: e3})
+				concurrent(err3)
+				concurrent(err2)
+				Expect(errPlain).NotTo(HaveOccurred(), "the delete of v3 by its id")
+				settle(s)
+				Expect(versionHead("v3")).To(BeNil(), "v3, removed")
+				stored("v1", "v2")
+				Expect(listed()).To(Equal([]string{"v2", "v1"}))
+				settledOn(ctx, "v2")
+				reads(ctx, "v2")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// holdOff is a legal hold OFF written on version instance.
+		holdOff := func(ctx context.Context, instance string) {
+			GinkgoHelper()
+			off := objectlock.EncodeLegalHold(meta.ObjectLegalHold{Status: "OFF"})
+			Expect(s.SetObjectAttrs(ctx, head(ctx, instance), map[string][]byte{meta.AttrObjectLegalHold: off}, nil)).To(Succeed())
+			settle(s)
+		}
+
+		// v3 is under a legal hold, unlinked by a writer with no Expect whose
+		// replay never ran, and kept by another reader's replay, which records
+		// it as lock-kept: its writer's check may still remove it. v2's refused
+		// relist leaves it unlisted and links v2 at epoch 0, as the key read v2
+		// before.
+		DescribeTable("not list again a version another writer's replay kept for its lock, and link its own at epoch 0",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				put(ctx, "v3")
+				holdWrite(ctx, "v3")
+				Expect(s.UnlinkObjInstanceForTest(ctx, rec, version("v3"), driver.OLHUnlink{SkipUpdate: true})).To(Succeed())
+				Expect(s.UpdateOLHForTest(ctx, rec, head(ctx, ""))).To(Succeed(), "another reader's replay keeps v3 for its hold")
+				settle(s)
+				Expect(records()).To(ContainElement(recordOf("v3")))
+				Expect(listed()).To(Equal([]string{"v2", "v1"}))
+				e2 := head(ctx, "v2")
+				at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v2") })
+				_, err := del(ctx, "v2", op.DeleteParams{Expect: e2})
+				concurrent(err)
+				settle(s)
+				stored("v1", "v2", "v3")
+				Expect(listed()).To(Equal([]string{"v2", "v1"}), "v3, kept for its lock, left unlisted")
+				settledOn(ctx, "v2")
+				Expect(records()).To(ContainElement(recordOf("v3")), "v3's record, for its writer's check or a later reader")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// A delete with no Expect unlinks v3; within its unlink-to-check gap a
+		// legal hold on v3 goes on, a reader's replay keeps v3 for it and
+		// records it as lock-kept, the hold goes off, v2's guarded delete is
+		// refused and relists, and the hold goes on again. The relist does not
+		// list v3, whose lock no longer holds when it reads it, so the
+		// delete's check finds v3 unlisted, its lock holding, and removes it,
+		// as it does at main: the delete is answered 204 with v3 gone.
+		DescribeTable("leave a version another writer's replay kept for its lock to that writer's check, its hold having gone off and on",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				put(ctx, "v3")
+				e2 := head(ctx, "v2")
+				var err2 error
+				at(calls("bucket_unlink_instance"), 1, func() {
+					holdWrite(ctx, "v3")
+					Expect(s.UpdateOLHForTest(ctx, rec, head(ctx, ""))).To(Succeed(), "a reader's replay keeps v3 for its hold")
+					settle(s)
+					Expect(records()).To(ContainElement(recordOf("v3")))
+					holdOff(ctx, "v3")
+					at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v2") })
+					_, err2 = del(ctx, "v2", op.DeleteParams{Expect: e2})
+					holdWrite(ctx, "v3")
+				})
+				_, err := del(ctx, "v3", op.DeleteParams{})
+				Expect(err).NotTo(HaveOccurred(), "the delete of v3 with no Expect")
+				concurrent(err2)
+				settle(s)
+				Expect(versionHead("v3")).To(BeNil(), "v3, removed by its delete's check")
+				_, ok := instanceEntry("v3")
+				Expect(ok).To(BeFalse(), "v3's instance entry, removed")
+				stored("v1", "v2")
+				Expect(listed()).To(Equal([]string{"v2", "v1"}))
+				settledOn(ctx, "v2")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// v3's guarded delete is refused for a legal hold written after its
+		// check, its own replay recording v3 as refused, locked. v2's refused
+		// relist, running first, lists v3 again, whatever its lock, and v2
+		// below it.
+		DescribeTable("list first a newer version its own delete was refused for, though a legal hold written since holds it",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				put(ctx, "v3")
+				e2, e3 := head(ctx, "v2"), head(ctx, "v3")
+				var err2 error
+				at(calls("bucket_unlink_instance"), 1, func() { holdWrite(ctx, "v3") })
+				at(calls("bucket_trim_olh_log"), 1, func() {
+					at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v2") })
+					_, err2 = del(ctx, "v2", op.DeleteParams{Expect: e2})
+				})
+				_, err3 := del(ctx, "v3", op.DeleteParams{Expect: e3})
+				concurrent(err3)
+				concurrent(err2)
+				settle(s)
+				stored("v1", "v2", "v3")
+				Expect(versionHead("v3").Xattrs).To(HaveKey(meta.AttrObjectLegalHold), "v3's hold")
+				Expect(listed()).To(Equal([]string{"v3", "v2", "v1"}))
+				settledOn(ctx, "v3")
+				reads(ctx, "v3")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// v3's refused record is rewritten as a gateway that named no removals
+		// in its records wrote it, with a reason or without: it counts as a
+		// removal still pending, and v2's refused relist links v2 at epoch 0,
+		// leaving v3 unlisted.
+		DescribeTable("take a record that names no removals as one naming a pending removal",
+			func(ctx SpecContext, r denc.Release, value string) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				put(ctx, "v3")
+				refusedAlone(ctx, "v3")
+				old := fmt.Sprintf(value, now().Format(time.RFC3339Nano))
+				Expect(s.WriteUnlistedRecordForTest(ctx, rec, version("v3"), []byte(old))).To(Succeed())
+				rm, ok := s.UnlistedRemovalsForTest(ctx, rec, version("v3"))
+				Expect(ok).To(BeTrue())
+				Expect(rm).To(Equal(map[string]string{driver.UnknownRemoval: driver.RemovalPending}), "one pending removal of a writer no tag names")
+				e2 := head(ctx, "v2")
+				at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v2") })
+				_, err := del(ctx, "v2", op.DeleteParams{Expect: e2})
+				concurrent(err)
+				settle(s)
+				stored("v1", "v2", "v3")
+				Expect(listed()).To(Equal([]string{"v2", "v1"}), "v3 left unlisted")
+				settledOn(ctx, "v2")
+				Expect(records()).To(ContainElement(recordOf("v3")))
+			},
+			Entry("no reason, on squid", denc.Squid, `{"time":%q}`),
+			Entry("no reason, on tentacle", denc.Tentacle, `{"time":%q}`),
+			Entry("a reason of refused, on squid", denc.Squid, `{"time":%q,"reason":"refused"}`),
+			Entry("a reason of refused, on tentacle", denc.Tentacle, `{"time":%q,"reason":"refused"}`),
+		)
+
+		// Each replay's record is merged into the version's, by its writer's
+		// op tag: a removal recorded refused stays so when another replay
+		// keeps it for its lock, and a refusal of another writer's removal
+		// leaves the one pending pending.
+		DescribeTable("merge each removal into the version's record",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				v3 := version("v3")
+				Expect(s.RecordRemovalForTest(ctx, rec, v3, "go-w", driver.RemovalRefused)).To(Succeed())
+				Expect(s.RecordRemovalForTest(ctx, rec, v3, "go-w", driver.RemovalPending)).To(Succeed())
+				Expect(s.RecordRemovalForTest(ctx, rec, v3, "go-p", driver.RemovalPending)).To(Succeed())
+				Expect(s.RecordRemovalForTest(ctx, rec, v3, "go-q", driver.RemovalRefused)).To(Succeed())
+				Expect(s.RecordRemovalForTest(ctx, rec, v3, "go-q", driver.RemovalPending)).To(Succeed())
+				rm, ok := s.UnlistedRemovalsForTest(ctx, rec, v3)
+				Expect(ok).To(BeTrue())
+				Expect(rm).To(Equal(map[string]string{
+					"go-w": driver.RemovalRefused, "go-p": driver.RemovalPending, "go-q": driver.RemovalRefused,
+				}))
+				Expect(s.RecordRemovalForTest(ctx, rec, v3, "go-p", driver.RemovalRefused)).To(Succeed())
+				rm, _ = s.UnlistedRemovalsForTest(ctx, rec, v3)
+				Expect(rm).To(HaveKeyWithValue("go-p", driver.RemovalRefused), "its own writer's refusal is final")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// v3 is under a legal hold, unlinked by a writer with no Expect whose
+		// replay never ran. Twelve readers' replays of that log entry each keep
+		// v3 for its hold and reach their record of it together, the record
+		// writes held until all twelve arrive. The first records the removal;
+		// each other's compare refuses, and its merge then finds the removal
+		// recorded as it would record it and writes nothing, so none runs out
+		// of tries.
+		DescribeTable("write a record once when replays of one logged removal record it at once",
+			func(ctx SpecContext, r denc.Release) {
+				const replays = 12
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				put(ctx, "v3")
+				holdWrite(ctx, "v3")
+				Expect(s.UnlinkObjInstanceForTest(ctx, rec, version("v3"), driver.OLHUnlink{SkipUpdate: true})).To(Succeed())
+				heads := make([]*op.ObjectState, replays)
+				for i := range heads {
+					heads[i] = head(ctx, "")
+				}
+				isRecord := recordWrite("v3")
+				var arrived, landed atomic.Int32
+				all := make(chan struct{})
+				ac.set(func(w *radosclient.WriteOp, send sendFunc) (uint64, error) {
+					if !isRecord(w) {
+						return hooks.around(w, send)
+					}
+					if n := arrived.Add(1); n == replays {
+						close(all)
+					} else if n < replays {
+						select {
+						case <-all:
+						case <-time.After(10 * time.Second):
+						}
+					}
+					ver, err := send()
+					if err == nil {
+						landed.Add(1)
+					}
+					return ver, err
+				})
+				errs := make([]error, replays)
+				var wg sync.WaitGroup
+				for i := range replays {
+					wg.Go(func() {
+						defer GinkgoRecover()
+						errs[i] = s.UpdateOLHForTest(ctx, rec, heads[i])
+					})
+				}
+				wg.Wait()
+				ac.set(hooks.around)
+				settle(s)
+				Expect(arrived.Load()).To(BeNumerically(">=", replays), "every replay reached its record")
+				for i, err := range errs {
+					Expect(err).NotTo(HaveOccurred(), "replay %d", i)
+				}
+				Expect(landed.Load()).To(BeEquivalentTo(1), "the record written once")
+				rm, ok := s.UnlistedRemovalsForTest(ctx, rec, version("v3"))
+				Expect(ok).To(BeTrue())
+				Expect(rm).To(ConsistOf(driver.RemovalPending))
+				stored("v1", "v2", "v3")
+				Expect(listed()).To(Equal([]string{"v2", "v1"}), "v3, kept for its hold, unlisted")
+				settledOn(ctx, "v2")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// A delete with no Expect unlinks v3, and its replay waits. A guarded
+		// delete of v3 unlinks it too and is refused, a legal hold or an attr
+		// write having moved v3's write tag after its check, and its relist
+		// ends before it links. One replay keeps the first delete's removal
+		// for the hold and the guarded delete's own replay refuses its own:
+		// the guarded delete's replay both, or a reader's replay first. v2's
+		// refused relist leaves v3 unlisted, its record naming a removal still
+		// pending, and links v2 at epoch 0; the first delete's check then
+		// removes v3 and takes its removal out of the record.
+		DescribeTable("leave a version to the check of a delete whose removal a replay kept, though another delete's removal of it was refused",
+			func(ctx SpecContext, r denc.Release, readerFirst bool) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				put(ctx, "v3")
+				var errW, err2 error
+				at(calls("bucket_unlink_instance"), 1, func() {
+					if readerFirst {
+						holdWrite(ctx, "v3")
+						Expect(s.UpdateOLHForTest(ctx, rec, head(ctx, ""))).To(Succeed(), "a reader's replay keeps v3 for its hold")
+						settle(s)
+					}
+					e3 := head(ctx, "v3")
+					at(calls("bucket_unlink_instance"), 1, func() {
+						if readerFirst {
+							attrWrite(ctx, "v3")
+							return
+						}
+						holdWrite(ctx, "v3")
+					})
+					driver.SetRelistBackstopForTest(s, time.Nanosecond)
+					_, errW = del(ctx, "v3", op.DeleteParams{Expect: e3})
+					driver.SetRelistBackstopForTest(s, 0)
+					settle(s)
+					rm, ok := s.UnlistedRemovalsForTest(ctx, rec, version("v3"))
+					Expect(ok).To(BeTrue())
+					Expect(rm).To(ConsistOf(driver.RemovalPending, driver.RemovalRefused), "one removal of v3 kept, the other refused")
+					e2 := head(ctx, "v2")
+					at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v2") })
+					_, err2 = del(ctx, "v2", op.DeleteParams{Expect: e2})
+					Expect(listed()).To(Equal([]string{"v2", "v1"}), "v3, its removal pending, left unlisted")
+				})
+				_, err := del(ctx, "v3", op.DeleteParams{})
+				Expect(err).NotTo(HaveOccurred(), "the delete of v3 with no Expect")
+				concurrent(errW)
+				concurrent(err2)
+				settle(s)
+				Expect(versionHead("v3")).To(BeNil(), "v3, removed by the first delete's check")
+				_, ok := instanceEntry("v3")
+				Expect(ok).To(BeFalse(), "v3's instance entry, removed")
+				stored("v1", "v2")
+				Expect(listed()).To(Equal([]string{"v2", "v1"}))
+				settledOn(ctx, "v2")
+				rm, _ := s.UnlistedRemovalsForTest(ctx, rec, version("v3"))
+				Expect(rm).To(ConsistOf(driver.RemovalRefused), "the first delete's removal, taken out by its check")
+			},
+			Entry("one replay keeping one removal and refusing the other, on squid", denc.Squid, false),
+			Entry("one replay keeping one removal and refusing the other, on tentacle", denc.Tentacle, false),
+			Entry("a reader's replay keeping the first removal, on squid", denc.Squid, true),
+			Entry("a reader's replay keeping the first removal, on tentacle", denc.Tentacle, true),
+		)
+
+		// A delete with no Expect unlinks v3, and its replay waits; a guarded
+		// delete of v3 unlinks it too, and a legal hold goes on. The guarded
+		// delete's replay keeps the first delete's removal for the hold and
+		// refuses its own, and its relist lists v3 again. The first delete's
+		// check finds v3 listed and its record naming that delete's removal:
+		// no replay removed v3 for it, and v3 is still stored, so it answers
+		// ConcurrentModification, not success, and takes its removal out of
+		// the record.
+		DescribeTable("answer ConcurrentModification to a delete whose removal a replay kept for its lock and a relist listed again",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				put(ctx, "v3")
+				var errW error
+				at(calls("bucket_unlink_instance"), 1, func() {
+					e3 := head(ctx, "v3")
+					at(calls("bucket_unlink_instance"), 1, func() { holdWrite(ctx, "v3") })
+					_, errW = del(ctx, "v3", op.DeleteParams{Expect: e3})
+					settle(s)
+					rm, ok := s.UnlistedRemovalsForTest(ctx, rec, version("v3"))
+					Expect(ok).To(BeTrue())
+					Expect(rm).To(ConsistOf(driver.RemovalPending, driver.RemovalRefused), "the first delete's removal kept, the guarded one's refused")
+				})
+				_, err := del(ctx, "v3", op.DeleteParams{})
+				concurrent(err)
+				concurrent(errW)
+				settle(s)
+				stored("v1", "v2", "v3")
+				Expect(listed()).To(Equal([]string{"v3", "v2", "v1"}))
+				settledOn(ctx, "v3")
+				reads(ctx, "v3")
+				rm, _ := s.UnlistedRemovalsForTest(ctx, rec, version("v3"))
+				Expect(rm).To(ConsistOf(driver.RemovalRefused), "the first delete's removal, taken out by its check")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// v3's guarded delete is refused for a legal hold written after its
+		// unlink. Once its replay has recorded the refusal, before its head
+		// op, another replay meets the same log entry and keeps the removal
+		// for the hold: a reader's, or that of v2's guarded delete, refused
+		// too. The record still names v3's removal refused, so v2's relist
+		// lists v3 first, and v2 below it.
+		DescribeTable("keep a refused removal refused when another replay keeps it for its lock",
+			func(ctx SpecContext, r denc.Release, reader bool) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				put(ctx, "v3")
+				e2, e3 := head(ctx, "v2"), head(ctx, "v3")
+				var err2 error
+				delete2 := func() {
+					at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v2") })
+					_, err2 = del(ctx, "v2", op.DeleteParams{Expect: e2})
+				}
+				at(calls("bucket_unlink_instance"), 1, func() { holdWrite(ctx, "v3") })
+				at(recordWrite("v3"), 1, func() {
+					if !reader {
+						delete2()
+						return
+					}
+					Expect(s.UpdateOLHForTest(ctx, rec, head(ctx, ""))).To(Succeed(), "a reader's replay keeps v3 for its hold")
+					rm, ok := s.UnlistedRemovalsForTest(ctx, rec, version("v3"))
+					Expect(ok).To(BeTrue())
+					Expect(rm).To(ConsistOf(driver.RemovalRefused), "v3's removal, still refused")
+				})
+				if reader {
+					driver.SetRelistBackstopForTest(s, time.Nanosecond)
+				}
+				_, err3 := del(ctx, "v3", op.DeleteParams{Expect: e3})
+				driver.SetRelistBackstopForTest(s, 0)
+				concurrent(err3)
+				settle(s)
+				if reader {
+					delete2()
+				}
+				concurrent(err2)
+				settle(s)
+				stored("v1", "v2", "v3")
+				Expect(listed()).To(Equal([]string{"v3", "v2", "v1"}))
+				settledOn(ctx, "v3")
+				reads(ctx, "v3")
+			},
+			Entry("a reader's replay, on squid", denc.Squid, true),
+			Entry("a reader's replay, on tentacle", denc.Tentacle, true),
+			Entry("the replay of v2's refused delete, on squid", denc.Squid, false),
+			Entry("the replay of v2's refused delete, on tentacle", denc.Tentacle, false),
+		)
+
+		// v3's guarded delete is refused for a legal hold written after its
+		// unlink: its replay's first pass refuses its removal and records it
+		// refused before its head op. Before that head op lands, v2's guarded
+		// delete runs whole: its replay keeps v3's removal for the hold, the
+		// record still naming it refused, refuses its own and trims, and its
+		// relist lists v3 first, taking v3's record. The hold then goes off.
+		// v3's delete's head op has lost, its next pass finds nothing of its
+		// own, and its check finds v3 listed, no record naming its removal and
+		// no lock: it answers the refusal its first pass met, v3 being still
+		// stored, not success.
+		DescribeTable("answer the refusal a pass of the delete's replay met once its record is gone and the hold off",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				put(ctx, "v3")
+				e2, e3 := head(ctx, "v2"), head(ctx, "v3")
+				var err2 error
+				at(calls("bucket_unlink_instance"), 1, func() { holdWrite(ctx, "v3") })
+				at(recordWrite("v3"), 1, func() {
+					at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v2") })
+					_, err2 = del(ctx, "v2", op.DeleteParams{Expect: e2})
+					Expect(listed()).To(Equal([]string{"v3", "v2", "v1"}), "v2's relist lists v3 first")
+					Expect(records()).NotTo(ContainElement(recordOf("v3")), "and takes v3's record")
+					holdOff(ctx, "v3")
+				})
+				_, err3 := del(ctx, "v3", op.DeleteParams{Expect: e3})
+				concurrent(err3)
+				Expect(err3).To(MatchError(driver.ErrRemovalRefused), "the refusal its first pass met")
+				concurrent(err2)
+				settle(s)
+				stored("v1", "v2", "v3")
+				Expect(versionHead("v3").Xattrs[meta.AttrObjectLegalHold]).To(Equal(objectlock.EncodeLegalHold(meta.ObjectLegalHold{Status: "OFF"})), "v3's hold, off")
+				Expect(listed()).To(Equal([]string{"v3", "v2", "v1"}))
+				settledOn(ctx, "v3")
+				reads(ctx, "v3")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// v3's delete is refused and its relist never links, its record naming
+		// its removal refused. v2's guarded delete is refused, and its relist
+		// lists v3 first; once its claim on v3's record has landed, another
+		// replay merges a removal of v3 it kept for a lock. Once v3 is listed,
+		// its record loses the refused removal it was listed on and keeps the
+		// pending one, for that removal's writer's check.
+		DescribeTable("take out of the record of a version listed first only the refused removals it was listed on",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				put(ctx, "v3")
+				refusedAlone(ctx, "v3")
+				rm, ok := s.UnlistedRemovalsForTest(ctx, rec, version("v3"))
+				Expect(ok).To(BeTrue())
+				Expect(rm).To(ConsistOf(driver.RemovalRefused))
+				e2 := head(ctx, "v2")
+				at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v2") })
+				at(claimWrite, 1, func() {
+					Expect(s.RecordRemovalForTest(ctx, rec, version("v3"), "go-kept", driver.RemovalPending)).To(Succeed(), "another replay keeps a removal of v3 for its lock")
+				})
+				_, err := del(ctx, "v2", op.DeleteParams{Expect: e2})
+				concurrent(err)
+				settle(s)
+				stored("v1", "v2", "v3")
+				Expect(listed()).To(Equal([]string{"v3", "v2", "v1"}))
+				settledOn(ctx, "v3")
+				rm, ok = s.UnlistedRemovalsForTest(ctx, rec, version("v3"))
+				Expect(ok).To(BeTrue(), "v3's record, naming a pending removal")
+				Expect(rm).To(Equal(map[string]string{"go-kept": driver.RemovalPending}))
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// v3's delete is refused and its relist never links; another replay
+		// keeps another writer's removal of v3 for a lock, still pending. A
+		// lifecycle pass lists v3 once its record settles: the record loses
+		// the refused removal and keeps the pending one, and the prune takes
+		// it once it is the settle age old, v3 being listed.
+		DescribeTable("keep in the record of a version a lifecycle pass lists again a removal still pending",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				put(ctx, "v3")
+				refusedAlone(ctx, "v3")
+				Expect(s.RecordRemovalForTest(ctx, rec, version("v3"), "go-kept", driver.RemovalPending)).To(Succeed())
+				clock.Add(int64(driver.UnlistedSettle))
+				n, err := s.RelistUnlistedForTest(ctx, rec)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(n).To(Equal(1))
+				settle(s)
+				stored("v1", "v2", "v3")
+				Expect(listed()).To(Equal([]string{"v3", "v2", "v1"}))
+				settledOn(ctx, "v3")
+				rm, ok := s.UnlistedRemovalsForTest(ctx, rec, version("v3"))
+				Expect(ok).To(BeTrue(), "v3's record, naming a pending removal")
+				Expect(rm).To(Equal(map[string]string{"go-kept": driver.RemovalPending}))
+				s.PruneUnlistedForTest(ctx, rec, []meta.ObjKey{version("v1")})
+				Expect(records()).NotTo(ContainElement(recordOf("v3")), "pruned once the settle age old")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// v3's guarded delete is refused for a legal hold written after its
+		// unlink, and a reader's replay keeps its removal for the hold first,
+		// recording it pending. The delete's check after its own replay
+		// refuses the removal and marks it refused, so v2's later refused
+		// relist lists v3 first.
+		DescribeTable("list first a newer version whose delete's check refused the removal another replay kept",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				put(ctx, "v3")
+				e3 := head(ctx, "v3")
+				at(calls("bucket_unlink_instance"), 1, func() {
+					holdWrite(ctx, "v3")
+					Expect(s.UpdateOLHForTest(ctx, rec, head(ctx, ""))).To(Succeed(), "a reader's replay keeps v3 for its hold")
+					settle(s)
+					rm, ok := s.UnlistedRemovalsForTest(ctx, rec, version("v3"))
+					Expect(ok).To(BeTrue())
+					Expect(rm).To(ConsistOf(driver.RemovalPending), "v3's removal, pending its delete's check")
+				})
+				driver.SetRelistBackstopForTest(s, time.Nanosecond)
+				_, err3 := del(ctx, "v3", op.DeleteParams{Expect: e3})
+				driver.SetRelistBackstopForTest(s, 0)
+				concurrent(err3)
+				settle(s)
+				rm, _ := s.UnlistedRemovalsForTest(ctx, rec, version("v3"))
+				Expect(rm).To(ConsistOf(driver.RemovalRefused), "marked refused by the delete's check")
+				Expect(listed()).To(Equal([]string{"v2", "v1"}), "v3, unlisted")
+				e2 := head(ctx, "v2")
+				at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v2") })
+				_, err2 := del(ctx, "v2", op.DeleteParams{Expect: e2})
+				concurrent(err2)
+				settle(s)
+				stored("v1", "v2", "v3")
+				Expect(listed()).To(Equal([]string{"v3", "v2", "v1"}))
+				settledOn(ctx, "v3")
+				reads(ctx, "v3")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// v3 is listed, and its record names a removal still pending: a
+		// replay's prune leaves it until it is the settle age old, as that
+		// removal's writer's check reads it, then takes it. v2's record, of a
+		// listed version with no pending removal, goes at once.
+		DescribeTable("prune a listed version's record naming a pending removal only past the settle age",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				put(ctx, "v3")
+				Expect(s.RecordRemovalForTest(ctx, rec, version("v3"), "go-w", driver.RemovalPending)).To(Succeed())
+				Expect(s.RecordRemovalForTest(ctx, rec, version("v2"), "go-x", driver.RemovalRefused)).To(Succeed())
+				s.PruneUnlistedForTest(ctx, rec, []meta.ObjKey{version("v1")})
+				Expect(records()).To(Equal([]string{recordOf("v3")}))
+				clock.Add(int64(driver.UnlistedSettle))
+				s.PruneUnlistedForTest(ctx, rec, []meta.ObjKey{version("v1")})
+				Expect(records()).To(BeEmpty())
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// The deletes of v4, v3 and v2 each run whole once the one before has
+		// trimmed, so the relists run v2's, v3's, then v4's.
+		DescribeTable("keep the newest of three named versions current",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				for _, v := range []string{"v1", "v2", "v3", "v4"} {
+					put(ctx, v)
+				}
+				exp := map[string]*op.ObjectState{"v2": head(ctx, "v2"), "v3": head(ctx, "v3"), "v4": head(ctx, "v4")}
+				errs := map[string]error{}
+				var refused func(order []string)
+				refused = func(order []string) {
+					v := order[0]
+					at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, v) })
+					if len(order) > 1 {
+						at(calls("bucket_trim_olh_log"), 1, func() { refused(order[1:]) })
+					}
+					_, errs[v] = del(ctx, v, op.DeleteParams{Expect: exp[v]})
+				}
+				refused([]string{"v4", "v3", "v2"})
+				for _, v := range []string{"v2", "v3", "v4"} {
+					concurrent(errs[v])
+				}
+				settle(s)
+				stored("v1", "v2", "v3", "v4")
+				Expect(listed()).To(Equal([]string{"v4", "v3", "v2", "v1"}))
+				settledOn(ctx, "v4")
+				reads(ctx, "v4")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// beforeBelowRead arms fn to run once, just before the first later read
+		// of the key's OLH entry that follows a read of the listing: a relist
+		// that read v3 listed newer and goes below it reads the entry in
+		// relistBelow next.
+		beforeBelowRead := func(fn func()) {
+			var listing atomic.Bool
+			ac.setBeforeRead(func(r *radosclient.ReadOp) {
+				for _, st := range r.Steps() {
+					x, ok := st.(*radosclient.ExecStep)
+					switch {
+					case !ok:
+					case x.Method == "bucket_list":
+						listing.Store(true)
+					case listing.Load() && x.Method == "bi_get" && rgwcls.DecodeBIGetOp(denc.NewDecoder(x.In)).Type == rgwcls.BIIndexOLH:
+						ac.setBeforeRead(nil)
+						fn()
+						return
+					}
+				}
+			})
+		}
+
+		// v2's refused relist reads v3 listed newer and goes below it; a
+		// delete of v3 with no Expect lands before its link, its unlink making
+		// v1 current. The relist reads the listing again and links v2 at epoch
+		// 0, current.
+		DescribeTable("read the listing again when the newer version a relist goes below is deleted before its link",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				put(ctx, "v3")
+				e2 := head(ctx, "v2")
+				var errPlain error
+				at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v2") })
+				at(calls("bucket_trim_olh_log"), 1, func() {
+					beforeBelowRead(func() { _, errPlain = del(ctx, "v3", op.DeleteParams{}) })
+				})
+				_, err := del(ctx, "v2", op.DeleteParams{Expect: e2})
+				concurrent(err)
+				Expect(errPlain).NotTo(HaveOccurred(), "the delete of v3 by its id")
+				settle(s)
+				Expect(versionHead("v3")).To(BeNil(), "v3, removed")
+				stored("v1", "v2")
+				Expect(listed()).To(Equal([]string{"v2", "v1"}))
+				settledOn(ctx, "v2")
+				reads(ctx, "v2")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// A delete naming null unlinks the null data and v1's delete unlinks
+		// v1, so no null delete marker is current: the null relist lists the
+		// null data below v1, held out of the listing, as a named version's
+		// relist goes below a newer one.
+		DescribeTable("keep v1 current over the older null data a delete naming null unlinked",
+			func(ctx SpecContext, r denc.Release, nullFirst bool) {
+				open(ctx, r)
+				olderNull(ctx)
+				eNull, e1 := head(ctx, ""), head(ctx, "v1")
+				var errNull, err1 error
+				deleteNull := func() {
+					at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "") })
+					_, errNull = del(ctx, meta.NullInstance, op.DeleteParams{Expect: eNull})
+				}
+				deleteV1 := func() {
+					at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v1") })
+					_, err1 = del(ctx, "v1", op.DeleteParams{Expect: e1})
+				}
+				outer, inner := deleteNull, deleteV1
+				if nullFirst {
+					outer, inner = deleteV1, deleteNull
+				}
+				at(calls("bucket_trim_olh_log"), 1, inner)
+				outer()
+				concurrent(errNull)
+				concurrent(err1)
+				settle(s)
+				stored("v1")
+				nullDataKept()
+				Expect(listed()).To(Equal([]string{"v1", ""}))
+				settledOn(ctx, "v1")
+				reads(ctx, "v1")
+			},
+			Entry("the null relist first, on squid", denc.Squid, true),
+			Entry("the null relist first, on tentacle", denc.Tentacle, true),
+			Entry("v1's relist first, on squid", denc.Squid, false),
+			Entry("v1's relist first, on tentacle", denc.Tentacle, false),
+		)
+
+		// unlinkOnly is the unlink of version instance by a writer whose replay
+		// has not run, the removal logged, with its pending attr then expired,
+		// so that no round waits on that attr. It returns the writer's op tag.
+		unlinkOnly := func(ctx context.Context, instance string) string {
+			GinkgoHelper()
+			was := pending()
+			Expect(s.UnlinkObjInstanceForTest(ctx, rec, version(instance), driver.OLHUnlink{SkipUpdate: true})).To(Succeed())
+			var opTag string
+			for _, p := range pending() {
+				if !slices.Contains(was, p) {
+					opTag = strings.TrimPrefix(p, meta.AttrOLHPendingPrefix)
+				}
+			}
+			Expect(opTag).NotTo(BeEmpty(), "the unlink's pending attr")
+			clock.Add(int64(2 * time.Hour))
+			return opTag
+		}
+
+		// v3's writer unlinks v3 once v2's refused replay has trimmed, and its
+		// replay runs during v2's relist's first wait, refusing the removal for
+		// an attr write since: v2's relist then lists v3 again and v2 below it.
+		DescribeTable("wait for a newer version's logged removal, and list that version first once its writer's replay refuses the removal",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				put(ctx, "v3")
+				e2, tag3 := head(ctx, "v2"), slices.Clone(head(ctx, "v3").Attrs[meta.AttrIDTag])
+				var op3 string
+				at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v2") })
+				at(calls("bucket_trim_olh_log"), 1, func() {
+					op3 = unlinkOnly(ctx, "v3")
+					attrWrite(ctx, "v3")
+				})
+				waits := 0
+				driver.SetCondSleepForTest(s, func(ctx context.Context, _ time.Duration) error {
+					if waits++; waits == 1 {
+						refused, err := s.ReplayOLHForTest(ctx, rec, head(ctx, ""), op3, tag3)
+						Expect(err).NotTo(HaveOccurred())
+						Expect(refused).To(MatchError(driver.ErrRemovalRefused), "v3's writer's replay refuses its removal")
+					}
+					return nil
+				})
+				_, err := del(ctx, "v2", op.DeleteParams{Expect: e2})
+				concurrent(err)
+				Expect(waits).To(Equal(1), "one wait, during which v3's writer's replay ran")
+				settle(s)
+				Expect(listed()).To(Equal([]string{"v3", "v2", "v1"}), "v3 listed again first, v2 below it")
+				Expect(s.RunRelistForTest(ctx, rec, version("v3"), olhHead().Xattrs[meta.AttrOLHIDTag])).To(Succeed(), "v3's writer's relist, which finds it listed")
+				settle(s)
+				stored("v1", "v2", "v3")
+				Expect(listed()).To(Equal([]string{"v3", "v2", "v1"}))
+				settledOn(ctx, "v3")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// v3 was refused and listed again before, its record left, and a
+		// delete with no Expect unlinks it once v2's refused replay has
+		// trimmed: the record names a version whose removal is logged, which
+		// a reader's replay carries out during the relist's first wait.
+		DescribeTable("wait for a newer version's logged removal though an earlier refusal's record names it, and link at epoch 0 once that removal lands",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				put(ctx, "v3")
+				Expect(s.RecordUnlistedForTest(ctx, rec, []meta.ObjKey{version("v3")}, nil)).To(Succeed())
+				e2 := head(ctx, "v2")
+				at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v2") })
+				at(calls("bucket_trim_olh_log"), 1, func() { unlinkOnly(ctx, "v3") })
+				waits := 0
+				driver.SetCondSleepForTest(s, func(ctx context.Context, _ time.Duration) error {
+					if waits++; waits == 1 {
+						Expect(s.UpdateOLHForTest(ctx, rec, head(ctx, ""))).To(Succeed(), "a reader's replay")
+					}
+					return nil
+				})
+				_, err := del(ctx, "v2", op.DeleteParams{Expect: e2})
+				concurrent(err)
+				Expect(waits).To(Equal(1), "one wait, during which the reader's replay removed v3")
+				settle(s)
+				Expect(versionHead("v3")).To(BeNil(), "v3, removed")
+				Expect(listed()).To(Equal([]string{"v2", "v1"}))
+				settledOn(ctx, "v2")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// v3's writer never replays: the relist links past its wait, and its
+		// link's replay carries out v3's removal.
+		DescribeTable("link at epoch 0 past the wait when no replay carries out a newer version's logged removal",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				put(ctx, "v3")
+				e2 := head(ctx, "v2")
+				at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v2") })
+				at(calls("bucket_trim_olh_log"), 1, func() { unlinkOnly(ctx, "v3") })
+				waits := 0
+				driver.SetCondSleepForTest(s, func(context.Context, time.Duration) error {
+					waits++
+					return nil
+				})
+				_, err := del(ctx, "v2", op.DeleteParams{Expect: e2})
+				concurrent(err)
+				Expect(waits).To(Equal(driver.OLHCondBackoffs), "the wait on pending modifications, spent on v3's logged removal")
+				settle(s)
+				Expect(versionHead("v3")).To(BeNil(), "v3, removed by v2's link's replay")
+				Expect(listed()).To(Equal([]string{"v2", "v1"}))
+				settledOn(ctx, "v2")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// beforeRelinkRead arms fn to run once, just before the first later
+		// read of the key's OLH entry that follows a relist's read of the
+		// key's records of unlisted versions: a read the relist of the held
+		// version makes, after the look for held versions.
+		beforeRelinkRead := func(fn func()) {
+			var records atomic.Bool
+			ac.setBeforeRead(func(r *radosclient.ReadOp) {
+				for _, st := range r.Steps() {
+					switch x := st.(type) {
+					case *radosclient.OmapGetValsStep:
+						if x.FilterPrefix == "k/" {
+							records.Store(true)
+						}
+					case *radosclient.ExecStep:
+						if records.Load() && x.Method == "bi_get" && rgwcls.DecodeBIGetOp(denc.NewDecoder(x.In)).Type == rgwcls.BIIndexOLH {
+							ac.setBeforeRead(nil)
+							fn()
+							return
+						}
+					}
+				}
+			})
+		}
+
+		// Another replay, which read v1's removal before v1's refused replay
+		// trimmed it, removes v1 while the null relist lists it again, as a
+		// replay running alongside the own one can: the relist of v1 links
+		// nothing, and the null relist's next round, finding v1 gone, makes the
+		// null data current.
+		DescribeTable("list nothing of a held version another replay removes while the null relist lists it, and make the null data current",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				olderNull(ctx)
+				eNull, e1 := head(ctx, ""), head(ctx, "v1")
+				var errNull error
+				at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v1") })
+				at(calls("bucket_trim_olh_log"), 1, func() {
+					at(calls("bucket_link_olh"), 1, func() { attrWrite(ctx, "") })
+					at(calls("bucket_trim_olh_log"), 1, func() {
+						beforeRelinkRead(func() {
+							Expect(s.NewOLHIndexForTest(rec, version("v1")).RemoveInstance(ctx, version("v1"), nil)).To(Succeed())
+							settle(s)
+						})
+					})
+					_, errNull = del(ctx, "", op.DeleteParams{Expect: eNull})
+				})
+				_, err1 := del(ctx, "v1", op.DeleteParams{Expect: e1})
+				concurrent(err1)
+				concurrent(errNull)
+				settle(s)
+				Expect(versionHead("v1")).To(BeNil(), "v1, removed")
+				_, ok := instanceEntry("v1")
+				Expect(ok).To(BeFalse(), "v1's instance entry, removed")
+				Expect(olhHead().Data).To(Equal([]byte("old")), "the null data, in the OLH head")
+				Expect(nullMarker()).To(BeFalse(), "no null delete marker")
+				Expect(listed()).To(Equal([]string{""}))
+				settledOn(ctx, "")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// v1's relist ends before it links. The null relist makes v1 current
+		// again all the same, as nothing goes below a current null marker.
+		DescribeTable("keep v1 current over the older null data when v1's relist never runs",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				olderNull(ctx)
+				eNull, e1 := head(ctx, ""), head(ctx, "v1")
+				at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v1") })
+				driver.SetRelistBackstopForTest(s, time.Nanosecond)
+				_, err := del(ctx, "v1", op.DeleteParams{Expect: e1})
+				concurrent(err)
+				driver.SetRelistBackstopForTest(s, 0)
+				Expect(listed()).To(Equal([]string{""}), "v1 unlisted, the null data current again, promoted by v1's unlink")
+				at(calls("bucket_link_olh"), 1, func() { attrWrite(ctx, "") })
+				_, err = del(ctx, "", op.DeleteParams{Expect: eNull})
+				concurrent(err)
+				settle(s)
+				stored("v1")
+				nullDataKept()
+				Expect(listed()).To(Equal([]string{"v1", ""}))
+				settledOn(ctx, "v1")
+				reads(ctx, "v1")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
 		)
 	})
 })

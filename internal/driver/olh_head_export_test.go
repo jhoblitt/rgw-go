@@ -50,10 +50,12 @@ type FakeOLHIndex struct {
 	// NullData and NullDataErr answer nullDataStored.
 	NullData    bool
 	NullDataErr error
-	// Unlisted collects the versions recordUnlisted took, and RecordErr
+	// Unlisted collects the versions recordUnlisted took, UnlistedRemovals
+	// the removal each was recorded with, as "op tag=state", and RecordErr
 	// answers it.
-	Unlisted  []meta.ObjKey
-	RecordErr error
+	Unlisted         []meta.ObjKey
+	UnlistedRemovals []string
+	RecordErr        error
 	// Pruned collects the keys of each pruneUnlisted call, and PrunedDetached
 	// whether its context was one no cancellation reaches.
 	Pruned         [][]meta.ObjKey
@@ -127,12 +129,15 @@ func (f *FakeOLHIndex) nullDataStored(_ context.Context, head *op.ObjectState) (
 	return f.NullData, f.NullDataErr
 }
 
-func (f *FakeOLHIndex) recordUnlisted(_ context.Context, head *op.ObjectState, keys []meta.ObjKey) error {
+func (f *FakeOLHIndex) recordUnlisted(_ context.Context, head *op.ObjectState, vs []unlistedVersion) error {
 	f.record(OLHIndexCall{Method: "recordUnlisted", Head: head})
 	if f.RecordErr != nil {
 		return f.RecordErr
 	}
-	f.Unlisted = append(f.Unlisted, keys...)
+	for _, u := range vs {
+		f.Unlisted = append(f.Unlisted, u.key)
+		f.UnlistedRemovals = append(f.UnlistedRemovals, u.opTag+"="+string(u.state))
+	}
 	return nil
 }
 
@@ -192,6 +197,13 @@ func (s *Store) FollowOLHForTest(ctx context.Context, head *op.ObjectState, upda
 // ApplyOLHLogForTest is applyOLHLog over idx for the external specs, of a
 // page no later page of whose replay links a version's data.
 func (s *Store) ApplyOLHLogForTest(ctx context.Context, idx *FakeOLHIndex, head *op.ObjectState, log map[uint64][]rgw.OLHLogEntry, opTag string, expectTag []byte) (uint64, error) {
+	last, _, err := s.applyOLHLog(ctx, idx, head, log, opTag, expectTag, nil)
+	return last, err
+}
+
+// ApplyOLHLogRefusedForTest is ApplyOLHLogForTest, returning as well the
+// versions whose removal, the writer's own, expectTag refused.
+func (s *Store) ApplyOLHLogRefusedForTest(ctx context.Context, idx *FakeOLHIndex, head *op.ObjectState, log map[uint64][]rgw.OLHLogEntry, opTag string, expectTag []byte) (uint64, []meta.ObjKey, error) {
 	return s.applyOLHLog(ctx, idx, head, log, opTag, expectTag, nil)
 }
 

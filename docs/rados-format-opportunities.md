@@ -123,15 +123,64 @@ Add an entry whenever work meets a format cost, and update it when a measurement
   of a third request's replay between a conditional marker's link and its
   own replay.
 
+## The OLH log's removal entry does not say whether its writer guarded it
+
+- **Format element:** `rgw_bucket_olh_log_entry`, the removal entry a
+  versioned delete's unlink logs: an epoch, an op, an op tag, a key and a
+  delete-marker flag, with nothing of the guard the delete held its removal
+  to
+  ([cls_rgw_types.h:520-554](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_types.h#L520-L554),
+  [cls_rgw_types.h:519-553](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_types.h#L519-L553)).
+- **Cost:** in correctness, from an emulator run. When a request's replay
+  applies another writer's removal of a version and keeps the version for
+  its object lock, it records the removal as pending under that writer's
+  op tag, since only that writer's check after its own replay may remove
+  the version, and a refused delete's relist of an older version of the
+  key leaves the version unlisted rather than list it first until that
+  check ends. Where that writer was a guarded delete, refused for the lock
+  write that moved the version's write tag after its check, its check
+  refuses the removal and marks it refused, so a relist after it lists the
+  version first. A relist that read the record before then has linked the
+  older version at a fresh epoch, and the delete's own relist lists the
+  version below it. In V21's adversarial harness's family of two refused
+  deletes with legal holds written (`docs/differences.md`, "A refused
+  versioned removal re-links the version, unless a newer null write owns
+  the null key"), 3 of 2000 schedules end with the older version current
+  until the key's next write, against 78 when the record kept one reason
+  per version and 237 when the relist read the listing alone.
+- **Proposal:** the guard's value in the removal entry: the write tag the
+  entry "An OLH log entry carries no guard on its removal" proposes. A
+  flag saying only that the writer held the removal to a guard would not
+  do: a guarded writer whose tag still matches the version's removes the
+  version in its own check, and a relist that listed it first would lose
+  that delete. With the tag, a replay that keeps the version for its lock
+  would record the removal refused when the entry's tag no longer matches
+  the version's write tag, the refusal the writer's own check would make,
+  so a relist would list the version first without waiting for that check,
+  and a radosgw replay could honour the refusal too. rgw-go already records
+  the pending removals in its own record (entry "An rgw-go object naming
+  the versions a replay left unlisted"), which closes most of these
+  schedules without a format change; the tag would close the rest.
+- **S3 compliance:** none affected: the tag changes which version a relist
+  makes current after refused deletes, never what is removed.
+- **Coexistence:** as for the guard: the field needs cls_rgw and every
+  gateway replaying the key to carry it, and rgw-go cannot write it alone.
+- **Status:** idea.
+- **Found:** phase 2 task V23's fix round, 2026-11-21, from its adversarial
+  review's run of a reason in the record of an unlisted version.
+
 ## An rgw-go object naming the versions a replay left unlisted
 
 - **Format element:** a new object, `rgw-go.unlisted.<bucket id>`, in the
   bucket's index pool beside its shards. Its omap holds one key per version
   an rgw-go replay left stored and unlisted: the version's index key name and
   its instance, each with `%`, `/` and NUL percent-encoded, joined by `/`.
-  Each value is a JSON record of when it was written, of the OLH tag the
-  replay read the log under, and of the claim of a reader relisting the
-  version, while one does. An xattr, `rgw-go.prune-cursor`, holds the last
+  Each value is a JSON record of when a replay last changed it, of the
+  OLH tag that replay read the log under, of the removals of the version
+  the replays left undone, each under its writer's op tag, `refused` or
+  `pending`, which every write merges into under a compare of the value it
+  read, and of the claim of a reader relisting the version, while one
+  does. An xattr, `rgw-go.prune-cursor`, holds the last
   key a record write's prune examined. No radosgw format holds
   this: the OLH log carries only the class's link, unlink and
   instance-removal ops
@@ -152,13 +201,17 @@ Add an entry whenever work meets a format cost, and update it when a measurement
   way, or refused, rgw-go's. The other way to find such versions, reading
   every shard's instance entries with `bi_list` on each lifecycle pass,
   costs at least a second read of the whole index each pass. The object
-  costs one omap write in a replay that refuses a removal or keeps one for
-  its lock, both rare, before its head op, and after its head op and trim a
+  costs one omap read and, unless the record already says what it would
+  write, one compared omap write in a replay that refuses a removal or
+  keeps one for its lock, both rare, before its head op, one
+  omap read and at most one compared write in the check of a writer whose
+  removal another replay applied, and after its head op and trim a
   prune of two records for each of the k it recorded: at most three reads
   of the object, 6k index or head reads and 2k+1 writes; one omap read per
   lifecycle pass of a versioned bucket, per bucket delete whose listing
-  reads empty and per purge; and per version relisted, a claim and a
-  removal of its record. The prune keeps the object to about twice the
+  reads empty and per purge; and per version relisted, a claim, then a
+  read and a compared removal of its record, or a rewrite when it still
+  names a pending removal. The prune keeps the object to about twice the
   records of versions still unlisted. Reasoning from the code; no
   measurement.
 - **Proposal:** adopted in rgw-go as described
