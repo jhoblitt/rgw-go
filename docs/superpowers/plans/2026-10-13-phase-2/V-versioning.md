@@ -3167,6 +3167,113 @@ nothing.
   store paths change it, and edits other entries of `docs/differences.md`, so it goes after V28, as
   the Order has it. V26 and V27 share no code file with it. **PR:** one. **Brief:** about 45 lines.
 
+### Task V30: a failed versioned write whose removal fails leaves its version reachable
+
+Found by the task review of V24's lifecycle-and-listing PR (its Important-2), and numbered here
+before that PR merged (PP-12). A versioned write that gives up on an answer proving no link of its
+version landed removes that version (`removeFailedVersion` and `removeUnlinkedVersion`,
+`internal/driver/olh.go:1337-1366`): after its awaited index completion fails
+(`internal/driver/put_versioned.go:341-352`), and after its link fails, through `setOLH`
+(`internal/driver/olh.go:316-322` and `internal/driver/olh.go:329-338`). A removal that fails in
+turn is logged, and leaves the head and an instance entry that no link listed
+(`internal/driver/olh.go:1360-1365`; `docs/differences.md`, "rgw-go removes the instance a failed
+versioned write made"). That is V24's Behaviour 1 path 3. The version is in no listing, the index
+counts it, and #675's recount refuses the bucket's delete while it stays. Its owner was answered
+the write's failure and holds no version id to delete it by, so only the admin removal with
+`purge-objects` removes the bucket.
+
+V24's lifecycle-and-listing PR records the versions a replay leaves unlisted and lists them again,
+and leaves this path unrecorded. Its ruling (that PR's report, "Behaviour 1 paths covered"):
+`removeFailedVersion` also serves CompleteMultipartUpload's first completion, whose head write goes
+through the same `linkVersion` and whose head names the upload's parts. A retried completion may
+still link that version (`linkRecorded`, `internal/driver/mp_complete.go:628-663`), so a consumer
+that removed it would queue the parts for the GC under that retry. A consumer that relisted any
+failed write's version would list a write answered as failed. Telling the two callers apart needs a
+seam in the write path, which this task adds.
+
+- **Layer:** driver. **Files:** `linkVersion` in `internal/driver/put_versioned.go`; `olhLink`,
+  `setOLH`, `removeFailedVersion` and `removeUnlinkedVersion` in `internal/driver/olh.go`; the record
+  and its consumer V24's lifecycle-and-listing PR adds (its unlisted-version object,
+  `recordUnlisted` and `settleUnlisted`); their specs (`internal/driver/put_versioned_test.go`,
+  `internal/driver/copy_versioned_test.go`, `internal/driver/mp_complete_versioned_test.go`,
+  `internal/driver/delete_expect_test.go` for DeleteBucket and `internal/driver/lc_bucket_test.go`
+  for lifecycle); `docs/differences.md`, the entry above and the entry V24's lifecycle-and-listing
+  PR adds, "Lifecycle and a bucket delete list again a version a replay left unlisted", whose
+  uncovered paths name this one; `docs/rados-format-opportunities.md`, the entry that PR adds for its
+  object. **Cluster:** no.
+- **Security boundary:** quota accounting; adversarial review applies (PP-14). A version left so is
+  counted in the index's stats and in what the write added to the quota cache
+  (`internal/driver/headwrite.go:435-441`), and the removal that takes it takes both back. Every text
+  on the quota side, here, in `docs/differences.md` and in the registry, states the mechanism only.
+- **Behaviour:**
+  1. `linkVersion` tells the callers apart by the head write it ends. `headWrite.completeMultipart`
+     marks CompleteMultipartUpload's head write and no other
+     (`internal/driver/headwrite.go:66-71`, set at `internal/driver/mp_complete.go:441-445`), and a
+     write with `headWrite.expect` already removes nothing (`internal/driver/put_versioned.go:340`
+     and `internal/driver/put_versioned.go:353`). A plain write is one with neither: PutObject's,
+     and CopyObject's onto another key. `linkVersion` passes that to both of its removals: its own
+     after a failed completion, and `setOLH`'s, through a field of `olhLink`, since `setOLH` decides
+     its removal where the link fails. The CompleteMultipartUpload retry already keeps its version on
+     every path (`KeepVersion`, `internal/driver/mp_complete.go:655`).
+  2. A plain write's removal runs past the end of the request's context, as `setOLH`'s removal
+     before an init already does (`internal/driver/olh.go:335`), so a client that leaves does not
+     fail it. A removal that still fails records the version in V24's unlisted-version object, as a
+     version to remove, never to list: the record carries that kind and the write tag the write's
+     head carries. It is written past the end of the request's context too; a record that fails is
+     logged, and the version stays as it does today.
+  3. The consumers, lifecycle's pass and DeleteBucket, remove such a version, and act on its record
+     at once, with no settle age. The write recorded it only after giving up on an answer that
+     proves no link of it landed, and `setOLH` makes no attempt after a link whose outcome is unknown
+     (`internal/driver/olh.go:396-417`), so no link of it is outstanding. The removal is
+     `removeUnlinkedVersion`'s, guarded on the recorded write tag. A version gone, listed, or whose
+     head carries another tag is left, and its record removed; a removal that fails keeps the record
+     for the next pass. DeleteBucket removes it before its recount and refuses nothing for it, so a
+     bucket whose only other entry was such a version deletes; lifecycle removes it before its rules.
+  4. A gateway that runs V24 without V30, as on a rolling upgrade, must never list such a record's
+     version: V24's consumer reads the record's value into its note and relists any version that
+     parses (`settleUnlisted` at that PR's head). The record goes where that consumer drops it or
+     does not read it, and the PR says which.
+  5. CompleteMultipartUpload's first completion records nothing and keeps today's removal. A
+     version its failed removal leaves is named by the upload's meta object, whose record the
+     completion wrote before its head write (`internal/driver/mp_complete.go:419-421`). The upload
+     stays listed, a retry links the version (`linkRecorded`), and an abort removes it once no link
+     can land (`removeUnlinkedRecorded` and `linkSettled`, `internal/driver/mp_abort.go:325` and
+     `internal/driver/mp_abort.go:603`). DeleteBucket aborts the bucket's uploads after its listing
+     check, V24's Behaviour 1 path 4.
+  6. Not covered, as V24 leaves them: a write whose link's outcome is unknown, which removes nothing
+     and records nothing; a gateway stop between the failed removal and its record; the null version,
+     whose head is the key's OLH head and which a delete naming `null` reaches; radosgw's failed
+     writes on a mixed fleet, which record nothing. `docs/differences.md` says so, in the entry above
+     and in V24's.
+  7. The RADOS format stays byte-identical: the removal is the one the write itself makes, and the
+     record is an rgw-go object radosgw neither reads nor removes. Record the record's new kind in the
+     entry V24's lifecycle-and-listing PR adds to `docs/rados-format-opportunities.md`.
+- **Specs:** on both releases, against the emulator:
+  - a versioned PutObject whose link the class refuses, its removal then failing, once at each of
+    the removal's ops: the version is recorded as one to remove. Lifecycle's next pass removes it,
+    and nothing else changes; DeleteBucket, on a bucket with nothing else, removes it and deletes the
+    bucket. No head, tail, instance entry or record of it is left, and the index's stats and the
+    quota cache count the versions stored before and after;
+  - the same after a failed awaited completion, and for CopyObject onto another key;
+  - a removal whose request's context ends during it completes;
+  - a record that fails: the write answers as today, logged, and the version stays;
+  - a recorded version deleted by its id, or whose head another write replaced, before the
+    consumer runs: the consumer removes nothing and drops the record;
+  - CompleteMultipartUpload's first completion with the same failures: nothing recorded, the upload
+    listed; a retry links the version and an abort removes it, as today, and #675's spec of a bucket
+    holding a completion whose link never landed passes;
+  - a copy onto itself and a lifecycle transition remove nothing and record nothing, as today; a
+    link whose outcome is unknown records nothing;
+  - V24's specs pass.
+
+  No s3-tests test: a link the class refuses followed by a removal that fails is not something an
+  S3 client can arrange.
+- **Depends on:** V24, its lifecycle-and-listing PR, whose record object and consumers this task
+  extends. V30 shares `internal/driver/put_versioned.go` with V25 and V26, which change
+  `linkVersion`, and `internal/driver/olh.go` with V25 and V28, whose changes reach `setOLH`, so it
+  goes after V28, as the Order has it. V27 shares no code file with it. **PR:** one. **Brief:**
+  about 40 lines.
+
 ## Order
 
 At most three implementers at once. A wave starts when the tasks it depends on have merged;
@@ -3186,7 +3293,7 @@ recordings land one at a time through the controller.
 | 8 | V7b, V8b, V8c | V7a, V8a, V9 |
 | 9 | V11, V12b | V7b, V8b |
 | 10 | V12a, V14a | V11, V13d |
-| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22, then V23, then V25, then V24, then V26, then V27, then V28, then V29 | everything above, WP-22 |
+| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22, then V23, then V25, then V24, then V26, then V27, then V28, then V29, then V30 | everything above, WP-22 |
 
 - V10's recording PR is a cluster task the controller schedules after its first PR merges.
 - The critical path is V1, V3b, V4, V5a, V5b, V5c, V7a, V7b, V11, V14a, V15a. L and C start
