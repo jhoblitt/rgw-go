@@ -3322,6 +3322,219 @@ seam in the write path, which this task adds.
   goes after V28, as the Order has it. V27 shares no code file with it. **PR:** one. **Brief:**
   about 40 lines.
 
+### Task V31: a delete answers no success for a removal still open
+
+Found by V23's task re-review 3 (its m2, and its note on #679's consumer) and its adversarial
+re-run 3, which name the case "concern 6", pre-existing at main, and numbered here before V23 merged
+(PP-12). A versioned delete whose replay leaves its removal to another replay answers before the
+removal's fate is known, and that replay keeps a version under a lock no delete passes
+(`applyOLHLog`, `internal/driver/olh_head.go:581-617`), so the delete can answer 204 for a version
+that is kept. The rgw-bug-reproduction session classed it correctness, low, not security.
+`finishOLHModification` (`internal/driver/olh.go:652-675`) answers before that fate is known on
+these paths, the third V23's:
+
+- `skip` and `stopsAfterLink` return before any replay (`internal/driver/olh.go:653-655`). `skip`
+  comes from `DeleteParams.SkipOLHUpdate`, which only DeleteObjects sets, on every delete of a name
+  but its last (`internal/op/deleteobjects.go:204-235` and `internal/op/deleteobjects.go:428`). A
+  delete that guards its removal runs its replay whatever it says
+  (`internal/driver/delete_versioned.go:119-121` and `internal/driver/delete_versioned.go:397-403`),
+  so the removals skipped are unguarded ones, which DeleteObjects sends on a bucket record without
+  object lock (`deleteUnderLock` and `guardRemoval`, `internal/op/objectlock.go:53-78` and
+  `internal/op/objectlock.go:154-164`). The name's last delete replays them as another writer's,
+  keeping a locked version, and nothing checks after it (`docs/differences.md`, "DeleteObjects
+  leaves a key's skipped updates to its last delete"). `stopsAfterLink` is the integration build's
+  fault point, which stands for a gateway stopped there
+  (`internal/driver/export_integration.go:28-33`).
+- A replay whose last pass did not read the whole log returns with no check while the key's OLH
+  entry still holds the writer's entries (`ownEntriesLogged`, `internal/driver/olh.go:668-673`): its
+  passes ran out, each refused by another writer's guard or overtaken by another replay's trim
+  (`errReplayOvertaken`, `internal/driver/olh.go:782-783`), or a removal's prepares were refused
+  until their bound and it was deferred (`errRemovalDeferred`, `internal/driver/olh.go:768-772` and
+  `internal/driver/olh.go:1194-1199`). A pass carries out the writer's own removal before its head
+  op unless its guard refuses it, but a deferral, or a pass ended on another removal's trim before
+  it, leaves it undone. The delete answers success, a guarded one unless its version's lock holds
+  when it reads the head after (`keptUnderLock`, `internal/driver/delete_versioned.go:490-503`;
+  `docs/differences.md`, "A replay keeps a version a link lists again after it read the log"), and
+  the next replay keeps the version or removes it.
+- V23's R1 (`ownRefusal` at V23's head), a writer that saw a pass refuse its own removal answering
+  that refusal while the version is stored, answers 409 on the path above too, and a later replay
+  where no lock holds then removes the version anyway (task re-review 3, m2).
+
+V23's record of each removal a replay left undone, in `rgw-go.unlisted.<bucket id>`, adds two more:
+
+- **A slow check finds its record pruned.** The writer's check reads the record to learn whether a
+  replay kept its removal (`checkRemoval` and `settleRemoval` at V23's head). A prune keeps a record
+  naming a pending removal until the record is `unlistedSettle`, 512 s, old (`pruneUnlisted`), and
+  lifecycle's and DeleteBucket's consumer, acting on records that old, lists such a version again and
+  removes the record once it finds the version listed (`settleUnlisted`). A check more than 512 s
+  after the keep, which a call that stalls reaches, librados setting no timeout by default
+  (`internal/driver/delete_versioned.go:628-639`), can find its entry gone and its version listed
+  again. `removeKept` takes a listed version for one a later link listed, and with nothing named the
+  check answers success: 204 with the version stored and listed again, a lost acknowledged delete.
+- **A pending entry ages with its record.** A merge into a record sets the record's one `time`
+  (`recordUnlisted` at V23's head), so a refusal merged into a record that holds another writer's
+  stale pending entry restarts the 512 s before the prune takes it, and repeated refusals keep it.
+  While it stays the record is not listable first (`listableFirst`), so a concurrent refused delete
+  of an older version leaves the older version current, L3's shape (task re-review 3, section 5).
+
+- **Layer:** driver. **Files:** `finishOLHModification`, `replayAndCheck`, `ownRefusal`,
+  `versionStored`, `checkRemoval`, `olhRemoval` and `loggedRemoval`, with the attempts that build it
+  in `setOLH` and `unlinkVersion`, in `internal/driver/olh.go`; the record and its readers in
+  `internal/driver/unlisted.go` (`unlistedNote`, `parseUnlistedNote`, `unlistedNote.merge`,
+  `listableFirst`, `recordUnlisted`, `settleRemoval`, `pruneUnlisted`, `takeListed`); their specs
+  (`internal/driver/delete_expect_test.go`, `internal/driver/delete_lock_op_test.go`,
+  `internal/driver/lc_bucket_test.go`); the doc of `StopAfterOLHLinkForTest` in
+  `internal/driver/export_integration.go`; in `docs/differences.md`, "A replay keeps another writer's
+  version whose object lock holds", "A replay keeps a version a link lists again after it read the
+  log", "Lifecycle and a bucket delete list again a version a replay left unlisted" and
+  "DeleteObjects leaves a key's skipped updates to its last delete";
+  `docs/rados-format-opportunities.md`, "An rgw-go object naming the versions a replay left
+  unlisted". **Cluster:** no.
+- **Security boundary:** the versioned delete's replay and object lock; adversarial review applies
+  (PP-14). No change may let a delete answer success for a version a replay kept, or remove a version
+  under a lock no delete passes.
+- **Behaviour:**
+  1. Each path's answer, radosgw's first:
+     - `skip`. radosgw's DeleteObjects skips the update of every delete of a key but its last
+       ([rgw_op.cc:6940-6955](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6940-L6955),
+       [rgw_op.cc:7870-7880](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7870-L7880)),
+       whose `unlink_obj_instance` and `set_olh` answer 0 before any update
+       ([rgw_rados.cc:8850-8853](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8850-L8853) and
+       [rgw_rados.cc:8746-8750](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8746-L8750),
+       [rgw_rados.cc:9596-9599](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9596-L9599) and
+       [rgw_rados.cc:9492-9496](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9492-L9496)),
+       and the last delete's update removes each version through `delete_obj`, which checks no lock
+       ([rgw_rados.cc:8529-8541](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8529-L8541),
+       [rgw_rados.cc:9275-9287](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9275-L9287)).
+       So radosgw answers the same 204, its removal made later whatever lock was written since:
+       parity in the answer, which rgw-go keeps. The kept case closes by an invariant: no request
+       answers on this path for a link or unlink that logged a removal, as a guarded delete already
+       does not. V28 holds every removal a delete makes on a record without object lock to the head
+       as read (its Behaviour 2), and a removal so held runs the delete's own replay, as `ExpectTag`
+       and `ExpectHead` do today, since another replay does not know the guard. So after V28 the 204
+       this path answers is a delete marker's link or unlink, which removes nothing, and no skipped
+       delete leaves a removal to the name's last delete. Trace, at V28's merge, every
+       request path that sets `SkipOLHUpdate`, or a link's or unlink's `SkipUpdate`, with a removal
+       logged, and record the result; any left is held to its head as V28 holds one.
+       `finishOLHModification` keeps honouring `skip`, which the driver's specs use to stage a
+       logged removal. The cost is V28's: DeleteObjects batches the replays of a name's delete
+       markers alone, as it does on a bucket with object lock today.
+     - `stopsAfterLink`. A gateway stopped after its link or unlink answers nothing, radosgw's too,
+       whose entries wait for the next update. The fault point's success is its harness's, not an
+       answer, and stays; its doc says so. What a stop leaves is Behaviours 2 and 3's: the next
+       replay keeps a locked version and records its removal pending under an op tag whose check
+       never runs.
+     - Own entries still logged. radosgw's `update_olh` applies the log once, with no retry, and its
+       `apply_olh_log` removes each version the log names before its head op, stopping on a removal
+       that fails
+       ([rgw_rados.cc:8529-8548](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8529-L8548),
+       [rgw_rados.cc:9275-9294](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9275-L9294)),
+       and `unlink_obj_instance` takes that head op's ECANCELED for success
+       ([rgw_rados.cc:8855-8859](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8855-L8859),
+       [rgw_rados.cc:9601-9605](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9601-L9605)).
+       Its removal compares nothing and is never deferred, so where another writer overtakes it
+       radosgw answers 204 with its version already removed. rgw-go answers the same where a pass of
+       its own carried out the removal, and only there. Once the replay returns with the key's OLH
+       entry still holding the writer's entries, a writer that logged a removal reads its version
+       (`versionStored` at V23's head): gone, it answers success, radosgw's answer; still stored, it
+       answers SlowDown, 503, with nothing more written. Neither 204 nor 409 is known true then,
+       since the next replay keeps the version under a lock or removes it, guarded only on the write
+       tag it reads. SlowDown is what rgw-go answers where a removal's fate is left to others
+       (`checkRemoval`'s deferral, `internal/driver/olh.go:1497-1498`; a read whose replay ran out of
+       passes, `followOLH`, `internal/driver/olh_head.go:386-389`), and the path is reached only
+       under the contention it names. The client's retry decides: a version removed since answers
+       204, one kept for its lock is refused by the op layer's lock check, and any other is removed
+       then. This replaces main's success and R1's 409 on this path; R1 still answers 409 once the
+       writer's entries have left the log, where its refusal is settled. The op layer retries a
+       guarded delete's ConcurrentModification and nothing else (`internal/op/objectlock.go:69-72`),
+       so a SlowDown reaches the client.
+  2. A slow check. At V23's head a check that finds its entry gone and its version listed answers
+     success (above). It must answer as a check whose record names its removal does: errKeptStored,
+     ConcurrentModification 409, while the version is stored, and success once it is gone. The
+     writer reads its clock before the index call that logs the removal, and `olhRemoval` carries
+     that reading; a check whose read of the record starts `unlistedSettle`/2, 256 s, or more after
+     it takes a record that no longer names its removal as naming it. No replay keeps a removal
+     before the call that logs it lands, and no reader takes a pending entry until it is
+     `unlistedSettle` old by its own time (Behaviour 3), a purge aside, which then removes the
+     version, so before the 256 s the record's silence proves no keep, with 256 s to spare for
+     gateways' clocks that disagree, where the record's age assumes a few seconds (`unlistedSettle`'s
+     doc, `internal/driver/unlisted.go:45-56`). A check that late has had its calls stall. The cost,
+     for late checks alone, is a 409 where a later link in the same log dropped a removal no replay
+     kept, which V23 answers 204; V23 already answers 409 where the record names the removal (its
+     stop case 2).
+  3. Each pending entry ages by its own keep. Each removal in a record carries the time its state
+     was recorded: a pending one's, the keep that added it; a refused one's, the refusal. A merge
+     sets the time of each entry it adds or changes and leaves the others' (`unlistedNote.merge`,
+     `recordUnlisted`), and so does `settleRemoval`'s refusal; `takeListed` and a claim keep them.
+     The record's `time` stays the time of its last change, the consumer's settle age as today. A
+     pending entry `unlistedSettle` old by its own time counts as settled everywhere but its
+     writer's check: the prune takes a record whose version is listed or gone once no pending entry
+     in it is younger, whatever later merges did to its `time`, and `listableFirst` does not count
+     it, so a refused delete's record holding only such entries beside its refusal is listed first.
+     That is safe: a check never removes a version it finds listed (`removeKept`), one whose record
+     still names its removal answers errKeptStored while the version is stored, and one whose entry
+     is gone is late, and answers as Behaviour 2 says.
+     - The times go in a field of their own beside `removals`, which keeps V23's shape, a map of op
+       tag to state, and every field V30 adds. A gateway running V23 reads a V31 record as its own
+       and drops the field when it rewrites the record. An entry with no time of its own, in a record
+       V23 wrote or rewrote, ages from the record's `time`, as V23 ages it, and a record written
+       before records named their removals still reads as one pending removal under the unknown tag
+       (`parseUnlistedNote`), aged the same way. The record is rgw-go's own object, so no radosgw
+       format changes.
+  4. Record the answers, radosgw's beside them, in `docs/differences.md`: the SlowDown in "A replay
+     keeps a version a link lists again after it read the log", which says the deferral answers
+     204, and in "A replay keeps another writer's version whose object lock holds", where V23
+     describes R1; the late check there too; the per-entry ages and what counts as settled in
+     "Lifecycle and a bucket delete list again a version a replay left unlisted"; and, in
+     "DeleteObjects leaves a key's skipped updates to its last delete", that a skipped delete logs no
+     removal. Record the field in `docs/rados-format-opportunities.md`'s entry for the object. No
+     registry entry: radosgw's replay removing a version locked since is one already
+     (`docs/ceph-upstream-bugs.md`, "radosgw's replay of another request's versioned delete removes
+     a version locked after that delete's check").
+- **Specs:** on both releases, against the emulator:
+  - `skip`: DeleteObjects over the RADOS store naming v1 and v2 of one key, on a request's bucket
+    record read before PutObjectLockConfiguration, a legal hold written on v1 through a fresh record
+    once v1's unlink lands: v1's delete has run its own replay before v2's starts, and v1's key
+    answers no success while v1 is stored. A skipped delete marker leaves its replay to the name's
+    last delete, as today;
+  - the stop: a writer stopped after its unlink, staged through the seam that leaves an unlink's
+    replay and check (`UnlinkObjInstanceForTest` with `SkipUpdate`), a legal hold on its version,
+    and a GET's replay that keeps the version and records its removal pending under that writer's
+    op tag; the per-entry specs below start from that record;
+  - own entries still logged: the deferral of `internal/driver/delete_expect_test.go:2417` and the
+    shared deadline of `internal/driver/delete_expect_test.go:2463` answer SlowDown, 503, where they
+    answer success today, the version stored and its removal logged; the next replay then removes
+    it, and with a legal hold written first keeps it and records it pending. The overtaken replay of
+    `internal/driver/delete_lock_op_test.go:638`, its version's write tag moved by an attr write
+    after the unlink, answers SlowDown, where main answers success and V23's store R1's 409, which
+    the op layer's retry turns into success; the GET's replay then removes the version. A replay
+    overtaken on every pass after its own pass removed the version answers success, the version
+    gone, and a link that logs no removal on the same path answers success, as today;
+  - the slow check: a GET's replay keeps a version for its legal hold, the writer's check held (a
+    hook) while the clock passes 512 s, and a lifecycle pass lists the version again and the record
+    goes: the check answers ConcurrentModification wrapping errKeptStored, the version stored and
+    listed. The same with the version removed meanwhile answers success, and a check inside 256 s
+    whose record never named its removal, a later link in the same log having dropped it, answers as
+    V23 does;
+  - per-entry ages: a record holding another writer's pending entry kept at T, its version listed
+    again past T+512 s, and a guarded delete of that version refused at T+600 s: the pending entry
+    keeps T, a refused delete of an older version then lists the newer version first, which stays
+    current, and the next prune that examines the record while the version is listed takes it. The
+    same with a refusal every 300 s from T+600 s, where V23 keeps the record while the refusals
+    come. A record with no times, and one written before records named their removals, decode and
+    age from their `time`;
+  - V21's adversarial harness with V23's families, 2000 schedules each: no schedule answers success
+    for a version kept, and L3 stays at or below V23's 3;
+  - V23's specs pass, but those Behaviour 1 changes.
+
+  No s3-tests test: a replay overtaken on every pass, a removal deferred to its bound, a check
+  stalled past 256 s and a pending entry a stopped gateway leaves are not things an S3 client can
+  arrange.
+- **Depends on:** V23, whose R1, record and check this task changes, and V28, whose guard closes the
+  `skip` path. V31 shares `internal/driver/olh.go` with V25, V28, V29 and V30, and the record with
+  V30, whose kind of record it keeps, so it goes after V30, as the Order has it. **PR:** one.
+  **Brief:** about 45 lines.
+
 ## Order
 
 At most three implementers at once. A wave starts when the tasks it depends on have merged;
@@ -3341,7 +3554,7 @@ recordings land one at a time through the controller.
 | 8 | V7b, V8b, V8c | V7a, V8a, V9 |
 | 9 | V11, V12b | V7b, V8b |
 | 10 | V12a, V14a | V11, V13d |
-| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22, then V23, then V24, then V25, then V26, then V27, then V28, then V29, then V30 | everything above, WP-22 |
+| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22, then V23, then V24, then V25, then V26, then V27, then V28, then V29, then V30, then V31 | everything above, WP-22 |
 
 - V10's recording PR is a cluster task the controller schedules after its first PR merges.
 - The critical path is V1, V3b, V4, V5a, V5b, V5c, V7a, V7b, V11, V14a, V15a. L and C start
