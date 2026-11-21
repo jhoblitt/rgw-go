@@ -2995,6 +2995,178 @@ By reading, not reproduced on radosgw.
   `internal/driver/delete.go` and `internal/driver/delete_versioned.go`, so V28 goes after both,
   as the Order has it. **PR:** one. **Brief:** about 50 lines.
 
+### Task V29: a bucket delete leaves no OLH head behind
+
+Found by V24's lifecycle-and-listing PR, in its run of V21's adversarial harness, and numbered here
+before that PR merged (PP-12). That PR adds its registry entry, "radosgw's bucket delete leaves the
+OLH head of a key whose last delete could not clear it". The delete of a key's last version clears
+the key's OLH: `clearOLHHead` removes the pending attrs older than `rgw_olh_pending_timeout_sec`, an
+hour by default (`internal/driver/olh_head.go:28-32`), then removes the head guarded on its OLH tag,
+its `olh.ver` and no pending attr, and a removal those guards refuse leaves the index alone
+(`internal/driver/olh_head.go:772-793`), as `clear_olh` does
+([rgw_rados.cc:8616-8624](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8616-L8624),
+[rgw_rados.cc:9362-9370](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9362-L9370)).
+`finishOLHLog` takes that refusal for success and trims nothing when it keeps no refused removal
+(`internal/driver/olh_head.go:702-711`), as `apply_olh_log` does
+([rgw_rados.cc:8550-8556](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8550-L8556),
+[rgw_rados.cc:9296-9302](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9296-L9302)),
+and so does `checkRemoval`'s clear (`clearVersionlessOLH`, `internal/driver/olh.go:1504-1528`). The
+head stays, and the key's version marker and OLH entry stay in the index. Nothing comes back for
+them: a read of the key replays its log only while a pending attr remains (`followOLH`,
+`internal/driver/olh_head.go:373-387`), so once the attr expires no read clears the OLH, and only
+the key's next write takes the head over. DeleteBucket finds none of it:
+
+- its listing skips a version marker
+  ([cls_rgw.cc:604-608](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L604-L608),
+  [cls_rgw.cc:654-658](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L654-L658))
+  and the OLH entry's namespace (V24's Behaviour 4);
+- its recount counts a plain entry that exists with no flags and an instance entry that exists, so
+  neither (`checkIndexCount`, `internal/driver/bucketops.go:396-400`;
+  [cls_rgw.cc:3035-3114](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L3035-L3114),
+  [cls_rgw.cc:3361-3434](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L3361-L3434));
+- its removal takes the index shards alone (`cleanIndex`, `internal/driver/bucketops.go:143-167`),
+  as `delete_bucket`'s does
+  ([rgw_rados.cc:5368-5371](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5368-L5371),
+  [rgw_rados.cc:6008-6009](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6008-L6009)).
+
+So the head stays in the data pool, named by nothing. The pending attr that refuses the clear is one
+no log entry names:
+
+- a relist's init that the backstop or a stalled call cut in flight, its link never sent (`setOLH`
+  with `olhRelink.finish`, `internal/driver/olh.go:344-347` and `internal/driver/olh.go:374-380`;
+  `docs/differences.md`, "A replay keeps a named version that a later link in the same log names");
+- a link or unlink whose outcome is unknown and that never landed ("A versioned link or unlink whose
+  outcome is unknown keeps its pending attr");
+- a gateway stop between an init and its link, rgw-go's or radosgw's.
+
+V24's harness parts K1 (the relist's backstop passing before each of its ops) and K2 (one of its
+calls stalled at each op) leave 126 versions unlisted, all listed again by that PR. In 10 of them
+the key, emptied through S3 inside the hour after the relist's init was cut and its bucket then
+deleted, leaves only its OLH head, no data and one pending attr. With the drain run past
+`rgw_olh_pending_timeout_sec`, so that the attr has expired before the last delete, all 126 leave
+nothing.
+
+- **Layer:** driver. **Files:** the replay's clear (`finishOLHLog` and `clearOLHHead` in
+  `internal/driver/olh_head.go`, and `clearVersionlessOLH`, which `checkRemoval` calls, in
+  `internal/driver/olh.go`) and the OLH index seam it records through (`olhIndex` in
+  `internal/driver/olh_head.go`, `bucketOLHIndex` in `internal/driver/olh_index.go`); DeleteBucket
+  (`deleteBucket` in `internal/driver/bucketops.go`, on both its paths, `DeleteBucket` and
+  `DeleteBucketPurged`); the record's object, beside the unlisted-version object V24's
+  lifecycle-and-listing PR adds; their specs (`internal/driver/olh_head_test.go`,
+  `internal/driver/delete_expect_test.go`, whose relist specs drive the backstop, and the exports
+  beside them); `docs/differences.md`; in `docs/ceph-upstream-bugs.md`, the rgw-go line of the entry
+  above; `docs/rados-format-opportunities.md`, beside the entry V24's lifecycle-and-listing PR adds
+  for its object. **Cluster:** no.
+- **Security boundary:** quota accounting and the bucket-deletion path; adversarial review applies
+  (PP-14). The head holds no data and no stats count it; nothing here changes what the index counts
+  or what the recount decides. Every text on the quota side, here, in `docs/differences.md` and in
+  the registry, states the mechanism only.
+- **Behaviour:**
+  1. After a bucket delete, no OLH head of the bucket's keys is left in the data pool, on every path
+     rgw-go observes (Behaviour 5 names the rest). A key's last delete inside
+     `rgw_olh_pending_timeout_sec` of a cut init, then DeleteBucket, leave what the same two leave
+     once the attr has expired: nothing of the key.
+  2. The mechanism: the clear's refusal is recorded, and DeleteBucket removes the recorded heads.
+     - A clear that a pending attr refuses, `finishOLHLog`'s or `clearVersionlessOLH`'s, records the
+       key in a per-bucket rgw-go object in the bucket's index pool, through the OLH index seam, as
+       V24's lifecycle-and-listing PR records an unlisted version. A clear refused because another
+       writer moved the OLH, its OLH tag or its `olh.ver`, is not recorded: that writer's replay owns
+       the key. The record follows the refusal, the one fact the replay observes, and the delete
+       answers as today. A record that fails is logged, and the head stays as it does today.
+     - DeleteBucket reads the record and each recorded head after the removal's claim and before
+       its recount. Once the recount has read zero, and before the index's removal, it removes each
+       recorded head that holds no null data (`holdsNullData`, `internal/driver/olh.go:1411`),
+       guarded on the head as read: its OLH tag, its write tag, its `olh.ver`, and the pending attrs
+       it read and no other. A head gone or holding data is passed over. A head another writer has
+       moved since the read, a new pending attr included, refuses the bucket: BucketNotEmpty with the
+       claim dropped, as the recount's refusal does, and a retry reads it again. The admin removal
+       with `purge-objects` (`DeleteBucketPurged`) skips the recount and removes the recorded heads
+       the same way. The record's object goes with the bucket, as V24's does.
+     - The record lives in an object of its own, not in V24's unlisted-version object. That object's
+       consumer reads a record with an empty instance as the null version's and removes one that
+       does not parse (`parseUnlistedKey` and `settleUnlisted` at that PR's head), so it would relist
+       or drop this record, as would a gateway running V24 without V29 during a rolling upgrade.
+       Lifecycle does not read it.
+  3. Why, against the candidates, each checked at origin/main:
+     - DeleteBucket waiting out, or clearing, a stale pending attr before it removes the index,
+       bounded by `rgw_olh_pending_timeout_sec`. DeleteBucket has no read that names the key, since
+       its listing and its recount pass over a key with no version (above), so it cannot find the
+       attr. The bound is an hour by default, which a request cannot hold, and a 409 until then would
+       keep a bucket its owner has emptied for that hour, where radosgw deletes it. The clear is kept,
+       as Behaviour 2's removal, made where the recount shows the attr's writer can lose nothing.
+     - The relist's paired write clearing its own init on every path. The init's op tag is made
+       before its write (`internal/driver/olh_head.go:182-186`), so an init cut in flight could be
+       canceled after it, the cancel ordered behind it as `resetCurrent`'s is
+       (`internal/driver/delete_versioned.go:1108-1117`). That covers one source alone. A link whose
+       outcome is unknown keeps its attr on purpose, so that a follow replays it if it lands late
+       (`internal/driver/olh.go:396-398`), and a cancel would undo that. A gateway stop, any other
+       writer's unknown outcome, and radosgw's writers leave the same attr. Not chosen, and not needed
+       once the refusal is recorded.
+     - DeleteBucket removing the OLH heads with no data that its emptiness check finds. Chosen, but
+       the check finds none today. Finding them needs a read that names the key: `bi_list` or a read
+       of the shards' OLH namespace, which D8 keeps out and which would need the owner's ruling, as
+       V24's design (B) did; or a record written where rgw-go observes the refusal. The record is
+       V24's design (A) applied to this state, and costs a write on that rare path alone.
+  4. Why removing over a pending attr younger than the timeout is safe there, which radosgw's clear
+     never does. Every writer whose init stands on a head with no version either holds an index
+     entry the recount counts once its init has landed, or links only entries the index's removal
+     takes. A write of a named version completes its index entry, awaited, before its link and its
+     init (`linkVersion`, `internal/driver/put_versioned.go:339-363`; D5). A null write inits with
+     its head write, which puts its data in the head, so the removal passes that head over. An
+     unlink, a relist and a transition act on a version the recount counts. Reading the heads before
+     the recount and removing after it holds that order: an attr read was inited before the
+     recount, and one inited after the read refuses the removal. Trace, before implementing, every
+     writer whose init can stand on such a head, the delete marker's and the null delete marker's
+     included, whose links write their entries after the recount, and record the result; a writer
+     that breaks the argument refuses the removal instead.
+  5. Not covered, and recorded in `docs/differences.md`: radosgw's last delete on a mixed fleet,
+     which records nothing, and radosgw's bucket delete, which reads no record and leaves the head
+     and the record's object; a gateway stop between the refused clear and its record; and, by
+     reading, a gateway stop between a last delete's head op and its clear, which leaves the head
+     with no pending attr and no refusal to record. A head left so stays, as radosgw leaves it.
+  6. The RADOS format stays byte-identical. The head's removal removes an object radosgw's
+     `clear_olh` removes, writing nothing in its place; the index is removed whole as today; the
+     record is a new rgw-go object radosgw neither reads nor removes. Record that object in
+     `docs/rados-format-opportunities.md`, with what a mixed fleet's radosgw bucket delete leaves;
+     record in `docs/differences.md` the removal over a young pending attr, where radosgw's bucket
+     delete leaves the head; and make the registry entry's rgw-go line say what rgw-go does.
+- **Specs:** on both releases, against the emulator:
+  - K1's and K2's shape: a refused delete of v1 whose relist's init lands while its call ends at
+    the backstop, and once with that init stalled until the backstop passes, leaving the init's
+    pending attr and v1 unlisted. Past V24's settle age DeleteBucket lists v1 again and answers 409;
+    v1 is deleted by its id inside `rgw_olh_pending_timeout_sec`, its clear refused and the key
+    recorded. DeleteBucket then deletes the bucket, and no OLH head, head or tail of v1, index
+    shard, or object of either record is left;
+  - the same with the attr expired before the delete: the clear removes the head as today, and
+    nothing is recorded;
+  - `checkRemoval`'s clear refused by a pending attr records the key the same way; a clear refused
+    by another writer's move records nothing;
+  - a live writer's init standing at the clear, whose link lands after: the key holds its version
+    and DeleteBucket answers 409 from its listing as today. Once that version is deleted and its
+    clear lands, DeleteBucket passes over the record of a head that is gone and deletes;
+  - an init landing between DeleteBucket's read of a recorded head and its removal: BucketNotEmpty,
+    the claim dropped, the head and its attrs kept; the same for a null write's head write;
+  - the admin removal with `purge-objects` removes a recorded head;
+  - a record that fails: the delete answers as today, logged, and DeleteBucket leaves the head,
+    pinned as recorded;
+  - radosgw's last delete, its replay taking the refused clear for success and writing no record:
+    DeleteBucket leaves the head, pinned as recorded;
+  - V21's adversarial harness with V24's lifecycle-and-listing part: K1's and K2's 126 schedules
+    leave nothing without the drain past the pending timeout, and J5's and K5's stay as that PR
+    leaves them;
+  - V24's specs pass.
+
+  No s3-tests test: a backstop that parts a relist's writes, or a stalled call, is not something an
+  S3 client can arrange, and the head is seen only through RADOS.
+- **Depends on:** V24, its lifecycle-and-listing PR. That PR adds the relists lifecycle's pass and
+  DeleteBucket run (`relistUnlisted`), each under the backstop a refused delete's relist has, and
+  lists again the version a cut relist leaves, so a bucket whose owner then empties it through S3
+  inside the hour reaches its delete, which #675's recount refused while that version stayed
+  unlisted. Its record object and consumer are the shape this task's record follows. V29 shares
+  `internal/driver/olh.go` with V25, whose links go through `setOLH` there, and with V28, whose
+  store paths change it, and edits other entries of `docs/differences.md`, so it goes after V28, as
+  the Order has it. V26 and V27 share no code file with it. **PR:** one. **Brief:** about 45 lines.
+
 ## Order
 
 At most three implementers at once. A wave starts when the tasks it depends on have merged;
@@ -3014,7 +3186,7 @@ recordings land one at a time through the controller.
 | 8 | V7b, V8b, V8c | V7a, V8a, V9 |
 | 9 | V11, V12b | V7b, V8b |
 | 10 | V12a, V14a | V11, V13d |
-| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22, then V23, then V25, then V24, then V26, then V27, then V28 | everything above, WP-22 |
+| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22, then V23, then V25, then V24, then V26, then V27, then V28, then V29 | everything above, WP-22 |
 
 - V10's recording PR is a cluster task the controller schedules after its first PR merges.
 - The critical path is V1, V3b, V4, V5a, V5b, V5c, V7a, V7b, V11, V14a, V15a. L and C start
