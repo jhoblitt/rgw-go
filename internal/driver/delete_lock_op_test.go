@@ -584,14 +584,19 @@ var _ = Describe("DeleteObject and DeleteObjects over the RADOS store on a bucke
 			Expect(listedKey("only")).To(Equal([]string{"o1"}), "listed again")
 		})
 		// An admin removal unlinked the version, another replay kept it for its
-		// hold, and a writer linked it again before the removal's check.
-		It("leaves a version linked again since another replay kept it, for a delete with no expected state", func(ctx SpecContext) {
+		// hold, and a writer linked it again before the removal's check. The
+		// check cannot tell that link from a relist's, so the delete answers
+		// what a removal its lock kept answers: ConcurrentModification, the
+		// version left as the link listed it.
+		It("answers ConcurrentModification, leaving a version linked again since another replay kept it, for a delete with no expected state", func(ctx SpecContext) {
 			legalHold(ctx, version("v1"))
 			atUnlink(1, func() {
 				getFirst(ctx, "k")
 				Expect(s.SetOLHForTest(ctx, rec, version("v1"), driver.OLHLink{})).To(Succeed(), "a writer links the version again")
 			})
-			Expect(s.DeleteObject(ctx, rec, version("v1"), op.DeleteParams{})).Error().NotTo(HaveOccurred())
+			_, err := s.DeleteObject(ctx, rec, version("v1"), op.DeleteParams{})
+			Expect(err).To(MatchError(op.ErrConcurrentModification))
+			Expect(err).To(MatchError(driver.ErrKeptStored), "the check's answer for a removal a replay kept")
 			settle(s)
 			Expect(head("v1")).NotTo(BeNil(), "the version's head")
 			Expect(instanceEntry("v1")).To(BeTrue(), "its instance entry")

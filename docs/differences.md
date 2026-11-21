@@ -7535,9 +7535,26 @@ differ, rgw-go does the following.
     with `%`, `/` and NUL percent-encoded, joined by `/`, so that no key
     holds the NUL at which librados cuts an omap listing's start key
     (`docs/cgo-limitations.md`, "go-ceph cuts object names at a NUL byte").
-    Each value is a JSON record of when it was written, of the OLH tag the
-    replay read the log under, and, while a reader relists the version, of
-    that reader's claim. radosgw neither writes, reads nor removes it
+    Each value is a JSON record of when a replay last changed it, of the
+    OLH tag that replay read the log under, of the removals of the version
+    the replays left undone, each under the op tag of the writer that
+    logged it, and, while a reader relists the version, of that reader's
+    claim. A removal is `refused` when the write tag its writer held it to
+    refused it, in that writer's own replay or in its check after it, and
+    `pending` when a replay kept another writer's removal for the
+    version's lock; that writer's check after its replay takes it out of
+    the record, or marks it `refused` when it refuses it. Every write reads
+    the record and merges into it under a compare of the value read, and
+    reads and merges again when another write landed in between: a refusal
+    replaces what the record holds under its op tag, and a pending removal
+    is added only where it holds none, so no replay drops or changes a
+    removal another replay recorded. A replay whose merge leaves the
+    removals and the OLH tag as they were writes nothing, so replays of one
+    log entry, readers following the key among them, write its record once
+    rather than contend on it until one runs out of its tries and its
+    request fails. A record written before records named their removals
+    counts as one pending removal of a writer it does not name. radosgw
+    neither writes, reads nor removes it
     (`docs/rados-format-opportunities.md`, "[An rgw-go object naming the
     versions a replay left
     unlisted](rados-format-opportunities.md#an-rgw-go-object-naming-the-versions-a-replay-left-unlisted)").
@@ -7546,19 +7563,28 @@ differ, rgw-go does the following.
     removes the version, or keeps it and records it. So a gateway that stops
     after the record leaves the version recorded, and one that stops before
     it leaves the removal logged.
-  - Each lifecycle pass of a bucket ever versioned, before its rules, and
+  - Each lifecycle pass of a bucket ever versioned, before its rules (a
+    bucket with no lifecycle rule gets no pass), and
     each S3 DeleteBucket and admin bucket removal without `purge-objects`,
     once its listing reads empty and before its multipart abort, read the
     object (`relistUnlisted`, `internal/driver/unlisted.go`). A version
     recorded at least 512 s before, the relist's backstop, that is still
     stored and unlisted is claimed and listed again by the relist a refused
-    removal runs: current at a fresh epoch when no listed version of its
-    name is newer, and otherwise at its own epoch below the newest, the null
-    version's data as its own relist links it. The record of a version
-    listed, gone or without its head is removed, as is the record of one the
-    relist listed; one the relist did not list gets its unclaimed record
-    back for the next reader. A pass starts no relist past its stop time,
-    and a bucket delete none more than 32 s after it began.
+    removal runs: a newer version of its name recorded and held out of the
+    listing listed again first, then current at a fresh epoch when no
+    version of its name newer than it is listed, and otherwise at its own
+    epoch below the newest, the null version's data as its own relist links
+    it. The record of a version listed, gone or without its head is
+    removed. The record of one the relist listed loses the refused removals
+    it named when the reader claimed it, and is removed once it names no
+    other removal; a pending removal, named then or merged in since, stays
+    with its record, without the claim, since its writer's check reads it to
+    learn that a replay kept its removal, until that check takes it out, or
+    the next pass or a prune takes the record once it is 512 s old, its
+    version being listed (`takeListed`, `internal/driver/unlisted.go`). One
+    the relist did not list gets its unclaimed record back for the next
+    reader. A pass starts no relist past its stop time, and a bucket delete
+    none more than 32 s after it began.
   - The 512 s is measured from the recording gateway's clock on the
     reader's, so it assumes clocks that agree within a few seconds, and it
     usually keeps a reader from relisting while the writer's own relist or
@@ -7586,7 +7612,9 @@ differ, rgw-go does the following.
     does not cut: for k versions recorded it examines the 2k records after
     a cursor the object keeps in an xattr, wrapping to the first, and
     removes, under a compare, each whose version is not stored and
-    unlisted, then moves the cursor. Each write adds k records and its
+    unlisted, then moves the cursor. A record naming a pending removal
+    stays until it is 512 s old, whatever its version, since that
+    removal's writer's check reads it. Each write adds k records and its
     prune examines 2k, so the object holds at most about twice the records
     of versions still left unlisted, whether those versions were then
     listed again by their writers or deleted by id. For k records it costs
@@ -12359,7 +12387,13 @@ does the following.
   answers AccessDenied (`keptUnderLock`, `internal/driver/delete_versioned.go`);
   so does a suspended bucket's null delete marker held to the null version.
   For `versionId=null` and that marker the data kept may be a newer null
-  write's, whose lock then decides.
+  write's, whose lock then decides. A delete held to the version as read
+  answers ConcurrentModification too, its refusal, with or without a lock,
+  when a pass of its own replay, reading the log before the later link was
+  logged, refused the removal, the version's write tag having moved since
+  the delete's check, and that pass's head op then lost to another replay:
+  the refusal stands though its later pass drops the removal (entry "A
+  replay keeps another writer's version whose object lock holds").
   rgw-go's own relist after a refused removal links an existing version
   that no write made, so it gives way to another delete's removal of the
   version while that removal is pending in the log, and compares the OLH
@@ -13448,7 +13482,8 @@ does the following.
     gone, another replay having removed it.
   - A named version that no listed version is newer than is linked at
     epoch 0, current again at a fresh epoch, the version the unlink
-    promoted demoted. It is linked in up to five epoch-0 rounds, each reading the
+    promoted demoted, once a newer version another refusal holds out of the
+    listing is listed again first (below). It is linked in up to five epoch-0 rounds, each reading the
     version, the OLH head and the listing afresh; before it reads the head, a
     round removes the pending attrs past `rgw_olh_pending_timeout_sec`, as
     radosgw's `check_pending_olh_entries` and rgw-go's follow do
@@ -13487,7 +13522,13 @@ does the following.
     [cls_rgw.cc:1061-1126](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1061-L1126),
     [cls_rgw.cc:983-988](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L983-L988) and
     [cls_rgw.cc:1196-1260](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1196-L1260)).
-    With a newer version listed the version goes behind it. With none, when
+    With a newer version listed the version goes behind it, as long as that
+    version is still listed when the relist reads the OLH entry its link
+    compares: one a delete took since sends the relist back to read the
+    listing again, where it would otherwise leave the version that delete's
+    unlink promoted, older, current with the relisted one listed ahead of it,
+    and a delete landing after that read moves the entry and refuses the
+    link. With none, when
     each of the five epoch-0 rounds lost its link to another writer's modification
     that lists nothing newer, such as unlinks of other versions, the version
     lists non-current ahead of the version the unlink promoted, which stays
@@ -13521,7 +13562,9 @@ does the following.
     epoch 0. When the version the marker demoted is newer than the null
     data, that version is linked at epoch 0 first, current again, and the
     null data then goes below it. Otherwise the null data goes at its own
-    epoch, its record reset first, as a named version's fallback does.
+    epoch, its record reset first, as a named version's fallback does. A
+    newer version another refusal holds out of the listing is listed again
+    first, as for a named version (below).
     Unlike that fallback, each of these links is guarded on the OLH head the
     round read, as the named version's epoch-0 link is, after the same wait
     on pending modifications; a round whose link that guard or the OLH
@@ -13531,6 +13574,133 @@ does the following.
     to its link, 512 s, after which the version stays unlisted (entry "A
     replay keeps a named version that a later link in the same log
     names").
+  - A relist lists again first any newer version another refusal holds out
+    of the listing, then lists its own below it, so that a refused delete
+    leaves the key as it was, as one refusal alone does, whatever an earlier
+    or concurrent refusal of a newer version of the key left unlisted. A
+    version is held so when it is newer than the one being listed again, its
+    head and instance record are there and its list entry is not, the
+    bucket's record of unlisted versions names a refused removal of it and
+    none pending (entry "Lifecycle and a bucket delete list again a version
+    a replay left unlisted"), and the OLH log no longer holds its removal. A
+    removal is refused when the write tag its writer held it to refused it,
+    in that writer's own replay or in its check after it: that writer
+    removes nothing more, so the version is listed first whatever its
+    lock. A removal a replay kept for the version's lock is
+    pending until its writer's check after its own replay ends, and a
+    version with a pending removal is never listed first, whatever its lock
+    now: that check still decides it. A record written before records named
+    their removals counts as one with a pending removal.
+    The relist lists the newest such version through the relist a reader of
+    its record runs, under the claim it takes on that record, whatever the
+    record's age: one listed, gone or without its head since is left as it
+    is. Once the version is listed, its record loses the refused removals
+    it named when claimed, and a pending removal another replay merged in
+    since stays for its writer's check (entry "Lifecycle and a bucket
+    delete list again a version a replay left unlisted"). A guarded delete
+    whose refusal the record named still answers that refusal once the
+    record is gone (entry "A replay keeps another writer's version whose
+    object lock holds"). The claim is taken whatever another reader's claim
+    on the record: the claim compares only the record as read, and two
+    relists of one version list it once, each linking nothing once it is
+    listed, while the other reader's release compares its own claim and
+    changes nothing. A record rewritten since it was read, by another
+    replay's record included, fails the claim, and nothing is listed. A
+    relist so run lists no held version whose own relist it runs inside. The
+    order holds because a version's instance record keeps the epoch it was
+    written at while it is unlisted: the class's unlink leaves the unlinked
+    version's record as it was, and promotes the next version at that
+    version's own epoch, reading its record anew before writing it
+    ([cls_rgw.cc:1388-1427](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1388-L1427) and
+    [cls_rgw.cc:1936-1958](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1936-L1958),
+    [cls_rgw.cc:1514-1554](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1514-L1554) and
+    [cls_rgw.cc:2083-2105](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2083-L2105)).
+    With v1, v2 and v3 written and the deletes of v2 and v3 both refused, at
+    once or one after the other, a relist that took only the listing into
+    account found v1 alone listed, linked v2 at epoch 0, and v3's relist
+    then found v2 listed at that fresh epoch and put v3 below it, so a GET of
+    the key read v2 until the key's next write. Now v2's relist lists v3
+    first, current, and v2 below it; v3's own relist, when it runs, finds v3
+    listed. A client's later delete of v3 by its id unlinks the current
+    version and promotes v2, the next listed. With a null delete marker
+    current, which a suspended bucket's delete links over the null data
+    before its replay refuses the removal of that data, the held version is
+    listed below the marker, as the version the marker demoted is, and the
+    null relist then links it at epoch 0, current again, and the null data
+    below it. While a newer version that is stored and unlisted still has its
+    removal in the OLH log, so that no replay has yet carried it out, refused
+    it or trimmed it, a round waits for that replay, within its wait on
+    pending modifications, 318 to 635 ms in all; past that wait it links as
+    if that version were not there, and its link's replay applies the
+    removal. radosgw never reaches this state: its replay removes every
+    version its log names through `delete_obj` with no write-tag guard
+    ([rgw_rados.cc:8530-8541](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8530-L8541),
+    [rgw_rados.cc:9276-9287](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9276-L9287);
+    `docs/ceph-upstream-bugs.md`, "[radosgw's DeleteObject removes the head
+    without checking its write
+    tag](ceph-upstream-bugs.md#radosgws-deleteobject-removes-the-head-without-checking-its-write-tag)"),
+    so in the same interleaving both deletes answer 204 and both versions
+    are removed, leaving v1 current in the named form and the null delete
+    marker in the null form. What stays:
+    - A newer version whose record names a pending removal is not listed
+      again, and the relist links its own as if that version were not there
+      (entry "A replay keeps another writer's version whose object lock
+      holds"). So a writer that sent that removal without `Expect` still
+      removes it in its check, even when the lock ended and was set again
+      between the keep and the check. Where the removal kept was a guarded
+      delete's, whose own replay would have refused it, a lock having been
+      written after that delete's check, another request's replay ran first
+      and kept the version for that lock: nothing in the OLH log tells that
+      writer from an unguarded one, so the record names the removal pending
+      until that delete's own check refuses it for the tag the lock write
+      moved and marks it refused. A relist that reads the record after that
+      check lists the version first; one that read it before, or before the
+      delete's own replay recorded its refusal, links its own as if the
+      version were not there, and the delete's relist then finds the older
+      version current at the fresh epoch and lists the version below it, so
+      the key reads the older version until its next write, as two
+      refusals did before (`docs/rados-format-opportunities.md`, "[The OLH
+      log's removal entry does not say whether its writer guarded
+      it](rados-format-opportunities.md#the-olh-logs-removal-entry-does-not-say-whether-its-writer-guarded-it)").
+      In V21's adversarial harness's family of two refused deletes with
+      legal holds written, 3 of 2000 schedules end so, against 237 when
+      the relist looked at the listing alone.
+    - A delete with no `Expect` and a guarded delete of one version both
+      unlink it, a legal hold written between them, and the guarded
+      delete's replay keeps the first delete's removal for the hold and
+      refuses its own. A refused delete of an older version whose relist
+      reads the record before the first delete's check finds that removal
+      pending, does not list the version first, and links its own at epoch
+      0; the guarded delete's relist then lists the version below it. The
+      first delete's check answers 409, the version being still stored, and
+      the key reads the older version over the stored newer one until its
+      next write. The adversarial harness's scripted schedule of this shape
+      ends so on both releases, every run; without the older version's
+      delete the version stays current and the first delete answers 409.
+    - A held version the relist could not list, its relist reaching a bound or
+      a read or write of it failing, or another reader's claim landing on its
+      record first, is one the relist links its own as if it were not there.
+      It stays stored, counted and in no listing until its own relist, a
+      later relist of an older version of the key, a lifecycle pass (a bucket
+      with no lifecycle rule gets none), a bucket delete once its listing
+      reads empty, or a purge lists it again, and then it lists below the
+      relisted version, which stays current over it until the key's next
+      write.
+    - A newer version whose remover's replay comes after the wait and then
+      refuses its removal is listed below the relisted version, as before.
+    - A lifecycle pass or a bucket delete that lists a version again keeps,
+      in its record, a pending removal whose writer's check never ran
+      (entry "Lifecycle and a bucket delete list again a version a replay
+      left unlisted"). A refused delete of that version landing before the
+      next pass or a prune takes the record merges its refusal into it, and
+      the stale pending removal then keeps other relists from listing the
+      version first: a concurrent refused delete of an older version leaves
+      the older version current until the key's next write, as in the
+      legal-hold family above. Each replay that changes a record, a refusal
+      merged into it among them, resets the record's time, which the next
+      pass and the prune count 512 s from, so refusals that keep coming keep
+      a stale pending removal past 512 s. Found by reading the code, not
+      run.
   - A refused removal of the null version that leaves the key no listed
     version has the replay trim the log where it would clear the key's
     OLH: the clear removes the OLH head object, which holds the data the
@@ -13673,20 +13843,65 @@ does the following.
   and unlisted, removes it under its own guard (`checkRemoval`). While the
   OLH entry still holds them, every pass of its replay having lost its head
   op to other writers, it leaves them to the next replay, which keeps a
-  locked version and removes any other. A version listed again since, by a
-  writer's link, is left as it is. A delete given `Expect` removes the
+  locked version and removes any other. A version listed again since is
+  left as it is. The check then settles its removal in the bucket's record
+  of unlisted versions (entry "Lifecycle and a bucket delete list again a
+  version a replay left unlisted"): a replay that kept or refused the
+  removal named it there before its trim, so before the check runs. While
+  the record names it, no replay removed the version for this writer, and
+  a version still stored, listed again or not, answers 409
+  ConcurrentModification, not success, unless the check removed it itself
+  (`checkRemoval`, `internal/driver/olh.go`). What listed it again may be a
+  relist, of another refused delete of the same version or a lifecycle
+  pass's, after which success would leave the version listed, and current,
+  after the delete's 204. It may as well be a later write that linked the
+  version again, radosgw's PutObject naming its id or rgw-go's
+  CompleteMultipartUpload retry ("A replay keeps a named version that a
+  later link in the same log names"), after which success would say the
+  delete took effect before that write. The check cannot tell the two
+  apart: both link the same instance, and neither the record nor the index
+  says which linked it. Success after a relist's link is a lost
+  acknowledged delete, the version left listed and current after the
+  delete's 204, so the check answers 409 in both, though a later write may
+  have linked the version since. Nothing is lost by it: the version stays
+  stored and listed as the link left it, and a client that retries the
+  delete removes the version as that link left it. Where nothing linked
+  the version again, the check finds it stored and unlisted under its lock
+  and removes it, and a writer with no `Expect` answers success. The check
+  takes its removal out of the record, or marks it refused when it refused
+  it. A delete given `Expect` removes the
   version under `Expect`'s write tag and answers a refusal as its own
   replay's refusal ("A refused versioned removal re-links the version,
   unless a newer null write owns the null key"): the version is listed
   again and the delete answers 409, which a delete under object lock checks
-  again, answering 403 AccessDenied for a hold written after its check. A
-  writer with no `Expect`, an admin removal or the unlink of a void
-  conditional write, removes the version when its lock is one a replay
-  keeps, the null version's data only while it carries the write tag the
-  writer's op saw, and clears the key's OLH when the null version it
-  removed was the key's last. A writer whose unlink takes a delete marker,
-  with `Expect` or without, logged no removal, since the class takes a
-  marker's entries itself
+  again, answering 403 AccessDenied for a hold written after its check. It
+  answers that refusal, 409, as well when a pass of its own replay refused
+  the removal and that pass's head op then lost to another replay, while
+  the version is still stored, whatever its later passes and its check
+  read: that pass recorded the refusal before its head op, the other
+  replay trims the removal, so the later passes find nothing of the
+  delete's own, and a relist of an older version may list the version
+  first and take that record before the check runs, while the lock whose
+  write moved the version's write tag may have ended, so that no lock
+  check answers for it either (`ownRefusal`, `internal/driver/olh.go`).
+  The write tag the refusal found moved never comes back, so the refusal
+  stands; only another writer's removal of the version since makes it
+  answer success. One case answers that 409 for a delete that then takes
+  effect: every pass after the refusal lost its head op to another
+  writer's or deferred its removals, so the delete's own entries are still
+  in the OLH log when it answers. A later replay applies that removal as
+  another writer's, keeping the version under a lock no delete passes and
+  otherwise removing it, guarded only on the write tag it reads: where no
+  such lock holds, the delete answered 409 and its version is removed
+  anyway. Answered success instead, the same path would lose the delete
+  wherever that lock keeps the version. A writer with no `Expect`, an
+  admin removal or the unlink of a void conditional write, removes the
+  version when its lock is
+  one a replay keeps, the null version's data only while it carries the
+  write tag the writer's op saw, and clears the key's OLH when the null
+  version it removed was the key's last. A writer whose unlink takes a
+  delete marker, with `Expect` or without, logged no removal, since the
+  class takes a marker's entries itself
   ([cls_rgw.cc:1970-1979](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1970-L1979),
   [cls_rgw.cc:2117-2126](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2117-L2126)),
   and checks nothing after its replay (`removeVersion`,

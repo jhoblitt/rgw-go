@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -66,14 +67,102 @@ const unlistedPrunePerRecord = 2
 // last key a prune examined.
 const unlistedCursorAttr = "rgw-go.prune-cursor"
 
-// unlistedNote is a version's record: when it was written, the OLH tag the
-// replay read the log under, which relistVersion compares with the OLH
-// entry's to find an entry cleared and made again since (remade), and the
-// claim of the reader relisting it, while one does.
+// unlistedNote is a version's record: when a replay last changed it, the
+// OLH tag that replay read the log under, which relistVersion compares with
+// the OLH entry's to find an entry cleared and made again since (remade),
+// the removals of the version the replays left undone, by the op tag of the
+// writer that logged each, and the claim of the reader relisting it, while
+// one does. A record with no removals field, written before records named
+// their removals, reads as one pending removal of a writer no tag names
+// (parseUnlistedNote).
 type unlistedNote struct {
-	Time   time.Time      `json:"time"`
-	OLHTag []byte         `json:"olh_tag,omitempty"`
-	Claim  *unlistedClaim `json:"claim,omitempty"`
+	Time     time.Time               `json:"time"`
+	OLHTag   []byte                  `json:"olh_tag,omitempty"`
+	Removals map[string]removalState `json:"removals"`
+	Claim    *unlistedClaim          `json:"claim,omitempty"`
+}
+
+// removalState is where a removal a replay left undone stands.
+type removalState string
+
+const (
+	// removalRefused is a writer's removal that the write tag the writer
+	// held it to refused (errRemovalRefused), in the writer's own replay or
+	// its check after it: that writer removes nothing more.
+	removalRefused removalState = "refused"
+	// removalPending is another writer's removal, which a replay kept for
+	// the version's lock (errRemovalLocked): that writer's check after its
+	// own replay may still remove the version, or answer, until it ends and
+	// settles the removal (checkRemoval).
+	removalPending removalState = "pending"
+)
+
+// unknownRemoval is the op tag of the removal a record written before
+// records named their removals stands for: one still pending, of a writer
+// no tag names.
+const unknownRemoval = ""
+
+// unlistedMergeTries bounds the tries of a write that merges into a record,
+// each reading the record and comparing it as read, so that a write another
+// writer made in between is merged, not overwritten.
+const unlistedMergeTries = 10
+
+// errRecordContended marks a merge into a record whose compare other writers
+// refused every try. It wraps no ECANCELED, which a replay takes for another
+// writer having moved past.
+var errRecordContended = fmt.Errorf("every one of %d tries lost its compare to another writer of the record", unlistedMergeTries)
+
+// unlistedVersion is a version a replay leaves unlisted, the op tag of the
+// writer whose removal it left, and where that removal stands.
+type unlistedVersion struct {
+	key   meta.ObjKey
+	opTag string
+	state removalState
+}
+
+// parseUnlistedNote parses a record's value, reporting whether it parses. A
+// record with no removals field, written before records named them, is given
+// one pending removal under unknownRemoval.
+func parseUnlistedNote(v []byte) (unlistedNote, bool) {
+	var n unlistedNote
+	if json.Unmarshal(v, &n) != nil {
+		return n, false
+	}
+	if n.Removals == nil {
+		n.Removals = map[string]removalState{unknownRemoval: removalPending}
+	}
+	return n, true
+}
+
+// holds reports whether n names a removal in state.
+func (n *unlistedNote) holds(state removalState) bool {
+	for _, st := range n.Removals {
+		if st == state {
+			return true
+		}
+	}
+	return false
+}
+
+// listableFirst reports whether e records a version a relist may list again
+// before its own: one with a refused removal and none still pending, so that
+// none of its writers removes it. A record that does not parse, or one
+// written before records named their removals, is not.
+func listableFirst(e unlistedEntry) bool {
+	n, ok := parseUnlistedNote(e.v)
+	return ok && n.holds(removalRefused) && !n.holds(removalPending)
+}
+
+// merge adds u's removal to n: a refusal, which only its writer's own replay
+// or check records, replaces whatever n holds under its op tag, and a
+// pending removal is added only when n holds none under that tag, so that a
+// replay meeting a log entry another replay recorded first changes nothing
+// of it.
+func (n *unlistedNote) merge(u unlistedVersion) {
+	if _, ok := n.Removals[u.opTag]; ok && u.state != removalRefused {
+		return
+	}
+	n.Removals[u.opTag] = u.state
 }
 
 // unlistedClaim is a reader's claim on a record: a token of its own and when
@@ -112,31 +201,147 @@ func parseUnlistedKey(k string) (meta.ObjKey, bool) {
 	return indexToObjKey(rgw.ObjKey{Name: n, Instance: i}), true
 }
 
-// recordUnlisted records keys, versions of rec's bucket a replay leaves
-// unlisted, olhTag being the OLH tag it read their removals under, in one
-// write that creates the object when it is missing. A version recorded again
-// takes the newer record. The replay prunes the object once its head op and
-// trim are done (pruneUnlisted).
-func (s *Store) recordUnlisted(ctx context.Context, rec *op.BucketRecord, keys []meta.ObjKey, olhTag []byte) error {
+// recordUnlisted records vs, versions of rec's bucket a replay leaves
+// unlisted, each with the removal it left, olhTag being the OLH tag it read
+// their removals under, in one write that creates the object when it is
+// missing. Each version's record is read and merged into
+// (unlistedNote.merge), in vs's order, and the write compares each as read,
+// so a record another writer changed in between is read and merged again,
+// up to unlistedMergeTries times: no replay's record drops a removal another
+// recorded. A record the merge leaves as it was, its removals and OLH tag
+// the same, is not written, so that replays of one log entry, readers
+// following a key among them, write its record once rather than contend on
+// it; when none needs writing nothing is. A record written takes the new time
+// and OLH tag, and loses any reader's claim, whose compare then refuses. The
+// replay prunes the object once its head op and trim are done
+// (pruneUnlisted).
+func (s *Store) recordUnlisted(ctx context.Context, rec *op.BucketRecord, vs []unlistedVersion, olhTag []byte) error {
 	pool, err := s.indexPool(ctx, &rec.Info)
 	if err != nil {
 		return err
 	}
-	v, err := json.Marshal(unlistedNote{Time: s.now(), OLHTag: olhTag})
+	oid := unlistedOID(&rec.Info)
+	byKey := map[string][]unlistedVersion{}
+	for _, u := range vs {
+		k := unlistedKey(u.key)
+		byKey[k] = append(byKey[k], u)
+	}
+	keys := slices.Sorted(maps.Keys(byKey))
+	for range unlistedMergeTries {
+		cur, err := readRecords(ctx, pool, oid, keys)
+		if err != nil {
+			return fmt.Errorf("reading the records of %d unlisted versions of bucket %s: %w", len(keys), rec.Info.Bucket.Name, err)
+		}
+		w := radosclient.NewWriteOp()
+		w.Create(false)
+		kv := make(map[string][]byte, len(keys))
+		for _, k := range keys {
+			n, ok := parseUnlistedNote(cur[k])
+			if !ok {
+				n = unlistedNote{Removals: map[string]removalState{}}
+			}
+			read := maps.Clone(n.Removals)
+			for _, u := range byKey[k] {
+				n.merge(u)
+			}
+			if ok && maps.Equal(read, n.Removals) && bytes.Equal(n.OLHTag, olhTag) {
+				continue
+			}
+			n.Time, n.OLHTag, n.Claim = s.now(), olhTag, nil
+			v, merr := json.Marshal(n)
+			if merr != nil {
+				return merr
+			}
+			w.OmapCmp(k, radosclient.CmpEQ, cur[k])
+			kv[k] = v
+		}
+		if len(kv) == 0 {
+			return nil
+		}
+		w.OmapSet(kv)
+		_, err = pool.Write(ctx, oid, w, radosclient.OpFlagNone)
+		switch {
+		case err == nil:
+			return nil
+		case !errors.Is(err, radosclient.ErrCanceled):
+			return fmt.Errorf("recording %d unlisted versions of bucket %s: %w", len(keys), rec.Info.Bucket.Name, err)
+		}
+	}
+	return fmt.Errorf("recording %d unlisted versions of bucket %s: %w", len(keys), rec.Info.Bucket.Name, errRecordContended)
+}
+
+// readRecords reads the records keys name; a key with none is absent from
+// the map, as is every key when the object does not exist.
+func readRecords(ctx context.Context, pool radosclient.Pool, oid string, keys []string) (map[string][]byte, error) {
+	rop := radosclient.NewReadOp()
+	res := rop.OmapGetValsByKeys(keys)
+	_, err := pool.Read(ctx, oid, rop, radosclient.OpFlagNone)
+	switch {
+	case errors.Is(err, radosclient.ErrNotFound):
+		return map[string][]byte{}, nil
+	case err != nil:
+		return nil, err
+	}
+	return res.Values, nil
+}
+
+// settleRemoval settles, in key's record, the removal its writer logged
+// under opTag, once that writer's check after its replay has ended
+// (checkRemoval): refused, the check's refusal, marks it refused, and any
+// other end takes it out. It reports whether the record, as read before
+// that write, named the removal in any state, or a pending one under
+// unknownRemoval: a replay then kept or refused it, so its writer did not
+// remove the version through it. A record that does not parse is taken to
+// name it. No record, one that does not name the removal, and one that
+// names it refused already are left as they are. The write compares the
+// record as read, retried as recordUnlisted's is, and changes nothing else
+// of it.
+func (s *Store) settleRemoval(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, opTag string, refused bool) (bool, error) {
+	pool, err := s.indexPool(ctx, &rec.Info)
 	if err != nil {
-		return err
+		return false, err
 	}
-	kv := make(map[string][]byte, len(keys))
-	for _, k := range keys {
-		kv[unlistedKey(k)] = v
+	oid, k := unlistedOID(&rec.Info), unlistedKey(key)
+	for range unlistedMergeTries {
+		cur, err := readRecords(ctx, pool, oid, []string{k})
+		if err != nil {
+			return false, err
+		}
+		v, ok := cur[k]
+		if !ok {
+			return false, nil
+		}
+		n, ok := parseUnlistedNote(v)
+		if !ok {
+			return true, nil
+		}
+		state, has := n.Removals[opTag]
+		named := has || n.Removals[unknownRemoval] == removalPending
+		switch {
+		case !has, state == removalRefused:
+			return named, nil
+		case refused:
+			n.Removals[opTag] = removalRefused
+		default:
+			delete(n.Removals, opTag)
+		}
+		to, err := json.Marshal(n)
+		if err != nil {
+			return named, err
+		}
+		w := radosclient.NewWriteOp()
+		w.AssertExists()
+		w.OmapCmp(k, radosclient.CmpEQ, v)
+		w.OmapSet(map[string][]byte{k: to})
+		_, err = pool.Write(ctx, oid, w, radosclient.OpFlagNone)
+		switch {
+		case err == nil, errors.Is(err, radosclient.ErrNotFound):
+			return named, nil
+		case !errors.Is(err, radosclient.ErrCanceled):
+			return named, err
+		}
 	}
-	w := radosclient.NewWriteOp()
-	w.Create(false)
-	w.OmapSet(kv)
-	if _, err := pool.Write(ctx, unlistedOID(&rec.Info), w, radosclient.OpFlagNone); err != nil {
-		return fmt.Errorf("recording %d unlisted versions of bucket %s: %w", len(keys), rec.Info.Bucket.Name, err)
-	}
-	return nil
+	return true, errRecordContended
 }
 
 // pruneUnlisted bounds the object by the versions still left unlisted, once
@@ -144,12 +349,17 @@ func (s *Store) recordUnlisted(ctx context.Context, rec *op.BucketRecord, keys [
 // unlistedPrunePerRecord records for each of keys after the key
 // unlistedCursorAttr names, wrapping to the first, but for keys' own, and
 // removes each whose version is not stored and unlisted (storedUnlisted),
-// then moves the cursor to the last it examined. A write that adds k records
-// has its prune examine 2k, so a cycle of the cursor through the object
-// removes every record stale when it began while adding at most half as
-// many, and the object holds at most about twice the records of versions
-// still unlisted. For k records it costs three reads of the object, up to
-// 6k index or head reads, and up to 2k+1 writes. A failure is logged and
+// then moves the cursor to the last it examined. A record naming a pending
+// removal stays while it is younger than unlistedSettle, whatever its
+// version: that removal's writer reads it in its check after its replay
+// (checkRemoval), and without it a version a relist has listed again would
+// read as one that writer's removal never reached. A write that adds k
+// records has its prune examine 2k, so a cycle of the cursor through the
+// object removes every record stale when it began while adding at most half
+// as many, and the object holds at most about twice the records of versions
+// still unlisted, and of those whose pending removals are younger than
+// unlistedSettle. For k records it costs three reads of the object, up to 6k
+// index or head reads, and up to 2k+1 writes. A failure is logged and
 // changes no answer: the readers remove stale records too.
 func (s *Store) pruneUnlisted(ctx context.Context, rec *op.BucketRecord, keys []meta.ObjKey) {
 	attrs := []any{slog.String("bucket", rec.Info.Bucket.Name)}
@@ -191,6 +401,9 @@ func (s *Store) pruneUnlisted(ctx context.Context, rec *op.BucketRecord, keys []
 		}
 		key, ok := parseUnlistedKey(e.k)
 		if ok {
+			if n, parsed := parseUnlistedNote(e.v); parsed && n.holds(removalPending) && s.now().Sub(n.Time) < unlistedSettle {
+				continue
+			}
 			kept, kerr := s.storedUnlisted(ctx, rec, key)
 			if kerr != nil || kept {
 				continue
@@ -238,13 +451,14 @@ func (s *Store) unlistedAfter(ctx context.Context, pool radosclient.Pool, oid, a
 // claim is younger than settle, then goes through the relist a refused
 // removal runs (runRelist): relistNull for the null version, relistVersion
 // for a named one, under the OLH tag its record carries. The record of a
-// version the relist listed is removed; one whose relist did not list it
-// gets its unclaimed record back for the next reader, logged; both run, with
-// the read before them, whatever ctx does, as the relist does. Each removal or
-// rewrite compares the record as last read or written, so one a later
-// replay wrote in between stays. A record that does not parse is removed,
-// logged. No relist starts once stop reports true or ctx has ended. A purge
-// passes settle 0, as it removes every version.
+// version the relist listed loses the refused removals it named when claimed,
+// and is removed once it names no other (takeListed); one whose relist did
+// not list it gets its unclaimed record back for the next reader, logged;
+// both run, with the read before them, whatever ctx does, as the relist does.
+// Each removal or rewrite compares the record as last read or written, so one
+// a later replay wrote in between stays. A record that does not parse is
+// removed, logged. No relist starts once stop reports true or ctx has ended.
+// A purge passes settle 0, as it removes every version.
 func (s *Store) relistUnlisted(ctx context.Context, rec *op.BucketRecord, settle time.Duration, stop func() bool) (int, error) {
 	pool, err := s.indexPool(ctx, &rec.Info)
 	if err != nil {
@@ -282,7 +496,7 @@ func (s *Store) settleUnlisted(ctx context.Context, rec *op.BucketRecord, pool r
 	key, ok := parseUnlistedKey(e.k)
 	var note unlistedNote
 	if ok {
-		ok = json.Unmarshal(e.v, &note) == nil
+		note, ok = parseUnlistedNote(e.v)
 	}
 	if !ok {
 		slog.WarnContext(ctx, "removing a record of an unlisted version that does not parse", append(attrs, slog.String("record", e.k))...)
@@ -327,8 +541,65 @@ func (s *Store) settleUnlisted(ctx context.Context, rec *op.BucketRecord, pool r
 		return false
 	}
 	slog.InfoContext(ctx, "listed again a version a replay left unlisted", attrs...)
-	s.removeRecord(dctx, rec, pool, oid, e.k, claimed)
+	s.takeListed(dctx, rec, pool, oid, e.k, note)
 	return true
+}
+
+// takeListed takes out of record k, once a relist has listed its version,
+// the removals listedOn, the record as the relist claimed it, names refused,
+// and removes the record once it names no removal. A removal pending, named
+// when the record was claimed or merged in since, stays, as does the record
+// that names it: its writer's check after its own replay reads it to learn
+// that a replay kept its removal (checkRemoval), and the version listed again
+// is still one no replay removed for that writer. The record left loses its
+// claim and keeps its time, so the prune takes it once that is unlistedSettle
+// old (pruneUnlisted). Each write compares the record as read, and a compare
+// another writer refused reads and takes out again, up to
+// unlistedMergeTries; a record that does not parse, or a failure, is left
+// for the next reader, logged.
+func (s *Store) takeListed(ctx context.Context, rec *op.BucketRecord, pool radosclient.Pool, oid, k string, listedOn unlistedNote) {
+	attrs := []any{slog.String("bucket", rec.Info.Bucket.Name), slog.String("record", k)}
+	for range unlistedMergeTries {
+		cur, err := readRecords(ctx, pool, oid, []string{k})
+		if err != nil {
+			slog.WarnContext(ctx, "could not read the record of a version listed again; the next pass reads it again", append(attrs, slog.Any("error", err))...)
+			return
+		}
+		v, ok := cur[k]
+		if !ok {
+			return
+		}
+		n, ok := parseUnlistedNote(v)
+		if !ok {
+			return
+		}
+		for tag, st := range listedOn.Removals {
+			if st == removalRefused && n.Removals[tag] == removalRefused {
+				delete(n.Removals, tag)
+			}
+		}
+		w := radosclient.NewWriteOp()
+		w.OmapCmp(k, radosclient.CmpEQ, v)
+		if len(n.Removals) == 0 {
+			w.OmapRmKeys([]string{k})
+		} else {
+			n.Claim = nil
+			to, merr := json.Marshal(n)
+			if merr != nil {
+				return
+			}
+			w.OmapSet(map[string][]byte{k: to})
+		}
+		_, err = pool.Write(ctx, oid, w, radosclient.OpFlagNone)
+		switch {
+		case err == nil, errors.Is(err, radosclient.ErrNotFound):
+			return
+		case !errors.Is(err, radosclient.ErrCanceled):
+			slog.WarnContext(ctx, "could not take the refused removals out of the record of a version listed again; the next pass reads it again", append(attrs, slog.Any("error", err))...)
+			return
+		}
+	}
+	slog.WarnContext(ctx, "could not take the refused removals out of the record of a version listed again; the next pass reads it again", append(attrs, slog.Any("error", errRecordContended))...)
 }
 
 // claimUnlisted claims record e, whose value parsed is note, for this reader:

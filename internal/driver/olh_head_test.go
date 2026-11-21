@@ -961,8 +961,8 @@ var _ = Describe("the OLH head operations", func() {
 				return map[uint64][]rgwcls.OLHLogEntry{3: {link("v2", tagP), removal("v1", tagP)}, 4: {removal("v0", tagQ)}}
 			}
 
-			DescribeTable("is recorded before the head op",
-				func(ctx SpecContext, opTag string, expect []byte, removeErr map[string]error, want []string) {
+			DescribeTable("is recorded before the head op, with why",
+				func(ctx SpecContext, opTag string, expect []byte, removeErr map[string]error, want, removals []string) {
 					olhHead("2", info("v1", false), withPending(tagP, tagQ))
 					idx.RemoveErr = removeErr
 					last, err := s.ApplyOLHLogForTest(ctx, idx, state(), log(), opTag, expect)
@@ -976,6 +976,7 @@ var _ = Describe("the OLH head operations", func() {
 						got = append(got, k.Instance)
 					}
 					Expect(got).To(Equal(want))
+					Expect(idx.UnlistedRemovals).To(Equal(removals), "refused, its writer's own removal; pending, another writer's; each under its writer's op tag")
 					for _, call := range idx.Calls {
 						if call.Method == "recordUnlisted" {
 							Expect(call.Writes).To(BeZero(), "before the head op")
@@ -992,14 +993,14 @@ var _ = Describe("the OLH head operations", func() {
 					Expect(ms[len(ms)-2:]).To(Equal([]string{"trimLog", "pruneUnlisted"}), "after the head op and the trim")
 				},
 				Entry("the writer's own removal its expected tag refused", tagP, []byte("tx-own\x00"),
-					map[string]error{"v1": refused()}, []string{"v1"}),
+					map[string]error{"v1": refused()}, []string{"v1"}, []string{tagP + "=" + driver.RemovalRefused}),
 				Entry("another writer's removal kept for its lock", tagP, []byte("tx-own\x00"),
-					map[string]error{"v0": locked()}, []string{"v0"}),
+					map[string]error{"v0": locked()}, []string{"v0"}, []string{tagQ + "=" + driver.RemovalPending}),
 				Entry("one of each, in one record", tagP, []byte("tx-own\x00"),
-					map[string]error{"v1": refused(), "v0": locked()}, []string{"v1", "v0"}),
+					map[string]error{"v1": refused(), "v0": locked()}, []string{"v1", "v0"}, []string{tagP + "=" + driver.RemovalRefused, tagQ + "=" + driver.RemovalPending}),
 				Entry("none for a removal a link listed again", "", nil,
-					map[string]error{"v1": relisted()}, []string(nil)),
-				Entry("none for removals that land", "", nil, nil, []string(nil)),
+					map[string]error{"v1": relisted()}, []string(nil), []string(nil)),
+				Entry("none for removals that land", "", nil, nil, []string(nil), []string(nil)),
 			)
 
 			It("stops the replay before its head op when the record fails, leaving the log", func(ctx SpecContext) {
@@ -1241,15 +1242,17 @@ var _ = Describe("the OLH head operations", func() {
 					[]string{"removeInstance", "recordUnlisted", "clear", "pruneUnlisted"}, true),
 			)
 
-			It("reports a head op that fails instead, leaving the entry for the retry", func(ctx SpecContext) {
+			It("reports a head op that fails instead, leaving the entry for the retry, and names the version it refused", func(ctx SpecContext) {
 				olhHead("2", info("v1", false), withPending(tagP))
 				st := state()
 				head().Xattrs[meta.AttrOLHVer] = []byte("4")
 				idx.RemoveErr = map[string]error{"v1": refusal("v1")}
-				_, err := s.ApplyOLHLogForTest(ctx, idx, st, map[uint64][]rgwcls.OLHLogEntry{3: {removal("v1", tagP)}}, tagP, own())
+				_, refused, err := s.ApplyOLHLogRefusedForTest(ctx, idx, st, map[uint64][]rgwcls.OLHLogEntry{3: {removal("v1", tagP)}}, tagP, own())
 				Expect(err).To(MatchError(radosclient.ErrCanceled))
 				Expect(errors.Is(err, driver.ErrRemovalRefused)).To(BeFalse(), "the replay did not land, so its retry meets the entry again")
 				Expect(head().Xattrs).To(HaveKey(meta.AttrOLHPendingPrefix + tagP))
+				Expect(refused).To(HaveLen(1))
+				Expect(refused[0].Instance).To(Equal("v1"), "the refusal its writer answers whatever its later passes read")
 			})
 
 			DescribeTable("reports a failed trim or index clear together with the refusal, which is then not final",

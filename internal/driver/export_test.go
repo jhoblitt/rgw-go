@@ -348,10 +348,74 @@ func (s *Store) RunRelistForTest(ctx context.Context, rec *op.BucketRecord, v me
 	})
 }
 
-// RecordUnlistedForTest is recordUnlisted for the external specs.
+// RecordUnlistedForTest is recordUnlisted for the external specs, each of
+// keys recorded with a refused removal under the op tag "go-refused".
 func (s *Store) RecordUnlistedForTest(ctx context.Context, rec *op.BucketRecord, keys []meta.ObjKey, olhTag []byte) error {
-	return s.recordUnlisted(ctx, rec, keys, olhTag)
+	vs := make([]unlistedVersion, 0, len(keys))
+	for _, k := range keys {
+		vs = append(vs, unlistedVersion{key: k, opTag: "go-refused", state: removalRefused})
+	}
+	return s.recordUnlisted(ctx, rec, vs, olhTag)
 }
+
+// RecordRemovalForTest is recordUnlisted for the external specs: key's
+// removal under opTag recorded in state, merged as a replay merges it.
+func (s *Store) RecordRemovalForTest(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, opTag, state string) error {
+	return s.recordUnlisted(ctx, rec, []unlistedVersion{{key: key, opTag: opTag, state: removalState(state)}}, nil)
+}
+
+// WriteUnlistedRecordForTest sets key's record to value as it is, as an
+// older gateway wrote it.
+func (s *Store) WriteUnlistedRecordForTest(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey, value []byte) error {
+	pool, err := s.indexPool(ctx, &rec.Info)
+	if err != nil {
+		return err
+	}
+	w := radosclient.NewWriteOp()
+	w.Create(false)
+	w.OmapSet(map[string][]byte{unlistedKey(key): value})
+	_, err = pool.Write(ctx, unlistedOID(&rec.Info), w, radosclient.OpFlagNone)
+	return err
+}
+
+// UnlistedRemovalsForTest is the removals key's record names, by op tag, as
+// a reader takes them (parseUnlistedNote), and whether the record exists and
+// parses.
+func (s *Store) UnlistedRemovalsForTest(ctx context.Context, rec *op.BucketRecord, key meta.ObjKey) (map[string]string, bool) {
+	pool, err := s.indexPool(ctx, &rec.Info)
+	if err != nil {
+		return nil, false
+	}
+	cur, err := readRecords(ctx, pool, unlistedOID(&rec.Info), []string{unlistedKey(key)})
+	if err != nil {
+		return nil, false
+	}
+	v, ok := cur[unlistedKey(key)]
+	if !ok {
+		return nil, false
+	}
+	n, ok := parseUnlistedNote(v)
+	if !ok {
+		return nil, false
+	}
+	out := map[string]string{}
+	for tag, st := range n.Removals {
+		out[tag] = string(st)
+	}
+	return out, true
+}
+
+// ErrKeptStored is errKeptStored for the external specs.
+var ErrKeptStored = errKeptStored
+
+// RemovalRefused and RemovalPending are the states a record names a removal
+// in, and UnknownRemoval the op tag a record written before records named
+// their removals stands for, for the external specs.
+const (
+	RemovalRefused = string(removalRefused)
+	RemovalPending = string(removalPending)
+	UnknownRemoval = unknownRemoval
+)
 
 // PruneUnlistedForTest is pruneUnlisted for the external specs, as a replay
 // runs it once it has recorded keys.
