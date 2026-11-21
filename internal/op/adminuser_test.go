@@ -676,7 +676,8 @@ var _ = Describe("admin user ops", func() {
 						_, _, _, p := objects.DeleteObjectArgsForCall(i)
 						Expect(p).To(Equal(op.DeleteParams{}), "delete %d", i)
 					}
-					Expect(buckets.DeleteBucketCallCount()).To(Equal(1))
+					Expect(buckets.DeleteBucketPurgedCallCount()).To(Equal(1), "the purge's removal, which skips the store's index check")
+					Expect(buckets.DeleteBucketCallCount()).To(BeZero())
 					_, err := store.GetUser(ctx, meta.UserID{ID: "leseb"})
 					Expect(err).To(MatchError(op.ErrNoSuchUser))
 				},
@@ -921,6 +922,10 @@ func (chownRefused) ChownBucket(context.Context, *op.BucketRecord, meta.Owner, s
 type deleteGone struct{ *memstore.Store }
 
 func (deleteGone) DeleteBucket(context.Context, *op.BucketRecord) error { return op.ErrNoSuchBucket }
+
+func (deleteGone) DeleteBucketPurged(context.Context, *op.BucketRecord) error {
+	return op.ErrNoSuchBucket
+}
 
 // needs is the users bit an op's check_caps asks for.
 func needs(o op.Op) uint32 {

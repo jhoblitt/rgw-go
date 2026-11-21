@@ -67,6 +67,10 @@ type Store struct {
 	// relistBackstopTimeout, when positive, bounds a relist up to its link
 	// in place of relistBackstop, for specs (refusedRemoval).
 	relistBackstopTimeout time.Duration
+	// indexAwaitTimeout, when positive, bounds a bucket delete's wait for its
+	// index completions in place of indexAwaitCap, for specs
+	// (awaitIndexCompletions).
+	indexAwaitTimeout time.Duration
 	// bufs is the free list, capped at the memory budget's size, of the
 	// buffers prefetches read the head into, those of
 	// rgw_get_obj_max_req_size that data reads of more than half that go

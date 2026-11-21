@@ -176,7 +176,7 @@ func (s *Store) removeHeadFlagged(ctx context.Context, rec *op.BucketRecord, key
 		if !how.await {
 			x.completeDel(ver, st.Mtime)
 		} else if cerr := x.completeDelSync(ctx, ver, st.Mtime); cerr != nil {
-			slog.WarnContext(ctx, "bucket index completion failed for a removed version; its index entry stays, counted in the bucket's stats, until an admin bucket check repairs them",
+			slog.WarnContext(ctx, "bucket index completion failed for a removed version; its index entry stays, counted in the bucket's stats, and keeps the bucket from an S3 delete until the admin bucket removal with purge-objects removes it with the bucket",
 				slog.String("bucket", rec.Info.Bucket.Name), slog.String("key", key.Name), slog.String("instance", key.Instance),
 				slog.Int("op", int(rgw.OpDel)), slog.Any("error", cerr))
 		}

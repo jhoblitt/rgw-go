@@ -1005,6 +1005,114 @@ var _ = Describe("DeleteObject with an expected state", func() {
 			Expect(listed()).NotTo(ContainElement("v1"), "listed nowhere")
 		})
 
+		// The version the bound leaves stored and unlisted is the bucket's
+		// last: its listing reads empty, and DeleteBucket refuses the bucket
+		// rather than remove the index and leave v1's head behind.
+		DescribeTable("keeps the bucket whose last version the relist left unlisted until a delete by its id removes it",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				expect := head(ctx, "v1")
+				at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v1") })
+				for k := 1; k <= 2*driver.OLHAttempts; k++ {
+					before(relinks, k, func() { put(ctx, fmt.Sprintf("w%03d", k)) })
+				}
+				_, err := del(ctx, "v1", op.DeleteParams{Expect: expect})
+				concurrent(err)
+				settle(s)
+				ac.set(nil)
+				Expect(listed()).NotTo(ContainElement("v1"))
+				for _, instance := range listed() {
+					_, derr := del(ctx, instance, op.DeleteParams{})
+					Expect(derr).NotTo(HaveOccurred(), instance)
+				}
+				settle(s)
+				Expect(listing(ctx, true)).To(BeEmpty(), "no listing shows v1")
+				stats, err := s.BucketStats(ctx, rec)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(stats.NumObjects).To(BeEquivalentTo(1), "the header counts v1")
+
+				Expect(s.DeleteBucket(ctx, rec)).To(MatchError(op.ErrBucketNotEmpty))
+				Expect(versionHead("v1")).NotTo(BeNil(), "v1's head stays")
+				_, ok := instanceEntry("v1")
+				Expect(ok).To(BeTrue(), "and its instance entry")
+				Expect(c.Object(rookMetaPool, rookRoot, ".bucket.meta.plain:"+rec.Info.Bucket.ID)).NotTo(BeNil(), "the instance")
+				stats, err = s.BucketStats(ctx, rec)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(stats.NumObjects).To(BeEquivalentTo(1))
+
+				_, err = del(ctx, "v1", op.DeleteParams{})
+				Expect(err).NotTo(HaveOccurred())
+				settle(s)
+				Expect(versionHead("v1")).To(BeNil())
+				Expect(s.DeleteBucket(ctx, rec)).To(Succeed())
+				Expect(c.Object(rookIndexPool, "", shard)).To(BeNil(), "clean_index")
+				Expect(c.Object(rookMetaPool, rookRoot, ".bucket.meta.plain:"+rec.Info.Bucket.ID)).To(BeNil())
+			},
+			Entry("on Squid", denc.Squid),
+			Entry("on Tentacle", denc.Tentacle),
+		)
+
+		// A versioned write whose link never landed, its outcome unknown,
+		// leaves its head and a completed instance entry no listing shows,
+		// which removeFailedVersion does not remove.
+		DescribeTable("keeps the bucket whose only version a write left unlinked",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				write(ctx, "v1")
+				settle(s)
+				Expect(listing(ctx, true)).To(BeEmpty())
+				stats, err := s.BucketStats(ctx, rec)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(stats.NumObjects).To(BeEquivalentTo(1))
+				Expect(s.DeleteBucket(ctx, rec)).To(MatchError(op.ErrBucketNotEmpty))
+				Expect(versionHead("v1")).NotTo(BeNil())
+				_, ok := instanceEntry("v1")
+				Expect(ok).To(BeTrue())
+				stats, err = s.BucketStats(ctx, rec)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(stats.NumObjects).To(BeEquivalentTo(1))
+			},
+			Entry("on Squid", denc.Squid),
+			Entry("on Tentacle", denc.Tentacle),
+		)
+
+		// A writer's unlink of a version under a legal hold, logged and left to
+		// a replay its gateway never ran, as radosgw's removal of a locked
+		// version that an rgw-go replay applies first: another reader's replay
+		// keeps the version for its hold, unlisted.
+		DescribeTable("keeps the bucket whose last version a replay kept for its legal hold",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				holdWrite(ctx, "v2")
+				Expect(s.UnlinkObjInstanceForTest(ctx, rec, version("v2"), driver.OLHUnlink{SkipUpdate: true})).To(Succeed())
+				Expect(s.UpdateOLHForTest(ctx, rec, head(ctx, ""))).To(Succeed(), "another reader's replay")
+				settle(s)
+				Expect(versionHead("v2")).NotTo(BeNil(), "kept for its hold")
+				Expect(listed()).NotTo(ContainElement("v2"))
+				_, err := del(ctx, "v1", op.DeleteParams{})
+				Expect(err).NotTo(HaveOccurred())
+				settle(s)
+				Expect(listing(ctx, true)).To(BeEmpty())
+				stats, err := s.BucketStats(ctx, rec)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(stats.NumObjects).To(BeEquivalentTo(1), "the header counts v2")
+				Expect(s.DeleteBucket(ctx, rec)).To(MatchError(op.ErrBucketNotEmpty))
+				Expect(versionHead("v2")).NotTo(BeNil())
+				Expect(versionHead("v2").Xattrs).To(HaveKey(meta.AttrObjectLegalHold))
+				_, ok := instanceEntry("v2")
+				Expect(ok).To(BeTrue())
+				stats, err = s.BucketStats(ctx, rec)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(stats.NumObjects).To(BeEquivalentTo(1))
+			},
+			Entry("on Squid", denc.Squid),
+			Entry("on Tentacle", denc.Tentacle),
+		)
+
 		// As above, each of the relist's links meets another writer's link of
 		// the key first, and here each also takes 15 ms to send, under a cap of
 		// 40 ms on its retries, whose clock the first lost link starts: the

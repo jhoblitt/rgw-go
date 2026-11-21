@@ -1,6 +1,8 @@
 package driver
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -382,6 +384,116 @@ func (s *Store) checkBucketEmpty(ctx context.Context, rec *op.BucketRecord) erro
 	}
 }
 
+// checkIndexCount refuses, as BucketNotEmpty, a bucket whose index still
+// holds an entry once its listing has read empty and its multipart uploads
+// are aborted. listed is the index generation the listing read and cur the
+// instance the removal's claim wrote, whose generation the removal removes:
+// a generation that moved in between, a reshard's commit, is refused, and a
+// retry lists the new one. A version whose instance entry stays while its
+// list entry is gone is in no listing, and removing the index would leave its
+// head and tails in the data pool.
+//
+// Each shard is judged on the class's own recount, check_index's calculated
+// header, which counts a plain entry that exists with no flags and an
+// instance entry that exists
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L3035-L3114 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L3361-L3432 at v20.2.4),
+// a read that writes nothing
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L4694 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L5111 at v20.2.4).
+// The stored header is not used: it can count more than the shard holds, as
+// a null delete marker's instance entry keeps the exists flag of the entry
+// it replaced, which the header never counted but a recount, a reshard or
+// the admin index fix does, and its removal uncounts nothing
+// (docs/ceph-upstream-bugs.md, "cls_rgw counts a null delete marker that
+// replaced existing data once its header is recounted"). Every category is
+// summed. A shard that cannot be read refuses the bucket; one the OSD does
+// not find is BucketNotEmpty, as a retry reads the generation again. An
+// indexless bucket has no index to read.
+func (s *Store) checkIndexCount(ctx context.Context, cur *op.BucketRecord, listed meta.IndexLayoutGen) error {
+	info := &cur.Info
+	name := info.Bucket.Name
+	if info.Layout.Current.Gen != listed.Gen {
+		return generationRefusal(info.Bucket, listed, info.Layout.Current)
+	}
+	n, err := s.indexEntries(ctx, info)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return nil
+	}
+	slog.WarnContext(ctx, "refusing to delete a bucket whose index holds entries no listing shows; a version left so is removed by its id, and the admin bucket removal with purge-objects removes the bucket without this check",
+		slog.String("bucket", name), slog.Uint64("entries", n))
+	return fmt.Errorf("bucket %s: its index holds %d entries no listing shows: %w", name, n, op.ErrBucketNotEmpty)
+}
+
+// indexEntries is the number of entries the class's recount finds in the
+// shards of info's current index generation (checkIndexCount).
+func (s *Store) indexEntries(ctx context.Context, info *meta.BucketInfo) (uint64, error) {
+	if info.Layout.Current.Layout.Type != meta.IndexNormal {
+		return 0, nil
+	}
+	pool, err := s.indexPool(ctx, info)
+	if err != nil {
+		return 0, err
+	}
+	oids := shardOIDs(info, info.Layout.Current)
+	counts := make([]uint64, len(oids))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(max(s.opts.bucketIndexMaxAIO, 1))
+	for i, oid := range oids {
+		g.Go(func() error {
+			rop := radosclient.NewReadOp()
+			res := rgwcls.BucketCheckIndex(rop, s.release)
+			if _, err := pool.Read(gctx, oid, rop, radosclient.OpFlagNone); err != nil {
+				if errors.Is(err, radosclient.ErrNotFound) {
+					return fmt.Errorf("bucket %s: index shard %s is gone: %w", info.Bucket.Name, oid, op.ErrBucketNotEmpty)
+				}
+				return fmt.Errorf("checking index shard %s: %w", oid, op.FromRADOS(err, op.ScopeBucket))
+			}
+			ret, err := res.Result()
+			if err != nil {
+				return fmt.Errorf("%w: checking index shard %s: %w", op.ErrUnknown, oid, err)
+			}
+			for _, st := range ret.CalculatedHeader.Stats {
+				counts[i] += st.NumEntries
+			}
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return 0, err
+	}
+	var n uint64
+	for _, c := range counts {
+		n += c
+	}
+	return n, nil
+}
+
+// indexAwaitCap bounds a bucket delete's wait for its index completions
+// (awaitIndexCompletions) at the cap on a relist's retries, relistCap.
+const indexAwaitCap = relistCap
+
+// awaitIndexCompletions waits for the index completions this gateway sent
+// for b's entries before the call (completionManager.awaitBucket): they run
+// unordered, so the last object's delete, answered just before, may not yet
+// have reached its shard. The wait ends at indexAwaitCap, for a completion
+// held behind a reshard or a call that never answers, as BucketNotEmpty,
+// which a retry clears once the completion lands; the end of ctx is its own
+// error.
+func (s *Store) awaitIndexCompletions(ctx context.Context, b meta.BucketID) error {
+	limit := cmp.Or(s.indexAwaitTimeout, indexAwaitCap)
+	wctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	err := s.w.completions.awaitBucket(wctx, b.Key())
+	if err != nil && ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("bucket %s: index completions sent for it did not answer within %s; retry: %w", b.Name, limit, op.ErrBucketNotEmpty)
+	}
+	return err
+}
+
 // maxRemoveRetries bounds the instance removals a delete or a rename
 // retries after another write changed the instance.
 const maxRemoveRetries = 20
@@ -427,13 +539,20 @@ const maxRemoveRetries = 20
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L412-L417),
 // stopping at an abort that fails; radosgw compares the raw id there and so
 // skips all three for a bucket with an empty zonegroup id on the master
-// zonegroup (docs/ceph-upstream-bugs.md). It then reads the entry point
-// afresh, as remove's new tracker does, and leaves it when the read fails or
+// zonegroup (docs/ceph-upstream-bugs.md). It then waits for this gateway's
+// index completions of the bucket (awaitIndexCompletions), claims the
+// removal, refuses a bucket whose index still holds an entry
+// (checkIndexCount), clearing the claim, reads the instance again and
+// refuses the same way when a reshard moved its index past the generation
+// counted, reads the entry point afresh, as remove's new tracker does, and leaves it when the read fails or
 // it names another instance; otherwise it removes it under the version read,
 // and a failure there is returned before anything else is removed, a lost
 // race as op.ErrRemovalRaced once the removal's claim is cleared
 // (releaseRemoval). The instance follows, under
-// the version read, then the index of the generation that read names, whose
+// the version read and held to the generation counted, a reshard that moved
+// the index in between, or any other failure of the removal, writing the
+// entry point back and clearing the claim (restoreRemoval), then the index of
+// the generation that read names, whose
 // failure is logged, the owner's list entry, whose failure is returned, and
 // last the bucket's lifecycle entry (removeLCEntry). The steps from the
 // entry point's read through the owner's list entry run past the end of
@@ -447,8 +566,92 @@ const maxRemoveRetries = 20
 // bucket's name, the entry of a bucket re-created under it included
 // (docs/ceph-upstream-bugs.md, "radosgw's bucket delete unlinks a bucket
 // re-created under the same name from its owner"); rgw-go removes only an
-// entry naming this instance.
+// entry naming this instance. radosgw deletes a bucket whose listing reads
+// empty though its index counts a version no listing shows, leaving that
+// version's head and tails in the data pool (docs/ceph-upstream-bugs.md,
+// "radosgw's bucket delete leaves the objects of a version no listing
+// shows"); rgw-go answers BucketNotEmpty (docs/differences.md, "A bucket
+// delete refuses a bucket whose index counts an entry no listing shows").
 func (s *Store) DeleteBucket(ctx context.Context, rec *op.BucketRecord) error {
+	return s.deleteBucket(ctx, rec, false)
+}
+
+// DeleteBucketPurged implements op.BucketStore as DeleteBucket for a bucket a
+// purge has emptied: the index check is skipped (checkIndexCount), so an
+// entry no listing shows goes with the index, as radosgw's removal leaves it
+// (docs/differences.md, "A bucket delete refuses a bucket whose index counts
+// an entry no listing shows").
+func (s *Store) DeleteBucketPurged(ctx context.Context, rec *op.BucketRecord) error {
+	return s.deleteBucket(ctx, rec, true)
+}
+
+// errGenerationMoved marks a removal a reshard overtook: the bucket's index
+// moved past the generation checkIndexCount judged.
+var errGenerationMoved = errors.New("the bucket's index moved to another generation")
+
+// generationRefusal is checkIndexCount's refusal of a bucket whose index
+// moved from generation counted to now, which a retry lists and counts.
+func generationRefusal(b meta.BucketID, counted, now meta.IndexLayoutGen) error {
+	return fmt.Errorf("bucket %s: its index moved from generation %d to %d during the delete; retry: %w",
+		b.Name, counted.Gen, now.Gen, op.ErrBucketNotEmpty)
+}
+
+// heldGeneration reads b's instance past the cache and answers it, or
+// errGenerationMoved with it when its index is no longer generation counted.
+func (s *Store) heldGeneration(ctx context.Context, b meta.BucketID, counted meta.IndexLayoutGen) (*op.BucketRecord, error) {
+	next, err := s.rereadInstance(ctx, b)
+	if err != nil {
+		return nil, err
+	}
+	if next.Info.Layout.Current.Gen != counted.Gen {
+		return next, errGenerationMoved
+	}
+	return next, nil
+}
+
+// refuseMoved ends a removal a reshard overtook (errGenerationMoved), next
+// the instance as read since, as restoreRemoval does, and answers the
+// refusal a retry clears by counting the new generation.
+func (s *Store) refuseMoved(ctx context.Context, cur, next *op.BucketRecord, ep *entryPoint, counted meta.IndexLayoutGen) error {
+	s.restoreRemoval(ctx, cur, next, ep)
+	return generationRefusal(cur.Info.Bucket, counted, next.Info.Layout.Current)
+}
+
+// restoreRemoval undoes a removal of cur that stops once it may have taken
+// the entry point, so the bucket stands named, as it was, for a retry: the
+// entry point the removal took, ep when not nil, is written back, and the
+// claim cleared while the instance still carries this removal's. next is the
+// instance as read since, or nil to read it again. An instance gone by then,
+// a removal whose outcome the caller could not tell having landed, gets no
+// entry point back. The write is exclusive, so a bucket another owner
+// created under the name in between keeps it; the failure is logged with the
+// instance's id, as is an instance that cannot be read.
+func (s *Store) restoreRemoval(ctx context.Context, cur, next *op.BucketRecord, ep *entryPoint) {
+	b := cur.Info.Bucket
+	if next == nil {
+		n, err := s.rereadInstance(ctx, b)
+		if err != nil {
+			if !errors.Is(err, op.ErrNoSuchBucket) {
+				slog.ErrorContext(ctx, "could not read the instance of a bucket whose removal stopped; its entry point stays removed",
+					slog.String("bucket", b.Name), slog.String("instance", b.ID), slog.Any("error", err))
+			}
+			return
+		}
+		next = n
+	}
+	if ep != nil {
+		if err := s.writeEntryPoint(ctx, ep.ep, ep.attrs, true, ep.mtime, &objv{write: newWriteVersion()}); err != nil {
+			slog.ErrorContext(ctx, "could not restore the entry point of a bucket whose removal stopped; its instance and index stay",
+				slog.String("bucket", b.Name), slog.String("instance", b.ID), slog.Any("error", err))
+		}
+	}
+	if bytes.Equal(next.Attrs[op.RemovingAttr], cur.Attrs[op.RemovingAttr]) {
+		s.dropClaim(ctx, next)
+	}
+}
+
+// deleteBucket is DeleteBucket, with the index check unless purged.
+func (s *Store) deleteBucket(ctx context.Context, rec *op.BucketRecord, purged bool) error {
 	cur, lerr := s.GetBucketInstance(ctx, rec.Info.Bucket)
 	if errors.Is(lerr, op.ErrNoSuchBucket) {
 		return fmt.Errorf("%w: %w", op.ErrNoSuchKey, lerr)
@@ -473,8 +676,20 @@ func (s *Store) DeleteBucket(ctx context.Context, rec *op.BucketRecord) error {
 	if n > 0 {
 		slog.WarnContext(ctx, "aborted incomplete multipart uploads", slog.String("bucket", b.Name), slog.Int("count", n))
 	}
+	listed := cur.Info.Layout.Current
+	if !purged {
+		if aerr := s.awaitIndexCompletions(ctx, b); aerr != nil {
+			return aerr
+		}
+	}
 	if cur, lerr = s.claimRemoval(ctx, cur); lerr != nil {
 		return lerr
+	}
+	if !purged {
+		if cerr := s.checkIndexCount(ctx, cur, listed); cerr != nil {
+			s.dropClaim(context.WithoutCancel(ctx), cur)
+			return cerr
+		}
 	}
 	// From the entry point's read on, the removal runs to its end, as
 	// radosgw's does: a request that ended between its steps would leave the
@@ -482,6 +697,18 @@ func (s *Store) DeleteBucket(ctx context.Context, rec *op.BucketRecord) error {
 	// failing for an ended request would leave the entry point while the
 	// instance went.
 	rctx := context.WithoutCancel(ctx)
+	var hold *meta.IndexLayoutGen
+	if !purged {
+		counted := cur.Info.Layout.Current
+		hold = &counted
+		if next, herr := s.heldGeneration(rctx, b, counted); errors.Is(herr, errGenerationMoved) {
+			return s.refuseMoved(rctx, cur, next, nil, counted)
+		} else if herr != nil {
+			s.dropClaim(rctx, cur)
+			return herr
+		}
+	}
+	var taken *entryPoint
 	e, err := s.readEntryPoint(rctx, b.Tenant, b.Name)
 	switch {
 	case err != nil:
@@ -493,8 +720,13 @@ func (s *Store) DeleteBucket(ctx context.Context, rec *op.BucketRecord) error {
 		if rerr := s.removeEntryPoint(rctx, b.Tenant, b.Name, &objv{read: e.v.read}); rerr != nil {
 			return s.releaseRemoval(rctx, cur, rerr)
 		}
+		taken = e
 	}
-	if cur, err = s.removeCurrentInstance(rctx, cur); err != nil {
+	prev := cur
+	if cur, err = s.removeCurrentInstance(rctx, cur, hold); errors.Is(err, errGenerationMoved) {
+		return s.refuseMoved(rctx, prev, cur, taken, *hold)
+	} else if err != nil {
+		s.restoreRemoval(rctx, prev, nil, taken)
 		return err
 	}
 	if err := s.cleanIndex(rctx, &cur.Info); err != nil {
@@ -544,21 +776,26 @@ func (s *Store) removeLCEntry(ctx context.Context, rec *op.BucketRecord) {
 // read with and, when another write changed it since, reads it again from
 // RADOS and retries, returning the record it removed under. The read skips
 // the metadata cache, which keeps the version the removal lost to until the
-// writer's notify arrives. An instance already gone is no failure.
-func (s *Store) removeCurrentInstance(ctx context.Context, cur *op.BucketRecord) (*op.BucketRecord, error) {
+// writer's notify arrives. An instance already gone is no failure. With hold
+// set, an instance read again whose index is no longer that generation is
+// not removed: it is returned with errGenerationMoved. Every write of the
+// instance changes its version, a reshard's commit, which names the new
+// generation, included, so the removal's version check fails on it.
+func (s *Store) removeCurrentInstance(ctx context.Context, cur *op.BucketRecord, hold *meta.IndexLayoutGen) (*op.BucketRecord, error) {
 	for range maxRemoveRetries {
 		err := s.removeInstance(ctx, cur.Info.Bucket, &objv{read: cur.Version})
 		if !errors.Is(err, op.ErrConcurrentModification) {
 			return cur, err
 		}
-		o := s.instanceObj(cur.Info.Bucket)
-		s.sysobj.cache.invalidateRemove(normalName(o.pool, o.oid))
-		next, rerr := s.GetBucketInstance(ctx, cur.Info.Bucket)
+		next, rerr := s.rereadInstance(ctx, cur.Info.Bucket)
 		if errors.Is(rerr, op.ErrNoSuchBucket) {
 			return cur, nil
 		}
 		if rerr != nil {
 			return nil, rerr
+		}
+		if hold != nil && next.Info.Layout.Current.Gen != hold.Gen {
+			return next, errGenerationMoved
 		}
 		cur = next
 	}

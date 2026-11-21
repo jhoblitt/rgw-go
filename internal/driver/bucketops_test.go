@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/driver"
 	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
+	"github.com/jhoblitt/rgw-go/internal/radosclient"
 	"github.com/jhoblitt/rgw-go/internal/testutil/fakerados"
 )
 
@@ -373,7 +375,10 @@ var _ = Describe("CreateBucket and DeleteBucket", func() {
 			e.Key = rgwcls.ObjKey{Name: meta.ObjKey{Name: "k.2~abc.meta", NS: meta.NSMultipart}.IndexKeyName()}
 			Expect(e.Key.Name).To(Equal("_multipart_k.2~abc.meta"))
 			seedIndexEntry(c, indexPool, shard, e)
-			Expect(s.DeleteBucket(ctx, rec)).To(Succeed(), "rgw_rados.cc:5220-5227 checks the empty namespace only")
+			err = s.DeleteBucket(ctx, rec)
+			Expect(err).To(MatchError(op.ErrBucketNotEmpty))
+			Expect(err).To(MatchError(ContainSubstring("no listing shows")), "the listing check passes it, rgw_rados.cc:5220-5227 checking the empty namespace only; the index check, which the abort of an upload whose meta object is gone leaves it to, refuses it")
+			Expect(s.DeleteBucketPurged(ctx, rec)).To(Succeed())
 		})
 		It("counts an escaped name beginning with an underscore as content", func(ctx SpecContext) {
 			rec, err := s.CreateBucket(ctx, params("plain"))
@@ -381,6 +386,141 @@ var _ = Describe("CreateBucket and DeleteBucket", func() {
 			shard := ".dir." + rec.Info.Bucket.ID + "." + strconv.FormatUint(uint64(shardOf(rec, "__under")), 10)
 			seedIndexEntry(c, indexPool, shard, entry("_under", 1))
 			Expect(s.DeleteBucket(ctx, rec)).To(MatchError(op.ErrBucketNotEmpty), "parse_raw_oid unescapes __under into the empty namespace")
+		})
+		Describe("of a bucket whose index counts an entry no listing shows", func() {
+			// v1 is a version of k whose instance entry exists, counted by the
+			// class, with no list entry: the state a refused removal's ended
+			// relist, a replay's keep of a locked version or a failed versioned
+			// write leaves.
+			var (
+				v1          meta.ObjKey
+				versionMeta rgwcls.DirEntryMeta
+			)
+			BeforeEach(func() {
+				v1 = meta.ObjKey{Name: "k", Instance: "v1"}
+				versionMeta = rgwcls.DirEntryMeta{Category: rgwcls.CategoryMain, Size: 5, AccountedSize: 5, Mtime: indexMtime}
+			})
+			// openAt sets the cluster's release and opens a store over cl at it.
+			openAt := func(ctx context.Context, cl radosclient.Cluster, release string) *driver.Store {
+				GinkgoHelper()
+				c.SetRequiredOSDRelease(release)
+				st, err := driver.Open(ctx, cl, conf(nil), driver.Options{})
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(st.Close)
+				return st
+			}
+			addVersion := func(ctx context.Context, st *driver.Store, rec *op.BucketRecord) {
+				GinkgoHelper()
+				x := st.NewIndexOpForTest(rec, v1, "add-v1")
+				Expect(x.Prepare(ctx, rgwcls.OpAdd)).To(Succeed())
+				Expect(x.CompleteSync(ctx, rgwcls.EntryVer{Pool: 7, Epoch: 1}, versionMeta)).To(Succeed())
+			}
+			instanceEntry := func(rec *op.BucketRecord) bool {
+				_, ok := c.InstanceEntry(indexPool, "", ".dir."+rec.Info.Bucket.ID+"."+strconv.FormatUint(uint64(shardOf(rec, "k")), 10), rgwcls.ObjKey{Name: "k", Instance: "v1"})
+				return ok
+			}
+			counted := func(ctx context.Context, st *driver.Store, rec *op.BucketRecord) uint64 {
+				GinkgoHelper()
+				stats, err := st.BucketStats(ctx, rec)
+				Expect(err).NotTo(HaveOccurred())
+				return stats.NumObjects
+			}
+			listedNothing := func(ctx context.Context, st *driver.Store, rec *op.BucketRecord) {
+				GinkgoHelper()
+				res, err := st.ListObjects(ctx, rec, op.ListObjectsParams{ListVersions: true, MaxKeys: 100})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(res.Entries).To(BeEmpty(), "no listing shows v1")
+			}
+
+			DescribeTable("answers BucketNotEmpty and keeps the bucket and the version whole, through the admin index fix, until the version is removed",
+				func(ctx SpecContext, release string) {
+					st := openAt(ctx, c, release)
+					rec, err := st.CreateBucket(ctx, params("plain"))
+					Expect(err).NotTo(HaveOccurred())
+					addVersion(ctx, st, rec)
+					listedNothing(ctx, st, rec)
+					Expect(counted(ctx, st, rec)).To(BeEquivalentTo(1), "the class counts v1 on its instance entry's ADD")
+
+					Expect(st.DeleteBucket(ctx, rec)).To(MatchError(op.ErrBucketNotEmpty))
+					Expect(c.Object(rookMetaPool, rookRoot, "plain")).NotTo(BeNil(), "the entry point")
+					Expect(instances("plain")).To(HaveLen(1))
+					Expect(shards()).NotTo(BeEmpty(), "the index")
+					Expect(instanceEntry(rec)).To(BeTrue(), "v1's instance entry")
+					Expect(linked(ctx, st, aliceOwner)).To(HaveLen(1))
+					Expect(counted(ctx, st, rec)).To(BeEquivalentTo(1))
+
+					existing, calculated, err := st.CheckIndex(ctx, rec)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(calculated).To(Equal(existing), "check_index counts an instance entry that exists")
+					Expect(st.RebuildIndex(ctx, rec)).To(Succeed())
+					Expect(st.DeleteBucket(ctx, rec)).To(MatchError(op.ErrBucketNotEmpty), "the fix keeps v1's count")
+
+					x := st.NewIndexOpForTest(rec, v1, "del-v1")
+					Expect(x.Prepare(ctx, rgwcls.OpDel)).To(Succeed())
+					x.CompleteDel(rgwcls.EntryVer{Pool: 7, Epoch: 2}, indexMtime)
+					Expect(st.DeleteBucket(ctx, rec)).To(Succeed(), "v1's removal unaccounted it")
+					Expect(c.Object(rookMetaPool, rookRoot, "plain")).To(BeNil())
+					Expect(shards()).To(BeEmpty(), "clean_index")
+					Expect(linked(ctx, st, aliceOwner)).To(BeEmpty())
+				},
+				Entry("on Squid", "squid"),
+				Entry("on Tentacle", "tentacle"),
+			)
+
+			DescribeTable("deletes a bucket whose stored header counts entries its index does not hold, judging the recount",
+				func(ctx SpecContext, release string, stored uint64) {
+					st := openAt(ctx, c, release)
+					rec, err := st.CreateBucket(ctx, params("plain"))
+					Expect(err).NotTo(HaveOccurred())
+					seedShardHeader(c, indexPool, ".dir."+rec.Info.Bucket.ID+".3", rgwcls.DirHeader{Stats: map[uint8]rgwcls.CategoryStats{
+						rgwcls.CategoryMain: {NumEntries: stored},
+					}})
+					listedNothing(ctx, st, rec)
+					existing, calculated, err := st.CheckIndex(ctx, rec)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(existing["rgw.main"].NumObjects).To(Equal(stored))
+					Expect(calculated["rgw.main"].NumObjects).To(BeZero(), "check_index recounts from the index")
+					Expect(st.DeleteBucket(ctx, rec)).To(Succeed())
+					Expect(c.Object(rookMetaPool, rookRoot, "plain")).To(BeNil())
+					Expect(shards()).To(BeEmpty())
+				},
+				Entry("on Squid, three entries", "squid", uint64(3)),
+				Entry("on Tentacle, three entries", "tentacle", uint64(3)),
+				Entry("on Squid, a count decremented past zero", "squid", ^uint64(0)),
+				Entry("on Tentacle, a count decremented past zero", "tentacle", ^uint64(0)),
+			)
+
+			// rgw-go's index completions run in goroutines of their own, so
+			// a delete answered before DeleteBucket may not yet have reached
+			// the shard: here v1's removal is held there for 200 ms.
+			It("waits for the index completions this gateway sent for the bucket before it reads the counts", func(ctx SpecContext) {
+				ac := &aroundCluster{Cluster: c}
+				st := openAt(ctx, ac, "squid")
+				rec, err := st.CreateBucket(ctx, params("plain"))
+				Expect(err).NotTo(HaveOccurred())
+				addVersion(ctx, st, rec)
+				isDel := func(w *radosclient.WriteOp) bool {
+					for _, step := range w.Steps() {
+						if x, ok := step.(*radosclient.ExecStep); ok && x.Method == "bucket_complete_op" {
+							return rgwcls.DecodeCompleteOp(denc.NewDecoder(x.In)).Op == rgwcls.OpDel
+						}
+					}
+					return false
+				}
+				var landed atomic.Bool
+				ac.set(onFirstMatching(isDel, func(send sendFunc) (uint64, error) {
+					time.Sleep(200 * time.Millisecond)
+					defer landed.Store(true)
+					return send()
+				}))
+				x := st.NewIndexOpForTest(rec, v1, "del-v1")
+				Expect(x.Prepare(ctx, rgwcls.OpDel)).To(Succeed())
+				x.CompleteDel(rgwcls.EntryVer{Pool: 7, Epoch: 2}, indexMtime)
+				Expect(landed.Load()).To(BeFalse(), "the removal's completion is still held")
+				Expect(st.DeleteBucket(ctx, rec)).To(Succeed())
+				Expect(landed.Load()).To(BeTrue())
+				Expect(shards()).To(BeEmpty())
+			})
 		})
 		It("syncs the owner's stats before deleting and unlinks last", func(ctx SpecContext) {
 			rec, err := s.CreateBucket(ctx, params("plain"))

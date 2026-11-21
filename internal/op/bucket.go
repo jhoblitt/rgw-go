@@ -161,6 +161,10 @@ type BucketStore interface {
 	// ErrPermanentRedirect, before the store reads its index or removes
 	// anything: rgw-go has no zonegroup to leave its objects to.
 	DeleteBucket(ctx context.Context, rec *BucketRecord) error
+	// DeleteBucketPurged is DeleteBucket for a bucket a purge has emptied,
+	// which a store that checks the index for entries no listing shows
+	// removes without that check, as radosgw's removal does.
+	DeleteBucketPurged(ctx context.Context, rec *BucketRecord) error
 	// PutBucketInfo rewrites the instance from rec.Info, guarded by rec.Version.
 	PutBucketInfo(ctx context.Context, rec *BucketRecord) error
 	// PutBucketAttrs sets and removes instance xattrs, guarded by rec.Version.

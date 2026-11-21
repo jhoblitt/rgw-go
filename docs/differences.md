@@ -7366,9 +7366,140 @@ differ, rgw-go does the following.
     included, once.
   - An upload whose parts the key's object names ("AbortMultipartUpload
     leaves a completed upload's parts alone") is skipped with a warning and
-    counted, as radosgw counts the abort it makes of it; the delete goes on
-    and leaves its meta object and parts. The emptiness check lets the
-    delete reach it only for a head without a visible index entry.
+    counted, as radosgw counts the abort it makes of it. The emptiness
+    check lets the delete reach it only for a head without a visible index
+    entry, and its meta object's and parts' entries stay, so the index check
+    that follows refuses the bucket ("A bucket delete refuses a bucket whose
+    index counts an entry no listing shows"), where radosgw deletes the
+    bucket and leaves the meta object and parts.
+- **A bucket delete refuses a bucket whose index counts an entry no
+  listing shows.** radosgw decides that a bucket is empty from its listing
+  alone, in `RadosBucket::remove` and again in `check_bucket_empty`
+  ([rgw_sal_rados.cc:362-383](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L362-L383),
+  [rgw_sal_rados.cc:379-400](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L379-L400);
+  [rgw_rados.cc:5259-5304](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5259-L5304),
+  [rgw_rados.cc:5723-5768](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5723-L5768)),
+  and the listing holds no instance entry. So it deletes a bucket whose
+  remaining versions each have an instance entry and no list entry, and
+  leaves their heads and tails in the data pool
+  (`docs/ceph-upstream-bugs.md`, "[radosgw's bucket delete leaves the
+  objects of a version no listing
+  shows](ceph-upstream-bugs.md#radosgws-bucket-delete-leaves-the-objects-of-a-version-no-listing-shows)").
+  rgw-go keeps the listing check and adds an index check to an S3
+  DeleteBucket and to an admin bucket removal without `purge-objects`.
+  Once the listing reads empty and the bucket's uploads are aborted, the
+  delete waits for the index completions it sent for the bucket's entries,
+  claims the removal, and runs the class's read-only index check on every
+  shard of the generation it will remove. When the recount finds any entry
+  it answers 409 BucketNotEmpty, clears its claim and removes nothing
+  (`checkIndexCount`, `internal/driver/bucketops.go`).
+  - The recount counts a plain entry that exists with no flags and an
+    instance entry that exists
+    ([cls_rgw.cc:3035-3114](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L3035-L3114),
+    [cls_rgw.cc:3361-3432](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L3361-L3432)),
+    every category summed. So a version left stored and in no listing keeps
+    its bucket, whichever path left it: those "A refused versioned removal
+    re-links the version, unless a newer null write owns the null key", "A
+    replay keeps another writer's version whose object lock holds" and
+    "rgw-go removes the instance a failed versioned write made" list, and
+    radosgw's own failed links.
+  - The stored header is not used, since it can count more than the shard
+    holds: a null delete marker linked over existing data keeps that data's
+    `exists` flag, a recount, a reshard or the admin index fix counts it,
+    and its removal uncounts nothing (`docs/ceph-upstream-bugs.md`,
+    "[cls_rgw counts a null delete marker that replaced existing data once
+    its header is recounted](ceph-upstream-bugs.md#cls_rgw-counts-a-null-delete-marker-that-replaced-existing-data-once-its-header-is-recounted)").
+    A header that drifted so does not keep a bucket.
+  - A reshard that commits after the listing moves the index the removal
+    would remove: the delete compares the generation its claim read with
+    the one the listing read, and refuses when they differ; a retry lists
+    and counts the new one. A reshard that commits after the check is
+    refused too. Before the entry point is touched, the delete reads the
+    instance past the cache and refuses when its index generation is no
+    longer the one counted. The instance's removal is then sent under the
+    version the claim wrote, so any later write of the instance, a
+    reshard's commit included, fails it; the instance read again is not
+    removed when its generation moved, and the delete answers 409.
+  - When the instance's removal stops after the entry point's removal,
+    whether a reshard moved the index or the removal failed otherwise,
+    the delete writes the entry point back, exclusively, clears its claim,
+    and answers 409 for a moved generation or the removal's own error
+    otherwise; the bucket stands named, and a retry deletes it or refuses
+    it. An instance gone by then, a removal that landed though its reply
+    was lost, gets no entry point back. Two states can follow, each only
+    when a reshard, which an operator or radosgw makes, or a removal
+    failure lands in that window:
+    - A bucket of the same name created while the entry point is gone,
+      by any user, keeps the name, since the write back is exclusive and
+      must not take a name from a live bucket. The overtaken bucket's
+      instance, index and objects stay with no entry point, its owner's
+      bucket list still names its old id, and the error log names the
+      instance's id. No S3 request reaches it, and an admin removal by
+      name reaches the new bucket. The way out is the admin link of the
+      overtaken bucket by `bucket-id` under a `new-bucket-name`, then the
+      admin removal with `purge-objects` of that name.
+    - A second removal of the same bucket that runs to its end between
+      the first's refusal and its write back leaves an entry point naming
+      an instance that is gone. GetBucket of the name answers
+      NoSuchBucket, and CreateBucket of it answers NoSuchKey, until the
+      admin bucket removal of the name removes the dangling entry point.
+      The bucket was empty, so no data is involved.
+  - The admin bucket removal with `purge-objects`, and the user removal
+    with `purge-data`, which purge each bucket the same way, skip the check
+    (`DeleteBucketPurged`), as radosgw's removal does: an entry no listing
+    shows goes with the index, and its version's objects stay in the data
+    pool, as radosgw leaves them. It is the operator's way to remove a
+    bucket whose index holds an entry no request reaches.
+  - An entry still counted whose data is gone is in the index too, so the
+    recount keeps it, and an S3 delete is refused until the entry goes.
+    Two paths leave one: a version removal whose head went before a gateway
+    stop cut its index completion, and a version removal whose awaited
+    index completion failed (`removeHeadFlagged`,
+    `internal/driver/delete.go`), as a mixed fleet's radosgw also drops a
+    failed completion. The bucket's owner cannot remove such an entry
+    through S3; the admin removal with `purge-objects` removes the bucket.
+    The null data a refused null delete kept, its key's only version, stays
+    whole when a later delete naming `null` takes the marker ("A refused
+    versioned removal re-links the version, unless a newer null write owns
+    the null key"); it is counted with its head, unlisted once the marker
+    goes, and keeps the bucket as any unlisted version does, until a delete
+    naming `null` takes it.
+  - A multipart part's entry whose upload's meta entry is gone is a plain
+    entry the listing check skips and no abort removes, so it keeps the
+    bucket, where radosgw deletes the bucket and leaves the part. The admin
+    index check with `fix=true` removes such entries (`removeOrphanParts`,
+    `internal/op/adminbucket_index.go`), and the delete then goes on.
+  - A multipart meta entry whose meta object is gone, left when the meta
+    object's removal landed and its index DEL was lost, is skipped by the
+    bucket delete's abort as NoSuchUpload and counted by the recount, so
+    it keeps the bucket, where radosgw deletes the bucket and leaves the
+    entry. The admin index check with `fix=true` does not remove a meta
+    entry; the admin removal with `purge-objects` removes the bucket.
+  - The check comes after the multipart abort, as radosgw's second
+    listing check does, so a refused delete has aborted the bucket's
+    uploads: their parts and meta objects are counted until the abort
+    removes them.
+  - The check runs under the removal's claim on the bucket instance, which
+    the delete clears when it refuses. A clear that fails, its write of the
+    instance refused or lost, leaves the claim, and the bucket's metadata
+    writes, its ACL, policy, tagging, versioning, lifecycle and the rest,
+    answer 409 ConcurrentModification until the next delete of the bucket
+    claims it again and clears it, or removes the bucket. The delete logs
+    the claim it could not clear.
+  - The wait for this gateway's completions is bounded at 32 s, the cap on
+    a relist's retries; one that has not answered by then, held behind a
+    reshard or a call that never answers, makes the delete answer 409,
+    which a retry clears once it lands. Only this gateway's completions are
+    waited for. One that has not reached its shard when the recount runs
+    makes the delete answer 409 once, and the next one goes on: another
+    gateway's completion still in flight, a listing's removal of a
+    multipart part's entry, and the listing's `dir_suggest_changes` REMOVE
+    of an entry whose head is gone, which the listing sends without
+    waiting and drops when no slot is free.
+  - A version whose instance entry's ADD completion was lost is counted
+    nowhere, so the check does not see it, and the delete leaves its head.
+  - On a mixed fleet, radosgw's bucket delete and purge still delete a
+    bucket in this state and leave its versions' objects.
 - **A bucket delete removes the lifecycle entry once the bucket is gone.**
   For a bucket whose attrs carry `user.rgw.lc`, both gateways remove its
   entry from its lifecycle shard after the multipart abort, and neither
@@ -12213,17 +12344,19 @@ does the following.
   No listing shows a version left so. Lifecycle's expiration walks the
   bucket's listing, so it does not find one, and no rule expires it.
   DeleteBucket's emptiness check reads the same listing (`checkBucketEmpty`,
-  `internal/driver/bucketops.go`) and does not see it, so the bucket can be
-  deleted while it holds one: its index goes, the version's instance entry
-  with it, and the version's objects, its head and the tails it names, stay
-  in the data pool, counted by no quota.
-  radosgw's bucket delete behaves the same, because its emptiness check also
-  reads the listing, which holds no instance entry
+  `internal/driver/bucketops.go`) and does not see it, but the class's
+  recount of the bucket's index counts its instance entry, and DeleteBucket
+  refuses the bucket while it does ("A bucket delete refuses a bucket whose
+  index counts an entry no listing shows"), until the admin removal with
+  `purge-objects` removes it with the bucket. radosgw's bucket delete checks the listing alone, which holds no
+  instance entry
   ([rgw_rados.cc:5259-5301](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5259-L5301),
   [rgw_rados.cc:5723-5765](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5723-L5765);
   [cls_rgw.cc:194-244](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L194-L244),
-  [cls_rgw.cc:244-294](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L244-L294)).
-  Plan task V24 tracks both. What lists the version again is a
+  [cls_rgw.cc:244-294](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L244-L294)),
+  so on a mixed fleet it deletes such a bucket and leaves the version's head
+  and tails in the data pool, counted by no quota. Plan task V24 tracks
+  lifecycle and the listing. What lists the version again is a
   later delete of that version whose removal its write tag refuses, whose
   own relist links it, or on a mixed fleet radosgw's `PUT ?versionId=`
   naming it. On a mixed fleet, radosgw's replay still removes
@@ -13450,8 +13583,12 @@ does the following.
     [rgw_rados.cc:5723-5765](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5723-L5765);
     [cls_rgw.cc:194-244](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L194-L244),
     [cls_rgw.cc:244-294](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L244-L294)),
-    so a purged bucket whose last versions these are is removed with their
-    heads left in the data pool. The version stays readable by its id.
+    so radosgw's purge of a bucket whose last versions these are removes it
+    with their heads left in the data pool, and so does rgw-go's, which
+    skips the index check; an S3 DeleteBucket and an admin removal without
+    `purge-objects` refuse it while the index counts them ("A bucket delete
+    refuses a bucket whose index counts an entry no listing shows"). The
+    version stays readable by its id.
   - A writer whose gateway dies between its unlink and its replay leaves a
     locked version the same way, where radosgw's next replay removes it, and
     so does a writer whose request ends while its unlink, or a conditional

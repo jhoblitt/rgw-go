@@ -679,8 +679,9 @@ var _ = Describe("admin bucket ops", func() {
 						Expect(p).To(Equal(op.DeleteParams{}), "delete %d checks nothing, as rgw_remove_object passes no condition", i)
 					}
 					Expect(objects.Invocations()).To(HaveLen(1), "the deletes alone, no read of an object's attrs")
-					Expect(buckets.DeleteBucketCallCount()).To(Equal(1))
-					_, gone := buckets.DeleteBucketArgsForCall(0)
+					Expect(buckets.DeleteBucketPurgedCallCount()).To(Equal(1), "the purge's removal, which skips the store's index check")
+					Expect(buckets.DeleteBucketCallCount()).To(BeZero())
+					_, gone := buckets.DeleteBucketPurgedArgsForCall(0)
 					Expect(gone).To(BeIdenticalTo(rec))
 					if bypass {
 						Expect(admin.PurgeBypassGCCallCount()).To(Equal(1), "the bypass-gc data pass first")
@@ -712,10 +713,22 @@ var _ = Describe("admin bucket ops", func() {
 					Expect(objects.DeleteObjectCallCount()).To(Equal(2), "the first removed, the second failed, none after")
 					Expect(x.entries).To(Equal(listed()[1:]))
 					Expect(buckets.DeleteBucketCallCount()).To(BeZero())
+					Expect(buckets.DeleteBucketPurgedCallCount()).To(BeZero())
 				},
 				Entry("purge-objects", false),
 				Entry("bypass-gc", true),
 			)
+			It("removes a bucket without purge-objects through the store's checked delete", func(ctx SpecContext) {
+				rec := fake(ctx, meta.BucketVersioned)
+				x.entries = nil
+				d := op.NewRemoveBucketAdmin()
+				d.Bucket = "test"
+				Expect(run(ctx, d)).To(Succeed())
+				Expect(buckets.DeleteBucketCallCount()).To(Equal(1))
+				Expect(buckets.DeleteBucketPurgedCallCount()).To(BeZero())
+				_, gone := buckets.DeleteBucketArgsForCall(0)
+				Expect(gone).To(BeIdenticalTo(rec))
+			})
 		})
 	})
 

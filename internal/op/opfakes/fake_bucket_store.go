@@ -36,6 +36,18 @@ type FakeBucketStore struct {
 	deleteBucketReturnsOnCall map[int]struct {
 		result1 error
 	}
+	DeleteBucketPurgedStub        func(context.Context, *op.BucketRecord) error
+	deleteBucketPurgedMutex       sync.RWMutex
+	deleteBucketPurgedArgsForCall []struct {
+		arg1 context.Context
+		arg2 *op.BucketRecord
+	}
+	deleteBucketPurgedReturns struct {
+		result1 error
+	}
+	deleteBucketPurgedReturnsOnCall map[int]struct {
+		result1 error
+	}
 	GetBucketStub        func(context.Context, string, string) (*op.BucketRecord, error)
 	getBucketMutex       sync.RWMutex
 	getBucketArgsForCall []struct {
@@ -233,6 +245,68 @@ func (fake *FakeBucketStore) DeleteBucketReturnsOnCall(i int, result1 error) {
 		})
 	}
 	fake.deleteBucketReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeBucketStore) DeleteBucketPurged(arg1 context.Context, arg2 *op.BucketRecord) error {
+	fake.deleteBucketPurgedMutex.Lock()
+	ret, specificReturn := fake.deleteBucketPurgedReturnsOnCall[len(fake.deleteBucketPurgedArgsForCall)]
+	fake.deleteBucketPurgedArgsForCall = append(fake.deleteBucketPurgedArgsForCall, struct {
+		arg1 context.Context
+		arg2 *op.BucketRecord
+	}{arg1, arg2})
+	stub := fake.DeleteBucketPurgedStub
+	fakeReturns := fake.deleteBucketPurgedReturns
+	fake.recordInvocation("DeleteBucketPurged", []interface{}{arg1, arg2})
+	fake.deleteBucketPurgedMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *FakeBucketStore) DeleteBucketPurgedCallCount() int {
+	fake.deleteBucketPurgedMutex.RLock()
+	defer fake.deleteBucketPurgedMutex.RUnlock()
+	return len(fake.deleteBucketPurgedArgsForCall)
+}
+
+func (fake *FakeBucketStore) DeleteBucketPurgedCalls(stub func(context.Context, *op.BucketRecord) error) {
+	fake.deleteBucketPurgedMutex.Lock()
+	defer fake.deleteBucketPurgedMutex.Unlock()
+	fake.DeleteBucketPurgedStub = stub
+}
+
+func (fake *FakeBucketStore) DeleteBucketPurgedArgsForCall(i int) (context.Context, *op.BucketRecord) {
+	fake.deleteBucketPurgedMutex.RLock()
+	defer fake.deleteBucketPurgedMutex.RUnlock()
+	argsForCall := fake.deleteBucketPurgedArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *FakeBucketStore) DeleteBucketPurgedReturns(result1 error) {
+	fake.deleteBucketPurgedMutex.Lock()
+	defer fake.deleteBucketPurgedMutex.Unlock()
+	fake.DeleteBucketPurgedStub = nil
+	fake.deleteBucketPurgedReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *FakeBucketStore) DeleteBucketPurgedReturnsOnCall(i int, result1 error) {
+	fake.deleteBucketPurgedMutex.Lock()
+	defer fake.deleteBucketPurgedMutex.Unlock()
+	fake.DeleteBucketPurgedStub = nil
+	if fake.deleteBucketPurgedReturnsOnCall == nil {
+		fake.deleteBucketPurgedReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.deleteBucketPurgedReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
 }

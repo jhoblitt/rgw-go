@@ -556,6 +556,8 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [librados registers a service daemon again while it shuts down](#librados-registers-a-service-daemon-again-while-it-shuts-down) | none | none | ✓ |
 | [radosgw's CompleteMultipartUpload evaluates encryption condition keys from headers it ignores](#radosgws-completemultipartupload-evaluates-encryption-condition-keys-from-headers-it-ignores) | pending | pending | ✓ |
 | [radosgw decides a delete's object-lock check on bucket info loaded before object lock was enabled](#radosgw-decides-a-deletes-object-lock-check-on-bucket-info-loaded-before-object-lock-was-enabled) | pending | pending | ✓ |
+| [radosgw's bucket delete leaves the objects of a version no listing shows](#radosgws-bucket-delete-leaves-the-objects-of-a-version-no-listing-shows) | pending | pending | ✓ |
+| [cls_rgw counts a null delete marker that replaced existing data once its header is recounted](#cls_rgw-counts-a-null-delete-marker-that-replaced-existing-data-once-its-header-is-recounted) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -36571,3 +36573,119 @@ Every new entry adds its row to this table, in document order.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 task V24's adversarial review, re-run 1, 2026-11-20,
   reading both tags; derived from the source, not reproduced.
+
+## radosgw's bucket delete leaves the objects of a version no listing shows
+
+- **Kind:** defect, possibly security-relevant (quota accounting):
+  radosgw decides that a bucket is empty from its listing, which holds no
+  instance entry, so a bucket whose remaining versions each have an
+  instance entry and no list entry is deleted with those versions' heads
+  and tails left in the data pool. Unreproduced on radosgw: derived from
+  the source.
+- **Evidence:** paths are under `src/`; each pair of links is v19.2.7's,
+  then v20.2.4's.
+  - `RadosBucket::remove` lists the bucket unordered, versions included,
+    and refuses only on an entry it lists
+    ([rgw_sal_rados.cc:362-383](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L362-L383),
+    [rgw_sal_rados.cc:379-400](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L379-L400)).
+    `delete_bucket` checks again through `check_bucket_empty`
+    ([rgw_rados.cc:5320-5325](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5320-L5325)
+    and [rgw_rados.cc:5259-5304](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5259-L5304),
+    [rgw_rados.cc:5945-5950](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5945-L5950)
+    and [rgw_rados.cc:5723-5768](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5723-L5768)).
+    Both list through the class's listing, which drops every key in the
+    0x80 namespace, where instance entries live
+    ([cls_rgw.cc:194-244](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L194-L244),
+    [cls_rgw.cc:244-294](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L244-L294)).
+  - `delete_bucket` then removes the index shard objects whole
+    ([rgw_rados.cc:5368-5371](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5368-L5371),
+    [rgw_rados.cc:6008-6009](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6008-L6009)),
+    the instance entries with them, and nothing removes the objects they
+    name.
+  - The class counts a version on its instance entry's ADD
+    ([cls_rgw.cc:1168-1185](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1168-L1185),
+    [cls_rgw.cc:1301-1318](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1301-L1318))
+    and stops counting it only when a DEL of that entry completes
+    ([cls_rgw.cc:1127-1167](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1127-L1167),
+    [cls_rgw.cc:1261-1300](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1261-L1300)),
+    so the bucket's index header counts such a version up to the delete.
+  - radosgw reaches the state itself: a versioned write whose link fails
+    leaves its head and its completed instance entry
+    ([rgw_rados.cc:8715-8737](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8715-L8737),
+    [rgw_rados.cc:9461-9483](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9461-L9483)),
+    and `radosgw-admin bucket check unlinked` takes only instance entries
+    at versioned_epoch 0
+    ([rgw_bucket.cc:741](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L741),
+    [rgw_bucket.cc:892](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L892)).
+    An rgw-go gateway on the same pools reaches it too, through the paths
+    `docs/differences.md` lists under "A refused versioned removal re-links
+    the version, unless a newer null write owns the null key".
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** does not reproduce it in an S3 DeleteBucket or an admin
+  bucket removal without `purge-objects`. Once its listing reads empty and
+  the bucket's uploads are aborted, the delete waits for the index
+  completions this gateway sent for the bucket, claims the removal, and
+  runs the class's read-only index check on every shard of the generation
+  it will remove; any entry the recount finds answers 409 BucketNotEmpty,
+  with nothing removed (`Store.checkIndexCount`,
+  `internal/driver/bucketops.go`; `docs/differences.md`, "A bucket delete
+  refuses a bucket whose index counts an entry no listing shows"). The
+  admin removal with `purge-objects` skips the check and leaves such a
+  version's objects as radosgw does. On a mixed fleet radosgw's
+  DeleteBucket still deletes such a bucket.
+- **Upstream:** pending: sent to rgw-bug-reproduction.
+- **Found:** V21's task re-review 3 (N7), 2026-11-20, reading the bucket
+  delete against the versions a refused removal's relist leaves unlisted;
+  plan task V24. Derived from the source, not reproduced on radosgw.
+
+## cls_rgw counts a null delete marker that replaced existing data once its header is recounted
+
+- **Kind:** defect, accounting: a null delete marker linked over an
+  existing entry of its key gets an instance entry that keeps that entry's
+  `exists` flag. The bucket index header never
+  counts the marker, but the class's recount and a reshard do, and the
+  marker's removal uncounts nothing, so after a recount, a reshard or the
+  admin index fix the stored header stays one entry above the shard once
+  the marker is gone. Unreproduced on radosgw: derived from the source, and
+  reproduced in rgw-go's emulator of the class, which models these steps.
+- **Evidence:** paths are under `src/cls/rgw/`; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - `rgw_bucket_link_olh` reads the target entry with `obj.init(op.delete_marker)`
+    ([cls_rgw.cc:1670](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1670),
+    [cls_rgw.cc:1811](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1811)).
+    For a null delete marker, whose key has no instance, `read_key_entry`
+    reads the plain entry, or the null data's instance entry when the plain
+    entry is a version marker, when the key has no delete marker entry
+    ([cls_rgw.cc:946-978](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L946-L978),
+    [cls_rgw.cc:1076-1107](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1076-L1107)).
+  - `init_as_delete_marker` then sets the key, flags, meta and tag and
+    leaves `exists` as read
+    ([cls_rgw.cc:1350-1358](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1350-L1358),
+    [cls_rgw.cc:1476-1484](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1476-L1484)),
+    and the link writes the marker's instance entry so. The link writes the
+    header only to bump its version
+    ([cls_rgw.cc:1864](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1864),
+    [cls_rgw.cc:1999](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1999)).
+  - `check_index`, which `rebuild_index` writes over the header, counts an
+    instance entry that exists
+    ([cls_rgw.cc:3091-3107](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L3091-L3107),
+    [cls_rgw.cc:3411-3427](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L3411-L3427)),
+    and a reshard counts each copied entry with the same rule
+    ([cls_rgw_types.cc:386-413](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_types.cc#L386-L413),
+    [cls_rgw_types.cc:409-440](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_types.cc#L409-L440)).
+  - `rgw_bucket_unlink_instance` removes a delete marker's instance entry
+    with a plain omap removal, which uncounts nothing
+    ([cls_rgw.cc:1970-1979](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1970-L1979)
+    and [cls_rgw.cc:1377-1386](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1377-L1386),
+    [cls_rgw.cc:2117-2126](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2117-L2126)
+    and [cls_rgw.cc:772-787](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L772-L787)).
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** writes the same index through the class, so its stored
+  headers drift the same way. Its DeleteBucket does not read the stored
+  header: it decides on each shard's recount, which no removed marker
+  holds (`Store.checkIndexCount`, `internal/driver/bucketops.go`). The
+  emulator models the class's steps (`internal/testutil/fakerados/cls_rgw_olh.go`).
+- **Upstream:** pending.
+- **Found:** V24's task review, 2026-11-20, reading the class's accounting
+  against the null delete marker's link; reproduced in the emulator on both
+  releases.

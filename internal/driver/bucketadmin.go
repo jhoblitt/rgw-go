@@ -952,6 +952,14 @@ func (s *Store) releaseRemoval(ctx context.Context, cur *op.BucketRecord, err er
 	if !errors.Is(err, op.ErrConcurrentModification) {
 		return err
 	}
+	s.dropClaim(ctx, cur)
+	return op.ErrRemovalRaced
+}
+
+// dropClaim clears the claim of cur, a removal that will not go on, as
+// releaseRemoval describes, logging what it cannot clear: a claim left on
+// the instance fences the bucket's metadata writes (busyBucket).
+func (s *Store) dropClaim(ctx context.Context, cur *op.BucketRecord) {
 	claim := cur.Attrs[op.RemovingAttr]
 	for range maxRemoveRetries {
 		released := *cur
@@ -959,26 +967,25 @@ func (s *Store) releaseRemoval(ctx context.Context, cur *op.BucketRecord, err er
 		delete(released.Attrs, op.RemovingAttr)
 		perr := s.PutBucketInfo(ctx, &released)
 		if perr == nil {
-			return op.ErrRemovalRaced
+			return
 		}
 		if !errors.Is(perr, op.ErrConcurrentModification) {
-			slog.WarnContext(ctx, "could not clear a lost removal's claim", slog.String("bucket", cur.Info.Bucket.Name), slog.Any("error", perr))
-			return op.ErrRemovalRaced
+			slog.WarnContext(ctx, "could not clear a removal's claim", slog.String("bucket", cur.Info.Bucket.Name), slog.Any("error", perr))
+			return
 		}
 		next, gerr := s.rereadInstance(ctx, cur.Info.Bucket)
 		if gerr != nil {
 			if !errors.Is(gerr, op.ErrNoSuchBucket) {
-				slog.WarnContext(ctx, "could not read a lost removal's claim", slog.String("bucket", cur.Info.Bucket.Name), slog.Any("error", gerr))
+				slog.WarnContext(ctx, "could not read a removal's claim", slog.String("bucket", cur.Info.Bucket.Name), slog.Any("error", gerr))
 			}
-			return op.ErrRemovalRaced
+			return
 		}
 		if !bytes.Equal(next.Attrs[op.RemovingAttr], claim) {
-			return op.ErrRemovalRaced
+			return
 		}
 		cur = next
 	}
-	slog.WarnContext(ctx, "a lost removal's claim kept changing; leaving it", slog.String("bucket", cur.Info.Bucket.Name))
-	return op.ErrRemovalRaced
+	slog.WarnContext(ctx, "a removal's claim kept changing; leaving it", slog.String("bucket", cur.Info.Bucket.Name))
 }
 
 // UnlinkBucketOwner implements op.BucketAdminStore as
