@@ -2338,9 +2338,15 @@ from V21's adversarial harness, 2000 schedules a random family:
   `internal/driver/mp_complete.go`); the link's compare (`olhLinkFields` and `linkOLH` in
   `internal/driver/olh_index.go`, and `setOLH` in `internal/driver/olh.go`, which fills it); the
   transition's link (`linkVersion` and V22's `linkTransition` in `internal/driver/put_versioned.go`)
-  and `keepCurrent` in `internal/driver/lc_transition.go`; their specs; `docs/differences.md`, the
-  window's paragraph in the entry V22 adds ("A replay keeps a version a link lists again after it
-  read the log"); the registry entry V20 adds. **Cluster:** no.
+  and `keepCurrent` in `internal/driver/lc_transition.go`; for Behaviour 8, the record and its
+  consumer V24's lifecycle-and-listing PR adds (`recordUnlisted` and `settleUnlisted`) and the
+  stale-op rule the consumer shares with the abort (`expireStaleOps` in
+  `internal/driver/mp_abort.go`); their specs, the consumer's in
+  `internal/driver/delete_expect_test.go` and `internal/driver/lc_bucket_test.go`;
+  `docs/differences.md`, the window's paragraph in the entry V22 adds ("A replay keeps a version a
+  link lists again after it read the log") and the entry V24's lifecycle-and-listing PR adds
+  ("Lifecycle and a bucket delete list again a version a replay left unlisted"); the registry entry
+  V20 adds. **Cluster:** no.
 - **Security boundary:** the versioned write's replay; adversarial review applies (PP-14).
 - **Behaviour:**
   1. Each rgw-go linker reads the version's instance entry before its link, after its own last
@@ -2369,9 +2375,12 @@ from V21's adversarial harness, 2000 schedules a random family:
        CompleteMultipartUpload, and a lifecycle pass, for two minutes a version.
      - A link over a removal that then completes leaves the state this task closes. Giving way
        leaves the version as its removal leaves it: removed, or, where the remover stopped, stored
-       and unlisted. V24 makes lifecycle and DeleteBucket find that state, so the cost is a
-       version left unlisted after a stopped removal, as a relist that ends before its link leaves
-       one today. Add the path to V24's Behaviour 1 and to the differences entry it updates.
+       and unlisted. V24's lifecycle-and-listing PR finds that state only through its record, its
+       design (A), so the give-way records the version, and the record's consumer clears the stale
+       DEL before it lists the version again (Behaviour 8). The cost is then a version unlisted
+       until lifecycle's next pass or a bucket delete lists it again, as a relist that ends before
+       its link leaves one. Add the path to V24's Behaviour 1 and to the differences entry it
+       updates.
   3. A link that gives way answers:
      - the relist: as its give-way to a logged removal does today, nothing linked, and the delete
        whose refusal it serves answers ConcurrentModification
@@ -2406,7 +2415,34 @@ from V21's adversarial harness, 2000 schedules a random family:
      window paragraph and the registry entry V20 adds then name radosgw's links and replay alone as
      reaching it, and the registry entry's rgw-go line says what rgw-go's linkers do.
   7. The RADOS state stays radosgw's. The compares are OMAP_CMP steps in the link's own op, as V21's
-     and V22's are, and the waits only read. Nothing is written that radosgw does not write.
+     and V22's are, and the waits only read. Nothing is written that radosgw does not write. The
+     records Behaviour 8 adds go to V24's rgw-go object, which radosgw neither reads nor removes.
+  8. A give-way to a DEL still pending after the wait records the version, and the record's
+     consumer clears that DEL first. Under V24's design (A) lifecycle and DeleteBucket find only a
+     recorded version, and they list it again through the same relist, which would give way to the
+     same DEL:
+     - The relist, the transition and `keepCurrent`, each when it gives way to such a DEL, record
+       the version in V24's unlisted-version object, `rgw-go.unlisted.<bucket id>` (`recordUnlisted`
+       at that PR's head), under the OLH tag the linker read, before it answers. A version already
+       recorded, as a refused removal's is by its replay, takes the newer record. A record that
+       fails is logged, the linker answers as Behaviour 3 says, and the version is left as the
+       removal left it. The CompleteMultipartUpload retry records nothing: the upload's meta object
+       names its version, and the abort removes that version once it has canceled the ops pending
+       past the tag timeout (`expireStaleOps`), V24's Behaviour 1 path 4.
+     - The consumer (`settleUnlisted` at that PR's head), before it lists a recorded version again,
+       reads the version's instance entry and cancels each DEL pending there past the shard's tag
+       timeout, as `expireStaleOps` does for the abort (`internal/driver/mp_abort.go:387-435`), the
+       rule the class's `dir_suggest_changes` applies
+       ([cls_rgw.cc:2283-2299](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L2283-L2299),
+       [cls_rgw.cc:2453-2469](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L2453-L2469)).
+       A DEL younger than that keeps the record for the next pass, and no relist runs. V24's settle
+       age, 512 s, is past the default tag timeout, 120 s, so the DEL a give-way met is stale once
+       its record settles, unless a later removal sent another. V26 then holds this cancel to the
+       entry's own version, as it holds the abort's.
+     - Trace, before implementing: a version still stored under a stale DEL is one no delete was
+       answered success for, since a delete answers once its own replay has carried out its
+       removal. A path on which a delete was answered and its version stays has the consumer finish
+       that removal instead of listing the version again, and the specs pin it.
 - **Specs:** on both releases, against the emulator:
   - each linker landing in the window: a replay's removal of X parked after its prepare, once
     before its head removal and once before its index completion; then the relist, its epoch-0
@@ -2415,7 +2451,18 @@ from V21's adversarial harness, 2000 schedules a random family:
     says. X's head, instance entry and list entry are gone, the OLH does not name X, and a later
     PutObject of the key links;
   - the same with the removal held past the wait: each gives way, linking nothing, and X stays as
-    the removal left it;
+    the removal left it, recorded but for the CompleteMultipartUpload retry;
+  - Behaviour 8, with the remover stopped after its prepare, for the relist, the transition and
+    `keepCurrent`, and for the null version through the relist and the transition: once the record
+    has settled, lifecycle's pass, and DeleteBucket on a bucket without lifecycle, cancel the stale
+    DEL and list X again, DeleteBucket answering 409 as V24's consumer does. X is then removed by
+    its id and the bucket deletes, with no head, tail, index entry or record of X left;
+  - a DEL younger than the tag timeout when the consumer runs: the record is kept and nothing is
+    listed, and the next pass, once the DEL is stale, lists X;
+  - the remover's DEL completing after the give-way: the consumer finds X gone and drops the
+    record; a record that fails: the linker answers as Behaviour 3 says, logged;
+  - the CompleteMultipartUpload retry's give-way records nothing, and the abort, past the tag
+    timeout, removes X;
   - H5's shape: another removal takes X, a third request's replay trims, a later removal's prepare
     writes the placeholder, and the relist gives way;
   - a prepare landing between a linker's instance-entry read and its link refuses that link, for
@@ -2429,7 +2476,8 @@ from V21's adversarial harness, 2000 schedules a random family:
     them. No new acknowledged-and-kept outcome and no new lost delete;
   - V22's specs, and the interleavings V21's specs pin, stay as they are.
 - **Depends on:** V22 and V23. V23 also reworks the relists in `internal/driver/delete_versioned.go`,
-  so V25 goes after it. **PR:** one. **Brief:** about 60 lines.
+  so V25 goes after it. V24's lifecycle-and-listing PR too, whose record and consumer Behaviour 8
+  extends, so V25 goes after V24, as the Order has it. **PR:** one. **Brief:** about 70 lines.
 
 ### Task V26: a cancel never lowers an index entry below a landed write
 
@@ -3293,7 +3341,7 @@ recordings land one at a time through the controller.
 | 8 | V7b, V8b, V8c | V7a, V8a, V9 |
 | 9 | V11, V12b | V7b, V8b |
 | 10 | V12a, V14a | V11, V13d |
-| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22, then V23, then V25, then V24, then V26, then V27, then V28, then V29, then V30 | everything above, WP-22 |
+| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22, then V23, then V24, then V25, then V26, then V27, then V28, then V29, then V30 | everything above, WP-22 |
 
 - V10's recording PR is a cluster task the controller schedules after its first PR merges.
 - The critical path is V1, V3b, V4, V5a, V5b, V5c, V7a, V7b, V11, V14a, V15a. L and C start
