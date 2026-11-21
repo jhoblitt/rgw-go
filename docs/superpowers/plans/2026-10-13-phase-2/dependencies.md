@@ -70,6 +70,8 @@ flowchart LR
   t_S14["S14"]
   t_S15["S15"]
   t_S16["S16"]
+  t_S17["S17"]
+  t_S18["S18"]
   t_V2["V2"]:::ext
   t_V10["V10"]:::ext
   t_BC_10["BC-10"]:::ext
@@ -92,6 +94,8 @@ flowchart LR
   t_S9 --> t_S14
   t_S13 --> t_S15
   t_S13 --> t_S16
+  t_S14 --> t_S17
+  t_S14 --> t_S18
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_S3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s3-one-aws-correct-ispublic" "S3: one AWS-correct IsPublic"
@@ -108,6 +112,8 @@ flowchart LR
   click t_S14 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s14-a-deny-reads-the-request-context-amazon-s3-builds" "S14: a Deny reads the request context Amazon S3 builds"
   click t_S15 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s15-completemultipartupload-under-a-deny-on-s3x-amz-acl" "S15: CompleteMultipartUpload under a Deny on `s3:x-amz-acl`"
   click t_S16 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s16-a-denys-typed-operator-over-a-repeated-tag-key" "S16: a Deny's typed operator over a repeated tag key"
+  click t_S17 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s17-a-deny-reads-s3signatureage-s3tlsversion-and-s3locationconstraint" "S17: a Deny reads s3:signatureAge, s3:TlsVersion and s3:LocationConstraint"
+  click t_S18 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s18-a-date-deny-reads-every-w3c-time-form" "S18: a Date Deny reads every W3C time form"
   click t_V2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v2-meta-olh-head-types-and-bucket-helpers" "V2: meta OLH head types and bucket helpers"
   click t_V10 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v10-op-and-s3-putbucketversioning-and-getbucketversioning" "V10: op and s3, PutBucketVersioning and GetBucketVersioning"
   click t_BC_10 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-10-website-semantics-and-xml" "BC-10: Website semantics and XML"
@@ -134,6 +140,8 @@ flowchart LR
 - [S14](00-index.md#task-s14-a-deny-reads-the-request-context-amazon-s3-builds): a Deny reads the request context Amazon S3 builds
 - [S15](00-index.md#task-s15-completemultipartupload-under-a-deny-on-s3x-amz-acl): CompleteMultipartUpload under a Deny on `s3:x-amz-acl`
 - [S16](00-index.md#task-s16-a-denys-typed-operator-over-a-repeated-tag-key): a Deny's typed operator over a repeated tag key
+- [S17](00-index.md#task-s17-a-deny-reads-s3signatureage-s3tlsversion-and-s3locationconstraint): a Deny reads s3:signatureAge, s3:TlsVersion and s3:LocationConstraint
+- [S18](00-index.md#task-s18-a-date-deny-reads-every-w3c-time-form): a Date Deny reads every W3C time form
 
 ### F: floor 19.2.7
 
