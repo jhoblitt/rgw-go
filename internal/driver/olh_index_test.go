@@ -235,6 +235,10 @@ var _ = Describe("the OLH index operations", func() {
 			_, err := idx.GetOLH(ctx, other)
 			return err
 		}),
+		Entry("nullDataStored", func(ctx context.Context, other *op.ObjectState) error {
+			_, err := idx.NullDataStored(ctx, other)
+			return err
+		}),
 	)
 
 	Describe("unlinkInstance", func() {

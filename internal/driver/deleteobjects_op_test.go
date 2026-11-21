@@ -215,6 +215,55 @@ var _ = Describe("DeleteObjects over the RADOS store on a versioned bucket", fun
 		), "two delete markers over v1, the last current")
 	}
 
+	// A key naming null reads the null delete marker over k's versions;
+	// before its delete's init another writer replaces that marker, a second
+	// suspended delete's null marker or a null write conditional on no
+	// current version. The key's delete starts again from a fresh read and
+	// takes what replaced the marker, as DeleteObject's does, and the key is
+	// answered deleted.
+	DescribeTable("deletes a key naming null whose null marker another writer replaced before its unlink, taking the replacement",
+		func(ctx SpecContext, r denc.Release, writer string) {
+			s = openPutStore(ctx, c, r, map[string]string{"rgw_cache_enabled": "false", "rgw_multi_obj_del_max_aio": "1"},
+				time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC))
+			DeferCleanup(s.Close)
+			env = s.Env()
+			env.Authz = op.OwnerOnly{}
+			rec := bucket(ctx, "suspended")
+			rec.Info.Flags |= meta.BucketVersionsSuspended
+			Expect(s.PutBucketInfo(ctx, rec)).To(Succeed())
+			rec, err := s.GetBucket(ctx, "", "suspended")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(s.DeleteObject(ctx, rec, meta.ObjKey{Name: "k"}, op.DeleteParams{})).To(HaveField("DeleteMarker", true), "the null marker over v3")
+			settle(s)
+			head := rec.Info.Bucket.Marker + "_k"
+			c.BeforeWrite(testDataPool, "", head, func(*fakerados.Object) {
+				c.BeforeWrite(testDataPool, "", head, nil)
+				switch writer {
+				case "marker":
+					Expect(s.DeleteObject(ctx, rec, meta.ObjKey{Name: "k"}, op.DeleteParams{})).To(HaveField("DeleteMarker", true), "a second null marker")
+				case "conditional write":
+					_, perr := s.PutObject(ctx, rec, meta.ObjKey{Name: "k"}, strings.NewReader("new"),
+						op.PutParams{Attrs: attrsWithACL(initiator), Size: 3, IfNoneMatch: "*"})
+					Expect(perr).NotTo(HaveOccurred(), "the null write, If-None-Match: * while the marker is current")
+				}
+				settle(s)
+			})
+			results := multiDelete(ctx, "suspended", "1", op.DeleteObjectsEntry{Key: meta.ObjKey{Name: "k", Instance: "null"}})
+			Expect(results[0].Err).NotTo(HaveOccurred(), "the key's outcome")
+			Expect(results[0].DeleteMarker).To(Equal(writer == "marker"), "a delete marker taken, or the null write's data")
+			Expect(listed(rec, "k")).To(ConsistOf(
+				HaveField("Instance", "v3"), HaveField("Instance", "v2"), HaveField("Instance", "v1"),
+			), "nothing of the null version left")
+			st, err := s.StatObject(ctx, rec, meta.ObjKey{Name: "k"})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Key.Instance).To(Equal("v3"), "v3 current again")
+		},
+		Entry("a second null marker, on squid", denc.Squid, "marker"),
+		Entry("a second null marker, on tentacle", denc.Tentacle, "marker"),
+		Entry("a conditional null write, on squid", denc.Squid, "conditional write"),
+		Entry("a conditional null write, on tentacle", denc.Tentacle, "conditional write"),
+	)
+
 	It("ends in the state the same deletes reach one by one, each with its own update, deleting one at a time", func(ctx SpecContext) {
 		groupedRec, single := bucket(ctx, "grouped"), bucket(ctx, "single")
 		for _, res := range multiDelete(ctx, "grouped", "1", grouped()...) {

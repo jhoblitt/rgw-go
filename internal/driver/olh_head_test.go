@@ -977,6 +977,90 @@ var _ = Describe("the OLH head operations", func() {
 				map[uint64][]rgwcls.OLHLogEntry{3: {removal("v0", tagP)}, 4: {link("", tagQ)}}, []string{"v0"}),
 		)
 
+		// The head holds null data that none of the replay's removals takes:
+		// data an earlier delete's refused removal kept, its entry gone from
+		// the log with that delete's trim, as the unlink of the null delete
+		// marker that delete left meets it. The clear would remove the data
+		// with the head and leave its record counted in the index.
+		Describe("an unlink that leaves no version while the OLH head holds null data", func() {
+			nullHead := func() {
+				olhHead("2", info("", true), map[string][]byte{meta.AttrETag: []byte("etag\x00")})
+				head().Data = []byte("null-body")
+			}
+
+			DescribeTable("keeps the head, trimming in place of the clear, while the index holds the data's record",
+				func(ctx SpecContext, log map[uint64][]rgwcls.OLHLogEntry, opTag string, removed []string) {
+					nullHead()
+					idx.NullData = true
+					last, err := s.ApplyOLHLogForTest(ctx, idx, state(), log, opTag, nil)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(last).To(BeEquivalentTo(3))
+					Expect(idx.Methods()).To(Equal(append(removed, "nullDataStored", "trimLog")))
+					Expect(idx.Calls[len(idx.Calls)-1].Ver).To(BeEquivalentTo(3), "the trim to the last epoch")
+					Expect(head()).NotTo(BeNil(), "the OLH head")
+					Expect(head().Data).To(Equal([]byte("null-body")), "the null data")
+					Expect(head().Xattrs).To(HaveKeyWithValue(meta.AttrOLHVer, []byte("3")))
+				},
+				Entry("the writer's unlink of the null delete marker",
+					map[uint64][]rgwcls.OLHLogEntry{3: {unlink(tagP)}}, tagP, []string{}),
+				Entry("a reader's replay of another writer's unlink of the null delete marker",
+					map[uint64][]rgwcls.OLHLogEntry{3: {unlink(tagQ)}}, "", []string{}),
+				Entry("the unlink of a named version, the key's only one listed, whose removal it takes",
+					map[uint64][]rgwcls.OLHLogEntry{3: {unlink(tagP), removal("v1", tagP)}}, tagP, []string{"removeInstance"}),
+			)
+
+			It("clears the OLH once the index no longer holds the data's record", func(ctx SpecContext) {
+				nullHead()
+				_, err := s.ApplyOLHLogForTest(ctx, idx, state(), map[uint64][]rgwcls.OLHLogEntry{3: {unlink(tagP)}}, tagP, nil)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(idx.Methods()).To(Equal([]string{"nullDataStored", "clear"}))
+				Expect(head()).To(BeNil())
+			})
+
+			DescribeTable("clears the OLH, reading no record, once one of the replay's removals took the null version",
+				func(ctx SpecContext, removeErr error) {
+					nullHead()
+					idx.NullData = true
+					idx.RemoveErr = map[string]error{"": removeErr}
+					_, err := s.ApplyOLHLogForTest(ctx, idx, state(), map[uint64][]rgwcls.OLHLogEntry{3: {unlink(tagP), removal("", tagP)}}, tagP, nil)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(idx.Methods()).To(Equal([]string{"removeInstance", "clear"}))
+					Expect(head()).To(BeNil())
+				},
+				Entry("its removal landing", nil),
+				Entry("its removal finding its record gone", &radosclient.Error{Errno: int32(syscall.ENOENT)}),
+				Entry("its removal finding its head gone", fmt.Errorf("%w: the version has no head", op.ErrNoSuchKey)),
+			)
+
+			It("clears the OLH, reading no record, when the head holds no null data", func(ctx SpecContext) {
+				olhHead("2", info("", true), nil)
+				idx.NullData = true
+				_, err := s.ApplyOLHLogForTest(ctx, idx, state(), map[uint64][]rgwcls.OLHLogEntry{3: {unlink(tagP)}}, tagP, nil)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(idx.Methods()).To(Equal([]string{"clear"}))
+				Expect(head()).To(BeNil())
+			})
+
+			It("names the clear as the step left when the read of the record fails, and keeps the head once a run again finds it", func(ctx SpecContext) {
+				nullHead()
+				boom := errors.New("boom")
+				idx.NullDataErr = boom
+				st := state()
+				last, err := s.ApplyOLHLogForTest(ctx, idx, st, map[uint64][]rgwcls.OLHLogEntry{3: {unlink(tagP)}}, tagP, nil)
+				Expect(err).To(MatchError(boom))
+				Expect(last).To(BeEquivalentTo(3), "the head op landed")
+				tail, ok := driver.UnfinishedOLHTail(err)
+				Expect(ok).To(BeTrue(), "the error names the tail left")
+				Expect(tail).To(Equal(driver.OLHTail{Last: 3, Clear: true, HeldNull: true, OpTag: tagP}))
+				Expect(head()).NotTo(BeNil(), "nothing cleared")
+				idx.NullData, idx.NullDataErr = true, nil
+				n := len(idx.Calls)
+				Expect(s.FinishOLHLogForTest(ctx, idx, st, tail)).To(Succeed())
+				Expect(idx.Methods()[n:]).To(Equal([]string{"nullDataStored", "trimLog"}))
+				Expect(head().Data).To(Equal([]byte("null-body")), "the null data")
+			})
+		})
+
 		// radosgw removes every version its log names for removal, a link of
 		// the same version later in the log or not
 		// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8479-L8481 at v19.2.7,

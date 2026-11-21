@@ -127,14 +127,19 @@ var _ = Describe("DeleteObject with an expected state", func() {
 	)
 	now := func() time.Time { return time.Unix(0, clock.Load()).UTC() }
 	version := func(instance string) meta.ObjKey { return meta.ObjKey{Name: "k", Instance: instance} }
-	open := func(ctx context.Context, r denc.Release) {
+	// openWith opens the store at r with the options kv over conf's.
+	openWith := func(ctx context.Context, r denc.Release, kv map[string]string) {
 		GinkgoHelper()
 		var err error
-		s, err = driver.Open(ctx, ac, conf(nil), driver.Options{Release: &r})
+		s, err = driver.Open(ctx, ac, conf(kv), driver.Options{Release: &r})
 		Expect(err).NotTo(HaveOccurred())
 		driver.SetClock(s, now)
 		s.SetReshardWaitForTest(0)
 		driver.SetCondSleepForTest(s, func(context.Context, time.Duration) error { return nil })
+	}
+	open := func(ctx context.Context, r denc.Release) {
+		GinkgoHelper()
+		openWith(ctx, r, nil)
 	}
 	BeforeEach(func(ctx SpecContext) {
 		clock.Store(time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC).UnixNano())
@@ -2341,6 +2346,27 @@ var _ = Describe("DeleteObject with an expected state", func() {
 			suspend()
 			nullPut(ctx, "tag-old", "old")
 		}
+		// refusedNull leaves body, the null data of a suspended bucket's key,
+		// over v1 when older, kept below the null delete marker of a delete
+		// whose removal of it an attr write refused after the marker's link and
+		// whose relist ended before it linked, as it does when its gateway stops
+		// after the refused replay's trim: here its backstop passes at once.
+		refusedNull := func(ctx context.Context, older bool, body string) {
+			GinkgoHelper()
+			if older {
+				put(ctx, "v1")
+			}
+			suspend()
+			nullPut(ctx, "tag-old", body)
+			expect := head(ctx, "")
+			at(calls("bucket_link_olh"), 1, func() { attrWrite(ctx, "") })
+			driver.SetRelistBackstopForTest(s, time.Nanosecond)
+			_, err := del(ctx, "", op.DeleteParams{Expect: expect})
+			concurrent(err)
+			driver.SetRelistBackstopForTest(s, 0)
+			Expect(nullMarker()).To(BeTrue(), "the refused delete's marker stays")
+			Expect(olhHead().Data).NotTo(BeEmpty(), "the refusal kept the null data in the OLH head")
+		}
 
 		It("replaces the null version while the OLH head carries the expected write tag", func(ctx SpecContext) {
 			nullCurrent(ctx)
@@ -2781,6 +2807,345 @@ var _ = Describe("DeleteObject with an expected state", func() {
 			Expect(listed()).To(Equal([]string{""}))
 			settledOn(ctx, "")
 		})
+
+		// The null data, which has tails, stays stored and counted below the
+		// marker a refused null delete left (refusedNull). Each delete naming
+		// null then takes one version, the marker first, and with deleteV1 a
+		// delete of v1, the key's last listed version once the marker is gone,
+		// comes between the two. After each the bucket's count is the versions
+		// stored, the null data's record is in the index exactly while its head
+		// holds the data that a read naming null returns, and each tail belongs
+		// to the data stored or is queued for the garbage collector.
+		DescribeTable("deletes naming null after a refused null delete whose relist ended take the marker, then the data, leaving no record without its data",
+			func(ctx SpecContext, r denc.Release, older, deleteV1 bool) {
+				const chunk = 4096
+				openWith(ctx, r, map[string]string{"rgw_max_chunk_size": "4096", "rgw_obj_stripe_size": "4096"})
+				body := strings.Repeat("n", 3*chunk)
+				refusedNull(ctx, older, body)
+				nullStored := func() bool { return olhHead() != nil && len(olhHead().Data) > 0 }
+				tails := func() []string {
+					var out []string
+					for _, oid := range poolObjects(ctx, c, testDataPool, "") {
+						if strings.Contains(oid, "__shadow_") {
+							out = append(out, oid)
+						}
+					}
+					return out
+				}
+				Expect(tails()).To(HaveLen(2), "the null data's tails")
+				queued := func() map[string]bool {
+					out := map[string]bool{}
+					for i := range 32 {
+						for _, e := range c.GCEntries(gcPoolName, gcNS, fmt.Sprintf("gc.%d", i)) {
+							for _, o := range e.Chain {
+								out[o.Key.Name] = true
+							}
+						}
+					}
+					return out
+				}
+				check := func(step string) {
+					GinkgoHelper()
+					settle(s)
+					want := 0
+					if nullStored() {
+						want++
+					}
+					if versionHead("v1") != nil {
+						want++
+					}
+					Expect(c.Header(rookIndexPool, "", shard).Stats[rgwcls.CategoryMain].NumEntries).To(BeEquivalentTo(want), "%s: the index header's count of the versions stored", step)
+					stats, err := s.BucketStats(ctx, rec)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(stats.NumObjects).To(BeEquivalentTo(want), "%s: BucketStats", step)
+					_, recorded := instanceEntry("")
+					Expect(recorded).To(Equal(nullStored()), "%s: the null data's record is in the index exactly while its head holds the data", step)
+					if nullStored() {
+						st, err := s.StatObject(ctx, rec, version("null"))
+						Expect(err).NotTo(HaveOccurred(), "%s: a read naming null", step)
+						Expect(readBack(ctx, s, st, 0, st.Size)).To(Equal([]byte(body)), "%s: a read naming null returns the null data", step)
+					}
+					q := queued()
+					var unnamed []string
+					for _, t := range tails() {
+						if !nullStored() && !q[t] || nullStored() && q[t] {
+							unnamed = append(unnamed, t)
+						}
+					}
+					Expect(unnamed).To(BeEmpty(), "%s: tails neither the stored null data's nor, once it is gone, queued for the garbage collector", step)
+				}
+
+				check("after the refused delete")
+
+				Expect(del(ctx, "null", op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "null", DeleteMarker: true}), "the first delete naming null takes the marker")
+				Expect(nullMarker()).To(BeFalse())
+				check("after the first delete naming null")
+				Expect(nullStored()).To(BeTrue(), "the first delete naming null leaves the null data whole")
+				cur, err := s.StatObject(ctx, rec, version(""))
+				Expect(err).NotTo(HaveOccurred())
+				if older {
+					Expect(cur.Key.Instance).To(Equal("v1"), "the key reads the version below the marker")
+					Expect(listing(ctx, true)).To(Equal([]string{"k@v1"}), "ListObjectVersions")
+				} else {
+					// olh.info still names the marker that went, so a read of the
+					// key answers as for a current delete marker.
+					Expect([]bool{cur.Exists, cur.DeleteMarker}).To(Equal([]bool{false, true}), "the key reads no version, as a delete marker")
+					Expect(listing(ctx, true)).To(BeEmpty(), "ListObjectVersions")
+				}
+				if deleteV1 {
+					Expect(del(ctx, "v1", op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "v1"}), "the delete of v1")
+					Expect(versionHead("v1")).To(BeNil())
+					check("after the delete of v1")
+					Expect(nullStored()).To(BeTrue(), "the delete of v1 leaves the null data whole")
+					cur, err = s.StatObject(ctx, rec, version(""))
+					Expect(err).NotTo(HaveOccurred())
+					Expect([]bool{cur.Exists, cur.DeleteMarker}).To(Equal([]bool{false, false}), "the key reads no version, and no delete marker")
+					Expect(listing(ctx, true)).To(BeEmpty(), "ListObjectVersions")
+				}
+
+				Expect(del(ctx, "null", op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "null"}), "the second delete naming null takes the data")
+				Expect(nullStored()).To(BeFalse())
+				check("after the second delete naming null")
+				_, err = del(ctx, "null", op.DeleteParams{})
+				Expect(err).To(MatchError(op.ErrNoSuchKey), "a third delete naming null")
+
+				Expect(nullMarker()).To(BeFalse(), "no null delete marker entry")
+				q := queued()
+				for _, t := range tails() {
+					Expect(q).To(HaveKey(t), "tail %s, queued for the garbage collector", t)
+				}
+				if older && !deleteV1 {
+					Expect(listed()).To(Equal([]string{"v1"}))
+					settledOn(ctx, "v1")
+					return
+				}
+				Expect(olhHead()).To(BeNil(), "the key's head")
+				_, ok := c.OLHEntry(rookIndexPool, "", shard, "k")
+				Expect(ok).To(BeFalse(), "the key's OLH entry")
+				_, ok = c.Entry(rookIndexPool, "", shard, "k")
+				Expect(ok).To(BeFalse(), "the key's plain entry")
+				Expect(list()).To(BeEmpty(), "the key's list entries")
+			},
+			Entry("the key's only version, on squid", denc.Squid, false, false),
+			Entry("the key's only version, on tentacle", denc.Tentacle, false, false),
+			Entry("over an older version, on squid", denc.Squid, true, false),
+			Entry("over an older version, on tentacle", denc.Tentacle, true, false),
+			Entry("over an older version deleted once the marker is gone, on squid", denc.Squid, true, true),
+			Entry("over an older version deleted once the marker is gone, on tentacle", denc.Tentacle, true, true),
+		)
+
+		// A radosgw null write prepares its record, writes the OLH head and
+		// dies before its index completion: its record is a placeholder not
+		// marked as existing, which nothing counts. The delete of the key's
+		// last listed version clears the OLH, the head with that write's data
+		// included, as radosgw's replay clears it.
+		It("clears the OLH, the head included, when the null data the head holds has a record not marked as existing", func(ctx SpecContext) {
+			put(ctx, "v1")
+			suspend()
+			rw := newRGWWriter(c, s, rec, denc.Squid, "")
+			rw.Prepare(ctx)
+			rw.HeadWrite(ctx)
+			placeholder, ok := instanceEntry("")
+			Expect(ok).To(BeTrue(), "the null write's prepared record")
+			Expect(placeholder.Exists).To(BeFalse(), "a placeholder")
+			Expect(olhHead().Data).To(Equal([]byte("data-")), "the null write's data in the OLH head")
+			Expect(del(ctx, "v1", op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "v1"}))
+			settle(s)
+			Expect(olhHead()).To(BeNil(), "the OLH head")
+			_, ok = c.OLHEntry(rookIndexPool, "", shard, "k")
+			Expect(ok).To(BeFalse(), "the key's OLH entry")
+			Expect(c.Header(rookIndexPool, "", shard).Stats[rgwcls.CategoryMain].NumEntries).To(BeZero(), "the index header's count")
+		})
+
+		// The null data a refused null delete kept below its marker gets a
+		// legal hold once versioning is enabled again: first, while the marker
+		// is current, or after the delete's init. A delete naming null without
+		// Expect, as a request holding a bucket record read before object lock
+		// was turned on sends it, takes the marker. The class logs no removal
+		// for a marker's unlink, so no check after the replay removes the data
+		// below, whichever replay applies the unlink first.
+		DescribeTable("a delete naming null without Expect takes the null marker alone, whatever lock holds the null data below",
+			func(ctx SpecContext, r denc.Release, older bool, lock string, race bool) {
+				open(ctx, r)
+				refusedNull(ctx, older, "null-body")
+				rec.Info.Flags &^= meta.BucketVersionsSuspended
+				if lock == "first" {
+					holdWrite(ctx, "")
+				}
+				if race || lock == "after-init" {
+					at(calls("bucket_unlink_instance"), 1, func() {
+						if lock == "after-init" {
+							holdWrite(ctx, "")
+						}
+						if race {
+							Expect(s.UpdateOLHForTest(ctx, rec, head(ctx, ""))).To(Succeed(), "another reader's replay, before the delete's own")
+						}
+					})
+				}
+				Expect(del(ctx, "null", op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "null", DeleteMarker: true}))
+				settle(s)
+				Expect(nullMarker()).To(BeFalse(), "the marker taken")
+				Expect(olhHead()).NotTo(BeNil(), "the OLH head")
+				Expect(olhHead().Data).To(Equal([]byte("null-body")), "the null data kept")
+				_, held := olhHead().Xattrs[meta.AttrObjectLegalHold]
+				Expect(held).To(Equal(lock != "none"), "the null data's legal hold")
+				ie, ok := instanceEntry("")
+				Expect(ok).To(BeTrue(), "the null data's record")
+				Expect(ie.Exists).To(BeTrue(), "the null data's record, marked as existing")
+				want := 1
+				if older {
+					want = 2
+					Expect(listed()).To(Equal([]string{"v1"}), "v1 current, the null data unlisted")
+				}
+				Expect(c.Header(rookIndexPool, "", shard).Stats[rgwcls.CategoryMain].NumEntries).To(BeEquivalentTo(want), "the index header's count of the versions stored")
+			},
+			Entry("the key's only version, a hold first, another replay first, on squid", denc.Squid, false, "first", true),
+			Entry("the key's only version, a hold first, another replay first, on tentacle", denc.Tentacle, false, "first", true),
+			Entry("over an older version, a hold first, another replay first, on squid", denc.Squid, true, "first", true),
+			Entry("over an older version, a hold first, another replay first, on tentacle", denc.Tentacle, true, "first", true),
+			Entry("the key's only version, a hold first, its own replay, on squid", denc.Squid, false, "first", false),
+			Entry("the key's only version, a hold first, its own replay, on tentacle", denc.Tentacle, false, "first", false),
+			Entry("over an older version, a hold first, its own replay, on squid", denc.Squid, true, "first", false),
+			Entry("over an older version, a hold first, its own replay, on tentacle", denc.Tentacle, true, "first", false),
+			Entry("the key's only version, a hold after the init, another replay first, on squid", denc.Squid, false, "after-init", true),
+			Entry("the key's only version, a hold after the init, another replay first, on tentacle", denc.Tentacle, false, "after-init", true),
+			Entry("over an older version, a hold after the init, another replay first, on squid", denc.Squid, true, "after-init", true),
+			Entry("over an older version, a hold after the init, another replay first, on tentacle", denc.Tentacle, true, "after-init", true),
+			Entry("the key's only version, no lock, another replay first, on squid", denc.Squid, false, "none", true),
+			Entry("the key's only version, no lock, another replay first, on tentacle", denc.Tentacle, false, "none", true),
+		)
+
+		// A delete naming null without Expect reads the null marker; before its
+		// init, another writer replaces that marker: a second suspended
+		// delete's null marker, or a null write, conditional on no current
+		// version or not. The unlink's compare of the marker it read refuses
+		// the unlink, and the delete starts again from a fresh read and takes
+		// what is then the null version, as a later delete naming null would:
+		// the second marker, or the write's data.
+		DescribeTable("a delete naming null without Expect takes what replaced the null marker it read",
+			func(ctx SpecContext, r denc.Release, older bool, writer string) {
+				open(ctx, r)
+				if older {
+					put(ctx, "v1")
+				}
+				suspend()
+				nullPut(ctx, "tag-old", "old")
+				Expect(del(ctx, "", op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "null", DeleteMarker: true}))
+				settle(s)
+				Expect(nullMarker()).To(BeTrue(), "the null marker current")
+				before(inits, 1, func() {
+					switch writer {
+					case "marker":
+						Expect(del(ctx, "", op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "null", DeleteMarker: true}), "a second null marker")
+					case "write":
+						nullPut(ctx, "tag-new", "new")
+					case "conditional write":
+						_, err := s.PutObject(ctx, rec, version(""), strings.NewReader("new"), op.PutParams{Attrs: attrs, Size: 3, Tag: "tag-new", IfNoneMatch: "*"})
+						Expect(err).NotTo(HaveOccurred(), "the null write, If-None-Match: * while the marker is current")
+					}
+					settle(s)
+				})
+				want := &op.DeleteObjectResult{VersionID: "null", DeleteMarker: writer == "marker"}
+				Expect(del(ctx, "null", op.DeleteParams{})).To(Equal(want), "the delete takes what replaced the marker")
+				settle(s)
+				Expect(nullMarker()).To(BeFalse(), "no null delete marker")
+				_, ok := instanceEntry("")
+				Expect(ok).To(BeFalse(), "no null record")
+				if older {
+					Expect(olhHead().Data).To(BeEmpty(), "no null data in the OLH head")
+					Expect(listed()).To(Equal([]string{"v1"}))
+					settledOn(ctx, "v1")
+					return
+				}
+				Expect(olhHead()).To(BeNil(), "the key's head")
+				Expect(list()).To(BeEmpty(), "the key's list entries")
+				Expect(c.Header(rookIndexPool, "", shard).Stats[rgwcls.CategoryMain].NumEntries).To(BeZero(), "the index header's count")
+			},
+			Entry("a second null marker, over an older version, on squid", denc.Squid, true, "marker"),
+			Entry("a second null marker, over an older version, on tentacle", denc.Tentacle, true, "marker"),
+			Entry("a second null marker, the key's only version, on squid", denc.Squid, false, "marker"),
+			Entry("a null write, over an older version, on squid", denc.Squid, true, "write"),
+			Entry("a null write, over an older version, on tentacle", denc.Tentacle, true, "write"),
+			Entry("a conditional null write, over an older version, on squid", denc.Squid, true, "conditional write"),
+			Entry("a conditional null write, over an older version, on tentacle", denc.Tentacle, true, "conditional write"),
+			Entry("a conditional null write, the key's only version, on squid", denc.Squid, false, "conditional write"),
+			Entry("a conditional null write, the key's only version, on tentacle", denc.Tentacle, false, "conditional write"),
+		)
+
+		// A null delete marker's instance entry left under a plain entry that
+		// is no version marker, as only multisite's unlink at an older epoch
+		// leaves one, then an OLH clear and a suspended bucket's plain write:
+		// the class resolves null to the plain entry, and a delete naming null
+		// without Expect compares the marker's entry as absent, which refuses
+		// every try. It answers ConcurrentModification and removes nothing.
+		DescribeTable("a delete naming null whose compare of the null marker refuses every try answers ConcurrentModification, removing nothing",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				suspend()
+				nullPut(ctx, "tag-old", "plain-body")
+				pe, ok := c.Entry(rookIndexPool, "", shard, "k")
+				Expect(ok).To(BeTrue(), "the plain entry")
+				Expect(pe.Flags&rgwcls.FlagVerMarker).To(BeZero(), "no version marker")
+				orphan := rgwcls.DirEntry{Key: rgwcls.ObjKey{Name: "k"}, Flags: rgwcls.FlagVer | rgwcls.FlagDeleteMarker, VersionedEpoch: 3}
+				c.Object(rookIndexPool, "", shard).Omap[rgwcls.InstanceIndexKey(rgwcls.ObjKey{Name: "k"}, true)] = encode(orphan)
+				_, err := del(ctx, "null", op.DeleteParams{})
+				Expect(err).To(MatchError(op.ErrConcurrentModification))
+				Expect(err).NotTo(MatchError(op.ErrUnknown), "never UnknownError, 500")
+				settle(s)
+				Expect(olhHead()).NotTo(BeNil(), "the null data's head")
+				Expect(olhHead().Data).To(Equal([]byte("plain-body")), "the null data")
+				_, ok = c.Entry(rookIndexPool, "", shard, "k")
+				Expect(ok).To(BeTrue(), "the plain entry")
+			},
+			Entry("on squid", denc.Squid),
+			Entry("on tentacle", denc.Tentacle),
+		)
+
+		// A delete naming null with neither Expect nor a condition on the data
+		// reads the null data; before its init, a null delete marker links
+		// over that data and its removal is refused (refusedNull's). The class
+		// would unlink that marker in the data's place: the unlink's compare of
+		// the marker as absent refuses it, and the delete, read again, takes
+		// the marker and answers a delete marker, the data kept below as the
+		// refusal left it for the next delete naming null.
+		DescribeTable("a delete naming null that read the null data takes a null marker linked over it before its unlink, answering a delete marker",
+			func(ctx SpecContext, r denc.Release, older bool) {
+				open(ctx, r)
+				if older {
+					put(ctx, "v1")
+				}
+				suspend()
+				nullPut(ctx, "tag-old", "null-body")
+				before(inits, 1, func() {
+					expect := head(ctx, "")
+					at(calls("bucket_link_olh"), 1, func() { attrWrite(ctx, "") })
+					driver.SetRelistBackstopForTest(s, time.Nanosecond)
+					_, err := del(ctx, "", op.DeleteParams{Expect: expect})
+					concurrent(err)
+					driver.SetRelistBackstopForTest(s, 0)
+				})
+				Expect(del(ctx, "null", op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "null", DeleteMarker: true}))
+				settle(s)
+				Expect(nullMarker()).To(BeFalse(), "the marker taken")
+				Expect(olhHead().Data).To(Equal([]byte("null-body")), "the null data, kept whole")
+				_, ok := instanceEntry("")
+				Expect(ok).To(BeTrue(), "the null data's record")
+				want := 1
+				if older {
+					want = 2
+				}
+				Expect(c.Header(rookIndexPool, "", shard).Stats[rgwcls.CategoryMain].NumEntries).To(BeEquivalentTo(want), "the index header's count of the versions stored")
+				Expect(del(ctx, "null", op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "null"}), "the next delete naming null takes the data")
+				settle(s)
+				_, ok = instanceEntry("")
+				Expect(ok).To(BeFalse(), "the null data's record")
+				Expect(c.Header(rookIndexPool, "", shard).Stats[rgwcls.CategoryMain].NumEntries).To(BeEquivalentTo(want-1), "the index header's count")
+			},
+			Entry("the key's only version, on squid", denc.Squid, false),
+			Entry("the key's only version, on tentacle", denc.Tentacle, false),
+			Entry("over an older version, on squid", denc.Squid, true),
+			Entry("over an older version, on tentacle", denc.Tentacle, true),
+		)
 	})
 
 	// With no other writer refusing its link, a relist has no bound in time:
