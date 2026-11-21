@@ -1577,6 +1577,76 @@ var _ = Describe("the lifecycle bucket pass", func() {
 			Entry("an unbroken stream of other writers' links: unlisted at the bound", 2*driver.OLHAttempts, driver.OLHAttempts, Not(ContainElement("v1"))),
 		)
 
+		// As above, an unbroken stream of other writers' links leaves v1
+		// unlisted at the relist's bound; no one holds its id. The replay that
+		// refused its removal recorded it, and the first pass after the record
+		// settles lists it again before its rules, which then expire it.
+		It("lists again, once its record settles, a version a refused expiry's relist left unlisted, and expires it", func(ctx SpecContext) {
+			ac = &aroundCluster{Cluster: c}
+			open(ctx, map[string]string{"rgw_lc_max_wp_worker": "1"})
+			driver.SetCondSleepForTest(s, func(context.Context, time.Duration) error { return nil })
+			rec, key := versioned(ctx, 0, noncurrentRule("0"), "v1", "v2")
+			v1 := versionOf(ctx, rec, "k", "v1")
+			clk.Advance(lcDay)
+			var mu sync.Mutex
+			refused, relinks := false, 0
+			ac.set(func(w *radosclient.WriteOp, send sendFunc) (uint64, error) {
+				defer GinkgoRecover()
+				steps := w.Steps()
+				relink := callsMethod(steps, "bucket_link_olh") && slices.ContainsFunc(steps, func(st radosclient.Step) bool {
+					_, ok := st.(*radosclient.OmapCmpStep)
+					return ok
+				})
+				mu.Lock()
+				unlink := !refused && callsMethod(steps, "bucket_unlink_instance")
+				refused = refused || unlink
+				if relink {
+					relinks++
+				}
+				n := relinks
+				mu.Unlock()
+				switch {
+				case unlink:
+					ver, err := send()
+					st, rerr := s.ReadOLHHeadForTest(ctx, rec, v1.Key)
+					Expect(rerr).NotTo(HaveOccurred())
+					policy := encode(acl.DefaultPolicy(meta.UserOwner(meta.UserID{ID: "carol"}), "Carol"))
+					Expect(s.SetObjectAttrs(ctx, st, map[string][]byte{meta.AttrACL: policy}, nil)).To(Succeed())
+					return ver, err
+				case relink && n <= 2*driver.OLHAttempts:
+					putVersion(ctx, rec, "k", fmt.Sprintf("w%03d", n))
+				}
+				return send()
+			})
+			pass(ctx)
+			ac.set(nil)
+			Expect(versions(ctx, rec, "k")).NotTo(ContainElement("v1"), "the relist's bound left v1 unlisted")
+			st, err := s.StatObject(ctx, rec, v1.Key)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Exists).To(BeTrue(), "v1 is stored")
+			recorded := c.Object(rookIndexPool, "", driver.UnlistedOIDForTest(&rec.Info))
+			Expect(recorded).NotTo(BeNil())
+			Expect(recorded.Omap).To(HaveKey(driver.UnlistedKeyForTest(v1.Key)), "the refusing replay recorded v1")
+			before := notes.NotifyCallCount()
+
+			clk.Advance(driver.UnlistedSettle + lcDay)
+			pass(ctx)
+			newest := versions(ctx, rec, "k")
+			Expect(newest).To(HaveLen(1), "the rule expired every noncurrent version, v1 among them")
+			st, err = s.StatObject(ctx, rec, v1.Key)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(st.Exists).To(BeFalse(), "v1 is gone")
+			var expired []meta.ObjKey
+			for i := before; i < notes.NotifyCallCount(); i++ {
+				_, note := notes.NotifyArgsForCall(i)
+				expired = append(expired, note.Key)
+			}
+			Expect(expired).To(ContainElement(v1.Key), "the pass expired v1 as a listed version")
+			Expect(c.Object(rookIndexPool, "", driver.UnlistedOIDForTest(&rec.Info)).Omap).To(BeEmpty(), "its record is taken")
+			Expect(indexed(rec)).To(BeEquivalentTo(1), "the stats count the one version stored")
+			Expect(lcEntries(c)).To(HaveKeyWithValue(key, completed(key)))
+		})
+
 		It("checks the lock of a bucket whose object lock is set during the pass, on the version as read again", func(ctx SpecContext) {
 			open(ctx, map[string]string{"rgw_lc_max_wp_worker": "1"})
 			rec, _ := versioned(ctx, 0, noncurrentRule("0"))

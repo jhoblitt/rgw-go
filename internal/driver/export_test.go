@@ -328,6 +328,43 @@ func SetIndexAwaitForTest(s *Store, d time.Duration) { s.indexAwaitTimeout = d }
 // IndexAwaitCap is indexAwaitCap for the external specs.
 const IndexAwaitCap = indexAwaitCap
 
+// UnlistedSettle is unlistedSettle for the external specs.
+const UnlistedSettle = unlistedSettle
+
+// UnlistedOIDForTest is the name of info's unlisted-version object.
+func UnlistedOIDForTest(info *meta.BucketInfo) string { return unlistedOID(info) }
+
+// UnlistedKeyForTest is key's omap key in the unlisted-version object.
+func UnlistedKeyForTest(key meta.ObjKey) string { return unlistedKey(key) }
+
+// ParseUnlistedKeyForTest is parseUnlistedKey for the external specs.
+func ParseUnlistedKeyForTest(k string) (meta.ObjKey, bool) { return parseUnlistedKey(k) }
+
+// RunRelistForTest runs the writer's relist of v, a named version whose
+// unlink sent olhTag, as refusedRemoval runs it.
+func (s *Store) RunRelistForTest(ctx context.Context, rec *op.BucketRecord, v meta.ObjKey, olhTag []byte) error {
+	return s.runRelist(ctx, rec, v, func(ctx context.Context, clock *relistClock, rec *op.BucketRecord, v meta.ObjKey) error {
+		return s.relistVersion(ctx, clock, rec, v, olhTag)
+	})
+}
+
+// RecordUnlistedForTest is recordUnlisted for the external specs.
+func (s *Store) RecordUnlistedForTest(ctx context.Context, rec *op.BucketRecord, keys []meta.ObjKey, olhTag []byte) error {
+	return s.recordUnlisted(ctx, rec, keys, olhTag)
+}
+
+// PruneUnlistedForTest is pruneUnlisted for the external specs, as a replay
+// runs it once it has recorded keys.
+func (s *Store) PruneUnlistedForTest(ctx context.Context, rec *op.BucketRecord, keys []meta.ObjKey) {
+	s.pruneUnlisted(ctx, rec, keys)
+}
+
+// RelistUnlistedForTest is relistUnlisted with no stop for the external
+// specs.
+func (s *Store) RelistUnlistedForTest(ctx context.Context, rec *op.BucketRecord) (int, error) {
+	return s.relistUnlisted(ctx, rec, unlistedSettle, func() bool { return false })
+}
+
 // PendingCompletionsForTest is the number of bucket index completions
 // submitted or queued and not yet done.
 func (s *Store) PendingCompletionsForTest() int { return s.w.completions.pending() }

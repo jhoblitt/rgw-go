@@ -165,6 +165,11 @@ type BucketStore interface {
 	// which a store that checks the index for entries no listing shows
 	// removes without that check, as radosgw's removal does.
 	DeleteBucketPurged(ctx context.Context, rec *BucketRecord) error
+	// RelistUnlisted lists again, for a purge, every version the store
+	// recorded as left in no listing, however recent its record, so that
+	// the purge's listing deletes it, and returns how many it listed. A
+	// store that records none returns 0.
+	RelistUnlisted(ctx context.Context, rec *BucketRecord) (int, error)
 	// PutBucketInfo rewrites the instance from rec.Info, guarded by rec.Version.
 	PutBucketInfo(ctx context.Context, rec *BucketRecord) error
 	// PutBucketAttrs sets and removes instance xattrs, guarded by rec.Version.

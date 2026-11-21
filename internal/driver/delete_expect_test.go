@@ -95,8 +95,8 @@ func (h *writeHooks) around(op *radosclient.WriteOp, send sendFunc) (uint64, err
 }
 
 // removalPrepareKey is the instance whose removal w prepares, when w is a
-// replay's prepare of a version's removal, the one prepare that compares
-// index entries.
+// replay's prepare of a version's removal, the one prepare DEL that compares
+// index entries; a relist's reset compares the OLH entry in a prepare ADD.
 func removalPrepareKey(w *radosclient.WriteOp) (string, bool) {
 	steps := w.Steps()
 	if !slices.ContainsFunc(steps, func(st radosclient.Step) bool {
@@ -107,7 +107,8 @@ func removalPrepareKey(w *radosclient.WriteOp) (string, bool) {
 	}
 	for _, st := range steps {
 		if e, ok := st.(*radosclient.ExecStep); ok && e.Method == "bucket_prepare_op" {
-			return rgwcls.DecodePrepareOp(denc.NewDecoder(e.In)).Key.Instance, true
+			p := rgwcls.DecodePrepareOp(denc.NewDecoder(e.In))
+			return p.Key.Instance, p.Op == rgwcls.OpDel
 		}
 	}
 	return "", false
@@ -276,6 +277,33 @@ var _ = Describe("DeleteObject with an expected state", func() {
 			return ok
 		})
 	}
+	// resetPrepare takes the prepare ADD of version instance, the one a
+	// relist's reset of its instance record sends.
+	resetPrepare := func(instance string) func(*radosclient.WriteOp) bool {
+		return func(w *radosclient.WriteOp) bool {
+			for _, st := range w.Steps() {
+				if x, ok := st.(*radosclient.ExecStep); ok && x.Method == "bucket_prepare_op" {
+					p := rgwcls.DecodePrepareOp(denc.NewDecoder(x.In))
+					return p.Op == rgwcls.OpAdd && p.Key.Instance == instance
+				}
+			}
+			return false
+		}
+	}
+	// claimWrite takes a reader's compared rewrite of a record, its claim
+	// first: the one write that compares and sets an omap key.
+	claimWrite := func(w *radosclient.WriteOp) bool {
+		var cmp, set bool
+		for _, st := range w.Steps() {
+			switch st.(type) {
+			case *radosclient.OmapCmpStep:
+				cmp = true
+			case *radosclient.OmapSetStep:
+				set = true
+			}
+		}
+		return cmp && set
+	}
 	// afterListing arms fn to run once, just before the first later read of
 	// the key's OLH entry that directly follows a read of the listing: the
 	// read a named version's relist sends before its epoch-0 link
@@ -374,6 +402,22 @@ var _ = Describe("DeleteObject with an expected state", func() {
 	instanceEntry := func(instance string) (rgwcls.DirEntry, bool) {
 		return c.InstanceEntry(rookIndexPool, "", shard, rgwcls.ObjKey{Name: "k", Instance: instance})
 	}
+	// recordObject is the bucket's unlisted-version object, and records its
+	// omap keys, in order.
+	recordObject := func() *fakerados.Object {
+		return c.Object(rookIndexPool, "", driver.UnlistedOIDForTest(&rec.Info))
+	}
+	records := func() []string {
+		var out []string
+		if o := recordObject(); o != nil {
+			for k := range o.Omap {
+				out = append(out, k)
+			}
+		}
+		slices.Sort(out)
+		return out
+	}
+	recordOf := func(instance string) string { return driver.UnlistedKeyForTest(version(instance)) }
 	// nullMarker reports whether k holds the null delete marker's instance or
 	// list entry.
 	nullMarker := func() bool {
@@ -1108,6 +1152,436 @@ var _ = Describe("DeleteObject with an expected state", func() {
 				stats, err = s.BucketStats(ctx, rec)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(stats.NumObjects).To(BeEquivalentTo(1))
+			},
+			Entry("on Squid", denc.Squid),
+			Entry("on Tentacle", denc.Tentacle),
+		)
+
+		// The relist's bound left v1 unlisted, the bucket's last version, and
+		// the replay that refused its removal recorded it before its trim. A
+		// record younger than its settling age waits, so the index check
+		// refuses the bucket as before; once it has settled, DeleteBucket lists
+		// v1 again and refuses the bucket with v1 listed, which its owner then
+		// removes by its id.
+		DescribeTable("lists the last version a relist left unlisted again once its record settles, so its owner can remove it and delete the bucket",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				expect := head(ctx, "v1")
+				at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v1") })
+				for k := 1; k <= 2*driver.OLHAttempts; k++ {
+					before(relinks, k, func() { put(ctx, fmt.Sprintf("w%03d", k)) })
+				}
+				_, err := del(ctx, "v1", op.DeleteParams{Expect: expect})
+				concurrent(err)
+				settle(s)
+				ac.set(nil)
+				for _, instance := range listed() {
+					_, derr := del(ctx, instance, op.DeleteParams{})
+					Expect(derr).NotTo(HaveOccurred(), instance)
+				}
+				settle(s)
+				Expect(listing(ctx, true)).To(BeEmpty(), "no listing shows v1")
+				Expect(records()).To(Equal([]string{recordOf("v1")}), "the refusing replay recorded v1")
+
+				Expect(s.DeleteBucket(ctx, rec)).To(MatchError(ContainSubstring("its index holds 1 entries")), "the record has not settled; the index check refuses")
+				Expect(listing(ctx, true)).To(BeEmpty())
+				Expect(records()).To(Equal([]string{recordOf("v1")}))
+
+				clock.Add(int64(driver.UnlistedSettle))
+				err = s.DeleteBucket(ctx, rec)
+				Expect(err).To(MatchError(op.ErrBucketNotEmpty))
+				Expect(err).To(MatchError(ContainSubstring("1 versions no listing showed are listed again")))
+				Expect(listing(ctx, true)).To(Equal([]string{"k@v1"}), "ListObjectVersions shows v1")
+				Expect(records()).To(BeEmpty(), "its record is taken")
+				stats, err := s.BucketStats(ctx, rec)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(stats.NumObjects).To(BeEquivalentTo(1), "the header counts v1, the one version stored")
+				Expect(c.Object(rookMetaPool, rookRoot, ".bucket.meta.plain:"+rec.Info.Bucket.ID)).NotTo(BeNil(), "the bucket stands")
+
+				_, err = del(ctx, "v1", op.DeleteParams{})
+				Expect(err).NotTo(HaveOccurred())
+				settle(s)
+				Expect(versionHead("v1")).To(BeNil())
+				Expect(s.DeleteBucket(ctx, rec)).To(Succeed())
+				Expect(c.Object(rookIndexPool, "", shard)).To(BeNil(), "clean_index")
+				Expect(recordObject()).To(BeNil(), "the record object goes with the bucket")
+				Expect(c.Object(rookMetaPool, rookRoot, ".bucket.meta.plain:"+rec.Info.Bucket.ID)).To(BeNil())
+			},
+			Entry("on Squid", denc.Squid),
+			Entry("on Tentacle", denc.Tentacle),
+		)
+
+		// As above for a version another reader's replay kept for its legal
+		// hold, whose writer never replayed its unlink.
+		DescribeTable("lists the last version a replay kept for its legal hold again once its record settles",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				holdWrite(ctx, "v2")
+				Expect(s.UnlinkObjInstanceForTest(ctx, rec, version("v2"), driver.OLHUnlink{SkipUpdate: true})).To(Succeed())
+				Expect(s.UpdateOLHForTest(ctx, rec, head(ctx, ""))).To(Succeed(), "another reader's replay")
+				settle(s)
+				Expect(listed()).NotTo(ContainElement("v2"))
+				Expect(records()).To(Equal([]string{recordOf("v2")}), "the keeping replay recorded v2")
+				_, err := del(ctx, "v1", op.DeleteParams{})
+				Expect(err).NotTo(HaveOccurred())
+				settle(s)
+				Expect(listing(ctx, true)).To(BeEmpty())
+
+				clock.Add(int64(driver.UnlistedSettle))
+				Expect(s.DeleteBucket(ctx, rec)).To(MatchError(op.ErrBucketNotEmpty))
+				Expect(listing(ctx, true)).To(Equal([]string{"k@v2"}), "ListObjectVersions shows v2")
+				Expect(versionHead("v2").Xattrs).To(HaveKey(meta.AttrObjectLegalHold), "under its hold")
+				Expect(records()).To(BeEmpty())
+
+				off := objectlock.EncodeLegalHold(meta.ObjectLegalHold{Status: "OFF"})
+				Expect(s.SetObjectAttrs(ctx, head(ctx, "v2"), map[string][]byte{meta.AttrObjectLegalHold: off}, nil)).To(Succeed())
+				settle(s)
+				_, err = del(ctx, "v2", op.DeleteParams{})
+				Expect(err).NotTo(HaveOccurred())
+				settle(s)
+				Expect(versionHead("v2")).To(BeNil())
+				Expect(s.DeleteBucket(ctx, rec)).To(Succeed())
+				Expect(c.Object(rookIndexPool, "", shard)).To(BeNil())
+				Expect(recordObject()).To(BeNil())
+			},
+			Entry("on Squid", denc.Squid),
+			Entry("on Tentacle", denc.Tentacle),
+		)
+
+		DescribeTable("takes the record of a version listed again or gone, and of one that does not parse, and keeps one not yet settled",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				Expect(s.RecordUnlistedForTest(ctx, rec, []meta.ObjKey{version("v1"), version("v9")}, nil)).To(Succeed())
+				pool, err := c.Pool(ctx, rookIndexPool, "")
+				Expect(err).NotTo(HaveOccurred())
+				w := radosclient.NewWriteOp()
+				w.OmapSet(map[string][]byte{"junk": []byte("{")})
+				_, err = pool.Write(ctx, driver.UnlistedOIDForTest(&rec.Info), w, radosclient.OpFlagNone)
+				Expect(err).NotTo(HaveOccurred())
+				n, err := s.RelistUnlistedForTest(ctx, rec)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(n).To(BeZero())
+				Expect(records()).To(Equal([]string{recordOf("v1"), recordOf("v9")}), "the records not yet settled stay; the one that does not parse goes")
+
+				clock.Add(int64(driver.UnlistedSettle))
+				Expect(s.RecordUnlistedForTest(ctx, rec, []meta.ObjKey{version("v8")}, nil)).To(Succeed())
+				n, err = s.RelistUnlistedForTest(ctx, rec)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(n).To(BeZero(), "nothing to list again")
+				Expect(records()).To(Equal([]string{recordOf("v8")}), "v1 listed and v9 gone take theirs; v8's has not settled")
+				Expect(listed()).To(Equal([]string{"v1"}))
+			},
+			Entry("on Squid", denc.Squid),
+			Entry("on Tentacle", denc.Tentacle),
+		)
+
+		It("removes the record object with a purged bucket", func(ctx SpecContext) {
+			Expect(s.RecordUnlistedForTest(ctx, rec, []meta.ObjKey{version("v1")}, nil)).To(Succeed())
+			Expect(recordObject()).NotTo(BeNil())
+			Expect(s.DeleteBucketPurged(ctx, rec)).To(Succeed())
+			Expect(recordObject()).To(BeNil())
+			Expect(c.Object(rookIndexPool, "", shard)).To(BeNil())
+		})
+
+		// keptForHold leaves v2, with v1 below it, unlisted and recorded: a
+		// writer's unlink of v2 under a legal hold that its gateway never
+		// replayed, which another reader's replay keeps for the hold.
+		keptForHold := func(ctx context.Context) {
+			GinkgoHelper()
+			holdWrite(ctx, "v2")
+			Expect(s.UnlinkObjInstanceForTest(ctx, rec, version("v2"), driver.OLHUnlink{SkipUpdate: true})).To(Succeed())
+			Expect(s.UpdateOLHForTest(ctx, rec, head(ctx, ""))).To(Succeed(), "another reader's replay")
+			settle(s)
+			Expect(listed()).NotTo(ContainElement("v2"))
+			Expect(records()).To(Equal([]string{recordOf("v2")}))
+		}
+
+		// A record's key holds no NUL, which librados would cut an omap
+		// listing's start key at, so a reader pages past the first thousand
+		// records. Here the thousand records of versions gone sort first and
+		// v2's comes on the second page.
+		DescribeTable("lists again a version whose record lies past the first page of records",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v1")
+				put(ctx, "v2")
+				keptForHold(ctx)
+				gone := make([]meta.ObjKey, 0, 1000)
+				for i := range 1000 {
+					gone = append(gone, meta.ObjKey{Name: fmt.Sprintf("a%04d", i), Instance: "v1"})
+				}
+				Expect(s.RecordUnlistedForTest(ctx, rec, gone, nil)).To(Succeed())
+				Expect(records()).To(HaveLen(1001))
+				Expect(records()[1000]).To(Equal(recordOf("v2")), "v2's record sorts last")
+
+				clock.Add(int64(driver.UnlistedSettle))
+				n, err := s.RelistUnlistedForTest(ctx, rec)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(n).To(Equal(1), "v2, from the second page")
+				Expect(listed()).To(ContainElement("v2"))
+				Expect(records()).To(BeEmpty(), "every record taken, the versions gone and v2")
+			},
+			Entry("on Squid", denc.Squid),
+			Entry("on Tentacle", denc.Tentacle),
+		)
+
+		// onlyVersionRefused leaves v2, the key's only version, unlisted and
+		// recorded, with the record settled: its guarded delete refused, the
+		// relist ended at once by its backstop. The refused replay cleared the
+		// key's OLH, so the OLH tag the record carries, which it returns, is
+		// on no OLH entry any more.
+		onlyVersionRefused := func(ctx context.Context) []byte {
+			GinkgoHelper()
+			put(ctx, "v2")
+			tag := slices.Clone(olhHead().Xattrs[meta.AttrOLHIDTag])
+			expect := head(ctx, "v2")
+			at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v2") })
+			driver.SetRelistBackstopForTest(s, time.Nanosecond)
+			_, err := del(ctx, "v2", op.DeleteParams{Expect: expect})
+			concurrent(err)
+			driver.SetRelistBackstopForTest(s, 0)
+			settle(s)
+			Expect(olhHead()).To(BeNil(), "the refused replay cleared the key's OLH")
+			Expect(listed()).To(BeEmpty())
+			Expect(records()).To(Equal([]string{recordOf("v2")}))
+			clock.Add(int64(driver.UnlistedSettle))
+			return tag
+		}
+		// listedOnceCurrent checks v2 is k's one listed version, current.
+		listedOnceCurrent := func(ctx context.Context) {
+			GinkgoHelper()
+			settle(s)
+			Expect(listed()).To(Equal([]string{"v2"}), "v2, listed once")
+			Expect(currents()).To(Equal([]string{"v2"}), "and current")
+			Expect(listing(ctx, false)).To(Equal([]string{"k@v2"}), "a listing without versions shows k")
+			Expect(records()).To(BeEmpty())
+		}
+
+		// The first relist's link makes a new OLH under a fresh tag; the second
+		// would take that for an OLH made again and link v2 below it, taking
+		// its current flag, but finds v2 listed and links nothing.
+		DescribeTable("leaves the version current and listed once when the writer's relist and a reader's both run",
+			func(ctx SpecContext, r denc.Release, order []string, readerListed int) {
+				open(ctx, r)
+				tag := onlyVersionRefused(ctx)
+				for _, who := range order {
+					switch who {
+					case "writer":
+						Expect(s.RunRelistForTest(ctx, rec, version("v2"), tag)).To(Succeed())
+					case "reader":
+						n, err := s.RelistUnlistedForTest(ctx, rec)
+						Expect(err).NotTo(HaveOccurred())
+						Expect(n).To(Equal(readerListed))
+					}
+				}
+				listedOnceCurrent(ctx)
+			},
+			Entry("on Squid, the reader first", denc.Squid, []string{"reader", "writer"}, 1),
+			Entry("on Tentacle, the reader first", denc.Tentacle, []string{"reader", "writer"}, 1),
+			Entry("on Squid, the writer first", denc.Squid, []string{"writer", "reader"}, 0),
+			Entry("on Tentacle, the writer first", denc.Tentacle, []string{"writer", "reader"}, 0),
+		)
+
+		// The second reader runs just before the first reader's link, having
+		// read the record once the first claimed it.
+		DescribeTable("relists a recorded version once when two readers take its record",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				onlyVersionRefused(ctx)
+				second := -1
+				before(relinks, 1, func() {
+					n, err := s.RelistUnlistedForTest(ctx, rec)
+					Expect(err).NotTo(HaveOccurred())
+					second = n
+				})
+				first, err := s.RelistUnlistedForTest(ctx, rec)
+				Expect(err).NotTo(HaveOccurred())
+				Expect([]int{first, second}).To(Equal([]int{1, 0}), "the second reader finds the record claimed and leaves it")
+				listedOnceCurrent(ctx)
+			},
+			Entry("on Squid", denc.Squid),
+			Entry("on Tentacle", denc.Tentacle),
+		)
+
+		// The writer's relist goes below v3, the newest listed, and is parked
+		// at its reset's prepare while v3 is deleted, which clears the key's
+		// OLH, and a reader lists v2 again, current. The reset compares the OLH
+		// entry the writer read, so it is refused rather than taking the
+		// current flag the reader's link set, and the writer then finds v2
+		// listed.
+		DescribeTable("leaves the version current when a reader's link lands at the writer's reset",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v2")
+				put(ctx, "v3")
+				tag := slices.Clone(olhHead().Xattrs[meta.AttrOLHIDTag])
+				expect := head(ctx, "v2")
+				at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, "v2") })
+				driver.SetRelistBackstopForTest(s, time.Nanosecond)
+				_, err := del(ctx, "v2", op.DeleteParams{Expect: expect})
+				concurrent(err)
+				driver.SetRelistBackstopForTest(s, 0)
+				settle(s)
+				Expect(listed()).To(Equal([]string{"v3"}))
+				Expect(records()).To(Equal([]string{recordOf("v2")}))
+				clock.Add(int64(driver.UnlistedSettle))
+
+				reader := -1
+				before(resetPrepare("v2"), 1, func() {
+					_, derr := del(ctx, "v3", op.DeleteParams{})
+					Expect(derr).NotTo(HaveOccurred())
+					settle(s)
+					n, rerr := s.RelistUnlistedForTest(ctx, rec)
+					Expect(rerr).NotTo(HaveOccurred())
+					reader = n
+				})
+				Expect(s.RunRelistForTest(ctx, rec, version("v2"), tag)).To(Succeed())
+				Expect(reader).To(Equal(1), "the reader listed v2 at the writer's reset")
+				listedOnceCurrent(ctx)
+				en, ok := instanceEntry("v2")
+				Expect(ok).To(BeTrue())
+				Expect(en.Flags&rgwcls.FlagCurrent).NotTo(BeZero(), "v2's instance entry stays flagged current")
+			},
+			Entry("on Squid", denc.Squid),
+			Entry("on Tentacle", denc.Tentacle),
+		)
+
+		// A reader's client leaves once its claim has landed; the relist, the
+		// read after it and the claim's release or the record's removal run on.
+		DescribeTable("clears its claim when its client leaves during the relist",
+			func(ctx SpecContext, r denc.Release, lists bool) {
+				open(ctx, r)
+				onlyVersionRefused(ctx)
+				if !lists {
+					driver.SetRelistBackstopForTest(s, time.Nanosecond)
+					DeferCleanup(func() { driver.SetRelistBackstopForTest(s, 0) })
+				}
+				cctx, cancel := context.WithCancel(ctx)
+				defer cancel()
+				at(claimWrite, 1, cancel)
+				n, err := s.RelistUnlistedForTest(cctx, rec)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(cctx.Err()).To(HaveOccurred(), "the client left once the claim landed")
+				if lists {
+					Expect(n).To(Equal(1))
+					listedOnceCurrent(ctx)
+					return
+				}
+				Expect(n).To(BeZero())
+				Expect(records()).To(Equal([]string{recordOf("v2")}), "the record stays for the next reader")
+				Expect(string(recordObject().Omap[recordOf("v2")])).NotTo(ContainSubstring(`"claim"`), "without the claim")
+			},
+			Entry("on Squid, the relist listing the version", denc.Squid, true),
+			Entry("on Tentacle, the relist listing the version", denc.Tentacle, true),
+			Entry("on Squid, the relist ending at its backstop", denc.Squid, false),
+			Entry("on Tentacle, the relist ending at its backstop", denc.Tentacle, false),
+		)
+
+		// One write that records several versions has its prune examine two
+		// records for each: here the second write's two records lead the
+		// prune past them to the first two records, whose versions are gone.
+		DescribeTable("prunes two records for each record a write adds",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				keys := func(names ...string) []meta.ObjKey {
+					out := make([]meta.ObjKey, 0, len(names))
+					for _, n := range names {
+						out = append(out, meta.ObjKey{Name: n, Instance: "v1"})
+					}
+					return out
+				}
+				recorded := func(names ...string) []string {
+					out := make([]string, 0, len(names))
+					for _, k := range keys(names...) {
+						out = append(out, driver.UnlistedKeyForTest(k))
+					}
+					return out
+				}
+				first := keys("g1", "g2", "g3", "g4", "g5", "g6")
+				Expect(s.RecordUnlistedForTest(ctx, rec, first, nil)).To(Succeed())
+				s.PruneUnlistedForTest(ctx, rec, first)
+				Expect(records()).To(Equal(recorded("g1", "g2", "g3", "g4", "g5", "g6")), "a prune passes over the records its write added")
+				second := keys("h1", "h2")
+				Expect(s.RecordUnlistedForTest(ctx, rec, second, nil)).To(Succeed())
+				s.PruneUnlistedForTest(ctx, rec, second)
+				Expect(records()).To(Equal(recorded("g3", "g4", "g5", "g6", "h1", "h2")), "four examined: h1 and h2, then g1 and g2, whose versions are gone")
+			},
+			Entry("on Squid", denc.Squid),
+			Entry("on Tentacle", denc.Tentacle),
+		)
+
+		// Each round's refusal is won by its delete's own relist, and a delete
+		// by id then removes the version, leaving its record behind; each
+		// record write prunes the records it examines whose versions are gone.
+		DescribeTable("bounds the record object by the versions still unlisted",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				put(ctx, "v0")
+				for i := 1; i <= 10; i++ {
+					inst := fmt.Sprintf("p%02d", i)
+					put(ctx, inst)
+					expect := head(ctx, inst)
+					at(calls("bucket_unlink_instance"), 1, func() { attrWrite(ctx, inst) })
+					_, err := del(ctx, inst, op.DeleteParams{Expect: expect})
+					concurrent(err)
+					settle(s)
+					Expect(listed()).To(ContainElement(inst), "its own relist listed it again")
+					_, err = del(ctx, inst, op.DeleteParams{})
+					Expect(err).NotTo(HaveOccurred())
+					settle(s)
+				}
+				Expect(len(records())).To(BeNumerically("<=", 2), "records of ten versions gone, pruned as later records were written")
+			},
+			Entry("on Squid", denc.Squid),
+			Entry("on Tentacle", denc.Tentacle),
+		)
+
+		// The purge lists again every recorded version, however recent its
+		// record, before it lists the bucket, so it removes it with the rest.
+		DescribeTable("purges a version a replay kept and recorded, its record not yet settled",
+			func(ctx SpecContext, r denc.Release) {
+				const chunk = 4096
+				openWith(ctx, r, map[string]string{"rgw_max_chunk_size": "4096", "rgw_obj_stripe_size": "4096"})
+				put(ctx, "v1")
+				body := strings.Repeat("t", 3*chunk)
+				_, err := s.PutObject(ctx, rec, version("v2"), strings.NewReader(body), op.PutParams{Attrs: attrs, Size: int64(len(body))})
+				Expect(err).NotTo(HaveOccurred())
+				settle(s)
+				tails := func() []string {
+					var out []string
+					for _, oid := range poolObjects(ctx, c, testDataPool, "") {
+						if strings.Contains(oid, "__shadow") {
+							out = append(out, oid)
+						}
+					}
+					return out
+				}
+				Expect(tails()).To(HaveLen(2), "v2's tails")
+				keptForHold(ctx)
+
+				Expect(op.PurgeBucket(ctx, s.Env(), rec)).To(Succeed())
+				settle(s)
+				Expect(versionHead("v1")).To(BeNil())
+				Expect(versionHead("v2")).To(BeNil(), "v2's head")
+				queued := map[string]bool{}
+				for i := range 32 {
+					for _, e := range c.GCEntries(gcPoolName, gcNS, fmt.Sprintf("gc.%d", i)) {
+						for _, o := range e.Chain {
+							queued[o.Key.Name] = true
+						}
+					}
+				}
+				for _, t := range tails() {
+					Expect(queued).To(HaveKey(t), "tail %s, queued for the garbage collector", t)
+				}
+				Expect(c.Object(rookIndexPool, "", shard)).To(BeNil(), "the index")
+				Expect(recordObject()).To(BeNil(), "the record object")
+				Expect(c.Object(rookMetaPool, rookRoot, ".bucket.meta.plain:"+rec.Info.Bucket.ID)).To(BeNil(), "the bucket")
 			},
 			Entry("on Squid", denc.Squid),
 			Entry("on Tentacle", denc.Tentacle),
@@ -3040,6 +3514,38 @@ var _ = Describe("DeleteObject with an expected state", func() {
 			Entry("over an older version, on tentacle", denc.Tentacle, true, false),
 			Entry("over an older version deleted once the marker is gone, on squid", denc.Squid, true, true),
 			Entry("over an older version deleted once the marker is gone, on tentacle", denc.Tentacle, true, true),
+		)
+
+		// The null data a refused null delete kept, its relist ended, is the
+		// key's only version: once a delete naming null takes the marker, no
+		// listing shows the key. The refusing replay recorded the null data,
+		// and once that record settles DeleteBucket lists it again, current.
+		DescribeTable("lists again the null data a refused null delete kept once its record settles, so a delete naming null removes it and the bucket deletes",
+			func(ctx SpecContext, r denc.Release) {
+				open(ctx, r)
+				refusedNull(ctx, false, "body")
+				settle(s)
+				Expect(records()).To(Equal([]string{recordOf("")}), "the refusing replay recorded the null data")
+				Expect(del(ctx, "null", op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "null", DeleteMarker: true}))
+				settle(s)
+				Expect(listing(ctx, true)).To(BeEmpty(), "no listing shows the key")
+
+				clock.Add(int64(driver.UnlistedSettle))
+				Expect(s.DeleteBucket(ctx, rec)).To(MatchError(op.ErrBucketNotEmpty))
+				Expect(listing(ctx, true)).To(Equal([]string{"k@null"}), "ListObjectVersions shows the null data")
+				Expect(nullMarker()).To(BeFalse())
+				settledOn(ctx, "")
+				Expect(records()).To(BeEmpty())
+
+				Expect(del(ctx, "null", op.DeleteParams{})).To(Equal(&op.DeleteObjectResult{VersionID: "null"}))
+				settle(s)
+				Expect(olhHead()).To(BeNil())
+				Expect(s.DeleteBucket(ctx, rec)).To(Succeed())
+				Expect(c.Object(rookIndexPool, "", shard)).To(BeNil())
+				Expect(recordObject()).To(BeNil())
+			},
+			Entry("on Squid", denc.Squid),
+			Entry("on Tentacle", denc.Tentacle),
 		)
 
 		// A radosgw null write prepares its record, writes the OLH head and

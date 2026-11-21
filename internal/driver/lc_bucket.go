@@ -125,8 +125,10 @@ func (s *Store) lcCloudTier(rec *op.BucketRecord, class string) bool {
 // succeeds before anything is read; a stale entry is errLCStaleEntry, a
 // bucket without user.rgw.lc complete, and one whose configuration does not
 // decode failed. A bucket the predicate refuses now, given new rules since
-// its claim, fails, so either worker takes it again at its next pass. Then
-// each rule of the prefix map, in order (lcBucket.rule), and the abort of
+// its claim, fails, so either worker takes it again at its next pass. On a
+// bucket ever versioned, the versions a replay left unlisted are listed again
+// first (lcBucket.relistUnlisted), so that the rules act on them. Then each
+// rule of the prefix map, in order (lcBucket.rule), and the abort of
 // expired multipart uploads (lcBucket.multipart), each page on the bucket's
 // record as atPage reads it again.
 func (p *lcPass) run(ctx context.Context, w *lcWorker, c lcClaim, stopAt time.Time) error {
@@ -152,6 +154,9 @@ func (p *lcPass) run(ctx context.Context, w *lcWorker, c lcClaim, stopAt time.Ti
 	b := &lcBucket{
 		p: p, w: w, c: c, attr: attr, conf: conf, stopAt: stopAt,
 		versioned: rec.Info.Versioned(), enabled: rec.Info.VersioningEnabled(),
+	}
+	if b.versioned {
+		b.relistUnlisted(ctx, rec)
 	}
 	archive := s.zone.Zone.TierType == lcTierArchive
 	ops := conf.PrefixMap()
@@ -244,6 +249,25 @@ func (b *lcBucket) current(ctx context.Context) (*op.BucketRecord, error) {
 		return nil, fmt.Errorf("%w: %s now refused: %s %q", errLCChanged, b.c.entry.Bucket, reason, rule)
 	}
 	return rec, nil
+}
+
+// relistUnlisted lists again, before the pass's rules, the versions a replay
+// left unlisted in rec's bucket whose records have settled (Store.
+// relistUnlisted), starting none past stopAt as atPage reads it. radosgw's
+// pass finds versions
+// through its listing alone
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L365-L380 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L365-L380 at v20.2.4),
+// so no rule of its acts on such a version. A failure is logged and the
+// rules run on what is listed.
+func (b *lcBucket) relistUnlisted(ctx context.Context, rec *op.BucketRecord) {
+	n, err := b.p.s.relistUnlisted(ctx, rec, unlistedSettle, func() bool { return b.w.now().Unix() > b.stopAt.Unix() })
+	if err != nil {
+		slog.WarnContext(ctx, "lifecycle could not list again the versions a replay left unlisted", slog.String("bucket", b.c.entry.Bucket), slog.Any("error", err))
+	}
+	if n > 0 {
+		slog.InfoContext(ctx, "lifecycle listed again versions a replay left unlisted", slog.String("bucket", b.c.entry.Bucket), slog.Int("versions", n))
+	}
 }
 
 // noteChange keeps err, the first failure of an action's record check: the

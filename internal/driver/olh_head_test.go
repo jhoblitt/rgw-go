@@ -909,13 +909,13 @@ var _ = Describe("the OLH head operations", func() {
 			},
 			Entry("a named version, then the trim",
 				map[uint64][]rgwcls.OLHLogEntry{3: {link("v2", tagQ), removal("v1", tagQ)}}, "v1",
-				[]string{"removeInstance", "trimLog"}, false),
+				[]string{"removeInstance", "recordUnlisted", "trimLog", "pruneUnlisted"}, false),
 			Entry("a named version whose unlink left no version, then the clear",
 				map[uint64][]rgwcls.OLHLogEntry{3: {removal("v1", tagQ), unlink(tagQ)}}, "v1",
-				[]string{"removeInstance", "clear"}, true),
+				[]string{"removeInstance", "recordUnlisted", "clear", "pruneUnlisted"}, true),
 			Entry("the null version whose unlink left no version, then the trim in the clear's place, the OLH head holding its data",
 				map[uint64][]rgwcls.OLHLogEntry{3: {unlink(tagQ), removal("", tagQ)}}, "",
-				[]string{"removeInstance", "trimLog"}, false),
+				[]string{"removeInstance", "recordUnlisted", "trimLog", "pruneUnlisted"}, false),
 		)
 
 		// A link of the version landed after the replay read the log, so the
@@ -949,6 +949,72 @@ var _ = Describe("the OLH head operations", func() {
 				map[uint64][]rgwcls.OLHLogEntry{3: {unlink(tagQ), removal("", tagQ)}}, "", "", nil,
 				[]string{"removeInstance", "trimLog"}, false),
 		)
+
+		// The trim takes the removal of a version the replay refused or kept
+		// from the OLH log, which then names it nowhere: the replay records it
+		// first, before its head op, under the OLH tag it read the log under.
+		Describe("a version it refuses or keeps", func() {
+			refused := func() error { return fmt.Errorf("removing version %q: %w", "v1", driver.ErrRemovalRefused) }
+			locked := func() error { return fmt.Errorf("version %q: %w", "v0", driver.ErrRemovalLocked) }
+			relisted := func() error { return fmt.Errorf("version %q: %w", "v1", driver.ErrRemovalRelisted) }
+			log := func() map[uint64][]rgwcls.OLHLogEntry {
+				return map[uint64][]rgwcls.OLHLogEntry{3: {link("v2", tagP), removal("v1", tagP)}, 4: {removal("v0", tagQ)}}
+			}
+
+			DescribeTable("is recorded before the head op",
+				func(ctx SpecContext, opTag string, expect []byte, removeErr map[string]error, want []string) {
+					olhHead("2", info("v1", false), withPending(tagP, tagQ))
+					idx.RemoveErr = removeErr
+					last, err := s.ApplyOLHLogForTest(ctx, idx, state(), log(), opTag, expect)
+					refusal := errors.Is(removeErr["v1"], driver.ErrRemovalRefused)
+					Expect(err != nil).To(Equal(refusal), "only the writer's own refusal comes back")
+					Expect(errors.Is(err, driver.ErrRemovalRefused)).To(Equal(refusal))
+					Expect(last).To(BeEquivalentTo(4), "the replay landed")
+					var got []string
+					for _, k := range idx.Unlisted {
+						Expect(k.Name).To(Equal("k"))
+						got = append(got, k.Instance)
+					}
+					Expect(got).To(Equal(want))
+					for _, call := range idx.Calls {
+						if call.Method == "recordUnlisted" {
+							Expect(call.Writes).To(BeZero(), "before the head op")
+							Expect(call.Head.Attrs[meta.AttrOLHIDTag]).To(Equal([]byte(olhTag)), "under the OLH tag the log was read under")
+						}
+					}
+					if want == nil {
+						Expect(idx.Pruned).To(BeEmpty(), "nothing recorded, nothing pruned")
+						return
+					}
+					Expect(idx.Pruned).To(Equal([][]meta.ObjKey{idx.Unlisted}), "the prune takes the versions recorded")
+					Expect(idx.PrunedDetached).To(Equal([]bool{true}), "on a context no cancellation reaches")
+					ms := idx.Methods()
+					Expect(ms[len(ms)-2:]).To(Equal([]string{"trimLog", "pruneUnlisted"}), "after the head op and the trim")
+				},
+				Entry("the writer's own removal its expected tag refused", tagP, []byte("tx-own\x00"),
+					map[string]error{"v1": refused()}, []string{"v1"}),
+				Entry("another writer's removal kept for its lock", tagP, []byte("tx-own\x00"),
+					map[string]error{"v0": locked()}, []string{"v0"}),
+				Entry("one of each, in one record", tagP, []byte("tx-own\x00"),
+					map[string]error{"v1": refused(), "v0": locked()}, []string{"v1", "v0"}),
+				Entry("none for a removal a link listed again", "", nil,
+					map[string]error{"v1": relisted()}, []string(nil)),
+				Entry("none for removals that land", "", nil, nil, []string(nil)),
+			)
+
+			It("stops the replay before its head op when the record fails, leaving the log", func(ctx SpecContext) {
+				olhHead("2", info("v1", false), withPending(tagQ))
+				boom := errors.New("boom")
+				idx.RecordErr = boom
+				idx.RemoveErr = map[string]error{"v0": locked()}
+				last, err := s.ApplyOLHLogForTest(ctx, idx, state(), map[uint64][]rgwcls.OLHLogEntry{3: {removal("v0", tagQ)}}, "", nil)
+				Expect(err).To(MatchError(boom))
+				Expect(last).To(BeZero())
+				Expect(nWrites()).To(BeZero(), "no head op")
+				Expect(idx.Methods()).To(Equal([]string{"removeInstance", "recordUnlisted"}), "no trim")
+				Expect(head().Xattrs).To(HaveKey(meta.AttrOLHPendingPrefix+tagQ), "the entry's pending attr stays for the next replay")
+			})
+		})
 
 		DescribeTable("drops a removal of the null version that a later link of null data follows",
 			func(ctx SpecContext, log map[uint64][]rgwcls.OLHLogEntry, removed []string) {
@@ -1169,10 +1235,10 @@ var _ = Describe("the OLH head operations", func() {
 				},
 				Entry("then trims the log",
 					map[uint64][]rgwcls.OLHLogEntry{3: {link("v2", tagP), removal("v1", tagP), removal("v0", tagP)}},
-					[]string{"removeInstance", "removeInstance", "trimLog"}, false),
+					[]string{"removeInstance", "removeInstance", "recordUnlisted", "trimLog", "pruneUnlisted"}, false),
 				Entry("then clears a versionless OLH",
 					map[uint64][]rgwcls.OLHLogEntry{3: {removal("v1", tagP), unlink(tagP)}},
-					[]string{"removeInstance", "clear"}, true),
+					[]string{"removeInstance", "recordUnlisted", "clear", "pruneUnlisted"}, true),
 			)
 
 			It("reports a head op that fails instead, leaving the entry for the retry", func(ctx SpecContext) {
@@ -1222,8 +1288,8 @@ var _ = Describe("the OLH head operations", func() {
 					Expect(err).To(MatchError(driver.ErrRemovalRefused))
 					Expect(errors.Is(err, radosclient.ErrCanceled)).To(BeFalse(), "the clear another writer refused is not the caller's")
 					Expect(last).To(BeEquivalentTo(3))
-					Expect(idx.Methods()).To(Equal([]string{"removeInstance", "trimLog"}), "the clear's head removal was refused, so the index clear never ran")
-					Expect(idx.Calls[1].Ver).To(BeEquivalentTo(3))
+					Expect(idx.Methods()).To(Equal([]string{"removeInstance", "recordUnlisted", "trimLog", "pruneUnlisted"}), "the clear's head removal was refused, so the index clear never ran")
+					Expect(idx.Calls[2].Ver).To(BeEquivalentTo(3))
 					Expect(head()).NotTo(BeNil(), "the other writer's pending attr kept the head")
 					Expect(head().Xattrs).To(HaveKeyWithValue(meta.AttrOLHVer, []byte("3")))
 					Expect(head().Xattrs).NotTo(HaveKey(meta.AttrOLHPendingPrefix + tagP))
@@ -1268,7 +1334,7 @@ var _ = Describe("the OLH head operations", func() {
 					Expect(retry).To(BeFalse(), "running the tail again cannot restore the writer's tag")
 					Expect(errors.Is(err, driver.ErrRefusalUnsettled)).To(Equal(!final))
 					ms := idx.Methods()
-					Expect(ms[len(ms)-2:]).To(Equal([]string{"trimLog", "getOLH"}))
+					Expect(ms[len(ms)-3:]).To(Equal([]string{"trimLog", "getOLH", "pruneUnlisted"}))
 					if ownHeadRemovalLands {
 						Expect(head()).To(BeNil(), "the writer's head removal landed")
 					}

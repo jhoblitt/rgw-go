@@ -118,6 +118,20 @@ type FakeBucketStore struct {
 	putBucketInfoReturnsOnCall map[int]struct {
 		result1 error
 	}
+	RelistUnlistedStub        func(context.Context, *op.BucketRecord) (int, error)
+	relistUnlistedMutex       sync.RWMutex
+	relistUnlistedArgsForCall []struct {
+		arg1 context.Context
+		arg2 *op.BucketRecord
+	}
+	relistUnlistedReturns struct {
+		result1 int
+		result2 error
+	}
+	relistUnlistedReturnsOnCall map[int]struct {
+		result1 int
+		result2 error
+	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
 }
@@ -637,6 +651,71 @@ func (fake *FakeBucketStore) PutBucketInfoReturnsOnCall(i int, result1 error) {
 	fake.putBucketInfoReturnsOnCall[i] = struct {
 		result1 error
 	}{result1}
+}
+
+func (fake *FakeBucketStore) RelistUnlisted(arg1 context.Context, arg2 *op.BucketRecord) (int, error) {
+	fake.relistUnlistedMutex.Lock()
+	ret, specificReturn := fake.relistUnlistedReturnsOnCall[len(fake.relistUnlistedArgsForCall)]
+	fake.relistUnlistedArgsForCall = append(fake.relistUnlistedArgsForCall, struct {
+		arg1 context.Context
+		arg2 *op.BucketRecord
+	}{arg1, arg2})
+	stub := fake.RelistUnlistedStub
+	fakeReturns := fake.relistUnlistedReturns
+	fake.recordInvocation("RelistUnlisted", []interface{}{arg1, arg2})
+	fake.relistUnlistedMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *FakeBucketStore) RelistUnlistedCallCount() int {
+	fake.relistUnlistedMutex.RLock()
+	defer fake.relistUnlistedMutex.RUnlock()
+	return len(fake.relistUnlistedArgsForCall)
+}
+
+func (fake *FakeBucketStore) RelistUnlistedCalls(stub func(context.Context, *op.BucketRecord) (int, error)) {
+	fake.relistUnlistedMutex.Lock()
+	defer fake.relistUnlistedMutex.Unlock()
+	fake.RelistUnlistedStub = stub
+}
+
+func (fake *FakeBucketStore) RelistUnlistedArgsForCall(i int) (context.Context, *op.BucketRecord) {
+	fake.relistUnlistedMutex.RLock()
+	defer fake.relistUnlistedMutex.RUnlock()
+	argsForCall := fake.relistUnlistedArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2
+}
+
+func (fake *FakeBucketStore) RelistUnlistedReturns(result1 int, result2 error) {
+	fake.relistUnlistedMutex.Lock()
+	defer fake.relistUnlistedMutex.Unlock()
+	fake.RelistUnlistedStub = nil
+	fake.relistUnlistedReturns = struct {
+		result1 int
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *FakeBucketStore) RelistUnlistedReturnsOnCall(i int, result1 int, result2 error) {
+	fake.relistUnlistedMutex.Lock()
+	defer fake.relistUnlistedMutex.Unlock()
+	fake.RelistUnlistedStub = nil
+	if fake.relistUnlistedReturnsOnCall == nil {
+		fake.relistUnlistedReturnsOnCall = make(map[int]struct {
+			result1 int
+			result2 error
+		})
+	}
+	fake.relistUnlistedReturnsOnCall[i] = struct {
+		result1 int
+		result2 error
+	}{result1, result2}
 }
 
 func (fake *FakeBucketStore) Invocations() map[string][][]interface{} {

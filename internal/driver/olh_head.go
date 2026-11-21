@@ -95,6 +95,12 @@ var errRemovalRelisted = errors.New("a link listed the version again since its r
 // retention written after the writer's check is not removed with it, and
 // removes any other guarded only on the write tag it reads, as radosgw's
 // replay removes it.
+//
+// recordUnlisted records keys, versions of head's name whose removals the
+// replay refused or kept, in the bucket's unlisted-version object, with the
+// OLH tag head carries (Store.recordUnlisted), and pruneUnlisted, once the
+// replay's head op and trim are done, removes records of versions no longer
+// unlisted from that object (Store.pruneUnlisted).
 type olhIndex interface {
 	readLog(ctx context.Context, head *op.ObjectState, marker uint64) (rgw.ReadOLHLogRet, error)
 	trimLog(ctx context.Context, head *op.ObjectState, ver uint64) error
@@ -102,6 +108,8 @@ type olhIndex interface {
 	removeInstance(ctx context.Context, key meta.ObjKey, expectTag []byte, keepLocked bool) error
 	getOLH(ctx context.Context, head *op.ObjectState) (rgw.OLHEntry, error)
 	nullDataStored(ctx context.Context, head *op.ObjectState) (bool, error)
+	recordUnlisted(ctx context.Context, head *op.ObjectState, keys []meta.ObjKey) error
+	pruneUnlisted(ctx context.Context, keys []meta.ObjKey)
 }
 
 // olhCondGuard makes an init commit only on the OLH its caller evaluated a
@@ -482,6 +490,17 @@ func (s *Store) followOLH(ctx context.Context, head *op.ObjectState, update func
 // a version (docs/differences.md, "A replay keeps another writer's version
 // whose object lock holds").
 //
+// Each version so refused or kept stays unlisted unless its writer lists it
+// again or removes it, and the trim takes the only record of it from the OLH
+// log. So the replay records them in the bucket's unlisted-version object
+// before its head op (olhIndex.recordUnlisted), and a record that fails stops
+// the replay there, as a removal that fails does, its log left for a later
+// replay; a lifecycle pass or a bucket delete lists such a version again
+// (relistUnlisted). Once the head op and the trim or clear have run, the
+// replay prunes that object (olhIndex.pruneUnlisted), on a context its
+// caller's end does not cut, so that its reads and writes stay off the head
+// op's path; whatever it meets is logged and changes no answer.
+//
 // The head op is guarded on head's OLH tag and on olh.ver equal to the bytes
 // head was read with, where radosgw compares olh.ver in the OSD's u64 mode,
 // which librados' C API cannot send (docs/cgo-limitations.md). An apply that
@@ -558,6 +577,7 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 	}
 	var refused error
 	var keepHead, nullTaken bool
+	var unlisted []meta.ObjKey
 	for _, e := range removals {
 		own := opTag != "" && e.OpTag == opTag
 		var guard []byte
@@ -572,6 +592,7 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 		case guard != nil && errors.Is(err, errRemovalRefused):
 			refused = errors.Join(refused, fmt.Errorf("replaying the olh log of %s: removing version %q: %w", what, key.Instance, err))
 			keepHead = keepHead || key.Instance == ""
+			unlisted = append(unlisted, key)
 		case errors.Is(err, errRemovalRelisted):
 			slog.DebugContext(ctx, "a replay passes over a removal a link has listed the version again since",
 				slog.Any("error", err),
@@ -589,8 +610,14 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 				slog.String("bucket", head.Bucket.Info.Bucket.Name), slog.String("key", key.Name), slog.String("instance", key.Instance),
 				slog.String("op_tag", e.OpTag))
 			keepHead = keepHead || key.Instance == ""
+			unlisted = append(unlisted, key)
 		default:
 			return 0, fmt.Errorf("replaying the olh log of %s: removing version %q: %w", what, key.Instance, err)
+		}
+	}
+	if len(unlisted) > 0 {
+		if err := idx.recordUnlisted(ctx, head, unlisted); err != nil {
+			return 0, fmt.Errorf("replaying the olh log of %s: %w", what, err)
 		}
 	}
 	if err := s.writeOLHHead(ctx, head, w); err != nil {
@@ -613,7 +640,11 @@ func (s *Store) applyOLHLog(ctx context.Context, idx olhIndex, head *op.ObjectSt
 		last: last, clear: remove, keep: refused != nil, keepHead: keepHead,
 		heldNull: !keepHead && !nullTaken && holdsNullData(head), opTag: opTag,
 	}
-	if err := s.finishOLHLog(ctx, idx, head, t); err != nil {
+	err := s.finishOLHLog(ctx, idx, head, t)
+	if len(unlisted) > 0 {
+		idx.pruneUnlisted(context.WithoutCancel(ctx), unlisted)
+	}
+	if err != nil {
 		return last, errors.Join(err, refused)
 	}
 	return last, refused

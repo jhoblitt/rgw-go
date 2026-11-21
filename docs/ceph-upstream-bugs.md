@@ -558,6 +558,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw decides a delete's object-lock check on bucket info loaded before object lock was enabled](#radosgw-decides-a-deletes-object-lock-check-on-bucket-info-loaded-before-object-lock-was-enabled) | pending | pending | ✓ |
 | [radosgw's bucket delete leaves the objects of a version no listing shows](#radosgws-bucket-delete-leaves-the-objects-of-a-version-no-listing-shows) | pending | pending | ✓ |
 | [cls_rgw counts a null delete marker that replaced existing data once its header is recounted](#cls_rgw-counts-a-null-delete-marker-that-replaced-existing-data-once-its-header-is-recounted) | pending | pending | ✓ |
+| [radosgw's bucket delete leaves the OLH head of a key whose last delete could not clear it](#radosgws-bucket-delete-leaves-the-olh-head-of-a-key-whose-last-delete-could-not-clear-it) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -35995,13 +35996,14 @@ Every new entry adds its row to this table, in document order.
   listing links nothing that a removal of that version pending in the log
   precedes, a relist that ends before its link leaves that version stored
   and counted, with or without a lock, and out of every listing and
-  lifecycle pass. A request naming the version's id reads it. Where it was
+  lifecycle pass until a lifecycle pass or a bucket delete lists it again
+  from the record the refused replay wrote before its trim. A request naming the version's id reads it. Where it was
   the key's current version the key no longer does: after a delete naming
   the version's id, `null` included, the key reads the next older version
   listed, or answers 404 when none is, except that a delete naming `null`
   where null was the key's only version leaves the key reading the null
   data, in the OLH head the refused replay kept, while no listing shows the
-  key (tracked by plan task V24). After a suspended bucket's delete of the
+  key. After a suspended bucket's delete of the
   null version the null delete marker that delete wrote stays current once
   it has answered 409, so the key answers 404 and a delete naming `null`
   takes the marker before the data; where that marker demoted a version
@@ -36629,10 +36631,20 @@ Every new entry adds its row to this table, in document order.
   it will remove; any entry the recount finds answers 409 BucketNotEmpty,
   with nothing removed (`Store.checkIndexCount`,
   `internal/driver/bucketops.go`; `docs/differences.md`, "A bucket delete
-  refuses a bucket whose index counts an entry no listing shows"). The
-  admin removal with `purge-objects` skips the check and leaves such a
-  version's objects as radosgw does. On a mixed fleet radosgw's
-  DeleteBucket still deletes such a bucket.
+  refuses a bucket whose index counts an entry no listing shows"). Its
+  replay records each version it leaves so, a removal its writer's write
+  tag refused or another writer's removal it kept for an object lock, in an
+  object of rgw-go's own before its trim, and a lifecycle pass or a bucket
+  delete lists each again once that record has settled, the delete
+  answering 409 with them listed, so the bucket's owner can remove them by
+  id (`relistUnlisted`, `internal/driver/unlisted.go`; `docs/differences.md`,
+  "Lifecycle and a bucket delete list again a version a replay left
+  unlisted"). The admin removal with `purge-objects` lists those recorded
+  versions again first, whatever the age of their records, and removes
+  them; it skips the check and leaves any other such version's objects as
+  radosgw does. On a mixed fleet
+  radosgw's DeleteBucket still deletes such a bucket, and its lifecycle
+  lists none of these versions.
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** V21's task re-review 3 (N7), 2026-11-20, reading the bucket
   delete against the versions a refused removal's relist leaves unlisted;
@@ -36689,3 +36701,56 @@ Every new entry adds its row to this table, in document order.
 - **Found:** V24's task review, 2026-11-20, reading the class's accounting
   against the null delete marker's link; reproduced in the emulator on both
   releases.
+
+## radosgw's bucket delete leaves the OLH head of a key whose last delete could not clear it
+
+- **Kind:** defect, cosmetic: a RADOS object with no data, the key's OLH
+  head with its OLH attrs, left in the data pool once its bucket is gone.
+  Not security-relevant: no stats count the head and it holds no data.
+  Unreproduced on radosgw: derived from the source, and reproduced on rgw-go
+  in its RADOS emulator.
+- **Evidence:** paths are under `src/`; each pair of links is v19.2.7's,
+  then v20.2.4's.
+  - The delete of a key's last version clears its OLH through `clear_olh`,
+    which removes the head only while no pending attr is on it and
+    otherwise answers ECANCELED before it clears the index entry
+    ([rgw_rados.cc:8617-8624](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8617-L8624),
+    [rgw_rados.cc:9363-9370](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9363-L9370)).
+    `apply_olh_log` takes that for success and trims nothing
+    ([rgw_rados.cc:8550-8556](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8550-L8556),
+    [rgw_rados.cc:9296-9302](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9296-L9302)),
+    so the head stays, and the key's version marker and OLH entry stay in
+    the index. A pending attr is left there by a writer that stopped
+    between its init and its link or cancel, and the head is left with
+    none by the DeleteObjects race in "[radosgw's DeleteObjects leaves an
+    OLH head with no version when a skipped delete's pending attr refuses
+    another replay's
+    clear](#radosgws-deleteobjects-leaves-an-olh-head-with-no-version-when-a-skipped-deletes-pending-attr-refuses-another-replays-clear)".
+  - The bucket delete's emptiness checks see neither: the class's listing
+    skips a version marker
+    ([cls_rgw.cc:603-607](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L603-L607),
+    [cls_rgw.cc:653-657](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L653-L657);
+    [cls_rgw_types.h:458-460](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw_types.h#L458-L460),
+    [cls_rgw_types.h:458-460](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw_types.h#L458-L460))
+    and every key in the 0x80 namespace, the OLH entry's
+    ([cls_rgw.cc:194-244](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L194-L244),
+    [cls_rgw.cc:244-294](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L244-L294)).
+    `delete_bucket` then removes the index shard objects
+    ([rgw_rados.cc:5368-5371](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5368-L5371),
+    [rgw_rados.cc:6008-6009](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6008-L6009))
+    and nothing removes the head, which no request reaches once the bucket
+    is gone.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it. rgw-go's relist whose init its backstop or a
+  stalled call cut in flight leaves that init's pending attr until it
+  expires (`docs/differences.md`, "A replay keeps a named version that a
+  later link in the same log names"); a delete of the key's last version
+  inside that hour cannot clear the OLH, and a bucket delete then leaves the
+  head, in the emulator after the relist's version was listed again and
+  removed by its id. Tracked by V29.
+- **Upstream:** pending; prior art not searched.
+- **Found:** phase 2 task V24's lifecycle-and-listing work, 2026-11-21, in
+  its run of V21's adversarial harness (parts K1 and K2): a key emptied
+  through S3 within the hour after such a cut init, its bucket then
+  deleted, left an OLH head with one pending attr and no data; with the
+  attr expired first, the same runs left nothing.

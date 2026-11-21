@@ -98,6 +98,10 @@ func (s *Store) DeleteBucketPurged(ctx context.Context, rec *op.BucketRecord) er
 	return s.DeleteBucket(ctx, rec)
 }
 
+// RelistUnlisted implements op.BucketStore: the memory store leaves no
+// version unlisted.
+func (s *Store) RelistUnlisted(context.Context, *op.BucketRecord) (int, error) { return 0, nil }
+
 // DeleteBucket implements op.BucketStore: a bucket of this zonegroup without
 // objects goes, and its in-flight uploads with it, as RadosBucket::remove
 // aborts them; one of another zonegroup is refused as the RADOS store

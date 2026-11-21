@@ -698,6 +698,23 @@ var _ = Describe("admin bucket ops", func() {
 				Entry("bypass-gc, versioning suspended", uint32(meta.BucketVersioned|meta.BucketVersionsSuspended), true, byVersion()),
 				Entry("bypass-gc, object lock", uint32(meta.BucketVersioned|meta.BucketObjLockEnabled), true, byVersion()),
 			)
+			DescribeTable("lists again the versions the store recorded as unlisted before it lists the bucket, going on when that fails",
+				func(ctx context.Context, relistErr error) {
+					fake(ctx, meta.BucketVersioned)
+					listedBefore := -1
+					buckets.RelistUnlistedCalls(func(context.Context, *op.BucketRecord) (int, error) {
+						listedBefore = buckets.ListObjectsCallCount()
+						return 0, relistErr
+					})
+					Expect(run(ctx, remove(false))).To(Succeed())
+					Expect(buckets.RelistUnlistedCallCount()).To(Equal(1))
+					Expect(listedBefore).To(BeZero(), "before the purge's first listing")
+					Expect(x.entries).To(BeEmpty())
+					Expect(buckets.DeleteBucketPurgedCallCount()).To(Equal(1))
+				},
+				Entry("a relist that succeeds", nil),
+				Entry("a relist that fails, which leaves its versions as radosgw's purge does", errors.New("the index pool refused the read")),
+			)
 			DescribeTable("answers a removal that fails part way with its failure, removing nothing after it and keeping the bucket",
 				func(ctx context.Context, bypass bool) {
 					fake(ctx, meta.BucketVersioned)
