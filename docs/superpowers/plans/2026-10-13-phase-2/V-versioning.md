@@ -2792,6 +2792,209 @@ releases, at main and at that PR's head; the hold's 403 is by reading.
   of `docs/differences.md`, so it is not ordered against them. **PR:** one. **Brief:** about 50
   lines.
 
+### Task V28: a delete decides object lock on current bucket state
+
+Found by V24 Behaviour 7's adversarial review in its re-run 1 (R1-3), pre-existing on main, and
+numbered here before that PR merged (PP-12). A delete decides whether to check object lock on the
+request's bucket record, loaded once (`loadBucket`, `internal/op/bucketops.go:32-39`) through the
+metadata cache (`GetBucket` and `readInstance`, `internal/driver/bucket.go:106-121` and
+`internal/driver/bucket.go:164-175`; `sysobjs.read`, `internal/driver/sysobj.go:106-150`).
+`lockTarget` checks nothing on a record without object lock (`internal/op/objectlock.go:93-94`), and
+`deleteUnderLock` then sends the delete with no `Expect` (`internal/op/objectlock.go:55-58`). Two
+records predate a lock written since:
+
+- a request in flight across PutObjectLockConfiguration, which sets the flag on a
+  versioning-enabled bucket (`internal/op/bucketobjectlock.go:155-159`), on any gateway and with no
+  failure;
+- another gateway's cached record when the enable's notify is lost, which the writer only logs
+  (`sysobjs.distribute`, `internal/driver/sysobj.go:419-424`), until `rgw_cache_expiry_interval`,
+  900 s by default (`internal/driver/options.go:28`), passes.
+
+A legal hold or a retention written meanwhile through a fresh record is then removed. The store's
+delete without `Expect` is an unguarded writer, which removes the version whatever it carries
+(`olhRemoval`, `internal/driver/olh.go:1339-1345`): its own replay removes it, and when another
+replay applies its unlink first and keeps the version for its lock, `checkRemoval` removes it after
+(`internal/driver/olh.go:1432-1435`). The adversarial row R1L removes a version under a legal hold
+both ways, at main and at V24 Behaviour 7's head. Lifecycle's actions decide the lock on a record
+read again before each action, but through the same cache (`lcBucket.current`,
+`internal/driver/lc_bucket.go:232-247`; `cur.Info.ObjLockEnabled()` at
+`internal/driver/lc_actions.go:132`, `internal/driver/lc_actions.go:288` and
+`internal/driver/lc_actions.go:418`), so a gateway that missed the notify expires a locked version
+until its cache entry expires. That lifecycle case is by reading, not run.
+
+radosgw has the same gap (`docs/ceph-upstream-bugs.md`, "radosgw decides a delete's object-lock
+check on bucket info loaded before object lock was enabled", which V24 Behaviour 7's PR adds). Its
+request loads `s->bucket` once
+([rgw_op.cc:525-530](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L525-L530),
+[rgw_op.cc:555-560](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L555-L560)),
+through the instance cache
+([svc_bucket_sobj.cc:284-298](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_bucket_sobj.cc#L284-L298),
+[svc_bucket_sobj.cc:235-249](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bucket_sobj.cc#L235-L249)),
+whose entries a lost notify leaves for `rgw_cache_expiry_interval`
+([svc_sys_obj_cache.cc:345-348](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_sys_obj_cache.cc#L345-L348),
+[svc_sys_obj_cache.cc:345-348](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_sys_obj_cache.cc#L345-L348);
+[rgw.yaml.in:3342](https://github.com/ceph/ceph/blob/v19.2.7/src/common/options/rgw.yaml.in#L3342),
+[rgw.yaml.in:3521](https://github.com/ceph/ceph/blob/v20.2.4/src/common/options/rgw.yaml.in#L3521)).
+DeleteObject and DeleteObjects take `check_obj_lock` from that info
+([rgw_op.cc:5186-5221](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5186-L5221) and
+[rgw_op.cc:6854-6879](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6854-L6879),
+[rgw_op.cc:5576-5611](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5576-L5611) and
+[rgw_op.cc:7782-7807](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7782-L7807)),
+while PutObjectLegalHold checks the flag on its own request's info
+([rgw_op.cc:8503-8509](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8503-L8509),
+[rgw_op.cc:9451-9457](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9451-L9457)).
+Lifecycle's `pass_object_lock_check` passes whatever its bucket's info lacks object lock
+([rgw_lc.cc:304-307](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L304-L307),
+[rgw_lc.cc:304-307](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L304-L307)), on
+info loaded once per pass
+([rgw_lc.cc:1697-1703](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1697-L1703),
+[rgw_lc.cc:1753-1759](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1753-L1759)).
+By reading, not reproduced on radosgw.
+
+- **Layer:** op and driver. **Files:** a `DeleteParams` field in `internal/op/object.go`, and an
+  error the refusal wraps, with opfakes, driverfakes and memstore as the hot-file rule for that
+  file says; the three store paths that refuse (Behaviour 2), in `internal/driver/delete.go`,
+  `internal/driver/delete_versioned.go` and `internal/driver/olh.go`; the op layer's lock check
+  (`deleteUnderLock` in `internal/op/objectlock.go`); the admin removals that set the field (the
+  object removal in `internal/op/adminbucket.go` and `PurgeObjects` in `internal/op/adminpurge.go`);
+  a read of a bucket instance past the metadata cache on `op.BucketStore` (`internal/op/bucket.go`),
+  the driver's beside `GetBucketInstance` in `internal/driver/bucket.go`; lifecycle's removals
+  (`expireCurrent`, `markCurrent` and `removeVersion` in `internal/driver/lc_actions.go`, and
+  `lcBucket.current` in `internal/driver/lc_bucket.go`); their specs, the op layer's over the RADOS
+  store in `internal/driver/delete_lock_op_test.go` and lifecycle's in
+  `internal/driver/lc_bucket_test.go`; `docs/differences.md`, the entries "A delete that removes a
+  version for good on an object-lock bucket checks its lock", "Every permanent removal by lifecycle
+  runs the object-lock check" and "Admin removals ignore object lock"; the rgw-go line of the
+  registry entry above. **Cluster:** no.
+- **Security boundary:** object lock; adversarial review applies (PP-14). No change may let a delete
+  remove a version whose lock a check on current bucket state would keep.
+- **Behaviour:**
+  1. A delete and a lifecycle action decide the lock check on bucket state at least as new as the
+     target's lock attrs as the store read them. Every lock attr rgw-go writes is written through a
+     record with object lock: PutObjectRetention and PutObjectLegalHold refuse a bucket without it
+     (`internal/op/objectretention.go:196-198`, `internal/op/objectretention.go:351-353`), a
+     write's object-lock headers are refused there (`objectLock`,
+     `internal/s3/putobject.go:495-500`), and a default retention needs it
+     (`internal/objectlock/default.go:24-26`). No S3 request clears the flag:
+     PutObjectLockConfiguration only sets it (`internal/op/bucketobjectlock.go:155-159`), and
+     PutBucketVersioning keeps it (`internal/op/bucketversioning.go:171-183`). So a read of the
+     bucket instance past the metadata cache, made after the store's read of the target found a
+     lock attr, finds object lock. Only an admin metadata put that cleared the flag, or a lock
+     radosgw's CopyObject stored on a bucket without it (`docs/ceph-upstream-bugs.md`, "radosgw's
+     CopyObject stores an object lock on a bucket without object lock"), leaves it off, and then no
+     check runs, as radosgw's would run none.
+  2. The store refuses. When the record a delete is given has no object lock, the store's delete
+     refuses a removal for good whose target, as the store reads it, carries a retention or
+     legal-hold attr: it writes nothing and answers an error wrapping a new op error, which says
+     the record predates the target's lock. The field is zero by default, so a caller that sets
+     nothing is refused: the refusal fails closed. A caller sets it when it has decided the lock
+     itself: the admin object removal and `PurgeObjects`, which ignore object lock
+     (`internal/op/adminbucket.go:926`, `internal/op/adminpurge.go:87`; P2), and a second round on
+     a record read past the cache that still has no object lock (Behaviours 3 and 4). A record with
+     object lock is never refused: its caller has checked the lock. The three paths, each on a head
+     it reads and with the removal held to that read, so that a lock written after the read refuses
+     the removal:
+     - the unversioned path: `DeleteObject`'s own head read (`readHead`,
+       `internal/driver/delete.go:62`), whose write tag already guards the removal
+       (`internal/driver/delete.go:79-81`). A head the guard does not cover, one without a write
+       tag, must not let a lock written after the read through; the implementer shows it held, or
+       holds it. No read is added;
+     - a suspended bucket's null delete marker, which removes the null data: `writeDeleteMarker`
+       (`internal/driver/delete_versioned.go:92`) through `setOLH`, whose every attempt reads the
+       key's OLH head (`internal/driver/olh.go:322`), the head that holds the null data. The
+       attempt refuses before its init, and otherwise sends the head's write tag to its init and
+       replay, as `ExpectHead` does for a conditional marker (`internal/driver/olh.go:337-339`). No
+       read is added;
+     - a versioned delete naming a version (`removeVersion`,
+       `internal/driver/delete_versioned.go:328`, through `unlinkVersion`,
+       `internal/driver/olh.go:492`). For `null`, the attempt's read of the key's OLH head
+       (`internal/driver/olh.go:502`) is the null data's head, held as the `Expect` path holds it
+       (`internal/driver/olh.go:507-512`), and no read is added. For any other version no head of
+       the version is read before its unlink, so this path reads it once, on a record without
+       object lock, and its write tag guards the removal as `expectRemoval`'s does
+       (`internal/driver/delete_versioned.go:420-427`). The refusal cannot wait for the replay,
+       which reads that head anyway: another request's replay that applies the unlink first keeps
+       only a lock no delete passes (`lockHolds`, `internal/driver/olh.go:1323-1337`), since the OLH
+       log carries nothing of the writer's, so a GOVERNANCE retention would go, and the version
+       would be out of the listing before any refusal.
+
+     A delete given `Expect` on a record without object lock, as lifecycle's are, refuses the same
+     way. A delete marker on an enabled bucket removes nothing and is never refused.
+  3. The op layer. `deleteUnderLock` sends a delete on a record without object lock as today, the
+     field unset (`internal/op/objectlock.go:55-58`). On the refusal it reads the bucket instance
+     past the metadata cache, which caches what it read, as `readFresh` reads an account
+     (`internal/driver/account.go:424-433`), and decides again on that record: `lockTarget`, the
+     check and the store's delete all take it, so a target the stale record names and the current
+     one does not, such as a suspended record's null version once the bucket is enabled, is never
+     removed unchecked. With object lock it runs the check and the guarded removal; without, it
+     sends the delete again with the field set. The permission checks, the governance bypass's
+     among them, stay on the request's record. A delete is refused at most once.
+  4. Lifecycle. Each removal (`internal/driver/lc_actions.go:138`,
+     `internal/driver/lc_actions.go:303` and `internal/driver/lc_actions.go:430`) is a store delete
+     on the record `recheck` returned, and meets the refusal when that record is stale. The action
+     then reads the instance past the cache, runs `current`'s checks on it, so a bucket whose
+     versioning changed since the pass began skips the action and ends the pass as `recheck` does,
+     and decides the lock again on it: `lcLockCheck` with object lock, and the removal with the
+     field set without. Decide's gate (`removable`, `internal/lifecycle/decide.go:478-484`) reads
+     the page's record and only chooses the effect; a removal the action then keeps is decided
+     again at the next pass.
+  5. The mechanism, and why:
+     - No read is added to the common path. An unversioned bucket's DeleteObject, a suspended
+       bucket's null delete marker and a delete naming `null` refuse on a head the store already
+       reads, and a delete marker on an enabled bucket removes nothing. The read past the cache
+       runs only on a refusal.
+     - It fails closed at the store, so every caller is covered, lifecycle included, and a caller
+       added later is refused until it decides the lock.
+     - The cost: the `DeleteParams` field, set by the admin removals and by each second round, and
+       the refusal on the three store paths above. A delete naming a version other than `null`, on
+       a bucket without object lock, reads that version's head once before its unlink, and its
+       removal and the null marker's are then guarded on the head as read. A write to the target
+       between that read and the removal is the lost race, where today the delete removes what it
+       finds.
+     - Rejected: the op layer reading every target on a record without object lock, which adds a
+       head read to every delete that removes a version for good there, every unversioned
+       DeleteObject included, and covers only the callers that pass through `deleteUnderLock`.
+     - Rejected: reading the instance past the cache on every delete. It costs a read per delete
+       and holds the removal to nothing, so a lock landing after it is still removed.
+  6. The RADOS state stays radosgw's: the reads write nothing, a refusal writes nothing, and a
+     delete the check passes removes what radosgw's removes. Record in `docs/differences.md` that
+     rgw-go decides on current bucket state where radosgw decides on the request's or the pass's,
+     the guard on a bucket without object lock, and, in "Admin removals ignore object lock", that
+     the admin removals still do. The registry entry's rgw-go line says what rgw-go does.
+- **Specs:** on both releases, against the emulator:
+  - R1L's shape: a versioning-enabled bucket with v1; a request's record read before
+    PutObjectLockConfiguration; object lock enabled and a legal hold written on v1 through a fresh
+    record; then DeleteObject and DeleteObjects naming v1 with the old record. Each answers 403
+    AccessDenied, "forbidden by object lock", and v1 stays, with the delete's own replay and with
+    another request's replay first. The same with a COMPLIANCE retention, and with a GOVERNANCE one,
+    which refuses without the bypass header and passes with it for a requester allowed the bypass;
+  - the lost notify: two stores on one emulated cluster, the enable's notify failed (`FailNotify`,
+    `internal/testutil/fakerados/cluster.go:371`), the second store's DeleteObject refused as above,
+    and its next request reading the current record from the cache;
+  - a lock written between the store's read and its removal, on each of the three paths (a write
+    hook): the removal refused, then 403 on the next round;
+  - an old suspended record over a bucket since enabled and locked, a hold on the null version: a
+    delete naming no version writes a delete marker and the null version stays;
+  - a bucket that never had object lock: a delete naming a version and an unversioned DeleteObject
+    answer as today, with no read past the cache, and the unversioned DeleteObject with no read
+    added; an attr write between the store's read and the removal of a named version answers the
+    lost race, the version kept and listed;
+  - the store's delete given a record without object lock and a locked target, the field unset:
+    refused with nothing written; the admin object removal and `PurgeObjects` remove it as today;
+  - lifecycle, a pass on a gateway that missed the notify: a noncurrent version under a hold, and
+    under COMPLIANCE, is kept; an expiration of a current object on a record still unversioned in
+    the cache, over a bucket since enabled and locked, skips and ends the pass; a version with no
+    lock attr expires as today.
+
+  No s3-tests test: a request in flight across PutObjectLockConfiguration, or a lost notify, is
+  not something an S3 client can arrange.
+- **Depends on:** V24, its Behaviour 7 PR, which adds the registry entry, and V27. V27 changes
+  `deleteUnderLock` and lifecycle's `removeVersion`, the code this task changes, and this task's
+  read of a target named `null` is V27's. The store paths are shared with V25, whose links go
+  through `setOLH` in `internal/driver/olh.go`, and with V26, which changes the cancels in
+  `internal/driver/delete.go` and `internal/driver/delete_versioned.go`, so V28 goes after both,
+  as the Order has it. **PR:** one. **Brief:** about 50 lines.
+
 ## Order
 
 At most three implementers at once. A wave starts when the tasks it depends on have merged;
@@ -2811,7 +3014,7 @@ recordings land one at a time through the controller.
 | 8 | V7b, V8b, V8c | V7a, V8a, V9 |
 | 9 | V11, V12b | V7b, V8b |
 | 10 | V12a, V14a | V11, V13d |
-| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22, then V23, then V25, then V24, then V26, then V27 | everything above, WP-22 |
+| 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22, then V23, then V25, then V24, then V26, then V27, then V28 | everything above, WP-22 |
 
 - V10's recording PR is a cluster task the controller schedules after its first PR merges.
 - The critical path is V1, V3b, V4, V5a, V5b, V5c, V7a, V7b, V11, V14a, V15a. L and C start
