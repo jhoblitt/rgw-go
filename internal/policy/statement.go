@@ -174,11 +174,19 @@ func (s *Statement) EvalPrincipal(id Identity) Effect {
 // EvalConditions is Statement::eval_conditions
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.cc#L1278-L1285 at v19.2.6,
 // https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1282-L1289 at v20.2.4):
-// Allow when every condition holds in env under sem, Deny otherwise. Each
-// condition is evaluated for the statement's Effect, as Condition.EvalFor
-// says: a Deny statement's holds where Amazon S3's or radosgw's does. A Deny
-// statement is also judged on env without the keys env.MarkUnsent names,
-// those radosgw adds for a header the request does not send, and its
+// Allow when every condition holds in env under sem, Deny otherwise. A
+// statement that allows judges each condition as radosgw does, on env as
+// built, which is radosgw's environment. One that denies judges each as
+// Condition.EvalFor judges a Deny's, where Amazon S3's evaluation or
+// radosgw's holds, on Amazon S3's request context, env with the values
+// env.SetForDeny sets, and with Amazon S3's reading of a negated operator
+// over several values (onAmazon); likewise on each second reading of a key
+// Amazon's texts leave open (env.SetForDenyOr, env.SetForDenyOrAbsent); and
+// as radosgw does on env as built; and the condition holds where any holds.
+// So a Deny reads the keys Amazon S3 sets beside radosgw's, and a key radosgw
+// leaves out is not absent to it where Amazon S3's request context holds it.
+// A Deny statement is also judged on env without the keys env.MarkUnsent
+// names, those radosgw adds for a header the request does not send, and its
 // conditions hold where they all hold on either, so that a Deny written for
 // the header's absence, by Null or an IfExists operator, still refuses.
 func (s *Statement) EvalConditions(env Env, sem Semantics) Effect {
@@ -194,12 +202,44 @@ func (s *Statement) EvalConditions(env Env, sem Semantics) Effect {
 }
 
 func (s *Statement) conditionsHold(env Env, sem Semantics) bool {
+	if s.Effect != Deny {
+		for _, c := range s.Conditions {
+			if !c.EvalFor(env, sem, s.Effect) {
+				return false
+			}
+		}
+		return true
+	}
+	if len(s.Conditions) == 0 {
+		return true
+	}
+	amazon := env.forDeny()
+	others := env.forDenyOr()
 	for _, c := range s.Conditions {
-		if !c.EvalFor(env, sem, s.Effect) {
+		onAmazon := c.onAmazon(sem)
+		holds := func(ctx Env) bool { return c.EvalFor(ctx, onAmazon, Deny) }
+		if !holds(amazon) && !slices.ContainsFunc(others, holds) && !c.Eval(env, sem) {
 			return false
 		}
 	}
 	return true
+}
+
+// onAmazon is sem for c judged on Amazon S3's request context, where a
+// negated operator over several values holds only when the key matches none
+// of them, on either release: "When multiple values are listed in a policy
+// for negated matching condition operators such as StringNotEquals and
+// DateNotEquals, the effective permissions work like a logical AND"
+// (https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_multi-value-conditions.md?plain=1#L36).
+// Squid's radosgw holds one where some value differs, and its judgement of
+// its own environment still does. Values that name policy variables keep
+// sem: EvalFor reads them as Amazon S3 does already, and radosgw's reading of
+// them compares the key with another key's values, not with the list.
+func (c Condition) onAmazon(sem Semantics) Semantics {
+	if len(c.Values) > 1 && !c.IsRuntime {
+		sem.NotMeansNone = true
+	}
+	return sem
 }
 
 func matchesAny(patterns []ARN, res ARN) bool {
