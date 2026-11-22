@@ -4418,7 +4418,7 @@ v20.2.4 tags, rgw-go does the following.
   refusals come ahead of the 400 that radosgw's bucket load answers first:
   a suspended bucket's, an unparsable policy's, and the 500 rgw-go's
   authorizer answers every requester, an admin included, for a bucket ACL
-  that does not decode (`internal/authz/evaluator.go:371-374`). The
+  that does not decode (`internal/authz/evaluator.go:426-429`). The
   preflight, which authorizes nobody, makes the check where radosgw does,
   after the redirect and ahead of an ACL that does not decode, and its
   answer is the same for every key (`op.GetBucketCORS`,
@@ -8372,7 +8372,7 @@ differ, rgw-go does the following.
   correct client's document, under the right root, is answered alike by
   both. This is the correct S3 answer that the design's compatibility rule
   asks for
-  (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:284-298`).
+  (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:288-302`).
   AWS's answer was not checked against Amazon S3 itself. The empty
   configuration radosgw stores for such a body is read as none
   ("GetBucketLifecycleConfiguration answers a stored configuration without
@@ -8389,7 +8389,7 @@ differ, rgw-go does the following.
   ([api.go:13051-13057](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L13051-L13057)).
   As the design's compatibility rule asks, reading
   correctly what radosgw's defect leaves
-  (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:284-298`),
+  (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:288-302`),
   rgw-go answers such an attr with radosgw's 404
   NoSuchLifecycleConfiguration and no message, the answer for a bucket
   with no configuration (`GetBucketLifecycle.Execute`,
@@ -8436,7 +8436,7 @@ differ, rgw-go does the following.
   to its schema
   ([api.go:20217-20221](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L20217-L20221)).
   As the design's compatibility rule asks
-  (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:284-298`),
+  (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:288-302`),
   rgw-go (`lifecycle.Parse`, `internal/lifecycle/xml.go`):
   - reads Expiration's Days, Transition's Days, the NoncurrentDays of
     NoncurrentVersionExpiration and of NoncurrentVersionTransition,
@@ -8518,7 +8518,7 @@ differ, rgw-go does the following.
   [api.go:28322-28334](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L28322-L28334),
   [api.go:42697-42699](https://github.com/aws/aws-sdk-go/blob/v1.55.8/service/s3/api.go#L42697-L42699)).
   As the design's compatibility rule asks
-  (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:284-298`),
+  (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:288-302`),
   rgw-go (`lifecycle.Parse`, `internal/lifecycle/xml.go`):
   - takes the Date of an Expiration or a Transition only when it is
     written as a full date-time, `YYYY-MM-DDThh:mm:ss` with an optional
@@ -8573,7 +8573,7 @@ differ, rgw-go does the following.
   once](ceph-upstream-bugs.md#radosgws-lifecycle-date-wraps-past-2554-and-expires-at-once)").
   As the design's compatibility rule asks, reading correctly whatever
   state the defect leaves
-  (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:284-298`),
+  (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:288-302`),
   rgw-go's prefix map (`Configuration.PrefixMap`,
   `internal/lifecycle/prefixmap.go`):
   - keeps a stored size's sign, so `Op.SizeMatches` applies an
@@ -15552,7 +15552,7 @@ below). GET, HEAD, PutObject, CopyObject and CompleteMultipartUpload send
 `x-amz-abort-date` and `x-amz-abort-rule-id`
 (`internal/s3/lifecycleheaders.go`).
 Where rgw-go differs, it does the following, as the design's compatibility
-rule asks (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:284-298`):
+rule asks (spec §8, `docs/superpowers/specs/2026-09-25-rgw-go-design.md:288-302`):
 the correct S3 result, in RADOS state radosgw reads as its own.
 
 - **A current delete marker at the end of a listing page is kept on
