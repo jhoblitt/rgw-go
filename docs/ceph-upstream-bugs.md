@@ -9956,8 +9956,8 @@ Every new entry adds its row to this table, in document order.
   - It keeps the identity so granted to the preflight: `op.Run`, the S3
     handler and the admin handler refuse it everywhere else with 500
     InternalError (`op.RefuseUnverified`, `internal/op/identity.go:71-76`;
-    `internal/op/op.go:70`, `internal/s3/handler.go:405`,
-    `internal/admin/handler.go:277`), so a stray dispatch row fails closed.
+    `internal/op/op.go:122`, `internal/s3/handler.go:405`,
+    `internal/admin/handler.go:278`), so a stray dispatch row fails closed.
   - Unlike radosgw, it answers every preflight whose key resolves alike, so
     the preflight tells its sender no more than a forged request of another
     method does: it runs a suspended user's preflight where radosgw answers
@@ -15630,8 +15630,8 @@ Every new entry adds its row to this table, in document order.
   ([test_s3.py:16584](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L16584)
   and
   [test_s3.py:17582](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/test/rgw/s3-tests/s3tests/functional/test_s3.py#L17582),
-  at main, as at rgw-go's pin f6f2529dd9e). `hack/s3tests/excluded-markers.txt:43` lists
-  that marker among the excluded ones, and `hack/s3tests/internal/selection/selection.go:72-78`
+  at main, as at rgw-go's pin f6f2529dd9e). `hack/s3tests/excluded-markers.txt:36` lists
+  that marker among the excluded ones, and `hack/s3tests/internal/selection/selection.go:111-117`
   turns the list into the `-m` expression it collects with, so both tests
   are deselected and no ledger outcome changes:
   `test/s3tests/baseline/squid.json`, `test/s3tests/baseline/tentacle.json`
@@ -16707,7 +16707,7 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** writes version 1 at either release, as Squid and Tentacle do,
   and decodes version 2 as v21 does (`RateLimitInfo.Encode` and
   `DecodeRateLimitInfo`, `internal/meta/period.go:177-207`; pinned in
-  `internal/meta/zone_test.go:538-552`).
+  `internal/meta/zone_test.go:546-560`).
   - So where Squid and Tentacle misread a v21 record, rgw-go reads the
     limits v21 meant.
   - Its ratelimit set then writes them back as version 1, without the list
@@ -17667,8 +17667,8 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** sends the check op to both methods, as radosgw does: `Check`
   sends `otp_check` a `cls_otp_check_otp_op`, and `LookupCheck` sends
   `otp_get_result` the same bytes, encoded from the same `CheckOp`
-  (`internal/cls/otp/ops_check.go:142-144`,
-  `internal/cls/otp/ops_check.go:158-160`). The package defines no
+  (`internal/cls/otp/ops_check.go:143-145`,
+  `internal/cls/otp/ops_check.go:159-161`). The package defines no
   `cls_otp_get_result_op`, so that no one "fixes" `LookupCheck` to send it:
   the class answers it EINVAL, and every MFA check would fail. The class
   emulation must decode the check op for both methods.
@@ -20713,10 +20713,10 @@ Every new entry adds its row to this table, in document order.
   the usual pair of floors.
 - **rgw-go:** not affected. It serves no POST object yet: its dispatch sends
   a bucket POST that names no other op to `post_obj`
-  (`internal/s3/dispatch.go:241-248`), which no route binds
+  (`internal/s3/dispatch.go:244-251`), which no route binds
   (`internal/s3/postobject.go:10`), so the handler answers this request 501
   NotImplemented, as it answers every POST object that passes
-  authentication, and reads no checksum field (`internal/s3/handler.go:426-430`;
+  authentication, and reads no checksum field (`internal/s3/handler.go:434-441`;
   `docs/differences.md`, "PutObject and CopyObject authorize a request before
   they read what the store holds for it").
 - **Upstream:** pending: sent to rgw-bug-reproduction.
@@ -20927,7 +20927,7 @@ Every new entry adds its row to this table, in document order.
   "On Squid, a request with no Host is a website request when s3website
   outranks s3"): `ParseRequest` flags every request as a website one when
   s3website is enabled and outranks s3, a request with no Host included
-  (`internal/s3/request.go:71-81`).
+  (`internal/s3/request.go:72-82`).
 - **Upstream:** [#66748](https://tracker.ceph.com/issues/66748), fixed by
   [ceph/ceph#58339](https://github.com/ceph/ceph/pull/58339) (5913f584cba).
   #66748 is Backporting to squid and reef: Squid's backport,
@@ -22365,7 +22365,7 @@ Every new entry adds its row to this table, in document order.
   bucket whose flags carry lock and suspension" pins.
   It does not reproduce the race either: its PutBucketVersioning checks
   object lock again on each try (`internal/op/bucketversioning.go:129-135`,
-  `:148-151`).
+  `:149-152`).
 - **Upstream:** pending: sent to rgw-bug-reproduction.
 - **Found:** phase 2 planning; confirmed by task C2, 2026-10-20, reading
   both tags; Kind and reachability corrected by C2's review and
@@ -31624,7 +31624,7 @@ Every new entry adds its row to this table, in document order.
   [rgw_rest_s3.cc:6442-6464](https://github.com/ceph/ceph/blob/8aa24c51928768192775ab5220ce0621f5e60355/src/rgw/rgw_rest_s3.cc#L6442-L6464)).
 - **rgw-go:** matches radosgw: `website.Match` answers the stored code
   while no index suffix is stored and 301 while one is
-  (`internal/website/redirect.go:45-69`), so there is no exclusion.
+  (`internal/website/redirect.go:47-69`), so there is no exclusion.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task BC-16, 2026-10-27, checking the website gate's
   redirect codes against radosgw's source, and its task review;
@@ -32594,16 +32594,16 @@ Every new entry adds its row to this table, in document order.
   afterwards.
 - **Releases:** v19.2.7 and v20.2.4.
 - **rgw-go:** affected the same way. `doWriteMeta` gives each non-empty attr
-  its own setxattr step (`internal/driver/headwrite.go:335-347`), which
+  its own setxattr step (`internal/driver/headwrite.go:351-363`), which
   go-ceph's `WriteOp.SetXattr` sends through `rados_write_op_setxattr`, the
   measured call. `requestAttrs` applies the three limits only when they are
-  set, and none is by default (`internal/s3/requestattrs.go:257-276`). Its
+  set, and none is by default (`internal/s3/requestattrs.go:280-299`). Its
   frontend takes beast's 16384-byte header limit
   (`internal/frontend/spec.go:23`), which net/http enforces with 4096 bytes
   of slack (`docs/differences.md`, "Header limit and malformed requests"), so
   about 200 more headers fit; and its in-flight byte limit weighs these
   steps as librados budgets them, by their names' and values' bytes rather
-  than the buffers they hold (`internal/radosclient/goceph/limiter.go:148-267`).
+  than the buffers they hold (`internal/radosclient/goceph/limiter.go:144-263`).
 - **Upstream:** none found. A prior-art search on 2026-11-03 found no issue
   or fix PR, each search first checked against a known match. It covered
   tracker.ceph.com's full-text issue search for `rgw_max_attrs_num_in_req`,
@@ -32779,9 +32779,9 @@ Every new entry adds its row to this table, in document order.
   ([CMakeLists.txt:19-29](https://github.com/ceph/ceph/blob/18e1652a4824c1ebdf72dbca447c474b09399561/CMakeLists.txt#L19-L29)).
 - **rgw-go:** its own accounting does not wrap: goceph's limiter weighs an
   op's steps in an `int64` that saturates (`weight`,
-  `internal/radosclient/goceph/limiter.go:147-174`). It reads as radosgw
+  `internal/radosclient/goceph/limiter.go:144-182`). It reads as radosgw
   does, each piece at most to its stripe's end and at most
-  `rgw_get_obj_max_req_size` (`walk`, `internal/driver/read.go:189-246`),
+  `rgw_get_obj_max_req_size` (`walk`, `internal/driver/read.go:248-305`),
   which it takes with no upper bound
   (`internal/driver/readpool.go:27-42`), and it sends each piece through
   go-ceph's read op, which calls `rados_read_op_read`. So it meets the
@@ -34222,7 +34222,7 @@ Every new entry adds its row to this table, in document order.
   `=?UTF-8?Q?b?=` and loses the `0x01` and the `c`.
 - **Releases:** v19.2.7 and v20.2.4.
 - **rgw-go:** reproduces it byte for byte (`formatXattr`,
-  internal/s3/requestattrs.go:300-319), so `docs/differences.md` needs
+  internal/s3/requestattrs.go:317-342), so `docs/differences.md` needs
   nothing.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task WP-28's review, 2026-11-14; derived from the
