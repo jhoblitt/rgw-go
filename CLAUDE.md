@@ -26,9 +26,9 @@ before writing Go here.
   `run.sh`), and `hack/image/check.sh` runs `make check` in Tentacle's check image on any host.
 - Host load: every go, make and golangci-lint command on this host, the agents' and the
   controller's, runs through `.claude/worktrees/phase-1-exec/.superpowers/tools/ctrl/gobuild.sh`,
-  one host-wide flock with `GOFLAGS=-p=4 GOMAXPROCS=4`, so only one build or test runs at a
-  time. Never run them outside it. Uncapped parallel runs took the owner's desktop past a load
-  of 600 on 2026-10-21.
+  a host-wide semaphore of four slots (`GOBUILD_SLOTS`) with `GOFLAGS=-p=4 GOMAXPROCS=4`, so at
+  most four builds or tests run at once. Never run them outside it. Uncapped parallel runs took
+  the owner's desktop past a load of 600 on 2026-10-21.
 - go-ceph comes from the jhoblitt/go-ceph fork through a `replace` in go.mod pinned to a
   commit on the fork's `rgw-go` integration branch; Dependabot does not follow a replace, so it
   is bumped by hand. Every pinned ref must be on `rgw-go`, and
