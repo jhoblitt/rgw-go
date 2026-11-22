@@ -123,14 +123,17 @@ var _ = Describe("a Deny on a condition key in another case than the request's",
 			// number
 			// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L853-L854,
 			// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L888-L889),
-			// and rgw-go sets what radosgw sets.
-			DescribeTable("holds a Numeric operator on aws:EpochTime in another case, whose value is a date and time",
+			// and a Deny reads Amazon S3's seconds, 1795089600, beside it.
+			DescribeTable("answers a Numeric operator on aws:EpochTime in another case by Amazon S3's seconds",
 				func(cond string, refused bool) {
 					deny("s3:GetObject", cond)
 					expectOutcome(f.getObject(alice(), "priv", "o"), refused)
 				},
-				Entry("a Numeric operator on the key in another case", `{"NumericLessThan": {"aws:epochtime": "1700000000"}}`, true),
-				Entry("a Numeric operator on the key as written, as radosgw answers it",
+				Entry("a Numeric operator on the key in another case that the seconds fail",
+					`{"NumericLessThan": {"aws:epochtime": "1700000000"}}`, false),
+				Entry("a Numeric operator on the key in another case that the seconds meet",
+					`{"NumericGreaterThan": {"aws:epochtime": "1700000000"}}`, true),
+				Entry("a Numeric operator on the key as written that the seconds fail",
 					`{"NumericLessThan": {"aws:EpochTime": "1700000000"}}`, false),
 				Entry("a Date operator on the key in another case", `{"DateLessThan": {"aws:epochtime": "1700000000"}}`, false),
 			)

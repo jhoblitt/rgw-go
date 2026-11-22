@@ -67,11 +67,11 @@ func classifyPayload(rv *requestView, payloadHash string) (payloadClass, error) 
 	pc := payloadClass{
 		unsignedPayload:  unsigned,
 		trailingChecksum: strings.HasSuffix(payloadHash, "TRAILER"),
-		unsignedChunked:  payloadHash == streamingUnsignedTrailer,
+		unsignedChunked:  op.PayloadUnsignedChunked(payloadHash),
 		trailerSignature: payloadHash == streamingPayloadTrailer,
 	}
 	switch {
-	case payloadHash == unsignedPayload, unsigned && !pc.trailingChecksum, empty:
+	case op.PayloadUnsigned(payloadHash), empty:
 		return payloadClass{kind: payloadNone}, nil
 	case !strings.HasPrefix(payloadHash, "STREAMING-"):
 		pc.kind = payloadSingle

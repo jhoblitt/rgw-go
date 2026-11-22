@@ -112,6 +112,9 @@ type Request struct {
 	// AuthRoute is AuthResult.Route, which says what of the query a read
 	// may take.
 	AuthRoute AuthRoute
+	// FormSigV4 is AuthResult.FormSigV4: a browser upload's form signed by
+	// Signature Version 4.
+	FormSigV4 bool
 	Env       *Env
 
 	// BucketRec and ObjState are loaded by the op's Init.

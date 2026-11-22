@@ -618,4 +618,260 @@ var _ = Describe("BuildEnv", func() {
 			}
 		})
 	})
+
+	Describe("the keys Amazon S3's request context sets, which a Deny reads", func() {
+		// amazonValue is key's value for a Deny, or absent.
+		const absent = "<absent>"
+		amazonValue := func(r *op.Request, a policy.Action, key string) string {
+			for _, p := range authz.AmazonPairs(cfg, r, a) {
+				if p[0] == key {
+					return p[1]
+				}
+			}
+			return absent
+		}
+		denies := func(env policy.Env, a policy.Action, cond string) policy.Effect {
+			p := mustParse(`{"Version": "2012-10-17", "Statement": [{"Effect": "Deny", "Principal": "*",` +
+				` "Action": "` + a.String() + `", "Resource": "*", "Condition": ` + cond + `}]}`)
+			res := policy.ObjectARN("", "b", "o")
+			return p.Eval(env, nil, a, &res, policy.SemanticsFor(denc.Squid))
+		}
+
+		It("are the request's time in Amazon S3's two forms and whether it is secure", func() {
+			r := envRequest(http.MethodGet, "b", "o", "")
+			Expect(authz.AmazonPairs(cfg, r, policy.S3GetObject)).To(Equal([][2]string{
+				{"aws:CurrentTime", "2026-09-27T12:00:00Z"},
+				{"aws:EpochTime", "1790510400"},
+				{"aws:SecureTransport", "false"},
+			}), "a plain request on no route")
+			r.TLS = true
+			Expect(amazonValue(r, policy.S3GetObject, "aws:SecureTransport")).To(Equal("true"), "over TLS")
+			cfg.TrustForwardedHTTPS = true
+			r = envRequest(http.MethodGet, "b", "o", "", "X-Forwarded-Proto", "https")
+			Expect(amazonValue(r, policy.S3GetObject, "aws:SecureTransport")).To(Equal("true"), "from a trusted proxy")
+		})
+
+		DescribeTable("name how the request is authenticated, and the payload hash a SigV4 signature covers",
+			func(route op.AuthRoute, formSigV4 bool, want [][2]string) {
+				r := envRequest(http.MethodGet, "b", "o", "", "X-Amz-Content-Sha256", "e3b0c442")
+				r.AuthRoute, r.FormSigV4 = route, formSigV4
+				Expect(authz.AmazonPairs(cfg, r, policy.S3GetObject)[3:]).To(Equal(want))
+			},
+			Entry("SigV4 in the Authorization header", op.RouteSigV4Header, false, [][2]string{
+				{"s3:signatureversion", "AWS4-HMAC-SHA256"}, {"s3:authType", "REST-HEADER"}, {"s3:x-amz-content-sha256", "e3b0c442"},
+			}),
+			Entry("a SigV4 presigned URL", op.RouteSigV4Query, false, [][2]string{
+				{"s3:signatureversion", "AWS4-HMAC-SHA256"}, {"s3:authType", "REST-QUERY-STRING"}, {"s3:x-amz-content-sha256", "e3b0c442"},
+			}),
+			Entry("SigV2 in the Authorization header", op.RouteSigV2Header, false,
+				[][2]string{{"s3:signatureversion", "AWS"}, {"s3:authType", "REST-HEADER"}}),
+			Entry("a SigV2 presigned URL", op.RouteSigV2Query, false,
+				[][2]string{{"s3:signatureversion", "AWS"}, {"s3:authType", "REST-QUERY-STRING"}}),
+			Entry("a browser upload whose form SigV2 signs", op.RouteBrowserUpload, false,
+				[][2]string{{"s3:signatureversion", "AWS"}, {"s3:authType", "POST"}}),
+			Entry("a browser upload whose form SigV4 signs", op.RouteBrowserUpload, true,
+				[][2]string{{"s3:signatureversion", "AWS4-HMAC-SHA256"}, {"s3:authType", "POST"}}),
+			Entry("an anonymous request", op.RouteAnonymous, false, [][2]string{}),
+			Entry("no route", op.RouteUnknown, false, [][2]string{}),
+		)
+
+		DescribeTable("take UNSIGNED-PAYLOAD for every payload the SigV4 verifier reads with no signature",
+			func(route op.AuthRoute, hdr []string, want string) {
+				r := envRequest(http.MethodPut, "b", "o", "", hdr...)
+				r.AuthRoute = route
+				Expect(amazonValue(r, policy.S3PutObject, "s3:x-amz-content-sha256")).To(Equal(want))
+			},
+			Entry("no payload hash", op.RouteSigV4Header, nil, "UNSIGNED-PAYLOAD"),
+			Entry("a presigned request with no payload hash", op.RouteSigV4Query, nil, "UNSIGNED-PAYLOAD"),
+			Entry("UNSIGNED-PAYLOAD", op.RouteSigV4Header, []string{"X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD"}, "UNSIGNED-PAYLOAD"),
+			Entry("a prefix before it", op.RouteSigV4Header, []string{"X-Amz-Content-Sha256", "XUNSIGNED-PAYLOAD"}, "UNSIGNED-PAYLOAD"),
+			Entry("a suffix after it", op.RouteSigV4Header, []string{"X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD-X"}, "UNSIGNED-PAYLOAD"),
+			Entry("it twice in one value", op.RouteSigV4Header, []string{"X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD,UNSIGNED-PAYLOAD"},
+				"UNSIGNED-PAYLOAD"),
+			Entry("a presigned request's prefixed spelling", op.RouteSigV4Query, []string{"X-Amz-Content-Sha256", "XUNSIGNED-PAYLOAD"},
+				"UNSIGNED-PAYLOAD"),
+			Entry("the last of a repeated header", op.RouteSigV4Header,
+				[]string{"X-Amz-Content-Sha256", "e3b0c442", "X-Amz-Content-Sha256", "XUNSIGNED-PAYLOAD"}, "UNSIGNED-PAYLOAD"),
+			Entry("a hash, the last of a repeated header", op.RouteSigV4Header,
+				[]string{"X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD", "X-Amz-Content-Sha256", "e3b0c442"}, "e3b0c442"),
+			Entry("aws-chunked with unsigned chunks", op.RouteSigV4Header,
+				[]string{"X-Amz-Content-Sha256", "STREAMING-UNSIGNED-PAYLOAD-TRAILER"}, "UNSIGNED-PAYLOAD"),
+			Entry("an unsigned form ending in TRAILER, whose body the verifier hashes", op.RouteSigV4Header,
+				[]string{"X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD-TRAILER"}, "UNSIGNED-PAYLOAD-TRAILER"),
+			Entry("an aws-chunked spelling of the unsigned form, whose chunk signatures the verifier checks", op.RouteSigV4Header,
+				[]string{"X-Amz-Content-Sha256", "STREAMING-XUNSIGNED-PAYLOAD-TRAILER"}, "STREAMING-XUNSIGNED-PAYLOAD-TRAILER"),
+			Entry("aws-chunked's signed form", op.RouteSigV4Header,
+				[]string{"X-Amz-Content-Sha256", "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"}, "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"),
+			Entry("aws-chunked's signed form with a signed trailer", op.RouteSigV4Header,
+				[]string{"X-Amz-Content-Sha256", "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER"}, "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER"),
+			Entry("a lower-case spelling, which the verifier hashes against", op.RouteSigV4Header,
+				[]string{"X-Amz-Content-Sha256", "unsigned-payload"}, "unsigned-payload"),
+			Entry("a SigV2 request", op.RouteSigV2Header, []string{"X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD"}, absent),
+			Entry("a browser upload", op.RouteBrowserUpload, nil, absent),
+		)
+
+		DescribeTable("read the payload hash a second way where Amazon's texts leave it open",
+			func(route op.AuthRoute, hdr []string, want []authz.AmazonOther) {
+				r := envRequest(http.MethodPut, "b", "o", "", hdr...)
+				r.AuthRoute = route
+				Expect(authz.AmazonOthers(cfg, r, policy.S3PutObject)).To(Equal(want))
+			},
+			Entry("a presigned request with no payload hash, also without the key", op.RouteSigV4Query, nil,
+				[]authz.AmazonOther{{Key: "s3:x-amz-content-sha256", Absent: true}}),
+			Entry("a presigned request sending UNSIGNED-PAYLOAD, also without the key", op.RouteSigV4Query,
+				[]string{"X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD"}, []authz.AmazonOther{{Key: "s3:x-amz-content-sha256", Absent: true}}),
+			Entry("a presigned request sending the body's hash, also without the key", op.RouteSigV4Query,
+				[]string{"X-Amz-Content-Sha256", "e3b0c442"}, []authz.AmazonOther{{Key: "s3:x-amz-content-sha256", Absent: true}}),
+			Entry("a presigned request sending a prefixed spelling, also as sent and without the key", op.RouteSigV4Query,
+				[]string{"X-Amz-Content-Sha256", "XUNSIGNED-PAYLOAD"}, []authz.AmazonOther{
+					{Key: "s3:x-amz-content-sha256", Value: "XUNSIGNED-PAYLOAD"}, {Key: "s3:x-amz-content-sha256", Absent: true},
+				}),
+			Entry("aws-chunked with unsigned chunks, also as sent", op.RouteSigV4Header,
+				[]string{"X-Amz-Content-Sha256", "STREAMING-UNSIGNED-PAYLOAD-TRAILER"},
+				[]authz.AmazonOther{{Key: "s3:x-amz-content-sha256", Value: "STREAMING-UNSIGNED-PAYLOAD-TRAILER"}}),
+			Entry("a prefixed spelling, also as sent", op.RouteSigV4Header, []string{"X-Amz-Content-Sha256", "XUNSIGNED-PAYLOAD"},
+				[]authz.AmazonOther{{Key: "s3:x-amz-content-sha256", Value: "XUNSIGNED-PAYLOAD"}}),
+			Entry("UNSIGNED-PAYLOAD itself, read one way", op.RouteSigV4Header, []string{"X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD"},
+				[]authz.AmazonOther{}),
+			Entry("a header-signed request with no payload hash, read one way", op.RouteSigV4Header, nil, []authz.AmazonOther{}),
+			Entry("the body's hash, read one way", op.RouteSigV4Header, []string{"X-Amz-Content-Sha256", "e3b0c442"}, []authz.AmazonOther{}),
+			Entry("aws-chunked with signed chunks, read one way", op.RouteSigV4Header,
+				[]string{"X-Amz-Content-Sha256", "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"}, []authz.AmazonOther{}),
+			Entry("an unsigned form ending in TRAILER, whose body the verifier hashes, read one way", op.RouteSigV4Header,
+				[]string{"X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD-TRAILER"}, []authz.AmazonOther{}),
+			Entry("a SigV2 request, which has no payload hash", op.RouteSigV2Query, nil, []authz.AmazonOther{}),
+			Entry("a browser upload, which has no payload hash", op.RouteBrowserUpload, nil, []authz.AmazonOther{}),
+		)
+
+		It("read the payload hash one way, or not at all, on the two checks whose keys AWS lists without it", func() {
+			r := envRequest(http.MethodPut, "b", "", "object-lock")
+			r.AuthRoute = op.RouteSigV4Query
+			for _, a := range []policy.Action{policy.S3GetBucketObjectLockConfiguration, policy.S3PutBucketObjectLockConfiguration} {
+				Expect(authz.AmazonOthers(cfg, r, a)).To(BeEmpty(), a.String())
+			}
+			Expect(authz.AmazonOthers(cfg, r, policy.IAMGetUser)).To(BeEmpty(), "an action outside S3")
+		})
+
+		It("leave the payload hash out of the two checks whose keys AWS lists without it", func() {
+			r := envRequest(http.MethodPut, "b", "", "object-lock")
+			r.AuthRoute = op.RouteSigV4Header
+			for _, a := range []policy.Action{policy.S3GetBucketObjectLockConfiguration, policy.S3PutBucketObjectLockConfiguration} {
+				Expect(amazonValue(r, a, "s3:x-amz-content-sha256")).To(Equal(absent), a.String())
+				Expect(amazonValue(r, a, "s3:authType")).To(Equal("REST-HEADER"), a.String())
+			}
+		})
+
+		DescribeTable("take x-amz-storage-class for the actions AWS lists the key for",
+			func(a policy.Action, want string) {
+				r := envRequest(http.MethodPut, "b", "o", "", "X-Amz-Storage-Class", "STANDARD_IA")
+				Expect(amazonValue(r, a, "s3:x-amz-storage-class")).To(Equal(want))
+				Expect(amazonValue(envRequest(http.MethodPut, "b", "o", ""), a, "s3:x-amz-storage-class")).
+					To(Equal(absent), "without the header")
+			},
+			Entry("s3:PutObject", policy.S3PutObject, "STANDARD_IA"),
+			Entry("s3:PutObjectAcl", policy.S3PutObjectAcl, "STANDARD_IA"),
+			Entry("s3:PutObjectVersionAcl", policy.S3PutObjectVersionAcl, "STANDARD_IA"),
+			Entry("s3:BypassGovernanceRetention", policy.S3BypassGovernanceRetention, "STANDARD_IA"),
+			Entry("s3:PutObjectTagging", policy.S3PutObjectTagging, absent),
+			Entry("s3:GetObject", policy.S3GetObject, absent),
+		)
+
+		DescribeTable("take the version a check of a version action is on",
+			func(pairs func() [][2]string, want string) {
+				v := absent
+				for _, p := range pairs() {
+					if p[0] == "s3:VersionId" {
+						v = p[1]
+					}
+				}
+				Expect(v).To(Equal(want))
+			},
+			Entry("GetObjectVersion", func() [][2]string {
+				return authz.AmazonPairs(cfg, envRequest(http.MethodGet, "b", "o", "versionId=v1"), policy.S3GetObjectVersion)
+			}, "v1"),
+			Entry("HeadObject of a version", func() [][2]string {
+				return authz.AmazonPairs(cfg, envRequest(http.MethodHead, "b", "o", "versionId=v1"), policy.S3GetObjectVersion)
+			}, "v1"),
+			Entry("DeleteObjectVersion", func() [][2]string {
+				return authz.AmazonPairs(cfg, envRequest(http.MethodDelete, "b", "o", "versionId=v1"), policy.S3DeleteObjectVersion)
+			}, "v1"),
+			Entry("PutObjectVersionAcl", func() [][2]string {
+				return authz.AmazonPairs(cfg, envRequest(http.MethodPut, "b", "o", "acl&versionId=v1"), policy.S3PutObjectVersionAcl)
+			}, "v1"),
+			Entry("PutObjectVersionTagging", func() [][2]string {
+				return authz.AmazonPairs(cfg, envRequest(http.MethodPut, "b", "o", "tagging&versionId=v1"), policy.S3PutObjectVersionTagging)
+			}, "v1"),
+			Entry("DeleteObjectVersionTagging", func() [][2]string {
+				return authz.AmazonPairs(cfg, envRequest(http.MethodDelete, "b", "o", "tagging&versionId=v1"),
+					policy.S3DeleteObjectVersionTagging)
+			}, "v1"),
+			Entry("GetObjectVersionAttributes", func() [][2]string {
+				return authz.AmazonPairs(cfg, envRequest(http.MethodGet, "b", "o", "attributes&versionId=v1"),
+					policy.S3GetObjectVersionAttributes)
+			}, "v1"),
+			Entry("a GET naming a version beside a copy source header it has no use for", func() [][2]string {
+				return authz.AmazonPairs(cfg, envRequest(http.MethodGet, "b", "o", "versionId=v1", "X-Amz-Copy-Source", "/src/k?versionId=v2"),
+					policy.S3GetObjectVersion)
+			}, "v1"),
+			Entry("a tagging PUT naming a version beside a copy source header it has no use for", func() [][2]string {
+				return authz.AmazonPairs(cfg, envRequest(http.MethodPut, "b", "o", "tagging&versionId=v1", "X-Amz-Copy-Source", "/src/k"),
+					policy.S3PutObjectVersionTagging)
+			}, "v1"),
+			Entry("an action AWS does not list the key for", func() [][2]string {
+				return authz.AmazonPairs(cfg, envRequest(http.MethodGet, "b", "o", "versionId=v1"), policy.S3GetObject)
+			}, absent),
+			Entry("a version action naming no version", func() [][2]string {
+				return authz.AmazonPairs(cfg, envRequest(http.MethodGet, "b", "o", ""), policy.S3GetObjectVersion)
+			}, absent),
+			Entry("a copy's source, whatever version the query names", func() [][2]string {
+				r := envRequest(http.MethodPut, "b", "o", "versionId=v1", "X-Amz-Copy-Source", "/src/k?versionId=v2")
+				return authz.AmazonPairsOnKey(cfg, r, policy.S3GetObjectVersion, meta.ObjKey{Name: "k", Instance: "v2"})
+			}, "v2"),
+			Entry("a DeleteObjects key, whatever version the query names", func() [][2]string {
+				r := envRequest(http.MethodPost, "b", "", "delete&versionId=v1")
+				return authz.AmazonPairsOnKey(cfg, r, policy.S3DeleteObjectVersion, meta.ObjKey{Name: "k", Instance: "v2"})
+			}, "v2"),
+			Entry("a DeleteObjects key naming the null version", func() [][2]string {
+				r := envRequest(http.MethodPost, "b", "", "delete")
+				return authz.AmazonPairsOnKey(cfg, r, policy.S3DeleteObjectVersion, meta.ObjKey{Name: "k", Instance: "null"})
+			}, "null"),
+			Entry("UploadPartCopy's source state, read at the version it names", func() [][2]string {
+				r := envRequest(http.MethodPut, "b", "o", "partNumber=1&uploadId=u&versionId=v1", "X-Amz-Copy-Source", "/src/k?versionId=v2")
+				st := &op.ObjectState{Key: meta.ObjKey{Name: "k", Instance: "v2"}, Exists: true}
+				return authz.AmazonPairsOnState(cfg, r, policy.S3GetObjectVersion, st)
+			}, "v2"),
+			Entry("a source state read at the null version, whose id is empty", func() [][2]string {
+				r := envRequest(http.MethodPut, "b", "o", "", "X-Amz-Copy-Source", "/src/k?versionId=null")
+				st := &op.ObjectState{Key: meta.ObjKey{Name: "k"}, Exists: true}
+				return authz.AmazonPairsOnState(cfg, r, policy.S3GetObjectVersion, st)
+			}, "null"),
+		)
+
+		It("set the S3 keys for S3's actions alone", func() {
+			r := envRequest(http.MethodPut, "b", "o", "versionId=v1", "X-Amz-Storage-Class", "STANDARD_IA")
+			r.AuthRoute = op.RouteSigV4Header
+			Expect(authz.AmazonPairs(cfg, r, policy.IAMGetUser)).To(HaveLen(3))
+			Expect(authz.AmazonPairs(cfg, r, policy.S3ObjectLambdaGetObject)).To(HaveLen(3))
+		})
+
+		It("reach a Deny, and leave the environment radosgw's", func() {
+			r := envRequest(http.MethodGet, "b", "o", "")
+			r.AuthRoute = op.RouteSigV4Query
+			env := authz.BuildEnv(cfg, r, policy.S3GetObject)
+			Expect(denies(env, policy.S3GetObject, `{"Bool": {"aws:SecureTransport": "false"}}`)).To(Equal(policy.Deny))
+			Expect(denies(env, policy.S3GetObject, `{"StringEquals": {"s3:authType": "REST-QUERY-STRING"}}`)).To(Equal(policy.Deny))
+			Expect(env.Lookup("aws:SecureTransport")).To(BeNil())
+			Expect(env.Lookup("s3:authType")).To(BeNil())
+			Expect(env.Lookup("aws:CurrentTime")).To(Equal([]string{"1790510400"}))
+		})
+
+		It("reach the missing-object check's Deny", func() {
+			r := envRequest(http.MethodGet, "b", "", "")
+			r.AuthRoute = op.RouteSigV4Header
+			env := authz.BaseEnv(cfg, r)
+			Expect(denies(env, policy.S3ListBucket, `{"Bool": {"aws:SecureTransport": "false"}}`)).To(Equal(policy.Deny))
+			Expect(denies(env, policy.S3ListBucket, `{"StringNotEquals": {"s3:x-amz-content-sha256": "UNSIGNED-PAYLOAD"}}`)).
+				To(Equal(policy.Pass))
+		})
+	})
 })

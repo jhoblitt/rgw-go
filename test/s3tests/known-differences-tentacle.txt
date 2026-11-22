@@ -212,3 +212,12 @@
 # A Deny written for the absence of x-amz-acl (Null s3:x-amz-acl true) refuses a PutObject that sends no x-amz-acl and a PutObjectAcl that sets its ACL by its body; radosgw adds the key empty to those checks and serves both (differences: "CopyObject and CreateMultipartUpload evaluate s3:PutObject with the keys of the ACL and the tags they set")
 ^s3tests\.functional\.test_s3::test_bucket_policy_deny_put_obj_null_acl$
 ^s3tests\.functional\.test_s3::test_bucket_policy_deny_put_obj_acl_body_null_acl$
+
+# A bucket policy Deny reads the condition keys Amazon S3's request context sets where radosgw sets none or another value: aws:SecureTransport false for a plain request, aws:EpochTime in seconds and aws:CurrentTime as a date and time, s3:signatureversion, s3:authType, s3:x-amz-content-sha256, s3:x-amz-storage-class and s3:VersionId; radosgw's environment lacks them, so it serves every request each test's Deny names (differences: "A Deny reads the condition keys Amazon S3 sets")
+^s3tests\.functional\.test_s3::test_bucket_policy_deny_secure_transport_false$
+^s3tests\.functional\.test_s3::test_bucket_policy_deny_request_time_amazon_forms$
+^s3tests\.functional\.test_s3::test_bucket_policy_deny_signature_version$
+^s3tests\.functional\.test_s3::test_bucket_policy_deny_auth_type$
+^s3tests\.functional\.test_s3::test_bucket_policy_deny_unsigned_payload$
+^s3tests\.functional\.test_s3::test_bucket_policy_deny_storage_class$
+^s3tests\.functional\.test_s3::test_bucket_policy_deny_version_id$

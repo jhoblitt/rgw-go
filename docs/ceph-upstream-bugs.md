@@ -6312,11 +6312,13 @@ Every new entry adds its row to this table, in document order.
   `2026-10-*` never holds.
 - **Releases:** v19.2.6, v20.2.4 and main (8aa24c51928, 2026-10-30); older
   releases not checked.
-- **rgw-go:** reproduces it: `internal/authz/env.go` sets both keys as
-  radosgw does. `docs/differences.md` records what follows from it in a
-  statement that denies and names `aws:EpochTime` in another ASCII case: a
-  numeric operator holds there, the key's value being no number ("A Deny's
-  condition key names match whatever their case").
+- **rgw-go:** reproduces it for an Allow, and not for a Deny.
+  `internal/authz/env.go` sets both keys as radosgw does, and an Allow reads
+  them alone. A Deny reads them in Amazon S3's forms too, `aws:CurrentTime` as
+  an ISO 8601 date and time and `aws:EpochTime` as seconds, so a numeric
+  condition on `aws:EpochTime` applies to it, and it also holds where
+  radosgw's values meet it (`docs/differences.md`, "A Deny reads the
+  condition keys Amazon S3 sets").
 - **Upstream:** reported to the Ceph security team (security@ceph.io) on
   2026-10-12; awaiting response.
 - **Found:** phase 1 planning of unit Z, recorded by unit Z's Task 12,
@@ -36134,9 +36136,12 @@ Every new entry adds its row to this table, in document order.
     in the IAM User Guide's archived source).
 - **Releases:** v19.2.7, v20.2.4 and main at 203e7c52025d (2026-10-30); older
   releases not checked.
-- **rgw-go:** reproduces it: `baseKeys` adds the key as radosgw does, with
-  the value `true` for a secure request alone (`internal/authz/env.go`); plan
-  task S14.
+- **rgw-go:** reproduces it for an Allow, and not for a Deny. `baseKeys`
+  adds the key as radosgw does, with the value `true` for a secure request
+  alone, and an Allow reads that environment alone. A Deny reads Amazon S3's
+  request context beside it, where the key is `false` for a request that is
+  not secure (`amazonKeys`, `internal/authz/env.go`; `docs/differences.md`,
+  "A Deny reads the condition keys Amazon S3 sets").
 - **Upstream:** none. A prior-art search on 2026-11-15 found no open report
   or pull request. [tracker #42521](https://tracker.ceph.com/issues/42521) is
   related, not a fix: it was closed in 2021 with "I believe this is fixed in
@@ -36228,11 +36233,18 @@ Every new entry adds its row to this table, in document order.
     ("[radosgw never sets aws:SecureTransport to false](#radosgw-never-sets-awssecuretransport-to-false)").
 - **Releases:** v19.2.7 and v20.2.4; older releases not checked.
 - **rgw-go:** reproduces it for an Allow: a condition on one of the keys is
-  judged on an absent key, and an Allow so conditioned grants nothing. For a
-  Deny, a negated operator on an absent key holds
+  judged on an absent key, and an Allow so conditioned grants nothing. A Deny
+  reads Amazon S3's request context beside radosgw's environment, where
+  `s3:signatureversion`, `s3:authType`, `s3:x-amz-content-sha256`,
+  `s3:x-amz-storage-class` and `s3:VersionId` hold the values Amazon's
+  documentation gives them, for the requests and actions it gives them for
+  (`amazonKeys`, `internal/authz/env.go`; `docs/differences.md`, "A Deny
+  reads the condition keys Amazon S3 sets"). The other keys stay absent for a
+  Deny too, and a Deny's negated operator on one holds for every request
   (`docs/differences.md`, "A Deny's condition holds where Amazon S3's
-  evaluation or radosgw's holds"). Setting the keys Amazon S3 sets on S3
-  requests is plan task S14.
+  evaluation or radosgw's holds"): `s3:signatureAge`, `s3:TlsVersion` and
+  `s3:LocationConstraint`, whose values rgw-go does not hold when it
+  authorizes; and the global keys.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 task S9's implementation, 2026-11-15, listing the keys a
   Deny's negated operator meets; derived from the source, not reproduced.

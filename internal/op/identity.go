@@ -3,6 +3,7 @@ package op
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/jhoblitt/rgw-go/internal/meta"
 )
@@ -126,6 +127,10 @@ type AuthResult struct {
 	// result; one left unset is RouteUnknown, which reads nothing from the
 	// query that a signature may leave out.
 	Route AuthRoute
+	// FormSigV4 is set for a browser upload whose form is signed by
+	// Signature Version 4, its x-amz-algorithm AWS4-HMAC-SHA256, and clear for
+	// one signed by Signature Version 2. Every other route names its version.
+	FormSigV4 bool
 	// Trailers holds the trailers of an aws-chunked payload whose
 	// x-amz-content-sha256 ends in TRAILER, which Body reads; nil for every
 	// other payload. radosgw puts each trailer x-amz-trailer lists into the
@@ -216,6 +221,28 @@ func (rt AuthRoute) ReadsQueryEncryption() bool {
 	default:
 		return false
 	}
+}
+
+// PayloadUnsigned reports whether a SigV4 request whose x-amz-content-sha256
+// is hash sends a payload that its signature does not cover and that nothing
+// verifies: hash contains UNSIGNED-PAYLOAD and does not end in TRAILER, the
+// test get_auth_data_v4 makes before it chooses no completer
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.h#L673-L681 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L5913-L5932 at v19.2.7;
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.h#L676-L684 at v20.2.4,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L6439-L6458 at v20.2.4).
+func PayloadUnsigned(hash string) bool {
+	return strings.Contains(hash, "UNSIGNED-PAYLOAD") && !strings.HasSuffix(hash, "TRAILER")
+}
+
+// PayloadUnsignedChunked reports whether hash is
+// STREAMING-UNSIGNED-PAYLOAD-TRAILER, the aws-chunked form whose chunks
+// carry no signature, only a trailing checksum, as
+// is_v4_payload_unsigned_chunked tells it apart
+// (https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.h#L668-L671 at v19.2.7,
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.h#L671-L674 at v20.2.4).
+func PayloadUnsignedChunked(hash string) bool {
+	return hash == "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
 }
 
 // PayloadForms is the set of signed payload forms an op accepts. radosgw's

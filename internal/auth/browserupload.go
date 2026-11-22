@@ -83,7 +83,10 @@ func (v *Verifier) browserUpload(ctx context.Context, creds op.BrowserUploadCred
 	if err != nil {
 		return nil, err
 	}
-	return &op.AuthResult{Identity: id, ContentLength: -1, PayloadSHA256: unsignedPayload, Route: op.RouteBrowserUpload}, nil
+	return &op.AuthResult{
+		Identity: id, ContentLength: -1, PayloadSHA256: unsignedPayload, Route: op.RouteBrowserUpload,
+		FormSigV4: creds.Algorithm == aws4Algorithm,
+	}, nil
 }
 
 // browserUploadAuthData is AWSBrowserUploadAbstractor::get_auth_data: the

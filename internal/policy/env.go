@@ -1,6 +1,9 @@
 package policy
 
-import "slices"
+import (
+	"maps"
+	"slices"
+)
 
 // Env is rgw::IAM::Environment
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_iam_policy.h#L326 at v19.2.6,
@@ -27,6 +30,18 @@ type Env struct {
 	keys map[string]*envValues
 	// unsent are the keys MarkUnsent names.
 	unsent []string
+	// deny are the keys and values SetForDeny sets.
+	deny map[string]string
+	// denyOr are the second readings SetForDenyOr and SetForDenyOrAbsent
+	// record, by key.
+	denyOr map[string][]reading
+}
+
+// reading is a reading of a key Amazon's texts leave open: value alone, or no
+// value when absent is set.
+type reading struct {
+	value  string
+	absent bool
 }
 
 // envValues are one key's values.
@@ -139,9 +154,17 @@ func (e *Env) Remove(key, value string) {
 
 // Clone returns a copy of e that shares no storage with it.
 func (e *Env) Clone() Env {
-	c := Env{keys: make(map[string]*envValues, len(e.keys)), unsent: slices.Clone(e.unsent)}
+	c := Env{
+		keys:   make(map[string]*envValues, len(e.keys)),
+		unsent: slices.Clone(e.unsent),
+		deny:   maps.Clone(e.deny),
+		denyOr: make(map[string][]reading, len(e.denyOr)),
+	}
 	for key, v := range e.keys {
 		c.keys[key] = &envValues{added: slices.Clone(v.added), linked: slices.Clone(v.linked)}
+	}
+	for key, rs := range e.denyOr {
+		c.denyOr[key] = slices.Clone(rs)
 	}
 	return c
 }
@@ -169,4 +192,80 @@ func (e *Env) withoutUnsent() (Env, bool) {
 	}
 	c.unsent = nil
 	return c, true
+}
+
+// SetForDeny records that Amazon S3's request context holds key with value
+// alone, where radosgw's holds no value for it or another one. A statement
+// that allows never reads it. One that denies reads it in place of key's
+// values here, beside radosgw's reading of the environment as built
+// (Statement.EvalConditions).
+func (e *Env) SetForDeny(key, value string) {
+	if e.deny == nil {
+		e.deny = make(map[string]string)
+	}
+	e.deny[key] = value
+}
+
+// forDeny is e with each key SetForDeny names holding the value it was set
+// to, alone: the request context a Deny's conditions read. It shares the
+// other keys' values with e, which no evaluation changes.
+func (e *Env) forDeny() Env {
+	if len(e.deny) == 0 {
+		return *e
+	}
+	keys := make(map[string]*envValues, len(e.keys)+len(e.deny))
+	maps.Copy(keys, e.keys)
+	for key, value := range e.deny {
+		keys[key] = &envValues{added: []string{value}, linked: []string{value}}
+	}
+	return Env{keys: keys}
+}
+
+// SetForDenyOr records that Amazon's texts leave key open between the value
+// SetForDeny sets and other: a Deny's condition also holds where it holds on
+// Amazon S3's request context with key holding other alone. A statement that
+// allows never reads it.
+func (e *Env) SetForDenyOr(key, other string) {
+	e.addDenyOr(key, reading{value: other})
+}
+
+// SetForDenyOrAbsent records that Amazon's texts leave key open between the
+// value SetForDeny sets and none: a Deny's condition also holds where it
+// holds on Amazon S3's request context without key. A statement that allows
+// never reads it.
+func (e *Env) SetForDenyOrAbsent(key string) {
+	e.addDenyOr(key, reading{absent: true})
+}
+
+func (e *Env) addDenyOr(key string, r reading) {
+	if e.denyOr == nil {
+		e.denyOr = make(map[string][]reading)
+	}
+	e.denyOr[key] = append(e.denyOr[key], r)
+}
+
+// forDenyOr is one request context for each second reading SetForDenyOr and
+// SetForDenyOrAbsent record: forDeny with that reading's key holding its
+// value alone, or absent. Each differs from forDeny in that one key.
+func (e *Env) forDenyOr() []Env {
+	if len(e.denyOr) == 0 {
+		return nil
+	}
+	amazon := e.forDeny()
+	var ctxs []Env
+	for key, rs := range e.denyOr {
+		for _, r := range rs {
+			keys := maps.Clone(amazon.keys)
+			if keys == nil {
+				keys = make(map[string]*envValues)
+			}
+			if r.absent {
+				delete(keys, key)
+			} else {
+				keys[key] = &envValues{added: []string{r.value}, linked: []string{r.value}}
+			}
+			ctxs = append(ctxs, Env{keys: keys})
+		}
+	}
+	return ctxs
 }

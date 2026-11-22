@@ -1,6 +1,7 @@
 package authz
 
 import (
+	"cmp"
 	"maps"
 	"net"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/jhoblitt/rgw-go/internal/acl"
 	"github.com/jhoblitt/rgw-go/internal/denc"
 	"github.com/jhoblitt/rgw-go/internal/iso8601"
+	"github.com/jhoblitt/rgw-go/internal/meta"
 	"github.com/jhoblitt/rgw-go/internal/op"
 	"github.com/jhoblitt/rgw-go/internal/policy"
 	"github.com/jhoblitt/rgw-go/internal/rgwtext"
@@ -29,22 +31,24 @@ type envPair struct{ key, value string }
 // among them; the evaluator adds those where the op does. Last come keys
 // radosgw does not add: those of the ACL and the tags a CopyObject or a
 // CreateMultipartUpload sets (writeKeys), then the object-lock keys of the
-// lock the request sets (lockKeys).
+// lock the request sets (lockKeys). Beside them, and read by a Deny alone, it
+// holds the values Amazon S3's request context gives the keys radosgw leaves
+// out or sets otherwise (amazonKeys).
 //
 // radosgw's environment is an unordered_multimap, and on Tentacle which of a
 // key's values a typed condition reads depends on how many pairs the
 // environment held when each was added (policy.Env), so the keys are added in
 // radosgw's order, and the keys it lacks after all of its own.
 func BuildEnv(cfg Config, r *op.Request, a policy.Action) policy.Env {
-	return buildEnv(cfg, r, a, nil)
+	return buildEnv(cfg, r, a, nil, requestVersion(r))
 }
 
-// buildEnv is BuildEnv with addTags, when non-nil, run where the op for a
-// adds its tag keys: before its own keys for CopyObject's destination check
-// and the two multipart ops that check s3:PutObject, after them for every
-// other op.
-func buildEnv(cfg Config, r *op.Request, a policy.Action, addTags func(*policy.Env)) policy.Env {
-	env := baseEnv(cfg, r)
+// buildEnv is BuildEnv for a check on version v, with addTags, when non-nil,
+// run where the op for a adds its tag keys: before its own keys for
+// CopyObject's destination check and the two multipart ops that check
+// s3:PutObject, after them for every other op.
+func buildEnv(cfg Config, r *op.Request, a policy.Action, addTags func(*policy.Env), v objectVersion) policy.Env {
+	env := baseEnvFor(cfg, r, a, v)
 	keys, tagsFirst := opKeys(cfg, r, a)
 	if tagsFirst && addTags != nil {
 		addTags(&env)
@@ -182,20 +186,268 @@ func remainingDays(until, now time.Time) int64 {
 // read_obj_policy extends with s3:prefix for a missing object's ListBucket
 // check
 // (https://github.com/ceph/ceph/blob/v19.2.6/src/rgw/rgw_op.cc#L438 at v19.2.6,
-// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L468 at v20.2.4).
+// https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L468 at v20.2.4),
+// with Amazon S3's request context for that check.
 func baseEnv(cfg Config, r *op.Request) policy.Env {
+	return baseEnvFor(cfg, r, policy.S3ListBucket, objectVersion{})
+}
+
+// baseEnvFor is rgw_build_iam_environment's keys, with the values Amazon S3's
+// request context gives a check of action a on version v set for a Deny, and
+// the second readings of those Amazon's texts leave open, all from one
+// reading of the clock.
+func baseEnvFor(cfg Config, r *op.Request, a policy.Action, v objectVersion) policy.Env {
+	now := cfg.now().UTC()
 	var env policy.Env
-	for _, p := range baseKeys(cfg, r) {
+	for _, p := range baseKeys(cfg, r, now) {
 		env.Add(p.key, p.value)
+	}
+	ps, others := amazonKeys(cfg, r, a, v, now)
+	for _, p := range ps {
+		env.SetForDeny(p.key, p.value)
+	}
+	for _, o := range others {
+		if o.absent {
+			env.SetForDenyOrAbsent(o.key)
+		} else {
+			env.SetForDenyOr(o.key, o.value)
+		}
 	}
 	return env
 }
 
-// baseKeys are rgw_build_iam_environment's keys in its order.
+// objectVersion is the version of the object a check is on, which
+// s3:VersionId names: id, when named is set.
+type objectVersion struct {
+	id    string
+	named bool
+}
+
+// requestVersion is the version a request names in its versionId parameter,
+// the version its checks of its own object are on: the one
+// internal/s3's ParseRequest gives r.Object, from the same parsed query.
+func requestVersion(r *op.Request) objectVersion {
+	return objectVersion{id: query(r, "versionId"), named: hasQuery(r, "versionId")}
+}
+
+// keyVersion is the version of key, an object a request names other than
+// its own: a copy's source, or a DeleteObjects key or delete marker version.
+func keyVersion(key meta.ObjKey) objectVersion {
+	return objectVersion{id: key.Instance, named: key.Instance != ""}
+}
+
+// stateVersion is the version of st, a source object's state that a check
+// is on once its head is read: the version its read resolved, whose id is
+// empty for the null version (op.ObjectState).
+func stateVersion(st *op.ObjectState) objectVersion {
+	return objectVersion{id: cmp.Or(st.Key.Instance, "null"), named: true}
+}
+
+// amazonKeys are the keys Amazon S3's request context holds for a check of
+// action a on version v where radosgw's holds none or another value, each
+// with the value Amazon's documentation of it gives
+// (docs/ceph-upstream-bugs.md, "radosgw sets few of the condition keys
+// Amazon S3 sets on S3 requests", "radosgw never sets aws:SecureTransport to
+// false" and "radosgw swaps aws:CurrentTime and aws:EpochTime";
+// docs/differences.md, "A Deny reads the condition keys Amazon S3 sets").
+// A Deny reads them in place of radosgw's values, and an Allow never does.
+// Keys whose value no Amazon text cited there gives, and those whose value
+// rgw-go does not hold when it authorizes, are left as radosgw leaves them:
+// absent. others are the second readings of the keys whose value Amazon's
+// texts leave open, which a Deny also reads.
+func amazonKeys(cfg Config, r *op.Request, a policy.Action, v objectVersion, now time.Time) (ps []envPair, others []otherReading) {
+	ps = []envPair{
+		// "Use this key to compare the date and time of the request" with
+		// "date operators"
+		// (https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_condition-keys.md?plain=1#L128-L134),
+		// which take "one of the W3C implementations of the ISO 8601 date
+		// formats"
+		// (https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_elements_condition_operators.md?plain=1#L131).
+		{"aws:CurrentTime", now.Format(time.RFC3339)},
+		// "the date and time of the request in epoch or Unix time", "the
+		// number of seconds since January 1, 1970"
+		// (https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_condition-keys.md?plain=1#L232-L238).
+		{"aws:EpochTime", strconv.FormatInt(now.Unix(), 10)},
+		// "The request context returns true or false", and "This key is
+		// always included in the request context"
+		// (https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_condition-keys.md?plain=1#L984-L990).
+		{"aws:SecureTransport", strconv.FormatBool(secureTransport(cfg, r))},
+	}
+	if !strings.HasPrefix(a.String(), "s3:") {
+		return ps, nil
+	}
+	if v, ok := signatureVersion(r); ok {
+		ps = append(ps, envPair{"s3:signatureversion", v})
+	}
+	if v, ok := authType(r.AuthRoute); ok {
+		ps = append(ps, envPair{"s3:authType", v})
+	}
+	if v, ok := payloadHash(r); ok && !unsignedContentUnlisted[a] {
+		ps = append(ps, envPair{"s3:x-amz-content-sha256", v})
+		others = append(others, payloadHashOthers(r)...)
+	}
+	if v, ok := op.HeaderValue(r.Header, "X-Amz-Storage-Class"); ok && storageClassActions[a] {
+		ps = append(ps, envPair{"s3:x-amz-storage-class", v})
+	}
+	if versionActions[a] && v.named {
+		ps = append(ps, envPair{"s3:VersionId", v.id})
+	}
+	return ps, others
+}
+
+// otherReading is a second reading of a key amazonKeys sets, where Amazon's
+// texts leave its value open: value alone, or no value when absent is set.
+type otherReading struct {
+	key, value string
+	absent     bool
+}
+
+// signatureVersion is s3:signatureversion for r: "AWS" for Signature
+// Version 2 and "AWS4-HMAC-SHA256" for Signature Version 4, in the header,
+// presigned or in a browser upload's form (r.FormSigV4), the values the S3
+// API Reference's page of the Signature Version 4 condition keys gives
+// (http://web.archive.org/web/20260520053457/https://docs.aws.amazon.com/AmazonS3/latest/API/bucket-policy-s3-sigv4-conditions.html,
+// the page as it stood on 2026-05-20, read 2026-11-21; the live page now
+// redirects to the reference's welcome page). An anonymous request has none,
+// the key being for "authenticated requests".
+func signatureVersion(r *op.Request) (string, bool) {
+	switch r.AuthRoute {
+	case op.RouteSigV2Header, op.RouteSigV2Query:
+		return "AWS", true
+	case op.RouteSigV4Header, op.RouteSigV4Query:
+		return "AWS4-HMAC-SHA256", true
+	case op.RouteBrowserUpload:
+		if r.FormSigV4 {
+			return "AWS4-HMAC-SHA256", true
+		}
+		return "AWS", true
+	}
+	return "", false
+}
+
+// authType is s3:authType for a request authenticated on route rt:
+// REST-HEADER for the Authorization header, REST-QUERY-STRING for a presigned
+// URL's query parameters and POST for a browser upload's form, the values
+// the same page gives
+// (http://web.archive.org/web/20260520053457/https://docs.aws.amazon.com/AmazonS3/latest/API/bucket-policy-s3-sigv4-conditions.html).
+// An anonymous request has none.
+func authType(rt op.AuthRoute) (string, bool) {
+	switch rt {
+	case op.RouteSigV2Header, op.RouteSigV4Header:
+		return "REST-HEADER", true
+	case op.RouteSigV2Query, op.RouteSigV4Query:
+		return "REST-QUERY-STRING", true
+	case op.RouteBrowserUpload:
+		return "POST", true
+	}
+	return "", false
+}
+
+// payloadHash is s3:x-amz-content-sha256 for a request signed by Signature
+// Version 4, in its Authorization header or presigned. A header-signed
+// request's client sets x-amz-content-sha256 "to the hash payload", and the
+// key's value for a payload no signature covers is UNSIGNED-PAYLOAD
+// (http://web.archive.org/web/20260520053457/https://docs.aws.amazon.com/AmazonS3/latest/API/bucket-policy-s3-sigv4-conditions.html).
+// That page says the key "doesn't support the x-amz-content-sha256 header as
+// a query string parameter" and gives no presigned value; the S3 user
+// guide's Deny of S3 on Outposts' s3-outposts:x-amz-content-sha256
+// UNSIGNED-PAYLOAD refuses "uploads that are using presigned URLs"
+// (https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/s3-outposts-bucket-policy-s3-sigv4-conditions.md?plain=1#L64),
+// so a Deny reads a presigned request so, and without the key too
+// (payloadHashOthers). The value is the payload hash the signature covers,
+// x-amz-content-sha256 or UNSIGNED-PAYLOAD for a request that sends none
+// (internal/auth/sigv4.go, expectedPayloadHash), but UNSIGNED-PAYLOAD for
+// every form whose payload the verifier reads with no signature: one it
+// leaves unverified (op.PayloadUnsigned) and aws-chunked with unsigned chunks
+// (op.PayloadUnsignedChunked), so that no spelling of an unsigned payload
+// escapes a Deny on that value. A signed aws-chunked form, whose chunk
+// signatures the verifier checks, is reported as sent. A request on any other
+// route has none.
+func payloadHash(r *op.Request) (string, bool) {
+	if r.AuthRoute != op.RouteSigV4Header && r.AuthRoute != op.RouteSigV4Query {
+		return "", false
+	}
+	h, ok := op.HeaderValue(r.Header, "X-Amz-Content-Sha256")
+	if !ok || op.PayloadUnsigned(h) || op.PayloadUnsignedChunked(h) {
+		return "UNSIGNED-PAYLOAD", true
+	}
+	return h, true
+}
+
+// payloadHashOthers are the readings of s3:x-amz-content-sha256 beside
+// payloadHash's that Amazon's texts leave open, for a request payloadHash
+// gives a value. For a form whose payload no signature covers other than
+// UNSIGNED-PAYLOAD itself, the page gives the value as the header holds it
+// ("set its value to the hash payload") and its purpose as denying "any
+// uploads where payloads are not signed"
+// (http://web.archive.org/web/20260520053457/https://docs.aws.amazon.com/AmazonS3/latest/API/bucket-policy-s3-sigv4-conditions.html),
+// so it is read both as UNSIGNED-PAYLOAD and as sent. For a presigned request
+// the page gives no value, the key not supporting the header "as a query
+// string parameter", where the S3 on Outposts page refuses presigned uploads
+// under a Deny of UNSIGNED-PAYLOAD
+// (https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/s3-outposts-bucket-policy-s3-sigv4-conditions.md?plain=1#L64),
+// so it is read both with payloadHash's value and without the key. A Deny's
+// condition on the key holds where it holds on any reading
+// (docs/differences.md, "A Deny reads the condition keys Amazon S3 sets").
+func payloadHashOthers(r *op.Request) []otherReading {
+	const key = "s3:x-amz-content-sha256"
+	var others []otherReading
+	h, ok := op.HeaderValue(r.Header, "X-Amz-Content-Sha256")
+	if ok && h != "UNSIGNED-PAYLOAD" && (op.PayloadUnsigned(h) || op.PayloadUnsignedChunked(h)) {
+		others = append(others, otherReading{key: key, value: h})
+	}
+	if r.AuthRoute == op.RouteSigV4Query {
+		others = append(others, otherReading{key: key, absent: true})
+	}
+	return others
+}
+
+// unsignedContentUnlisted are the S3 actions rgw-go checks whose condition
+// keys AWS's Service Authorization Reference for Amazon S3 lists without
+// s3:x-amz-content-sha256, which it lists for every other S3 action
+// (https://servicereference.us-east-1.amazonaws.com/v1/s3/s3.json, Version
+// v1.5, as docs/ceph-upstream-bugs.md's "radosgw sets few of the condition
+// keys Amazon S3 sets on S3 requests" read it on 2026-11-15; mirrored at
+// https://github.com/iann0036/iam-dataset/blob/78b22a950d5e7ec10d7174e22e9e1f4412a8e8f3/aws/iam_definition.json).
+var unsignedContentUnlisted = map[policy.Action]bool{
+	policy.S3GetBucketObjectLockConfiguration: true,
+	policy.S3PutBucketObjectLockConfiguration: true,
+}
+
+// storageClassActions are the actions the Service Authorization Reference
+// (unsignedContentUnlisted's) lists s3:x-amz-storage-class for, the storage
+// class an upload asks for in x-amz-storage-class
+// (https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L244,
+// https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L260).
+var storageClassActions = map[policy.Action]bool{
+	policy.S3PutObject:                 true,
+	policy.S3PutObjectAcl:              true,
+	policy.S3PutObjectVersionAcl:       true,
+	policy.S3BypassGovernanceRetention: true,
+}
+
+// versionActions are the actions rgw-go checks that the Service
+// Authorization Reference (unsignedContentUnlisted's) lists s3:versionid
+// for. The key holds the version of the object the check is on, "a specific
+// object version" a request asks for by its version ID
+// (https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L200,
+// https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L227).
+var versionActions = map[policy.Action]bool{
+	policy.S3GetObjectVersion:           true,
+	policy.S3GetObjectVersionAcl:        true,
+	policy.S3PutObjectVersionAcl:        true,
+	policy.S3DeleteObjectVersion:        true,
+	policy.S3GetObjectVersionTagging:    true,
+	policy.S3PutObjectVersionTagging:    true,
+	policy.S3DeleteObjectVersionTagging: true,
+	policy.S3GetObjectVersionAttributes: true,
+	policy.S3GetObjectVersionTorrent:    true,
+}
+
+// baseKeys are rgw_build_iam_environment's keys in its order, at now.
 // aws:CurrentTime is the epoch in seconds and aws:EpochTime the ISO 8601
 // time, the reverse of AWS's names, as radosgw sets them.
-func baseKeys(cfg Config, r *op.Request) []envPair {
-	now := cfg.now().UTC()
+func baseKeys(cfg Config, r *op.Request, now time.Time) []envPair {
 	ps := []envPair{
 		{"aws:CurrentTime", strconv.FormatInt(now.Unix(), 10)},
 		{"aws:EpochTime", now.Format("2006-01-02T15:04:05.000000000Z")},

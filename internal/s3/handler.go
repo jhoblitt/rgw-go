@@ -527,8 +527,9 @@ func LogAuthError(ctx context.Context, err error) {
 	}
 }
 
-// ApplyAuth gives r the authenticated identity and the route it
-// authenticated on (op.AuthResult.Route); when the authenticator replaces
+// ApplyAuth gives r the authenticated identity, the route it authenticated
+// on (op.AuthResult.Route) and, for a browser upload, the signature version
+// of its form (op.AuthResult.FormSigV4); when the authenticator replaces
 // the request body with a reader that verifies the payload as it is read,
 // that reader and its length; the trailers that reader keeps
 // (op.AuthResult.Trailers); and a SigV2 presigned request's signed query
@@ -540,6 +541,7 @@ func LogAuthError(ctx context.Context, err error) {
 func ApplyAuth(r *op.Request, res *op.AuthResult) {
 	r.Identity = res.Identity
 	r.AuthRoute = res.Route
+	r.FormSigV4 = res.FormSigV4
 	r.Trailers = res.Trailers
 	if res.Body != nil {
 		r.Body = res.Body
