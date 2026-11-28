@@ -13037,7 +13037,7 @@ does the following.
   delete refuses its bucket while the index counts it, and the admin removal
   with `purge-objects` removes the bucket. The removal that fails is
   tracked by V30. A failed versioned delete makes
-  no version and removes none. Versioning is not served yet.
+  no version and removes none.
 - **A versioned write retries when the key's OLH head goes between its read
   and its init.** radosgw's `set_olh` reads the key's OLH head and then
   inits a pending modification on it, which asserts that a head it read

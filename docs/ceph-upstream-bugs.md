@@ -5202,8 +5202,10 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** checked at v19.2.6, v20.2.4 and main (8aa24c51928,
   2026-10-30, where the option still has no minimum and `create_next`'s
   division is unchanged).
-- **rgw-go:** does not read `rgw_obj_stripe_size`; it writes no object
-  manifests yet. Its manifest walks refuse a stripe-0 rule past the head ("radosgw
+- **rgw-go:** does not reproduce it: it refuses to start on an
+  `rgw_obj_stripe_size` of 0 (`readWriteOptions`, `internal/driver/writer.go`;
+  `docs/differences.md`, "Write sizes that cannot write"). Its manifest
+  walks refuse a stripe-0 rule past the head ("radosgw
   hangs or faults walking a manifest whose rule has a stripe size of 0",
   above).
 - **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
@@ -6455,7 +6457,8 @@ Every new entry adds its row to this table, in document order.
   refuses a payload that expects a trailer signature with 403
   SignatureDoesNotMatch, and ends any other there, as radosgw's
   `complete()` does, leaving the rest of the body unread. A Content-MD5 is
-  the op's to compare, and phase 1 compares no trailing checksum. A
+  the op's to compare, and so is a checksum trailer, which the reader hands
+  on once the body has ended (`internal/op/checksumreq.go`). A
   payload short of its length is answered as radosgw answers it when the
   op's read goes on (`docs/differences.md`, "aws-chunked framing is read
   strictly").
@@ -16298,7 +16301,10 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** reproduces it in fakerados, whose `RGWClass` emulates the class
   (`rgwBucketLinkOLH`, `internal/testutil/fakerados/cls_rgw_olh.go`;
   pinned in `internal/testutil/fakerados/cls_rgw_olh_test.go`). The gateway
-  links no versions yet.
+  links versions through the same class op (`setOLH`,
+  `internal/driver/olh.go`), so the defect, which is the OSD class's, is
+  within its reach. Whether it meets it on a cluster as radosgw does was
+  not run.
 - **Upstream:** pending: sent to rgw-bug-reproduction. Fixed on main by
   [ceph/ceph#62469](https://github.com/ceph/ceph/pull/62469), which merged
   4195486c8ed; in v21.0.0 and later. Reworked by
@@ -16382,7 +16388,10 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** reproduces it in fakerados, whose `RGWClass` emulates the class
   (`rgwBucketLinkOLH`, `internal/testutil/fakerados/cls_rgw_olh.go`;
   pinned in `internal/testutil/fakerados/cls_rgw_olh_test.go`). The gateway
-  links no versions yet.
+  links versions through the same class op (`setOLH`,
+  `internal/driver/olh.go`), so the defect, which is the OSD class's, is
+  within its reach. Whether it meets it on a cluster as radosgw does was
+  not run.
 - **Upstream:** [#82572](https://tracker.ceph.com/issues/82572), filed
   2026-11-02 by the rgw-bug-reproduction session with a patch that moves the
   unlink after the epoch check; no pull request. Still on main at
@@ -16432,7 +16441,10 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** reproduces it in fakerados, whose `RGWClass` emulates the class
   (`rgwBucketUnlinkInstance`, `internal/testutil/fakerados/cls_rgw_olh.go`;
   pinned in `internal/testutil/fakerados/cls_rgw_olh_test.go`). The gateway
-  unlinks no versions yet. A reader that takes a delete marker's instance
+  unlinks versions through the same class op (`unlinkVersion`,
+  `internal/driver/olh.go`), so the defect, which is the OSD class's, is
+  within its reach. Whether it meets it on a cluster as radosgw does was
+  not run. A reader that takes a delete marker's instance
   entry from `bi_get` as proof the marker exists would take this one too;
   `StatObject`'s lookup of a named version that has no head decides a
   delete marker from its list entry instead, so it takes this one for a
@@ -16477,9 +16489,11 @@ Every new entry adds its row to this table, in document order.
   is the first release with the fix (`git tag --contains 744284811c8`), and
   the squid and tentacle branch heads (226f1401666 and ab83d026c29, both
   2026-10-12) carry no backport.
-- **rgw-go:** unaffected: its zstd encoder is klauspost's, one shared per
-  level, which allocates no stream per block (`internal/compression/encode.go`,
-  `zstdEncoder`).
+- **rgw-go:** unaffected: its zstd encoder is klauspost's, drawn from a pool
+  per level that keeps an encoder for each compression running at once and
+  leaves the idle ones to the garbage collector, so it makes no stream per
+  block to leak (`internal/compression/encode.go`, `zstdEncoder` and
+  `zstdPool`).
 - **Upstream:** [#73522](https://tracker.ceph.com/issues/73522), which
   4cc10e7aa8b's `Fixes:` trailer names, "zstd: Update zstd for cmake 4
   compatibility", Resolved with no backport, fixed on main by
@@ -17400,8 +17414,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
 - **rgw-go:** reproduces it: `clearOLHHead` (`internal/driver/olh_head.go`)
   clears the index after any removal failure but ECANCELED, logging one
-  other than not found, pinned in `internal/driver/olh_head_test.go`. The
-  gateway links no versions yet.
+  other than not found, pinned in `internal/driver/olh_head_test.go`.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task V4, 2026-10-15, implementing `clear_olh`;
   derived from the source, not reproduced.
@@ -17452,8 +17465,7 @@ Every new entry adds its row to this table, in document order.
   `internal/driver/olh_head_test.go`, and `setOLH`
   (`internal/driver/olh.go`) retries it from a fresh read, which creates
   the head and links (`docs/differences.md`, "A versioned write retries when
-  the key's OLH head goes between its read and its init"). The gateway
-  links no versions yet.
+  the key's OLH head goes between its read and its init").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task V4, 2026-10-15, implementing
   `olh_init_modification`; derived from the source, not reproduced.
@@ -18560,8 +18572,10 @@ Every new entry adds its row to this table, in document order.
   `docs/differences.md`, "Every S3 response carries CORS headers once its
   bucket is loaded"), GetBucketCors, PutBucketCors and DeleteBucketCors
   included (`internal/s3/cors.go`). It serves no notification,
-  request-payment, retention, legal-hold or metadata-search route yet, and
-  answers them 501 before any bucket loads.
+  request-payment or metadata-search route yet, and answers them 501 before
+  any bucket loads. Its retention and legal-hold routes are served
+  (`internal/s3/objectlockroutes.go`); whether their four answers carry the
+  headers was not checked for this entry.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, Task BC-7, 2026-10-22, scanning every
   `end_header` call at both tags for one without its op. Derived from the
@@ -20908,7 +20922,10 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** reproduces it in fakerados, whose `RGWClass` emulates the class
   (`rgwListStart`, `internal/testutil/fakerados/cls_rgw.go`; pinned in
   `internal/testutil/fakerados/cls_rgw_versioned_test.go`). The gateway
-  lists no versions yet.
+  lists versions through the class's list op (`ListObjects` with
+  `ListVersions`, `internal/driver/list.go`), so the defect, which is the
+  OSD class's, is within its reach. Whether it meets it on a cluster as
+  radosgw does was not run.
 - **Upstream:** pending: sent to rgw-bug-reproduction, whose triage logged
   it as V3A-1 and verified the discarded return at the three call sites
   cited above, at v19.2.7, v20.2.4 and main, where they still stand at
