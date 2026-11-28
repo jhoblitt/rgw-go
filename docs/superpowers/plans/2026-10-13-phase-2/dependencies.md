@@ -72,6 +72,15 @@ flowchart LR
   t_S16["S16"]
   t_S17["S17"]
   t_S18["S18"]
+  t_S19["S19"]
+  t_S20["S20"]
+  t_S21["S21"]
+  t_S22["S22"]
+  t_S23["S23"]
+  t_S24["S24"]
+  t_S25["S25"]
+  t_S26["S26"]
+  t_S27["S27"]
   t_V2["V2"]:::ext
   t_V10["V10"]:::ext
   t_BC_10["BC-10"]:::ext
@@ -79,6 +88,7 @@ flowchart LR
   t_BC_23["BC-23"]:::ext
   t_BC_28a["BC-28a"]:::ext
   t_L7["L7"]:::ext
+  t_WP_31["WP-31"]:::ext
   t_S1 --> t_S4
   t_V2 --> t_S6
   t_V10 --> t_S7
@@ -96,6 +106,10 @@ flowchart LR
   t_S13 --> t_S16
   t_S14 --> t_S17
   t_S14 --> t_S18
+  t_WP_31 --> t_S19
+  t_S16 --> t_S24
+  t_S19 --> t_S24
+  t_S15 --> t_S27
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_S3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s3-one-aws-correct-ispublic" "S3: one AWS-correct IsPublic"
@@ -114,6 +128,15 @@ flowchart LR
   click t_S16 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s16-a-denys-typed-operator-over-a-repeated-tag-key" "S16: a Deny's typed operator over a repeated tag key"
   click t_S17 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s17-a-deny-reads-s3signatureage-s3tlsversion-and-s3locationconstraint" "S17: a Deny reads s3:signatureAge, s3:TlsVersion and s3:LocationConstraint"
   click t_S18 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s18-a-date-deny-reads-every-w3c-time-form" "S18: a Date Deny reads every W3C time form"
+  click t_S19 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s19-a-writes-s3putobjecttagging-check-carries-its-tags-whatever-its-query-holds" "S19: a write's s3:PutObjectTagging check carries its tags whatever its query holds"
+  click t_S20 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s20-deleteobjects-judges-each-key-with-the-keys-tags" "S20: DeleteObjects judges each key with the key's tags"
+  click t_S21 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s21-a-request-reads-its-buckets-policy-once" "S21: a request reads its bucket's policy once"
+  click t_S22 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s22-a-policy-parse-costs-time-linear-in-its-document" "S22: a policy parse costs time linear in its document"
+  click t_S23 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s23-a-deny-reads-awssourceip-as-an-address" "S23: a Deny reads aws:SourceIp as an address"
+  click t_S24 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s24-putobjecttaggings-check-carries-the-tags-its-body-sets" "S24: PutObjectTagging's check carries the tags its body sets"
+  click t_S25 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s25-a-statement-matches-an-arns-account-by-the-comparison-that-grants-less" "S25: a statement matches an ARN's account by the comparison that grants less"
+  click t_S26 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s26-a-deny-reads-s3x-amz-copy-source-in-the-form-the-copy-reads-its-source-by" "S26: a Deny reads s3:x-amz-copy-source in the form the copy reads its source by"
+  click t_S27 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s27-uploadpart-and-uploadpartcopy-take-no-acl-header" "S27: UploadPart and UploadPartCopy take no ACL header"
   click t_V2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v2-meta-olh-head-types-and-bucket-helpers" "V2: meta OLH head types and bucket helpers"
   click t_V10 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v10-op-and-s3-putbucketversioning-and-getbucketversioning" "V10: op and s3, PutBucketVersioning and GetBucketVersioning"
   click t_BC_10 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-10-website-semantics-and-xml" "BC-10: Website semantics and XML"
@@ -121,6 +144,7 @@ flowchart LR
   click t_BC_23 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-23-encryption-configuration-type" "BC-23: Encryption configuration type"
   click t_BC_28a href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/B-bucket-config.md#task-bc-28a-ownership-type" "BC-28a: Ownership type"
   click t_L7 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/L-object-lock.md#task-l7-a-policys-object-lock-condition-keys-constrain-the-lock-a-request-sets" "L7: a policy's object-lock condition keys constrain the lock a request sets"
+  click t_WP_31 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-31-copyobject-honours-x-amz-tagging-directive" "WP-31: CopyObject honours x-amz-tagging-directive"
   classDef ext stroke-dasharray: 5 4
 ```
 
@@ -142,6 +166,15 @@ flowchart LR
 - [S16](00-index.md#task-s16-a-denys-typed-operator-over-a-repeated-tag-key): a Deny's typed operator over a repeated tag key
 - [S17](00-index.md#task-s17-a-deny-reads-s3signatureage-s3tlsversion-and-s3locationconstraint): a Deny reads s3:signatureAge, s3:TlsVersion and s3:LocationConstraint
 - [S18](00-index.md#task-s18-a-date-deny-reads-every-w3c-time-form): a Date Deny reads every W3C time form
+- [S19](00-index.md#task-s19-a-writes-s3putobjecttagging-check-carries-its-tags-whatever-its-query-holds): a write's s3:PutObjectTagging check carries its tags whatever its query holds
+- [S20](00-index.md#task-s20-deleteobjects-judges-each-key-with-the-keys-tags): DeleteObjects judges each key with the key's tags
+- [S21](00-index.md#task-s21-a-request-reads-its-buckets-policy-once): a request reads its bucket's policy once
+- [S22](00-index.md#task-s22-a-policy-parse-costs-time-linear-in-its-document): a policy parse costs time linear in its document
+- [S23](00-index.md#task-s23-a-deny-reads-awssourceip-as-an-address): a Deny reads aws:SourceIp as an address
+- [S24](00-index.md#task-s24-putobjecttaggings-check-carries-the-tags-its-body-sets): PutObjectTagging's check carries the tags its body sets
+- [S25](00-index.md#task-s25-a-statement-matches-an-arns-account-by-the-comparison-that-grants-less): a statement matches an ARN's account by the comparison that grants less
+- [S26](00-index.md#task-s26-a-deny-reads-s3x-amz-copy-source-in-the-form-the-copy-reads-its-source-by): a Deny reads s3:x-amz-copy-source in the form the copy reads its source by
+- [S27](00-index.md#task-s27-uploadpart-and-uploadpartcopy-take-no-acl-header): UploadPart and UploadPartCopy take no ACL header
 
 ### F: floor 19.2.7
 
@@ -167,6 +200,18 @@ flowchart LR
   t_F18["F18"]
   t_F19["F19"]
   t_F20["F20"]
+  t_F21["F21"]
+  t_F22["F22"]
+  t_F23["F23"]
+  t_F24["F24"]
+  t_F25["F25"]
+  t_F26["F26"]
+  t_F27["F27"]
+  t_F28["F28"]
+  t_F29["F29"]
+  t_F30["F30"]
+  t_F31["F31"]
+  t_F32["F32"]
   t_F2 --> t_F3
   t_F2 --> t_F4
   t_F3 --> t_F4
@@ -190,6 +235,9 @@ flowchart LR
   t_F15 --> t_F17
   t_F17 --> t_F18
   t_F18 --> t_F19
+  t_F22 --> t_F23
+  t_F22 --> t_F25
+  t_F30 --> t_F31
   click t_F1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f1-docs-the-specs-squid-floor-is-v1927" "F1: docs, the spec's Squid floor is v19.2.7"
   click t_F2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f2-docs-the-registry-at-v1927" "F2: docs, the registry at v19.2.7"
   click t_F3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f3-docs-the-exclusions-at-v1927" "F3: docs, the exclusions at v19.2.7"
@@ -210,6 +258,18 @@ flowchart LR
   click t_F18 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f18-auth-authz-and-s3-the-s3-api-reads-x-amz--headers-only" "F18: auth, authz and s3, the S3 API reads X-Amz- headers only"
   click t_F19 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f19-auth-and-s3-a-header-signed-sigv2-request-takes-no-unsigned-query-metadata-or-encryption" "F19: auth and s3, a header-signed SigV2 request takes no unsigned query metadata or encryption"
   click t_F20 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f20-s3-putobject-parses-partnumber-as-radosgw-does" "F20: s3, PutObject parses partNumber as radosgw does"
+  click t_F21 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f21-auth-the-signature-and-dispatch-read-one-query" "F21: auth, the signature and dispatch read one query"
+  click t_F22 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f22-auth-and-s3-a-sigv2-requests-op-is-one-its-signature-names" "F22: auth and s3, a SigV2 request's op is one its signature names"
+  click t_F23 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f23-auth-and-admin-sigv2-on-the-admin-api" "F23: auth and admin, SigV2 on the admin API"
+  click t_F24 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f24-admin-an-admin-requests-op-does-not-depend-on-the-order-of-its-query" "F24: admin, an admin request's op does not depend on the order of its query"
+  click t_F25 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f25-auth-sigv2s-canonical-resource-writes-policy-wherever-the-query-names-it" "F25: auth, SigV2's canonical resource writes `policy` wherever the query names it"
+  click t_F26 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f26-op-and-s3-a-content-md5-binds-the-body-of-a-parameter-document" "F26: op and s3, a Content-MD5 binds the body of a parameter document"
+  click t_F27 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f27-formatter-and-admin-a-tags-key-is-never-written-as-markup" "F27: formatter and admin, a tag's key is never written as markup"
+  click t_F28 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f28-driver-a-bucket-instance-put-bounds-a-new-instances-shard-count" "F28: driver, a bucket instance put bounds a new instance's shard count"
+  click t_F29 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f29-op-and-admin-the-usage-listing-renders-as-it-reads" "F29: op and admin, the usage listing renders as it reads"
+  click t_F30 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f30-frontend-a-read-no-handler-makes-has-a-deadline-and-options--reaches-the-handler" "F30: frontend, a read no handler makes has a deadline, and `OPTIONS *` reaches the handler"
+  click t_F31 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f31-frontend-the-connection-of-a-request-that-names-two-framings-is-not-reused" "F31: frontend, the connection of a request that names two framings is not reused"
+  click t_F32 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/F-floor-19.2.7.md#task-f32-frontend-what-nethttp-answers-or-rewrites-before-a-handler-is-recorded-and-pinned" "F32: frontend, what net/http answers or rewrites before a handler is recorded and pinned"
 ```
 
 - [F1](F-floor-19.2.7.md#task-f1-docs-the-specs-squid-floor-is-v1927): docs, the spec's Squid floor is v19.2.7
@@ -232,6 +292,18 @@ flowchart LR
 - [F18](F-floor-19.2.7.md#task-f18-auth-authz-and-s3-the-s3-api-reads-x-amz--headers-only): auth, authz and s3, the S3 API reads X-Amz- headers only
 - [F19](F-floor-19.2.7.md#task-f19-auth-and-s3-a-header-signed-sigv2-request-takes-no-unsigned-query-metadata-or-encryption): auth and s3, a header-signed SigV2 request takes no unsigned query metadata or encryption
 - [F20](F-floor-19.2.7.md#task-f20-s3-putobject-parses-partnumber-as-radosgw-does): s3, PutObject parses partNumber as radosgw does
+- [F21](F-floor-19.2.7.md#task-f21-auth-the-signature-and-dispatch-read-one-query): auth, the signature and dispatch read one query
+- [F22](F-floor-19.2.7.md#task-f22-auth-and-s3-a-sigv2-requests-op-is-one-its-signature-names): auth and s3, a SigV2 request's op is one its signature names
+- [F23](F-floor-19.2.7.md#task-f23-auth-and-admin-sigv2-on-the-admin-api): auth and admin, SigV2 on the admin API
+- [F24](F-floor-19.2.7.md#task-f24-admin-an-admin-requests-op-does-not-depend-on-the-order-of-its-query): admin, an admin request's op does not depend on the order of its query
+- [F25](F-floor-19.2.7.md#task-f25-auth-sigv2s-canonical-resource-writes-policy-wherever-the-query-names-it): auth, SigV2's canonical resource writes `policy` wherever the query names it
+- [F26](F-floor-19.2.7.md#task-f26-op-and-s3-a-content-md5-binds-the-body-of-a-parameter-document): op and s3, a Content-MD5 binds the body of a parameter document
+- [F27](F-floor-19.2.7.md#task-f27-formatter-and-admin-a-tags-key-is-never-written-as-markup): formatter and admin, a tag's key is never written as markup
+- [F28](F-floor-19.2.7.md#task-f28-driver-a-bucket-instance-put-bounds-a-new-instances-shard-count): driver, a bucket instance put bounds a new instance's shard count
+- [F29](F-floor-19.2.7.md#task-f29-op-and-admin-the-usage-listing-renders-as-it-reads): op and admin, the usage listing renders as it reads
+- [F30](F-floor-19.2.7.md#task-f30-frontend-a-read-no-handler-makes-has-a-deadline-and-options--reaches-the-handler): frontend, a read no handler makes has a deadline, and `OPTIONS *` reaches the handler
+- [F31](F-floor-19.2.7.md#task-f31-frontend-the-connection-of-a-request-that-names-two-framings-is-not-reused): frontend, the connection of a request that names two framings is not reused
+- [F32](F-floor-19.2.7.md#task-f32-frontend-what-nethttp-answers-or-rewrites-before-a-handler-is-recorded-and-pinned): frontend, what net/http answers or rewrites before a handler is recorded and pinned
 
 ### V: versioning
 
@@ -277,6 +349,9 @@ flowchart LR
   t_V22["V22"]
   t_V23["V23"]
   t_V24["V24"]
+  t_V25["V25"]
+  t_V32["V32"]
+  t_V33["V33"]
   t_S1["S1"]:::ext
   t_S2["S2"]:::ext
   t_WP_16["WP-16"]:::ext
@@ -347,6 +422,10 @@ flowchart LR
   t_V21 --> t_V22
   t_V21 --> t_V23
   t_V21 --> t_V24
+  t_V22 --> t_V25
+  t_V23 --> t_V25
+  t_V24 --> t_V25
+  t_V25 --> t_V33
   click t_V0 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v0-a-failed-class-call-keeps-its-output" "V0: a failed class call keeps its output"
   click t_V1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v1-clsrgw-olh-methods-bi_get-and-the-index-key-encoders" "V1: cls/rgw OLH methods, `bi_get` and the index key encoders"
   click t_V2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v2-meta-olh-head-types-and-bucket-helpers" "V2: meta OLH head types and bucket helpers"
@@ -385,6 +464,9 @@ flowchart LR
   click t_V22 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v22-a-replays-removal-keeps-a-version-a-link-lands-on-after-the-replay-read-the-log" "V22: a replay's removal keeps a version a link lands on after the replay read the log"
   click t_V23 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v23-two-refused-deletes-keep-the-newest-version-current" "V23: two refused deletes keep the newest version current"
   click t_V24 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v24-a-version-left-unlisted-is-still-expired-and-blocks-deletebucket" "V24: a version left unlisted is still expired and blocks DeleteBucket"
+  click t_V25 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v25-a-link-refuses-to-land-on-a-version-a-replays-removal-has-prepared" "V25: a link refuses to land on a version a replay's removal has prepared"
+  click t_V32 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v32-a-version-id-holding-_-names-no-version" "V32: a version id holding `_` names no version"
+  click t_V33 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v33-a-null-writes-first-link-waits-for-a-removal-of-the-null-data-and-gives-way-to-it" "V33: a null write's first link waits for a removal of the null data, and gives way to it"
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_WP_16 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-16-the-otp-class-client" "WP-16: the otp class client"
@@ -428,6 +510,9 @@ flowchart LR
 - [V19](V-versioning.md#task-v19-another-requests-replay-keeps-a-versioned-deletes-object-lock-guard): another request's replay keeps a versioned delete's object-lock guard
 - [V20](V-versioning.md#task-v20-a-key-left-with-an-olh-entry-pending-removal-stays-listable): a key left with an OLH entry pending removal stays listable
 - [V21](V-versioning.md#task-v21-a-replay-keeps-a-version-a-later-link-of-the-same-log-names): a replay keeps a version a later link of the same log names
+- [V25](V-versioning.md#task-v25-a-link-refuses-to-land-on-a-version-a-replays-removal-has-prepared): a link refuses to land on a version a replay's removal has prepared
+- [V32](V-versioning.md#task-v32-a-version-id-holding-_-names-no-version): a version id holding `_` names no version
+- [V33](V-versioning.md#task-v33-a-null-writes-first-link-waits-for-a-removal-of-the-null-data-and-gives-way-to-it): a null write's first link waits for a removal of the null data, and gives way to it
 
 ### L: object lock
 
@@ -527,6 +612,7 @@ flowchart LR
   t_C13["C13"]
   t_C14["C14"]
   t_C15["C15"]
+  t_C16["C16"]
   t_S1["S1"]:::ext
   t_S2["S2"]:::ext
   t_V5b["V5b"]:::ext
@@ -602,6 +688,7 @@ flowchart LR
   click t_C13 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md#task-c13-the-cross-gateway-and-mixed-worker-gates" "C13: the cross-gateway and mixed-worker gates"
   click t_C14 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md#task-c14-x-amz-expirations-rule-id-url-encoded" "C14: x-amz-expiration's rule-id URL-encoded"
   click t_C15 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md#task-c15-the-lifecycle-headers-on-copyobject-completemultipartupload-and-listparts" "C15: the lifecycle headers on CopyObject, CompleteMultipartUpload and ListParts"
+  click t_C16 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/C-lifecycle.md#task-c16-the-worker-knows-a-version-by-what-a-write-changes-not-by-its-mtime" "C16: the worker knows a version by what a write changes, not by its mtime"
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_V5b href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/V-versioning.md#task-v5b-driver-setolh-unlinkobjinstance-and-the-races" "V5b: driver, `setOLH`, `unlinkObjInstance` and the races"
@@ -637,6 +724,7 @@ flowchart LR
 - [C13](C-lifecycle.md#task-c13-the-cross-gateway-and-mixed-worker-gates): the cross-gateway and mixed-worker gates
 - [C14](C-lifecycle.md#task-c14-x-amz-expirations-rule-id-url-encoded): x-amz-expiration's rule-id URL-encoded
 - [C15](C-lifecycle.md#task-c15-the-lifecycle-headers-on-copyobject-completemultipartupload-and-listparts): the lifecycle headers on CopyObject, CompleteMultipartUpload and ListParts
+- [C16](C-lifecycle.md#task-c16-the-worker-knows-a-version-by-what-a-write-changes-not-by-its-mtime): the worker knows a version by what a write changes, not by its mtime
 
 ### B: bucket config
 
@@ -926,6 +1014,11 @@ flowchart LR
   t_WP_30["WP-30"]
   t_WP_31["WP-31"]
   t_WP_32["WP-32"]
+  t_WP_33["WP-33"]
+  t_WP_34["WP-34"]
+  t_WP_35["WP-35"]
+  t_WP_36["WP-36"]
+  t_WP_37["WP-37"]
   t_S1["S1"]:::ext
   t_S2["S2"]:::ext
   t_S4["S4"]:::ext
@@ -990,6 +1083,7 @@ flowchart LR
   t_WP_13 --> t_WP_26
   t_WP_26 --> t_WP_29
   t_WP_29 --> t_WP_32
+  t_WP_33 --> t_WP_34
   click t_WP_1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-1-checksum-types-and-record" "WP-1: checksum types and record"
   click t_WP_2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-2-digests-and-combiners" "WP-2: digests and combiners"
   click t_WP_3 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-3-trailer-values" "WP-3: trailer values"
@@ -1021,6 +1115,11 @@ flowchart LR
   click t_WP_30 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-30-a-copy-within-one-placement-shares-the-sources-tails-comparing-the-canonical-class" "WP-30: a copy within one placement shares the source's tails, comparing the canonical class"
   click t_WP_31 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-31-copyobject-honours-x-amz-tagging-directive" "WP-31: CopyObject honours x-amz-tagging-directive"
   click t_WP_32 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-32-a-completemultipartupload-that-asks-for-encryption-answers-as-the-writes-do" "WP-32: a CompleteMultipartUpload that asks for encryption answers as the writes do"
+  click t_WP_33 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-33-a-part-is-numbered-from-1-and-every-stored-part-is-retired" "WP-33: a part is numbered from 1, and every stored part is retired"
+  click t_WP_34 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-34-complete-and-abort-read-an-uploads-parts-once" "WP-34: Complete and Abort read an upload's parts once"
+  click t_WP_35 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-35-a-completions-part-checksums-are-compared-with-the-parts-stored" "WP-35: a completion's part checksums are compared with the parts stored"
+  click t_WP_36 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-36-every-checksum-trailer-x-amz-trailer-lists-is-compared" "WP-36: every checksum trailer x-amz-trailer lists is compared"
+  click t_WP_37 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/WP-write-path.md#task-wp-37-listparts-over-an-acl-whose-grants-do-not-decode-the-comment-and-a-spec" "WP-37: ListParts over an ACL whose grants do not decode: the comment and a spec"
   click t_S1 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s1-fakeradoss-rgw-class-as-method-tables" "S1: fakerados's rgw class as method tables"
   click t_S2 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s2-route-sets-per-feature-and-the-env-slots" "S2: route sets per feature and the Env slots"
   click t_S4 href "https://github.com/jhoblitt/rgw-go/blob/main/docs/superpowers/plans/2026-10-13-phase-2/00-index.md#task-s4-fakerados-refuses-an-unregistered-class-method-at-op-setup" "S4: fakerados refuses an unregistered class method at op setup"
@@ -1064,6 +1163,11 @@ flowchart LR
 - [WP-30](WP-write-path.md#task-wp-30-a-copy-within-one-placement-shares-the-sources-tails-comparing-the-canonical-class): a copy within one placement shares the source's tails, comparing the canonical class
 - [WP-31](WP-write-path.md#task-wp-31-copyobject-honours-x-amz-tagging-directive): CopyObject honours x-amz-tagging-directive
 - [WP-32](WP-write-path.md#task-wp-32-a-completemultipartupload-that-asks-for-encryption-answers-as-the-writes-do): a CompleteMultipartUpload that asks for encryption answers as the writes do
+- [WP-33](WP-write-path.md#task-wp-33-a-part-is-numbered-from-1-and-every-stored-part-is-retired): a part is numbered from 1, and every stored part is retired
+- [WP-34](WP-write-path.md#task-wp-34-complete-and-abort-read-an-uploads-parts-once): Complete and Abort read an upload's parts once
+- [WP-35](WP-write-path.md#task-wp-35-a-completions-part-checksums-are-compared-with-the-parts-stored): a completion's part checksums are compared with the parts stored
+- [WP-36](WP-write-path.md#task-wp-36-every-checksum-trailer-x-amz-trailer-lists-is-compared): every checksum trailer x-amz-trailer lists is compared
+- [WP-37](WP-write-path.md#task-wp-37-listparts-over-an-acl-whose-grants-do-not-decode-the-comment-and-a-spec): ListParts over an ACL whose grants do not decode: the comment and a spec
 
 ### T: gate tooling
 
