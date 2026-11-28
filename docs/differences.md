@@ -11719,20 +11719,42 @@ does the following.
   `rgw_op.cc:398-447` at v19.2.6, `:428-477` at v20.2.4) and decodes the
   upload's info in execute, where an empty meta object is NoSuchUpload and
   one that does not decode is -EIO. rgw-go reads and decodes the upload
-  first, so a meta object whose info does not decode answers 500
-  UnknownError to every requester, where radosgw answers a refused one 403
-  AccessDenied, and an empty meta object takes the missing-object rule,
-  404 NoSuchKey or 403 AccessDenied, where radosgw authorizes against its
-  ACL and then answers 404 NoSuchUpload. Only a corrupt upload meets
-  either, and rgw-go lists nothing for it.
-- **ListParts names the owner of an ACL whose grants do not decode.**
-  radosgw's ListParts decodes the meta object's whole ACL and answers 500
-  UnknownError, -EIO, when it does not decode (`RGWListMultipart::execute`,
-  `rgw_op.cc:6680-6688` at v19.2.6, `:7604-7612` at v20.2.4). rgw-go reads
-  the owner alone, as `decode_policy` does for the index entries
-  `set_attrs` and the listing's reconciliation write, so it lists the parts
-  under the owner a policy names even when its grants do not decode, and
-  under no owner when its owner does not. No S3 op writes such an ACL.
+  first, but answers a failure of that read only once the requester is
+  authorized, against a state whose policy is the bucket owner's default
+  ("The multipart routes authorize a request before they read what the
+  store holds for it"). So a meta object whose info does not decode
+  answers 403 AccessDenied to a requester that is refused and 500
+  UnknownError to one that passes, which `internal/s3/multipart_test.go`
+  pins for another user and for the bucket's owner. radosgw answers the
+  same two, but decides who passes on the meta object's own ACL, where
+  rgw-go decides on the bucket owner's default. An empty meta object takes
+  the missing-object rule, 404 NoSuchKey or 403 AccessDenied, where radosgw
+  authorizes against its ACL and then answers 404 NoSuchUpload. Only a
+  corrupt upload meets either, and rgw-go lists nothing for it.
+- **ListParts answers 500 for an upload ACL whose grants do not decode, as
+  radosgw does.** Until 2026-11-28 this entry, titled "ListParts names the
+  owner of an ACL whose grants do not decode", said rgw-go read the owner
+  alone and listed the parts under it. It does not, and no difference is
+  left here. radosgw decodes the meta object's whole ACL when it reads the
+  object's policy, before its permission check, and again in
+  `RGWListMultipart::execute`, and answers 500 UnknownError, -EIO, when it
+  does not decode
+  ([rgw_op.cc:411-422](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L411-L422) and
+  [rgw_op.cc:6685-6695](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6685-L6695),
+  [rgw_op.cc:441-452](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L441-L452) and
+  [rgw_op.cc:7603-7613](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7603-L7613)).
+  rgw-go's authorizer and its `ListParts.Execute` decode the whole policy
+  too (`decodeACL`, `internal/op/objectread.go`; `acl.DecodePolicy`,
+  `internal/acl/policy.go`), so an ACL whose owner decodes and whose grants
+  do not answers 500 UnknownError to the bucket's owner and to another user
+  alike, and lists nothing. A spec pins the 500 for an ACL that does not
+  decode at all (`internal/op/listparts_test.go`); the case of an owner
+  that decodes before grants that do not was run on both releases on
+  2026-11-28 and has no spec of its own. The driver still reads the owner
+  alone into the upload it returns (`uploadFromMeta`,
+  `internal/driver/mp_layout.go`), as `decode_policy` does for the index
+  entries `set_attrs` and the listing's reconciliation write, but ListParts
+  does not render that owner. No S3 op writes such an ACL.
 - **UploadPartCopy refuses a cloud-tiered source with a range too.**
   radosgw refuses a source transitioned to a cloud tier with 403
   InvalidObjectState only for a copy without `x-amz-copy-source-range`
@@ -13015,7 +13037,7 @@ does the following.
   delete refuses its bucket while the index counts it, and the admin removal
   with `purge-objects` removes the bucket. The removal that fails is
   tracked by V30. A failed versioned delete makes
-  no version and removes none. Versioning is not served yet.
+  no version and removes none.
 - **A versioned write retries when the key's OLH head goes between its read
   and its init.** radosgw's `set_olh` reads the key's OLH head and then
   inits a pending modification on it, which asserts that a head it read

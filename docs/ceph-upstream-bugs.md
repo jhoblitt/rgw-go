@@ -525,7 +525,7 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw sends a metadata put's objv tag raw in RGWX_UPDATE_VERSION](#radosgw-sends-a-metadata-puts-objv-tag-raw-in-rgwx_update_version) | pending | pending | ✓ |
 | [radosgw's replay of another request's versioned delete removes a version locked after that delete's check](#radosgws-replay-of-another-requests-versioned-delete-removes-a-version-locked-after-that-deletes-check) | pending | pending | ✓ |
 | [radosgw applies a policy statement that names NotAction and no Action to no action](#radosgw-applies-a-policy-statement-that-names-notaction-and-no-action-to-no-action) | [#73983](https://tracker.ceph.com/issues/73983) | none; [ceph/ceph#66099](https://github.com/ceph/ceph/pull/66099) closed unmerged |  |
-| [radosgw's PutObject sets the object ACL and tags its headers name under s3:PutObject alone](#radosgws-putobject-sets-the-object-acl-and-tags-its-headers-name-under-s3putobject-alone) | [#24131](https://tracker.ceph.com/issues/24131) (the tagging half) | pending |  |
+| [radosgw's PutObject sets the object ACL and tags its headers name under s3:PutObject alone](#radosgws-putobject-sets-the-object-acl-and-tags-its-headers-name-under-s3putobject-alone) | [#24131](https://tracker.ceph.com/issues/24131) (the tagging half), [#82944](https://tracker.ceph.com/issues/82944) (overlaps) | pending |  |
 | [radosgw-admin's object stat shows an attr it does not decode only up to its first NUL](#radosgw-admins-object-stat-shows-an-attr-it-does-not-decode-only-up-to-its-first-nul) | pending | pending | ✓ |
 | [radosgw leaves a key's version marker and OLH entry when a delete takes the key's first version before its link](#radosgw-leaves-a-keys-version-marker-and-olh-entry-when-a-delete-takes-the-keys-first-version-before-its-link) | pending | pending | ✓ |
 | [radosgw's replay that reads the head between another replay's head op and its trim makes an older version current](#radosgws-replay-that-reads-the-head-between-another-replays-head-op-and-its-trim-makes-an-older-version-current) | none | [ceph/ceph#67774](https://github.com/ceph/ceph/pull/67774) |  |
@@ -559,6 +559,26 @@ fixes it, or when rgw-go's handling changes. go-ceph's defects live in
 | [radosgw's bucket delete leaves the objects of a version no listing shows](#radosgws-bucket-delete-leaves-the-objects-of-a-version-no-listing-shows) | pending | pending | ✓ |
 | [cls_rgw counts a null delete marker that replaced existing data once its header is recounted](#cls_rgw-counts-a-null-delete-marker-that-replaced-existing-data-once-its-header-is-recounted) | pending | pending | ✓ |
 | [radosgw's bucket delete leaves the OLH head of a key whose last delete could not clear it](#radosgws-bucket-delete-leaves-the-olh-head-of-a-key-whose-last-delete-could-not-clear-it) | pending | pending | ✓ |
+| [radosgw's SigV4 canonical query and its argument parser split and decode a query token in opposite orders](#radosgws-sigv4-canonical-query-and-its-argument-parser-split-and-decode-a-query-token-in-opposite-orders) | pending | pending |  |
+| [radosgw's SigV2 signature does not cover query keys that choose the operation](#radosgws-sigv2-signature-does-not-cover-query-keys-that-choose-the-operation) | [#23182](https://tracker.ceph.com/issues/23182), [#82418](https://tracker.ceph.com/issues/82418) | pending |  |
+| [radosgw's SigV2 signature covers none of an admin API request's arguments](#radosgws-sigv2-signature-covers-none-of-an-admin-api-requests-arguments) | [#23182](https://tracker.ceph.com/issues/23182), [#82418](https://tracker.ceph.com/issues/82418) | pending |  |
+| [radosgw chooses an admin operation by the first admin sub-resource of a query whose order SigV4 does not sign](#radosgw-chooses-an-admin-operation-by-the-first-admin-sub-resource-of-a-query-whose-order-sigv4-does-not-sign) | pending | pending | ✓ |
+| [radosgw's SigV2 canonical resource leaves out policy when another admin sub-resource precedes it](#radosgws-sigv2-canonical-resource-leaves-out-policy-when-another-admin-sub-resource-precedes-it) | pending | pending |  |
+| [radosgw holds no body read by read_all_input to a signed Content-MD5](#radosgw-holds-no-body-read-by-read_all_input-to-a-signed-content-md5) | [#81230](https://tracker.ceph.com/issues/81230) | pending |  |
+| [radosgw's PutObjectTagging evaluates s3:PutObjectTagging without the tags it sets](#radosgws-putobjecttagging-evaluates-s3putobjecttagging-without-the-tags-it-sets) | [#82944](https://tracker.ceph.com/issues/82944) (overlaps) | pending |  |
+| [radosgw's DeleteObjects evaluates each key's delete permission without the key's tags](#radosgws-deleteobjects-evaluates-each-keys-delete-permission-without-the-keys-tags) | pending | pending | ✓ |
+| [radosgw takes a peer address as aws:SourceIp unparsed, and NotIpAddress is false for one that does not parse](#radosgw-takes-a-peer-address-as-awssourceip-unparsed-and-notipaddress-is-false-for-one-that-does-not-parse) | pending | pending | ✓ |
+| [radosgw matches an ARN's account without regard to case](#radosgw-matches-an-arns-account-without-regard-to-case) | pending | pending | ✓ |
+| [radosgw holds a request's versionId to no rule, though its head names rely on version ids without an underscore](#radosgw-holds-a-requests-versionid-to-no-rule-though-its-head-names-rely-on-version-ids-without-an-underscore) | pending | pending | ✓ |
+| [radosgw registers a part numbered below 1, which no completion or abort lists](#radosgw-registers-a-part-numbered-below-1-which-no-completion-or-abort-lists) | pending | pending | ✓ |
+| [radosgw writes a bucket tag's key as a member name, unescaped, in the admin bucket stats](#radosgw-writes-a-bucket-tags-key-as-a-member-name-unescaped-in-the-admin-bucket-stats) | pending | pending | ✓ |
+| [radosgw's list_parts reads an upload's whole part omap for every page once its part numbers have a gap](#radosgws-list_parts-reads-an-uploads-whole-part-omap-for-every-page-once-its-part-numbers-have-a-gap) | pending | pending | ✓ |
+| [radosgw's bucket instance metadata put names every index shard a document's num_shards counts](#radosgws-bucket-instance-metadata-put-names-every-index-shard-a-documents-num_shards-counts) | pending | pending | ✓ |
+| [radosgw's CompleteMultipartUpload reads no part checksum from its document](#radosgws-completemultipartupload-reads-no-part-checksum-from-its-document) | pending | pending | ✓ |
+| [radosgw splits x-amz-trailer on commas alone, so a name listed after white space is never found](#radosgw-splits-x-amz-trailer-on-commas-alone-so-a-name-listed-after-white-space-is-never-found) | pending | pending | ✓ |
+| [radosgw's writes naming no version replace an object under object lock when the bucket's versioning is not enabled](#radosgws-writes-naming-no-version-replace-an-object-under-object-lock-when-the-buckets-versioning-is-not-enabled) | private report | pending |  |
+| [radosgw decides a write's version on bucket info loaded before versioning and object lock were enabled](#radosgw-decides-a-writes-version-on-bucket-info-loaded-before-versioning-and-object-lock-were-enabled) | pending | pending | ✓ |
+| [radosgw's lifecycle never transitions a version whose attrs were written after its link](#radosgws-lifecycle-never-transitions-a-version-whose-attrs-were-written-after-its-link) | pending | pending | ✓ |
 
 A ✓ under Found by us marks a defect first found by the project's own sessions, the repository owner's Claude Code sessions such as rgw-go, rgw-rs and rgw-bug-reproduction, with no earlier upstream report or fix PR.
 
@@ -5182,8 +5202,10 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** checked at v19.2.6, v20.2.4 and main (8aa24c51928,
   2026-10-30, where the option still has no minimum and `create_next`'s
   division is unchanged).
-- **rgw-go:** does not read `rgw_obj_stripe_size`; it writes no object
-  manifests yet. Its manifest walks refuse a stripe-0 rule past the head ("radosgw
+- **rgw-go:** does not reproduce it: it refuses to start on an
+  `rgw_obj_stripe_size` of 0 (`readWriteOptions`, `internal/driver/writer.go`;
+  `docs/differences.md`, "Write sizes that cannot write"). Its manifest
+  walks refuse a stripe-0 rule past the head ("radosgw
   hangs or faults walking a manifest whose rule has a stripe size of 0",
   above).
 - **Upstream:** none for this defect. A prior-art search on 2026-10-01 found
@@ -6435,7 +6457,8 @@ Every new entry adds its row to this table, in document order.
   refuses a payload that expects a trailer signature with 403
   SignatureDoesNotMatch, and ends any other there, as radosgw's
   `complete()` does, leaving the rest of the body unread. A Content-MD5 is
-  the op's to compare, and phase 1 compares no trailing checksum. A
+  the op's to compare, and so is a checksum trailer, which the reader hands
+  on once the body has ended (`internal/op/checksumreq.go`). A
   payload short of its length is answered as radosgw answers it when the
   op's read goes on (`docs/differences.md`, "aws-chunked framing is read
   strictly").
@@ -16278,7 +16301,10 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** reproduces it in fakerados, whose `RGWClass` emulates the class
   (`rgwBucketLinkOLH`, `internal/testutil/fakerados/cls_rgw_olh.go`;
   pinned in `internal/testutil/fakerados/cls_rgw_olh_test.go`). The gateway
-  links no versions yet.
+  links versions through the same class op (`setOLH`,
+  `internal/driver/olh.go`), so the defect, which is the OSD class's, is
+  within its reach. Whether it meets it on a cluster as radosgw does was
+  not run.
 - **Upstream:** pending: sent to rgw-bug-reproduction. Fixed on main by
   [ceph/ceph#62469](https://github.com/ceph/ceph/pull/62469), which merged
   4195486c8ed; in v21.0.0 and later. Reworked by
@@ -16362,7 +16388,10 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** reproduces it in fakerados, whose `RGWClass` emulates the class
   (`rgwBucketLinkOLH`, `internal/testutil/fakerados/cls_rgw_olh.go`;
   pinned in `internal/testutil/fakerados/cls_rgw_olh_test.go`). The gateway
-  links no versions yet.
+  links versions through the same class op (`setOLH`,
+  `internal/driver/olh.go`), so the defect, which is the OSD class's, is
+  within its reach. Whether it meets it on a cluster as radosgw does was
+  not run.
 - **Upstream:** [#82572](https://tracker.ceph.com/issues/82572), filed
   2026-11-02 by the rgw-bug-reproduction session with a patch that moves the
   unlink after the epoch check; no pull request. Still on main at
@@ -16412,7 +16441,10 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** reproduces it in fakerados, whose `RGWClass` emulates the class
   (`rgwBucketUnlinkInstance`, `internal/testutil/fakerados/cls_rgw_olh.go`;
   pinned in `internal/testutil/fakerados/cls_rgw_olh_test.go`). The gateway
-  unlinks no versions yet. A reader that takes a delete marker's instance
+  unlinks versions through the same class op (`unlinkVersion`,
+  `internal/driver/olh.go`), so the defect, which is the OSD class's, is
+  within its reach. Whether it meets it on a cluster as radosgw does was
+  not run. A reader that takes a delete marker's instance
   entry from `bi_get` as proof the marker exists would take this one too;
   `StatObject`'s lookup of a named version that has no head decides a
   delete marker from its list entry instead, so it takes this one for a
@@ -16457,9 +16489,11 @@ Every new entry adds its row to this table, in document order.
   is the first release with the fix (`git tag --contains 744284811c8`), and
   the squid and tentacle branch heads (226f1401666 and ab83d026c29, both
   2026-10-12) carry no backport.
-- **rgw-go:** unaffected: its zstd encoder is klauspost's, one shared per
-  level, which allocates no stream per block (`internal/compression/encode.go`,
-  `zstdEncoder`).
+- **rgw-go:** unaffected: its zstd encoder is klauspost's, drawn from a pool
+  per level that keeps an encoder for each compression running at once and
+  leaves the idle ones to the garbage collector, so it makes no stream per
+  block to leak (`internal/compression/encode.go`, `zstdEncoder` and
+  `zstdPool`).
 - **Upstream:** [#73522](https://tracker.ceph.com/issues/73522), which
   4cc10e7aa8b's `Fixes:` trailer names, "zstd: Update zstd for cmake 4
   compatibility", Resolved with no backport, fixed on main by
@@ -17380,8 +17414,7 @@ Every new entry adds its row to this table, in document order.
 - **Releases:** Squid and Tentacle, checked at v19.2.7 and v20.2.4.
 - **rgw-go:** reproduces it: `clearOLHHead` (`internal/driver/olh_head.go`)
   clears the index after any removal failure but ECANCELED, logging one
-  other than not found, pinned in `internal/driver/olh_head_test.go`. The
-  gateway links no versions yet.
+  other than not found, pinned in `internal/driver/olh_head_test.go`.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task V4, 2026-10-15, implementing `clear_olh`;
   derived from the source, not reproduced.
@@ -17432,8 +17465,7 @@ Every new entry adds its row to this table, in document order.
   `internal/driver/olh_head_test.go`, and `setOLH`
   (`internal/driver/olh.go`) retries it from a fresh read, which creates
   the head and links (`docs/differences.md`, "A versioned write retries when
-  the key's OLH head goes between its read and its init"). The gateway
-  links no versions yet.
+  the key's OLH head goes between its read and its init").
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 Task V4, 2026-10-15, implementing
   `olh_init_modification`; derived from the source, not reproduced.
@@ -18540,8 +18572,10 @@ Every new entry adds its row to this table, in document order.
   `docs/differences.md`, "Every S3 response carries CORS headers once its
   bucket is loaded"), GetBucketCors, PutBucketCors and DeleteBucketCors
   included (`internal/s3/cors.go`). It serves no notification,
-  request-payment, retention, legal-hold or metadata-search route yet, and
-  answers them 501 before any bucket loads.
+  request-payment or metadata-search route yet, and answers them 501 before
+  any bucket loads. Its retention and legal-hold routes are served
+  (`internal/s3/objectlockroutes.go`); whether their four answers carry the
+  headers was not checked for this entry.
 - **Upstream:** pending; prior art not searched.
 - **Found:** phase 2 unit B, Task BC-7, 2026-10-22, scanning every
   `end_header` call at both tags for one without its op. Derived from the
@@ -20888,7 +20922,10 @@ Every new entry adds its row to this table, in document order.
 - **rgw-go:** reproduces it in fakerados, whose `RGWClass` emulates the class
   (`rgwListStart`, `internal/testutil/fakerados/cls_rgw.go`; pinned in
   `internal/testutil/fakerados/cls_rgw_versioned_test.go`). The gateway
-  lists no versions yet.
+  lists versions through the class's list op (`ListObjects` with
+  `ListVersions`, `internal/driver/list.go`), so the defect, which is the
+  OSD class's, is within its reach. Whether it meets it on a cluster as
+  radosgw does was not run.
 - **Upstream:** pending: sent to rgw-bug-reproduction, whose triage logged
   it as V3A-1 and verified the discarded return at the three call sites
   cited above, at v19.2.7, v20.2.4 and main, where they still stand at
@@ -34495,13 +34532,23 @@ Every new entry adds its row to this table, in document order.
   `internal/op/writeacltags.go`; `docs/differences.md`, "A write's ACL and
   tag headers need s3:PutObjectAcl and s3:PutObjectTagging", which records
   why `bucket-owner-full-control` needs s3:PutObject alone). The POST object
-  upload is not served yet.
+  upload is not served yet. One request shape escapes the tag half today:
+  `opKeys` gives an s3:PutObjectTagging check the request's
+  `s3:RequestObjectTag/<key>` keys only when the query has no `tagging`
+  key, a test meant to tell PutObjectTagging's own op from a write's
+  header check, and a CreateMultipartUpload's query may carry that key, so
+  its s3:PutObjectTagging check is then evaluated without them
+  (`internal/authz/env.go`). A numbered plan task will decide by the op.
 - **Upstream:** [#24131](https://tracker.ceph.com/issues/24131), Fix Under
   Review since 2018, covers the tagging half; the ACL half: pending: sent
-  to rgw-bug-reproduction.
+  to rgw-bug-reproduction. Its triage of the sweep of 2026-11-21 names
+  [#82944](https://tracker.ceph.com/issues/82944) as overlapping; that
+  tracker's state is not checked here.
 - **Found:** upstream first for the tagging half, by #24131's reporter;
   met by phase 2 Task S8's adversarial review, 2026-11-14, comparing the
-  actions the PutObject ops evaluate with Amazon S3's.
+  actions the PutObject ops evaluate with Amazon S3's. The gap in rgw-go's
+  own tag check was found by the adversarial sweep of authorization,
+  2026-11-21.
 
 ## radosgw-admin's object stat shows an attr it does not decode only up to its first NUL
 
@@ -35747,7 +35794,11 @@ Every new entry adds its row to this table, in document order.
   the tags they set"). Its s3:PutObjectAcl and s3:PutObjectTagging checks
   carry their keys on all three writes too (`docs/differences.md`, "A
   write's ACL and tag headers need s3:PutObjectAcl and
-  s3:PutObjectTagging").
+  s3:PutObjectTagging"), but for one request shape: a
+  CreateMultipartUpload whose query names `tagging` has its
+  s3:PutObjectTagging check evaluated without the tag keys, which
+  "[radosgw's PutObject sets the object ACL and tags its headers name under s3:PutObject alone](#radosgws-putobject-sets-the-object-acl-and-tags-its-headers-name-under-s3putobject-alone)"
+  records with its plan task.
 - **Upstream:** in part: [ceph/ceph#70051](https://github.com/ceph/ceph/pull/70051) ([#72646](https://tracker.ceph.com/issues/72646)), at main e82ccd0873677ffd0cac1d081ecdea512dbc05bd, backported in
   [ceph/ceph#70681](https://github.com/ceph/ceph/pull/70681) for v21.1.2, adds an `s3:RequestObjectTag/<key>` for each
   tag a copy stores, its header's or its source's, and requires
@@ -36777,3 +36828,895 @@ Every new entry adds its row to this table, in document order.
   through S3 within the hour after such a cut init, its bucket then
   deleted, left an OLH head with one pending attr and no data; with the
   attr expired first, the same runs left nothing.
+
+## radosgw's SigV4 canonical query and its argument parser split and decode a query token in opposite orders
+
+- **Kind:** defect, possibly security-relevant (signature verification):
+  the query SigV4 signs and the arguments the handlers read are made from
+  one query string by two readers that disagree about a token holding a
+  malformed percent-escape. Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - `get_v4_canonical_qs` splits each `&` token at its `=` with
+    `parse_key_value` and only then recodes the key and the value, each on
+    its own, through `aws4_uri_recode`
+    ([rgw_auth_s3.cc:604-660](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L604-L660),
+    [rgw_auth_s3.cc:610-666](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L610-L666)),
+    which is `url_decode` and an encoding of what it returns
+    ([rgw_auth_s3.h:592-596](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.h#L592-L596),
+    [rgw_auth_s3.h:595-599](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.h#L595-L599)).
+  - `RGWHTTPArgs::parse` decodes the token whole with `url_decode`, and
+    only then has `NameVal::parse` split the decoded text at its first `=`
+    and `append` file the pair
+    ([rgw_common.cc:848-898](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L848-L898),
+    [rgw_common.cc:861-911](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L861-L911);
+    [rgw_common.cc:831-846](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L831-L846),
+    [rgw_common.cc:844-859](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L844-L859)).
+  - `url_decode` ends its result at a `%` with fewer than two bytes after
+    it, and returns an empty string at an escape whose digits are not
+    hexadecimal
+    ([rgw_common.cc:1701-1734](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L1701-L1734),
+    [rgw_common.cc:1764-1797](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L1764-L1797)).
+  - So a malformed escape cuts or empties the key or the value alone in
+    the first reader and the whole token in the second, and the name and
+    value SigV4 signs for such a token are not the name and value the
+    argument map holds for it.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it. Its canonical query splits a token before it
+  decodes each side (`canonicalQueryV4`, `internal/auth/sigv4.go`;
+  `aws4Recode`, `internal/auth/encoding.go`), and each of its argument
+  parsers decodes a token before it splits it (`parseQuery`,
+  `internal/auth/request.go`, and the handlers' own), all through
+  radosgw's `url_decode` results (`rgwtext.URLDecode`,
+  `internal/rgwtext/urldecode.go`). A numbered plan task will change it.
+- **Upstream:** pending.
+- **Found:** the adversarial sweep of authentication, 2026-11-21, reading
+  the two readers of the query against each other; seen on rgw-go over its
+  in-memory store on both releases, and derived from the source for
+  radosgw, not reproduced.
+
+## radosgw's SigV2 signature does not cover query keys that choose the operation
+
+- **Kind:** defect, possibly security-relevant (what a signature covers),
+  and already reported upstream. Unreproduced by us: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - `rgw_create_s3_canonical_header` builds SigV2's string to sign from
+    the method, Content-MD5, Content-Type, the date, the `x-amz-` headers
+    and the canonical resource
+    ([rgw_auth_s3.cc:130-169](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L130-L169),
+    [rgw_auth_s3.cc:131-170](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L131-L170)).
+    `get_canon_resource` writes after the path only the names that are
+    both in `signed_subresources` and filed in the request's
+    `sub_resources`
+    ([rgw_auth_s3.cc:91-124](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L91-L124),
+    [rgw_auth_s3.cc:92-125](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L92-L125);
+    the list at
+    [rgw_auth_s3.cc:31-60](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L31-L60),
+    [rgw_auth_s3.cc:32-61](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L32-L61)).
+  - The S3 handlers choose an operation by the presence of query keys that
+    list lacks. An object PUT is PutObjectRetention or PutObjectLegalHold
+    when the query has `retention` or `legal-hold`
+    ([rgw_rest_s3.cc:4863-4879](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4863-L4879),
+    [rgw_rest_s3.cc:5390-5406](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5390-L5406);
+    [rgw_rest_s3.h:750-755](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.h#L750-L755),
+    [rgw_rest_s3.h:780-785](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.h#L780-L785)),
+    and a PutObject is an append when it has `append`, which
+    `RGWHTTPArgs::append` files as a sub-resource the list does not name
+    ([rgw_rest_s3.cc:2696](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2696),
+    [rgw_rest_s3.cc:2849](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2849);
+    [rgw_common.cc:947-948](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L947-L948),
+    [rgw_common.cc:960-961](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L960-L961)).
+  - So the string to sign is the same with such a key and without it,
+    while the operation served is not. This widens two entries that record
+    other keys the same resource leaves out,
+    "[radosgw takes query meta and encryption settings a SigV2 request does not sign](#radosgw-takes-query-meta-and-encryption-settings-a-sigv2-request-does-not-sign)"
+    and
+    "[radosgw's SigV2 resource lists encryption and object-lock but never signs them](#radosgws-sigv2-resource-lists-encryption-and-object-lock-but-never-signs-them)".
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it for the keys it routes on. Its canonical
+  resource writes the same list (`signedSubresourcesV2` and
+  `canonicalResourceV2`, `internal/auth/sigv2.go`), and its dispatch
+  chooses a route by query keys the list lacks, `retention` and
+  `legal-hold` among them (`internal/s3/dispatch.go`). It serves no append
+  (`appendUnserved`, `internal/op/putobject.go`), so `append` chooses no
+  operation there. A numbered plan task will change it.
+- **Upstream:** [#23182](https://tracker.ceph.com/issues/23182) and
+  [#82418](https://tracker.ceph.com/issues/82418), which
+  rgw-bug-reproduction's triage of the sweep names for it. Not found by us.
+  The trackers' own state is not checked here.
+- **Found:** upstream first; met by the adversarial sweep of
+  authentication, 2026-11-21, comparing the keys the dispatch tests with
+  the keys the canonical resource writes. Seen on rgw-go over its
+  in-memory store on both releases; derived from the source for radosgw,
+  not reproduced.
+
+## radosgw's SigV2 signature covers none of an admin API request's arguments
+
+- **Kind:** defect, possibly security-relevant (what a signature covers),
+  and already reported upstream. Unreproduced by us: derived from the
+  source.
+- **Evidence:** paths are under `src/rgw/`; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - The admin API's handlers derive from `RGWHandler_Auth_S3`, whose
+    `authorize` is the S3 handlers' `RGW_Auth_S3::authorize`
+    ([rgw_rest_s3.h:643-645](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.h#L643-L645),
+    [rgw_rest_s3.h:667-669](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.h#L667-L669)),
+    so a SigV2 request to the admin API is verified as one to S3 is.
+  - An admin request's operation is chosen by its method, its path and the
+    admin sub-resource its query names: `RGWHandler_User` tests
+    `sub_resource_exists` for `subuser`, `key`, `caps`, `quota` and `list`
+    ([rgw_rest_user.cc:1129-1177](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rest_user.cc#L1129-L1177),
+    [rgw_rest_user.cc:1139-1187](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L1139-L1187)).
+    The arguments those operations act on are query arguments too, read
+    through `RESTArgs`.
+  - SigV2's string to sign holds neither: after the path its canonical
+    resource writes only the names of `signed_subresources` that the
+    request files as sub-resources
+    ([rgw_auth_s3.cc:91-124](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L91-L124),
+    [rgw_auth_s3.cc:92-125](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L92-L125)),
+    and of the admin sub-resource names that list holds `policy` alone
+    ([rgw_auth_s3.cc:31-60](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L31-L60),
+    [rgw_auth_s3.cc:32-61](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L32-L61)).
+  - So the string to sign of an admin request is the same for every admin
+    sub-resource and every argument a query of its method and path can
+    carry. The S3 face of the same resource is
+    "[radosgw's SigV2 signature does not cover query keys that choose the operation](#radosgws-sigv2-signature-does-not-cover-query-keys-that-choose-the-operation)".
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it. Its admin handler authenticates with the S3
+  verifier, which takes SigV2 (`internal/admin/handler.go`), and chooses
+  its operation by the admin sub-resource of the query
+  (`internal/admin/request.go`, `internal/admin/dispatch.go`). A numbered
+  plan task will change it.
+- **Upstream:** [#23182](https://tracker.ceph.com/issues/23182), which
+  rgw-bug-reproduction's triage of the sweep names as exact for the admin
+  API, and [#82418](https://tracker.ceph.com/issues/82418). Not found by
+  us. The trackers' own state is not checked here.
+- **Found:** upstream first; met by the adversarial sweep of
+  authentication, 2026-11-21. Seen on rgw-go's admin handler over its
+  in-memory store on both releases; derived from the source for radosgw,
+  not reproduced.
+
+## radosgw chooses an admin operation by the first admin sub-resource of a query whose order SigV4 does not sign
+
+- **Kind:** defect, possibly security-relevant, low. Unreproduced: derived
+  from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - `RGWHTTPArgs::append` files an admin sub-resource name, one of
+    `subuser`, `key`, `caps`, `index`, `policy`, `quota`, `list`, `object`
+    and `sync`, under `sub_resources` only while it has filed none, so of
+    the names a query carries the first in query order is the one filed
+    ([rgw_common.cc:962-975](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L962-L975),
+    [rgw_common.cc:975-988](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L975-L988)).
+    The admin handlers choose their operation by `sub_resource_exists`
+    ([rgw_rest_user.cc:1129-1177](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rest_user.cc#L1129-L1177),
+    [rgw_rest_user.cc:1139-1187](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L1139-L1187)).
+  - Some of those names are also arguments of other admin operations:
+    `RGWOp_Key_Create` and `RGWOp_Key_Remove`, which the `key`
+    sub-resource selects, each read a `subuser` argument
+    ([rgw_rest_user.cc:697](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rest_user.cc#L697),
+    [rgw_rest_user.cc:707](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L707);
+    [rgw_rest_user.cc:754](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rest_user.cc#L754),
+    [rgw_rest_user.cc:764](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rest_user.cc#L764)).
+  - `get_v4_canonical_qs` collects the query's pairs in a `std::multimap`
+    keyed by the encoded name and writes them in the map's order
+    ([rgw_auth_s3.cc:620-657](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L620-L657),
+    [rgw_auth_s3.cc:626-663](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L626-L663)),
+    so the canonical query, and the signature over it, is the same for
+    every order of the same pairs.
+  - So which operation a query naming two of those names selects rests on
+    an order the signature does not hold.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it. Its admin parser files the first admin
+  sub-resource of the query (`internal/admin/request.go`) and its canonical
+  query is sorted by encoded key (`canonicalQueryV4`,
+  `internal/auth/sigv4.go`). A numbered plan task will change it.
+- **Upstream:** pending.
+- **Found:** the adversarial sweep of authentication, 2026-11-21. Seen on
+  rgw-go's admin handler over its in-memory store on both releases;
+  derived from the source for radosgw, not reproduced.
+
+## radosgw's SigV2 canonical resource leaves out policy when another admin sub-resource precedes it
+
+- **Kind:** defect, possibly security-relevant (what a signature covers).
+  Unreproduced: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - `policy` is in `signed_subresources`
+    ([rgw_auth_s3.cc:31-60](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L31-L60),
+    [rgw_auth_s3.cc:32-61](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L32-L61)),
+    and `get_canon_resource` writes a name of that list only when the
+    request's `sub_resources` holds it
+    ([rgw_auth_s3.cc:91-124](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L91-L124),
+    [rgw_auth_s3.cc:92-125](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L92-L125)).
+  - `RGWHTTPArgs::append` files `policy` as one of the nine admin
+    sub-resource names, of which it files only the first a query carries
+    ([rgw_common.cc:962-975](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L962-L975),
+    [rgw_common.cc:975-988](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L975-L988)).
+    A query that names another of the nine before `policy` therefore
+    leaves `policy` out of `sub_resources`, and the canonical resource
+    does not write it. The other eight are not in the signed list, so it
+    writes none of them either.
+  - The S3 bucket handler tests the argument itself, whatever its
+    position: `is_policy_op` is `s->info.args.exists("policy")`
+    ([rgw_rest_s3.h:704-706](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.h#L704-L706),
+    [rgw_rest_s3.h:731-733](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.h#L731-L733)).
+  - So the canonical resource and the handler read two maps that disagree
+    about `policy` for such a query.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it. Its verifier's parser files the first admin
+  sub-resource alone (`parseQuery`, `internal/auth/request.go`),
+  `canonicalResourceV2` writes what the parser filed
+  (`internal/auth/sigv2.go`), and its dispatch tests the argument
+  (`internal/s3/dispatch.go`). A numbered plan task will change it.
+- **Upstream:** pending.
+- **Found:** the adversarial sweep of authentication, 2026-11-21. Seen on
+  rgw-go over its in-memory store on both releases; derived from the
+  source for radosgw, not reproduced.
+
+## radosgw holds no body read by read_all_input to a signed Content-MD5
+
+- **Kind:** defect, possibly security-relevant (the integrity of a signed
+  request's body), and public for its consequence. Unreproduced by us for
+  Content-MD5: derived from the source.
+- **Evidence:** paths are under `src/rgw/`; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - A SigV2 string to sign names the body only through the `Content-MD5`
+    header, which `rgw_create_s3_canonical_header` reads from
+    `HTTP_CONTENT_MD5`
+    ([rgw_auth_s3.cc:193-260](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L193-L260),
+    [rgw_auth_s3.cc:194-263](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L194-L263)),
+    and a SigV4 request whose payload hash is `UNSIGNED-PAYLOAD` names it
+    only through a `content-md5` it lists in its signed headers.
+  - Outside the signature code and the REST client, a search of `src/rgw`
+    for `CONTENT_MD5` finds the header read in three places at each tag:
+    `RGWPutObj_ObjStore::get_params` and `RGWPostObj_ObjStore::get_params`,
+    whose operations compare it with the body's MD5
+    ([rgw_rest.cc:1066-1071](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1066-L1071),
+    [rgw_rest.cc:1066-1071](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1066-L1071);
+    [rgw_rest.cc:1426](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest.cc#L1426),
+    [rgw_rest.cc:1426](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest.cc#L1426)),
+    and `RGWPutLC::execute`
+    ([rgw_op.cc:5945-5988](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5945-L5988),
+    [rgw_op.cc:6611-6654](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6611-L6654)).
+  - Every other operation that reads a parameter document reads it through
+    `read_all_input` and compares no digest of it; they are the operations
+    "[radosgw ignores a payload-hash mismatch on bodies read by read_all_input](#radosgw-ignores-a-payload-hash-mismatch-on-bodies-read-by-read_all_input)"
+    lists.
+  - So such an operation acts on whatever body arrives under a signed
+    `Content-MD5`.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it for `Content-MD5`. It holds such a body to a
+  signed `x-amz-content-sha256` (`docs/differences.md`, "A body read whole
+  is checked against its signed hash"), but compares `Content-MD5` only on
+  PutObject, UploadPart and PutBucketLifecycle (`internal/s3/putobject.go`,
+  `internal/s3/multipart.go`, `internal/op/lifecycle.go`); `readParamBody`
+  (`internal/s3/bucket.go`) and `op.ReadParamBody`
+  (`internal/op/parambody.go`) read no `Content-MD5`. A numbered plan task
+  will change it.
+- **Upstream:** [#81230](https://tracker.ceph.com/issues/81230), which
+  rgw-bug-reproduction's triage of the sweep cites as public for the
+  consequence: a signed request's body replaced on the operations that
+  read it through `read_all_input`. The tracker's own state is not checked
+  here.
+- **Found:** the adversarial sweep of authentication, 2026-11-21, reading
+  which operations compare `Content-MD5`; the payload-hash entry's
+  evidence had already noted that none of its operations compares one.
+  Seen on rgw-go over its in-memory store on both releases; derived from
+  the source for radosgw, not reproduced.
+
+## radosgw's PutObjectTagging evaluates s3:PutObjectTagging without the tags it sets
+
+- **Kind:** defect, possibly security-relevant (authorization).
+  Unreproduced on a cluster: derived from the source, and seen in rgw-go,
+  which mirrors it.
+- **Evidence:** paths are under `src/rgw/`; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - `RGWPutObjTags::verify_permission` evaluates s3:PutObjectTagging, or
+    s3:PutObjectVersionTagging for a named version, after it adds the
+    object's existing tags and the bucket's when a policy names them, and
+    adds no `s3:RequestObjectTag` key
+    ([rgw_op.cc:1076-1091](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1076-L1091),
+    [rgw_op.cc:1275-1290](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1275-L1290)).
+    The tags the request sets are in its body, which `execute` reads
+    through `get_params` only afterwards
+    ([rgw_op.cc:1093-1097](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1093-L1097),
+    [rgw_op.cc:1292-1296](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1292-L1296)).
+  - A search of `src/rgw` for `RequestObjectTag` finds one line at each
+    tag that sets the key, in `RGWPutObj::verify_permission`, for the tags
+    of its `x-amz-tagging` header
+    ([rgw_op.cc:3970-3972](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3970-L3972),
+    [rgw_op.cc:4179-4181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4179-L4181)).
+  - So a condition on `s3:RequestObjectTag/<key>` in a statement about
+    s3:PutObjectTagging is judged on an absent key by the one operation
+    whose action it is
+    ("[radosgw's negated condition operators are false on an absent key](#radosgws-negated-condition-operators-are-false-on-an-absent-key)").
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it. `opKeys` adds no request-tag key to
+  PutObjectTagging's own check, whose tags are in its body
+  (`internal/authz/env.go`; `PutObjectTagging.VerifyPermission`,
+  `internal/op/objectattrs.go`), while the s3:PutObjectTagging checks its
+  three writes make for an `x-amz-tagging` header carry that header's keys
+  (`docs/differences.md`, "A write's ACL and tag headers need
+  s3:PutObjectAcl and s3:PutObjectTagging"). A numbered plan task will
+  change it.
+- **Upstream:** rgw-bug-reproduction's triage of the sweep names
+  [#82944](https://tracker.ceph.com/issues/82944) as overlapping. The
+  tracker's own state is not checked here.
+- **Found:** the adversarial sweep of authorization, 2026-11-21, probing
+  which condition keys each s3:PutObjectTagging check carries; seen on
+  rgw-go on both releases, and derived from the source for radosgw, not
+  reproduced.
+
+## radosgw's DeleteObjects evaluates each key's delete permission without the key's tags
+
+- **Kind:** defect, possibly security-relevant (authorization).
+  Unreproduced on a cluster: derived from the source, and seen in rgw-go,
+  which mirrors it for the positive operators.
+- **Evidence:** paths are under `src/rgw/`; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - `RGWDeleteObj::verify_permission` adds the object's tags to the
+    environment when a policy names `s3:ExistingObjectTag` or
+    `s3:ResourceTag`, then evaluates s3:DeleteObject or
+    s3:DeleteObjectVersion
+    ([rgw_op.cc:5138-5151](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5138-L5151),
+    [rgw_op.cc:5528-5541](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5528-L5541)).
+  - `RGWDeleteMultiObj::verify_permission` makes the same call
+    ([rgw_op.cc:6774-6786](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6774-L6786),
+    [rgw_op.cc:7707-7719](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7707-L7719)),
+    but `rgw_iam_add_objtags` reads the tags of `s->object`, which a
+    multi-object delete's request does not name, and adds nothing for an
+    empty one
+    ([rgw_op.cc:740-745](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L740-L745),
+    [rgw_op.cc:770-775](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L770-L775)).
+  - `handle_individual_object` then evaluates each key's action on
+    `s->env` as it stands
+    ([rgw_op.cc:6837-6847](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6837-L6847),
+    [rgw_op.cc:7765-7775](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7765-L7775)).
+  - So a statement conditioned on `s3:ExistingObjectTag/<key>` is judged
+    without that key for each object a DeleteObjects names, where a
+    DeleteObject of the same object is judged with it. Two entries record
+    neighbouring gaps:
+    "[radosgw evaluates a tag-conditioned policy without the tags it fails to read](#radosgw-evaluates-a-tag-conditioned-policy-without-the-tags-it-fails-to-read)"
+    and
+    "[radosgw's DeleteObjects checks s3:BypassGovernanceRetention on the bucket's ARN, not each key's](#radosgws-deleteobjects-checks-s3bypassgovernanceretention-on-the-buckets-arn-not-each-keys)".
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it under a positive operator: its per-key check
+  adds no object tags (`tagRule`, `internal/authz/tagrule.go`;
+  `internal/op/deleteobjects.go`), where its single delete adds them. Under
+  a negated operator in a Deny it differs from radosgw the other way: the
+  sweep's probe saw every key refused, the tag being absent, where radosgw
+  deletes every key. A numbered plan task will change both.
+- **Upstream:** pending.
+- **Found:** the adversarial sweep of authorization, 2026-11-21, setting
+  the single delete's tag rule against the multi-object delete's; seen on
+  rgw-go on both releases, and derived from the source for radosgw, not
+  reproduced.
+
+## radosgw takes a peer address as aws:SourceIp unparsed, and NotIpAddress is false for one that does not parse
+
+- **Kind:** defect, possibly security-relevant (authorization), low. The
+  sink is read from the source at both tags. Whether radosgw's frontend
+  ever produces an address that does not parse is not established: see the
+  last bullet. Unreproduced.
+- **Evidence:** paths are under `src/rgw/`; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - The frontend sets `REMOTE_ADDR` to
+    `remote_endpoint.address().to_string()`
+    ([rgw_asio_client.cc:92](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L92),
+    [rgw_asio_client.cc:92](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_client.cc#L92)),
+    and `aws:SourceIp` is that variable as written when
+    `rgw_remote_addr_param` is empty
+    ([rgw_op.cc:869-886](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L869-L886),
+    [rgw_op.cc:904-921](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L904-L921)).
+  - `as_network` hands the key's value to `inet_pton`, which takes no
+    IPv6 zone, and answers none for a value that does not convert
+    ([rgw_iam_policy.cc:1008-1068](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L1008-L1068),
+    [rgw_iam_policy.cc:1012-1072](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1012-L1072)).
+  - `NotIpAddress` is false when the key's own value does not convert, as
+    `IpAddress` is: in the operator's own code at v19.2.7
+    ([rgw_iam_policy.cc:974-992](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L974-L992)),
+    and through `typed_none` at v20.2.4
+    ([rgw_iam_policy.cc:994-996](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L994-L996),
+    [rgw_iam_policy.h:548-567](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.h#L548-L567)).
+    So a Deny written as "unless the source is in these ranges" does not
+    hold for a source that does not parse, the route
+    "[radosgw cuts X-Forwarded-For only for an rgw_remote_addr_param written in capitals](#radosgw-cuts-x-forwarded-for-only-for-an-rgw_remote_addr_param-written-in-capitals)"
+    reaches through a proxy chain.
+  - Not verified: whether Boost.Asio's `to_string` writes a link-local
+    IPv6 peer's zone, as in `fe80::1%eth0`. Boost is not in the tree read
+    here, and nothing was run. If it does, such a peer's address is one
+    that does not parse.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces the sink, and its own frontend does produce such
+  an address: net/http's remote address keeps a link-local peer's zone,
+  `cgiVar` takes its host part as written (`internal/authz/env.go`),
+  `ParseMaskedIP` takes no zone (`internal/policy/convert.go`), and
+  `NotIpAddress` is false for a value that does not convert
+  (`internal/policy/condition.go`). Seen at the evaluator with net/http's
+  form of the address, not over a link-local socket. A numbered plan task
+  will change it.
+- **Upstream:** pending.
+- **Found:** the adversarial sweep of authorization, 2026-11-21; seen on
+  rgw-go's evaluator on both releases, and read from the source for
+  radosgw, not reproduced.
+
+## radosgw matches an ARN's account without regard to case
+
+- **Kind:** defect, possibly security-relevant (authorization).
+  Unreproduced on a cluster: derived from the source, and seen in rgw-go,
+  which mirrors it.
+- **Evidence:** paths are under `src/rgw/`; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - `ARN::match` compares the account component with
+    `match_wildcards(account, candidate.account, MATCH_CASE_INSENSITIVE)`,
+    as it compares the region, and compares the resource with no flag
+    ([rgw_arn.cc:319-344](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_arn.cc#L319-L344),
+    [rgw_arn.cc:319-344](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_arn.cc#L319-L344)).
+  - The ARN of a bucket or an object takes the bucket's tenant as its
+    account
+    ([rgw_arn.cc:126-152](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_arn.cc#L126-L152),
+    [rgw_arn.cc:126-152](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_arn.cc#L126-L152)),
+    and a tenant's name is letters, digits and underscores, in either case
+    (`rgw_validate_tenant_name`,
+    [rgw_user.cc:91-101](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_user.cc#L91-L101),
+    [rgw_user.cc:91-101](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_user.cc#L91-L101)).
+  - So an ARN pattern's account matches a candidate's without regard to
+    case, though the tenant names an account stands for may be written in
+    either.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it (`ARN.Match`, `internal/policy/arn.go`). A
+  numbered plan task will change it.
+- **Upstream:** pending.
+- **Found:** the adversarial sweep of authorization, 2026-11-21, reading
+  `ARN::match`; seen on rgw-go's evaluator on both releases, and derived
+  from the source for radosgw, not reproduced.
+
+## radosgw holds a request's versionId to no rule, though its head names rely on version ids without an underscore
+
+- **Kind:** defect, possibly security-relevant. Unreproduced on radosgw:
+  derived from the source, and seen on rgw-go, which mirrors it, over its
+  RADOS emulator.
+- **Evidence:** paths are under `src/rgw/`; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - `rgw_obj_key::get_oid` names a version's head `_:<instance>_<name>`:
+    the instance and the name joined by `_`, neither of them escaped
+    ([rgw_obj_types.h:238-254](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_obj_types.h#L238-L254),
+    [rgw_obj_types.h:238-254](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_obj_types.h#L238-L254)).
+  - The instances radosgw makes hold no `_`.
+    `gen_rand_obj_instance_name` draws them with
+    `gen_rand_alphanumeric_no_underscore`, and says why: "no underscore
+    for instance name due to the way we encode the raw keys"
+    ([rgw_rados.cc:8868-8877](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8868-L8877),
+    [rgw_rados.cc:9614-9623](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9614-L9623)).
+  - A request's `versionId` becomes its key's instance as sent
+    ([rgw_rest_s3.cc:4976-4985](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4976-L4985),
+    [rgw_rest_s3.cc:5506-5515](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5506-L5515)),
+    and a search of `rgw_rest_s3.cc`, `rgw_rest.cc`, `rgw_op.cc` and
+    `rgw_common.cc` for `"versionId"` at both tags finds no check of what
+    it holds.
+  - So the rule the head name's encoding relies on holds for the instances
+    the gateway generates, and nothing holds an instance a request names
+    to it. The upload id's form of the same sink is
+    "[radosgw lets an upload id address another key's multipart upload](#radosgw-lets-an-upload-id-address-another-keys-multipart-upload)".
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it. `meta.ObjKey.OID` builds the same name
+  (`internal/meta/objkey.go`), the instances it makes hold no `_`
+  (`noUnderscoreAlnum`, `internal/meta/olh.go`), and a request's
+  `versionId` is checked for a NUL alone (`refuseNUL`,
+  `internal/s3/request.go`). A numbered plan task will change it.
+- **Upstream:** pending.
+- **Found:** the adversarial sweep of the RADOS formats, 2026-11-21,
+  reading how a request's key becomes a head name; seen on rgw-go over
+  its emulator on both releases, and derived from the source for radosgw,
+  not reproduced.
+
+## radosgw registers a part numbered below 1, which no completion or abort lists
+
+- **Kind:** defect, possibly security-relevant (storage that no S3 request
+  frees). Unreproduced on radosgw: derived from the source, and seen on
+  rgw-go, which mirrors it, over its RADOS emulator.
+- **Evidence:** paths are under `src/rgw/`; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - UploadPart reads `partNumber` with `strict_strtol` and checks no more
+    of it, so it takes 0 and a negative number
+    ([rgw_rest_s3.cc:2682-2694](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2682-L2694),
+    [rgw_rest_s3.cc:2835-2847](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2835-L2847)),
+    and `MultipartObjectProcessor::complete` registers the part under
+    `part.%08d` of that number
+    ([rgw_putobj_processor.cc:533-544](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L533-L544),
+    [rgw_putobj_processor.cc:571-582](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L571-L582)).
+    `rgw_multipart_part_upload_limit` bounds only the count of parts a
+    completion names
+    ([rgw_op.cc:6413-6417](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6413-L6417),
+    [rgw_op.cc:7205-7209](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7205-L7209)).
+  - `list_parts` reads the upload's omap after `part.%08d` of its marker
+    ([rgw_sal_rados.cc:3354-3363](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3354-L3363),
+    [rgw_sal_rados.cc:4196-4205](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4196-L4205)),
+    and its unsorted fallback keeps a part only when its number is above
+    the marker
+    ([rgw_sal_rados.cc:3401-3405](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3401-L3405),
+    [rgw_sal_rados.cc:4243-4247](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4243-L4247)).
+    Abort and complete both list from marker 0
+    ([rgw_sal_rados.cc:3163-3181](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3163-L3181),
+    [rgw_sal_rados.cc:4003-4021](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4003-L4021);
+    [rgw_sal_rados.cc:3460-3467](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3460-L3467),
+    [rgw_sal_rados.cc:4304-4311](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4304-L4311)).
+    Part 0's key is that marker's own and a negative number's sorts before
+    it, so neither lists a part numbered below 1.
+  - Both act on the parts they list alone, so nothing retires such a
+    part's objects or its head's index entry with its upload.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it. `partNumberArg` bounds nothing
+  (`internal/s3/putobject.go`) and `listAllParts` lists from marker 0
+  (`internal/driver/mp_cleanup.go`, `internal/driver/mp_list.go`). Its own
+  bucket delete then answers BucketNotEmpty for the index entries no
+  listing shows (`checkIndexCount`, `internal/driver/bucketops.go`). A
+  numbered plan task will change it.
+- **Upstream:** pending.
+- **Found:** the adversarial sweep of multipart and the admin API,
+  2026-11-21; seen on rgw-go over its emulator on both releases, and
+  derived from the source for radosgw, not reproduced.
+
+## radosgw writes a bucket tag's key as a member name, unescaped, in the admin bucket stats
+
+- **Kind:** defect, possibly security-relevant (the document an admin
+  tool parses). Unreproduced on radosgw: derived from the source, and seen
+  on rgw-go, which mirrors it.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `RGWObjTags::dump` writes each tag with
+    `f->dump_string(tag.first.c_str(), tag.second)`, so the tag's key is
+    the member's name
+    ([rgw_tag.cc:59-66](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.cc#L59-L66),
+    [rgw_tag.cc:59-66](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.cc#L59-L66)),
+    and the admin bucket stats call it for the bucket's tag set
+    ([rgw_bucket.cc:1419-1425](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L1419-L1425),
+    [rgw_bucket.cc:1584-1590](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L1584-L1590)).
+  - `JSONFormatter::print_name` writes a name between two quotes as it
+    stands, where a value goes through the escaper
+    ([Formatter.cc:199-218](https://github.com/ceph/ceph/blob/v19.2.7/src/common/Formatter.cc#L199-L218),
+    [Formatter.cc:207-226](https://github.com/ceph/ceph/blob/v20.2.4/src/common/Formatter.cc#L207-L226)).
+  - A tag's key is checked for its length alone
+    (`check_and_add_tag`,
+    [rgw_tag.cc:23-34](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_tag.cc#L23-L34),
+    [rgw_tag.cc:23-34](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_tag.cc#L23-L34)).
+  - So the bytes of a key are written into the stats document as markup,
+    not as text. The XML formatter was not read. A neighbouring entry
+    records the ACL names the S3 XML writes so:
+    "[radosgw writes ACL owner and grantee names into its XML unescaped](#radosgw-writes-acl-owner-and-grantee-names-into-its-xml-unescaped)".
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it. `dumpBucketStats` renders the tag set with
+  each key as its member's name (`internal/admin/bucket.go`), and its
+  formatters write a name as it stands (`printName`,
+  `internal/formatter/json.go`; `internal/formatter/xml.go`). It writes the
+  whole key, where radosgw's `c_str()` ends at a NUL. A numbered plan task
+  will change it.
+- **Upstream:** pending.
+- **Found:** the adversarial sweep of multipart and the admin API,
+  2026-11-21; seen on rgw-go's admin handler on both releases, and derived
+  from the source for radosgw, not reproduced.
+
+## radosgw's list_parts reads an upload's whole part omap for every page once its part numbers have a gap
+
+- **Kind:** defect, possibly security-relevant (resource use).
+  Unreproduced on radosgw: derived from the source; the read counts were
+  measured on rgw-go, which mirrors it, over its RADOS emulator.
+- **Evidence:** paths are under `src/rgw/`; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - `list_parts` reads one page of the sorted omap. At the first part
+    whose number is not the one after the last, it calls itself again with
+    `assume_unsorted`
+    ([rgw_sal_rados.cc:3389-3398](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3389-L3398),
+    [rgw_sal_rados.cc:4231-4240](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4231-L4240)),
+    and that call reads the whole omap with `get_all`, decodes every part
+    info and returns one page of them
+    ([rgw_sal_rados.cc:3364-3366](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3364-L3366),
+    [rgw_sal_rados.cc:4206-4208](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4206-L4208);
+    [rgw_sal_rados.cc:3412-3428](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3412-L3428),
+    [rgw_sal_rados.cc:4254-4270](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4254-L4270)).
+  - Abort and complete call it once for each page of 1000 parts
+    ([rgw_sal_rados.cc:3180-3181](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3180-L3181),
+    [rgw_sal_rados.cc:4020-4021](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4020-L4021);
+    [rgw_sal_rados.cc:3466-3467](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3466-L3467),
+    [rgw_sal_rados.cc:4310-4311](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4310-L4311)).
+  - Nothing bounds the parts an upload registers but the part number's own
+    range
+    ("[radosgw registers a part numbered below 1, which no completion or abort lists](#radosgw-registers-a-part-numbered-below-1-which-no-completion-or-abort-lists)"),
+    and a part may be empty.
+  - So for an upload whose part numbers have gaps throughout, every page
+    costs a read and a decode of every part, and an abort or a completion
+    of N parts costs about N/1000 of those.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it (`listPartsPage`, `internal/driver/mp_list.go`;
+  `listAllParts`, `internal/driver/mp_cleanup.go`). Its abort also holds
+  the upload's lock, which radosgw's does not take, and answers 503 when
+  its listing may outlast the lock's term (`lockTermLeft`,
+  `internal/driver/mp_abort.go`), so such an upload's abort can fail where
+  radosgw's only takes long. A numbered plan task will change it.
+- **Upstream:** pending.
+- **Found:** the adversarial sweep of multipart and the admin API,
+  2026-11-21; measured on rgw-go over its emulator, and derived from the
+  source for radosgw, not reproduced.
+
+## radosgw's bucket instance metadata put names every index shard a document's num_shards counts
+
+- **Kind:** defect, low: resource use by a holder of the `metadata=write`
+  cap. Unreproduced: derived from the source, and not run on either
+  gateway.
+- **Evidence:** paths are under `src/rgw/`; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - The bucket info's JSON decode reads `num_shards` into the layout's
+    32-bit count
+    ([rgw_common.cc:2564](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_common.cc#L2564),
+    [rgw_common.cc:2623](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_common.cc#L2623)).
+  - The put's checks keep a remote zone's layout out and choose a
+    placement for a new instance; none bounds the count
+    (`put_check` at v19.2.7,
+    [rgw_bucket.cc:2803-2864](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L2803-L2864);
+    `put_prepare` at v20.2.4,
+    [rgw_bucket.cc:2921-2997](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L2921-L2997)).
+    The instance is stored, and `put_post` then calls `init_index`
+    (at v19.2.7
+    [rgw_bucket.cc:2866-2898](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_bucket.cc#L2866-L2898);
+    at v20.2.4
+    [rgw_bucket.cc:2882-2892](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L2882-L2892) and
+    [rgw_bucket.cc:2999-3008](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_bucket.cc#L2999-L3008)).
+  - `init_index` builds a `map<int, string>` with a name for every shard
+    before it writes one
+    ([svc_bi_rados.cc:354-372](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_bi_rados.cc#L354-L372),
+    [svc_bi_rados.cc:450-471](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bi_rados.cc#L450-L471);
+    `get_bucket_index_objects`,
+    [svc_bi_rados.cc:130-148](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/services/svc_bi_rados.cc#L130-L148),
+    [svc_bi_rados.cc:138-156](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/services/svc_bi_rados.cc#L138-L156)).
+  - No bound on the count was found on this path at either tag. Whether
+    one applies elsewhere was not established.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** the same shape, by reading. `BucketInfo.UnmarshalJSON` reads
+  any 32-bit `num_shards` (`internal/meta/bucket_json.go`), `newInstance`
+  checks a new instance's marker, placement and id and not its shard count
+  (`internal/driver/metadata_instance.go`), and `shardOIDs` makes a name
+  for every shard (`internal/driver/index.go`). A numbered plan task will
+  change it.
+- **Upstream:** pending.
+- **Found:** the adversarial sweep of multipart and the admin API,
+  2026-11-21; derived by reading both gateways, not run.
+
+## radosgw's CompleteMultipartUpload reads no part checksum from its document
+
+- **Kind:** defect, not security-relevant: an integrity check the
+  completion document offers and the server does not make. Unreproduced on
+  radosgw: derived from the source, and seen on rgw-go, which mirrors it,
+  at Tentacle.
+- **Evidence:** paths are under `src/rgw/`; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - `RGWMultiPart::xml_end` reads the `PartNumber` and the `ETag` of each
+    `Part`
+    ([rgw_multi.cc:24-42](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_multi.cc#L24-L42),
+    [rgw_multi.cc:24-42](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_multi.cc#L24-L42)),
+    and `RGWMultiXMLParser::alloc_obj` builds an object for those two
+    elements alone, so the parser drops a `Checksum<ALG>` element of a
+    `Part`
+    ([rgw_multi.cc:58-74](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_multi.cc#L58-L74),
+    [rgw_multi.cc:58-74](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_multi.cc#L58-L74)).
+  - At v20.2.4 a part's record holds its checksum
+    (`info.cksum`,
+    [rgw_putobj_processor.cc:571-586](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L571-L586)),
+    which the completion never sets a document's value against. At v19.2.7
+    the record holds none
+    ([rgw_putobj_processor.cc:533-548](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L533-L548)).
+  - Other entries record what the completion does with the checksums it
+    has, among them
+    "[radosgw's CompleteMultipartUpload combines the checksums of the parts it lists, not of those it completes](#radosgws-completemultipartupload-combines-the-checksums-of-the-parts-it-lists-not-of-those-it-completes)";
+    the Impact of
+    "[radosgw's UploadPartCopy answers the copied part's checksum in headers, not in CopyPartResult](#radosgws-uploadpartcopy-answers-the-copied-parts-checksum-in-headers-not-in-copypartresult)"
+    already noted that the completion reads no part checksum.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it. `ParseCompleteMultipart` reads `PartNumber`
+  and `ETag` (`internal/op/multipartxml.go`), and `assemblePart` compares
+  the ETag alone (`internal/driver/mp_complete.go`). A numbered plan task
+  will change it.
+- **Upstream:** pending.
+- **Found:** the adversarial sweep of encryption and integrity,
+  2026-11-21; seen on rgw-go at Tentacle, and derived from the source for
+  radosgw, not reproduced. Amazon S3's answer to such a completion was not
+  checked.
+
+## radosgw splits x-amz-trailer on commas alone, so a name listed after white space is never found
+
+- **Kind:** defect, not security-relevant: an integrity check a client
+  asked for is skipped while the write succeeds. Unreproduced on radosgw:
+  derived from the source, and seen on rgw-go, which mirrors it.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - `extract_trailing_headers` splits `x-amz-trailer` with
+    `ceph::split(x_amz_trailer, ",")` and searches the trailer section for
+    each part as it stands
+    ([rgw_auth_s3.cc:1504-1532](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L1504-L1532),
+    [rgw_auth_s3.cc:1459-1487](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1459-L1487)).
+    A part keeps every byte but the delimiter
+    ([split.h:32-38](https://github.com/ceph/ceph/blob/v19.2.7/src/common/split.h#L32-L38),
+    [split.h:32-38](https://github.com/ceph/ceph/blob/v20.2.4/src/common/split.h#L32-L38)).
+  - A list written with HTTP's optional white space after a comma gives a
+    name that starts with the space, which no trailer line bears, so that
+    trailer is not extracted.
+  - At v20.2.4 PutObject's checksum filter then finds no expected value
+    and stores the checksum it computed, unverified
+    ([rgw_op.cc:4757-4791](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4757-L4791)).
+    v19.2.7 has the same split, and no checksum filter in
+    `RGWPutObj::execute` to verify with.
+  - Neighbouring entries on the same function and on unverified checksums:
+    "[radosgw cuts an aws-chunked trailer section by its trailers' length, not their position](#radosgw-cuts-an-aws-chunked-trailer-section-by-its-trailers-length-not-their-position)"
+    and
+    "[radosgw verifies no checksum value sent without an algorithm header](#radosgw-verifies-no-checksum-value-sent-without-an-algorithm-header)".
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it. Its authenticator and its op both split the
+  list on "," alone and use each name as it stands
+  (`internal/auth/payload.go`, `internal/auth/chunked.go`; `trailerValues`,
+  `internal/op/checksumreq.go`), so such a trailer is not taken for
+  declared, and the refusal of a declared trailer that brings no value
+  (`docs/differences.md`, "A declared checksum trailer that brings no value
+  is refused") does not reach it. A numbered plan task will change it.
+- **Upstream:** pending.
+- **Found:** the adversarial sweep of encryption and integrity,
+  2026-11-21; seen on rgw-go on both releases, and derived from the source
+  for radosgw, not reproduced.
+
+## radosgw's writes naming no version replace an object under object lock when the bucket's versioning is not enabled
+
+- **Kind:** defect, data corruption (object lock): on a lock bucket whose
+  versioning is suspended, or whose flags lack `BUCKET_VERSIONED`, a write
+  replaces a version a retention or legal hold protects, the hold with it.
+  Unreproduced on radosgw: derived from the source, and seen on rgw-go,
+  which mirrors it, over its RADOS emulator.
+- **Evidence:** paths are under `src/rgw/`; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - `RGWPutObj::execute` gives its object a new instance only when the
+    request's bucket has versioning enabled
+    ([rgw_op.cc:4278-4285](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4278-L4285),
+    [rgw_op.cc:4491-4498](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4491-L4498)),
+    so on a bucket in either state its write lands on the key's existing
+    head.
+  - `_do_write_meta` resets that head: a write that creates passes
+    `reset_obj` to `prepare_atomic_modification`, which removes the
+    existing head but for its OLH attrs
+    ([rgw_rados.cc:6737-6744](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L6737-L6744),
+    [rgw_rados.cc:7351-7358](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L7351-L7358);
+    `remove_rgw_head_obj`,
+    [rgw_rados.cc:5798-5803](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5798-L5803),
+    [rgw_rados.cc:6410-6415](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L6410-L6415)).
+    A retention or legal-hold attr on the version goes with its data.
+  - `_do_write_meta` reads the bucket's object lock only to give the new
+    object the bucket's default retention
+    ([rgw_rados.cc:3211-3221](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3211-L3221),
+    [rgw_rados.cc:3308-3318](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3308-L3318)),
+    and `verify_object_lock` has two callers at each tag, DeleteObject and
+    DeleteObjects
+    ([rgw_op.cc:5213](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5213),
+    [rgw_op.cc:5603](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5603);
+    [rgw_op.cc:6873](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6873),
+    [rgw_op.cc:7801](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7801)).
+    Nothing on the write path reads the lock of the version it replaces.
+  - S3 makes neither state on a lock bucket, and a `bucket.instance`
+    metadata put stores either, as the deletes' entry shows. CopyObject
+    and CompleteMultipartUpload were not read at the tags for this.
+- **Shared sink:** the lock check made by the deletes alone, and there
+  keyed on the request naming a version; the deletes' side is
+  "[radosgw's S3 deletes naming no version remove an object under object lock when the bucket's versioning is not enabled](#radosgws-s3-deletes-naming-no-version-remove-an-object-under-object-lock-when-the-buckets-versioning-is-not-enabled)",
+  and lifecycle's
+  "[radosgw's lifecycle current expiration removes an object under object lock](#radosgws-lifecycle-current-expiration-removes-an-object-under-object-lock)".
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces it. `op.VersionForWrite` gives a write no
+  instance unless the request's bucket record has versioning enabled
+  (`internal/op/version.go`), the head write's reset keeps the OLH's attrs
+  alone (`doWriteMeta`, `internal/driver/headwrite.go`; `headKeptAttrs`,
+  `internal/driver/delete.go`), and the lock check is the deletes' and
+  lifecycle's (`deleteUnderLock`, `internal/op/objectlock.go`;
+  `lcLockCheck`, `internal/driver/lc_actions.go`), so PutObject,
+  CopyObject and CompleteMultipartUpload check none. A numbered plan task
+  will change it.
+- **Upstream:** known upstream before this entry through a private report,
+  which this registry does not link. No public tracker issue or pull
+  request is cited.
+- **Found:** met by the adversarial sweep of versioning and lifecycle,
+  2026-11-21, on the write path the deletes' entry leaves out; seen on
+  rgw-go over its emulator on both releases, and derived from the source
+  for radosgw, not reproduced.
+
+## radosgw decides a write's version on bucket info loaded before versioning and object lock were enabled
+
+- **Kind:** defect, possibly security-relevant (object lock). A write
+  chooses between a new version and the key's existing head on the bucket
+  info its request holds, and that info can predate an enable of
+  versioning and of object lock on the bucket. Unreproduced on radosgw:
+  derived from the source, and seen on rgw-go, which mirrors it, over its
+  RADOS emulator.
+- **Evidence:** paths are under `src/rgw/`; each pair of links is
+  v19.2.7's, then v20.2.4's.
+  - PutObjectLockConfiguration enables object lock on an existing bucket
+    whose versioning is enabled
+    ([rgw_op.cc:8289-8302](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L8289-L8302),
+    [rgw_op.cc:9224-9237](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L9224-L9237)),
+    so the null version of a bucket that was once unversioned or suspended
+    can come to hold a retention or a legal hold.
+  - A request loads `s->bucket` once
+    ([rgw_op.cc:526-530](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L526-L530),
+    [rgw_op.cc:556-560](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L556-L560)),
+    through a cache whose entry can outlive the change, as
+    "[radosgw decides a delete's object-lock check on bucket info loaded before object lock was enabled](#radosgw-decides-a-deletes-object-lock-check-on-bucket-info-loaded-before-object-lock-was-enabled)"
+    shows with its evidence; a request in flight across the enable holds
+    the earlier info too.
+  - `RGWPutObj::execute` gives its object a new instance only when that
+    info has versioning enabled
+    ([rgw_op.cc:4278-4285](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4278-L4285),
+    [rgw_op.cc:4491-4498](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4491-L4498)).
+    On earlier info the write lands on the key's existing head, the null
+    version's, and resets it with no lock check, as
+    "[radosgw's writes naming no version replace an object under object lock when the bucket's versioning is not enabled](#radosgws-writes-naming-no-version-replace-an-object-under-object-lock-when-the-buckets-versioning-is-not-enabled)"
+    shows.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** the same exposure. `op.VersionForWrite` decides on the
+  bucket record its op loaded when the request began
+  (`internal/op/version.go`), and the store's write is given that record.
+  Plan task V28 tracks the deletes' side of a stale record; a numbered plan
+  task will cover the writes.
+- **Upstream:** pending.
+- **Found:** the adversarial sweep of versioning and lifecycle,
+  2026-11-21; seen on rgw-go over its emulator on both releases, with a
+  write held in flight across the enable and with a stale record, and
+  derived from the source for radosgw, not reproduced.
+
+## radosgw's lifecycle never transitions a version whose attrs were written after its link
+
+- **Kind:** defect, S3-correctness, not security-relevant. Unreproduced
+  on radosgw: derived from the source, and seen on rgw-go, which mirrors
+  it, over its RADOS emulator.
+- **Evidence:** each pair of links is v19.2.7's, then v20.2.4's.
+  - An attr write stamps the head one nanosecond past the mtime it read
+    (`set_obj_attrs`,
+    [rgw_sal_rados.cc:2379-2392](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2379-L2392),
+    [rgw_sal_rados.cc:2971-2984](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2971-L2984);
+    "[radosgw's set_obj_attrs moves an object's mtime one nanosecond on](#radosgws-set_obj_attrs-moves-an-objects-mtime-one-nanosecond-on)"),
+    and completes the object's index entry with that mtime.
+  - `rgw_bucket_complete_op` reads and writes one index key, the one
+    `encode_obj_index_key` gives for the op's key
+    ([cls_rgw.cc:1043-1047](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1043-L1047),
+    [cls_rgw.cc:1178-1182](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1178-L1182);
+    [cls_rgw.cc:1168-1198](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1168-L1198),
+    [cls_rgw.cc:1301-1329](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1301-L1329);
+    [cls_rgw.cc:339-346](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L339-L346),
+    [cls_rgw.cc:389-396](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L389-L396)).
+    For a key that names an instance that is the version's instance entry,
+    in the namespace no listing returns
+    ([cls_rgw.cc:194-244](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L194-L244),
+    [cls_rgw.cc:244-294](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L244-L294)).
+    The version's list entry, which a listing does return, is another key
+    and keeps the mtime it was linked with
+    ("[radosgw's listing never repairs a version's list entry](#radosgws-listing-never-repairs-a-versions-list-entry)").
+  - The lifecycle's transition passes the listed entry's mtime
+    ([rgw_lc.cc:1515-1516](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1515-L1516),
+    [rgw_lc.cc:1561-1562](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1561-L1562)),
+    and `transition_obj` answers -ECANCELED unless the head's mtime is
+    that one
+    ([rgw_rados.cc:5216-5220](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5216-L5220),
+    [rgw_rados.cc:5449-5453](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5449-L5453)).
+  - So after an attr write on a version, a PutObjectTagging or a
+    PutObjectAcl among them, the two mtimes differ by a nanosecond at
+    every pass, and the transition is cancelled each time. radosgw's
+    expiration compares no exact mtime
+    ("[radosgw's lifecycle expiration guards its removal with the listed mtime's second alone](#radosgws-lifecycle-expiration-guards-its-removal-with-the-listed-mtimes-second-alone)"),
+    so it still expires such a version.
+- **Releases:** v19.2.7 and v20.2.4.
+- **rgw-go:** reproduces the transition, and goes further. On a bucket
+  ever versioned each of its lifecycle actions goes on only while the
+  version is the one listed, by its exact mtime (`lcBucket.listedAs`,
+  `internal/driver/lc_actions.go`; `transitionListed`,
+  `internal/driver/lc_transition.go`), so after an attr write it neither
+  transitions nor expires the version, where radosgw still expires it.
+  `docs/differences.md`, "Lifecycle removes an object only as it was
+  listed", says the skip is decided afresh at the next pass, which holds
+  only on a bucket never versioned. A numbered plan task will change it.
+- **Upstream:** pending.
+- **Found:** the adversarial sweep of versioning and lifecycle,
+  2026-11-21; seen on rgw-go over its emulator on both releases, and
+  derived from the source for radosgw, not reproduced.
