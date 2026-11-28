@@ -2899,6 +2899,41 @@ info loaded once per pass
 [rgw_lc.cc:1753-1759](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1753-L1759)).
 By reading, not reproduced on radosgw.
 
+**The write side,** added on 2026-11-28 from the versioning and lifecycle sweep of 2026-11-21
+(F1), which reproduced it on the emulator at both releases. A write that replaces the null version
+in place checks no object lock, and it is this task's too: the rgw-bug-reproduction session calls
+it the write-side twin of the stale-record delete, and on radosgw one fix likely serves both.
+Mechanism only:
+
+- PutObject, CopyObject and CompleteMultipartUpload choose between a new version and the null
+  version on the request's bucket record. `op.VersionForWrite` gives the write no instance unless
+  that record's versioning is enabled (`internal/op/version.go:22-27`), on the record loaded once
+  in Init (`internal/op/putobject.go:126`, `internal/op/copyobject.go:100`,
+  `internal/op/completemultipart.go:125`), and the store's write is given the same record
+  (`internal/op/putobject.go:225-226`, `internal/op/copyobject.go:271-272`,
+  `internal/op/completemultipart.go:198-199`).
+- A write with no instance resets the head it lands on, the plain object's or the null data on
+  the key's OLH head, and the reset keeps the OLH attrs alone (`doWriteMeta`,
+  `internal/driver/headwrite.go:309-316`; `headKeptAttrs`, `internal/driver/delete.go:125-130`).
+  A retention or legal-hold attr on that version goes with its data, and nothing on the write
+  path reads either attr.
+- Two kinds of record send a write there while the version it replaces holds a lock. One is a
+  current record of an object-lock bucket whose versioning is not enabled, suspended or never
+  set, which a bucket instance metadata put can store (`keepInstance` refuses only turning object
+  lock off, `internal/driver/metadata_instance.go:345-370`); these are the states `lockTarget`
+  names for the deletes (`internal/op/objectlock.go:91-102`). The other is a record read before
+  versioning and object lock were enabled: a write in flight across PutBucketVersioning,
+  PutObjectLockConfiguration and PutObjectLegalHold, whose head write lands when its body ends,
+  and another gateway's cached record when the notify is lost, as for the deletes above.
+- radosgw is the same by reading: `RGWPutObj::execute` draws a new instance only when the
+  request's bucket has versioning enabled
+  ([rgw_op.cc:4278-4285](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4278-L4285),
+  [rgw_op.cc:4491-4498](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4491-L4498)),
+  on the bucket info loaded once, cited above, and its head write reads the bucket's object lock
+  only to add a default retention
+  ([rgw_rados.cc:3211-3221](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L3211-L3221),
+  [rgw_rados.cc:3308-3318](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L3308-L3318)).
+
 - **Layer:** op and driver. **Files:** a `DeleteParams` field in `internal/op/object.go`, and an
   error the refusal wraps, with opfakes, driverfakes and memstore as the hot-file rule for that
   file says; the three store paths that refuse (Behaviour 2), in `internal/driver/delete.go`,
@@ -2913,9 +2948,16 @@ By reading, not reproduced on radosgw.
   `internal/driver/lc_bucket_test.go`; `docs/differences.md`, the entries "A delete that removes a
   version for good on an object-lock bucket checks its lock", "Every permanent removal by lifecycle
   runs the object-lock check" and "Admin removals ignore object lock"; the rgw-go line of the
-  registry entry above. **Cluster:** no.
+  registry entry above. For the write side (Behaviour 7): the head write (`writeMeta` and
+  `doWriteMeta` in `internal/driver/headwrite.go`) and its three callers
+  (`internal/driver/put.go`, `internal/driver/copy.go`, `internal/driver/mp_complete.go`); the
+  writes' params in `internal/op/object.go` and `internal/op/multipart.go`, with opfakes,
+  driverfakes and memstore; the three ops (`internal/op/putobject.go`,
+  `internal/op/copyobject.go`, `internal/op/completemultipart.go`); their specs over the RADOS
+  store; a `docs/differences.md` entry for the write; the rgw-go lines of the two registry
+  entries the registry sweep writes for the writes' side. **Cluster:** no.
 - **Security boundary:** object lock; adversarial review applies (PP-14). No change may let a delete
-  remove a version whose lock a check on current bucket state would keep.
+  remove, or a write replace, a version whose lock a check on current bucket state would keep.
 - **Behaviour:**
   1. A delete and a lifecycle action decide the lock check on bucket state at least as new as the
      target's lock attrs as the store read them. Every lock attr rgw-go writes is written through a
@@ -3009,6 +3051,43 @@ By reading, not reproduced on radosgw.
      rgw-go decides on current bucket state where radosgw decides on the request's or the pass's,
      the guard on a bucket without object lock, and, in "Admin removals ignore object lock", that
      the admin removals still do. The registry entry's rgw-go line says what rgw-go does.
+  7. The write side. A write that would replace a version in place meets the deletes' rule, at
+     the head write, which is where the replaced head is read and the only step that destroys
+     it.
+     - The store asks. `writeMeta` replaces a head that exists only on a pass that read it
+       (`internal/driver/headwrite.go:205-264`, `:294-316`; its first pass creates exclusively
+       and replaces nothing). When a write with no instance would reset a head that, as that
+       pass read it, carries a retention or legal-hold attr, the store does not write it unless
+       its caller's decision lets it. The decision is a seam the op hands the store with the
+       write's params. Without one the store refuses, so the refusal fails closed and a caller
+       added later is refused until it decides. The write is held to the head as read by the
+       head write's guard, so a lock attr written after the read refuses it; a head the guard
+       does not cover is the implementer's to show held, or to hold, as in Behaviour 2.
+     - The op decides, on bucket state at least as new as the attr, as Behaviour 1 has it:
+       - on a record with object lock whose versioning is not enabled, the lock is judged on
+         the head as read, as a delete naming no version judges it, and a write takes no
+         governance bypass. A legal hold, or a retention not yet expired, refuses the write
+         with 403 AccessDenied, "forbidden by object lock". An expired retention does not
+         (D13);
+       - on a record without object lock, the op reads the bucket instance past the metadata
+         cache, with Behaviour 3's read. If versioning is now enabled, the write must not land
+         in place: it answers 503 SlowDown with nothing replaced, and the client's retry, on the
+         current record, writes a new version. If the bucket now has object lock and versioning
+         is not enabled, the first case decides. If it still has no object lock, the attr is one
+         no check enforces (Behaviour 1's two sources), and the write is made, as radosgw makes
+         it.
+     - A refused write replaces nothing. Its tails go to the garbage collector as a failed
+       write's do, and a refused CompleteMultipartUpload leaves its upload in place, so the
+       retry can complete it.
+     - No read is added to the common path: the head write already reads the head it resets,
+       and the read past the cache runs only when that head carries a lock attr under a record
+       without object lock. A versioning-enabled record's write names a new instance and resets
+       nothing.
+     - Rejected: a check in the op before the body is read, which a lock written while the body
+       arrives passes; and deciding the instance again in the store, which would rename the
+       tails a streamed write has already stored under its first key.
+     - Record the write in `docs/differences.md` beside the two delete entries, and what rgw-go
+       does in the rgw-go lines of the registry's entries for the writes' side.
 - **Specs:** on both releases, against the emulator:
   - R1L's shape: a versioning-enabled bucket with v1; a request's record read before
     PutObjectLockConfiguration; object lock enabled and a legal hold written on v1 through a fresh
@@ -3032,16 +3111,43 @@ By reading, not reproduced on radosgw.
   - lifecycle, a pass on a gateway that missed the notify: a noncurrent version under a hold, and
     under COMPLIANCE, is kept; an expiration of a current object on a record still unversioned in
     the cache, over a bucket since enabled and locked, skips and ends the pass; a version with no
-    lock attr expires as today.
+    lock attr expires as today;
+  - the write side, every step an `op.Run` of the S3 op over the RADOS store, for PutObject,
+    CopyObject and CompleteMultipartUpload:
+    - a current record with object lock and versioning suspended, and one with object lock and
+      versioning never set, each stored through the metadata put: a write over a key whose null
+      version holds a legal hold, a COMPLIANCE retention or an unexpired GOVERNANCE retention
+      answers 403 AccessDenied, "forbidden by object lock"; the version keeps its data, its ETag
+      and its lock attrs, the failed write's tails are queued for the garbage collector, and the
+      completion's upload is still listed. Over an expired retention, and over a version with no
+      lock attr, the write lands as today;
+    - in flight: a PutObject whose bucket was loaded, and whose body is held back, across
+      PutBucketVersioning Enabled, PutObjectLockConfiguration and PutObjectLegalHold ON on the
+      null version, from a never-versioned start and from a suspended one: its head write answers
+      503 SlowDown, the null version keeps its data and its hold, and the same request sent again
+      writes a new version. The same for CopyObject and CompleteMultipartUpload on the record
+      read before;
+    - the lost notify: the second store's write on its cached record answers the same;
+    - a lock attr written between the head write's read and its write (a write hook): the write
+      is refused and nothing is replaced;
+    - a record without object lock whose instance, read past the cache, has none either, over a
+      head seeded with a lock attr: written, as radosgw writes it;
+    - a bucket that never had object lock, and a versioning-enabled one: no read past the cache
+      and no read added, counted on the store;
+    - the store's write given no decision over a head with a lock attr: refused, with nothing
+      written.
 
-  No s3-tests test: a request in flight across PutObjectLockConfiguration, or a lost notify, is
-  not something an S3 client can arrange.
+  No s3-tests test: a request in flight across PutObjectLockConfiguration, a lost notify, or an
+  object-lock bucket whose versioning is not enabled, which only a metadata put stores, is not
+  something an S3 client can arrange.
 - **Depends on:** V24, its Behaviour 7 PR, which adds the registry entry, and V27. V27 changes
   `deleteUnderLock` and lifecycle's `removeVersion`, the code this task changes, and this task's
   read of a target named `null` is V27's. The store paths are shared with V25, whose links go
   through `setOLH` in `internal/driver/olh.go`, and with V26, which changes the cancels in
   `internal/driver/delete.go` and `internal/driver/delete_versioned.go`, so V28 goes after both,
-  as the Order has it. **PR:** one. **Brief:** about 50 lines.
+  as the Order has it. **PR split:** the delete side (Behaviours 1 to 6), then the write side
+  (Behaviour 7), which uses the first's read past the cache and its op error. **Brief:** about
+  50 lines for the delete side and about 35 for the write side.
 
 ### Task V29: a bucket delete leaves no OLH head behind
 
@@ -3535,6 +3641,219 @@ V23's record of each removal a replay left undone, in `rgw-go.unlisted.<bucket i
   V30, whose kind of record it keeps, so it goes after V30, as the Order has it. **PR:** one.
   **Brief:** about 45 lines.
 
+### Task V32: a version id holding `_` names no version
+
+Found by the cls and formats sweep of 2026-11-21 (F1), on main, and numbered here (PP-12).
+Mechanism only. A version's head is named from its instance and its key's name, joined by `_`
+with nothing escaped (`meta.ObjKey.OID`, `internal/meta/objkey.go:73-82`), and a request's
+`versionId` becomes the key's instance as sent: the request's own (`internal/s3/request.go:125`),
+a copy source's (`internal/s3/copyobject.go:205`) and a DeleteObjects entry's
+(`internal/s3/deleteobjects.go:211-214`), each checked for a NUL alone (`refuseNUL`,
+`internal/s3/request.go:370-392`). Once an instance may hold `_`, a head's name no longer says
+which key and instance it belongs to: one RADOS name answers for two pairs. A read of a named
+version goes to that head without the index (`objectState`, `internal/driver/stat.go:42-54`),
+and an attr write writes it and completes an index entry for the request's key and instance
+(`SetObjectAttrs`, `internal/driver/attrs.go:35-101`), while the request is authorized on the
+key it names.
+
+No version id either gateway generates holds `_`. rgw-go's alphabet (`noUnderscoreAlnum`,
+`internal/meta/olh.go:70-73`) is radosgw's, whose generator says why: "no underscore for
+instance name due to the way we encode the raw keys"
+([rgw_rados.cc:8868-8877](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L8868-L8877),
+[rgw_rados.cc:9614-9623](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L9614-L9623)). Neither gateway holds a request's
+`versionId` to that rule. radosgw takes it as sent
+([rgw_rest_s3.cc:4976-4985](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4976-L4985), [rgw_rest_s3.cc:5506-5515](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5506-L5515))
+and `rgw_obj_key::get_oid` joins the name the same way
+([rgw_obj_types.h:238-254](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_obj_types.h#L238-L254), [rgw_obj_types.h:238-254](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_obj_types.h#L238-L254)).
+rgw-go closed the same class for upload ids (`aliasedUpload`,
+`internal/op/uploadpart.go:541-560`; the registry's "radosgw lets an upload id address another
+key's multipart upload") and not for version ids.
+
+- **Layer:** s3 and driver. **Files:** the three places a version id enters
+  (`internal/s3/request.go`, `internal/s3/copyobject.go`, `internal/s3/deleteobjects.go`); the
+  driver's head reference for a named version (`internal/driver`); their specs;
+  `docs/differences.md`; the rgw-go line of the registry entry the registry sweep adds.
+  **Cluster:** no.
+- **Security boundary:** the key a request is authorized on and the RADOS object it reaches;
+  adversarial review applies (PP-14). No change may let a request read or write a head that its
+  key and instance do not own.
+- **Decision:** a version id other than `null` that holds `_` names no version, at both layers.
+  The S3 layer answers it as a version that does not exist, before any head is read, and the
+  driver refuses to build a head reference for such an instance, so a caller added later is
+  covered, as the upload id is checked in the op and again in the driver (`metaRef`,
+  `internal/driver/mp_layout.go:77-81`). Reason: no generated
+  id holds one, so nothing either gateway made by itself is lost, and the refusal needs no
+  change to any RADOS name.
+- **Behaviour:**
+  1. A request's `versionId`, a copy source's and a DeleteObjects entry's, when it holds `_` and
+     is not `null`, gets the answer that op gives today to a version id naming no version of the
+     key: for the reads, the attr reads and writes, the copy's source, a versioned DeleteObject
+     and a DeleteObjects entry alike. Nothing is read from or written to the data pool or the
+     index for it.
+  2. `null`, an empty id, and every id either gateway generates are unchanged.
+  3. The driver's head reference refuses a non-null instance holding `_`, whoever asks.
+  4. A write's `versionId` is already ignored (D3; `docs/differences.md`, "A write's versionId is
+     ignored").
+  5. An instance another gateway stored. radosgw keeps a write's `versionId` as the instance on a
+     bucket whose versioning is not enabled
+     ([rgw_op.cc:4278-4285](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L4278-L4285), [rgw_op.cc:4491-4498](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4491-L4498); the
+     registry's "radosgw indexes a PutObject naming versionId=null on an unversioned bucket
+     under the null instance"), so a shared zone may hold an index entry whose instance has a
+     `_`. rgw-go lists it and serves no request that names it. Lifecycle and the bucket delete
+     meet it through the driver's refusal: they skip it and say so in the log, and never reach
+     the head its name spells. The differences entry says so, and that the admin purge is what
+     removes such a bucket.
+  6. The assumption, which the task checks before it relies on it: no release's generator made
+     an instance holding `_`. It holds at both floors; the task reads the generator's history
+     in the clone.
+- **Specs:** on both releases, through the handler over the RADOS store on the emulator:
+  - GetObject, HeadObject, GetObjectAttributes, Get and PutObjectAcl, Get, Put and
+    DeleteObjectTagging, Get and PutObjectRetention, Get and PutObjectLegalHold, DeleteObject, a
+    DeleteObjects entry, and the source of CopyObject and of UploadPartCopy, each naming a
+    version id that holds `_`: the op's answer for a version that does not exist, with no head
+    read or written and no index entry made, counted on the store;
+  - the same ids with `null`, and a generated id: unchanged;
+  - the driver's head reference, asked directly: refused;
+  - an index entry seeded with such an instance, as a radosgw could have left one: listed by
+    ListObjectVersions, not served, skipped by a lifecycle pass and by DeleteBucket's walk with
+    a log line, and removed by the admin purge.
+- **s3-tests (PP-19):** a version id that holds `_`, on a key with no such version, answers as a
+  missing version on GetObject, PutObjectAcl and DeleteObject. Both gateways pass it, so it pins
+  the answer and carries no marker. A test that tells the gateways apart would be the worked
+  example, so it waits until the rgw-bug-reproduction session says the radosgw side is public.
+- **Exclusions and registry:** a `docs/differences.md` entry, mechanism only; the rgw-go line of
+  the registry entry.
+- **Depends on:** nothing. It changes no OLH code, so it does not wait for V25 to V31. **PR:**
+  one. **Brief:** about 35 lines.
+
+### Task V33: a null write's first link waits for a removal of the null data, and gives way to it
+
+Found by V25's task review (I2), reproduced on both releases at V25's head and on main with the
+same lines, and numbered here before V25 merged (PP-12). V25 closes the window between a
+removal's prepare and its index completion for the linkers its task lists. One linker is left:
+the first link of a write of the null version, whose data a delete can name before that link.
+
+- A key with an OLH, in a bucket whose versioning is suspended, holds null data. A null
+  PutObject lands its head write, over the OLH head, and its index completion.
+- A delete naming `null` reads that head, unlinks, and its replay sends its removal's prepare.
+- The write's link then lands on the entry under the DEL. It is `setOLH` with a write tag and
+  no entry to compare (`linkVersion`, `internal/driver/put_versioned.go:339-364`, the link at
+  `:362-363`; `setOLH` takes a compare from a relink alone, `internal/driver/olh.go:312-315`),
+  and the class's link refuses only a missing instance entry
+  ([cls_rgw.cc:1668-1688](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1668-L1688), [cls_rgw.cc:1809-1829](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1809-L1829)).
+- The write answers success. The removal, already past its compare, takes the head's data and
+  the entry, and the delete answers success.
+
+What is left, as the review's probe printed it: the null version is listed and current, the OLH
+names it, and the OLH head holds no data. A stat of the key answers that it exists, with size 0
+and no ETag. A later PutObject with versioning enabled again fails NoSuchKey and leaves the key
+as it was. A later null PutObject succeeds and leaves two list entries for the null version,
+both current.
+
+The linkers it serves are the writes that end in `linkVersion` on a null version
+(`internal/driver/headwrite.go:441`): PutObject (`internal/driver/put.go:226`), CopyObject, its
+copy of the null version onto itself among them (`internal/driver/copy.go:311`), and
+CompleteMultipartUpload's first link (`internal/driver/mp_complete.go:446`). The review ran the
+delete naming `null`. By reading and not run, a suspended bucket's null delete marker and
+lifecycle's expiration of the current version remove the null data through the same removal. A
+named version's first link is safe, since no client knows its id before the link.
+
+- **Layer:** driver. **Files:** the write's link (`linkVersion` in
+  `internal/driver/put_versioned.go`; `setOLH` and `versionTaken` in `internal/driver/olh.go`);
+  V25's instance-entry read, wait and compare list at V25's head (`olhLinkFields` and `linkOLH`
+  in `internal/driver/olh_index.go`) and its record (`recordUnlisted`); their specs;
+  `docs/differences.md`, "A versioned write whose version a delete removes before its link
+  succeeds" and the window's paragraph of "A replay keeps a version a link lists again after it
+  read the log"; the rgw-go line of the registry entry V20 adds. **Cluster:** no.
+- **Security boundary:** the versioned write's and delete's path; adversarial review applies
+  (PP-14).
+- **Decision:** V25's pattern, applied to the write, with the write's own answers. The link
+  waits for a removal of the null data, links if the removal was canceled, answers success
+  without a link once the version is gone, and gives way with a record if the wait ends.
+  - It is not the relist's answer. A relist that gives way links nothing, and its delete
+    answers ConcurrentModification: the removal is taking a version the relist's request did
+    not write. Here the delete read the write's own head and is taking the write's own data.
+    Both requests then did what they asked, the write first, which a write already answers as
+    success once the version is gone (`versionTaken`, `internal/driver/olh.go:411-416` and
+    `:436-446`; `docs/differences.md`, "A versioned write whose version a delete removes before
+    its link succeeds").
+  - A wait that ends is not answered success. The version is not gone yet, and a remover that
+    stopped would leave an acknowledged write stored and unlisted. It answers 503 SlowDown, as
+    a delete whose removal was deferred past its bound is answered (`removeKept`,
+    `internal/driver/olh.go:1601-1602`), and the client may send the write again.
+- **Behaviour:**
+  1. After its index completion and before its link, a write of the null version reads the null
+     data's entry (`nullDataEntry`), as V25's linkers read a version's instance entry. An entry
+     with no DEL pending is linked, and the link compares the entry as read, by V25's compare
+     list, so a prepare that lands after the read refuses the link and the next round reads the
+     DEL.
+  2. A DEL pending on the entry is waited out, within V25's bound, the entry read again after
+     each backoff. A pending op of any other kind is no reason to wait.
+  3. The wait ends in one of three ways:
+     - the DEL is gone, and the entry and the head still hold the write: the removal was
+       canceled, and the write links as in 1;
+     - the entry is gone and the head no longer holds the write, `versionTaken`'s test: the
+       write answers success with nothing linked and nothing removed. The OLH names what the
+       delete made current, and the write's tails are the delete's;
+     - the DEL is still pending: the write links nothing, records the version as V25's
+       give-way does, and answers 503 SlowDown. Its data stays as the removal leaves it.
+
+     Any other state the read finds, an entry gone while the head still holds the write among
+     them, keeps the answer it has today.
+  4. A remover that stopped must not hold the key's null writes for longer than the shard's tag
+     timeout. A write whose link finds a DEL pending past that age cancels it, by the rule the
+     abort applies and V25's consumer shares (`expireStaleOps`,
+     `internal/driver/mp_abort.go:387-435`), and then links. V26 holds that cancel to the
+     entry's own version.
+  5. A conditional write of the null version follows the same rule: its condition is checked at
+     its head write, and its link carries none (`linkCond`,
+     `internal/driver/put_versioned.go:304-309`).
+  6. A named version's first link, a lifecycle transition's link and the CompleteMultipartUpload
+     retry are unchanged: V25 has the last two.
+  7. The RADOS state stays radosgw's, as in V25: the compare is an OMAP_CMP step in the link's
+     own op, and the wait only reads.
+  8. Trace, before implementing: a write sent again after a 503, while the first write's DEL is
+     still pending. Its head write replaces the data the removal read, so the task shows what
+     the removal then does, and pins it: the outcome must be the retry's data listed, or the
+     key as the delete leaves it, and never an entry with no data.
+- **Seams:** none new. The task uses V25's entry read, wait and compare list, and V24's record.
+- **Specs:** on both releases, against the emulator:
+  - the review's schedule: a null write parked before its link, a delete naming `null` parked
+    after its removal's prepare, then the link, then the removal. The write waits, finds the
+    version gone and answers success. No list entry names the null version, the OLH names the
+    version the delete made current, and the head holds no data. A later PutObject with
+    versioning enabled links, and a later null PutObject leaves one list entry for null;
+  - the same with the removal parked before its head removal, and before its index completion;
+  - for each linker: PutObject, CopyObject of the null version onto itself, and
+    CompleteMultipartUpload's first link; and a conditional PutObject;
+  - for each deleter: the delete naming `null`, a null delete marker, and lifecycle's
+    expiration of the current version, which runs what was only read;
+  - the removal canceled while the write waits: the write links, and the null version is
+    listed, current and readable;
+  - the removal held past the wait: 503 SlowDown, nothing linked, the version recorded. Once
+    the removal completes, the key is as the delete leaves it, and the write sent again
+    succeeds;
+  - the remover stopped: a write sent again before the tag timeout answers 503, and one after
+    it cancels the DEL and links. The record's consumer then finds the version listed and drops
+    the record;
+  - a prepare landing between the write's read of the entry and its link refuses that link;
+  - Behaviour 8's trace, as the task settles it;
+  - a named version's first link, unchanged;
+  - V21's adversarial harness with V22's and V25's additions, and a family for this schedule,
+    2000 schedules a family: no listed version without data, no new acknowledged-and-kept
+    outcome and no new lost delete.
+- **s3-tests (PP-19):** none: the window lies between two RADOS ops of one request, and no S3
+  client can hold it open.
+- **Exclusions and registry:** `docs/differences.md`: "A versioned write whose version a delete
+  removes before its link succeeds" says what a null write's link does in the window, in place
+  of the sentence V25's PR leaves there, that a numbered plan task will change it, and that a
+  write answered 503 there may be listed later, once the record's consumer lists its version
+  again; the window's paragraph of "A replay keeps a version a link lists again after it read
+  the log" lists the write among rgw-go's linkers. The rgw-go line of the registry entry V20
+  adds.
+- **Depends on:** V25, whose read, wait, compare list and record it uses. **PR:** one.
+  **Brief:** about 45 lines.
+
 ## Order
 
 At most three implementers at once. A wave starts when the tasks it depends on have merged;
@@ -3555,7 +3874,11 @@ recordings land one at a time through the controller.
 | 9 | V11, V12b | V7b, V8b |
 | 10 | V12a, V14a | V11, V13d |
 | 11 | V16, then V15a, then V17, then V18, then V19, then V20, then V15b, then V15c, then V21, then V22, then V23, then V24, then V25, then V26, then V27, then V28, then V29, then V30, then V31 | everything above, WP-22 |
+| sweep | V32 | nothing: it changes no OLH code and can start at once |
+| after V25 | V33 | V25, whose read, wait, compare list and record it uses |
 
+- V28 ships as two PRs, its delete side and then its write side (its Behaviour 7, added
+  2026-11-28). V31, which depends on V28's guard, waits for the delete side alone.
 - V10's recording PR is a cluster task the controller schedules after its first PR merges.
 - The critical path is V1, V3b, V4, V5a, V5b, V5c, V7a, V7b, V11, V14a, V15a. L and C start
   their versioned work from V6, V8a, V8c and V9 (index, Order 2); L4 and C10b need V8c for

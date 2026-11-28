@@ -3,8 +3,10 @@
 Threat model: two kinds of input. A client adversary meets the request parsers this unit adds
 and one authorization check, and these get adversarial review (PP-14):
 - the checksum headers, and the aws-chunked trailer section, which authentication reads for
-  the signed-trailer payload (WP-3, WP-6);
-- `?layout`'s `admin=read` cap check (WP-21).
+  the signed-trailer payload (WP-3, WP-6, WP-36);
+- `?layout`'s `admin=read` cap check (WP-21);
+- a part's number, the parts an upload registers and the completion document's part checksums,
+  numbered from the sweeps of 2026-11-21 (WP-33 to WP-35).
 
 The otp section's input comes from an admin who holds `metadata=write`, phase 1's check. Its
 validation still keeps a careless document from faulting the OSD (defect 11). Everything else
@@ -1434,6 +1436,332 @@ Found by WP-29's scoped re-review (O1), and numbered here before WP-29 merged (P
   - An s3-test where reasonable (PP-19), with its pin move in this task's PR.
 - **Depends on:** WP-29. **PR:** one. **Brief:** about 35 lines.
 
+### Task WP-33: a part is numbered from 1, and every stored part is retired
+
+Found by the multipart and admin sweep of 2026-11-21 (F1), on main, and numbered here (PP-12).
+
+- **Layer:** s3 and driver. **Files:** the part's number where a part reads it
+  (`uploadPartParams`, `internal/s3/multipart.go`; `partNumberArg`, `internal/s3/putobject.go`);
+  the listing Complete and Abort retire by (`listAllParts`, `internal/driver/mp_cleanup.go`;
+  `internal/driver/mp_list.go`); their specs; `docs/differences.md`; the rgw-go line of the
+  registry entry the registry sweep adds. **Cluster:** no.
+- **Security boundary:** the request path: a client's number reaches RADOS object names and can
+  leave storage no request retires; adversarial review applies (PP-14).
+- **Why,** mechanism only:
+  - UploadPart takes any part number `strict_strtol` parses, zero and the negative ones
+    included: `partNumberArg` bounds nothing (`internal/s3/putobject.go:154-167`), and the
+    driver keeps the number's low 32 bits (`putPart`, `internal/driver/mp_part.go:366`).
+  - A part numbered below 1 is registered in the upload's meta object like any other
+    (`meta.MultipartPartKey`, `internal/meta/multipart.go:66-68`), with its head and stripes in
+    the data pool and its head's entry in the bucket index.
+  - Complete and Abort list the parts through `listAllParts`
+    (`internal/driver/mp_cleanup.go:220-231`), which starts at marker 0: the sorted read begins
+    after part 0's key (`sortedPartsPage`, `internal/driver/mp_list.go:135-154`) and the
+    unsorted read keeps only the numbers above the marker (`:121`). Neither sees a part
+    numbered below 1.
+  - They retire only the parts they listed and then remove the meta object
+    (`internal/driver/mp_abort.go:179-220`; `retireUpload`,
+    `internal/driver/mp_complete.go:692`). The parts left out keep their objects in the data
+    pool, queued for no garbage collection, and their index entries, counted in the bucket's
+    stats. No S3 request names what is left.
+  - rgw-go's bucket delete then refuses that bucket for good, since its index holds entries no
+    listing shows (`checkIndexCount`, `internal/driver/bucketops.go:413-429`); only the admin
+    purge removes it. radosgw's deletes the bucket and leaves the objects.
+  - radosgw is the same up to the bucket delete at both tags: it reads the number with
+    `strict_strtol` alone ([rgw_rest_s3.cc:2682-2694](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L2682-L2694),
+    [rgw_rest_s3.cc:2835-2847](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L2835-L2847)) and registers it unchecked
+    ([rgw_putobj_processor.cc:534-543](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_putobj_processor.cc#L534-L543),
+    [rgw_putobj_processor.cc:571-582](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_putobj_processor.cc#L571-L582)); `list_parts` reads
+    after the marker's key and keeps the numbers above it
+    ([rgw_sal_rados.cc:3354-3404](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3354-L3404),
+    [rgw_sal_rados.cc:4196-4246](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4196-L4246)); and abort and complete list
+    from marker 0 ([rgw_sal_rados.cc:3180-3224](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3180-L3224) and
+    [rgw_sal_rados.cc:3467](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3467),
+    [rgw_sal_rados.cc:4020-4064](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4020-L4064) and
+    [rgw_sal_rados.cc:4311](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4311)).
+  - Amazon S3's part number is "a positive integer between 1 and 10,000"
+    ([service-2.json:14306](https://github.com/boto/botocore/blob/4c688659d4a2ccc0edcdc3357107a534a52e478d/botocore/data/s3/2006-03-01/service-2.json#L14306),
+    and [:14021](https://github.com/boto/botocore/blob/4c688659d4a2ccc0edcdc3357107a534a52e478d/botocore/data/s3/2006-03-01/service-2.json#L14021)
+    for a copied part).
+- **Decision:** both halves. rgw-go refuses the number at the door, as Amazon S3 does, so it
+  stores no such part; and Complete and Abort retire every part an upload registers, whatever
+  its number, so a part a radosgw on the zone stored is retired too. Reason: the first is S3's
+  rule, and the second is the compatibility rule's "prevent corruption of shared data even
+  where radosgw allows it".
+- **Behaviour:**
+  1. UploadPart and UploadPartCopy answer 400 InvalidArgument to a part number below 1, and to
+     one above `rgw_multipart_part_upload_limit`, the option that already bounds the parts a
+     completion names (`partUploadLimit`, `internal/op/completemultipart.go:369-376`) and whose
+     default is Amazon's 10,000. The refusal is made where the number is parsed, with nothing
+     stored. F20's parse of the number is unchanged.
+  2. Complete, Abort, the bucket delete's aborts and the completion's cleanup of orphaned parts
+     retire every part the meta object registers, the ones numbered below 1 among them: their
+     objects go to the garbage collector and their index entries are removed.
+  3. A completion is still assembled from the parts numbered from 1 alone. `assemble` requires
+     a completion to name every part it is given (`internal/driver/mp_complete.go:107-117`), so
+     the parts below 1 are kept out of what it is given and are retired with the upload, never
+     assembled. A completion that names a part below 1 is InvalidPart, as today.
+  4. ListParts is unchanged: a part below 1 that another gateway stored is not listed, as on
+     radosgw.
+- **Seams:** the listing has two readers: the assembly's, the parts numbered from 1 as
+  `listAllParts` returns them today, and the retirement's, every registered part. WP-34 changes
+  how the omap is read, so the two tasks merge one after the other.
+- **Specs:** per release, on the emulator:
+  - UploadPart and UploadPartCopy with part numbers 0, -1, the limit, the limit plus one and a
+    number past 32 bits: 400 for all but the limit, nothing registered and nothing stored;
+  - an upload whose meta object is seeded with parts 0 and -1 beside part 1, as a radosgw could
+    leave it: after Abort, and after Complete naming part 1, no object of the upload stays in
+    the data pool outside a GC chain, no index entry of it stays, the bucket's stats return to
+    what they were, and DeleteBucket succeeds once the bucket is empty;
+  - on that upload, a completion naming part 1 alone completes, and one naming parts 0 and 1 is
+    InvalidPart.
+- **s3-tests (PP-19):** UploadPart with part number 0 and with 10,001 answers 400
+  InvalidArgument. radosgw stores the part, so the test is `fails_on_rgw`. The task moves the
+  pin with the known-differences lines.
+- **Exclusions and registry:** a `docs/differences.md` entry for the refusal and for the
+  retirement; the rgw-go line of the registry entry.
+- **Depends on:** nothing. **PR:** one. **Brief:** about 35 lines.
+
+### Task WP-34: Complete and Abort read an upload's parts once
+
+Found by the multipart and admin sweep of 2026-11-21 (F3), on main, and numbered here (PP-12).
+
+- **Layer:** driver. **Files:** `internal/driver/mp_list.go`, `internal/driver/mp_cleanup.go`
+  (`listAllParts`), `internal/driver/mp_abort.go`, their specs; `docs/differences.md`;
+  `docs/memory.md`; the rgw-go line of the registry entry the registry sweep adds. **Cluster:**
+  no.
+- **Security boundary:** the request path, what an untrusted request can make the gateway read
+  and hold; adversarial review applies (PP-14).
+- **Why,** mechanism only:
+  - Nothing bounds how many parts an upload registers: a part may be empty, UploadPart takes any
+    32-bit number (WP-33), and `rgw_multipart_part_upload_limit` is checked only against the
+    parts a completion names (`internal/op/completemultipart.go:177-179`).
+  - `listPartsPage` falls back, whenever the page after its marker is not numbered
+    consecutively, to the whole omap, every value decoded and held, of which it returns one
+    page (`internal/driver/mp_list.go:102-129`). That memory draws on no budget (`readMeta`'s
+    note, `internal/driver/mp_layout.go:134-143`).
+  - `listAllParts`, which Abort, Complete, the bucket delete's aborts and the completion's
+    orphan cleanup call, asks for pages of 1000 (`internal/driver/mp_cleanup.go:215-231`). When
+    the parts' numbers have gaps every page falls back, so N parts cost N/1000 whole reads: work
+    that grows with the square of the parts.
+  - Abort and Complete run on past the client's disconnect once they hold the upload's lock
+    (`internal/driver/mp_abort.go:56`, `internal/driver/mp_complete.go:360`).
+  - rgw-go only: an abort whose listing outlasts its lock's term, less a margin, answers 503
+    (`lockTermLeft`, `internal/driver/mp_abort.go:101-110`, checked at `:211`), so such an upload
+    can no longer be aborted, and DeleteBucket, which stops at an abort that fails, can no
+    longer delete its bucket.
+  - radosgw has the same loops at both tags: `list_parts` falls back to the whole omap on the
+    first number out of sequence ([rgw_sal_rados.cc:3354-3404](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3354-L3404),
+    [rgw_sal_rados.cc:4196-4246](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4196-L4246)), and abort and complete call
+    it for each page ([rgw_sal_rados.cc:3180-3224](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L3180-L3224),
+    [rgw_sal_rados.cc:4020-4064](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L4020-L4064)). Its abort takes no lock, so
+    it has no counterpart of the 503.
+- **Decision:** a listing of all an upload's parts is one pass over the omap, and what it holds
+  is bounded. Reason: WP-33 bounds the parts rgw-go stores, but an upload a radosgw on the zone
+  wrote is not bounded, and rgw-go must still be able to abort it and delete its bucket.
+- **Behaviour:**
+  1. `listAllParts` reads the meta object's omap once, in the omap's own pages, and orders the
+     parts by number. Its reads grow linearly with the parts.
+  2. ListParts, which a client pages, costs one read of the omap for a request, and holds one
+     page of decoded parts, not every decoded value.
+  3. What a listing holds draws on the memory budget, or is bounded by a stated number of parts
+     for each request; the task chooses and records it in `docs/memory.md`.
+  4. An abort whose listing still outlasts its lock's term answers 503 as today. With one pass
+     that takes an upload far larger than the quadratic listing allowed; the differences entry
+     gives the size at which the default `rgw_mp_lock_max_time` is reached, as measured, and
+     that raising the option is what an operator does then.
+  5. The parts returned, their order, and every answer of ListParts, Complete and Abort are
+     unchanged.
+- **Seams:** none new: `listAllParts` and `listPartsPage`.
+- **Specs:** on the emulator, the release not differing on this path:
+  - an upload whose meta object is seeded with N parts at even numbers, for N of 10,000 and
+    40,000: Abort reads the omap in the reads of one pass, counted, where the sweep counted 111
+    and 1641, and Complete the same; ListParts with max-parts 1 makes one pass, as today;
+  - the live memory of one listing of 100,000 parts stays under the bound Behaviour 3 states;
+  - the sweep's case of an abort that outlasted its lock, 40,000 gapped parts with the clock
+    advanced at each read: the abort now ends inside its term, and DeleteBucket succeeds;
+  - the existing specs of ListParts, Complete and Abort, the unsorted upload ids among them,
+    unchanged.
+- **s3-tests (PP-19):** none: a cost, on an upload of a size the suite does not make.
+- **Exclusions and registry:** a `docs/differences.md` entry for the one pass and the bound;
+  `docs/memory.md`; the rgw-go line of the registry entry.
+- **Depends on:** WP-33, which changes the same listing. **PR:** one. **Brief:** about 30 lines.
+
+### Task WP-35: a completion's part checksums are compared with the parts stored
+
+Found by the encryption and integrity sweep of 2026-11-21 (F1), on main, and numbered here
+(PP-12).
+
+- **Layer:** op and driver. **Files:** the completion document's parse
+  (`ParseCompleteMultipart`, `internal/op/multipartxml.go`), the part a completion names
+  (`op.CompletePart`, `internal/op/multipart.go`), the assembly (`assemblePart`,
+  `internal/driver/mp_complete.go`), memstore's, their specs; `docs/differences.md`; the rgw-go
+  line of the registry entry the registry sweep adds. **Cluster:** no.
+- **Security boundary:** a parser of a client's document on the request path; adversarial
+  review applies (PP-14). The sweep rates the defect itself as integrity, not security.
+- **Why:**
+  - A completion's `Part` may carry a `Checksum<ALG>` element, the part's checksum as the
+    client holds it
+    ([service-2.json:2759](https://github.com/boto/botocore/blob/4c688659d4a2ccc0edcdc3357107a534a52e478d/botocore/data/s3/2006-03-01/service-2.json#L2759)).
+    Amazon's own example sends it for each part
+    ([checking-object-integrity.md:138](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/checking-object-integrity.md?plain=1#L138)).
+  - `ParseCompleteMultipart` reads only `PartNumber` and `ETag` of each `Part`
+    (`internal/op/multipartxml.go:33-56`), so the assembly compares the ETag alone
+    (`internal/driver/mp_complete.go:139-148`). The upload's combined checksum is then computed
+    from the stored parts' records and answered as the object's, whatever the document named.
+    A client that sends a checksum the server holds no part for is told the upload completed.
+  - radosgw is the same at both tags, whose parser reads `PartNumber` and `ETag` alone
+    ([rgw_multi.cc:24-71](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_multi.cc#L24-L71), [rgw_multi.cc:24-71](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_multi.cc#L24-L71)).
+  - No pinned Amazon text read says what Amazon S3 answers to a wrong part checksum, or whether
+    it requires the element.
+- **Decision:** on an upload with a checksum type, a `Part`'s checksum element is read and held
+  to the stored part's value. An absent element is not required. Reason: a check the client
+  asked for must be made or the request refused, and requiring the element would refuse the
+  completions every client of radosgw sends today.
+- **Behaviour:**
+  1. **Establish Amazon's answers first,** from pinned sources: the code for a part whose
+     checksum element differs from the part stored, for an element of another algorithm than
+     the upload's, and whether an element is required of a COMPOSITE upload. The task records
+     each source. Where a text decides a code, that code is used.
+  2. Where none decides: a `Part` whose element is not the stored part's value answers 400
+     InvalidPart, as a `Part` whose ETag is not the stored part's does, and an element of
+     another algorithm than the upload's answers 400 InvalidRequest, as WD-3 answers a part
+     uploaded so. Nothing is assembled or written, and the upload stays.
+  3. An element on an upload with no checksum type, which is every Squid upload (D22), is not
+     compared: no part has a value to hold it to. `docs/differences.md` says so.
+  4. A `Part` with no element is assembled as today, unless step 1 finds Amazon's requirement,
+     which the task then records and the owner rules on.
+  5. The comparison is of the armored value, whole, as WD-4 compares the completion's own
+     supplied value.
+- **Seams:** `op.CompletePart` carries the element's algorithm and value, and the stores'
+  assembly compares them with the part record's checksum (`meta.UploadPartInfo.Cksum`).
+- **Specs:** per release:
+  - Tentacle, a COMPOSITE SHA256 upload and a FULL_OBJECT CRC32 one: every part's element
+    right, completed; one element wrong, refused with the upload still listed and no object
+    written; an element of another algorithm; no elements, completed as today; an element whose
+    value does not decode;
+  - Squid: elements of any value, completed as today;
+  - the completion's own supplied checksum header (WD-4), unchanged;
+  - the parser against a document with several checksum elements in one `Part`, and S11's
+    bounds.
+- **s3-tests (PP-19):** a completion whose `Part` carries a wrong `ChecksumSHA256` is refused.
+  radosgw completes it, so the test is `fails_on_rgw`, and step 1 decides `fails_on_aws`. The
+  task moves the pin with the known-differences lines.
+- **Exclusions and registry:** a `docs/differences.md` entry; the rgw-go line of the registry
+  entry.
+- **Depends on:** nothing: WP-9 and WP-12 are on main. **PR:** one. **Brief:** about 35 lines.
+
+### Task WP-36: every checksum trailer x-amz-trailer lists is compared
+
+Found by the encryption and integrity sweep of 2026-11-21 (F2), on main, and numbered here
+(PP-12).
+
+- **Layer:** auth and op. **Files:** the list's split in the authenticator
+  (`internal/auth/payload.go`, `internal/auth/chunked.go`) and in the checksum request
+  (`trailerValues`, `internal/op/checksumreq.go`), their specs; `docs/differences.md`; the
+  rgw-go line of the registry entry the registry sweep adds. **Cluster:** no.
+- **Security boundary:** the aws-chunked trailer section, which authentication reads (this
+  unit's threat model, WP-3); adversarial review applies (PP-14).
+- **Why:**
+  - `x-amz-trailer` is split on "," alone and each name is used as it stands. The authenticator
+    keeps a trailer line only when its name equals a listed name byte for byte
+    (`internal/auth/payload.go:170-173`; `internal/auth/chunked.go:469`), and the op takes a
+    listed name for a checksum trailer only when it starts `x-amz-checksum-` and the rest is an
+    algorithm's name (`trailerValues`, `internal/op/checksumreq.go:124-143`).
+  - A list written with HTTP's optional white space after a comma gives a name that begins with
+    a space, which neither matches. The request then has no checksum value: with an algorithm
+    header the store computes the checksum, stores it unverified and answers it, and without one
+    it computes none. The rule for a declared trailer that brings no value, 400 BadDigest
+    (`docs/differences.md`, "A declared checksum trailer that brings no value is refused"), does
+    not apply, because the trailer is not taken for declared.
+  - Read from the code and not run: a checksum trailer listed in an earlier instance of a
+    repeated `x-amz-trailer` header is dropped the same way, since both readers take a repeated
+    header's last instance (`internal/auth/request.go:118-132`,
+    `internal/op/request.go:190-196`).
+  - radosgw at v20.2.4 splits the same way and searches the trailer section for the name with
+    its space, so it does not find the value and stores its own checksum unverified
+    ([rgw_auth_s3.cc:1459-1487](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_auth_s3.cc#L1459-L1487), [split.h:32-38](https://github.com/ceph/ceph/blob/v20.2.4/src/common/split.h#L32-L38),
+    [rgw_op.cc:4757-4790](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4757-L4790)). v19.2.7 has the same split
+    ([rgw_auth_s3.cc:1504-1532](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_auth_s3.cc#L1504-L1532)) and no checksum to verify with.
+- **Decision:** a request that lists a checksum trailer, in any form HTTP reads as naming it,
+  has that trailer compared or is refused. The list is read as an HTTP list: optional white
+  space around a name is not part of it. Reason: the client asked for the check, and a success
+  that skipped it is worse than a refusal. One reader of the list serves both the authenticator
+  and the op, so they cannot disagree on the names again.
+- **Behaviour:**
+  1. Each name of `x-amz-trailer` is taken without the spaces and tabs around it, in the
+     authenticator and in `trailerValues` alike.
+  2. A repeated `x-amz-trailer` header is decided by the same rule: the task either reads every
+     instance as one list, as HTTP combines a list header, or refuses a request that repeats it,
+     and records which. In neither case does a listed checksum trailer go uncompared.
+  3. A payload whose trailers are signed is verified over the trailers kept, as today; with
+     Behaviour 1 a list written with white space keeps its trailers, so such a payload now
+     verifies where it failed its trailer signature.
+  4. A name that is still no checksum's, and a list with an empty name, are as today.
+- **Seams:** one function splits the list into names, called from `internal/auth/payload.go`
+  and from `trailerValues`.
+- **Specs:** per release, through the verifier, the handler and the op:
+  - an unsigned aws-chunked PUT whose list names a second trailer after ", ", after a tab, and
+    with a space before the comma, carrying a wrong checksum value: 400 BadDigest with nothing
+    stored, with and without an algorithm header; the right value: stored and answered;
+  - the same payload with signed trailers: verified;
+  - a repeated header, as Behaviour 2 rules;
+  - the lists the suite sends today, unchanged.
+- **s3-tests (PP-19):** a PUT whose `x-amz-trailer` names its checksum trailer after a comma and
+  a space, with a wrong value, is refused. radosgw stores the object, so the test is
+  `fails_on_rgw`. The task moves the pin with the known-differences lines.
+- **Exclusions and registry:** `docs/differences.md`: "aws-chunked trailer sections are read
+  line by line" says how the list is read, and a new line for the repeated header; the rgw-go
+  line of the registry entry.
+- **Depends on:** nothing: WP-3 and WP-6 are on main. **PR:** one. **Brief:** about 30 lines.
+
+### Task WP-37: ListParts over an ACL whose grants do not decode: the comment and a spec
+
+Found by the registry sweep of 2026-11-28, which read the code against
+`docs/differences.md`, and numbered here (PP-12).
+
+- **Layer:** driver, and the op's specs. **Files:** `uploadFromMeta`'s comment
+  (`internal/driver/mp_layout.go`); `internal/op/listparts_test.go`; a spec through the handler
+  over the RADOS store (`internal/s3/multipart_test.go` or `internal/driver/mp_list_test.go`);
+  `docs/differences.md`, only as Behaviour 3 says. **Cluster:** no.
+- **Security boundary:** none: a comment and specs, so the standard review applies.
+- **Why:**
+  - `uploadFromMeta`'s comment says ListParts renders the owner the driver decodes alone, and
+    cites `docs/differences.md`, "ListParts names the owner of an ACL whose grants do not
+    decode" (`internal/driver/mp_layout.go:192-198`).
+  - ListParts has no such difference. The op decodes the meta object's whole ACL, takes the
+    result's owner from it, and answers 500 UnknownError, radosgw's -EIO, when it does not
+    decode (`ListParts.Execute`, `internal/op/listparts.go:159-165`; `decodeACL`,
+    `internal/op/objectread.go:239-246`), as radosgw does
+    ([rgw_op.cc:6685-6695](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6685-L6695), [rgw_op.cc:7603-7613](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7603-L7613)).
+  - At a2ef90e the entry the comment cites still says that rgw-go lists the parts under the
+    owner (`docs/differences.md:11728-11735`). The registry sweep reports that its own change
+    retitles the entry; that change is not on main at a2ef90e.
+  - The specs pin an ACL of which nothing decodes (`internal/op/listparts_test.go:272-277`,
+    `:361-368`). None pins the case the entry was about, an ACL whose owner decodes and whose
+    grants do not. `internal/driver/attrs_test.go:176-186` builds such an ACL for the index
+    entry's owner.
+- **Decision:** the comment is corrected and the case is pinned. No behaviour changes. Reason:
+  a comment that states a difference the code does not have sends the next reader to an entry
+  that says the opposite of the code.
+- **Behaviour:**
+  1. The comment says what `uploadFromMeta` decodes and what reads it. It no longer says that
+     ListParts renders that owner, and it cites the entry by the title it has on main when the
+     task runs, or no entry when none applies.
+  2. A spec pins the case: for an upload whose meta object's ACL has an owner that decodes and
+     grants that do not, ListParts answers 500 UnknownError to the upload's owner and to
+     another user, and lists nothing.
+  3. If `docs/differences.md` still says, when the task runs, that ListParts lists such an
+     upload's parts, the task corrects the entry.
+- **Seams:** none.
+- **Specs:** the case of Behaviour 2, in the op over a stub, and through the handler over the
+  RADOS store on the emulator on both releases; the specs for an ACL of which nothing decodes,
+  unchanged.
+- **s3-tests (PP-19):** none: no S3 op writes such an ACL.
+- **Exclusions and registry:** `docs/differences.md`, only as Behaviour 3 says.
+- **Depends on:** nothing. It merges after the registry sweep's change to the entry, when that
+  is open, since both name the entry's title. **PR:** one. **Brief:** about 15 lines.
+
 ## Order
 
 Everything starts after the index's deferred benchmark run and the shared tasks it names.
@@ -1453,6 +1781,8 @@ Everything starts after the index's deferred benchmark run and the shared tasks 
 | any time | WP-30 | nothing |
 | after S12 | WP-31 | S12 |
 | after WP-29 | WP-32 | WP-29 |
+| any time | WP-33, WP-35, WP-36, WP-37 | nothing |
+| after WP-33 | WP-34 | WP-33 |
 | cluster, one at a time | WP-24, WP-15, WP-14 | WP-19 and WP-21; WP-8 to WP-11 and WP-13; WP-6 to WP-13, WP-22, T-1, and BC-34 or the POST line deselected |
 
 - Wave 1 is wider than the subagent budget allows at once; the controller starts WP-10 (a),

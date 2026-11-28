@@ -1046,6 +1046,106 @@ Found by C8's task review, and numbered here before C8 merged (PP-12).
 - **Exclusions and registry:** `docs/differences.md` entries.
 - **Depends on:** C8. **PR:** one. **Brief:** about 40 lines.
 
+### Task C16: the worker knows a version by what a write changes, not by its mtime
+
+Found by the versioning and lifecycle sweep of 2026-11-21 (F2), reproduced on the emulator at
+both releases, and numbered here (PP-12).
+
+- **Layer:** driver. **Files:** the worker's actions (`internal/driver/lc_actions.go`,
+  `internal/driver/lc_transition.go`), their specs (`internal/driver/lc_bucket_test.go`,
+  `internal/driver/lc_transition_test.go`); `docs/differences.md`; the rgw-go line of the
+  registry entry the registry sweep adds. **Cluster:** no; C13's gate runs it on a cluster.
+- **Security boundary:** none, so the standard review applies. The comparison this task changes
+  is what keeps a pass from removing an object written since its listing, and the specs pin
+  that first.
+- **Why:**
+  - On a bucket ever versioned, every lifecycle action reads the version again and goes on only
+    while it is the one listed. `lcBucket.listedAs` requires a named version's head to carry the
+    listed mtime exactly, and the null version's instance entry to carry it
+    (`internal/driver/lc_actions.go:330-345`); `markCurrent`, `removeVersion` and
+    `transitionListed` call it (`internal/driver/lc_actions.go:262`, `:400`;
+    `internal/driver/lc_transition.go:177-182`). The removals then send the listed mtime again
+    as their own conditions (`internal/driver/lc_actions.go:294-302`, `:424-429`).
+  - An attr write stamps the head one nanosecond past the mtime it read and completes the index
+    entry with that mtime (`SetObjectAttrs`, `internal/driver/attrs.go:90-100`), as radosgw's
+    does ([rgw_sal_rados.cc:2383-2385](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_sal_rados.cc#L2383-L2385),
+    [rgw_sal_rados.cc:2975-2977](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_sal_rados.cc#L2975-L2977)). The completion writes the
+    one index entry it read, the version's instance entry
+    ([cls_rgw.cc:1047](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1047) and
+    [cls_rgw.cc:1168-1198](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1168-L1198), [cls_rgw.cc:1182](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1182)
+    and [cls_rgw.cc:1301-1329](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1301-L1329)). The version's list entry, which a
+    versions listing reads, keeps the mtime it was linked with.
+  - So after PutObjectTagging, DeleteObjectTagging, PutObjectAcl, PutObjectRetention or
+    PutObjectLegalHold on a version, the listed mtime and the head's differ by a nanosecond at
+    every pass, and every pass skips the version as changed since its listing: no delete marker
+    for a current version, no removal of a noncurrent one, no transition. Only a later link that
+    rewrites the list entry ends it. A version whose retention has lapsed, or whose legal hold
+    was lifted, is never expired.
+  - `docs/differences.md`, "Lifecycle removes an object only as it was listed", says the skip is
+    decided afresh at the next pass. That holds only on a bucket never versioned, where the
+    entry listed is the one the attr write completed.
+  - radosgw expires these versions: its removal sends the listed mtime as `unmod_since` alone
+    and compares no head mtime ([rgw_lc.cc:601-658](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L601-L658),
+    [rgw_lc.cc:608-679](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L608-L679)). Its transition has the same defect as rgw-go's:
+    it passes the listed mtime ([rgw_lc.cc:1515](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_lc.cc#L1515),
+    [rgw_lc.cc:1561](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_lc.cc#L1561)) and `transition_obj` answers ECANCELED unless the
+    head's equals it ([rgw_rados.cc:5216-5220](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/driver/rados/rgw_rados.cc#L5216-L5220),
+    [rgw_rados.cc:5449-5453](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/driver/rados/rgw_rados.cc#L5449-L5453)).
+- **Decision:** on a bucket ever versioned, a version is the one listed when it is the same
+  write, and the mtime is not what says so. A named version's data is written once under its
+  id, so its ETag says it; the null version can be written again in place, so its instance
+  entry's ETag and versioned epoch say it. Reason: an attr write makes no new object, and the
+  action is already held to the head it judged by its own guards. Rejected: comparing mtimes to
+  the second, which still skips a version whose attr write crossed a second and still passes a
+  rewrite within one.
+- **Behaviour:**
+  1. `listedAs` takes a named version for the one listed when it exists at the listed ETag, and
+     the null version when its instance entry, read again, carries the listed ETag and versioned
+     epoch. Neither compares an mtime.
+  2. The removals of a bucket ever versioned carry no condition on the listed mtime. They stay
+     held to the head the action read, by `Expect` and the listed ETag, and to the lock check
+     on that head, so a write or a lock that lands after the read still refuses the action for
+     this pass, and the next pass decides afresh and now acts.
+  3. A transition of a bucket ever versioned follows the same rule, and still lands only on the
+     version it read.
+  4. A rule's filter is judged on the head as the action reads it, as today, so an attr write
+     that takes a version out of a rule's tags is honoured.
+  5. A bucket never versioned is unchanged: its listed entry is the one a write completed, and
+     its mtime and ETag are compared as today.
+  6. The transition of a current version an attr write touched. `keepCurrent` reads the current
+     flag off the version's instance entry (`internal/driver/lc_transition.go:245-276`), which
+     the class clears on every completion ([cls_rgw.cc:1062-1064](https://github.com/ceph/ceph/blob/v19.2.7/src/cls/rgw/cls_rgw.cc#L1062-L1064),
+     [cls_rgw.cc:1197-1199](https://github.com/ceph/ceph/blob/v20.2.4/src/cls/rgw/cls_rgw.cc#L1197-L1199)) while the list entry keeps it; the sweep
+     read this and did not run it. The task reads the flag where a listing reads it, or shows
+     the extra link harmless and pins it.
+- **Seams:** none new: `listedAs`, `transitionListed` and the two removals' params.
+- **Specs:** on both releases, against the emulator, each attr write one `SetObjectAttrs` and,
+  through the op layer, each of the five attr ops:
+  - Expiration over a current version with an attr write: a delete marker, where today there is
+    none; NoncurrentVersionExpiration over an attr-written noncurrent version: removed; the same
+    for an attr-written null version beside a newer version;
+  - Transition: an attr-written version and an untouched one both reach the target class;
+  - an object-lock bucket: a version whose GOVERNANCE retention lapsed, and one whose legal hold
+    was set and lifted, each expire; one still under a lock is kept;
+  - safety: the null version written again between its listing and the action is not removed,
+    by its ETag and by its epoch for a rewrite of the same bytes; a lock or an attr write that
+    lands between the action's read and its write skips the action for this pass;
+  - a rule filtered on a tag the attr write removed: the version stays;
+  - a bucket never versioned: the specs of `internal/driver/lc_bucket_test.go:379-403`,
+    unchanged;
+  - Behaviour 6, as the task settles it.
+- **s3-tests (PP-19):** time-driven, so at the gate and on demand (P1): on a versioned bucket, a
+  version tagged after its PUT is expired by an Expiration rule, which radosgw passes too, and
+  is transitioned by a Transition rule, which radosgw fails by reading, so that half is
+  `fails_on_rgw`. The task moves the pin with the known-differences lines.
+- **Exclusions and registry:** `docs/differences.md`: "Lifecycle removes an object only as it
+  was listed" and "A lifecycle transition lands only on the version it read" say what "as
+  listed" means on a bucket ever versioned, and that rgw-go transitions a version radosgw never
+  does. The rgw-go line of the registry entry for radosgw's transition.
+- **Depends on:** nothing: C10b and C11 are on main. It shares `internal/driver/lc_actions.go`
+  with V27 and V28, which change `removeVersion` too, so the three merge one after the other,
+  never in parallel. **PR:** one. **Brief:** about 40 lines.
+
 ## Order
 
 The owner asked for lifecycle early, so C6, C9 and C10a sit in the earliest waves their
@@ -1062,6 +1162,7 @@ dependencies allow; none of them waits on versioning.
 | 7 | C11; C8 | C10a, V7a, V9, WP-11 and L5a for C11, and C10b for versioned transitions; C2, C6, L5b and WP-13 for C8 (L's wave 6) |
 | 8, one at a time | C12 (a), (b), (c); C13 (a), (b), (c) | each PR's own dependencies; T-2 |
 | after C8 | C14, C15 | C8 |
+| sweep | C16 | nothing: C10b and C11 are on main. It merges apart from V27 and V28, which change the same file |
 
 - C12 and C13 are this unit's cluster tasks. They run one at a time with every other unit's
   cluster tasks, and C12's recordings land one at a time through the controller. C12 (b) can

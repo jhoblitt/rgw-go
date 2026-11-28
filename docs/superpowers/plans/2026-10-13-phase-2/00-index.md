@@ -34,14 +34,14 @@ The set's files:
 
 | File | Unit | Tasks |
 |---|---|---|
-| `00-index.md` | this index, and the shared tasks S1 to S18 | 18 |
-| `V-versioning.md` | the OLH protocol, versioned ops, ListObjectVersions, MFA delete | V0-V24 |
+| `00-index.md` | this index, and the shared tasks S1 to S27 | 27 |
+| `V-versioning.md` | the OLH protocol, versioned ops, ListObjectVersions, MFA delete | V0-V33 |
 | `L-object-lock.md` | object lock: configuration, retention, legal hold, enforcement | L1-L5b |
-| `C-lifecycle.md` | lifecycle configuration and the worker | C1-C15 |
+| `C-lifecycle.md` | lifecycle configuration and the worker | C1-C16 |
 | `B-bucket-config.md` | CORS, website, encryption configuration, ownership controls, public access block, policy status, POST object | BC-2 to BC-35 |
-| `WP-write-path.md` | checksums, compression and placement on writes, `?layout`, admin otp | WP-1 to WP-21, WP-24 to WP-32 |
+| `WP-write-path.md` | checksums, compression and placement on writes, `?layout`, admin otp | WP-1 to WP-21, WP-24 to WP-37 |
 | `T-gate-tooling.md` | the s3-tests selection in Go, the include list, the harness, the phase 2 gate | T-tasks, with WP-22 and WP-23 |
-| `F-floor-19.2.7.md` | the floor bump to Squid v19.2.7: phase 1 maintenance that lands before phase 2 | F1-F20 |
+| `F-floor-19.2.7.md` | the floor bump to Squid v19.2.7: phase 1 maintenance that lands before phase 2, and F21 to F32, phase 1 maintenance numbered from the sweeps of 2026-11-21 and 2026-11-28 | F1-F32 |
 | `CL-citation-links.md` | Ceph citations as clickable links, in the docs and in Go comments | CL1-CL6 |
 | `SM-service-map.md` | rgw-go's registration in the manager's service map: the go-ceph binding, the harness's radosgw readers, the gateway's metadata and status | SM1-SM6 |
 
@@ -955,12 +955,512 @@ merged (PP-12).
 - **Depends on:** S14, which changes the same Deny evaluation (`policy.Statement`'s conditions
   and `policy.Condition.EvalFor`). **PR:** one. **Brief:** about 50 lines.
 
+### Task S19: a write's s3:PutObjectTagging check carries its tags whatever its query holds
+
+Found by the authorization sweep of 2026-11-21 (F-A), on main, and numbered here (PP-12). It
+overlaps public tracker [#82944](https://tracker.ceph.com/issues/82944), which reports the same
+keys missing from radosgw's s3:PutObject check, the gap S13 closed on rgw-go.
+
+- **Layer:** authz and op. **Files:** the policy environment (`opKeys`, `internal/authz/env.go`)
+  and the write's check (`verifyACLAndTags`, `internal/op/writeacltags.go`), their specs;
+  `docs/differences.md`. **Cluster:** no.
+- **Security boundary:** request authorization; adversarial review applies (PP-14).
+- **Why,** mechanism only:
+  - `opKeys` gives an s3:PutObjectTagging check the `s3:RequestObjectTag/<key>` keys of the
+    `x-amz-tagging` header only when the query has no `tagging` key
+    (`internal/authz/env.go:616-625`). The test is meant to tell PutObjectTagging's own op,
+    whose tags are in its body, from a write's check of its header.
+  - The query does not say which op a request is. A POST of an object dispatches on `uploadId`
+    and then `uploads`, and `tagging` is no row of that method
+    (`internal/s3/dispatch.go:296-304`), so a CreateMultipartUpload may carry the key.
+  - CreateMultipartUpload checks s3:PutObjectTagging for its header through
+    `verifyWriteHeaders` (`internal/op/initmultipart.go:81-86`,
+    `internal/op/writeacltags.go:103-127`) and stores the header's tags on the upload
+    (`internal/op/initmultipart.go:146-148`). With the key in its query that check is evaluated
+    without the request-tag keys, while the same request's s3:PutObject check carries them
+    (`writeKeys`, `internal/authz/env.go:101-119`).
+  - The check is rgw-go's own (S12): radosgw's CreateMultipartUpload is chosen the same way
+    ([rgw_rest_s3.cc:4894-4900](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_rest_s3.cc#L4894-L4900),
+    [rgw_rest_s3.cc:5421-5427](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_rest_s3.cc#L5421-L5427)) and checks s3:PutObject alone
+    ([rgw_op.cc:6274-6289](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6274-L6289), [rgw_op.cc:6941-6956](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6941-L6956)).
+- **Decision:** a check's keys are chosen by the op it is made for, which its caller knows, and
+  never by a query key the dispatch of that method does not read. Reason: the query is the
+  requester's to write, and the op is dispatch's to choose.
+- **Behaviour:**
+  1. A write's s3:PutObjectTagging check carries the `s3:RequestObjectTag/<key>` keys of the
+     tags the write stores, whatever its query holds: PutObject, CreateMultipartUpload,
+     CopyObject under the rule WP-31 gives it, and later the POST upload.
+  2. The tagging op's own check is S24's.
+  3. No other check changes.
+- **Seams:** the caller of the s3:PutObjectTagging check says which check it is, a write's or
+  the tagging op's, to the environment's builder; the names are the implementer's.
+- **Specs:** per release:
+  - under a bucket Deny of s3:PutObjectTagging with a positive operator on a request tag, and
+    under an Allow so conditioned as the only grant, with `Null`, an `IfExists` operator and a
+    `ForAllValues` one: a CreateMultipartUpload with a `tagging` key in its query and one
+    without answer alike, and a refused one leaves no upload;
+  - PutObject and CopyObject, unchanged;
+  - a walk of every place the environment or the tag rule is chosen from the request's shape
+    (`opKeys`, `writeKeys`, `tagRule`, `isCopyObject`, `isCreateMultipartUpload`) against the
+    dispatch table: a query key the method's dispatch does not read changes no check's keys.
+- **s3-tests (PP-19):** a CreateMultipartUpload whose query also holds `tagging`, under a bucket
+  Deny of s3:PutObjectTagging on a request tag its header sets, is refused. radosgw makes no
+  such check, so the test is `fails_on_rgw`. The task moves the pin with the known-differences
+  lines.
+- **Exclusions and registry:** `docs/differences.md`, "A write's ACL and tag headers need
+  s3:PutObjectAcl and s3:PutObjectTagging", already promises the keys and needs no change beyond
+  a sentence that the query plays no part. No registry entry: the check is not radosgw's.
+- **Depends on:** WP-31, which changes the same check and its caller. **PR:** one. **Brief:**
+  about 35 lines.
+
+### Task S20: DeleteObjects judges each key with the key's tags
+
+Found by the authorization sweep of 2026-11-21 (F-B and R-2), on main, and numbered here
+(PP-12).
+
+- **Layer:** authz. **Files:** the tag rule (`internal/authz/tagrule.go`) and its specs, the
+  DeleteObjects specs; `docs/differences.md`; the rgw-go line of the registry entry the registry
+  sweep adds. **Cluster:** no.
+- **Security boundary:** request authorization; adversarial review applies (PP-14).
+- **Why,** mechanism only:
+  - A single DeleteObject adds the object's tags to the environment when a policy names
+    `s3:ExistingObjectTag` or `s3:ResourceTag` (`internal/authz/tagrule.go:72-80`).
+  - DeleteObjects' check of each key (`VerifyBucketPermissionIn`,
+    `internal/op/deleteobjects.go:417-425`) is the explicit-bucket form, for which `tagRule`
+    adds an object's tags only to a read's actions (`internal/authz/tagrule.go:45-54`).
+  - So each key's s3:DeleteObject or s3:DeleteObjectVersion is judged with no existing-tag key.
+    A Deny under a positive operator on such a key does not hold where DeleteObject's holds. A
+    Deny under a negated operator holds for every key, by S9's absent-key rule, where
+    DeleteObject's holds only for the keys whose tag fails it.
+  - radosgw is the same on the positive side at both tags:
+    `RGWDeleteMultiObj::verify_permission` adds the tags of the request's object, which a
+    multi-object delete does not name ([rgw_op.cc:6774-6786](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6774-L6786),
+    [rgw_op.cc:7707-7719](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7707-L7719)), and each key is evaluated on that environment
+    ([rgw_op.cc:6837-6847](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6837-L6847), [rgw_op.cc:7765-7775](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7765-L7775)),
+    where `RGWDeleteObj::verify_permission` adds the object's
+    ([rgw_op.cc:5138-5156](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5138-L5156), [rgw_op.cc:5528-5546](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L5528-L5546)).
+- **Decision:** each key of a DeleteObjects is judged as a DeleteObject of that key is. Reason:
+  one policy gives one answer whichever op deletes, and the tags are read only when a policy
+  names one.
+- **Behaviour:**
+  1. For the explicit-bucket form, s3:DeleteObject and s3:DeleteObjectVersion take the key's
+     tags as needed: the key's head is read only when the bucket's policy or one of the
+     identity's names an existing-object or resource tag, as `tagAdder` decides for the single
+     delete (`internal/authz/tagrule.go:215-260`).
+  2. A key named with a version reads that version's tags, and one named without reads the
+     current version's, as `objectFor` reads them (`internal/authz/tagrule.go:262-286`).
+  3. A key whose tags a policy needs and that cannot be read is refused, never deleted, and its
+     entry answers as a refused key does.
+  4. A missing key adds no tag and is answered as today.
+  5. A bucket whose policies name no tag reads nothing more than today.
+- **Seams:** none new: `tagRule`'s explicit-bucket case.
+- **Specs:** per release, through the handler and the evaluator:
+  - under a bucket Deny of s3:DeleteObject with a positive operator on an existing tag: a key
+    that carries the tag answers AccessDenied in the result and stays; a key that does not is
+    deleted; DeleteObject of each answers the same;
+  - under a Deny with a negated operator: a key whose tag satisfies the policy is deleted, and
+    one that does not is refused;
+  - under an Allow so conditioned as the only grant; with a version named;
+  - a bucket with no tag-naming policy: no head read for the check, counted on the store;
+  - tags that cannot be read: the key refused and kept.
+- **s3-tests (PP-19):** a DeleteObjects under a bucket Deny of s3:DeleteObject on an existing
+  tag answers AccessDenied for the tagged key and leaves it. radosgw deletes it, so the test is
+  `fails_on_rgw`. The task moves the pin with the known-differences lines.
+- **Exclusions and registry:** a `docs/differences.md` entry beside "DeleteObjects checks
+  s3:BypassGovernanceRetention for each key, on the key's ARN"; the rgw-go line of the registry
+  entry.
+- **Depends on:** nothing. **PR:** one. **Brief:** about 35 lines.
+
+### Task S21: a request reads its bucket's policy once
+
+Found by the authorization sweep of 2026-11-21 (F-C), on main, and numbered here (PP-12).
+
+- **Layer:** authz and op. **Files:** the evaluator's preludes (`internal/authz/evaluator.go`,
+  `internal/authz/load.go`), the request (`internal/op/request.go`), their specs. **Cluster:**
+  no.
+- **Security boundary:** the request path, what an untrusted request can make the gateway
+  compute; adversarial review applies (PP-14).
+- **Why,** mechanism only:
+  - No parsed policy is kept. `op.BucketPolicyFor` parses the stored text on every call
+    (`internal/op/policystatus.go:90-103`), and every `Verify` entry of the evaluator reaches
+    it (`bucketPolicy`, `internal/authz/load.go:27-29`; `requestBucket` and `explicitBucket`,
+    `internal/authz/evaluator.go:409-460`).
+  - DeleteObjects makes the check once for each key (`internal/op/deleteobjects.go:417-425`),
+    up to `rgw_delete_multi_obj_max_num` keys (`:369-380`) and `rgw_multi_obj_del_max_aio` at
+    once (`:385-393`). Each check also decodes the identity's policies, the bucket's ACL and
+    its public-access block, and the governance bypass adds an evaluation for each key that
+    exists (`bypassAllowed`, `internal/op/objectlock.go:136-146`).
+  - The op's own permission check refuses only the marked refusals
+    (`internal/op/deleteobjects.go:136-141`), so a key whose check refuses still costs its
+    parse.
+  - A bucket policy may be as large as `rgw_max_put_param_size`
+    (`internal/s3/bucketsubres.go:50-66`). So the work of one small request grows with the
+    product of its keys and the policy's size.
+  - radosgw parses the bucket's policy once for a request
+    ([rgw_op.cc:598-615](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L598-L615), [rgw_op.cc:628-645](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L628-L645)) and each
+    key's check reads it ([rgw_op.cc:6837-6847](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L6837-L6847),
+    [rgw_op.cc:7765-7775](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L7765-L7775)).
+- **Decision:** what authorizes a request on a bucket is read once for that request and that
+  bucket record. Reason: it bounds a request to one parse for each bucket it names, as radosgw
+  is bounded, with no cache to invalidate. Rejected: a cache of parsed policies across requests,
+  which needs the metadata cache's invalidation and is a performance change, not this fix; S22
+  bounds the cost of the one parse that remains.
+- **Behaviour:**
+  1. The parsed bucket policy, the bucket's ACL, its public-access block and the identity's
+     policies are read once for a request and a bucket record, and every check of that request
+     on that record uses them: the request's own bucket check, DeleteObjects' check of each key,
+     and each bypass check.
+  2. Every answer is unchanged: the same refusals, marked or unmarked as today.
+  3. The inputs belong to the record they were read from. A check on a record read again, as a
+     retried bucket write reads one, reads them again.
+- **Seams:** the request holds the inputs it has read, keyed by the bucket record, and both
+  preludes (`requestPrelude`, `internal/authz/evaluator.go:345-358`; `explicitPrelude`, `:364`)
+  take them from there. It is safe for the concurrent checks DeleteObjects makes.
+- **Specs:** per release:
+  - a DeleteObjects of 1, 10 and 100 keys parses its bucket's policy once, counted by a hook on
+    the parse, with and without the bypass header on an object-lock bucket;
+  - the existing answers of DeleteObjects, of a copy with a source in another bucket and of a
+    retried bucket write, unchanged;
+  - the per-key checks under the race detector.
+- **s3-tests (PP-19):** none: the cost is not something an S3 response shows.
+- **Exclusions and registry:** none: radosgw parses once, and so does rgw-go after this task.
+- **Depends on:** nothing. **PR:** one. **Brief:** about 30 lines.
+
+### Task S22: a policy parse costs time linear in its document
+
+Found by the authorization sweep of 2026-11-21 (F-E), on main, and numbered here (PP-12).
+
+- **Layer:** policy. **Files:** `internal/policy/parse.go` (`addPrincipal`, `addResource`) and
+  its specs. **Cluster:** no.
+- **Security boundary:** the request path: a bucket's owner writes the document and every
+  requester of the bucket makes the gateway parse it; adversarial review applies (PP-14).
+- **Why,** mechanism only:
+  - The parser adds each principal and each resource to its statement through a scan of what
+    the statement already holds (`internal/policy/parse.go:547-571`), so a statement of n
+    distinct principals or resources costs about n²/2 comparisons to parse.
+  - A stored bucket policy is parsed for each request that reaches its bucket's check (S21),
+    and PutBucketPolicy takes a document as large as `rgw_max_put_param_size`
+    (`internal/s3/bucketsubres.go:50-66`). The sweep measured seconds for one parse at that
+    size.
+  - radosgw holds a statement's principals and resources in sorted sets, as
+    `internal/policy/parse.go:538-546` and `:562-565` say of it; its cost was not measured.
+- **Decision:** membership is tested through a set beside each list. Reason: the lists keep
+  their order and their contents, which evaluation and the dumps read, so no answer and no byte
+  changes.
+- **Behaviour:**
+  1. A parse takes time linear in the document, up to a logarithmic factor.
+  2. What a statement holds is unchanged: the first of the principals radosgw's set treats as
+     equal is kept (`docs/ceph-upstream-bugs.md`, "radosgw drops all but the first OIDC
+     provider or Service principal in a statement"), and a repeated ARN is held once.
+- **Seams:** none: the two adders.
+- **Specs:**
+  - the parser's existing specs, unchanged;
+  - generated statements with repeated and distinct principals and resources parse to what the
+    scan gives, the old adders kept in the spec as the reference;
+  - a bound on the comparisons a parse makes as its document doubles, counted, not timed.
+- **s3-tests (PP-19):** none: a cost.
+- **Exclusions and registry:** none.
+- **Depends on:** nothing. **PR:** one. **Brief:** about 20 lines.
+
+### Task S23: a Deny reads aws:SourceIp as an address
+
+Found by the authorization sweep of 2026-11-21 (F-D), on main, and numbered here (PP-12).
+
+- **Layer:** authz and policy. **Files:** S14's Deny-only context (`amazonKeys`,
+  `internal/authz/env.go`), a Deny's evaluation of the IP operators
+  (`internal/policy/condition.go`), their specs; `docs/differences.md`; the rgw-go line of the
+  registry entry the registry sweep adds. **Cluster:** no.
+- **Security boundary:** policy evaluation is authorization; adversarial review applies
+  (PP-14).
+- **Why,** mechanism only:
+  - `aws:SourceIp` is the host part of the request's remote address (`sourceIP` and `cgiVar`,
+    `internal/authz/env.go:506-539`). net/http writes a link-local IPv6 peer's address with its
+    zone, so the key's value carries the zone.
+  - `ParseMaskedIP` is glibc's `inet_pton`, which takes no zone
+    (`internal/policy/convert.go:209-240`), so that value does not convert, and a typed
+    operator is false for a key whose value does not convert, the negated ones too
+    (`typedNone`, `internal/policy/condition.go:1307-1318`).
+  - So a Deny written as an allow-list, `NotIpAddress` over the ranges that may connect, does
+    not hold for such a peer, and neither does a Deny over a range with `IpAddress`.
+  - The same holds for any value of the key that is no address, such as the proxy chain a
+    header `rgw_remote_addr_param` names can hold (the registry's "radosgw cuts X-Forwarded-For
+    only for an rgw_remote_addr_param written in capitals").
+  - radosgw, by reading and not run: its REMOTE_ADDR is the endpoint's address as written
+    ([rgw_asio_client.cc:92](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_asio_client.cc#L92), [rgw_asio_client.cc:92](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_asio_client.cc#L92)),
+    `as_network` hands it to `inet_pton` ([rgw_iam_policy.cc:1008-1068](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L1008-L1068),
+    [rgw_iam_policy.cc:1012-1072](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L1012-L1072)), and `NotIpAddress` is false for a value
+    that does not convert ([rgw_iam_policy.cc:974-992](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_iam_policy.cc#L974-L992),
+    [rgw_iam_policy.cc:994-996](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_iam_policy.cc#L994-L996)).
+  - Amazon's key is "the requester's IP address"
+    ([reference_policies_condition-keys.md:1058](https://github.com/awsdocs/iam-user-guide/blob/e2b8637a825b9f292bb04af61277d067dfcc5676/doc_source/reference_policies_condition-keys.md?plain=1#L1058)):
+    an address, never an address and a zone.
+- **Decision:** in a Deny, `aws:SourceIp` is an address, or the Deny fails closed. Both rules
+  act on a Deny alone, and an Allow keeps radosgw's evaluation, as S9 and S14 keep it. Reason:
+  an allow-list Deny must not be passed by a peer whose address the gateway cannot read.
+- **Behaviour:**
+  1. A Deny reads the peer's address without its zone, through S14's Deny-only context
+     (`policy.Env.SetForDeny`, `internal/policy/env.go:197-210`; `amazonKeys`,
+     `internal/authz/env.go:258-296`). Radosgw's environment keeps the value as written.
+  2. In a Deny, a negated IP operator holds over a value of `aws:SourceIp` that names no
+     address, as S9 holds a negated operator over an absent key: a source the gateway cannot
+     read is no better than none. A positive IP operator stays false over such a value, since
+     no address is in any range; `docs/differences.md` says so.
+  3. An Allow is unchanged: an `IpAddress` Allow grants nothing to a peer whose address carries
+     a zone, as radosgw's.
+- **Seams:** S14's `SetForDeny`, and the Deny reading of `Condition.EvalFor`.
+- **Specs:** per release, in a Deny and in an Allow statement, through the evaluator with
+  net/http's forms of the remote address:
+  - a `NotIpAddress` Deny over two ranges: an IPv4 and an IPv6 peer inside a range served, one
+    outside refused, a link-local peer with a zone refused, and served once its range is
+    listed;
+  - an `IpAddress` Deny over the link-local range: a peer with a zone refused;
+  - `rgw_remote_addr_param` naming a header that holds two addresses, written in capitals and
+    not: the `NotIpAddress` Deny refuses where the value is no address;
+  - every Allow answer unchanged.
+- **s3-tests (PP-19):** none: the suite cannot connect from a link-local address with a zone,
+  nor set the gateway's `rgw_remote_addr_param`. The report says so.
+- **Exclusions and registry:** `docs/differences.md`, "A Deny reads the condition keys Amazon S3
+  sets", takes `aws:SourceIp`'s value and Behaviour 2; the rgw-go line of the registry entry.
+- **Depends on:** nothing; S14 is on main. **PR:** one. **Brief:** about 35 lines.
+
+### Task S24: PutObjectTagging's check carries the tags its body sets
+
+Found by the authorization sweep of 2026-11-21 (R-1), on main, and numbered here (PP-12). It
+overlaps public tracker [#82944](https://tracker.ceph.com/issues/82944), the same keys missing
+from other checks.
+
+- **Layer:** op, s3 and authz. **Files:** PutObjectTagging (`internal/op/objectattrs.go`,
+  `internal/s3/objectattrs.go`), the environment (`opKeys`, `internal/authz/env.go`), their
+  specs; `docs/differences.md`; the rgw-go line of the registry entry the registry sweep adds.
+  **Cluster:** no.
+- **Security boundary:** request authorization, and a client's document parsed before the
+  request is authorized; adversarial review applies (PP-14).
+- **Why:**
+  - PutObjectTagging authorizes before it reads its body: `VerifyPermission`
+    (`internal/op/objectattrs.go:204-207`) runs ahead of the `Params` call in `Execute`
+    (`:216-221`), and `opKeys` adds no key for the tagging op (`internal/authz/env.go:616-625`).
+    So its s3:PutObjectTagging check carries no `s3:RequestObjectTag` key.
+  - radosgw is the same at both tags: `RGWPutObjTags::verify_permission` evaluates before
+    `execute` reads the body and adds no key ([rgw_op.cc:1076-1097](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L1076-L1097),
+    [rgw_op.cc:1275-1296](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L1275-L1296)), and the one line that sets the key is
+    `RGWPutObj`'s, for its header ([rgw_op.cc:3970-3972](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L3970-L3972),
+    [rgw_op.cc:4179-4181](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L4179-L4181)).
+  - Amazon documents the key for this op: it is for "adding tags to objects using the
+    PutObjectTagging and PutObject" requests, and its example grants s3:PutObjectTagging under
+    `StringEquals` on `s3:RequestObjectTag/Project`
+    ([tagging-and-policies.md:12](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/tagging-and-policies.md?plain=1#L12),
+    [:72-89](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/tagging-and-policies.md?plain=1#L72-L89)).
+  - Since S12 a policy conditioned on a request tag binds rgw-go's writes and not the tagging
+    op, the op the key is documented for.
+- **Decision:** the tagging op reads and parses its body before it authorizes, and its check
+  carries the keys of the tags the body sets, in an Allow as in a Deny, as S13 gave the keys to
+  CopyObject and CreateMultipartUpload. Reason: Amazon's own example is an Allow on this key
+  for this op. PutObjectRetention is the pattern (`internal/op/objectretention.go:101-158`), as
+  it is S17's.
+- **Behaviour:**
+  1. The op's `Init` reads the body under the bounds `Params` reads it with today, and parses
+     it. A body that does not read or parse sets no key, and its error is kept and answered
+     where `Params` answers it today, once the request is authorized.
+  2. The check carries `s3:RequestObjectTag/<key>` for each tag of the body, for
+     s3:PutObjectTagging and s3:PutObjectVersionTagging.
+  3. A body that names a key twice is refused before the check, as S16 refuses a header that
+     does, so that no check reads one value of the key.
+  4. A missing object answers as today, after the check.
+  5. A refused requester's body is now read, bounded, before the refusal, as DeleteObjects
+     reads its body (`internal/op/deleteobjects.go:116-123`). The differences entry records it.
+- **Seams:** the op carries the parsed set, or its error, from `Init` to `Execute`; the request
+  carries the set for the environment, as it carries `List` and `Lock`
+  (`internal/op/request.go:123-129`), which may also serve S19's seam for a write's tags.
+- **Specs:** per release:
+  - under a bucket Deny of s3:PutObjectTagging with `StringEquals` on a request tag: a body
+    that sets it refused 403 with the object's tags unchanged, another value served;
+  - under an Allow so conditioned as the only grant: served with the tag, refused without;
+  - `Null` and a `ForAllValues` operator; a version named;
+  - a malformed body: 403 for a refused requester, 400 MalformedXML for an allowed one; a body
+    over the bound; a missing object; a body that repeats a key.
+- **s3-tests (PP-19):** PutObjectTagging under a bucket Deny of s3:PutObjectTagging on a request
+  tag is refused when its body sets the tag, and Amazon's Allow example grants it. radosgw
+  answers both the other way, so the tests are `fails_on_rgw`. The task moves the pin with the
+  known-differences lines.
+- **Exclusions and registry:** a `docs/differences.md` entry; the rgw-go line of the registry
+  entry.
+- **Depends on:** S16, which changes the same handler and decides the repeated key, and S19,
+  which changes the same case of `opKeys`. **PR:** one. **Brief:** about 40 lines.
+
+### Task S25: a statement matches an ARN's account by the comparison that grants less
+
+Found by the authorization sweep of 2026-11-21 (R-3), on main, and numbered here (PP-12).
+
+- **Layer:** policy. **Files:** `internal/policy/arn.go` (`ARN.Match`),
+  `internal/policy/statement.go` (`Statement.Eval`), their specs; `docs/differences.md`; the
+  rgw-go line of the registry entry the registry sweep adds. **Cluster:** no.
+- **Security boundary:** policy evaluation is authorization; adversarial review applies
+  (PP-14).
+- **Why,** mechanism only:
+  - `ARN.Match` compares a resource pattern's account with the candidate's without regard to
+    ASCII case (`internal/policy/arn.go:336-348`), as radosgw's `ARN::match` does at both tags
+    ([rgw_arn.cc:319-344](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_arn.cc#L319-L344), [rgw_arn.cc:319-344](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_arn.cc#L319-L344)).
+  - An ARN's account is a tenant here, and a tenant's name is case-sensitive: letters, digits
+    and underscores in either case (`validTenantName`, `internal/s3/request.go:420-428`).
+  - A resource pattern with no account, or `*`, takes the tenant of the policy's owner at
+    parse (`internal/policy/parse.go:410-417`).
+  - So a statement's resource pattern matches a resource whose account differs from the
+    pattern's only in case.
+- **Decision:** each statement takes, of the exact and the case-insensitive comparison of the
+  account, the one that grants less. Reason: tenant names are case-sensitive, so the exact
+  comparison is the correct one, and where the wider match only refuses more it is kept, as
+  S9 and S10 keep radosgw's reading in a Deny.
+- **Behaviour:**
+  1. An Allow's `Resource` and a Deny's `NotResource` compare the account exactly.
+  2. A Deny's `Resource` and an Allow's `NotResource` keep the case-insensitive comparison.
+  3. The region, the resource and the wildcards compare as today.
+  4. Accounts that are equal, or that differ in more than case, give today's answers.
+- **Seams:** `ARN.Match` takes the comparison, and `Statement.Eval`
+  (`internal/policy/statement.go:92-110`) chooses it by the statement's effect and by which of
+  `Resource` and `NotResource` it is matching (`matchesAny`, `:245-247`).
+- **Specs:** per release, at the policy and through the evaluator, for an identity policy and
+  a bucket policy:
+  - a table over the four positions, an Allow's and a Deny's `Resource` and `NotResource`, with
+    accounts equal, differing only in case, and different, with and without wildcards: each
+    position gives the answer that grants less;
+  - every existing ARN spec, unchanged.
+- **s3-tests (PP-19):** the case needs an identity policy, which s3-tests sets through IAM
+  under the `user_policy` marker, out until phase 3 (`hack/s3tests/excluded-markers.txt:49-55`).
+  Its test is written with that marker and `fails_on_rgw`, and runs once phase 3 lifts it, as
+  S17's third test does.
+- **Exclusions and registry:** a `docs/differences.md` entry, mechanism only; the rgw-go line of
+  the registry entry.
+- **Depends on:** nothing. **PR:** one. **Brief:** about 25 lines.
+
+### Task S26: a Deny reads s3:x-amz-copy-source in the form the copy reads its source by
+
+Found by the authorization sweep of 2026-11-21 (O-1, an observation), on main, and numbered
+here (PP-12). The brief asked whether it is a task or a note. It is a task: a Deny that another
+spelling of one source escapes is the class S9 to S18 close, and this fix adds holds only, so
+it does not wait on Amazon's exact form.
+
+- **Layer:** authz. **Files:** the copy's keys and S14's Deny-only context
+  (`internal/authz/env.go`), their specs; `docs/differences.md`; `docs/ceph-upstream-bugs.md`.
+  **Cluster:** no.
+- **Security boundary:** policy evaluation is authorization; adversarial review applies
+  (PP-14).
+- **Why,** mechanism only:
+  - `s3:x-amz-copy-source` is the `x-amz-copy-source` header as sent, in both gateways
+    (`copyKeys`, `internal/authz/env.go:693-700`; [rgw_op.cc:5477-5485](https://github.com/ceph/ceph/blob/v19.2.7/src/rgw/rgw_op.cc#L5477-L5485),
+    [rgw_op.cc:6043-6051](https://github.com/ceph/ceph/blob/v20.2.4/src/rgw/rgw_op.cc#L6043-L6051)).
+  - The copy reads its source through a decode: one leading `/` dropped, the name
+    percent-decoded, and everything from the first `?` taken as arguments (`parseCopySource`,
+    `internal/s3/copyobject.go:194-215`). So one source has many spellings, and a condition
+    written for one does not read the others.
+  - A Deny under a positive operator on the key therefore does not hold for another spelling
+    of the source it names. A Deny under a negated operator holds for every spelling but the
+    policy's, and an Allow grants the policy's spelling alone.
+  - No pinned Amazon text says which form Amazon S3 compares. Its own example describes the
+    header's value with a leading slash and writes the policy's value without one
+    ([amazon-s3-policy-keys.md:146](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L146),
+    [:171](https://github.com/awsdocs/amazon-s3-userguide/blob/1b918e0a0da664a139aad2ceb5d2ef10187c272f/doc_source/amazon-s3-policy-keys.md?plain=1#L171)),
+    which reads as a normal form and not the header as sent.
+- **Decision:** in a Deny the key is read as sent and in the forms the copy itself reads, and
+  the condition holds where it holds on any of them. An Allow keeps the header as sent, which
+  already fails closed. Reason: the request must not choose which of its own spellings a Deny
+  judges.
+- **Behaviour:**
+  1. A Deny's condition on the key holds where it holds on the header as sent, on the decoded
+     `<bucket>/<key>` followed by the header's `?` and what follows it, or on the decoded
+     `<bucket>/<key>` alone, through S14's second readings (`policy.Env.SetForDenyOr`,
+     `internal/policy/env.go:224-230`). The decode is `parseCopySource`'s own, so the forms a
+     Deny reads are the forms the copy acts on.
+  2. A negated Deny, the form Amazon's example uses, still holds for a spelling other than the
+     policy's, as today and as on radosgw: the reading as sent holds it. The differences entry
+     records that a client must spell the source as the policy does to pass it.
+  3. An Allow is unchanged.
+  4. UploadPartCopy carries no such key on either gateway and is not changed here.
+- **Seams:** S14's `SetForDenyOr`, set where `copyKeys` sets the key; the decode is shared with
+  the handler, not copied.
+- **Specs:** per release, in a Deny and in an Allow statement:
+  - a Deny with `StringLike` and with `StringEquals` on the key: the source as the policy
+    spells it, with a leading slash, percent-encoded in its name and in its separator, and with
+    a `?` suffix that names a version and one that names nothing, each refused; another source
+    served;
+  - the negated Deny and the Allow as the only grant: today's answers for every spelling;
+  - a tenant-qualified source.
+- **s3-tests (PP-19):** under a bucket Deny of s3:PutObject with `StringLike` on the key, a copy
+  whose header spells the denied source with a leading slash, and one that percent-encodes it,
+  are refused. radosgw serves them, so the test is `fails_on_rgw`. The task moves the pin with
+  the known-differences lines.
+- **Exclusions and registry:** a `docs/differences.md` entry beside "A Deny reads the condition
+  keys Amazon S3 sets"; a `docs/ceph-upstream-bugs.md` entry for radosgw's side, mechanism only,
+  possibly security-relevant and sent to rgw-bug-reproduction (PP-4), unless the registry sweep
+  has added it.
+- **Depends on:** nothing; S14 is on main. **PR:** one. **Brief:** about 35 lines.
+
+### Task S27: UploadPart and UploadPartCopy take no ACL header
+
+Found by S15's work (its report's concern 2), and numbered here before S15 merged (PP-12).
+
+- **Layer:** s3, op and authz. **Files:** the part's parameters and checks
+  (`internal/s3/multipart.go`, `internal/op/uploadpart.go`), the part's keys
+  (`putObjectKeys`, `internal/authz/env.go`), their specs; `docs/differences.md`;
+  `docs/ceph-upstream-bugs.md`. **Cluster:** no.
+- **Security boundary:** request authorization, since the keys a part's check carries change;
+  adversarial review applies (PP-14).
+- **Why:**
+  - Amazon S3's UploadPart and UploadPartCopy have no ACL or grant parameter
+    ([service-2.json:14198](https://github.com/boto/botocore/blob/4c688659d4a2ccc0edcdc3357107a534a52e478d/botocore/data/s3/2006-03-01/service-2.json#L14198),
+    [:13960](https://github.com/boto/botocore/blob/4c688659d4a2ccc0edcdc3357107a534a52e478d/botocore/data/s3/2006-03-01/service-2.json#L13960)),
+    and an AWS CLI maintainer's test of 2015-12-10 got 400 InvalidArgument, "The specified
+    header is not valid in this context", for an UploadPart sent with `x-amz-acl`
+    ([aws/aws-cli#1674](https://github.com/aws/aws-cli/issues/1674#issuecomment-163717329)).
+    That report is first-hand and old; the same thread later says, unconfirmed, that Amazon
+    changed something on its side in 2018.
+  - Both gateways take the header. rgw-go builds an ACL from a part's headers and stores it on
+    the part's head (`uploadPartChecks`, `internal/s3/multipart.go:299-304`;
+    `internal/op/uploadpart.go:281-291`, `:308`), as radosgw's `RGWPutObj` does for a part, and
+    the part's s3:PutObject check carries `s3:x-amz-acl` from the part's own header
+    (`putObjectKeys`, `internal/authz/env.go:706-710`). The completed object takes the upload's
+    ACL, not a part's.
+  - S13 pins that a part must repeat the canned ACL to pass a Deny for its absence, and S15
+    decides what a completion's check reads.
+- **Behaviour:**
+  1. **Establish Amazon's answer today first,** from the sources S15's step 1 names, for a part
+     sent with `x-amz-acl`, for one sent with a grant header, and for one sent with neither
+     under a Deny for the ACL's absence. The task records each source read. If one shows that
+     Amazon takes the header today, the task stops for the owner's ruling.
+  2. Otherwise UploadPart and UploadPartCopy answer 400 InvalidArgument to `x-amz-acl` and to
+     each `x-amz-grant-*` header. The refusal reads the request's own headers alone, so it is
+     made where the handler makes its other header refusals, before authorization (B16).
+  3. A part's head takes the ACL a part sent without a header takes today, and the refusal of
+     a public ACL under the bucket's block goes with the header.
+  4. The part's s3:PutObject check carries no ACL key of the part's own. What it carries
+     follows S15's ruling: under its outcome (a) none, so a Deny for the ACL's absence refuses
+     every part as it refuses every completion; under (b) the upload's recorded keys, so the
+     parts of an upload created with the ACL pass. S13's spec and its differences sentence
+     change with it.
+- **Seams:** under S15's outcome (b), the part's check reads the record S15 gives the upload;
+  under (a), none.
+- **Specs:** per release, for UploadPart and UploadPartCopy:
+  - a part sent with `x-amz-acl` and with each grant header: 400 InvalidArgument and no part
+    stored, for an allowed and for a refused requester;
+  - a part sent with neither: stored, its head's ACL as today;
+  - under the Deny for the ACL's absence and under the Allow form as the only grant: the
+    answers S15's ruling gives;
+  - CreateMultipartUpload's ACL and the completed object's, unchanged.
+- **s3-tests (PP-19):** an UploadPart sent with `x-amz-acl` answers 400 InvalidArgument.
+  radosgw serves it, so the test is `fails_on_rgw`, and step 1 decides whether it is also
+  `fails_on_aws`. The task moves the pin with the known-differences lines.
+- **Exclusions and registry:** a `docs/differences.md` entry; a `docs/ceph-upstream-bugs.md`
+  entry for radosgw taking an ACL header on a part, S3-correctness.
+- **Depends on:** S15, for its ruling and the record of an upload's keys. **PR:** one.
+  **Brief:** about 40 lines.
+
 ## Order
 
-1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, S6 once V2 lands, S7 once V10, BC-17, BC-23, BC-10 and BC-28a land, S8 and S11 at once, S9 and S10 once L7 lands, S12 once S8 lands, S13 once S12 lands, S14 once S9 lands, S15 and S16 once S13 lands, and S17 and S18 once S14 lands.
+1. **Before any phase 2 task:** unit F, the floor bump, then the deferred benchmark run on v19.2.7 and v20.2.4 (spec §9), then S1, S2 and S3 in parallel, S4 once S1 lands, S5 at once, S6 once V2 lands, S7 once V10, BC-17, BC-23, BC-10 and BC-28a land, S8 and S11 at once, S9 and S10 once L7 lands, S12 once S8 lands, S13 once S12 lands, S14 once S9 lands, S15 and S16 once S13 lands, S17 and S18 once S14 lands, S19 once WP-31 lands, S20, S21, S22, S23, S25 and S26 at once, S24 once S16 and S19 land, and S27 once S15 lands.
 2. **Then the units in parallel**, each in its own file's waves. V's foundation (V0 to V3b) comes first among the units, because L and C consume its OLH seams. B and WP start with S2, and the T and SM units start at once. Within the waves:
    - The cluster tasks of every unit run one at a time.
    - The recording tasks, which append to the parity ledgers, land one at a time through the controller.
+   - The tasks numbered on 2026-11-28 from the sweeps of 2026-11-21 and 2026-11-28 wait for no wave. F21, F24, F26, F27, F28, F29, F30, F32, V32, C16, WP-33, WP-35, WP-36 and WP-37 start at once, and so does the presigned route of F22. F22's header route waits for the owner's ruling on FD-10 (unit F), F23 for that ruling and F22, F25 for F22, F31 for F30, and WP-34 for WP-33. The write side added to V28 follows V28's delete side. C16 merges apart from V27 and V28, which change the same file.
+   - V33, numbered on 2026-11-28 from V25's review, starts once V25 lands.
 3. **The hot-file rule** (PP-5, settled after the whole-plan review). Where two tasks only add a field, a helper or one call line to a shared file, no order is fixed: whichever lands first, the later rebases. A fixed order stays only where two tasks change the same function body: WP-6, V11 and BC-26 on the write-path op files, and V7b and WP-9 on `mp_complete.go`.
 4. **The cross-unit dependencies,** stated in each unit's Seams:
    - L and C consume V's versioned delete and delete-marker writers.
