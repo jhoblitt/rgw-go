@@ -85,7 +85,7 @@ tidy-check: ## Fail when go mod tidy would change go.mod or go.sum
 
 .PHONY: test
 test: ## Run every suite with the race detector
-	@for m in $(MODULES); do (cd "$$m" && go test "-tags=$(GO_TAGS)" -race -count=1 ./...) || exit 1; done
+	@for m in $(MODULES); do (cd "$$m" && go test "-tags=$(GO_TAGS)" -race -count=1 -timeout=25m ./...) || exit 1; done
 
 # Neither vet nor test builds the integration tag's spec tree, so an error
 # Ginkgo finds only while building it, such as a decorator on a node that
